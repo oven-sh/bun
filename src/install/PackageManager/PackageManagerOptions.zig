@@ -64,6 +64,9 @@ preid: string = "",
 message: ?string = null,
 force: bool = false,
 
+// `bun pm why` command options
+top_only: bool = false,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -598,6 +601,9 @@ pub fn load(
         this.preid = cli.preid;
         this.message = cli.message;
         this.force = cli.force;
+
+        // `bun pm why` command options
+        this.top_only = cli.top_only;
     } else {
         this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
         PackageManager.verbose_install = false;

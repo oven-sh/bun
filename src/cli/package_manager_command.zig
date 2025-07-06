@@ -23,6 +23,7 @@ pub const PackCommand = @import("./pack_command.zig").PackCommand;
 const Npm = Install.Npm;
 const PmViewCommand = @import("./pm_view_command.zig");
 const PmVersionCommand = @import("./pm_version_command.zig").PmVersionCommand;
+const PmWhyCommand = @import("./pm_why_command.zig").PmWhyCommand;
 const File = bun.sys.File;
 
 const ByName = struct {
@@ -126,6 +127,7 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
             \\  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
             \\  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
+            \\  <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>               show dependency tree explaining why a package is installed
             \\  <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
             \\  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>
             \\  <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag
@@ -433,6 +435,9 @@ pub const PackageManagerCommand = struct {
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "version")) {
             try PmVersionCommand.exec(ctx, pm, pm.options.positionals, cwd);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "why")) {
+            try PmWhyCommand.exec(ctx, pm, pm.options.positionals);
             Global.exit(0);
         }
 

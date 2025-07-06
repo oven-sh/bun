@@ -79,6 +79,7 @@ pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--allow-same-version                   Allow bumping to the same version") catch unreachable,
     clap.parseParam("-m, --message <STR>                    Use the given message for the commit") catch unreachable,
     clap.parseParam("--preid <STR>                          Identifier to be used to prefix premajor, preminor, prepatch or prerelease version increments") catch unreachable,
+    clap.parseParam("--top                                Show only the first level of dependencies") catch unreachable,
     clap.parseParam("<POS> ...                         ") catch unreachable,
 });
 
@@ -210,6 +211,9 @@ git_tag_version: bool = true,
 allow_same_version: bool = false,
 preid: string = "",
 message: ?string = null,
+
+// `bun pm why` options
+top_only: bool = false,
 
 const PatchOpts = union(enum) {
     nothing: struct {},
@@ -911,6 +915,9 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         if (args.option("--message")) |message| {
             cli.message = message;
         }
+
+        // `bun pm why` options
+        cli.top_only = args.flag("--top");
     }
 
     return cli;

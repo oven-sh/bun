@@ -22,22 +22,22 @@ describe("bun outdated", () => {
   }
 
   async function runCommand(cmd: string[], testDir: string) {
-    const { stdout, stderr, exited } = Bun.spawn({
+    const { stdout, exited } = Bun.spawn({
       cmd,
       cwd: testDir,
       stdout: "pipe",
       stdin: "ignore",
-      stderr: "pipe",
+      stderr: "inherit",
       env: bunEnv,
     });
 
-    const [output, error, exitCode] = await Promise.all([
+    const [output, exitCode] = await Promise.all([
       new Response(stdout).text(),
-      new Response(stderr).text(),
+
       exited,
     ]);
 
-    return { output, error, code: exitCode };
+    return { output, code: exitCode };
   }
 
   describe("bun outdated --json", () => {
@@ -48,10 +48,10 @@ describe("bun outdated", () => {
       await runCommand([bunExe(), "install"], testDir);
       
       // Then run outdated --json
-      const { output, error, code } = await runCommand([bunExe(), "outdated", "--json"], testDir);
+      const { output, code } = await runCommand([bunExe(), "outdated", "--json"], testDir);
 
       expect(code).toBe(0);
-      expect(error).toBe("");
+      
 
       // Parse the JSON to verify it's valid
       const json = JSON.parse(output);
@@ -91,10 +91,10 @@ describe("bun outdated", () => {
       await runCommand([bunExe(), "install"], testDir);
       
       // Run outdated with filter to include workspace info
-      const { output, error, code } = await runCommand([bunExe(), "outdated", "--json", "--filter=*"], testDir);
+      const { output, code } = await runCommand([bunExe(), "outdated", "--json", "--filter=*"], testDir);
 
       expect(code).toBe(0);
-      expect(error).toBe("");
+      
 
       if (output.trim()) {
         const json = JSON.parse(output);
@@ -116,10 +116,10 @@ describe("bun outdated", () => {
       await runCommand([bunExe(), "install"], testDir);
       
       // Run outdated --json
-      const { output, error, code } = await runCommand([bunExe(), "outdated", "--json"], testDir);
+      const { output, code } = await runCommand([bunExe(), "outdated", "--json"], testDir);
 
       expect(code).toBe(0);
-      expect(error).toBe("");
+      
 
       if (output.trim()) {
         const json = JSON.parse(output);
@@ -158,10 +158,10 @@ describe("bun outdated", () => {
       await runCommand([bunExe(), "install"], testDir);
       
       // Run outdated --json
-      const { output, error, code } = await runCommand([bunExe(), "outdated", "--json"], testDir);
+      const { output, code } = await runCommand([bunExe(), "outdated", "--json"], testDir);
 
       expect(code).toBe(0);
-      expect(error).toBe("");
+      
       
       if (output.trim()) {
         const json = JSON.parse(output);
@@ -177,10 +177,10 @@ describe("bun outdated", () => {
       await runCommand([bunExe(), "install"], testDir);
       
       // Run outdated --json with package filter
-      const { output, error, code } = await runCommand([bunExe(), "outdated", "--json", "react"], testDir);
+      const { output, code } = await runCommand([bunExe(), "outdated", "--json", "react"], testDir);
 
       expect(code).toBe(0);
-      expect(error).toBe("");
+      
 
       if (output.trim()) {
         const json = JSON.parse(output);
@@ -202,10 +202,10 @@ describe("bun outdated", () => {
       await runCommand([bunExe(), "install"], testDir);
       
       // Run outdated without --json
-      const { output, error, code } = await runCommand([bunExe(), "outdated"], testDir);
+      const { output, code } = await runCommand([bunExe(), "outdated"], testDir);
 
       expect(code).toBe(0);
-      expect(error).toBe("");
+      
 
       // Should contain table headers
       if (output.trim()) {

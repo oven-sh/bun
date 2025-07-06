@@ -1,10 +1,10 @@
-import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
-import { join } from "node:path";
-import { mkdir, writeFile, rm } from "node:fs/promises";
-import { existsSync, realpathSync, mkdtempSync } from "node:fs";
 import { spawnSync } from "bun";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { existsSync, mkdtempSync, realpathSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
   let package_dir: string;

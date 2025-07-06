@@ -848,6 +848,11 @@ pub fn transpileSourceCode(
 
     switch (loader) {
         .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .text, .csv, .csv_no_header, .tsv, .tsv_no_header => {
+            // Ensure that if there was an ASTMemoryAllocator in use, it's not used anymore.
+            var ast_scope = js_ast.ASTMemoryAllocator.Scope{};
+            ast_scope.enter();
+            defer ast_scope.exit();
+
             jsc_vm.transpiled_count += 1;
             jsc_vm.transpiler.resetStore();
             const hash = bun.Watcher.getHash(path.text);

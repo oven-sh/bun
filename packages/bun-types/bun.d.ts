@@ -966,6 +966,13 @@ declare module "bun" {
     },
   ): Promise<number>;
 
+  interface SystemError extends Error {
+    errno?: number | undefined;
+    code?: string | undefined;
+    path?: string | undefined;
+    syscall?: string | undefined;
+  }
+
   /**
    * Concatenate an array of typed arrays into a single `ArrayBuffer`. This is a fast path.
    *
@@ -2647,7 +2654,8 @@ declare module "bun" {
    *
    * @category Bundler
    *
-   * @example Basic usage - Bundle a single entrypoint and check results
+   * @example
+   * Basic usage - Bundle a single entrypoint and check results
    *```ts
    * const result = await Bun.build({
    *   entrypoints: ['./src/index.tsx'],

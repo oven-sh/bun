@@ -388,7 +388,7 @@ fn getAST(
                 temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
                 temp_log.msgs.clearAndFree();
             }
-            const root = try CSV.parse(source, &temp_log, allocator, false, .{ .header = true, .delimiter = ',' });
+            const root = try CSV.parse(source, &temp_log, allocator, false, .{ .header = true, .delimiter = "," });
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
         .csv_no_header => {
@@ -399,7 +399,7 @@ fn getAST(
                 temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
                 temp_log.msgs.clearAndFree();
             }
-            const root = try CSV.parse(source, &temp_log, allocator, false, .{ .header = false, .delimiter = ',' });
+            const root = try CSV.parse(source, &temp_log, allocator, false, .{ .header = false, .delimiter = "," });
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
         .tsv => {
@@ -410,7 +410,7 @@ fn getAST(
                 temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
                 temp_log.msgs.clearAndFree();
             }
-            const root = try CSV.parse(source, &temp_log, allocator, false, .{ .header = true, .delimiter = '\t' });
+            const root = try CSV.parse(source, &temp_log, allocator, false, .{ .header = true, .delimiter = "\"" });
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
         .tsv_no_header => {
@@ -421,7 +421,7 @@ fn getAST(
                 temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
                 temp_log.msgs.clearAndFree();
             }
-            const root = try CSV.parse(source, &temp_log, allocator, false, .{ .header = false, .delimiter = '\t' });
+            const root = try CSV.parse(source, &temp_log, allocator, false, .{ .header = false, .delimiter = "\"" });
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
         .text => {

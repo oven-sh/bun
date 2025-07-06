@@ -7,14 +7,8 @@ const string = bun.string;
 const Command = bun.CLI.Command;
 const PackageManager = bun.install.PackageManager;
 const Semver = bun.Semver;
-const logger = bun.logger;
-const Environment = bun.Environment;
-const Lockfile = @import("../install/lockfile.zig");
-const DependencyID = @import("../install/install.zig").DependencyID;
 const PackageID = @import("../install/install.zig").PackageID;
-const Dependency = @import("../install/dependency.zig");
 const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
-const String = Semver.String;
 
 pub const WhyCommand = struct {
     const PREFIX_LAST = "  └─ ";

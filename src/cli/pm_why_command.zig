@@ -1,4 +1,3 @@
-const std = @import("std");
 const WhyCommand = @import("./why_command.zig").WhyCommand;
 const bun = @import("bun");
 const Command = bun.CLI.Command;

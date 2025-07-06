@@ -316,7 +316,7 @@ pub const WhyCommand = struct {
 
             if (dependents.items.len == 0) {
                 Output.prettyln("<d>  └─ No dependents found<r>", .{});
-            } else if (max_depth == 1) {
+            } else if (max_depth == 0) {
                 Output.prettyln("<d>  └─ (deeper dependencies hidden)<r>", .{});
             } else {
                 var ctx_data = TreeContext.init(arena_allocator, string_bytes, top_only, &all_dependents);

@@ -98,12 +98,10 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     }
 
     ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, ptr->sourceCode());
+    RETURN_IF_EXCEPTION(scope, {});
     if (!executable) {
-        // If an exception is already being thrown, don't throw another one.
-        // ModuleProgramExecutable::tryCreate() sometimes throws on failure, but sometimes it doesn't.
-        if (!scope.exception()) {
-            throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
-        }
+        ASSERT(!scope.exception());
+        throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
         return nullptr;
     }
 
@@ -120,6 +118,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
             // JSC::ProgramCodeBlock::create() requires GC to be deferred.
             DeferGC deferGC(vm);
             codeBlock = ModuleProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
+            RETURN_IF_EXCEPTION(scope, {});
         }
         if (codeBlock) {
             CompilationResult compilationResult = JIT::compileSync(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail);
@@ -184,7 +183,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     const auto& requests = moduleRecord->requestedModules();
 
     if (requests.isEmpty()) {
-        return constructEmptyArray(globalObject, nullptr, 0);
+        RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr, 0));
     }
 
     JSArray* requestsArray = constructEmptyArray(globalObject, nullptr, requests.size());
@@ -320,13 +319,17 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             WTF::String specifier = specifierValue.toWTFString(globalObject);
             JSObject* moduleNative = moduleNativeValue.getObject();
             AbstractModuleRecord* resolvedRecord = jsCast<NodeVMModule*>(moduleNative)->moduleRecord(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
 
             record->setImportedModule(globalObject, Identifier::fromString(vm, specifier), resolvedRecord);
+            RETURN_IF_EXCEPTION(scope, {});
             m_resolveCache.set(WTFMove(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
         }
     }
 
-    if (NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false)) {
+    NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (nodeVmGlobalObject) {
         globalObject = nodeVmGlobalObject;
     }
 
@@ -355,10 +358,10 @@ RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalOb
     if (!m_bytecode) {
         if (!m_cachedExecutable) {
             ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, m_sourceCode);
+            RETURN_IF_EXCEPTION(scope, {});
             if (!executable) {
-                if (!scope.exception()) {
-                    throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
-                }
+                ASSERT(!scope.exception());
+                throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
                 return nullptr;
             }
             m_cachedExecutable.set(vm, this, executable);
@@ -371,10 +374,16 @@ RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalOb
 
 JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     if (!m_cachedBytecodeBuffer) {
         RefPtr<CachedBytecode> cachedBytecode = bytecode(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         std::span<const uint8_t> bytes = cachedBytecode->span();
-        m_cachedBytecodeBuffer.set(vm(), this, WebCore::createBuffer(globalObject, bytes));
+        auto buf = WebCore::createBuffer(globalObject, bytes);
+        RETURN_IF_EXCEPTION(scope, {});
+        m_cachedBytecodeBuffer.set(vm, this, buf);
     }
 
     return m_cachedBytecodeBuffer.get();
@@ -386,10 +395,15 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
         return;
     }
 
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSModuleEnvironment* moduleEnvironment = m_moduleRecord->moduleEnvironmentMayBeNull();
     ASSERT(moduleEnvironment != nullptr);
 
     JSValue metaValue = moduleEnvironment->get(globalObject, globalObject->vm().propertyNames->builtinNames().metaPrivateName());
+    if (auto ex = scope.exception()) {
+        if (vm.isTerminationException(ex)) return;
+    }
     ASSERT(metaValue);
     ASSERT(metaValue.isObject());
 
@@ -400,6 +414,7 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
     args.append(m_moduleWrapper.get());
 
     JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
+    scope.release();
 }
 
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)

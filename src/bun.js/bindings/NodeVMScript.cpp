@@ -139,6 +139,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
                 // JSC::ProgramCodeBlock::create() requires GC to be deferred.
                 DeferGC deferGC(vm);
                 codeBlock = JSC::ProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
+                RETURN_IF_EXCEPTION(scope, {});
             }
             JSC::CompilationResult compilationResult = JIT::compileSync(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail);
             if (compilationResult != JSC::CompilationResult::CompilationFailed) {
@@ -449,11 +450,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JS
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
-    if (auto* buffer = script->getBytecodeBuffer()) {
-        return JSValue::encode(buffer);
-    }
-
-    return JSValue::encode(jsUndefined());
+    RELEASE_AND_RETURN(scope, JSValue::encode(script->getBytecodeBuffer()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
@@ -501,7 +498,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject,
     }
 
     const JSC::SourceCode& source = script->source();
-    return createCachedData(globalObject, source);
+    RELEASE_AND_RETURN(scope, createCachedData(globalObject, source));
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, CallFrame* callFrame))

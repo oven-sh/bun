@@ -374,7 +374,7 @@ fn flushLogs(this: *WebWorker) void {
     const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker") catch bun.outOfMemory();
     const str = err.toBunString(vm.global) catch @panic("unexpected exception");
     defer str.deref();
-    WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
+    bun.jsc.fromJSHostCallGeneric(vm.global, @src(), WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch return;
 }
 
 fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObject, error_instance_or_exception: jsc.JSValue) void {
@@ -431,10 +431,6 @@ fn setStatus(this: *WebWorker, status: Status) void {
     log("[{d}] status: {s}", .{ this.execution_context_id, @tagName(status) });
 
     this.status.store(status, .release);
-}
-
-fn unhandledError(this: *WebWorker, _: anyerror) void {
-    this.flushLogs();
 }
 
 fn spin(this: *WebWorker) void {

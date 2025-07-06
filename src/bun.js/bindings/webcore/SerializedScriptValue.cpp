@@ -5659,13 +5659,13 @@ static void maybeThrowExceptionIfSerializationFailed(JSGlobalObject& lexicalGlob
         break;
     case SerializationReturnCode::StackOverflowError:
         throwException(&lexicalGlobalObject, scope, createStackOverflowError(&lexicalGlobalObject));
-        RELEASE_AND_RETURN(scope, );
+        break;
     case SerializationReturnCode::ValidationError:
         throwTypeError(&lexicalGlobalObject, scope, "Unable to deserialize data."_s);
-        RELEASE_AND_RETURN(scope, );
+        break;
     case SerializationReturnCode::DataCloneError:
         throwDataCloneError(lexicalGlobalObject, scope);
-        RELEASE_AND_RETURN(scope, );
+        break;
     case SerializationReturnCode::ExistingExceptionError:
     case SerializationReturnCode::UnspecifiedError:
         break;
@@ -6023,7 +6023,8 @@ Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
 
 JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlobal, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer* arrayBuffer, size_t byteOffset, size_t maxByteLength, SerializationErrorMode throwExceptions, bool* didFail)
 {
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     if (!arrayBuffer || arrayBuffer->isDetached()) {
         if (didFail)
@@ -6064,8 +6065,9 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
     if (didFail) {
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
     }
-    if (throwExceptions == SerializationErrorMode::Throwing)
+    if (throwScope.exception() || throwExceptions == SerializationErrorMode::Throwing) [[unlikely]]
         maybeThrowExceptionIfSerializationFailed(*globalObject, result.second);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     return result.first ? result.first : jsNull();
 }

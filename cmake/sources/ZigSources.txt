@@ -646,8 +646,8 @@ src/output.zig
 src/OutputFile.zig
 src/patch.zig
 src/paths.zig
-src/paths/Path.zig
 src/paths/EnvPath.zig
+src/paths/Path.zig
 src/perf.zig
 src/pool.zig
 src/Progress.zig

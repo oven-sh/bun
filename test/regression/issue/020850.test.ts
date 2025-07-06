@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // Regression test for hanging installs when creating a new lockfile

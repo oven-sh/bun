@@ -243,6 +243,10 @@ pub const OutdatedCommand = struct {
         const pkg_dependencies = packages.items(.dependencies);
 
         var outdated_ids: std.ArrayListUnmanaged(OutdatedInfo) = .{};
+        
+        if (!manager.options.json_output) {
+            Output.prettyln("DEBUG: collectOutdatedDependencies called with {} workspaces", .{workspace_pkg_ids.len});
+        }
 
         for (workspace_pkg_ids) |workspace_pkg_id| {
             const pkg_deps = pkg_dependencies[workspace_pkg_id];
@@ -704,6 +708,17 @@ pub const OutdatedCommand = struct {
         workspace_pkg_ids: []const PackageID,
     ) !void {
         const show_progress = !manager.options.json_output;
+        
+        switch (show_progress) {
+            inline else => |enable_progress| try updateManifestsIfNecessaryWithProgress(manager, workspace_pkg_ids, enable_progress),
+        }
+    }
+
+    fn updateManifestsIfNecessaryWithProgress(
+        manager: *PackageManager,
+        workspace_pkg_ids: []const PackageID,
+        comptime enable_progress: bool,
+    ) !void {
         const log_level = manager.options.log_level;
         const lockfile = manager.lockfile;
         const resolutions = lockfile.buffers.resolutions.items;
@@ -736,7 +751,7 @@ pub const OutdatedCommand = struct {
                     const task_id = Install.Task.Id.forManifest(package_name);
                     if (manager.hasCreatedNetworkTask(task_id, dep.behavior.optional)) continue;
 
-                    if (show_progress) {
+                    if (comptime enable_progress) {
                         manager.startProgressBarIfNone();
                     }
 
@@ -771,7 +786,7 @@ pub const OutdatedCommand = struct {
                         .onResolve = {},
                         .onPackageManifestError = {},
                         .onPackageDownloadError = {},
-                        .progress_bar = show_progress,
+                        .progress_bar = enable_progress,
                         .manifests_only = true,
                     },
                     true,
@@ -785,7 +800,6 @@ pub const OutdatedCommand = struct {
 
         const RunClosure = struct {
             manager: *PackageManager,
-            show_progress: bool,
             err: ?anyerror = null,
             pub fn isDone(closure: *@This()) bool {
                 if (closure.manager.pendingTaskCount() > 0) {
@@ -797,7 +811,7 @@ pub const OutdatedCommand = struct {
                             .onResolve = {},
                             .onPackageManifestError = {},
                             .onPackageDownloadError = {},
-                            .progress_bar = closure.show_progress,
+                            .progress_bar = enable_progress,
                             .manifests_only = true,
                         },
                         true,
@@ -812,12 +826,14 @@ pub const OutdatedCommand = struct {
             }
         };
 
-        var run_closure: RunClosure = .{ .manager = manager, .show_progress = show_progress };
+        var run_closure: RunClosure = .{ .manager = manager };
         manager.sleepUntil(&run_closure, &RunClosure.isDone);
 
-        if (show_progress and log_level.showProgress()) {
-            manager.endProgressBar();
-            Output.flush();
+        if (comptime enable_progress) {
+            if (log_level.showProgress()) {
+                manager.endProgressBar();
+                Output.flush();
+            }
         }
 
         if (run_closure.err) |err| {

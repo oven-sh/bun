@@ -87,6 +87,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" ")],
       cwd: testDir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -110,6 +111,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const install = spawnSync({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -118,6 +120,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "lodash"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -145,6 +148,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const install = spawnSync({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -153,6 +157,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "mime-types"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -203,6 +208,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const install = spawnSync({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -211,6 +217,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "pkg-a"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -236,6 +243,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const install = spawnSync({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -244,6 +252,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout, stderr, exitCode } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "alias-pkg"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -271,6 +280,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const install = spawnSync({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -279,6 +289,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout, stderr, exitCode } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "non-existent-package"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -316,6 +327,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const install = spawnSync({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -324,6 +336,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout: devStdout, exitCode: devExited } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "typescript"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -334,6 +347,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout: peerStdout, exitCode: peerExited } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "react"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -344,6 +358,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout: optStdout, exitCode: optExited } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "chalk"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -368,6 +383,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const install = spawnSync({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -376,6 +392,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "react"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -391,6 +408,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "mime-db"],
       cwd: testDir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -412,6 +430,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "@types/*"],
       cwd: testDir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -438,6 +457,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const install = spawnSync({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -446,6 +466,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "react@^18.0.0"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -508,6 +529,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const install = spawnSync({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -516,6 +538,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "lodash"],
       cwd: package_dir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -535,6 +558,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout: stdoutWithTop, exitCode: exitedWithTop } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "mime-db", "--top"],
       cwd: testDir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -545,6 +569,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     const { stdout: stdoutWithoutTop, exitCode: exitedWithoutTop } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "mime-db"],
       cwd: testDir,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });

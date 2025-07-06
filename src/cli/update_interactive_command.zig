@@ -669,39 +669,59 @@ pub const UpdateInteractiveCommand = struct {
 
             var displayed_lines: usize = 0;
             
-            // Print column headers
-            if (displayed_lines == 0) {
-                Output.print("      ", .{}); // Match the indentation of items (cursor + checkbox)
-                Output.pretty("<r><d>Package", .{});
-                var j: usize = 0;
-                while (j < state.max_name_len - "Package".len + 2) : (j += 1) {
-                    Output.print(" ", .{});
-                }
-                Output.pretty("Current", .{});
-                j = 0;
-                while (j < state.max_current_len - "Current".len + 2) : (j += 1) {
-                    Output.print(" ", .{});
-                }
-                Output.pretty("Target", .{});
-                j = 0;
-                while (j < state.max_update_len - "Target".len + 2) : (j += 1) {
-                    Output.print(" ", .{});
-                }
-                Output.pretty("Latest<r>\n", .{});
-                displayed_lines += 1;
-            }
-            
             // Group by dependency type
             var current_dep_type: ?[]const u8 = null;
             
             for (state.packages, state.selected, 0..) |*pkg, selected, i| {
-                // Print dependency type header if changed  
+                // Print dependency type header with column headers if changed  
                 if (current_dep_type == null or !strings.eql(current_dep_type.?, pkg.dependency_type)) {
                     if (displayed_lines > 0) {
                         Output.print("\n", .{});
                         displayed_lines += 1;
                     }
-                    Output.pretty("  <r><d>{s}<r>\n", .{pkg.dependency_type});
+                    
+                    // Count selected packages in this dependency type
+                    var selected_count: usize = 0;
+                    for (state.packages, state.selected) |p, sel| {
+                        if (strings.eql(p.dependency_type, pkg.dependency_type) and sel) {
+                            selected_count += 1;
+                        }
+                    }
+                    
+                    // Print dependency type - bold if any selected
+                    Output.print("  ", .{});
+                    if (selected_count > 0) {
+                        Output.pretty("<r><b>{s} - {d}<r>", .{pkg.dependency_type, selected_count});
+                    } else {
+                        Output.pretty("<r>{s}<r>", .{pkg.dependency_type});
+                    }
+                    
+                    // Calculate padding to align column headers with values
+                    var j: usize = 0;
+                    var dep_type_text_len: usize = pkg.dependency_type.len;
+                    if (selected_count > 0) {
+                        dep_type_text_len += 5; // " - N" is roughly 5 chars
+                    }
+                    const padding_to_current = if (state.max_name_len + 8 > dep_type_text_len) 
+                        state.max_name_len + 8 - dep_type_text_len 
+                    else 
+                        4;
+                    while (j < padding_to_current) : (j += 1) {
+                        Output.print(" ", .{});
+                    }
+                    
+                    // Column headers aligned with their columns
+                    Output.pretty("<r><d>Current<r>", .{});
+                    j = 0;
+                    while (j < state.max_current_len - "Current".len + 4) : (j += 1) {
+                        Output.print(" ", .{});
+                    }
+                    Output.pretty("<r><d>Target<r>", .{});
+                    j = 0; 
+                    while (j < state.max_update_len - "Target".len + 4) : (j += 1) {
+                        Output.print(" ", .{});
+                    }
+                    Output.pretty("<r><d>Latest<r>\n", .{});
                     displayed_lines += 1;
                     current_dep_type = pkg.dependency_type;
                 }
@@ -806,11 +826,40 @@ pub const UpdateInteractiveCommand = struct {
                     Output.print(" ", .{});
                 }
                 
-                // Target version - bold if not using latest
-                if (!pkg.use_latest) {
-                    Output.pretty("<r><b>{s}<r>", .{pkg.update_version});
+                // Target version with diffFmt coloring - bold if not using latest
+                const target_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.update_version, pkg.update_version));
+                if (current_ver_parsed.valid and target_ver_parsed.valid) {
+                    const current_full = Semver.Version{
+                        .major = current_ver_parsed.version.major orelse 0,
+                        .minor = current_ver_parsed.version.minor orelse 0,
+                        .patch = current_ver_parsed.version.patch orelse 0,
+                        .tag = current_ver_parsed.version.tag,
+                    };
+                    const target_full = Semver.Version{
+                        .major = target_ver_parsed.version.major orelse 0,
+                        .minor = target_ver_parsed.version.minor orelse 0,
+                        .patch = target_ver_parsed.version.patch orelse 0,
+                        .tag = target_ver_parsed.version.tag,
+                    };
+                    
+                    if (selected and !pkg.use_latest) {
+                        Output.print("\x1B[1m", .{}); // Bold when selected and this is the active version
+                    }
+                    Output.pretty("{}", .{target_full.diffFmt(
+                        current_full,
+                        pkg.update_version,
+                        pkg.current_version,
+                    )});
+                    if (selected and !pkg.use_latest) {
+                        Output.print("\x1B[22m", .{}); // Reset bold
+                    }
                 } else {
-                    Output.pretty("<r>{s}<r>", .{pkg.update_version});
+                    // Fallback if version parsing fails
+                    if (selected and !pkg.use_latest) {
+                        Output.pretty("<r><b>{s}<r>", .{pkg.update_version});
+                    } else {
+                        Output.pretty("<r>{s}<r>", .{pkg.update_version});
+                    }
                 }
                 
                 // Print padding after target version
@@ -820,11 +869,40 @@ pub const UpdateInteractiveCommand = struct {
                     Output.print(" ", .{});
                 }
                 
-                // Latest version - bold if using latest
-                if (pkg.use_latest) {
-                    Output.pretty("<r><b>{s}<r>", .{pkg.latest_version});
+                // Latest version with diffFmt coloring - bold if using latest
+                const latest_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.latest_version, pkg.latest_version));
+                if (current_ver_parsed.valid and latest_ver_parsed.valid) {
+                    const current_full = Semver.Version{
+                        .major = current_ver_parsed.version.major orelse 0,
+                        .minor = current_ver_parsed.version.minor orelse 0,
+                        .patch = current_ver_parsed.version.patch orelse 0,
+                        .tag = current_ver_parsed.version.tag,
+                    };
+                    const latest_full = Semver.Version{
+                        .major = latest_ver_parsed.version.major orelse 0,
+                        .minor = latest_ver_parsed.version.minor orelse 0,
+                        .patch = latest_ver_parsed.version.patch orelse 0,
+                        .tag = latest_ver_parsed.version.tag,
+                    };
+                    
+                    if (selected and pkg.use_latest) {
+                        Output.print("\x1B[1m", .{}); // Bold when selected and this is the active version
+                    }
+                    Output.pretty("{}", .{latest_full.diffFmt(
+                        current_full,
+                        pkg.latest_version,
+                        pkg.current_version,
+                    )});
+                    if (selected and pkg.use_latest) {
+                        Output.print("\x1B[22m", .{}); // Reset bold
+                    }
                 } else {
-                    Output.pretty("<r>{s}<r>", .{pkg.latest_version});
+                    // Fallback if version parsing fails
+                    if (selected and pkg.use_latest) {
+                        Output.pretty("<r><b>{s}<r>", .{pkg.latest_version});
+                    } else {
+                        Output.pretty("<r>{s}<r>", .{pkg.latest_version});
+                    }
                 }
                 
                 

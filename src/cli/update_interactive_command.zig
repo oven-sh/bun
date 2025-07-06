@@ -1189,37 +1189,37 @@ pub const UpdateInteractiveCommand = struct {
     }
 };
 
+extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
+
 // @sortImports
 
 const std = @import("std");
+
 const bun = @import("bun");
+const Environment = bun.Environment;
 const Global = bun.Global;
+const JSPrinter = bun.js_printer;
+const OOM = bun.OOM;
 const Output = bun.Output;
-const Command = bun.CLI.Command;
-const Install = bun.install;
-const PackageManager = Install.PackageManager;
-const PackageID = Install.PackageID;
-const DependencyID = Install.DependencyID;
-const Behavior = Install.Dependency.Behavior;
-const invalid_package_id = Install.invalid_package_id;
-const Resolution = Install.Resolution;
+const PathBuffer = bun.PathBuffer;
+const glob = bun.glob;
+const path = bun.path;
 const string = bun.string;
 const strings = bun.strings;
-const String = bun.String;
-const PathBuffer = bun.PathBuffer;
+const Command = bun.CLI.Command;
 const FileSystem = bun.fs.FileSystem;
-const path = bun.path;
-const glob = bun.glob;
-const Table = bun.fmt.Table;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const OOM = bun.OOM;
-const UpdateRequest = PackageManager.UpdateRequest;
-const PackageJSONEditor = PackageManager.PackageJSONEditor;
-const JSPrinter = bun.js_printer;
-const JSAst = bun.JSAst;
-const Environment = bun.Environment;
-const logger = bun.logger;
+
 const Semver = bun.Semver;
 const SlicedString = Semver.SlicedString;
 
-extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
+const Install = bun.install;
+const DependencyID = Install.DependencyID;
+const PackageID = Install.PackageID;
+const Resolution = Install.Resolution;
+const invalid_package_id = Install.invalid_package_id;
+const Behavior = Install.Dependency.Behavior;
+
+const PackageManager = Install.PackageManager;
+const PackageJSONEditor = PackageManager.PackageJSONEditor;
+const UpdateRequest = PackageManager.UpdateRequest;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;

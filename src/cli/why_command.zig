@@ -170,8 +170,8 @@ pub const WhyCommand = struct {
             \\
             \\<b>Examples:<r>
             \\  <d>$<r> <b><green>bun pm why<r> <blue>react<r>
-            \\  <d>$<r> <b><green>bun pm why<r> <blue>"@types/*:<r>
-            \\  <d>$<r> <b><green>bun pmwhy<r> <blue>"*-lodash"<r> <cyan>--top<r>
+            \\  <d>$<r> <b><green>bun pm why<r> <blue>"@types/*"<r>
+            \\  <d>$<r> <b><green>bun pm why<r> <blue>"*-lodash"<r> <cyan>--top<r>
             \\
         ;
         Output.pretty(usage_text, .{});

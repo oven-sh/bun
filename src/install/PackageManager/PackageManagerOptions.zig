@@ -66,6 +66,7 @@ force: bool = false,
 
 // `bun pm why` command options
 top_only: bool = false,
+depth: ?usize = null,
 
 pub const PublishConfig = struct {
     access: ?Access = null,
@@ -604,6 +605,7 @@ pub fn load(
 
         // `bun pm why` command options
         this.top_only = cli.top_only;
+        this.depth = cli.depth;
     } else {
         this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
         PackageManager.verbose_install = false;

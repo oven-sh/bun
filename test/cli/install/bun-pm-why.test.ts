@@ -6,7 +6,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
+describe.each(["why", "pm why"])("bun %s", cmd => {
   let package_dir: string;
   let i = 0;
 
@@ -43,7 +43,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     });
 
     spawnSync({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: testDir,
       env: bunEnv,
     });
@@ -73,7 +73,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     });
 
     spawnSync({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: testDir,
       env: bunEnv,
     });
@@ -92,7 +92,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
       stderr: "pipe",
     });
 
-    expect(stdout.toString()).toContain(`bun pm why v${Bun.version.replace("-debug", "")}`);
+    expect(stdout.toString()).toContain(`bun why v${Bun.version.replace("-debug", "")}`);
     expect(exitCode).toBe(1);
   });
 
@@ -109,7 +109,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     );
 
     const install = spawnSync({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: package_dir,
       env: bunEnv,
       stdout: "pipe",
@@ -146,13 +146,14 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     );
 
     const install = spawnSync({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: package_dir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     expect(install.exitCode).toBe(0);
+    expect(install.stderr.toString()).toContain("");
 
     const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "mime-types"],
@@ -206,7 +207,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     );
 
     const install = spawnSync({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: package_dir,
       env: bunEnv,
       stdout: "pipe",
@@ -241,7 +242,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     );
 
     const install = spawnSync({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: package_dir,
       env: bunEnv,
       stdout: "pipe",
@@ -278,7 +279,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     );
 
     const install = spawnSync({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: package_dir,
       env: bunEnv,
       stdout: "pipe",
@@ -325,7 +326,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     );
 
     const install = spawnSync({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: package_dir,
       env: bunEnv,
       stdout: "pipe",
@@ -381,7 +382,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     );
 
     const install = spawnSync({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: package_dir,
       env: bunEnv,
       stdout: "pipe",
@@ -455,7 +456,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     );
 
     const install = spawnSync({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: package_dir,
       env: bunEnv,
       stdout: "pipe",
@@ -527,7 +528,7 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
     );
 
     const install = spawnSync({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: package_dir,
       env: bunEnv,
       stdout: "pipe",
@@ -579,5 +580,35 @@ describe.each([/*"why",*/ "pm why"])("bun %s", cmd => {
 
     expect(outputWithTop.length).toBeGreaterThan(0);
     expect(outputWithoutTop.length).toBeGreaterThan(0);
+  });
+
+  it("should support the --depth flag to limit dependency tree depth", async () => {
+    const testDir = setupComplexDependencyTree();
+
+    const { stdout: stdoutDepth2, exitCode: exitedDepth2 } = spawnSync({
+      cmd: [bunExe(), ...cmd.split(" "), "mime-db", "--depth", "2"],
+      cwd: testDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(exitedDepth2).toBe(0);
+    const outputDepth2 = stdoutDepth2.toString();
+
+    const { stdout: stdoutNoDepth, exitCode: exitedNoDepth } = spawnSync({
+      cmd: [bunExe(), ...cmd.split(" "), "mime-db"],
+      cwd: testDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(exitedNoDepth).toBe(0);
+    const outputNoDepth = stdoutNoDepth.toString();
+
+    expect(outputDepth2.split("\n").length).toBeLessThan(outputNoDepth.split("\n").length);
+
+    expect(outputDepth2).toContain("mime-db@");
   });
 });

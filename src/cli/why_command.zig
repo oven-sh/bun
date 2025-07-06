@@ -157,7 +157,7 @@ pub const WhyCommand = struct {
     };
 
     pub fn printUsage() void {
-        Output.prettyln("<r><b>bun pm why<r> <d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.prettyln("<r><b>bun why<r> <d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
 
         const usage_text =
             \\Explain why a package is installed
@@ -167,11 +167,12 @@ pub const WhyCommand = struct {
             \\
             \\<b>Options:<r>
             \\  <cyan>--top<r>      <d>Show only the top dependency tree instead of nested ones<r>
+            \\  <cyan>--depth<r> <blue>\<NUM\><r> <d>Maximum depth of the dependency tree to display<r>
             \\
             \\<b>Examples:<r>
-            \\  <d>$<r> <b><green>bun pm why<r> <blue>react<r>
-            \\  <d>$<r> <b><green>bun pm why<r> <blue>"@types/*"<r>
-            \\  <d>$<r> <b><green>bun pm why<r> <blue>"*-lodash"<r> <cyan>--top<r>
+            \\  <d>$<r> <b><green>bun why<r> <blue>react<r>
+            \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
+            \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
             \\
         ;
         Output.pretty(usage_text, .{});
@@ -179,16 +180,23 @@ pub const WhyCommand = struct {
     }
 
     pub fn exec(ctx: Command.Context) !void {
-        if (ctx.positionals.len < 2) {
+        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .why);
+        const pm, _ = try PackageManager.init(ctx, cli, PackageManager.Subcommand.why);
+
+        if (cli.positionals.len < 1) {
             printUsage();
             Global.exit(1);
         }
 
-        const package_pattern = ctx.positionals[0];
-        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .why);
-        const pm, _ = try PackageManager.init(ctx, cli, PackageManager.Subcommand.why);
+        if (strings.eqlComptime(cli.positionals[0], "why")) {
+            if (cli.positionals.len < 2) {
+                printUsage();
+                Global.exit(1);
+            }
+            return try execWithManager(ctx, pm, cli.positionals[1], cli.top_only);
+        }
 
-        try execWithManager(ctx, pm, package_pattern, pm.options.top_only);
+        return try execWithManager(ctx, pm, cli.positionals[0], cli.top_only);
     }
 
     pub fn execFromPm(ctx: Command.Context, pm: *PackageManager, positionals: []const string) !void {
@@ -206,6 +214,10 @@ pub const WhyCommand = struct {
 
         if (top_only) {
             max_depth = 1;
+        } else if (pm.options.depth) |depth| {
+            max_depth = depth;
+        } else {
+            max_depth = 100;
         }
 
         const lockfile = load_lockfile.ok.lockfile;
@@ -303,7 +315,9 @@ pub const WhyCommand = struct {
             Output.prettyln("<b>{s}@{s}<r>", .{ target_name, target_version.version });
 
             if (dependents.items.len == 0) {
-                Output.prettyln("  └─ <d>No dependents found<r>", .{});
+                Output.prettyln("<d>  └─ No dependents found<r>", .{});
+            } else if (max_depth == 1) {
+                Output.prettyln("<d>  └─ (deeper dependencies hidden)<r>", .{});
             } else {
                 var ctx_data = TreeContext.init(arena_allocator, string_bytes, top_only, &all_dependents);
                 defer ctx_data.clearPathTracker();
@@ -387,11 +401,6 @@ pub const WhyCommand = struct {
         printed_break_line: bool,
         parent_is_workspace: bool,
     ) !void {
-        if (depth >= max_depth) {
-            Output.prettyln("<d>{s}└─ (deeper dependencies hidden)<r>", .{prefix});
-            return;
-        }
-
         if (ctx.path_tracker.get(current_pkg_id) != null) {
             Output.prettyln("<d>{s}└─ <yellow>*circular<r>", .{prefix});
             return;
@@ -402,6 +411,12 @@ pub const WhyCommand = struct {
 
         const dependents = if (ctx.all_dependents.get(current_pkg_id)) |deps| deps else std.ArrayList(DependentInfo).init(ctx.allocator);
 
+        if (depth >= max_depth) {
+            if (dependents.items.len > 0) {
+                Output.prettyln("<d>{s}└─ (deeper dependencies hidden)<r>", .{prefix});
+            }
+            return;
+        }
         for (dependents.items, 0..) |dep, dep_idx| {
             const is_workspace = std.mem.startsWith(u8, dep.version, "workspace:");
             if (parent_is_workspace and dep.version.len == 0) {

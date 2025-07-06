@@ -80,6 +80,7 @@ pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("-m, --message <STR>                    Use the given message for the commit") catch unreachable,
     clap.parseParam("--preid <STR>                          Identifier to be used to prefix premajor, preminor, prepatch or prerelease version increments") catch unreachable,
     clap.parseParam("--top                                Show only the first level of dependencies") catch unreachable,
+    clap.parseParam("--depth <NUM>                          Maximum depth of the dependency tree to display") catch unreachable,
     clap.parseParam("<POS> ...                         ") catch unreachable,
 });
 
@@ -150,6 +151,12 @@ const publish_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
 });
 
+const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
+    clap.parseParam("<POS> ...                              Package name to explain why it's installed") catch unreachable,
+    clap.parseParam("--top                                  Show only the top dependency tree instead of nested ones") catch unreachable,
+    clap.parseParam("--depth <NUM>                          Maximum depth of the dependency tree to display") catch unreachable,
+});
+
 cache_dir: ?string = null,
 lockfile: string = "",
 token: string = "",
@@ -214,6 +221,7 @@ message: ?string = null,
 
 // `bun pm why` options
 top_only: bool = false,
+depth: ?usize = null,
 
 const PatchOpts = union(enum) {
     nothing: struct {},
@@ -623,6 +631,33 @@ pub fn printHelp(subcommand: Subcommand) void {
             Output.pretty(outro_text, .{});
             Output.flush();
         },
+        .why => {
+            const intro_text =
+                \\
+                \\<b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> <blue>\<package\><r>
+                \\
+                \\  Explain why a package is installed.
+                \\
+                \\<b>Flags:<r>
+            ;
+
+            const outro_text =
+                \\
+                \\
+                \\<b>Examples:<r>
+                \\  <d>$<r> <b><green>bun why<r> <blue>react<r>
+                \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
+                \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
+                \\
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/why<r>.
+                \\
+            ;
+
+            Output.pretty(intro_text, .{});
+            clap.simpleHelp(why_params);
+            Output.pretty(outro_text, .{});
+            Output.flush();
+        },
     }
 }
 
@@ -642,6 +677,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         .outdated => outdated_params,
         .pack => pack_params,
         .publish => publish_params,
+        .why => why_params,
 
         // TODO: we will probably want to do this for other *_params. this way extra params
         // are not included in the help text
@@ -915,9 +951,17 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         if (args.option("--message")) |message| {
             cli.message = message;
         }
+    }
 
-        // `bun pm why` options
+    // `bun pm why` and `bun why` options
+    if (comptime subcommand == .pm or subcommand == .why) {
         cli.top_only = args.flag("--top");
+        if (args.option("--depth")) |depth| {
+            cli.depth = std.fmt.parseInt(usize, depth, 10) catch {
+                Output.errGeneric("invalid depth value: '{s}', must be a positive integer", .{depth});
+                Global.exit(1);
+            };
+        }
     }
 
     return cli;

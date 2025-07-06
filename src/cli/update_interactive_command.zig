@@ -20,12 +20,14 @@ const glob = bun.glob;
 const Table = bun.fmt.Table;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const OOM = bun.OOM;
-const UpdateRequest = Install.UpdateRequest;
-const PackageJSONEditor = Install.PackageJSONEditor;
+const UpdateRequest = PackageManager.UpdateRequest;
+const PackageJSONEditor = PackageManager.PackageJSONEditor;
 const JSPrinter = bun.js_printer;
 const JSAst = bun.JSAst;
 const Environment = bun.Environment;
 const logger = bun.logger;
+const Semver = bun.Semver;
+const SlicedString = Semver.SlicedString;
 
 extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
 
@@ -39,6 +41,9 @@ pub const UpdateInteractiveCommand = struct {
         dep_id: DependencyID,
         workspace_pkg_id: PackageID,
         dependency_type: []const u8,
+        workspace_name: []const u8,
+        behavior: Behavior,
+        use_latest: bool = false,
     };
     fn resolveCatalogDependency(manager: *PackageManager, dep: Install.Dependency) ?Install.Dependency.Version {
         return if (dep.version.tag == .catalog) blk: {
@@ -73,20 +78,20 @@ pub const UpdateInteractiveCommand = struct {
     }
 
     fn updatePackages(
-        _: std.mem.Allocator,
         manager: *PackageManager,
         ctx: Command.Context,
         updates: []UpdateRequest,
         original_cwd: string,
     ) !void {
-        // Get the current package.json
+        // This function follows the same pattern as updatePackageJSONAndInstallWithManagerWithUpdates
+        // from updatePackageJSONAndInstall.zig
+        
+        // Load and parse the current package.json
         var current_package_json = switch (manager.workspace_package_json_cache.getWithPath(
             manager.allocator,
             manager.log,
             manager.original_package_json_path,
-            .{
-                .guess_indentation = true,
-            },
+            .{ .guess_indentation = true },
         )) {
             .parse_err => |err| {
                 manager.log.print(Output.errorWriter()) catch {};
@@ -105,43 +110,37 @@ pub const UpdateInteractiveCommand = struct {
             },
             .entry => |entry| entry,
         };
-        const current_package_json_indent = current_package_json.indentation;
         
-        // Preserve trailing newline if it exists
-        const preserve_trailing_newline_at_eof_for_package_json = current_package_json.source.contents.len > 0 and
+        const current_package_json_indent = current_package_json.indentation;
+        const preserve_trailing_newline = current_package_json.source.contents.len > 0 and 
             current_package_json.source.contents[current_package_json.source.contents.len - 1] == '\n';
         
-        // Get dependency types from the stored map
-        const dep_types = manager.update_dependency_types;
-        
-        // Set the update requests on the manager
-        manager.update_requests = updates;
+        // Set update mode
         manager.to_update = true;
+        manager.update_requests = updates;
         
-        // First pass: edit package.json with the update requests
-        for (updates) |*update| {
-            const dep_type = dep_types.get(update.name) orelse "dependencies";
-            var update_slice = [_]UpdateRequest{update.*};
-            try PackageJSONEditor.edit(
-                manager,
-                &update_slice,
-                &current_package_json.root,
-                dep_type,
-                .{
-                    .exact_versions = manager.options.enable.exact_versions,
-                    .before_install = true,
-                },
-            );
-        }
-        
-        // Create a buffer for the updated package.json
-        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
-        try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 1);
-        buffer_writer.append_newline = preserve_trailing_newline_at_eof_for_package_json;
-        var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+        // Edit the package.json with all updates
+        // For interactive mode, we'll edit all as dependencies
+        // TODO: preserve original dependency types
+        var updates_mut = updates;
+        try PackageJSONEditor.edit(
+            manager,
+            &updates_mut,
+            &current_package_json.root,
+            "dependencies",
+            .{
+                .exact_versions = manager.options.enable.exact_versions,
+                .before_install = true,
+            },
+        );
         
         // Serialize the updated package.json
-        var written = JSPrinter.printJSON(
+        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+        try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 1);
+        buffer_writer.append_newline = preserve_trailing_newline;
+        var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+        
+        _ = JSPrinter.printJSON(
             @TypeOf(&package_json_writer),
             &package_json_writer,
             current_package_json.root,
@@ -155,78 +154,10 @@ pub const UpdateInteractiveCommand = struct {
             Global.crash();
         };
         
-        var new_package_json_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
-        current_package_json.source.contents = new_package_json_source;
+        const new_package_json_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
         
         // Call installWithManager to perform the installation
-        const installWithManager = @import("../install/PackageManager/install_with_manager.zig").installWithManager;
-        try installWithManager(manager, ctx, new_package_json_source, original_cwd);
-        
-        // Check for failures
-        for (updates) |request| {
-            if (request.failed) {
-                Global.exit(1);
-                return;
-            }
-        }
-        
-        // Re-parse package.json to update with exact versions from lockfile
-        const source = &bun.logger.Source.initPathString("package.json", new_package_json_source);
-        var new_package_json = bun.JSON.parsePackageJSONUTF8(source, manager.log, manager.allocator) catch |err| {
-            Output.prettyErrorln("package.json failed to parse due to error {s}", .{@errorName(err)});
-            Global.crash();
-        };
-        
-        // Second pass: update with exact versions
-        for (updates) |*update| {
-            const dep_type = dep_types.get(update.name) orelse "dependencies";
-            var update_slice = [_]UpdateRequest{update.*};
-            try PackageJSONEditor.edit(
-                manager,
-                &update_slice,
-                &new_package_json,
-                dep_type,
-                .{
-                    .exact_versions = manager.options.enable.exact_versions,
-                    .add_trusted_dependencies = manager.options.do.trust_dependencies_from_args,
-                },
-            );
-        }
-        
-        var buffer_writer_two = JSPrinter.BufferWriter.init(manager.allocator);
-        try buffer_writer_two.buffer.list.ensureTotalCapacity(manager.allocator, source.contents.len + 1);
-        buffer_writer_two.append_newline = preserve_trailing_newline_at_eof_for_package_json;
-        var package_json_writer_two = JSPrinter.BufferPrinter.init(buffer_writer_two);
-        
-        written = JSPrinter.printJSON(
-            @TypeOf(&package_json_writer_two),
-            &package_json_writer_two,
-            new_package_json,
-            source,
-            .{
-                .indent = current_package_json_indent,
-                .mangled_props = null,
-            },
-        ) catch |err| {
-            Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
-            Global.crash();
-        };
-        
-        new_package_json_source = try manager.allocator.dupe(u8, package_json_writer_two.ctx.writtenWithoutTrailingZero());
-        
-        // Write the updated package.json to disk
-        if (manager.options.do.write_package_json) {
-            const workspace_package_json_file = (try bun.sys.File.openat(
-                .cwd(),
-                manager.original_package_json_path,
-                bun.O.RDWR,
-                0,
-            ).unwrap()).handle.stdFile();
-            
-            try workspace_package_json_file.pwriteAll(new_package_json_source, 0);
-            std.posix.ftruncate(workspace_package_json_file.handle, new_package_json_source.len) catch {};
-            workspace_package_json_file.close();
-        }
+        try manager.installWithManager(ctx, new_package_json_source, original_cwd);
     }
 
     fn updateInteractive(ctx: Command.Context, original_cwd: string, manager: *PackageManager) !void {
@@ -301,6 +232,7 @@ pub const UpdateInteractiveCommand = struct {
                         bun.default_allocator.free(pkg.current_version);
                         bun.default_allocator.free(pkg.latest_version);
                         bun.default_allocator.free(pkg.update_version);
+                        bun.default_allocator.free(pkg.workspace_name);
                     }
                     bun.default_allocator.free(outdated_packages);
                 }
@@ -314,9 +246,9 @@ pub const UpdateInteractiveCommand = struct {
                 const selected = try promptForUpdates(bun.default_allocator, outdated_packages);
                 defer bun.default_allocator.free(selected);
                 
-                // Create UpdateRequest array from selected packages
-                var update_requests = std.ArrayList(UpdateRequest).init(bun.default_allocator);
-                defer update_requests.deinit();
+                // Create package specifier array from selected packages
+                var package_specifiers = std.ArrayList([]const u8).init(bun.default_allocator);
+                defer package_specifiers.deinit();
                 
                 // Create a map to track dependency types for packages
                 var dep_types = std.StringHashMap([]const u8).init(bun.default_allocator);
@@ -327,54 +259,45 @@ pub const UpdateInteractiveCommand = struct {
                     
                     try dep_types.put(pkg.name, pkg.dependency_type);
                     
-                    // Parse the version string into a proper version
-                    var update_request = UpdateRequest{};
-                    update_request.name = try bun.default_allocator.dupe(u8, pkg.name);
-                    update_request.name_hash = String.Builder.stringHash(pkg.name);
-                    update_request.version_buf = try bun.default_allocator.dupe(u8, pkg.update_version);
+                    // Use latest version if user selected it with 'l' key
+                    const target_version = if (pkg.use_latest) pkg.latest_version else pkg.update_version;
                     
-                    // For npm packages, we use the version directly
-                    if (strings.hasPrefixComptime(pkg.update_version, "^") or 
-                        strings.hasPrefixComptime(pkg.update_version, "~") or
-                        strings.hasPrefixComptime(pkg.update_version, ">=") or
-                        strings.hasPrefixComptime(pkg.update_version, ">") or
-                        strings.hasPrefixComptime(pkg.update_version, "<") or
-                        strings.hasPrefixComptime(pkg.update_version, "<=") or
-                        (pkg.update_version[0] >= '0' and pkg.update_version[0] <= '9')) {
-                        update_request.version = .{
-                            .tag = .npm,
-                            .value = .{ .npm = .{} },
-                            .literal = String.init(update_request.version_buf, update_request.version_buf),
-                        };
-                    } else {
-                        // dist tag
-                        update_request.version = .{
-                            .tag = .dist_tag,
-                            .value = .{ .dist_tag = .{ .tag = String.init(update_request.version_buf, update_request.version_buf) } },
-                            .literal = String.init(update_request.version_buf, update_request.version_buf),
-                        };
-                    }
+                    // Create a full package specifier string for UpdateRequest.parse
+                    const package_specifier = try std.fmt.allocPrint(
+                        bun.default_allocator,
+                        "{s}@{s}",
+                        .{ pkg.name, target_version }
+                    );
                     
-                    try update_requests.append(update_request);
+                    try package_specifiers.append(package_specifier);
                 }
                 
-                // Store the dependency types on the manager for later use
-                manager.update_dependency_types = dep_types;
+                // dep_types will be freed when we exit this scope
                 
-                if (update_requests.items.len == 0) {
+                if (package_specifiers.items.len == 0) {
                     Output.prettyln("<r><yellow>!</r> No packages selected for update", .{});
                     return;
                 }
+                
+                // Parse the package specifiers into UpdateRequests
+                var update_requests_array = UpdateRequest.Array{};
+                const update_requests = UpdateRequest.parse(
+                    bun.default_allocator,
+                    manager,
+                    manager.log,
+                    package_specifiers.items,
+                    &update_requests_array,
+                    .update,
+                );
                 
                 // Perform the update
                 Output.prettyln("\n<r><cyan>Installing updates...<r>", .{});
                 Output.flush();
                 
                 try updatePackages(
-                    bun.default_allocator,
                     manager,
                     ctx,
-                    update_requests.items,
+                    update_requests,
                     original_cwd,
                 );
             },
@@ -532,7 +455,21 @@ pub const UpdateInteractiveCommand = struct {
                 else
                     manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
                 
+                // Skip if current version is already the latest
                 if (resolution.value.npm.version.order(latest.version, string_buf, manifest.string_buf) != .lt) continue;
+                
+                // Skip if update version is the same as current version
+                // Note: Current version is in lockfile's string_buf, update version is in manifest's string_buf
+                const current_ver = resolution.value.npm.version;
+                const update_ver = update_version.version;
+                
+                // Compare the actual version numbers
+                if (current_ver.major == update_ver.major and 
+                    current_ver.minor == update_ver.minor and 
+                    current_ver.patch == update_ver.patch and
+                    current_ver.tag.eql(update_ver.tag)) {
+                    continue;
+                }
                 
                 version_buf.clearRetainingCapacity();
                 try version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)});
@@ -551,41 +488,105 @@ pub const UpdateInteractiveCommand = struct {
                 version_buf.clearRetainingCapacity();
                 const dep_type = if (dep.behavior.dev) "devDependencies" else if (dep.behavior.optional) "optionalDependencies" else if (dep.behavior.peer) "peerDependencies" else "dependencies";
                 
+                // Get workspace name but only show if it's actually a workspace
+                const workspace_resolution = pkg_resolutions[workspace_pkg_id];
+                const workspace_name = if (workspace_resolution.tag == .workspace) 
+                    pkg_names[workspace_pkg_id].slice(string_buf) 
+                else 
+                    "";
+                
                 try outdated_packages.append(.{
                     .name = try allocator.dupe(u8, name_slice),
                     .current_version = try allocator.dupe(u8, current_version_buf),
                     .latest_version = try allocator.dupe(u8, latest_version_buf),
                     .update_version = try allocator.dupe(u8, update_version_buf),
                     .package_id = package_id,
-                    .dep_id = dep_id,
+                    .dep_id = @intCast(dep_id),
                     .workspace_pkg_id = workspace_pkg_id,
                     .dependency_type = dep_type,
+                    .workspace_name = try allocator.dupe(u8, workspace_name),
+                    .behavior = dep.behavior,
                 });
             }
         }
         
-        return try outdated_packages.toOwnedSlice();
+        const result = try outdated_packages.toOwnedSlice();
+        
+        // Sort packages: dependencies first, then devDependencies, etc.
+        std.sort.pdq(OutdatedPackage, result, {}, struct {
+            fn lessThan(_: void, a: OutdatedPackage, b: OutdatedPackage) bool {
+                // First sort by dependency type
+                const a_priority = depTypePriority(a.dependency_type);
+                const b_priority = depTypePriority(b.dependency_type);
+                if (a_priority != b_priority) return a_priority < b_priority;
+                
+                // Then by name
+                return strings.order(a.name, b.name) == .lt;
+            }
+            
+            fn depTypePriority(dep_type: []const u8) u8 {
+                if (strings.eqlComptime(dep_type, "dependencies")) return 0;
+                if (strings.eqlComptime(dep_type, "devDependencies")) return 1;
+                if (strings.eqlComptime(dep_type, "peerDependencies")) return 2;
+                if (strings.eqlComptime(dep_type, "optionalDependencies")) return 3;
+                return 4;
+            }
+        }.lessThan);
+        
+        return result;
     }
 
     const MultiSelectState = struct {
-        packages: []const OutdatedPackage,
+        packages: []OutdatedPackage,
         selected: []bool,
         cursor: usize = 0,
         toggle_all: bool = false,
+        max_name_len: usize = 0,
+        max_current_len: usize = 0,
+        max_update_len: usize = 0,
+        max_latest_len: usize = 0,
     };
 
-    fn promptForUpdates(allocator: std.mem.Allocator, packages: []const OutdatedPackage) ![]bool {
+    fn promptForUpdates(allocator: std.mem.Allocator, packages: []OutdatedPackage) ![]bool {
         if (packages.len == 0) {
             Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
             return allocator.alloc(bool, 0);
         }
 
         const selected = try allocator.alloc(bool, packages.len);
+        // Default to all unselected
         @memset(selected, false);
+        
+        // Calculate max column widths
+        var max_name_len: usize = "Package".len;
+        var max_current_len: usize = "Current".len;
+        var max_target_len: usize = "Target".len;
+        var max_latest_len: usize = "Latest".len;
+        
+        for (packages) |pkg| {
+            // Include dev tag length in max calculation
+            var dev_tag_len: usize = 0;
+            if (pkg.behavior.dev) {
+                dev_tag_len = 4; // " dev"
+            } else if (pkg.behavior.peer) {
+                dev_tag_len = 5; // " peer"
+            } else if (pkg.behavior.optional) {
+                dev_tag_len = 9; // " optional"
+            }
+            const name_len = pkg.name.len + dev_tag_len;
+            max_name_len = @max(max_name_len, name_len);
+            max_current_len = @max(max_current_len, pkg.current_version.len);
+            max_target_len = @max(max_target_len, pkg.update_version.len);
+            max_latest_len = @max(max_latest_len, pkg.latest_version.len);
+        }
 
         var state = MultiSelectState{
             .packages = packages,
             .selected = selected,
+            .max_name_len = max_name_len,
+            .max_current_len = max_current_len,
+            .max_update_len = max_target_len,
+            .max_latest_len = max_latest_len,
         };
 
         // Set raw mode
@@ -628,8 +629,13 @@ pub const UpdateInteractiveCommand = struct {
     fn processMultiSelect(state: *MultiSelectState) ![]bool {
         const colors = Output.enable_ansi_colors;
 
+        // Clear any previous progress output
+        Output.print("\r\x1B[2K", .{});  // Clear entire line
+        Output.print("\x1B[1A\x1B[2K", .{});  // Move up one line and clear it too
+        Output.flush();
+        
         // Print the prompt
-        Output.prettyln("<r><cyan>?<r> Select packages to update<d> - Space to toggle, Enter to confirm, a to select all, n to select none<r>", .{});
+        Output.prettyln("<r><cyan>?<r> Select packages to update<d> - Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest<r>", .{});
         Output.prettyln("", .{});
 
         if (colors) Output.print("\x1b[?25l", .{}); // hide cursor
@@ -637,10 +643,11 @@ pub const UpdateInteractiveCommand = struct {
 
         var initial_draw = true;
         var reprint_menu = true;
+        var total_lines: usize = 0;
         errdefer reprint_menu = false;
         defer {
             if (!initial_draw) {
-                Output.up(state.packages.len + 2);
+                Output.up(total_lines + 2);
             }
             Output.clearToEnd();
 
@@ -652,30 +659,180 @@ pub const UpdateInteractiveCommand = struct {
                 Output.prettyln("<r><green>✓<r> Selected {d} package{s} to update", .{ count, if (count == 1) "" else "s" });
             }
         }
-
+        
         while (true) {
             if (!initial_draw) {
-                Output.up(state.packages.len);
+                Output.up(total_lines);
             }
             initial_draw = false;
+            total_lines = 0;
 
-            // Print packages
-            for (state.packages, state.selected, 0..) |pkg, selected, i| {
+            var displayed_lines: usize = 0;
+            
+            // Print column headers
+            if (displayed_lines == 0) {
+                Output.print("      ", .{}); // Match the indentation of items (cursor + checkbox)
+                Output.pretty("<r><d>Package", .{});
+                var j: usize = 0;
+                while (j < state.max_name_len - "Package".len + 2) : (j += 1) {
+                    Output.print(" ", .{});
+                }
+                Output.pretty("Current", .{});
+                j = 0;
+                while (j < state.max_current_len - "Current".len + 2) : (j += 1) {
+                    Output.print(" ", .{});
+                }
+                Output.pretty("Target", .{});
+                j = 0;
+                while (j < state.max_update_len - "Target".len + 2) : (j += 1) {
+                    Output.print(" ", .{});
+                }
+                Output.pretty("Latest<r>\n", .{});
+                displayed_lines += 1;
+            }
+            
+            // Group by dependency type
+            var current_dep_type: ?[]const u8 = null;
+            
+            for (state.packages, state.selected, 0..) |*pkg, selected, i| {
+                // Print dependency type header if changed  
+                if (current_dep_type == null or !strings.eql(current_dep_type.?, pkg.dependency_type)) {
+                    if (displayed_lines > 0) {
+                        Output.print("\n", .{});
+                        displayed_lines += 1;
+                    }
+                    Output.pretty("  <r><d>{s}<r>\n", .{pkg.dependency_type});
+                    displayed_lines += 1;
+                    current_dep_type = pkg.dependency_type;
+                }
                 const is_cursor = i == state.cursor;
-                const cursor_symbol = if (colors) "❯" else ">";
-                const checkbox = if (selected) "[x]" else "[ ]";
+                const checkbox = if (selected) "■" else "□";
                 
+                // Calculate padding
+                const name_padding = state.max_name_len - pkg.name.len;
+                const current_padding = state.max_current_len - pkg.current_version.len;
+                
+                // Determine version change severity for checkbox color
+                const current_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.current_version, pkg.current_version));
+                const update_ver_parsed = if (pkg.use_latest) 
+                    Semver.Version.parse(SlicedString.init(pkg.latest_version, pkg.latest_version))
+                else 
+                    Semver.Version.parse(SlicedString.init(pkg.update_version, pkg.update_version));
+                
+                var checkbox_color: []const u8 = "green"; // default
+                if (current_ver_parsed.valid and update_ver_parsed.valid) {
+                    const current_full = Semver.Version{
+                        .major = current_ver_parsed.version.major orelse 0,
+                        .minor = current_ver_parsed.version.minor orelse 0,
+                        .patch = current_ver_parsed.version.patch orelse 0,
+                        .tag = current_ver_parsed.version.tag,
+                    };
+                    const update_full = Semver.Version{
+                        .major = update_ver_parsed.version.major orelse 0,
+                        .minor = update_ver_parsed.version.minor orelse 0,
+                        .patch = update_ver_parsed.version.patch orelse 0,
+                        .tag = update_ver_parsed.version.tag,
+                    };
+                    
+                    const target_ver_str = if (pkg.use_latest) pkg.latest_version else pkg.update_version;
+                    const diff = update_full.whichVersionIsDifferent(current_full, target_ver_str, pkg.current_version);
+                    if (diff) |d| {
+                        switch (d) {
+                            .major => checkbox_color = "red",
+                            .minor => {
+                                if (current_full.major == 0) {
+                                    checkbox_color = "red"; // 0.x.y minor changes are breaking
+                                } else {
+                                    checkbox_color = "yellow";
+                                }
+                            },
+                            .patch => {
+                                if (current_full.major == 0 and current_full.minor == 0) {
+                                    checkbox_color = "red"; // 0.0.x patch changes are breaking
+                                } else {
+                                    checkbox_color = "green";
+                                }
+                            },
+                            else => checkbox_color = "green",
+                        }
+                    }
+                }
+                
+                // Cursor and checkbox
                 if (is_cursor) {
-                    if (colors) {
-                        Output.pretty("<r><cyan>{s}<r> ", .{cursor_symbol});
-                        Output.print("\x1B[4m{s} {s} {s} → {s}\x1B[24m\x1B[0K\n", .{ checkbox, pkg.name, pkg.current_version, pkg.latest_version });
+                    Output.pretty("  <r><cyan>❯<r> ", .{});
+                } else {
+                    Output.print("    ", .{});
+                }
+                
+                // Checkbox with appropriate color
+                if (selected) {
+                    if (strings.eqlComptime(checkbox_color, "red")) {
+                        Output.pretty("<r><red>{s}<r> ", .{checkbox});
+                    } else if (strings.eqlComptime(checkbox_color, "yellow")) {
+                        Output.pretty("<r><yellow>{s}<r> ", .{checkbox});
                     } else {
-                        Output.pretty("<r><cyan>{s}<r> {s} {s} {s} → {s}\x1B[0K\n", .{ cursor_symbol, checkbox, pkg.name, pkg.current_version, pkg.latest_version });
+                        Output.pretty("<r><green>{s}<r> ", .{checkbox});
                     }
                 } else {
-                    Output.print("  {s} {s} {s} → {s}\x1B[0K\n", .{ checkbox, pkg.name, pkg.current_version, pkg.latest_version });
+                    Output.print("{s} ", .{checkbox});
                 }
+                
+                // Package name - color it when selected
+                if (selected) {
+                    if (strings.eqlComptime(checkbox_color, "red")) {
+                        Output.pretty("<r><red>{s}<r>", .{pkg.name});
+                    } else if (strings.eqlComptime(checkbox_color, "yellow")) {
+                        Output.pretty("<r><yellow>{s}<r>", .{pkg.name});
+                    } else {
+                        Output.pretty("<r><green>{s}<r>", .{pkg.name});
+                    }
+                } else {
+                    Output.pretty("<r>{s}<r>", .{pkg.name});
+                }
+                
+                // Print padding after name
+                var j: usize = 0;
+                while (j < name_padding + 2) : (j += 1) {
+                    Output.print(" ", .{});
+                }
+                
+                // Current version
+                Output.pretty("<r>{s}<r>", .{pkg.current_version});
+                
+                // Print padding after current version
+                j = 0;
+                while (j < current_padding + 2) : (j += 1) {
+                    Output.print(" ", .{});
+                }
+                
+                // Target version - bold if not using latest
+                if (!pkg.use_latest) {
+                    Output.pretty("<r><b>{s}<r>", .{pkg.update_version});
+                } else {
+                    Output.pretty("<r>{s}<r>", .{pkg.update_version});
+                }
+                
+                // Print padding after target version
+                const target_padding = state.max_update_len - pkg.update_version.len;
+                j = 0;
+                while (j < target_padding + 2) : (j += 1) {
+                    Output.print(" ", .{});
+                }
+                
+                // Latest version - bold if using latest
+                if (pkg.use_latest) {
+                    Output.pretty("<r><b>{s}<r>", .{pkg.latest_version});
+                } else {
+                    Output.pretty("<r>{s}<r>", .{pkg.latest_version});
+                }
+                
+                
+                Output.print("\x1B[0K\n", .{});
+                displayed_lines += 1;
             }
+            
+            total_lines = displayed_lines;
             Output.clearToEnd();
             Output.flush();
 
@@ -687,15 +844,22 @@ pub const UpdateInteractiveCommand = struct {
                 3, 4 => return error.EndOfStream, // ctrl+c, ctrl+d
                 ' ' => {
                     state.selected[state.cursor] = !state.selected[state.cursor];
-                    if (state.cursor < state.packages.len - 1) {
-                        state.cursor += 1;
-                    }
+                    // Don't move cursor on space - let user manually navigate
                 },
                 'a', 'A' => {
                     @memset(state.selected, true);
                 },
                 'n', 'N' => {
                     @memset(state.selected, false);
+                },
+                'i', 'I' => {
+                    // Invert selection
+                    for (state.selected) |*sel| {
+                        sel.* = !sel.*;
+                    }
+                },
+                'l', 'L' => {
+                    state.packages[state.cursor].use_latest = !state.packages[state.cursor].use_latest;
                 },
                 'j' => {
                     if (state.cursor < state.packages.len - 1) {

@@ -64,6 +64,7 @@ pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
 
 pub const update_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
+    clap.parseParam("-i, --interactive                     Show an interactive list of outdated packages to select for update") catch unreachable,
     clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
 });
 
@@ -175,6 +176,7 @@ ignore_scripts: bool = false,
 trusted: bool = false,
 no_summary: bool = false,
 latest: bool = false,
+interactive: bool = false,
 json_output: bool = false,
 filters: []const string = &.{},
 
@@ -280,6 +282,9 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\
                 \\  <d>Update all dependencies to latest:<r>
                 \\  <b><green>bun update<r> <cyan>--latest<r>
+                \\
+                \\  <d>Interactive update (select packages to update):<r>
+                \\  <b><green>bun update<r> <cyan>-i<r>
                 \\
                 \\  <d>Update specific packages:<r>
                 \\  <b><green>bun update<r> <blue>zod jquery@3<r>
@@ -841,6 +846,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
     if (comptime subcommand == .update) {
         cli.latest = args.flag("--latest");
+        cli.interactive = args.flag("--interactive");
     }
 
     const specified_backend: ?PackageInstall.Method = brk: {

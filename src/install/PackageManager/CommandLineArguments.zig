@@ -117,7 +117,7 @@ const patch_commit_params: []const ParamType = &(shared_params ++ [_]ParamType{
 });
 
 const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
-    // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
+    clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
     clap.parseParam("-F, --filter <STR>...                        Display outdated dependencies for each matching workspace") catch unreachable,
     clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
 });
@@ -492,6 +492,9 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <b><green>bun outdated<r> <blue>"is-*"<r>
                 \\  <b><green>bun outdated<r> <blue>"!is-even"<r>
                 \\
+                \\  <d>Output outdated dependencies in JSON format.<r>
+                \\  <b><green>bun outdated<r> <cyan>--json<r>
+                \\
                 \\Full documentation is available at <magenta>https://bun.sh/docs/cli/outdated<r>.
                 \\
             ;
@@ -729,7 +732,6 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (comptime subcommand == .outdated) {
         // fake --dry-run, we don't actually resolve+clean the lockfile
         cli.dry_run = true;
-        // cli.json_output = args.flag("--json");
     }
 
     if (comptime subcommand == .pack or subcommand == .pm or subcommand == .publish) {

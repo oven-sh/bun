@@ -2447,10 +2447,13 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       stream.resume(); // we have a error we consume and close
       pushToStream(stream, null);
     }
-    markStreamClosed(stream);
+
     if (destroy) stream.destroy(error_instance, stream.rstCode);
-    else if (error_instance) {
-      stream.emit("error", error_instance);
+    else {
+      markStreamClosed(stream);
+      if (error_instance) {
+        stream.emit("error", error_instance);
+      }
     }
 
     if (destroy_self) self.destroy();
@@ -2625,8 +2628,8 @@ class ServerHttp2Session extends Http2Session {
       }
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        markStreamClosed(stream);
         self.#connections--;
+        markStreamClosed(stream);
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
           self.destroy();
@@ -3110,8 +3113,8 @@ class ClientHttp2Session extends Http2Session {
 
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        markStreamClosed(stream);
         self.#connections--;
+        markStreamClosed(stream);
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
           self.destroy();

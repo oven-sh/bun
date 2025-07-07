@@ -74,13 +74,16 @@ test("SourceMap findEntry returns mapping data", () => {
   });
   const result = sourceMap.findEntry(0, 0);
 
-  expect(typeof result).toBe("object");
-  // Should now return actual mapping data instead of empty object
-  expect(result).toHaveProperty("generatedLine");
-  expect(result).toHaveProperty("generatedColumn");
-  expect(result).toHaveProperty("originalLine");
-  expect(result).toHaveProperty("originalColumn");
-  expect(result).toHaveProperty("source");
+  expect(result).toMatchInlineSnapshot(`
+    {
+      "generatedColumn": 0,
+      "generatedLine": 0,
+      "name": undefined,
+      "originalColumn": 0,
+      "originalLine": 0,
+      "originalSource": "test.js",
+    }
+  `);
 });
 
 test("SourceMap findOrigin returns origin data", () => {
@@ -91,10 +94,84 @@ test("SourceMap findOrigin returns origin data", () => {
   });
   const result = sourceMap.findOrigin(0, 0);
 
-  expect(typeof result).toBe("object");
-  // Should now return actual origin data instead of empty object
-  expect(result).toHaveProperty("line");
-  expect(result).toHaveProperty("column");
-  expect(result).toHaveProperty("source");
-  expect(result).toHaveProperty("name");
+  expect(result).toMatchInlineSnapshot(`
+    {
+      "column": 0,
+      "fileName": "test.js",
+      "line": 0,
+      "name": undefined,
+    }
+  `);
+});
+
+test("SourceMap with names returns name property correctly", () => {
+  const sourceMap = new SourceMap({
+    version: 3,
+    sources: ["test.js"],
+    names: ["myFunction", "myVariable"],
+    mappings: "AAAAA,CAACC", // Both segments reference names
+  });
+
+  const result = sourceMap.findEntry(0, 0);
+  const resultWithName = sourceMap.findEntry(0, 6);
+  expect(result).toMatchInlineSnapshot(`
+    {
+      "generatedColumn": 0,
+      "generatedLine": 0,
+      "name": "myFunction",
+      "originalColumn": 0,
+      "originalLine": 0,
+      "originalSource": "test.js",
+    }
+  `);
+  expect(resultWithName).toMatchInlineSnapshot(`
+    {
+      "generatedColumn": 1,
+      "generatedLine": 0,
+      "name": "myVariable",
+      "originalColumn": 1,
+      "originalLine": 0,
+      "originalSource": "test.js",
+    }
+  `);
+});
+
+test("SourceMap without names has undefined name property", () => {
+  const sourceMap = new SourceMap({
+    version: 3,
+    sources: ["test.js"],
+    mappings: "AAAA",
+  });
+
+  const result = sourceMap.findEntry(0, 0);
+  expect(result).toMatchInlineSnapshot(`
+    {
+      "generatedColumn": 0,
+      "generatedLine": 0,
+      "name": undefined,
+      "originalColumn": 0,
+      "originalLine": 0,
+      "originalSource": "test.js",
+    }
+  `);
+});
+
+test("SourceMap with invalid name index has undefined name property", () => {
+  const sourceMap = new SourceMap({
+    version: 3,
+    sources: ["test.js"],
+    mappings: "AAAAA,CAACC", // Both segments reference names
+  });
+
+  const result = sourceMap.findEntry(0, 0);
+  expect(result).toMatchInlineSnapshot(`
+    {
+      "generatedColumn": 0,
+      "generatedLine": 0,
+      "name": undefined,
+      "originalColumn": 0,
+      "originalLine": 0,
+      "originalSource": "test.js",
+    }
+  `);
 });

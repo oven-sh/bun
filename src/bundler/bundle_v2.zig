@@ -4153,7 +4153,6 @@ pub const CacheEntry = @import("../cache.zig").Fs.Entry;
 pub const URL = @import("../url.zig").URL;
 pub const Resolver = _resolver.Resolver;
 pub const TOML = @import("../toml/toml_parser.zig").TOML;
-const CSV = @import("../csv/csv_parser.zig").CSV;
 pub const Dependency = js_ast.Dependency;
 pub const JSAst = js_ast.BundledAst;
 pub const Loader = options.Loader;

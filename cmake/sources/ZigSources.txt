@@ -562,6 +562,7 @@ src/install/hoisted_install.zig
 src/install/install_binding.zig
 src/install/install.zig
 src/install/integrity.zig
+src/install/isolated_install.zig
 src/install/lifecycle_script_runner.zig
 src/install/lockfile.zig
 src/install/lockfile/Buffers.zig
@@ -605,10 +606,13 @@ src/install/patch_install.zig
 src/install/repository.zig
 src/install/resolution.zig
 src/install/resolvers/folder_resolver.zig
+src/install/store/Hardlinker.zig
+src/install/store/Installer.zig
+src/install/store/Store.zig
+src/install/store/Symlinker.zig
 src/install/versioned_url.zig
 src/install/windows-shim/BinLinkingShim.zig
 src/install/windows-shim/bun_shim_impl.zig
-src/install/workspaces.zig
 src/io/heap.zig
 src/io/io.zig
 src/io/MaxBuf.zig

@@ -983,7 +983,7 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
 
 const std = @import("std");
 const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
-const installIsolatedPackages = @import("../workspaces.zig").installIsolatedPackages;
+const installIsolatedPackages = @import("../isolated_install.zig").installIsolatedPackages;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

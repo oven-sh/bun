@@ -1325,7 +1325,9 @@ declare module "bun" {
 
     /**
      * Configuration options for SQL client connection and behavior
-     *  @example
+     *
+     * @example
+     * ```ts
      * const config: Bun.SQL.Options = {
      *   host: 'localhost',
      *   port: 5432,
@@ -1338,55 +1340,147 @@ declare module "bun" {
      *     console.log('Connected to database');
      *   }
      * };
+     * ```
      */
     interface Options {
-      /** Connection URL (can be string or URL object) */
+      /**
+       * Connection URL (can be string or URL object)
+       */
       url?: URL | string;
-      /** Database server hostname */
+
+      /**
+       * Database server hostname
+       */
       host?: string;
-      /** Database server hostname (alias for host) */
+
+      /**
+       * Database server hostname (alias for host)
+       * @deprecated Prefer {@link host}
+       */
       hostname?: string;
-      /** Database server port number */
+
+      /**
+       * Database server port number
+       */
       port?: number | string;
-      /** Database user for authentication */
+
+      /**
+       * Database user for authentication
+       */
       username?: string;
-      /** Database user for authentication (alias for username) */
+
+      /**
+       * Database user for authentication (alias for username)
+       * @deprecated Prefer {@link username}
+       */
       user?: string;
-      /** Database password for authentication */
+
+      /**
+       * Database password for authentication
+       */
       password?: string | (() => Promise<string>);
-      /** Database password for authentication (alias for password) */
+
+      /**
+       * Database password for authentication (alias for password)
+       * @deprecated Prefer {@link password}
+       */
       pass?: string | (() => Promise<string>);
-      /** Name of the database to connect to */
+
+      /**
+       * Name of the database to connect to
+       */
       database?: string;
-      /** Name of the database to connect to (alias for database) */
+
+      /**
+       * Name of the database to connect to (alias for database)
+       * @deprecated Prefer {@link database}
+       */
       db?: string;
-      /** Database adapter/driver to use */
-      adapter?: string;
-      /** Maximum time in seconds to wait for connection to become available */
+
+      /**
+       * Database adapter/driver to use
+       */
+      adapter?: "postgres" /*| "sqlite" | "mysql"*/ | (string & {});
+
+      /**
+       * Maximum time in seconds to wait for connection to become available
+       */
       idleTimeout?: number;
-      /** Maximum time in seconds to wait for connection to become available (alias for idleTimeout) */
+
+      /**
+       * Maximum time in seconds to wait for connection to become available (alias for idleTimeout)
+       * @deprecated Prefer {@link idleTimeout}
+       */
       idle_timeout?: number;
-      /** Maximum time in seconds to wait when establishing a connection */
+
+      /**
+       * Maximum time in seconds to wait when establishing a connection
+       */
       connectionTimeout?: number;
-      /** Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout) */
+
+      /**
+       * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
+       * @deprecated Prefer {@link connectionTimeout}
+       */
       connection_timeout?: number;
-      /** Maximum lifetime in seconds of a connection */
+
+      /**
+       * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
+       * @deprecated Prefer {@link connectionTimeout}
+       */
+      connectTimeout?: number;
+
+      /**
+       * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
+       * @deprecated Prefer {@link connectionTimeout}
+       */
+      connect_timeout?: number;
+
+      /**
+       * Maximum lifetime in seconds of a connection
+       */
       maxLifetime?: number;
-      /** Maximum lifetime in seconds of a connection (alias for maxLifetime) */
+
+      /**
+       * Maximum lifetime in seconds of a connection (alias for maxLifetime)
+       * @deprecated Prefer {@link maxLifetime}
+       */
       max_lifetime?: number;
-      /** Whether to use TLS/SSL for the connection */
+
+      /**
+       * Whether to use TLS/SSL for the connection
+       */
       tls?: TLSOptions | boolean;
-      /** Whether to use TLS/SSL for the connection (alias for tls) */
+
+      /**
+       * Whether to use TLS/SSL for the connection (alias for tls)
+       */
       ssl?: TLSOptions | boolean;
-      /** Callback function executed when a connection is established */
+
+      /**
+       * Callback function executed when a connection is established
+       */
       onconnect?: (client: SQL) => void;
-      /** Callback function executed when a connection is closed */
+
+      /**
+       * Callback function executed when a connection is closed
+       */
       onclose?: (client: SQL) => void;
-      /** Maximum number of connections in the pool */
+
+      /**
+       * Maximum number of connections in the pool
+       */
       max?: number;
-      /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
+
+      /**
+       * By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts.
+       */
       bigint?: boolean;
-      /** Automatic creation of prepared statements, defaults to true */
+
+      /**
+       * Automatic creation of prepared statements
+       * @default true
+       */
       prepare?: boolean;
     }
 

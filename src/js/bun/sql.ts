@@ -1452,7 +1452,9 @@ function loadOptions(o) {
   idleTimeout ??= o.idleTimeout;
   idleTimeout ??= o.idle_timeout;
   connectionTimeout ??= o.connectionTimeout;
-  connectionTimeout ??= o.connection_timeout;
+  connectionTimeout ??= o.connectionTimeout;
+  connectionTimeout ??= o.connectTimeout;
+  connectionTimeout ??= o.connect_timeout;
   maxLifetime ??= o.maxLifetime;
   maxLifetime ??= o.max_lifetime;
   bigint ??= o.bigint;

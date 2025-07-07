@@ -82,7 +82,21 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
 
     const api_lock = vm.jsc.getAPILock();
     defer api_lock.release();
-    buildWithVm(ctx, cwd, vm) catch |err| switch (err) {
+
+    var pt: PerThread = .{
+        .input_files = &.{},
+        .bundled_outputs = &.{},
+        .output_indexes = &.{},
+        .module_keys = &.{},
+        .module_map = .{},
+        .source_maps = .{},
+
+        .vm = vm,
+        .loaded_files = bun.bit_set.AutoBitSet.initEmpty(vm.allocator, 0) catch unreachable,
+        .all_server_files = JSValue.null,
+    };
+
+    buildWithVm(ctx, cwd, vm, &pt) catch |err| switch (err) {
         error.JSError => |e| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
             const err_value = vm.global.takeException(e);
@@ -96,7 +110,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     };
 }
 
-pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMachine) !void {
+pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMachine, pt: *PerThread) !void {
     // Load and evaluate the configuration module
     const global = vm.global;
     const b = &vm.transpiler;
@@ -380,7 +394,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         .source_maps = source_maps,
     };
 
-    var pt = try PerThread.init(vm, per_thread_options);
+    pt.* = try PerThread.init(vm, per_thread_options);
     pt.attach();
 
     // Static site generator

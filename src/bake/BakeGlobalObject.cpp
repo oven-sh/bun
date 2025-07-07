@@ -107,9 +107,9 @@ static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* glob
     return promise;
 }
 
-extern "C" BunString BakeProdLoad(ProductionPerThread* perThreadData, BunString a);
+extern "C" BunString BakeProdLoad(void* perThreadData, BunString a);
 
-extern "C" ProductionPerThread* BakeGlobalObject__getPerThreadData(JSC::JSGlobalObject* global)
+extern "C" void* BakeGlobalObject__getPerThreadData(JSC::JSGlobalObject* global)
 {
     Bake::GlobalObject* bake = jsCast<Bake::GlobalObject*>(global);
     return bake->m_perThreadData;
@@ -246,7 +246,7 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     return global;
 }
 
-extern "C" void BakeGlobalObject__attachPerThreadData(GlobalObject* global, ProductionPerThread* perThreadData)
+extern "C" void BakeGlobalObject__attachPerThreadData(GlobalObject* global, void* perThreadData)
 {
     global->m_perThreadData = perThreadData;
 }

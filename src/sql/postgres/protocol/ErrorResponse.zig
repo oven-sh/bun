@@ -1,5 +1,3 @@
-const ErrorResponse = @This();
-
 messages: std.ArrayListUnmanaged(FieldMessage) = .{},
 
 pub fn format(formatter: ErrorResponse, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -148,12 +146,14 @@ pub fn toJS(this: ErrorResponse, globalObject: *JSC.JSGlobalObject) JSValue {
 
 // @sortImports
 
+const ErrorResponse = @This();
 const std = @import("std");
-const bun = @import("bun");
-const String = bun.String;
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
+const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
 const FieldMessage = @import("./FieldMessage.zig").FieldMessage;
 const NewReader = @import("./NewReader.zig").NewReader;
-const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
+
+const bun = @import("bun");
+const String = bun.String;
+
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

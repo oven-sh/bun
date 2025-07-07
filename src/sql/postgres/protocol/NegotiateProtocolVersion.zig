@@ -1,4 +1,3 @@
-const NegotiateProtocolVersion = @This();
 version: int4 = 0,
 unrecognized_options: std.ArrayListUnmanaged(String) = .{},
 
@@ -34,10 +33,12 @@ pub fn decodeInternal(
 }
 
 // @sortImports
+
 const std = @import("std");
-const bun = @import("bun");
 const NewReader = @import("./NewReader.zig").NewReader;
-const String = bun.String;
+
 const int_types = @import("../types/int_types.zig");
 const int4 = int_types.int4;
-const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
+
+const bun = @import("bun");
+const String = bun.String;

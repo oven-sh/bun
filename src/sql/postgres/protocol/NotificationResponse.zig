@@ -1,4 +1,3 @@
-const NotificationResponse = @This();
 pid: int4 = 0,
 channel: bun.ByteList = .{},
 payload: bun.ByteList = .{},
@@ -23,8 +22,10 @@ pub const decode = DecoderWrap(NotificationResponse, decodeInternal).decode;
 
 // @sortImports
 
+const NotificationResponse = @This();
+const bun = @import("bun");
+const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
+const NewReader = @import("./NewReader.zig").NewReader;
+
 const types = @import("../PostgresTypes.zig");
 const int4 = types.int4;
-const NewReader = @import("./NewReader.zig").NewReader;
-const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
-const bun = @import("bun");

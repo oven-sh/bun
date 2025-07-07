@@ -9,6 +9,6 @@ pub fn WriteWrap(comptime Container: type, comptime writeFn: anytype) type {
 
 // @sortImports
 
-const std = @import("std");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
+
 const NewWriter = @import("./NewWriter.zig").NewWriter;

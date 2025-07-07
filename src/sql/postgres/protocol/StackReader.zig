@@ -1,4 +1,3 @@
-const StackReader = @This();
 buffer: []const u8 = "",
 offset: *usize,
 message_start: *usize,
@@ -60,6 +59,7 @@ pub fn readZ(this: StackReader) AnyPostgresError!Data {
 
 // @sortImports
 
+const StackReader = @This();
 const bun = @import("bun");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const Data = @import("../Data.zig").Data;

@@ -1,4 +1,3 @@
-const RowDescription = @This();
 fields: []FieldDescription = &[_]FieldDescription{},
 pub fn deinit(this: *@This()) void {
     for (this.fields) |*field| {
@@ -37,7 +36,9 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 pub const decode = DecoderWrap(RowDescription, decodeInternal).decode;
 
 // @sortImports
-const bun = @import("bun");
+
 const FieldDescription = @import("./FieldDescription.zig");
-const NewReader = @import("./NewReader.zig").NewReader;
+const RowDescription = @This();
+const bun = @import("bun");
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
+const NewReader = @import("./NewReader.zig").NewReader;

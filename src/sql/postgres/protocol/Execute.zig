@@ -1,4 +1,3 @@
-const Execute = @This();
 max_rows: int4 = 0,
 p: PortalOrPreparedStatement,
 
@@ -20,11 +19,10 @@ pub fn writeInternal(
 pub const write = WriteWrap(@This(), writeInternal).write;
 
 // @sortImports
-const std = @import("std");
+
 const NewWriter = @import("./NewWriter.zig").NewWriter;
-const Data = @import("../Data.zig").Data;
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
+const PortalOrPreparedStatement = @import("./PortalOrPreparedStatement.zig").PortalOrPreparedStatement;
 const WriteWrap = @import("./WriteWrap.zig").WriteWrap;
+
 const int_types = @import("../types/int_types.zig");
 const int4 = int_types.int4;
-const PortalOrPreparedStatement = @import("./PortalOrPreparedStatement.zig").PortalOrPreparedStatement;

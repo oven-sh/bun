@@ -1,4 +1,3 @@
-const BackendKeyData = @This();
 process_id: u32 = 0,
 secret_key: u32 = 0,
 pub const decode = DecoderWrap(BackendKeyData, decodeInternal).decode;
@@ -16,5 +15,6 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 
 // @sortImports
 
+const BackendKeyData = @This();
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
 const NewReader = @import("./NewReader.zig").NewReader;

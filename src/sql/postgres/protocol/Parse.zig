@@ -1,4 +1,3 @@
-const Parse = @This();
 name: []const u8 = "",
 query: []const u8 = "",
 params: []const int4 = &.{},
@@ -30,12 +29,15 @@ pub const write = WriteWrap(@This(), writeInternal).write;
 
 // @sortImports
 
-const types = @import("../PostgresTypes.zig");
-const int4 = types.int4;
+const Parse = @This();
+const std = @import("std");
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const WriteWrap = @import("./WriteWrap.zig").WriteWrap;
+const toBytes = std.mem.toBytes;
+
+const types = @import("../PostgresTypes.zig");
+const Int32 = types.Int32;
+const int4 = types.int4;
+
 const zHelpers = @import("./zHelpers.zig");
 const zCount = zHelpers.zCount;
-const toBytes = std.mem.toBytes;
-const std = @import("std");
-const Int32 = types.Int32;

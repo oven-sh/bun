@@ -1,4 +1,3 @@
-const CommandComplete = @This();
 command_tag: Data = .{ .empty = {} },
 
 pub fn deinit(this: *@This()) void {
@@ -18,7 +17,9 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 pub const decode = DecoderWrap(CommandComplete, decodeInternal).decode;
 
 // @sortImports
+
+const CommandComplete = @This();
 const bun = @import("bun");
 const Data = @import("../Data.zig").Data;
-const NewReader = @import("./NewReader.zig").NewReader;
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
+const NewReader = @import("./NewReader.zig").NewReader;

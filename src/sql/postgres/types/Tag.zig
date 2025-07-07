@@ -391,17 +391,21 @@ pub const Tag = enum(short) {
     }
 };
 
+const @"bool" = @import("./bool.zig");
+
 // @sortImports
-const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
+const bytea = @import("./bytea.zig");
+const date = @import("./date.zig");
+const json = @import("./json.zig");
+const numeric = @import("./numeric.zig");
+const std = @import("std");
 const string = @import("./string.zig");
+const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
+
 const int_types = @import("./int_types.zig");
 const short = int_types.short;
-const numeric = @import("./numeric.zig");
-const json = @import("./json.zig");
-const date = @import("./date.zig");
-const bytea = @import("./bytea.zig");
-const @"bool" = @import("./bool.zig");
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;

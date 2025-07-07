@@ -1,4 +1,3 @@
-const ParameterStatus = @This();
 name: Data = .{ .empty = {} },
 value: Data = .{ .empty = {} },
 
@@ -21,8 +20,8 @@ pub const decode = DecoderWrap(ParameterStatus, decodeInternal).decode;
 
 // @sortImports
 
-const std = @import("std");
+const ParameterStatus = @This();
 const bun = @import("bun");
 const Data = @import("../Data.zig").Data;
-const NewReader = @import("./NewReader.zig").NewReader;
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
+const NewReader = @import("./NewReader.zig").NewReader;

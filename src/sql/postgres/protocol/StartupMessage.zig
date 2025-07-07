@@ -1,4 +1,3 @@
-const StartupMessage = @This();
 user: Data,
 database: Data,
 options: Data = Data{ .empty = {} },
@@ -40,13 +39,14 @@ pub fn writeInternal(
 pub const write = WriteWrap(@This(), writeInternal).write;
 
 // @sortImports
+
 const std = @import("std");
-const NewWriter = @import("./NewWriter.zig").NewWriter;
 const Data = @import("../Data.zig").Data;
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
+const NewWriter = @import("./NewWriter.zig").NewWriter;
 const WriteWrap = @import("./WriteWrap.zig").WriteWrap;
+const zFieldCount = @import("./zHelpers.zig").zFieldCount;
 const toBytes = std.mem.toBytes;
+
 const int_types = @import("../types/int_types.zig");
 const Int32 = int_types.Int32;
 const int4 = int_types.int4;
-const zFieldCount = @import("./zHelpers.zig").zFieldCount;

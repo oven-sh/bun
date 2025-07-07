@@ -1,5 +1,3 @@
-const date = @This();
-
 pub const to = 1184;
 pub const from = [_]short{ 1082, 1114, 1184 };
 
@@ -47,11 +45,13 @@ pub fn toJS(
 }
 
 // @sortImports
-const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
+const std = @import("std");
+const Data = @import("../Data.zig").Data;
+
 const int_types = @import("./int_types.zig");
 const short = int_types.short;
-const Data = @import("../Data.zig").Data;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;

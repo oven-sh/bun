@@ -1,4 +1,3 @@
-const ArrayList = @This();
 array: *std.ArrayList(u8),
 
 pub fn offset(this: @This()) usize {
@@ -17,6 +16,7 @@ pub const Writer = NewWriter(@This());
 
 // @sortImports
 
+const ArrayList = @This();
 const std = @import("std");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const NewWriter = @import("./NewWriter.zig").NewWriter;

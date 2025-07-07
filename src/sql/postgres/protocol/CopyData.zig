@@ -1,4 +1,3 @@
-const CopyData = @This();
 data: Data = .{ .empty = {} },
 
 pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
@@ -29,12 +28,13 @@ pub fn writeInternal(
 pub const write = WriteWrap(@This(), writeInternal).write;
 
 // @sortImports
+
+const CopyData = @This();
 const std = @import("std");
+const Data = @import("../Data.zig").Data;
+const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
+const Int32 = @import("../types/int_types.zig").Int32;
 const NewReader = @import("./NewReader.zig").NewReader;
 const NewWriter = @import("./NewWriter.zig").NewWriter;
-const Data = @import("../Data.zig").Data;
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
-const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
 const WriteWrap = @import("./WriteWrap.zig").WriteWrap;
 const toBytes = std.mem.toBytes;
-const Int32 = @import("../types/int_types.zig").Int32;

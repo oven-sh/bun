@@ -80,8 +80,8 @@ pub const FieldMessage = union(FieldType) {
 // @sortImports
 
 const std = @import("std");
-const bun = @import("bun");
-const String = bun.String;
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const FieldType = @import("./FieldType.zig").FieldType;
 const NewReader = @import("./NewReader.zig").NewReader;
+
+const bun = @import("bun");
+const String = bun.String;

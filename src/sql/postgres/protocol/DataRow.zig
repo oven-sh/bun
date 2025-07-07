@@ -1,5 +1,3 @@
-const DataRow = @This();
-
 pub fn decode(context: anytype, comptime ContextType: type, reader: NewReader(ContextType), comptime forEach: fn (@TypeOf(context), index: u32, bytes: ?*Data) AnyPostgresError!bool) AnyPostgresError!void {
     var remaining_bytes = try reader.length();
     remaining_bytes -|= 4;
@@ -24,9 +22,12 @@ pub fn decode(context: anytype, comptime ContextType: type, reader: NewReader(Co
     }
 }
 
+pub const null_int4 = 4294967295;
+
 // @sortImports
 
-const NewReader = @import("./NewReader.zig").NewReader;
-const Data = @import("../Data.zig").Data;
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
-pub const null_int4 = 4294967295;
+
+const Data = @import("../Data.zig").Data;
+
+const NewReader = @import("./NewReader.zig").NewReader;

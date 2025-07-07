@@ -1,5 +1,3 @@
-const PasswordMessage = @This();
-
 password: Data = .{ .empty = {} },
 
 pub fn deinit(this: *PasswordMessage) void {
@@ -23,10 +21,11 @@ pub fn writeInternal(
 pub const write = WriteWrap(@This(), writeInternal).write;
 
 // @sortImports
+
+const PasswordMessage = @This();
 const std = @import("std");
-const NewWriter = @import("./NewWriter.zig").NewWriter;
 const Data = @import("../Data.zig").Data;
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
-const WriteWrap = @import("./WriteWrap.zig").WriteWrap;
 const Int32 = @import("../types/int_types.zig").Int32;
+const NewWriter = @import("./NewWriter.zig").NewWriter;
+const WriteWrap = @import("./WriteWrap.zig").WriteWrap;
 const toBytes = std.mem.toBytes;

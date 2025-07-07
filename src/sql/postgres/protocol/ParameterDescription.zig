@@ -1,4 +1,3 @@
-const ParameterDescription = @This();
 parameters: []int4 = &[_]int4{},
 
 pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
@@ -29,8 +28,10 @@ fn toInt32Slice(comptime Int: type, slice: []const u8) []align(1) const Int {
 
 // @sortImports
 
+const ParameterDescription = @This();
+const bun = @import("bun");
+const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
+const NewReader = @import("./NewReader.zig").NewReader;
+
 const types = @import("../PostgresTypes.zig");
 const int4 = types.int4;
-const NewReader = @import("./NewReader.zig").NewReader;
-const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
-const bun = @import("bun");

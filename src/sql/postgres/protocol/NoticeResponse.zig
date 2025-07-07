@@ -1,4 +1,3 @@
-const NoticeResponse = @This();
 messages: std.ArrayListUnmanaged(FieldMessage) = .{},
 pub fn deinit(this: *NoticeResponse) void {
     for (this.messages.items) |*message| {
@@ -42,10 +41,13 @@ pub fn toJS(this: NoticeResponse, globalObject: *JSC.JSGlobalObject) JSValue {
 }
 
 // @sortImports
-const std = @import("std");
+
+const NoticeResponse = @This();
 const bun = @import("bun");
-const NewReader = @import("./NewReader.zig").NewReader;
-const JSC = bun.JSC;
-const FieldMessage = @import("./FieldMessage.zig").FieldMessage;
+const std = @import("std");
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
+const FieldMessage = @import("./FieldMessage.zig").FieldMessage;
+const NewReader = @import("./NewReader.zig").NewReader;
+
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

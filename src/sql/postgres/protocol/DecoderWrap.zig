@@ -9,6 +9,6 @@ pub fn DecoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
 
 // @sortImports
 
-const std = @import("std");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
+
 const NewReader = @import("./NewReader.zig").NewReader;

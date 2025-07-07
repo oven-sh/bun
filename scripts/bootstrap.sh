@@ -741,13 +741,8 @@ install_nodejs() {
 		;;
 	esac
 
-	# Some distros do not install the node headers by default.
-	# These are needed for certain FFI tests, such as: `cc.test.ts`
-	case "$distro" in
-	alpine | amzn)
-		install_nodejs_headers
-		;;
-	esac
+	# Ensure that Node.js headers are always pre-downloaded so that we don't rely on node-gyp
+	install_nodejs_headers
 }
 
 install_nodejs_headers() {
@@ -768,47 +763,34 @@ setup_node_gyp_cache() {
 	nodejs_version="$1"
 	headers_source="$2"
 
-	# Common node-gyp cache locations
-	cache_locations="
-		$HOME/.node-gyp/$nodejs_version
-		$HOME/.cache/node-gyp/$nodejs_version
-		$HOME/.npm/_cacache/node-gyp/$nodejs_version
-		$current_home/.node-gyp/$nodejs_version
-		$current_home/.cache/node-gyp/$nodejs_version
-	"
+	cache_dir="$home/.cache/node-gyp/$nodejs_version"
 
-	for cache_dir in $cache_locations; do
-		if ! [ -z "$cache_dir" ]; then
-			create_directory "$cache_dir"
+	create_directory "$cache_dir"
 
-			# Copy headers
-			if [ -d "$headers_source/include" ]; then
-				cp -R "$headers_source/include" "$cache_dir/" 2>/dev/null || true
-			fi
+	# Copy headers
+	if [ -d "$headers_source/include" ]; then
+		cp -R "$headers_source/include" "$cache_dir/" 2>/dev/null || true
+	fi
 
-			# Create installVersion file (node-gyp expects this)
-			echo "11" > "$cache_dir/installVersion" 2>/dev/null || true
+	# Create installVersion file (node-gyp expects this)
+	echo "11" > "$cache_dir/installVersion" 2>/dev/null || true
 
-			# For Linux, we don't need .lib files like Windows
-			# but create the directory structure node-gyp expects
-			case "$arch" in
-			x86_64|amd64)
-				create_directory "$cache_dir/lib/x64" 2>/dev/null || true
-				;;
-			aarch64|arm64)
-				create_directory "$cache_dir/lib/arm64" 2>/dev/null || true
-				;;
-			*)
-				create_directory "$cache_dir/lib" 2>/dev/null || true
-				;;
-			esac
+	# For Linux, we don't need .lib files like Windows
+	# but create the directory structure node-gyp expects
+	case "$arch" in
+	x86_64|amd64)
+		create_directory "$cache_dir/lib/x64" 2>/dev/null || true
+		;;
+	aarch64|arm64)
+		create_directory "$cache_dir/lib/arm64" 2>/dev/null || true
+		;;
+	*)
+		create_directory "$cache_dir/lib" 2>/dev/null || true
+		;;
+	esac
 
-			# Set proper ownership for buildkite user
-			if [ "$ci" = "1" ] && [ "$user" = "buildkite-agent" ]; then
-				execute_sudo chown -R "$user:$user" "$cache_dir" 2>/dev/null || true
-			fi
-		fi
-	done
+	# Ensure entire path is accessible, not just last component
+	grant_to_user "$home/.cache"
 }
 
 bun_version_exact() {

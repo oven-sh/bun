@@ -230,26 +230,24 @@ function getTestExpectations() {
   return expectations;
 }
 
+const skipArray = (() => {
+  const path = join(cwd, "test/no-validate-exceptions.txt");
+  if (!existsSync(path)) {
+    return [];
+  }
+  return readFileSync(path, "utf-8")
+    .split("\n")
+    .filter(line => !line.startsWith("#") && line.length > 0);
+})();
+
 /**
  * Returns whether we should validate exception checks running the given test
  * @param {string} test
  * @returns {boolean}
  */
-const shouldValidateExceptions = (() => {
-  let skipArray;
-  return test => {
-    if (!skipArray) {
-      const path = join(cwd, "test/no-validate-exceptions.txt");
-      if (!existsSync(path)) {
-        skipArray = [];
-      }
-      skipArray = readFileSync(path, "utf-8")
-        .split("\n")
-        .filter(line => !line.startsWith("#") && line.length > 0);
-    }
-    return !(skipArray.includes(test) || skipArray.includes("test/" + test));
-  };
-})();
+const shouldValidateExceptions = test => {
+  return !(skipArray.includes(test) || skipArray.includes("test/" + test));
+};
 
 /**
  * @param {string} testPath
@@ -442,7 +440,7 @@ async function runTests() {
           NO_COLOR: "1",
           BUN_DEBUG_QUIET_LOGS: "1",
         };
-        if (basename(execPath).includes("asan") && shouldValidateExceptions(testPath)) {
+        if (execPath.includes("asan") && shouldValidateExceptions(testPath)) {
           env.BUN_JSC_validateExceptionChecks = "1";
         }
         await runTest(title, async () => {

@@ -736,6 +736,7 @@ test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js
 test/js/node/test/parallel/test-cluster-disconnect-idle-worker.js
 test/js/node/test/parallel/test-cluster-disconnect-leak.js
 test/js/node/test/parallel/test-os.js
+test/js/node/test/parallel/test-util-callbackify.js
 # ProgramExecutable::initializeGlobalProperties
 # missing RELEASE_AND_RETURN
 test/js/node/test/parallel/test-repl-syntax-error-handling.js
@@ -752,11 +753,9 @@ test/js/node/test/parallel/test-http-parser.js
 
 # try again later
 test/js/node/test/parallel/test-promises-warning-on-unhandled-rejection.js
+test/js/node/test/parallel/test-worker-nested-uncaught.js
 
 # normalizeCryptoAlgorithmParameters
 test/js/node/test/parallel/test-webcrypto-derivekey.js
 test/js/node/test/parallel/test-webcrypto-digest.js
 test/js/node/test/parallel/test-webcrypto-encrypt-decrypt-aes.js
-
-# works but look again
-# test/js/node/test/parallel/test-worker-nested-uncaught.js

@@ -226,7 +226,6 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             auto params = convertDictionary<CryptoAlgorithmRsaHashedKeyGenParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
-            ASSERT(hashIdentifier.hasException() == !!scope.exception());
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmRsaHashedKeyGenParams>(params);
@@ -246,7 +245,6 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             auto params = convertDictionary<CryptoAlgorithmHmacKeyParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
-            ASSERT(hashIdentifier.hasException() == !!scope.exception());
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmHmacKeyParams>(params);
@@ -653,7 +651,10 @@ void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
     addAuthenticatedEncryptionWarningIfNecessary(key.algorithmIdentifier());
 
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTFMove(algorithmIdentifier), Operations::Decrypt);
-    ASSERT(paramsOrException.hasException() == !!scope.exception());
+    if (auto ex = scope.exception()) {
+        promise->reject(ex);
+        return;
+    }
     if (paramsOrException.hasException()) {
         promise->reject(paramsOrException.releaseException());
         return;
@@ -770,9 +771,11 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTFMove(algorithmIdentifier), Operations::Digest);
-    ASSERT(paramsOrException.hasException() == !!scope.exception());
+    if (auto ex = scope.exception()) {
+        promise->reject(ex);
+        return;
+    }
     if (paramsOrException.hasException()) {
         promise->reject(paramsOrException.releaseException().code(), "Unrecognized algorithm name"_s);
         return;
@@ -802,9 +805,11 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTFMove(algorithmIdentifier), Operations::GenerateKey);
-    ASSERT(paramsOrException.hasException() == !!scope.exception());
+    if (auto ex = scope.exception()) {
+        promise->reject(ex);
+        return;
+    }
     if (paramsOrException.hasException()) {
         promise->reject(paramsOrException.releaseException());
         return;
@@ -966,9 +971,11 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTFMove(algorithmIdentifier), Operations::ImportKey);
-    ASSERT(paramsOrException.hasException() == !!scope.exception());
+    if (auto ex = scope.exception()) {
+        promise->reject(ex);
+        return;
+    }
     if (paramsOrException.hasException()) {
         promise->reject(paramsOrException.releaseException());
         return;

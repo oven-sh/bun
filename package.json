@@ -1,13 +1,12 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.2.18",
+  "version": "1.2.19",
   "workspaces": [
     "./packages/bun-types",
     "./packages/@types/bun"
   ],
   "devDependencies": {
-    "@types/react": "^18.3.3",
     "esbuild": "^0.21.4",
     "mitata": "^0.1.11",
     "peechy": "0.4.34",

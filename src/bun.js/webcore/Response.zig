@@ -388,7 +388,7 @@ pub fn constructJSON(
         var str = bun.String.empty;
         // calling JSON.stringify on an empty string adds extra quotes
         // so this is correct
-        json_value.jsonStringify(globalThis, 0, &str);
+        try json_value.jsonStringify(globalThis, 0, &str);
 
         if (globalThis.hasException()) {
             return .zero;
@@ -727,7 +727,7 @@ const MimeType = bun.http.MimeType;
 const http = bun.http;
 const JSC = bun.JSC;
 
-const Method = @import("../../http/method.zig").Method;
+const Method = @import("../../http/Method.zig").Method;
 const FetchHeaders = bun.webcore.FetchHeaders;
 const Output = bun.Output;
 const string = bun.string;

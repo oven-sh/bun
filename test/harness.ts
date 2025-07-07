@@ -1647,7 +1647,7 @@ export class VerdaccioRegistry {
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
     let bunfig = `
     [install]
-    cache = "${join(dir, ".bun-cache").replace("\\", "\\\\")}"
+    cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
     `;
     if ("saveTextLockfile" in opts) {
       bunfig += `saveTextLockfile = ${opts.saveTextLockfile}

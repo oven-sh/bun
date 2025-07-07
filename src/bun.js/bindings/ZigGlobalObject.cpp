@@ -90,7 +90,6 @@
 #include "JSDOMException.h"
 #include "JSDOMFile.h"
 #include "JSDOMFormData.h"
-#include "JSDOMPromiseDeferred.h"
 #include "JSDOMURL.h"
 #include "JSEnvironmentVariableMap.h"
 #include "JSErrorEvent.h"
@@ -4469,8 +4468,7 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGl
     auto valid = Zig__GlobalObject__validateResponseForWasmStreaming(globalObject, JSC::JSValue::encode(source));
     if (!valid) return nullptr;
 
-    auto deferred = WebCore::DeferredPromise::create(*globalObject, WebCore::DeferredPromise::Mode::RetainPromiseOnResolve);
-    auto promise = jsCast<JSPromise*>(deferred->promise());
+    auto promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject);
 
     auto readableStreamMaybe = JSC::JSValue::decode(Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(

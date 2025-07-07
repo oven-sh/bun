@@ -761,14 +761,11 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     }
 }
 
-pub fn openDirForIteration(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
+pub fn openDirForIteration(dir: FD, path_: []const u8) sys.Maybe(FD) {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(.fromStdDir(dir), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
-        return res.stdDir();
-    } else {
-        const fd = try sys.openatA(.fromStdDir(dir), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
-        return fd.stdDir();
+        return sys.openDirAtWindowsA(dir, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true });
     }
+    return sys.openatA(dir, path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0);
 }
 
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
@@ -2775,7 +2772,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
 
 pub const brotli = @import("./brotli.zig");
 
-pub fn iterateDir(dir: std.fs.Dir) DirIterator.Iterator {
+pub fn iterateDir(dir: FD) DirIterator.Iterator {
     return DirIterator.iterate(dir, .u8).iter;
 }
 

@@ -269,7 +269,7 @@ pub const Async = struct {
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, @intFromEnum(req.result));
 
                 if (this.result == .err) {
-                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
+                    this.result.err = this.result.err.clone(bun.default_allocator);
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -283,7 +283,7 @@ pub const Async = struct {
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, req, @intFromEnum(req.result));
 
                 if (this.result == .err) {
-                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
+                    this.result.err = this.result.err.clone(bun.default_allocator);
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -382,7 +382,7 @@ pub const Async = struct {
                 this.result = function(&node_fs, this.args, .@"async");
 
                 if (this.result == .err) {
-                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
+                    this.result.err = this.result.err.clone(bun.default_allocator);
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -642,7 +642,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             this.result = result;
 
             if (this.result == .err) {
-                this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
+                this.result.err = this.result.err.clone(bun.default_allocator);
             }
 
             if (this.evtloop == .js) {
@@ -859,8 +859,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 },
             }
 
-            const dir = fd.stdDir();
-            var iterator = DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
+            var iterator = DirIterator.iterate(fd, if (Environment.isWindows) .u16 else .u8);
             var entry = iterator.next();
             while (switch (entry) {
                 .err => |err| {
@@ -4425,7 +4424,6 @@ pub const NodeFS = struct {
         comptime ExpectedType: type,
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
-        const dir = fd.stdDir();
         const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == bun.JSC.Node.Dirent);
 
         var dirent_path: bun.String = bun.String.dead;
@@ -4433,7 +4431,7 @@ pub const NodeFS = struct {
             dirent_path.deref();
         }
 
-        var iterator = DirIterator.iterate(dir, comptime if (is_u16) .u16 else .u8);
+        var iterator = DirIterator.iterate(fd, comptime if (is_u16) .u16 else .u8);
         var entry = iterator.next();
 
         const re_encoding_buffer: ?*bun.PathBuffer = if (is_u16 and args.encoding != .utf8)
@@ -4573,7 +4571,7 @@ pub const NodeFS = struct {
             }
         }
 
-        var iterator = DirIterator.iterate(fd.stdDir(), .u8);
+        var iterator = DirIterator.iterate(fd, .u8);
         var entry = iterator.next();
         var dirent_path_prev: bun.String = bun.String.empty;
         defer {
@@ -4727,7 +4725,7 @@ pub const NodeFS = struct {
                 }
             }
 
-            var iterator = DirIterator.iterate(fd.stdDir(), .u8);
+            var iterator = DirIterator.iterate(fd, .u8);
             var entry = iterator.next();
             var dirent_path_prev: bun.String = bun.String.dead;
             defer {
@@ -6088,10 +6086,7 @@ pub const NodeFS = struct {
             .result => {},
         }
 
-        var iterator = iterator: {
-            const dir = fd.stdDir();
-            break :iterator DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
-        };
+        var iterator = DirIterator.iterate(fd, if (Environment.isWindows) .u16 else .u8);
         var entry = iterator.next();
         while (switch (entry) {
             .err => |err| {

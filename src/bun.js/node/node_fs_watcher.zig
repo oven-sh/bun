@@ -167,7 +167,7 @@ pub const FSWatcher = struct {
         pub fn dupe(event: Event) !Event {
             return switch (event) {
                 inline .rename, .change => |path, t| @unionInit(Event, @tagName(t), try bun.default_allocator.dupe(u8, path)),
-                .@"error" => |err| .{ .@"error" = try err.clone(bun.default_allocator) },
+                .@"error" => |err| .{ .@"error" = err.clone(bun.default_allocator) },
                 inline else => |value, t| @unionInit(Event, @tagName(t), value),
             };
         }

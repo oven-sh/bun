@@ -531,7 +531,7 @@ pub const InitCommand = struct {
             // Find any source file
             var dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch break :infer;
             defer dir.close();
-            var it = bun.DirIterator.iterate(dir, .u8);
+            var it = bun.DirIterator.iterate(.fromStdDir(dir), .u8);
             while (try it.next().unwrap()) |file| {
                 if (file.kind != .file) continue;
                 const loader = bun.options.Loader.fromString(std.fs.path.extension(file.name.slice())) orelse

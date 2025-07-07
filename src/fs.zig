@@ -624,7 +624,7 @@ pub const FileSystem = struct {
             var existing = this.entries.atIndex(index) orelse return null;
             if (existing.* == .entries) {
                 if (existing.entries.generation < generation) {
-                    var handle = bun.openDirForIteration(std.fs.cwd(), existing.entries.dir) catch |err| {
+                    var handle = bun.openDirForIteration(FD.cwd(), existing.entries.dir).unwrap() catch |err| {
                         existing.entries.data.clearAndFree(bun.fs_allocator);
 
                         return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
@@ -636,7 +636,7 @@ pub const FileSystem = struct {
                         &existing.entries.data,
                         existing.entries.dir,
                         generation,
-                        handle,
+                        handle.stdDir(),
 
                         void,
                         void{},
@@ -982,7 +982,7 @@ pub const FileSystem = struct {
         ) !DirEntry {
             _ = fs;
 
-            var iter = bun.iterateDir(handle);
+            var iter = bun.iterateDir(.fromStdDir(handle));
             var dir = DirEntry.init(_dir, generation);
             const allocator = bun.fs_allocator;
             errdefer dir.deinit(allocator);

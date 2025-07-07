@@ -35,21 +35,77 @@ declare module "*.html" {
 }
 
 declare module "*.csv" {
-  var contents: import("bun").CSV.CSVParserResult<Record<string, string>>;
-  export = contents;
+  export var data: Record<string, string>[];
+  export default data;
+  export var rows: number;
+  export var columns: number;
+  export var errors:
+    | {
+        line: number;
+        text: string;
+      }[]
+    | undefined;
+  export var comments:
+    | {
+        line: number;
+        text: string;
+      }[]
+    | undefined;
 }
 
-declare module "*.csv?no_header" {
-  var contents: import("bun").CSV.CSVParserResult<string[][]>;
-  export = contents;
+declare module "*.csv?header=false" {
+  export var data: string[][];
+  export default data;
+  export var rows: number;
+  export var columns: number;
+  export var errors:
+    | {
+        line: number;
+        text: string;
+      }[]
+    | undefined;
+  export var comments:
+    | {
+        line: number;
+        text: string;
+      }[]
+    | undefined;
 }
 
 declare module "*.tsv" {
-  var contents: import("bun").CSV.CSVParserResult<Record<string, string>>;
-  export = contents;
+  export var data: Record<string, string>[];
+  export default data;
+  export var rows: number;
+  export var columns: number;
+  export var errors:
+    | {
+        line: number;
+        text: string;
+      }[]
+    | undefined;
+  export var comments:
+    | {
+        line: number;
+        text: string;
+      }[]
+    | undefined;
 }
 
 declare module "*.tsv?no_header" {
-  var contents: import("bun").CSV.CSVParserResult<string[][]>;
-  export = contents;
+  export var data: string[][];
+  export default data;
+  export var rows: number;
+  export var columns: number;
+  export var errors:
+    | {
+        line: number;
+        text: string;
+      }[]
+    | undefined;
+  export var comments:
+    | {
+        line: number;
+        text: string;
+      }[]
+    | undefined;
 }

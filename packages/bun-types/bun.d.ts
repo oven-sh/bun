@@ -768,19 +768,33 @@ declare module "bun" {
       /**
        * The number of errors encountered during parsing.
        */
-      errors: {
-        row: number;
+      errors?: {
+        line: number;
         text: string;
       }[];
       /**
        * The comments encountered during parsing.
        * This is only available if `comments` is set to true.
        */
-      comments: {
-        row: number;
+      comments?: {
+        line: number;
         text: string;
       }[];
     }
+
+    type InferCSVResultType<T, Opts extends CSVParserOptions> = T extends undefined
+      ? Opts extends { header: false }
+        ? Opts extends { dynamicTyping: true }
+          ? (string | number | boolean)[]
+          : string[]
+        : Opts extends { dynamicTyping: true }
+          ? Record<string, string | number | boolean>
+          : Record<string, string>
+      : T;
+
+    type Prettify<T> = {
+      [K in keyof T]: T[K];
+    } & {};
 
     /**
      * Parse a CSV string into a JavaScript array.
@@ -791,12 +805,11 @@ declare module "bun" {
      * @param options Parsing options
      * @returns If has_header is true (default), returns Record<string, string>[]; otherwise, string[][]
      */
-    export function parse(
-      input: string,
-      options?: CSVParserOptions,
-    ): CSVParserOptions extends { has_header: false }
-      ? CSVParserResult<string[]>
-      : CSVParserResult<Record<string, string>>;
+    export function parse<T = undefined, const Opts extends CSVParserOptions = CSVParserOptions>(
+      data: string,
+      options?: Opts,
+    ): CSVParserResult<InferCSVResultType<T, Opts>>;
+    // ): Prettify<CSVParserResult<InferCSVResultType<T, Opts>>>;
   }
 
   /**

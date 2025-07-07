@@ -360,6 +360,27 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
             }
 
             {
+                const source = all_sources[source_index];
+                const default_export_value = blk: {
+                    // For CSV files, export the .data property as default instead of the entire object
+                    if (bun.strings.endsWithComptime(source.path.pretty, ".csv") or
+                        bun.strings.endsWithComptime(source.path.pretty, ".tsv"))
+                    {
+                        if (expr.data == .e_object) {
+                            // Find the 'data' property in the CSV object
+                            for (expr.data.e_object.properties.slice()) |property| {
+                                if (property.key != null and property.key.?.data == .e_string and
+                                    property.key.?.data.e_string.eqlComptime("data") and property.value != null)
+                                {
+                                    break :blk property.value.?;
+                                }
+                            }
+                        }
+                    }
+                    // Default case: use the entire expression
+                    break :blk expr;
+                };
+
                 const generated = try this.generateNamedExportInFile(
                     source_index,
                     module_ref,
@@ -379,7 +400,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                             .loc = stmt.loc,
                         },
                         .value = .{
-                            .expr = expr,
+                            .expr = default_export_value,
                         },
                     },
                     stmt.loc,

@@ -35,6 +35,31 @@ fn dangerouslyRunWithoutJitProtections(R: type, func: anytype, args: anytype) R 
     return @call(.always_inline, func, args);
 }
 
+pub fn unprotectExecutableMemory(buf: []u8) void {
+    const C = @cImport({
+        @cInclude("sys/mman.h");
+    });
+
+    const page_size = std.heap.pageSize();
+    const page_start = @intFromPtr(buf.ptr) & ~(page_size - 1);
+    const size = buf.len + (@intFromPtr(buf.ptr) - page_start); // round up to full pages
+
+    const result = C.mprotect(@ptrFromInt(page_start), size, C.PROT_READ | C.PROT_WRITE);
+    if (result != 0) {
+        std.debug.print("mprotect failed \n", .{});
+    }
+}
+
+fn freeBufferWithoutJitProtections(alloc: *Allocator, buffer: *const []u8) void {
+    const has_protection = (Environment.isAarch64 and Environment.isMac);
+    if (comptime has_protection) {
+        pthread_jit_write_protect_np(@intFromBool(false));
+        unprotectExecutableMemory(buffer.*);
+    }
+    defer if (comptime has_protection) pthread_jit_write_protect_np(@intFromBool(true));
+    alloc.free(buffer.*);
+}
+
 const Offsets = extern struct {
     JSArrayBufferView__offsetOfLength: u32,
     JSArrayBufferView__offsetOfByteOffset: u32,
@@ -1433,7 +1458,6 @@ pub const FFI = struct {
             }
 
             if (val.step == .compiled) {
-                // val.allocator.free(val.step.compiled.buf);
                 if (val.step.compiled.js_function != .zero) {
                     _ = globalThis;
                     // _ = JSC.untrackFunction(globalThis, val.step.compiled.js_function);
@@ -1444,6 +1468,8 @@ pub const FFI = struct {
                     FFICallbackFunctionWrapper_destroy(wrapper);
                     val.step.compiled.ffi_callback_function_wrapper = null;
                 }
+
+                freeBufferWithoutJitProtections(&val.allocator, &val.step.compiled.buf);
             }
 
             if (val.step == .failed and val.step.failed.allocated) {

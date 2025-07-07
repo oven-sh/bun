@@ -3387,7 +3387,12 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
 
     ASSERT(!args.isEmpty());
     JSObject* nextTickFn = this->m_nextTickFunction.get();
-    AsyncContextFrame::call(globalObject, nextTickFn, jsUndefined(), args);
+    auto* frame = jsDynamicCast<AsyncContextFrame*>(args.at(0));
+    if (frame) {
+        frame->run(globalObject, jsUndefined(), nextTickFn, args);
+    } else {
+        AsyncContextFrame::call(globalObject, nextTickFn, jsUndefined(), args);
+    }
     RELEASE_AND_RETURN(scope, void());
 }
 
@@ -3416,7 +3421,7 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue value, JS
 template<size_t NumArgs>
 void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue func, const JSValue (&args)[NumArgs])
 {
-    ASSERT_WITH_MESSAGE(func.isCallable(), "Must be a function for us to call");
+    ASSERT_WITH_MESSAGE(func.isCallable() || func.inherits<AsyncContextFrame>(), "Must be a function for us to call");
     MarkedArgumentBuffer argsBuffer;
     argsBuffer.ensureCapacity(NumArgs + 1);
     if (!func.isEmpty()) {
@@ -3522,6 +3527,9 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     object->putDirect(vm, Identifier::fromString(vm, "tls_ocsp"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "tls"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "cached_builtins"_s), jsBoolean(true));
+    object->putDirect(vm, Identifier::fromString(vm, "openssl_is_boringssl"_s), jsBoolean(true));
+    object->putDirect(vm, Identifier::fromString(vm, "require_module"_s), jsBoolean(true));
+    object->putDirect(vm, Identifier::fromString(vm, "typescript"_s), jsString(vm, String("transform"_s)));
 
     return object;
 }

@@ -45,6 +45,7 @@ declare module "bun" {
   type DOMHighResTimeStamp = number;
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
+  type MaybePromise<T> = T | Promise<T>;
 
   namespace __internal {
     type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
@@ -7714,6 +7715,56 @@ declare module "bun" {
      * @default Date.now()
      */
     timestamp?: number | Date,
+  ): Buffer;
+
+  /**
+   * Generate a UUIDv5, which is a name-based UUID based on the SHA-1 hash of a namespace UUID and a name.
+   *
+   * @param name The name to use for the UUID
+   * @param namespace The namespace to use for the UUID
+   * @param encoding The encoding to use for the UUID
+   *
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "dns");
+   * console.log(uuid); // "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+   * ```
+   *
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "url");
+   * console.log(uuid); // "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+   * ```
+   */
+  function randomUUIDv5(
+    name: string | BufferSource,
+    namespace: string | BufferSource | "dns" | "url" | "oid" | "x500",
+    /**
+     * @default "hex"
+     */
+    encoding?: "hex" | "base64" | "base64url",
+  ): string;
+
+  /**
+   * Generate a UUIDv5 as a Buffer
+   *
+   * @param name The name to use for the UUID
+   * @param namespace The namespace to use for the UUID
+   * @param encoding The encoding to use for the UUID
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "url", "buffer");
+   * console.log(uuid); // <Buffer 6b a7 b8 11 9d ad 11 d1 80 b4 00 c0 4f d4 30 c8>
+   * ```
+   */
+  function randomUUIDv5(
+    name: string | BufferSource,
+    namespace: string | BufferSource | "dns" | "url" | "oid" | "x500",
+    encoding: "buffer",
   ): Buffer;
 
   /**

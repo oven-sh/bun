@@ -1680,6 +1680,26 @@ extern "C" napi_status napi_create_typedarray(
     JSValue arraybufferValue = toJS(arraybuffer);
     auto arraybufferPtr = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(arraybufferValue);
     NAPI_RETURN_EARLY_IF_FALSE(env, arraybufferPtr, napi_arraybuffer_expected);
+    switch (type) {
+    case napi_int8_array:
+    case napi_uint8_array:
+    case napi_uint8_clamped_array:
+    case napi_int16_array:
+    case napi_uint16_array:
+    case napi_int32_array:
+    case napi_uint32_array:
+    case napi_float32_array:
+    case napi_float64_array:
+    case napi_bigint64_array:
+    case napi_biguint64_array: {
+        break;
+    }
+    default: {
+        napi_set_last_error(env, napi_invalid_arg);
+        return napi_invalid_arg;
+    }
+    }
+
     JSC::JSArrayBufferView* view = createArrayBufferView(globalObject, type, arraybufferPtr->impl(), byte_offset, length);
     NAPI_RETURN_IF_EXCEPTION(env);
     *result = toNapi(view, globalObject);
@@ -1735,7 +1755,7 @@ extern "C" napi_status napi_get_all_property_names(
                 // Climb up the prototype chain to find inherited properties
                 JSObject* current_object = object;
                 while (!current_object->getOwnPropertyDescriptor(globalObject, key.toPropertyKey(globalObject), desc)) {
-                    JSObject* proto = current_object->getPrototype(JSC::getVM(globalObject), globalObject).getObject();
+                    JSObject* proto = current_object->getPrototype(globalObject).getObject();
                     if (!proto) {
                         break;
                     }
@@ -1936,6 +1956,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
     auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -2095,12 +2116,6 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
 
     if (bufsize == 0) [[unlikely]] {
         if (writtenPtr) *writtenPtr = 0;
-        return napi_set_last_error(env, napi_ok);
-    }
-
-    if (bufsize == NAPI_AUTO_LENGTH) [[unlikely]] {
-        if (writtenPtr) *writtenPtr = 0;
-        buf[0] = '\0';
         return napi_set_last_error(env, napi_ok);
     }
 

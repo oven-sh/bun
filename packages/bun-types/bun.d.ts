@@ -1346,170 +1346,170 @@ declare module "bun" {
       /**
        * Connection URL (can be string or URL object)
        */
-      url?: URL | string;
+      url?: URL | string | undefined;
 
       /**
        * Database server hostname
        * @default "localhost"
        */
-      host?: string;
+      host?: string | undefined;
 
       /**
        * Database server hostname (alias for host)
        * @deprecated Prefer {@link host}
        * @default "localhost"
        */
-      hostname?: string;
+      hostname?: string | undefined;
 
       /**
        * Database server port number
        * @default 5432
        */
-      port?: number | string;
+      port?: number | string | undefined;
 
       /**
        * Database user for authentication
        * @default "postgres"
        */
-      username?: string;
+      username?: string | undefined;
 
       /**
        * Database user for authentication (alias for username)
        * @deprecated Prefer {@link username}
        * @default "postgres"
        */
-      user?: string;
+      user?: string | undefined;
 
       /**
        * Database password for authentication
        * @default ""
        */
-      password?: string | (() => Promise<string>);
+      password?: string | (() => Promise<string>) | undefined;
 
       /**
        * Database password for authentication (alias for password)
        * @deprecated Prefer {@link password}
        * @default ""
        */
-      pass?: string | (() => Promise<string>);
+      pass?: string | (() => Promise<string>) | undefined;
 
       /**
        * Name of the database to connect to
        * @default The username value
        */
-      database?: string;
+      database?: string | undefined;
 
       /**
        * Name of the database to connect to (alias for database)
        * @deprecated Prefer {@link database}
        * @default The username value
        */
-      db?: string;
+      db?: string | undefined;
 
       /**
        * Database adapter/driver to use
        * @default "postgres"
        */
-      adapter?: "postgres" /*| "sqlite" | "mysql"*/ | (string & {});
+      adapter?: "postgres" /*| "sqlite" | "mysql"*/ | (string & {}) | undefined;
 
       /**
        * Maximum time in seconds to wait for connection to become available
        * @default 0 (no timeout)
        */
-      idleTimeout?: number;
+      idleTimeout?: number | undefined;
 
       /**
        * Maximum time in seconds to wait for connection to become available (alias for idleTimeout)
        * @deprecated Prefer {@link idleTimeout}
        * @default 0 (no timeout)
        */
-      idle_timeout?: number;
+      idle_timeout?: number | undefined;
 
       /**
        * Maximum time in seconds to wait when establishing a connection
        * @default 30
        */
-      connectionTimeout?: number;
+      connectionTimeout?: number | undefined;
 
       /**
        * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
        * @deprecated Prefer {@link connectionTimeout}
        * @default 30
        */
-      connection_timeout?: number;
+      connection_timeout?: number | undefined;
 
       /**
        * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
        * @deprecated Prefer {@link connectionTimeout}
        * @default 30
        */
-      connectTimeout?: number;
+      connectTimeout?: number | undefined;
 
       /**
        * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
        * @deprecated Prefer {@link connectionTimeout}
        * @default 30
        */
-      connect_timeout?: number;
+      connect_timeout?: number | undefined;
 
       /**
        * Maximum lifetime in seconds of a connection
        * @default 0 (no maximum lifetime)
        */
-      maxLifetime?: number;
+      maxLifetime?: number | undefined;
 
       /**
        * Maximum lifetime in seconds of a connection (alias for maxLifetime)
        * @deprecated Prefer {@link maxLifetime}
        * @default 0 (no maximum lifetime)
        */
-      max_lifetime?: number;
+      max_lifetime?: number | undefined;
 
       /**
        * Whether to use TLS/SSL for the connection
        * @default false
        */
-      tls?: TLSOptions | boolean;
+      tls?: TLSOptions | boolean | undefined;
 
       /**
        * Whether to use TLS/SSL for the connection (alias for tls)
        * @default false
        */
-      ssl?: TLSOptions | boolean;
+      ssl?: TLSOptions | boolean | undefined;
 
       /**
        * Unix domain socket path for connection
        * @default ""
        */
-      path?: string;
+      path?: string | undefined;
 
       /**
        * Callback function executed when a connection is established
        */
-      onconnect?: (client: SQL) => void;
+      onconnect?: (client: SQL) => void | undefined;
 
       /**
        * Callback function executed when a connection is closed
        */
-      onclose?: (client: SQL) => void;
+      onclose?: (client: SQL) => void | undefined;
 
       /**
        * Maximum number of connections in the pool
        * @default 10
        */
-      max?: number;
+      max?: number | undefined;
 
       /**
        * By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts.
        * @default false
        */
-      bigint?: boolean;
+      bigint?: boolean | undefined;
 
       /**
        * Automatic creation of prepared statements
        * @default true
        */
-      prepare?: boolean;
+      prepare?: boolean | undefined;
     }
 
     /**

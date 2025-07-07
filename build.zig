@@ -752,6 +752,13 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
             });
         }
     }
+    {
+        const cppImport = b.createModule(.{
+            .root_source_file = (std.Build.LazyPath{ .cwd_relative = opts.codegen_path }).path(b, "cpp.zig"),
+        });
+        mod.addImport("cpp", cppImport);
+        cppImport.addImport("bun", mod);
+    }
     inline for (.{
         .{ .import = "completions-bash", .file = b.path("completions/bun.bash") },
         .{ .import = "completions-zsh", .file = b.path("completions/bun.zsh") },

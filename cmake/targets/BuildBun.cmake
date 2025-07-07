@@ -312,6 +312,10 @@ set(BUN_JAVASCRIPT_OUTPUTS
   ${CWD}/src/bun.js/bindings/GeneratedJS2Native.zig
 )
 
+set(BUN_CPP_OUTPUTS
+  ${CODEGEN_PATH}/cpp.zig
+)
+
 register_command(
   TARGET
     bun-cppbind
@@ -321,12 +325,12 @@ register_command(
     ${BUN_EXECUTABLE}
       ${CWD}/src/codegen/cppbind.ts
       ${CWD}/src
-      ${CWD}/src
+      ${CODEGEN_PATH}
   SOURCES
     ${CWD}/src/codegen/cppbind.ts
     ${BUN_CXX_SOURCES}
   OUTPUTS
-    ${CWD}/src/cpp.zig
+    ${BUN_CPP_OUTPUTS}
 )
 
 register_command(
@@ -558,6 +562,7 @@ set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_ERROR_CODE_OUTPUTS}
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
+  ${BUN_CPP_OUTPUTS}
 )
 
 # In debug builds, these are not embedded, but rather referenced at runtime.
@@ -631,7 +636,6 @@ register_command(
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}
-    ${CWD}/src/cpp.zig
 )
 
 set_property(TARGET bun-zig PROPERTY JOB_POOL compile_pool)

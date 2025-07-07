@@ -105,7 +105,7 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
             // Actually create the JS object representing the CPU
             const cpu = JSC.JSValue.createEmptyObject(globalThis, 3);
             cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
-            values.putIndex(globalThis, num_cpus, cpu);
+            try values.putIndex(globalThis, num_cpus, cpu);
 
             num_cpus += 1;
         }
@@ -251,7 +251,7 @@ fn cpusImplDarwin(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         cpu.put(globalThis, JSC.ZigString.static("model"), model_name);
         cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
 
-        values.putIndex(globalThis, cpu_index, cpu);
+        try values.putIndex(globalThis, cpu_index, cpu);
     }
     return values;
 }
@@ -281,7 +281,7 @@ pub fn cpusImplWindows(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(cpu_info.speed));
         cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
 
-        values.putIndex(globalThis, @intCast(i), cpu);
+        try values.putIndex(globalThis, @intCast(i), cpu);
     }
 
     return values;
@@ -635,12 +635,12 @@ fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSVal
         if (try ret.get(globalThis, interface_name)) |array| {
             // Add this interface entry to the existing array
             const next_index: u32 = @intCast(try array.getLength(globalThis));
-            array.putIndex(globalThis, next_index, interface);
+            try array.putIndex(globalThis, next_index, interface);
         } else {
             // Add it as an array with this interface as an element
             const member_name = JSC.ZigString.init(interface_name);
             var array = try JSC.JSValue.createEmptyArray(globalThis, 1);
-            array.putIndex(globalThis, 0, interface);
+            try array.putIndex(globalThis, 0, interface);
             ret.put(globalThis, &member_name, array);
         }
     }
@@ -749,12 +749,12 @@ fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSV
         if (try ret.get(globalThis, interface_name)) |array| {
             // Add this interface entry to the existing array
             const next_index: u32 = @intCast(try array.getLength(globalThis));
-            array.putIndex(globalThis, next_index, interface);
+            try array.putIndex(globalThis, next_index, interface);
         } else {
             // Add it as an array with this interface as an element
             const member_name = JSC.ZigString.init(interface_name);
             var array = try JSC.JSValue.createEmptyArray(globalThis, 1);
-            array.putIndex(globalThis, 0, interface);
+            try array.putIndex(globalThis, 0, interface);
             ret.put(globalThis, &member_name, array);
         }
     }

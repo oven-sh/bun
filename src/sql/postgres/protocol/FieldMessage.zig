@@ -1,0 +1,87 @@
+pub const FieldMessage = union(FieldType) {
+    severity: String,
+    localized_severity: String,
+    code: String,
+    message: String,
+    detail: String,
+    hint: String,
+    position: String,
+    internal_position: String,
+    internal: String,
+    where: String,
+    schema: String,
+    table: String,
+    column: String,
+    datatype: String,
+    constraint: String,
+    file: String,
+    line: String,
+    routine: String,
+
+    pub fn format(this: FieldMessage, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (this) {
+            inline else => |str| {
+                try std.fmt.format(writer, "{}", .{str});
+            },
+        }
+    }
+
+    pub fn deinit(this: *FieldMessage) void {
+        switch (this.*) {
+            inline else => |*message| {
+                message.deref();
+            },
+        }
+    }
+
+    pub fn decodeList(comptime Context: type, reader: NewReader(Context)) !std.ArrayListUnmanaged(FieldMessage) {
+        var messages = std.ArrayListUnmanaged(FieldMessage){};
+        while (true) {
+            const field_int = try reader.int(u8);
+            if (field_int == 0) break;
+            const field: FieldType = @enumFromInt(field_int);
+
+            var message = try reader.readZ();
+            defer message.deinit();
+            if (message.slice().len == 0) break;
+
+            try messages.append(bun.default_allocator, FieldMessage.init(field, message.slice()) catch continue);
+        }
+
+        return messages;
+    }
+
+    pub fn init(tag: FieldType, message: []const u8) !FieldMessage {
+        return switch (tag) {
+            .severity => FieldMessage{ .severity = String.createUTF8(message) },
+            // Ignore this one for now.
+            // .localized_severity => FieldMessage{ .localized_severity = String.createUTF8(message) },
+            .code => FieldMessage{ .code = String.createUTF8(message) },
+            .message => FieldMessage{ .message = String.createUTF8(message) },
+            .detail => FieldMessage{ .detail = String.createUTF8(message) },
+            .hint => FieldMessage{ .hint = String.createUTF8(message) },
+            .position => FieldMessage{ .position = String.createUTF8(message) },
+            .internal_position => FieldMessage{ .internal_position = String.createUTF8(message) },
+            .internal => FieldMessage{ .internal = String.createUTF8(message) },
+            .where => FieldMessage{ .where = String.createUTF8(message) },
+            .schema => FieldMessage{ .schema = String.createUTF8(message) },
+            .table => FieldMessage{ .table = String.createUTF8(message) },
+            .column => FieldMessage{ .column = String.createUTF8(message) },
+            .datatype => FieldMessage{ .datatype = String.createUTF8(message) },
+            .constraint => FieldMessage{ .constraint = String.createUTF8(message) },
+            .file => FieldMessage{ .file = String.createUTF8(message) },
+            .line => FieldMessage{ .line = String.createUTF8(message) },
+            .routine => FieldMessage{ .routine = String.createUTF8(message) },
+            else => error.UnknownFieldType,
+        };
+    }
+};
+
+// @sortImports
+
+const std = @import("std");
+const bun = @import("bun");
+const String = bun.String;
+const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
+const FieldType = @import("./FieldType.zig").FieldType;
+const NewReader = @import("./NewReader.zig").NewReader;

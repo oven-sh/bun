@@ -41,13 +41,12 @@ pub fn toJS(
 
 // @sortImports
 
+const bun = @import("bun");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const Data = @import("../Data.zig").Data;
 
 const int_types = @import("./int_types.zig");
 const short = int_types.short;
-
-const bun = @import("bun");
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

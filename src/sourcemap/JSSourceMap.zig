@@ -34,6 +34,7 @@ fn findSourceMap(
                 return globalObject.ERR(.INVALID_URL, "Invalid URL: {s}", .{source_url}).throw();
             }
 
+            // Replace the file:// URL with the absolute path.
             source_url_string.deref();
             source_url_slice.deinit();
             source_url_string = path;

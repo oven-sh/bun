@@ -1350,112 +1350,138 @@ declare module "bun" {
 
       /**
        * Database server hostname
+       * @default "localhost"
        */
       host?: string;
 
       /**
        * Database server hostname (alias for host)
        * @deprecated Prefer {@link host}
+       * @default "localhost"
        */
       hostname?: string;
 
       /**
        * Database server port number
+       * @default 5432
        */
       port?: number | string;
 
       /**
        * Database user for authentication
+       * @default "postgres"
        */
       username?: string;
 
       /**
        * Database user for authentication (alias for username)
        * @deprecated Prefer {@link username}
+       * @default "postgres"
        */
       user?: string;
 
       /**
        * Database password for authentication
+       * @default ""
        */
       password?: string | (() => Promise<string>);
 
       /**
        * Database password for authentication (alias for password)
        * @deprecated Prefer {@link password}
+       * @default ""
        */
       pass?: string | (() => Promise<string>);
 
       /**
        * Name of the database to connect to
+       * @default The username value
        */
       database?: string;
 
       /**
        * Name of the database to connect to (alias for database)
        * @deprecated Prefer {@link database}
+       * @default The username value
        */
       db?: string;
 
       /**
        * Database adapter/driver to use
+       * @default "postgres"
        */
       adapter?: "postgres" /*| "sqlite" | "mysql"*/ | (string & {});
 
       /**
        * Maximum time in seconds to wait for connection to become available
+       * @default 0 (no timeout)
        */
       idleTimeout?: number;
 
       /**
        * Maximum time in seconds to wait for connection to become available (alias for idleTimeout)
        * @deprecated Prefer {@link idleTimeout}
+       * @default 0 (no timeout)
        */
       idle_timeout?: number;
 
       /**
        * Maximum time in seconds to wait when establishing a connection
+       * @default 30
        */
       connectionTimeout?: number;
 
       /**
        * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
        * @deprecated Prefer {@link connectionTimeout}
+       * @default 30
        */
       connection_timeout?: number;
 
       /**
        * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
        * @deprecated Prefer {@link connectionTimeout}
+       * @default 30
        */
       connectTimeout?: number;
 
       /**
        * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
        * @deprecated Prefer {@link connectionTimeout}
+       * @default 30
        */
       connect_timeout?: number;
 
       /**
        * Maximum lifetime in seconds of a connection
+       * @default 0 (no maximum lifetime)
        */
       maxLifetime?: number;
 
       /**
        * Maximum lifetime in seconds of a connection (alias for maxLifetime)
        * @deprecated Prefer {@link maxLifetime}
+       * @default 0 (no maximum lifetime)
        */
       max_lifetime?: number;
 
       /**
        * Whether to use TLS/SSL for the connection
+       * @default false
        */
       tls?: TLSOptions | boolean;
 
       /**
        * Whether to use TLS/SSL for the connection (alias for tls)
+       * @default false
        */
       ssl?: TLSOptions | boolean;
+
+      /**
+       * Unix domain socket path for connection
+       * @default ""
+       */
+      path?: string;
 
       /**
        * Callback function executed when a connection is established
@@ -1469,11 +1495,13 @@ declare module "bun" {
 
       /**
        * Maximum number of connections in the pool
+       * @default 10
        */
       max?: number;
 
       /**
        * By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts.
+       * @default false
        */
       bigint?: boolean;
 

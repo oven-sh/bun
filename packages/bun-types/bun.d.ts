@@ -1251,9 +1251,9 @@ declare module "bun" {
      */
     writer(options?: { highWaterMark?: number }): FileSink;
 
-    readonly readable: ReadableStream;
-
-    // TODO: writable: WritableStream;
+    // TODO
+    // readonly readable: ReadableStream<Uint8Array>;
+    // readonly writable: WritableStream<Uint8Array>;
 
     /**
      * A UNIX timestamp indicating when the file was last modified.

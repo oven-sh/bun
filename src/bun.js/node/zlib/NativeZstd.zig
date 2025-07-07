@@ -83,7 +83,7 @@ pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
     this.write_result = writeState.asU32().ptr;
 
     const write_js_callback = try validators.validateFunction(globalThis, "processCallback", processCallback_value);
-    js.writeCallbackSetCached(this_value, globalThis, write_js_callback);
+    js.writeCallbackSetCached(this_value, globalThis, write_js_callback.withAsyncContextIfNeeded(globalThis));
 
     var pledged_src_size: u64 = std.math.maxInt(u64);
     if (pledgedSrcSize_value.isNumber()) {

@@ -45,6 +45,7 @@ declare module "bun" {
   type DOMHighResTimeStamp = number;
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
+  type MaybePromise<T> = T | Promise<T>;
 
   namespace __internal {
     type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
@@ -3307,7 +3308,7 @@ declare module "bun" {
       [K in HTTPMethod]?: RouteHandlerWithWebSocketUpgrade<T>;
     };
 
-    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T>;
+    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T> | HTMLBundle;
     type RouteValueWithWebSocketUpgrade<T extends string> =
       | RouteValue<T>
       | RouteHandlerWithWebSocketUpgrade<T>
@@ -5870,7 +5871,7 @@ declare module "bun" {
   const isMainThread: boolean;
 
   /**
-   * Used when importing an HTML file at runtime.
+   * Used when importing an HTML file at runtime or at build time.
    *
    * @example
    *
@@ -5878,10 +5879,34 @@ declare module "bun" {
    * import app from "./index.html";
    * ```
    *
-   * Bun.build support for this isn't imlpemented yet.
    */
+
   interface HTMLBundle {
     index: string;
+
+    /** Array of generated output files with metadata. This only exists when built ahead of time with `Bun.build` or `bun build` */
+    files?: Array<{
+      /** Original source file path. */
+      input?: string;
+      /** Generated output file path (with content hash, if included in naming) */
+      path: string;
+      /** File type/loader used (js, css, html, file, etc.) */
+      loader: Loader;
+      /** Whether this file is an entry point */
+      isEntry: boolean;
+      /** HTTP headers including ETag and Content-Type */
+      headers: {
+        /** ETag for caching */
+        etag: string;
+        /** MIME type with charset */
+        "content-type": string;
+
+        /**
+         * Additional headers may be added in the future.
+         */
+        [key: string]: string;
+      };
+    }>;
   }
 
   /**
@@ -7690,6 +7715,56 @@ declare module "bun" {
      * @default Date.now()
      */
     timestamp?: number | Date,
+  ): Buffer;
+
+  /**
+   * Generate a UUIDv5, which is a name-based UUID based on the SHA-1 hash of a namespace UUID and a name.
+   *
+   * @param name The name to use for the UUID
+   * @param namespace The namespace to use for the UUID
+   * @param encoding The encoding to use for the UUID
+   *
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "dns");
+   * console.log(uuid); // "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+   * ```
+   *
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "url");
+   * console.log(uuid); // "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+   * ```
+   */
+  function randomUUIDv5(
+    name: string | BufferSource,
+    namespace: string | BufferSource | "dns" | "url" | "oid" | "x500",
+    /**
+     * @default "hex"
+     */
+    encoding?: "hex" | "base64" | "base64url",
+  ): string;
+
+  /**
+   * Generate a UUIDv5 as a Buffer
+   *
+   * @param name The name to use for the UUID
+   * @param namespace The namespace to use for the UUID
+   * @param encoding The encoding to use for the UUID
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "url", "buffer");
+   * console.log(uuid); // <Buffer 6b a7 b8 11 9d ad 11 d1 80 b4 00 c0 4f d4 30 c8>
+   * ```
+   */
+  function randomUUIDv5(
+    name: string | BufferSource,
+    namespace: string | BufferSource | "dns" | "url" | "oid" | "x500",
+    encoding: "buffer",
   ): Buffer;
 
   /**

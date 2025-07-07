@@ -245,14 +245,14 @@ pub fn getSharedSigalgs(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.
             bun.copy(u8, buffer, sig_with_md);
             buffer[sig_with_md.len] = '+';
             bun.copy(u8, buffer[sig_with_md.len + 1 ..], hash_slice);
-            array.putIndex(globalObject, @as(u32, @intCast(i)), JSC.ZigString.fromUTF8(buffer).toJS(globalObject));
+            try array.putIndex(globalObject, @as(u32, @intCast(i)), JSC.ZigString.fromUTF8(buffer).toJS(globalObject));
         } else {
             const buffer = bun.default_allocator.alloc(u8, sig_with_md.len + 6) catch bun.outOfMemory();
             defer bun.default_allocator.free(buffer);
 
             bun.copy(u8, buffer, sig_with_md);
             bun.copy(u8, buffer[sig_with_md.len..], "+UNDEF");
-            array.putIndex(globalObject, @as(u32, @intCast(i)), JSC.ZigString.fromUTF8(buffer).toJS(globalObject));
+            try array.putIndex(globalObject, @as(u32, @intCast(i)), JSC.ZigString.fromUTF8(buffer).toJS(globalObject));
         }
     }
     return array;

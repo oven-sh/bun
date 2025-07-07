@@ -514,15 +514,15 @@ pub const String = extern struct {
     }
 
     pub fn fromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
-        var scope: JSC.CatchScope = undefined;
-        scope.init(globalObject, @src(), .assertions_only);
+        var scope: JSC.ExceptionValidationScope = undefined;
+        scope.init(globalObject, @src());
         defer scope.deinit();
         var out: String = String.dead;
         const ok = BunString__fromJS(globalObject, value, &out);
 
         // If there is a pending exception, but stringifying succeeds, we don't return JSError.
         // We do need to always call hasException() to satisfy the need for an exception check.
-        const has_exception = scope.hasException();
+        const has_exception = scope.hasExceptionOrFalseWhenAssertionsAreDisabled();
         if (ok) {
             bun.debugAssert(out.tag != .Dead);
         } else {

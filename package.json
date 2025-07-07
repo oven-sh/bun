@@ -1,8 +1,11 @@
 {
   "name": "bun",
-  "version": "1.2.18",
+  "version": "1.2.19",
+  "workspaces": [
+    "./packages/bun-types",
+    "./packages/@types/bun"
+  ],
   "devDependencies": {
-    "@types/react": "^18.3.3",
     "esbuild": "^0.21.4",
     "mitata": "^0.1.11",
     "peechy": "0.4.34",
@@ -79,10 +82,6 @@
     "clean:zig": "rm -rf build/debug/cache/zig build/debug/CMakeCache.txt 'build/debug/*.o' .zig-cache zig-out || true",
     "sync-webkit-source": "bun ./scripts/sync-webkit-source.ts"
   },
-  "workspaces": [
-    "./packages/bun-types",
-    "./packages/@types/bun"
-  ],
   "trustedDependencies": [
     "tree-sitter",
     "tree-sitter-c",

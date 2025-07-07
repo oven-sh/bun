@@ -9,6 +9,17 @@ pub const EnvPathOptions = struct {
     //
 };
 
+fn trimPathDelimiters(input: string) string {
+    var trimmed = input;
+    while (trimmed.len > 0 and trimmed[0] == std.fs.path.delimiter) {
+        trimmed = trimmed[1..];
+    }
+    while (trimmed.len > 0 and trimmed[trimmed.len - 1] == std.fs.path.delimiter) {
+        trimmed = trimmed[0 .. trimmed.len - 1];
+    }
+    return trimmed;
+}
+
 pub fn EnvPath(comptime opts: EnvPathOptions) type {
     return struct {
         allocator: std.mem.Allocator,
@@ -32,7 +43,7 @@ pub fn EnvPath(comptime opts: EnvPathOptions) type {
 
         pub fn append(this: *@This(), input: anytype) OOM!void {
             const trimmed: string = switch (@TypeOf(input)) {
-                []u8, []const u8 => strings.trimTrailingPathSeparators(strings.trimPathDelimiters(input)),
+                []u8, []const u8 => strings.withoutTrailingSlash(trimPathDelimiters(input)),
 
                 // assume already trimmed
                 else => input.slice(),

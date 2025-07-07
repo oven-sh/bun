@@ -440,41 +440,65 @@ pub fn removeLeadingDotSlash(slice: []const u8) callconv(bun.callconv_inline) []
     return slice;
 }
 
-pub fn trimLeadingPathSeparators(input: string) string {
-    var trimmed = input;
-    while (trimmed.len > 0 and switch (trimmed[0]) {
-        '/', '\\' => true,
-        else => false,
-    }) {
-        trimmed = trimmed[1..];
+// Copied from std, modified to accept input type
+pub fn basename(comptime T: type, input: []const T) []const T {
+    if (comptime Environment.isWindows) {
+        return basenameWindows(T, input);
     }
-    return trimmed;
+    return basenamePosix(T, input);
 }
 
-pub fn trimTrailingPathSeparators(input: string) string {
-    var trimmed = input;
-    while (trimmed.len > 0 and switch (trimmed[trimmed.len - 1]) {
-        '/', '\\' => true,
-        else => false,
-    }) {
-        trimmed = trimmed[0 .. trimmed.len - 1];
+fn basenamePosix(comptime T: type, input: []const T) []const T {
+    if (input.len == 0)
+        return &[_]u8{};
+
+    var end_index: usize = input.len - 1;
+    while (input[end_index] == '/') {
+        if (end_index == 0)
+            return &.{};
+        end_index -= 1;
     }
-    return trimmed;
+    var start_index: usize = end_index;
+    end_index += 1;
+    while (input[start_index] != '/') {
+        if (start_index == 0)
+            return input[0..end_index];
+        start_index -= 1;
+    }
+
+    return input[start_index + 1 .. end_index];
 }
 
-pub fn trimPathSeparators(input: string) string {
-    return trimLeadingPathSeparators(trimTrailingPathSeparators(input));
-}
+fn basenameWindows(comptime T: type, input: []const T) []const T {
+    if (input.len == 0)
+        return &.{};
 
-pub fn trimPathDelimiters(input: string) string {
-    var trimmed = input;
-    while (trimmed.len > 0 and trimmed[0] == std.fs.path.delimiter) {
-        trimmed = trimmed[1..];
+    var end_index: usize = input.len - 1;
+    while (true) {
+        const byte = input[end_index];
+        if (byte == '/' or byte == '\\') {
+            if (end_index == 0)
+                return &.{};
+            end_index -= 1;
+            continue;
+        }
+        if (byte == ':' and end_index == 1) {
+            return &.{};
+        }
+        break;
     }
-    while (trimmed.len > 0 and trimmed[trimmed.len - 1] == std.fs.path.delimiter) {
-        trimmed = trimmed[0 .. trimmed.len - 1];
+
+    var start_index: usize = end_index;
+    end_index += 1;
+    while (input[start_index] != '/' and input[start_index] != '\\' and
+        !(input[start_index] == ':' and start_index == 1))
+    {
+        if (start_index == 0)
+            return input[0..end_index];
+        start_index -= 1;
     }
-    return trimmed;
+
+    return input[start_index + 1 .. end_index];
 }
 
 const bun = @import("bun");

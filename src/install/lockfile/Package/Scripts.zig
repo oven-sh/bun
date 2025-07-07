@@ -216,14 +216,8 @@ pub const Scripts = extern struct {
             const cwd = if (comptime !Environment.isWindows)
                 cwd_.slice()
             else brk: {
-                @memcpy(cwd_buf[0..cwd_.len], cwd_.slice());
-                cwd_buf[cwd_.len] = 0;
-                const cwd_handle = bun.openDirNoRenamingOrDeletingWindows(bun.invalid_fd, cwd_buf[0..cwd_.len :0]) catch break :brk cwd_.slice();
-
-                var buf: bun.WPathBuffer = undefined;
-                const new_cwd = bun.windows.GetFinalPathNameByHandle(cwd_handle.fd, .{}, &buf) catch break :brk cwd_.slice();
-
-                break :brk strings.convertUTF16toUTF8InBuffer(&cwd_buf, new_cwd) catch break :brk cwd_.slice();
+                const cwd_handle = bun.openDirNoRenamingOrDeletingWindows(bun.invalid_fd, cwd_.sliceZ()) catch break :brk cwd_.slice();
+                break :brk FD.fromStdDir(cwd_handle).getFdPath(&cwd_buf) catch break :brk cwd_.slice();
             };
 
             return .{
@@ -393,3 +387,4 @@ const stringZ = [:0]const u8;
 const strings = bun.strings;
 const Package = Lockfile.Package;
 const debug = Output.scoped(.Lockfile, true);
+const FD = bun.FD;

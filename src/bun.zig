@@ -768,6 +768,13 @@ pub fn openDirForIteration(dir: FD, path_: []const u8) sys.Maybe(FD) {
     return sys.openatA(dir, path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0);
 }
 
+pub fn openDirForIterationOSPath(dir: FD, path_: []const OSPathChar) sys.Maybe(FD) {
+    if (comptime Environment.isWindows) {
+        return sys.openDirAtWindows(dir, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true });
+    }
+    return sys.openatA(dir, path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0);
+}
+
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     const fd = if (comptime Environment.isWindows)
         try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap()

@@ -89,7 +89,7 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
                     self.name_buffer.append(0) catch bun.outOfMemory();
 
                     if (base.kind == .directory) {
-                        const new_dir = switch (bun.openDirForIteration(top.iter.iter.dir, base.name.slice())) {
+                        const new_dir = switch (bun.openDirForIterationOSPath(top.iter.iter.dir, base.name.slice())) {
                             .result => |fd| fd,
                             .err => |err| return .initErr(err),
                         };

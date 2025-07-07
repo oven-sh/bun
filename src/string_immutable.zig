@@ -2346,10 +2346,7 @@ pub const withoutLeadingSlash = _paths.withoutLeadingSlash;
 pub const withoutNTPrefix = _paths.withoutNTPrefix;
 pub const withoutTrailingSlash = _paths.withoutTrailingSlash;
 pub const withoutTrailingSlashWindowsPath = _paths.withoutTrailingSlashWindowsPath;
-pub const trimTrailingPathSeparators = _paths.trimTrailingPathSeparators;
-pub const trimLeadingPathSeparators = _paths.trimLeadingPathSeparators;
-pub const trimPathSeparators = _paths.trimPathSeparators;
-pub const trimPathDelimiters = _paths.trimPathDelimiters;
+pub const basename = _paths.basename;
 
 pub const log = bun.Output.scoped(.STR, true);
 pub const grapheme = @import("./grapheme.zig");

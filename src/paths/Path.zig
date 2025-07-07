@@ -16,6 +16,7 @@ const Options = struct {
     const Unit = enum {
         u8,
         u16,
+        os,
     };
 
     const BufType = enum {
@@ -57,6 +58,7 @@ const Options = struct {
         return switch (opts.unit) {
             .u8 => u8,
             .u16 => u16,
+            .os => if (Environment.isWindows) u16 else u8,
         };
     }
 
@@ -64,6 +66,7 @@ const Options = struct {
         return switch (opts.unit) {
             .u8 => u16,
             .u16 => u8,
+            .os => if (Environment.isWindows) u8 else u16,
         };
     }
 
@@ -74,6 +77,7 @@ const Options = struct {
                 return switch (comptime opts.unit) {
                     .u8 => bun.MAX_PATH_BYTES,
                     .u16 => bun.PATH_MAX_WIDE,
+                    .os => if (Environment.isWindows) bun.PATH_MAX_WIDE else bun.MAX_PATH_BYTES,
                 };
             },
         }
@@ -85,6 +89,7 @@ const Options = struct {
                 pooled: switch (opts.unit) {
                     .u8 => *PathBuffer,
                     .u16 => *WPathBuffer,
+                    .os => if (Environment.isWindows) *WPathBuffer else *PathBuffer,
                 },
                 len: usize,
 
@@ -102,7 +107,7 @@ const Options = struct {
                         this.len += 1;
                     }
 
-                    if (comptime @typeInfo(@TypeOf(characters)).pointer.child == opts.pathUnit()) {
+                    if (opts.inputChildType(@TypeOf(characters)) == opts.pathUnit()) {
                         switch (comptime opts.sep) {
                             .any => {
                                 @memcpy(this.pooled[this.len..][0..characters.len], characters);
@@ -119,7 +124,33 @@ const Options = struct {
                             },
                         }
                     } else {
-                        this.convertAppend(characters);
+                        switch (opts.inputChildType(@TypeOf(characters))) {
+                            u8 => {
+                                const converted = bun.strings.convertUTF8toUTF16InBuffer(this.pooled[this.len..], characters);
+                                if (comptime opts.sep != .any) {
+                                    for (this.pooled[this.len..][0..converted.len], 0..) |c, off| {
+                                        switch (c) {
+                                            '/', '\\' => this.pooled[this.len + off] = opts.sep.char(),
+                                            else => {},
+                                        }
+                                    }
+                                }
+                                this.len += converted.len;
+                            },
+                            u16 => {
+                                const converted = bun.strings.convertUTF16toUTF8InBuffer(this.pooled[this.len..], characters) catch unreachable;
+                                if (comptime opts.sep != .any) {
+                                    for (this.pooled[this.len..][0..converted.len], 0..) |c, off| {
+                                        switch (c) {
+                                            '/', '\\' => this.pooled[this.len + off] = opts.sep.char(),
+                                            else => {},
+                                        }
+                                    }
+                                }
+                                this.len += converted.len;
+                            },
+                            else => @compileError("unexpected character type"),
+                        }
                     }
 
                     // switch (@TypeOf(characters)) {
@@ -187,6 +218,15 @@ const Options = struct {
             }
         }.Result;
     }
+
+    pub fn inputChildType(comptime opts: @This(), comptime InputType: type) type {
+        _ = opts;
+        return switch (@typeInfo(std.meta.Child(InputType))) {
+            // handle string literals
+            .array => |array| array.child,
+            else => std.meta.Child(InputType),
+        };
+    }
 };
 
 pub fn AbsPath(comptime opts: Options) type {
@@ -221,6 +261,10 @@ pub fn Path(comptime opts: Options) type {
                             .pooled = switch (opts.unit) {
                                 .u8 => bun.path_buffer_pool.get(),
                                 .u16 => bun.w_path_buffer_pool.get(),
+                                .os => if (comptime Environment.isWindows)
+                                    bun.w_path_buffer_pool.get()
+                                else
+                                    bun.path_buffer_pool.get(),
                             },
                             .len = 0,
                         },
@@ -235,10 +279,20 @@ pub fn Path(comptime opts: Options) type {
                     switch (opts.unit) {
                         .u8 => bun.path_buffer_pool.put(this._buf.pooled),
                         .u16 => bun.w_path_buffer_pool.put(this._buf.pooled),
+                        .os => if (comptime Environment.isWindows)
+                            bun.w_path_buffer_pool.put(this._buf.pooled)
+                        else
+                            bun.path_buffer_pool.put(this._buf.pooled),
                     }
                 },
             }
             @constCast(this).* = undefined;
+        }
+
+        pub fn move(this: *const @This()) @This() {
+            const moved = this.*;
+            @constCast(this).* = undefined;
+            return moved;
         }
 
         pub fn initTopLevelDir() @This() {
@@ -280,34 +334,31 @@ pub fn Path(comptime opts: Options) type {
 
         pub fn from(input: anytype) Result(@This()) {
             switch (comptime @TypeOf(input)) {
-                []u8, []const u8, [:0]u8, [:0]const u8 => {
-                    const trimmed = switch (comptime opts.kind) {
-                        .abs => trimmed: {
-                            bun.debugAssert(isInputAbsolute(input));
-                            break :trimmed trimInput(.abs, input);
-                        },
-                        .rel => trimmed: {
-                            bun.debugAssert(!isInputAbsolute(input));
-                            break :trimmed trimInput(.rel, input);
-                        },
-                        .any => trimInput(if (isInputAbsolute(input)) .abs else .rel, input),
-                    };
-
-                    if (comptime opts.check_length == .check_for_greater_than_max_path) {
-                        if (trimmed.len >= opts.maxPathLength()) {
-                            return error.MaxPathExceeded;
-                        }
-                    }
-
-                    var this = init();
-                    this._buf.append(trimmed, false);
-                    return this;
-                },
-                // []u16, []const u16, [:0]u16, [:0]const u16 => {
-
-                // },
+                []u8, []const u8, [:0]u8, [:0]const u8 => {},
+                []u16, []const u16, [:0]u16, [:0]const u16 => {},
                 else => @compileError("unsupported type: " ++ @typeName(@TypeOf(input))),
             }
+            const trimmed = switch (comptime opts.kind) {
+                .abs => trimmed: {
+                    bun.debugAssert(isInputAbsolute(input));
+                    break :trimmed trimInput(.abs, input);
+                },
+                .rel => trimmed: {
+                    bun.debugAssert(!isInputAbsolute(input));
+                    break :trimmed trimInput(.rel, input);
+                },
+                .any => trimInput(if (isInputAbsolute(input)) .abs else .rel, input),
+            };
+
+            if (comptime opts.check_length == .check_for_greater_than_max_path) {
+                if (trimmed.len >= opts.maxPathLength()) {
+                    return error.MaxPathExceeded;
+                }
+            }
+
+            var this = init();
+            this._buf.append(trimmed, false);
+            return this;
         }
 
         pub fn isAbsolute(this: *const @This()) bool {
@@ -319,17 +370,17 @@ pub fn Path(comptime opts: Options) type {
         }
 
         pub fn basename(this: *const @This()) []const opts.pathUnit() {
-            return std.fs.path.basename(this.slice());
+            return bun.strings.basename(opts.pathUnit(), this.slice());
         }
 
         pub fn basenameZ(this: *const @This()) [:0]const opts.pathUnit() {
             const full = this.sliceZ();
-            const base = std.fs.path.basename(full);
+            const base = bun.strings.basename(opts.pathUnit(), full);
             return full[full.len - base.len ..][0..base.len :0];
         }
 
         pub fn dirname(this: *const @This()) ?[]const opts.pathUnit() {
-            return std.fs.path.dirname(this.slice());
+            return bun.Dirname.dirname(opts.pathUnit(), this.slice());
         }
 
         pub fn slice(this: *const @This()) []const opts.pathUnit() {
@@ -379,12 +430,6 @@ pub fn Path(comptime opts: Options) type {
         }
 
         pub fn rootLen(input: anytype) ?usize {
-            switch (@TypeOf(input)) {
-                []u8, []const u8, [:0]u8, [:0]const u8 => {},
-                []u16, []const u16, [:0]u16, [:0]const u16 => {},
-                else => @compileError("unexpected path type"),
-            }
-
             if (comptime Environment.isWindows) {
                 if (input.len > 2 and input[1] == ':' and switch (input[2]) {
                     '/', '\\' => true,
@@ -469,14 +514,8 @@ pub fn Path(comptime opts: Options) type {
             rel,
         };
 
-        fn trimInput(kind: TrimInputKind, input: anytype) []const @typeInfo(@TypeOf(input)).pointer.child {
-            const ReturnType = switch (@TypeOf(input)) {
-                []u8, []const u8, [:0]u8, [:0]const u8 => []const u8,
-                []u16, []const u16, [:0]u16, [:0]const u16 => []const u16,
-                else => @compileError("unexpected input type"),
-            };
-
-            var trimmed: ReturnType = input;
+        fn trimInput(kind: TrimInputKind, input: anytype) []const opts.inputChildType(@TypeOf(input)) {
+            var trimmed: []const opts.inputChildType(@TypeOf(input)) = input[0..];
 
             if (comptime Environment.isWindows) {
                 switch (kind) {
@@ -539,14 +578,6 @@ pub fn Path(comptime opts: Options) type {
         }
 
         fn isInputAbsolute(input: anytype) bool {
-            return switch (@TypeOf(input)) {
-                []u8, []const u8, [:0]u8, [:0]const u8 => isInputAbsoluteT(u8, input),
-                []u16, []const u16, [:0]u16, [:0]const u16 => isInputAbsolute(u16, input),
-                else => @compileError("unexpected path type"),
-            };
-        }
-
-        fn isInputAbsoluteT(comptime T: type, input: []const T) bool {
             if (input.len == 0) {
                 return false;
             }
@@ -575,7 +606,7 @@ pub fn Path(comptime opts: Options) type {
             return false;
         }
 
-        pub fn append(this: *@This(), input: []const opts.pathUnit()) Result(void) {
+        pub fn append(this: *@This(), input: anytype) Result(void) {
             const needs_sep = this.len() > 0 and switch (comptime opts.sep) {
                 .any => switch (this.slice()[this.len() - 1]) {
                     '/', '\\' => false,
@@ -661,12 +692,7 @@ pub fn Path(comptime opts: Options) type {
             }
         }
 
-        pub fn appendFmt(this: *@This(), comptime fmt: []const opts.pathUnit(), args: anytype) Result(void) {
-            switch (comptime opts.unit) {
-                .u8 => {},
-                .u16 => @compileError("unsupported unit type"),
-            }
-
+        pub fn appendFmt(this: *@This(), comptime fmt: []const u8, args: anytype) Result(void) {
             // TODO: there's probably a better way to do this. needed for trimming slashes
             var temp: Path(.{ .buf_type = .pool }) = .init();
             defer temp.deinit();
@@ -687,6 +713,7 @@ pub fn Path(comptime opts: Options) type {
             switch (comptime opts.unit) {
                 .u8 => {},
                 .u16 => @compileError("unsupported unit type"),
+                .os => if (Environment.isWindows) @compileError("unsupported unit type"),
             }
 
             switch (comptime opts.kind) {

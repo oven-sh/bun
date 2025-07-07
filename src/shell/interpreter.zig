@@ -1709,7 +1709,7 @@ pub const ShellSyscall = struct {
             };
 
             return switch (Syscall.stat(path)) {
-                .err => |e| .{ .err = e.clone(bun.default_allocator) catch bun.outOfMemory() },
+                .err => |e| .{ .err = e.clone(bun.default_allocator) },
                 .result => |s| .{ .result = s },
             };
         }

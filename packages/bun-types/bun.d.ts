@@ -1883,7 +1883,7 @@ declare module "bun" {
      * @example
      * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
      */
-    unsafe<T = any>(string: string, values?: any[]): SQLQuery<T>;
+    unsafe<T = any>(string: string, values?: any[]): SQL.Query<T>;
 
     /**
      * Reads a file and uses the contents as a query.
@@ -1891,7 +1891,7 @@ declare module "bun" {
      * @example
      * const result = await sql.file("query.sql", [1, 2, 3]);
      */
-    file(filename: string, values?: any[]): SQLQuery;
+    file<T = any>(filename: string, values?: any[]): SQL.Query<T>;
 
     /**
      * Current client options

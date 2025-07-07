@@ -1335,36 +1335,35 @@ for (let credentials of allCredentials) {
       });
     });
   });
-
-  describe.skipIf(!minioCredentials)("http endpoint should work when using env variables", () => {
-    const testDir = tempDirWithFiles("minio-credential-test", {
-      "index.mjs": `
-        import { s3, randomUUIDv7 } from "bun";
-        import { expect } from "bun:test";
-        const name = randomUUIDv7("hex") + ".txt";
-        const s3file = s3.file(name);
-        await s3file.write("Hello Bun!");
-        try {
-          const text = await s3file.text();
-          expect(text).toBe("Hello Bun!");
-          process.stdout.write(text);
-        } finally {
-          await s3file.unlink();
-        }
-      `,
-    });
-    for (const endpoint of ["S3_ENDPOINT", "AWS_ENDPOINT"]) {
-      it(endpoint, async () => {
-        const { stdout, stderr } = await bunRun(path.join(testDir, "index.mjs"), {
-          // @ts-ignore
-          [endpoint]: minioCredentials!.endpoint as string,
-          "S3_BUCKET": minioCredentials!.bucket as string,
-          "S3_ACCESS_KEY_ID": minioCredentials!.accessKeyId as string,
-          "S3_SECRET_ACCESS_KEY": minioCredentials!.secretAccessKey as string,
-        });
-        expect(stderr).toBe("");
-        expect(stdout).toBe("Hello Bun!");
-      });
-    }
-  });
 }
+describe.skipIf(!minioCredentials)("http endpoint should work when using env variables", () => {
+  const testDir = tempDirWithFiles("minio-credential-test", {
+    "index.mjs": `
+      import { s3, randomUUIDv7 } from "bun";
+      import { expect } from "bun:test";
+      const name = randomUUIDv7("hex") + ".txt";
+      const s3file = s3.file(name);
+      await s3file.write("Hello Bun!");
+      try {
+        const text = await s3file.text();
+        expect(text).toBe("Hello Bun!");
+        process.stdout.write(text);
+      } finally {
+        await s3file.unlink();
+      }
+    `,
+  });
+  for (const endpoint of ["S3_ENDPOINT", "AWS_ENDPOINT"]) {
+    it(endpoint, async () => {
+      const { stdout, stderr } = await bunRun(path.join(testDir, "index.mjs"), {
+        // @ts-ignore
+        [endpoint]: minioCredentials!.endpoint as string,
+        "S3_BUCKET": minioCredentials!.bucket as string,
+        "S3_ACCESS_KEY_ID": minioCredentials!.accessKeyId as string,
+        "S3_SECRET_ACCESS_KEY": minioCredentials!.secretAccessKey as string,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("Hello Bun!");
+    });
+  }
+});

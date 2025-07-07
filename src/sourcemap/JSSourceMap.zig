@@ -99,7 +99,6 @@ pub fn constructor(
         names.deinit();
     }
 
-    // Convert sources array to ZigString.Slice objects
     var sources = std.ArrayList(bun.String).init(bun.default_allocator);
     errdefer {
         for (sources.items) |*str| {
@@ -213,17 +212,37 @@ fn sourceNameToJS(this: *const JSSourceMap, globalObject: *JSGlobalObject, mappi
     return .js_undefined;
 }
 
+extern fn Bun__createNodeModuleSourceMapOriginObject(
+    globalObject: *JSGlobalObject,
+    name: JSValue,
+    line: JSValue,
+    column: JSValue,
+    source: JSValue,
+) JSValue;
+
+extern fn Bun__createNodeModuleSourceMapEntryObject(
+    globalObject: *JSGlobalObject,
+    generatedLine: JSValue,
+    generatedColumn: JSValue,
+    originalLine: JSValue,
+    originalColumn: JSValue,
+    source: JSValue,
+    name: JSValue,
+) JSValue;
+
 pub fn findOrigin(this: *JSSourceMap, globalObject: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     const line_number, const column_number = try getLineColumn(globalObject, callFrame);
 
     const mapping = this.sourcemap.mappings.find(line_number, column_number) orelse return JSC.JSValue.createEmptyObject(globalObject, 0);
-    const result = JSC.JSValue.createEmptyObject(globalObject, 4);
-    result.put(globalObject, JSC.ZigString.static("line"), JSC.JSValue.jsNumber(mapping.originalLine()));
-    result.put(globalObject, JSC.ZigString.static("column"), JSC.JSValue.jsNumber(mapping.originalColumn()));
-    result.put(globalObject, JSC.ZigString.static("fileName"), try sourceNameToJS(this, globalObject, &mapping));
-    result.put(globalObject, JSC.ZigString.static("name"), try mappingNameToJS(this, globalObject, &mapping));
-
-    return result;
+    const name = try mappingNameToJS(this, globalObject, &mapping);
+    const source = try sourceNameToJS(this, globalObject, &mapping);
+    return Bun__createNodeModuleSourceMapOriginObject(
+        globalObject,
+        name,
+        JSC.JSValue.jsNumber(mapping.originalLine()),
+        JSC.JSValue.jsNumber(mapping.originalColumn()),
+        source,
+    );
 }
 
 pub fn findEntry(this: *JSSourceMap, globalObject: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -231,15 +250,17 @@ pub fn findEntry(this: *JSSourceMap, globalObject: *JSGlobalObject, callFrame: *
 
     const mapping = this.sourcemap.mappings.find(line_number, column_number) orelse return JSC.JSValue.createEmptyObject(globalObject, 0);
 
-    const result = JSC.JSValue.createEmptyObject(globalObject, 5);
-    result.put(globalObject, JSC.ZigString.static("generatedLine"), JSC.JSValue.jsNumber(mapping.generatedLine()));
-    result.put(globalObject, JSC.ZigString.static("generatedColumn"), JSC.JSValue.jsNumber(mapping.generatedColumn()));
-    result.put(globalObject, JSC.ZigString.static("originalLine"), JSC.JSValue.jsNumber(mapping.originalLine()));
-    result.put(globalObject, JSC.ZigString.static("originalColumn"), JSC.JSValue.jsNumber(mapping.originalColumn()));
-    result.put(globalObject, JSC.ZigString.static("originalSource"), try sourceNameToJS(this, globalObject, &mapping));
-    result.put(globalObject, JSC.ZigString.static("name"), try mappingNameToJS(this, globalObject, &mapping));
-
-    return result;
+    const name = try mappingNameToJS(this, globalObject, &mapping);
+    const source = try sourceNameToJS(this, globalObject, &mapping);
+    return Bun__createNodeModuleSourceMapEntryObject(
+        globalObject,
+        JSC.JSValue.jsNumber(mapping.generatedLine()),
+        JSC.JSValue.jsNumber(mapping.generatedColumn()),
+        JSC.JSValue.jsNumber(mapping.originalLine()),
+        JSC.JSValue.jsNumber(mapping.originalColumn()),
+        source,
+        name,
+    );
 }
 
 pub fn deinit(this: *JSSourceMap) void {

@@ -710,6 +710,10 @@ pub const ParsedSourceMap = struct {
         return @ptrFromInt(this.underlying_provider.data);
     }
 
+    pub fn memoryCost(this: *const ParsedSourceMap) usize {
+        return @sizeOf(ParsedSourceMap) + this.mappings.memoryCost() + this.external_source_names.len * @sizeOf([]const u8);
+    }
+
     pub fn writeVLQs(map: ParsedSourceMap, writer: anytype) !void {
         var last_col: i32 = 0;
         var last_src: i32 = 0;

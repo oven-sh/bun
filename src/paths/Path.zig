@@ -2,6 +2,7 @@ const std = @import("std");
 const bun = @import("bun");
 const Output = bun.Output;
 const PathBuffer = bun.PathBuffer;
+const WPathBuffer = bun.WPathBuffer;
 const Environment = bun.Environment;
 const FD = bun.FD;
 
@@ -10,6 +11,12 @@ const Options = struct {
     sep: PathSeparators = .any,
     kind: Kind = .any,
     buf_type: BufType = .pool,
+    unit: Unit = .u8,
+
+    const Unit = enum {
+        u8,
+        u16,
+    };
 
     const BufType = enum {
         pool,
@@ -46,17 +53,46 @@ const Options = struct {
         }
     };
 
+    pub fn pathUnit(comptime opts: @This()) type {
+        return switch (opts.unit) {
+            .u8 => u8,
+            .u16 => u16,
+        };
+    }
+
+    pub fn notPathUnit(comptime opts: @This()) type {
+        return switch (opts.unit) {
+            .u8 => u16,
+            .u16 => u8,
+        };
+    }
+
+    pub fn maxPathLength(comptime opts: @This()) usize {
+        switch (comptime opts.check_length) {
+            .assume_always_less_than_max_path => @compileError("max path length is not needed"),
+            .check_for_greater_than_max_path => {
+                return switch (comptime opts.unit) {
+                    .u8 => bun.MAX_PATH_BYTES,
+                    .u16 => bun.PATH_MAX_WIDE,
+                };
+            },
+        }
+    }
+
     pub fn Buf(comptime opts: @This()) type {
         return switch (opts.buf_type) {
             .pool => struct {
-                pooled: *PathBuffer,
+                pooled: switch (opts.unit) {
+                    .u8 => *PathBuffer,
+                    .u16 => *WPathBuffer,
+                },
                 len: usize,
 
                 pub fn setLength(this: *@This(), new_len: usize) void {
                     this.len = new_len;
                 }
 
-                pub fn append(this: *@This(), characters: []const u8, add_separator: bool) void {
+                pub fn append(this: *@This(), characters: anytype, add_separator: bool) void {
                     if (add_separator) {
                         switch (comptime opts.sep) {
                             .any, .auto => this.pooled[this.len] = std.fs.path.sep,
@@ -65,21 +101,67 @@ const Options = struct {
                         }
                         this.len += 1;
                     }
-                    switch (comptime opts.sep) {
-                        .any => {
-                            @memcpy(this.pooled[this.len..][0..characters.len], characters);
-                            this.len += characters.len;
-                        },
-                        .auto, .posix, .windows => {
-                            for (characters) |c| {
-                                switch (c) {
-                                    '/', '\\' => this.pooled[this.len] = opts.sep.char(),
-                                    else => this.pooled[this.len] = c,
+
+                    if (comptime @typeInfo(@TypeOf(characters)).pointer.child == opts.pathUnit()) {
+                        switch (comptime opts.sep) {
+                            .any => {
+                                @memcpy(this.pooled[this.len..][0..characters.len], characters);
+                                this.len += characters.len;
+                            },
+                            .auto, .posix, .windows => {
+                                for (characters) |c| {
+                                    switch (c) {
+                                        '/', '\\' => this.pooled[this.len] = opts.sep.char(),
+                                        else => this.pooled[this.len] = c,
+                                    }
+                                    this.len += 1;
                                 }
-                                this.len += 1;
-                            }
-                        },
+                            },
+                        }
+                    } else {
+                        this.convertAppend(characters);
                     }
+
+                    // switch (@TypeOf(characters)) {
+                    //     []u8, []const u8, [:0]u8, [:0]const u8 => {
+                    //         if (opts.unit == .u8) {
+                    //             this.appendT()
+                    //         }
+                    //     }
+                    // }
+                }
+
+                // fn append(this: *@This(), characters: []const opts.pathUnit(), add_separator: bool) void {
+                //     if (add_separator) {}
+                //     switch (comptime opts.sep) {
+                //         .any => {
+                //             @memcpy(this.pooled[this.len..][0..characters.len], characters);
+                //             this.len += characters.len;
+                //         },
+                //         .auto, .posix, .windows => {
+                //             for (characters) |c| {
+                //                 switch (c) {
+                //                     '/', '\\' => this.pooled[this.len] = opts.sep.char(),
+                //                     else => this.pooled[this.len] = c,
+                //                 }
+                //                 this.len += 1;
+                //             }
+                //         },
+                //     }
+                // }
+
+                fn convertAppend(this: *@This(), characters: []const opts.notPathUnit()) void {
+                    _ = this;
+                    _ = characters;
+                    // switch (comptime opts.sep) {
+                    //     .any => {
+                    //         switch (opts.notPathUnit()) {
+                    //             .u8 => {
+                    //                 const converted = bun.strings.convertUTF8toUTF16InBuffer(this.pooled[this.len..], characters);
+                    //             },
+                    //         }
+                    //     },
+                    // }
                 }
             },
             // .stack => struct {
@@ -87,7 +169,7 @@ const Options = struct {
             //     len: u16,
             // },
             // .array_list => struct {
-            //     list: std.ArrayList(u8),
+            //     list: std.ArrayList(opts.pathUnit()),
             // },
 
         };
@@ -122,6 +204,10 @@ pub fn RelPath(comptime opts: Options) type {
 pub fn Path(comptime opts: Options) type {
     const Result = opts.ResultFn();
 
+    // if (opts.unit == .u16 and !Environment.isWindows) {
+    //     @compileError("utf16 not supported");
+    // }
+
     // const log = Output.scoped(.Path, false);
 
     return struct {
@@ -130,7 +216,15 @@ pub fn Path(comptime opts: Options) type {
         pub fn init() @This() {
             switch (comptime opts.buf_type) {
                 .pool => {
-                    return .{ ._buf = .{ .pooled = bun.path_buffer_pool.get(), .len = 0 } };
+                    return .{
+                        ._buf = .{
+                            .pooled = switch (opts.unit) {
+                                .u8 => bun.path_buffer_pool.get(),
+                                .u16 => bun.w_path_buffer_pool.get(),
+                            },
+                            .len = 0,
+                        },
+                    };
                 },
             }
         }
@@ -138,7 +232,10 @@ pub fn Path(comptime opts: Options) type {
         pub fn deinit(this: *const @This()) void {
             switch (comptime opts.buf_type) {
                 .pool => {
-                    bun.path_buffer_pool.put(this._buf.pooled);
+                    switch (opts.unit) {
+                        .u8 => bun.path_buffer_pool.put(this._buf.pooled),
+                        .u16 => bun.w_path_buffer_pool.put(this._buf.pooled),
+                    }
                 },
             }
             @constCast(this).* = undefined;
@@ -150,7 +247,7 @@ pub fn Path(comptime opts: Options) type {
 
             const trimmed = switch (comptime opts.kind) {
                 .abs => trimmed: {
-                    bun.debugAssert(std.fs.path.isAbsolute(top_level_dir));
+                    bun.debugAssert(isInputAbsolute(top_level_dir));
                     break :trimmed trimInput(.abs, top_level_dir);
                 },
                 .rel => @compileError("cannot create a relative path from top_level_dir"),
@@ -181,59 +278,67 @@ pub fn Path(comptime opts: Options) type {
             return this;
         }
 
-        pub fn from(input: []const u8) Result(@This()) {
-            const trimmed = switch (comptime opts.kind) {
-                .abs => trimmed: {
-                    bun.debugAssert(std.fs.path.isAbsolute(input));
-                    break :trimmed trimInput(.abs, input);
-                },
-                .rel => trimmed: {
-                    bun.debugAssert(!std.fs.path.isAbsolute(input));
-                    break :trimmed trimInput(.rel, input);
-                },
-                .any => trimInput(if (std.fs.path.isAbsolute(input)) .abs else .rel, input),
-            };
+        pub fn from(input: anytype) Result(@This()) {
+            switch (comptime @TypeOf(input)) {
+                []u8, []const u8, [:0]u8, [:0]const u8 => {
+                    const trimmed = switch (comptime opts.kind) {
+                        .abs => trimmed: {
+                            bun.debugAssert(isInputAbsolute(input));
+                            break :trimmed trimInput(.abs, input);
+                        },
+                        .rel => trimmed: {
+                            bun.debugAssert(!isInputAbsolute(input));
+                            break :trimmed trimInput(.rel, input);
+                        },
+                        .any => trimInput(if (isInputAbsolute(input)) .abs else .rel, input),
+                    };
 
-            if (comptime opts.check_length == .check_for_greater_than_max_path) {
-                if (trimmed.len >= bun.MAX_PATH_BYTES) {
-                    return error.MaxPathExceeded;
-                }
+                    if (comptime opts.check_length == .check_for_greater_than_max_path) {
+                        if (trimmed.len >= opts.maxPathLength()) {
+                            return error.MaxPathExceeded;
+                        }
+                    }
+
+                    var this = init();
+                    this._buf.append(trimmed, false);
+                    return this;
+                },
+                // []u16, []const u16, [:0]u16, [:0]const u16 => {
+
+                // },
+                else => @compileError("unsupported type: " ++ @typeName(@TypeOf(input))),
             }
-
-            var this = init();
-            this._buf.append(trimmed, false);
-            return this;
         }
 
         pub fn isAbsolute(this: *const @This()) bool {
             return switch (comptime opts.kind) {
                 .abs => @compileError("already known to be absolute"),
                 .rel => @compileError("already known to not be absolute"),
-                .any => std.fs.path.isAbsolute(this.slice()),
+                .any => isInputAbsolute(this.slice()),
             };
         }
 
-        pub fn basename(this: *@This()) []const u8 {
+        pub fn basename(this: *const @This()) []const opts.pathUnit() {
             return std.fs.path.basename(this.slice());
         }
 
-        pub fn basenameZ(this: *@This()) [:0]const u8 {
+        pub fn basenameZ(this: *const @This()) [:0]const opts.pathUnit() {
             const full = this.sliceZ();
             const base = std.fs.path.basename(full);
             return full[full.len - base.len ..][0..base.len :0];
         }
 
-        pub fn dirname(this: *@This()) ?[]const u8 {
+        pub fn dirname(this: *const @This()) ?[]const opts.pathUnit() {
             return std.fs.path.dirname(this.slice());
         }
 
-        pub fn slice(this: *const @This()) []const u8 {
+        pub fn slice(this: *const @This()) []const opts.pathUnit() {
             switch (comptime opts.buf_type) {
                 .pool => return this._buf.pooled[0..this._buf.len],
             }
         }
 
-        pub fn sliceZ(this: *const @This()) [:0]const u8 {
+        pub fn sliceZ(this: *const @This()) [:0]const opts.pathUnit() {
             switch (comptime opts.buf_type) {
                 .pool => {
                     this._buf.pooled[this._buf.len] = 0;
@@ -242,7 +347,7 @@ pub fn Path(comptime opts: Options) type {
             }
         }
 
-        // pub fn buf(this: *const @This()) []u8 {
+        // pub fn buf(this: *const @This()) []opts.pathUnit() {
         //     switch (comptime opts.buf_type) {
         //         .pool => {
         //             return this._buf.pooled;
@@ -273,7 +378,13 @@ pub fn Path(comptime opts: Options) type {
             this._buf.setLength(0);
         }
 
-        pub fn rootLen(input: []const u8) ?usize {
+        pub fn rootLen(input: anytype) ?usize {
+            switch (@TypeOf(input)) {
+                []u8, []const u8, [:0]u8, [:0]const u8 => {},
+                []u16, []const u16, [:0]u16, [:0]const u16 => {},
+                else => @compileError("unexpected path type"),
+            }
+
             if (comptime Environment.isWindows) {
                 if (input.len > 2 and input[1] == ':' and switch (input[2]) {
                     '/', '\\' => true,
@@ -353,8 +464,19 @@ pub fn Path(comptime opts: Options) type {
             return null;
         }
 
-        fn trimInput(kind: enum { abs, rel }, input: []const u8) []const u8 {
-            var trimmed = input;
+        const TrimInputKind = enum {
+            abs,
+            rel,
+        };
+
+        fn trimInput(kind: TrimInputKind, input: anytype) []const @typeInfo(@TypeOf(input)).pointer.child {
+            const ReturnType = switch (@TypeOf(input)) {
+                []u8, []const u8, [:0]u8, [:0]const u8 => []const u8,
+                []u16, []const u16, [:0]u16, [:0]const u16 => []const u16,
+                else => @compileError("unexpected input type"),
+            };
+
+            var trimmed: ReturnType = input;
 
             if (comptime Environment.isWindows) {
                 switch (kind) {
@@ -416,7 +538,44 @@ pub fn Path(comptime opts: Options) type {
             return trimmed;
         }
 
-        pub fn append(this: *@This(), input: []const u8) Result(void) {
+        fn isInputAbsolute(input: anytype) bool {
+            return switch (@TypeOf(input)) {
+                []u8, []const u8, [:0]u8, [:0]const u8 => isInputAbsoluteT(u8, input),
+                []u16, []const u16, [:0]u16, [:0]const u16 => isInputAbsolute(u16, input),
+                else => @compileError("unexpected path type"),
+            };
+        }
+
+        fn isInputAbsoluteT(comptime T: type, input: []const T) bool {
+            if (input.len == 0) {
+                return false;
+            }
+
+            if (input[0] == '/') {
+                return true;
+            }
+
+            if (comptime Environment.isWindows) {
+                if (input[0] == '\\') {
+                    return true;
+                }
+
+                if (input.len < 3) {
+                    return false;
+                }
+
+                if (input[1] == ':' and switch (input[2]) {
+                    '/', '\\' => true,
+                    else => false,
+                }) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        pub fn append(this: *@This(), input: []const opts.pathUnit()) Result(void) {
             const needs_sep = this.len() > 0 and switch (comptime opts.sep) {
                 .any => switch (this.slice()[this.len() - 1]) {
                     '/', '\\' => false,
@@ -431,9 +590,9 @@ pub fn Path(comptime opts: Options) type {
 
                     if (comptime Environment.isDebug) {
                         if (has_root) {
-                            bun.debugAssert(!std.fs.path.isAbsolute(input));
+                            bun.debugAssert(!isInputAbsolute(input));
                         } else {
-                            bun.debugAssert(std.fs.path.isAbsolute(input));
+                            bun.debugAssert(isInputAbsolute(input));
                         }
                     }
 
@@ -444,7 +603,7 @@ pub fn Path(comptime opts: Options) type {
                     }
 
                     if (comptime opts.check_length == .check_for_greater_than_max_path) {
-                        if (this.len() + trimmed.len + @intFromBool(needs_sep) >= bun.MAX_PATH_BYTES) {
+                        if (this.len() + trimmed.len + @intFromBool(needs_sep) >= opts.maxPathLength()) {
                             return error.MaxPathExceeded;
                         }
                     }
@@ -452,7 +611,7 @@ pub fn Path(comptime opts: Options) type {
                     this._buf.append(trimmed, needs_sep);
                 },
                 .rel => {
-                    bun.debugAssert(!std.fs.path.isAbsolute(input));
+                    bun.debugAssert(!isInputAbsolute(input));
 
                     const trimmed = trimInput(.rel, input);
 
@@ -461,7 +620,7 @@ pub fn Path(comptime opts: Options) type {
                     }
 
                     if (comptime opts.check_length == .check_for_greater_than_max_path) {
-                        if (this.len() + trimmed.len + @intFromBool(needs_sep) >= bun.MAX_PATH_BYTES) {
+                        if (this.len() + trimmed.len + @intFromBool(needs_sep) >= opts.maxPathLength()) {
                             return error.MaxPathExceeded;
                         }
                     }
@@ -469,7 +628,7 @@ pub fn Path(comptime opts: Options) type {
                     this._buf.append(trimmed, needs_sep);
                 },
                 .any => {
-                    const input_is_absolute = std.fs.path.isAbsolute(input);
+                    const input_is_absolute = isInputAbsolute(input);
 
                     if (comptime Environment.isDebug) {
                         if (needs_sep) {
@@ -481,7 +640,7 @@ pub fn Path(comptime opts: Options) type {
                         // anything appended to an existing path should be trimmed
                         // as a relative path
                         .rel
-                    else if (std.fs.path.isAbsolute(input))
+                    else if (isInputAbsolute(input))
                         // path is empty, trim based on input
                         .abs
                     else
@@ -492,7 +651,7 @@ pub fn Path(comptime opts: Options) type {
                     }
 
                     if (comptime opts.check_length == .check_for_greater_than_max_path) {
-                        if (this.len() + trimmed.len + @intFromBool(needs_sep) >= bun.MAX_PATH_BYTES) {
+                        if (this.len() + trimmed.len + @intFromBool(needs_sep) >= opts.maxPathLength()) {
                             return error.MaxPathExceeded;
                         }
                     }
@@ -502,7 +661,11 @@ pub fn Path(comptime opts: Options) type {
             }
         }
 
-        pub fn appendFmt(this: *@This(), comptime fmt: []const u8, args: anytype) Result(void) {
+        pub fn appendFmt(this: *@This(), comptime fmt: []const opts.pathUnit(), args: anytype) Result(void) {
+            switch (comptime opts.unit) {
+                .u8 => {},
+                .u16 => @compileError("unsupported unit type"),
+            }
 
             // TODO: there's probably a better way to do this. needed for trimming slashes
             var temp: Path(.{ .buf_type = .pool }) = .init();
@@ -520,12 +683,17 @@ pub fn Path(comptime opts: Options) type {
             return this.append(input);
         }
 
-        pub fn join(this: *@This(), parts: []const []const u8) Result(void) {
+        pub fn join(this: *@This(), parts: []const []const opts.pathUnit()) Result(void) {
+            switch (comptime opts.unit) {
+                .u8 => {},
+                .u16 => @compileError("unsupported unit type"),
+            }
+
             switch (comptime opts.kind) {
                 .abs => {},
                 .rel => @compileError("cannot join with relative path"),
                 .any => {
-                    bun.debugAssert(std.fs.path.isAbsolute(this.slice()));
+                    bun.debugAssert(this.isAbsolute());
                 },
             }
 
@@ -551,7 +719,7 @@ pub fn Path(comptime opts: Options) type {
             }
         }
 
-        pub fn relative(this: *const @This(), to: *const @This()) RelPath(opts) {
+        pub fn relative(this: *const @This(), to: anytype) RelPath(opts) {
             switch (comptime opts.buf_type) {
                 .pool => {
                     var output: RelPath(opts) = .init();
@@ -578,10 +746,10 @@ pub fn Path(comptime opts: Options) type {
             var i: usize = 0;
             while (i < n_components) {
                 const slash = switch (comptime opts.sep) {
-                    .any => std.mem.lastIndexOfAny(u8, this.slice(), &.{ std.fs.path.sep_posix, std.fs.path.sep_windows }),
-                    .auto => std.mem.lastIndexOfScalar(u8, this.slice(), std.fs.path.sep),
-                    .posix => std.mem.lastIndexOfScalar(u8, this.slice(), std.fs.path.sep_posix),
-                    .windows => std.mem.lastIndexOfScalar(u8, this.slice(), std.fs.path.sep_windows),
+                    .any => std.mem.lastIndexOfAny(opts.pathUnit(), this.slice(), &.{ std.fs.path.sep_posix, std.fs.path.sep_windows }),
+                    .auto => std.mem.lastIndexOfScalar(opts.pathUnit(), this.slice(), std.fs.path.sep),
+                    .posix => std.mem.lastIndexOfScalar(opts.pathUnit(), this.slice(), std.fs.path.sep_posix),
+                    .windows => std.mem.lastIndexOfScalar(opts.pathUnit(), this.slice(), std.fs.path.sep_windows),
                 } orelse {
                     this._buf.setLength(min_len);
                     return;

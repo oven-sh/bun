@@ -30,8 +30,5 @@ fn PathBufferPoolT(comptime T: type) type {
 }
 
 pub const path_buffer_pool = PathBufferPoolT(PathBuffer);
-pub const w_path_buffer_pool = if (Environment.isWindows) PathBufferPoolT(WPathBuffer) else struct {
-    // So it can be used in code that deletes all the pools.
-    pub fn deleteAll() void {}
-};
+pub const w_path_buffer_pool = PathBufferPoolT(WPathBuffer);
 pub const os_path_buffer_pool = if (Environment.isWindows) w_path_buffer_pool else path_buffer_pool;

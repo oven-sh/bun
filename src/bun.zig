@@ -257,6 +257,7 @@ pub const CodePoint = StringTypes.CodePoint;
 pub const paths = @import("./paths.zig");
 pub const MAX_PATH_BYTES = paths.MAX_PATH_BYTES;
 pub const PathBuffer = paths.PathBuffer;
+pub const PATH_MAX_WIDE = paths.PATH_MAX_WIDE;
 pub const WPathBuffer = paths.WPathBuffer;
 pub const OSPathChar = paths.OSPathChar;
 pub const OSPathSliceZ = paths.OSPathSliceZ;

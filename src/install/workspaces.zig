@@ -697,6 +697,9 @@ pub fn installIsolatedPackages(
         //     install_queue.writeItemAssumeCapacity(entry_id);
         // }
 
+        // add the pending task count upfront
+        _ = manager.incrementPendingTasks(@intCast(store.entries.len));
+
         // while (install_queue.readItem()) |entry_id| {
         for (0..store.entries.len) |_entry_id| {
             const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
@@ -719,6 +722,7 @@ pub fn installIsolatedPackages(
                 else => {
                     // this is `uninitialized` or `single_file_module`.
                     bun.debugAssert(false);
+                    manager.decrementPendingTasks();
                     entry_steps[entry_id.get()].store(.done, .monotonic);
                     installer.resumeAvailableTasks();
                     continue;
@@ -727,10 +731,11 @@ pub fn installIsolatedPackages(
                     installer.summary.skipped += 1;
 
                     if (entry_id == .root) {
-                        entry_steps[entry_id.get()].store(.@"symlink dependencies", .monotonic);
-                        installer.startTask(entry_id);
+                        entry_steps[entry_id.get()].store(.symlink_dependencies, .monotonic);
+                        installer.resumeTask(entry_id);
                         continue;
                     }
+                    manager.decrementPendingTasks();
                     entry_steps[entry_id.get()].store(.done, .monotonic);
                     installer.resumeAvailableTasks();
                     continue;
@@ -740,10 +745,11 @@ pub fn installIsolatedPackages(
                     installer.summary.skipped += 1;
 
                     if (!(try seen_workspace_ids.getOrPut(lockfile.allocator, pkg_id)).found_existing) {
-                        entry_steps[entry_id.get()].store(.@"symlink dependencies", .monotonic);
-                        installer.startTask(entry_id);
+                        entry_steps[entry_id.get()].store(.symlink_dependencies, .monotonic);
+                        installer.resumeTask(entry_id);
                         continue;
                     }
+                    manager.decrementPendingTasks();
                     entry_steps[entry_id.get()].store(.done, .monotonic);
                     installer.resumeAvailableTasks();
                     continue;
@@ -752,12 +758,13 @@ pub fn installIsolatedPackages(
                     // no installation required, will only need to be linked to packages that depend on it.
                     bun.debugAssert(entry_dependencies[entry_id.get()].list.items.len == 0);
                     installer.summary.skipped += 1;
+                    manager.decrementPendingTasks();
                     entry_steps[entry_id.get()].store(.done, .monotonic);
                     installer.resumeAvailableTasks();
                     continue;
                 },
                 .folder => {
-                    installer.startTask(entry_id);
+                    installer.resumeTask(entry_id);
                     continue;
                 },
 
@@ -797,7 +804,8 @@ pub fn installIsolatedPackages(
 
                     if (!needs_install) {
                         installer.summary.skipped += 1;
-                        installer.store.entries.items(.step)[entry_id.get()].store(.done, .monotonic);
+                        manager.decrementPendingTasks();
+                        entry_steps[entry_id.get()].store(.done, .monotonic);
                         if (installer.install_node) |node| {
                             node.completeOne();
                         }
@@ -844,7 +852,7 @@ pub fn installIsolatedPackages(
                     };
 
                     if (!missing_from_cache) {
-                        installer.startTask(entry_id);
+                        installer.resumeTask(entry_id);
                         continue;
                     }
 
@@ -876,6 +884,7 @@ pub fn installIsolatedPackages(
                                         Global.exit(1);
                                     }
                                     installer.summary.fail += 1;
+                                    manager.decrementPendingTasks();
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
                                     continue;
                                 },
@@ -911,6 +920,7 @@ pub fn installIsolatedPackages(
                                         Global.exit(1);
                                     }
                                     installer.summary.fail += 1;
+                                    manager.decrementPendingTasks();
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
                                     continue;
                                 },
@@ -943,6 +953,7 @@ pub fn installIsolatedPackages(
                                         Global.exit(1);
                                     }
                                     installer.summary.fail += 1;
+                                    manager.decrementPendingTasks();
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
                                     continue;
                                 },
@@ -977,6 +988,8 @@ pub fn installIsolatedPackages(
                         return true;
                     };
 
+                    wait.installer.resumeAvailableTasks();
+
                     return wait.manager.pendingTaskCount() == 0;
                 }
             };
@@ -996,9 +1009,8 @@ pub fn installIsolatedPackages(
 
         if (comptime Environment.isDebug) {
             var done = true;
-            for (store.entries.items(.step), 0..) |entry_step, _entry_id| {
+            next_entry: for (store.entries.items(.step), 0..) |entry_step, _entry_id| {
                 const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
-                _ = entry_id;
                 const step = entry_step.load(.monotonic);
 
                 if (step == .done) {
@@ -1007,28 +1019,28 @@ pub fn installIsolatedPackages(
 
                 done = false;
 
-                // std.debug.print("entry not done: {d}", .{entry_id});
+                std.debug.print("entry not done: {d}", .{entry_id});
 
-                // const deps = store.entries.items(.dependencies)[entry_id.get()];
-                // for (deps.slice()) |dep| {
-                //     const dep_step = entry_steps[dep.entry_id.get()].load(.monotonic);
-                //     if (dep_step != .done) {
-                //         std.debug.print(", parents:\n - ", .{});
-                //         const parent_ids = Store.Entry.debugGatherAllParents(entry_id, store);
-                //         for (parent_ids) |parent_id| {
-                //             if (parent_id == .root) {
-                //                 std.debug.print("root ", .{});
-                //             } else {
-                //                 std.debug.print("{d} ", .{parent_id.get()});
-                //             }
-                //         }
+                const deps = store.entries.items(.dependencies)[entry_id.get()];
+                for (deps.slice()) |dep| {
+                    const dep_step = entry_steps[dep.entry_id.get()].load(.monotonic);
+                    if (dep_step != .done) {
+                        std.debug.print(", parents:\n - ", .{});
+                        const parent_ids = Store.Entry.debugGatherAllParents(entry_id, installer.store);
+                        for (parent_ids) |parent_id| {
+                            if (parent_id == .root) {
+                                std.debug.print("root ", .{});
+                            } else {
+                                std.debug.print("{d} ", .{parent_id.get()});
+                            }
+                        }
 
-                //         std.debug.print("\n", .{});
-                //         continue :next_entry;
-                //     }
-                // }
+                        std.debug.print("\n", .{});
+                        continue :next_entry;
+                    }
+                }
 
-                // std.debug.print(" and is able to run\n", .{});
+                std.debug.print(" and is able to run\n", .{});
             }
 
             bun.debugAssert(done);
@@ -1039,113 +1051,6 @@ pub fn installIsolatedPackages(
         return installer.summary;
     }
 }
-
-const Symlinker = struct {
-    dest: [:0]const u8,
-    target: [:0]const u8,
-    abs_fallback_junction_target: if (Environment.isWindows) [:0]const u8 else void,
-
-    pub fn init(dest: [:0]const u8, target: [:0]const u8, abs_fallback_junction_target: [:0]const u8) @This() {
-        return .{
-            .dest = dest,
-            .target = target,
-            .abs_fallback_junction_target = if (Environment.isWindows) abs_fallback_junction_target,
-        };
-    }
-
-    pub fn symlink(this: *const @This()) sys.Maybe(void) {
-        if (comptime Environment.isWindows) {
-            return sys.symlinkOrJunction(this.dest, this.target, this.abs_fallback_junction_target);
-        }
-        return sys.symlink(this.target, this.dest);
-    }
-
-    pub const Strategy = enum {
-        expect_existing,
-        expect_missing,
-        ignore_failure,
-    };
-
-    pub fn ensureSymlink(
-        this: *const @This(),
-        strategy: Strategy,
-    ) sys.Maybe(void) {
-        return switch (strategy) {
-            .ignore_failure => {
-                return switch (this.symlink()) {
-                    .result => .success,
-                    .err => |symlink_err| switch (symlink_err.getErrno()) {
-                        .NOENT => {
-                            const dest_parent = std.fs.path.dirname(this.dest) orelse {
-                                return .success;
-                            };
-
-                            FD.cwd().makePath(u8, dest_parent) catch {};
-                            _ = this.symlink();
-                            return .success;
-                        },
-                        else => .success,
-                    },
-                };
-            },
-            .expect_missing => {
-                return switch (this.symlink()) {
-                    .result => .success,
-                    .err => |symlink_err1| switch (symlink_err1.getErrno()) {
-                        .NOENT => {
-                            const dest_parent = std.fs.path.dirname(this.dest) orelse {
-                                return .initErr(symlink_err1);
-                            };
-
-                            FD.cwd().makePath(u8, dest_parent) catch {};
-                            return this.symlink();
-                        },
-                        .EXIST => {
-                            FD.cwd().deleteTree(this.dest) catch {};
-                            return this.symlink();
-                        },
-                        else => .initErr(symlink_err1),
-                    },
-                };
-            },
-            .expect_existing => {
-                const current_link_buf = bun.path_buffer_pool.get();
-                defer bun.path_buffer_pool.put(current_link_buf);
-                const current_link = switch (sys.readlink(this.dest, current_link_buf)) {
-                    .result => |res| res,
-                    .err => |readlink_err| return switch (readlink_err.getErrno()) {
-                        .NOENT => switch (this.symlink()) {
-                            .result => .success,
-                            .err => |symlink_err| switch (symlink_err.getErrno()) {
-                                .NOENT => {
-                                    const dest_parent = std.fs.path.dirname(this.dest) orelse {
-                                        return .initErr(symlink_err);
-                                    };
-
-                                    FD.cwd().makePath(u8, dest_parent) catch {};
-                                    return this.symlink();
-                                },
-                                else => .initErr(symlink_err),
-                            },
-                        },
-                        else => {
-                            FD.cwd().deleteTree(this.dest) catch {};
-                            return this.symlink();
-                        },
-                    },
-                };
-
-                if (strings.eqlLong(current_link, this.target, true)) {
-                    return .success;
-                }
-
-                // this existing link is pointing to the wrong package
-                _ = sys.unlink(this.dest);
-                return this.symlink();
-            },
-        };
-    }
-};
 
 const Ids = struct {
     dep_id: DependencyID,
@@ -1263,24 +1168,11 @@ pub const Store = struct {
             this.manager.thread_pool.schedule(.from(&task.task));
         }
 
-        pub fn startTask(this: *Installer, entry_id: Entry.Id) void {
-            const task = this.preallocated_tasks.get();
-
-            task.* = .{
-                .entry_id = entry_id,
-                .installer = this,
-                .err = null,
-            };
-
-            _ = this.manager.incrementPendingTasks(1);
-            this.manager.thread_pool.schedule(.from(&task.task));
-        }
-
         pub fn onPackageExtracted(this: *Installer, task_id: install.Task.Id) void {
             if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
                 for (removed.value.items) |install_ctx| {
                     const entry_id = install_ctx.isolated_package_install_context;
-                    this.startTask(entry_id);
+                    this.resumeTask(entry_id);
                 }
             }
         }
@@ -1321,7 +1213,7 @@ pub const Store = struct {
                         },
                     }
                 },
-                .@"symlink dependencies" => |symlink_err| {
+                .symlink_dependencies => |symlink_err| {
                     Output.err(symlink_err, "failed to symlink dependencies for package: {s}@{}", .{
                         pkg_name.slice(string_buf),
                         pkg_res.fmt(string_buf, .auto),
@@ -1365,17 +1257,12 @@ pub const Store = struct {
                 Global.exit(1);
             }
 
+            this.manager.decrementPendingTasks();
+
             this.summary.fail += 1;
             this.store.entries.items(.step)[entry_id.get()].store(.done, .monotonic);
             this.resumeAvailableTasks();
         }
-
-        // pub fn onEnqueueFail(this: *Installer, entry_id: Entry.Id, err: anyerror) void {
-        //     Output.err(err, "failed to enqueue")
-        //     if (!this.manager.options.enable.fail_early) {
-        //         this.store.entries.items(.step)[entry_id.get()].store(.done, .monotonic);
-        //     }
-        // }
 
         pub fn onTask(this: *Installer, task_entry_id: Entry.Id) void {
             const entries = this.store.entries.slice();
@@ -1391,7 +1278,7 @@ pub const Store = struct {
         }
 
         pub fn onTaskSuccess(this: *Installer, entry_id: Entry.Id) void {
-            this.resumeAvailableTasks();
+            this.manager.decrementPendingTasks();
 
             const pkg_id = pkg_id: {
                 if (entry_id == .root) {
@@ -1455,7 +1342,7 @@ pub const Store = struct {
                     }
                 }
 
-                entry_steps[entry_id.get()].store(.@"symlink dependency binaries", .monotonic);
+                entry_steps[entry_id.get()].store(.symlink_dependency_binaries, .monotonic);
                 this.resumeTask(entry_id);
             }
         }
@@ -1476,9 +1363,10 @@ pub const Store = struct {
                     walk_err: anyerror,
                     hardlink_err: sys.Error,
                 },
-                @"symlink dependencies": sys.Error,
-                @"symlink dependency binaries",
-                @"run preinstall": anyerror,
+                symlink_dependencies: sys.Error,
+                check_if_blocked,
+                symlink_dependency_binaries,
+                run_preinstall: anyerror,
                 binaries: anyerror,
                 @"run (post)install and (pre/post)prepare": anyerror,
                 done,
@@ -1487,12 +1375,14 @@ pub const Store = struct {
 
             pub const Step = enum(u8) {
                 link_package,
-                @"symlink dependencies",
+                symlink_dependencies,
+
+                check_if_blocked,
 
                 // blocked can only happen here
 
-                @"symlink dependency binaries",
-                @"run preinstall",
+                symlink_dependency_binaries,
+                run_preinstall,
 
                 // pause here while preinstall runs
 
@@ -1503,52 +1393,44 @@ pub const Store = struct {
 
                 done,
                 blocked,
-
-                pub fn next(this: @This()) @This() {
-                    bun.debugAssert(this != .blocked);
-                    return @enumFromInt(@intFromEnum(this) + 1);
-                }
             };
 
-            fn setStep(this: *Task, new_step: Step) void {
-                this.installer.store.entries.items(.step)[this.entry_id.get()].store(new_step, .monotonic);
-            }
+            fn nextStep(this: *Task, comptime current_step: Step) Step {
+                const next_step: Step = switch (comptime current_step) {
+                    .link_package => .symlink_dependencies,
+                    .symlink_dependencies => .check_if_blocked,
+                    .check_if_blocked => .symlink_dependency_binaries,
+                    .symlink_dependency_binaries => .run_preinstall,
+                    .run_preinstall => .binaries,
+                    .binaries => .@"run (post)install and (pre/post)prepare",
+                    .@"run (post)install and (pre/post)prepare" => .done,
 
-            fn nextStep(this: *Task) Step {
-                const current_step = this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic);
-                if (current_step == .done) return .done;
+                    .done,
+                    .blocked,
+                    => @compileError("unexpected step"),
+                };
 
-                const next_step = current_step.next();
                 this.installer.store.entries.items(.step)[this.entry_id.get()].store(next_step, .monotonic);
 
                 return next_step;
             }
 
-            fn done(this: *Task) void {
-                this.installer.tasks.push(this);
-                this.installer.manager.decrementPendingTasks();
-                this.installer.manager.wake();
-            }
-
-            fn fail(this: *Task, err: Error) void {
+            fn fail(this: *Task, err: Error) Yield {
                 this.err = err;
                 this.installer.tasks.push(this);
-                this.installer.manager.decrementPendingTasks();
                 this.installer.manager.wake();
+                return .yield;
             }
 
-            fn pause(this: *Task) void {
+            fn yield(this: *Task) Yield {
                 this.installer.tasks.push(this);
                 this.installer.manager.wake();
+                return .yield;
             }
 
-            fn blocked(this: *Task) void {
-                this.installer.store.entries.items(.step)[this.entry_id.get()].store(.blocked, .monotonic);
-                this.installer.tasks.push(this);
-                this.installer.manager.wake();
-            }
+            const Yield = enum { yield };
 
-            fn run(this: *Task) OOM!void {
+            fn run(this: *Task) OOM!Yield {
                 const installer = this.installer;
                 const manager = installer.manager;
                 const lockfile = installer.lockfile;
@@ -1579,7 +1461,7 @@ pub const Store = struct {
                 const pkg_res = pkg_resolutions[pkg_id];
 
                 return next_step: switch (entry_steps[this.entry_id.get()].load(.monotonic)) {
-                    .link_package => {
+                    inline .link_package => |current_step| {
                         const string_buf = lockfile.buffers.string_bytes.items;
 
                         if (pkg_res.tag == .folder) {
@@ -1618,7 +1500,7 @@ pub const Store = struct {
                                 switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_subpath.sliceZ())) {
                                     .result => {
                                         // success! move to next step
-                                        continue :next_step this.nextStep();
+                                        continue :next_step this.nextStep(current_step);
                                     },
                                     .err => |clonefile_err1| {
                                         switch (clonefile_err1.getErrno()) {
@@ -1626,19 +1508,17 @@ pub const Store = struct {
                                             .OPNOTSUPP => break :hardlink_fallback,
                                             .NOENT => {
                                                 const parent_dest_dir = std.fs.path.dirname(dest_subpath.slice()) orelse {
-                                                    this.fail(.{ .link_package = .{ .hardlink_err = clonefile_err1 } });
-                                                    return;
+                                                    return this.fail(.{ .link_package = .{ .hardlink_err = clonefile_err1 } });
                                                 };
 
                                                 FD.cwd().makePath(u8, parent_dest_dir) catch {};
 
                                                 switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_subpath.sliceZ())) {
                                                     .result => {
-                                                        continue :next_step this.nextStep();
+                                                        continue :next_step this.nextStep(current_step);
                                                     },
                                                     .err => |clonefile_err2| {
-                                                        this.fail(.{ .link_package = .{ .hardlink_err = clonefile_err2 } });
-                                                        return;
+                                                        return this.fail(.{ .link_package = .{ .hardlink_err = clonefile_err2 } });
                                                     },
                                                 }
                                             },
@@ -1660,8 +1540,7 @@ pub const Store = struct {
                                 )) {
                                     .result => |dir_fd| dir_fd,
                                     .err => |err| {
-                                        this.fail(.{ .link_package = .{ .hardlink_err = err } });
-                                        return;
+                                        return this.fail(.{ .link_package = .{ .hardlink_err = err } });
                                     },
                                 };
                             }
@@ -1673,8 +1552,7 @@ pub const Store = struct {
                             )) {
                                 .result => |fd| fd,
                                 .err => |err| {
-                                    this.fail(.{ .link_package = .{ .hardlink_err = err } });
-                                    return;
+                                    return this.fail(.{ .link_package = .{ .hardlink_err = err } });
                                 },
                             };
                         };
@@ -1687,6 +1565,9 @@ pub const Store = struct {
                             &.{},
                         );
                         defer walker.deinit();
+
+                        var src2: bun.AbsPath(.{ .unit = .u16 }) = .from(cache_dir_path.slice());
+                        defer src2.deinit();
 
                         if (comptime Environment.isWindows) {
                             var src_buf: bun.WPathBuffer = undefined;
@@ -1705,8 +1586,7 @@ pub const Store = struct {
                             dest.len += 1;
 
                             while (walker.next() catch |err| {
-                                this.fail(.{ .link_package = .{ .walk_err = err } });
-                                return;
+                                return this.fail(.{ .link_package = .{ .walk_err = err } });
                             }) |entry| {
                                 // TODO: add support for utf16 in AbsPath and RelPath
                                 const saved_src_len = src.len;
@@ -1738,8 +1618,7 @@ pub const Store = struct {
                                                     switch (sys.link(u16, src, dest)) {
                                                         .result => continue,
                                                         .err => |link_err2| {
-                                                            this.fail(.{ .link_package = .{ .hardlink_err = link_err2 } });
-                                                            return;
+                                                            return this.fail(.{ .link_package = .{ .hardlink_err = link_err2 } });
                                                         },
                                                     }
                                                 },
@@ -1747,22 +1626,19 @@ pub const Store = struct {
                                                 .NOENT,
                                                 => {
                                                     const dest_parent = bun.Dirname.dirname(u16, dest) orelse {
-                                                        this.fail(.{ .link_package = .{ .hardlink_err = link_err1 } });
-                                                        return;
+                                                        return this.fail(.{ .link_package = .{ .hardlink_err = link_err1 } });
                                                     };
 
                                                     FD.cwd().makePath(u16, dest_parent) catch {};
                                                     switch (sys.link(u16, src, dest)) {
                                                         .result => continue,
                                                         .err => |link_err2| {
-                                                            this.fail(.{ .link_package = .{ .hardlink_err = link_err2 } });
-                                                            return;
+                                                            return this.fail(.{ .link_package = .{ .hardlink_err = link_err2 } });
                                                         },
                                                     }
                                                 },
                                                 else => {
-                                                    this.fail(.{ .link_package = .{ .hardlink_err = link_err1 } });
-                                                    return;
+                                                    return this.fail(.{ .link_package = .{ .hardlink_err = link_err1 } });
                                                 },
                                             },
                                         }
@@ -1771,11 +1647,10 @@ pub const Store = struct {
                                 }
                             }
 
-                            continue :next_step this.nextStep();
+                            continue :next_step this.nextStep(current_step);
                         } else {
                             while (walker.next() catch |err| {
-                                this.fail(.{ .link_package = .{ .walk_err = err } });
-                                return;
+                                return this.fail(.{ .link_package = .{ .walk_err = err } });
                             }) |entry| {
                                 var dest_subpath_save = dest_subpath.save();
                                 defer dest_subpath_save.restore();
@@ -1798,29 +1673,25 @@ pub const Store = struct {
                                                         switch (sys.linkatZ(entry_dir, entry.basename, FD.cwd(), dest_subpath.sliceZ())) {
                                                             .result => {},
                                                             .err => |link_err2| {
-                                                                this.fail(.{ .link_package = .{ .hardlink_err = link_err2 } });
-                                                                return;
+                                                                return this.fail(.{ .link_package = .{ .hardlink_err = link_err2 } });
                                                             },
                                                         }
                                                     },
                                                     .NOENT => {
                                                         const dest_subpath_parent = dest_subpath.dirname() orelse {
-                                                            this.fail(.{ .link_package = .{ .hardlink_err = link_err1 } });
-                                                            return;
+                                                            return this.fail(.{ .link_package = .{ .hardlink_err = link_err1 } });
                                                         };
 
                                                         FD.cwd().makePath(u8, dest_subpath_parent) catch {};
                                                         switch (sys.linkatZ(entry_dir, entry.basename, FD.cwd(), dest_subpath.sliceZ())) {
                                                             .result => {},
                                                             .err => |link_err2| {
-                                                                this.fail(.{ .link_package = .{ .hardlink_err = link_err2 } });
-                                                                return;
+                                                                return this.fail(.{ .link_package = .{ .hardlink_err = link_err2 } });
                                                             },
                                                         }
                                                     },
                                                     else => {
-                                                        this.fail(.{ .link_package = .{ .hardlink_err = link_err1 } });
-                                                        return;
+                                                        return this.fail(.{ .link_package = .{ .hardlink_err = link_err1 } });
                                                     },
                                                 }
                                             },
@@ -1829,12 +1700,10 @@ pub const Store = struct {
                                     else => {},
                                 }
                             }
-                            continue :next_step this.nextStep();
+                            continue :next_step this.nextStep(current_step);
                         }
-
-                        unreachable;
                     },
-                    .@"symlink dependencies" => {
+                    inline .symlink_dependencies => |current_step| {
                         const string_buf = lockfile.buffers.string_bytes.items;
                         const dependencies = lockfile.buffers.dependencies.items;
 
@@ -1843,7 +1712,7 @@ pub const Store = struct {
                             const dep_dep_id = node_dep_ids[dep_node_id.get()];
                             const dep_name = dependencies[dep_dep_id].name;
 
-                            var dest: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+                            var dest: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
                             defer dest.deinit();
 
                             installer.appendStoreNodeModulesPath(&dest, this.entry_id);
@@ -1863,7 +1732,7 @@ pub const Store = struct {
                             };
                             defer target.deinit();
 
-                            const symlinker: Symlinker = .init(dest.sliceZ(), target.sliceZ(), dep_store_path.sliceZ());
+                            const symlinker: Symlinker = .init(&dest, &target, &dep_store_path);
 
                             const link_strategy: Symlinker.Strategy = if (pkg_res.tag == .root or pkg_res.tag == .workspace)
                                 // root and workspace packages ensure their dependency symlinks
@@ -1876,38 +1745,37 @@ pub const Store = struct {
                             switch (symlinker.ensureSymlink(link_strategy)) {
                                 .result => {},
                                 .err => |err| {
-                                    this.fail(.{ .@"symlink dependencies" = err });
-                                    return;
+                                    return this.fail(.{ .symlink_dependencies = err });
                                 },
                             }
                         }
-                        continue :next_step this.nextStep();
+                        continue :next_step this.nextStep(current_step);
                     },
-                    .@"symlink dependency binaries" => {
-                        {
-                            // preinstall scripts need to run before binaries can be linked. Block here if any dependencies
-                            // of this entry are not finished. Do not count cycles towards blocking.
+                    inline .check_if_blocked => |current_step| {
+                        // preinstall scripts need to run before binaries can be linked. Block here if any dependencies
+                        // of this entry are not finished. Do not count cycles towards blocking.
 
-                            var parent_dedupe: std.AutoArrayHashMap(Entry.Id, void) = .init(bun.default_allocator);
-                            defer parent_dedupe.deinit();
+                        var parent_dedupe: std.AutoArrayHashMap(Entry.Id, void) = .init(bun.default_allocator);
+                        defer parent_dedupe.deinit();
 
-                            const dependencies = entry_dependencies[this.entry_id.get()];
-                            for (dependencies.slice()) |dep| {
-                                if (entry_steps[dep.entry_id.get()].load(.monotonic) != .done) {
-                                    if (installer.store.isCycle(this.entry_id, dep.entry_id, &parent_dedupe)) {
-                                        parent_dedupe.clearRetainingCapacity();
-                                        continue;
-                                    }
-
-                                    this.blocked();
-                                    return;
+                        const deps = entry_dependencies[this.entry_id.get()];
+                        for (deps.slice()) |dep| {
+                            if (entry_steps[dep.entry_id.get()].load(.monotonic) != .done) {
+                                if (installer.store.isCycle(this.entry_id, dep.entry_id, &parent_dedupe)) {
+                                    parent_dedupe.clearRetainingCapacity();
+                                    continue;
                                 }
+
+                                entry_steps[this.entry_id.get()].store(.blocked, .monotonic);
+                                return this.yield();
                             }
                         }
 
+                        continue :next_step this.nextStep(current_step);
+                    },
+                    inline .symlink_dependency_binaries => |current_step| {
                         installer.linkDependencyBins(this.entry_id) catch |err| {
-                            this.fail(.{ .binaries = err });
-                            return;
+                            return this.fail(.{ .binaries = err });
                         };
 
                         switch (pkg_res.tag) {
@@ -1929,7 +1797,7 @@ pub const Store = struct {
                             => {
                                 const string_buf = lockfile.buffers.string_bytes.items;
 
-                                var hidden_hoisted_node_modules: bun.RelPath(.{}) = .init();
+                                var hidden_hoisted_node_modules: bun.Path(.{ .sep = .auto }) = .init();
                                 defer hidden_hoisted_node_modules.deinit();
 
                                 hidden_hoisted_node_modules.append(
@@ -1937,7 +1805,7 @@ pub const Store = struct {
                                 );
                                 hidden_hoisted_node_modules.append(pkg_name.slice(installer.lockfile.buffers.string_bytes.items));
 
-                                var target: bun.RelPath(.{}) = .init();
+                                var target: bun.RelPath(.{ .sep = .auto }) = .init();
                                 defer target.deinit();
 
                                 target.append("..");
@@ -1950,21 +1818,21 @@ pub const Store = struct {
                                     pkg_name.slice(string_buf),
                                 });
 
-                                var full_target: bun.AbsPath(.{}) = .initTopLevelDir();
+                                var full_target: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                                 defer full_target.deinit();
 
                                 installer.appendStorePath(&full_target, this.entry_id);
 
-                                const symlinker: Symlinker = .init(hidden_hoisted_node_modules.sliceZ(), target.sliceZ(), full_target.sliceZ());
+                                const symlinker: Symlinker = .init(&hidden_hoisted_node_modules, &target, &full_target);
                                 _ = symlinker.ensureSymlink(.ignore_failure);
                             },
                         }
 
-                        continue :next_step this.nextStep();
+                        continue :next_step this.nextStep(current_step);
                     },
-                    .@"run preinstall" => {
+                    inline .run_preinstall => |current_step| {
                         if (!installer.manager.options.do.run_scripts or this.entry_id == .root) {
-                            continue :next_step this.nextStep();
+                            continue :next_step this.nextStep(current_step);
                         }
 
                         const string_buf = installer.lockfile.buffers.string_bytes.items;
@@ -2000,8 +1868,7 @@ pub const Store = struct {
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                             ) catch |err| {
-                                this.fail(.{ .@"run preinstall" = err });
-                                return;
+                                return this.fail(.{ .run_preinstall = err });
                             };
 
                             if (scripts_list) |list| {
@@ -2025,7 +1892,7 @@ pub const Store = struct {
 
                                 if (list.first_index != 0) {
                                     // has scripts but not a preinstall
-                                    continue :next_step this.nextStep();
+                                    continue :next_step this.nextStep(current_step);
                                 }
 
                                 installer.manager.spawnPackageLifecycleScripts(
@@ -2038,25 +1905,23 @@ pub const Store = struct {
                                         .installer = installer,
                                     },
                                 ) catch |err| {
-                                    this.fail(.{ .@"run preinstall" = err });
-                                    return;
+                                    return this.fail(.{ .run_preinstall = err });
                                 };
 
-                                this.pause();
-                                return;
+                                return this.yield();
                             }
                         }
 
-                        continue :next_step this.nextStep();
+                        continue :next_step this.nextStep(current_step);
                     },
-                    .binaries => {
+                    inline .binaries => |current_step| {
                         if (this.entry_id == .root) {
-                            continue :next_step this.nextStep();
+                            continue :next_step this.nextStep(current_step);
                         }
 
                         const bin = pkg_bins[pkg_id];
                         if (bin.tag == .none) {
-                            continue :next_step this.nextStep();
+                            continue :next_step this.nextStep(current_step);
                         }
 
                         const string_buf = installer.lockfile.buffers.string_bytes.items;
@@ -2092,19 +1957,18 @@ pub const Store = struct {
                         bin_linker.link(false);
 
                         if (bin_linker.err) |err| {
-                            this.fail(.{ .binaries = err });
-                            return;
+                            return this.fail(.{ .binaries = err });
                         }
 
-                        continue :next_step this.nextStep();
+                        continue :next_step this.nextStep(current_step);
                     },
-                    .@"run (post)install and (pre/post)prepare" => {
+                    inline .@"run (post)install and (pre/post)prepare" => |current_step| {
                         if (!installer.manager.options.do.run_scripts or this.entry_id == .root) {
-                            continue :next_step this.nextStep();
+                            continue :next_step this.nextStep(current_step);
                         }
 
                         var list = entry_scripts[this.entry_id.get()] orelse {
-                            continue :next_step this.nextStep();
+                            continue :next_step this.nextStep(current_step);
                         };
 
                         if (list.first_index == 0) {
@@ -2117,7 +1981,7 @@ pub const Store = struct {
                         }
 
                         if (list.first_index == 0) {
-                            continue :next_step this.nextStep();
+                            continue :next_step this.nextStep(current_step);
                         }
 
                         const dep = installer.lockfile.buffers.dependencies.items[dep_id];
@@ -2132,23 +1996,23 @@ pub const Store = struct {
                                 .installer = installer,
                             },
                         ) catch |err| {
-                            this.fail(.{ .@"run (post)install and (pre/post)prepare" = err });
-                            return;
+                            return this.fail(.{ .@"run (post)install and (pre/post)prepare" = err });
                         };
 
-                        this.pause();
-                        return;
+                        // when these scripts finish the package install will be
+                        // complete. the task does not have anymore work to complete
+                        // so it does not return to the thread pool.
+
+                        return this.yield();
                     },
 
                     .done => {
-                        this.done();
-                        return;
+                        return this.yield();
                     },
 
                     .blocked => {
                         bun.debugAssert(false);
-                        this.done();
-                        return;
+                        return this.yield();
                     },
                 };
             }
@@ -2156,10 +2020,129 @@ pub const Store = struct {
             pub fn callback(task: *ThreadPool.Task) void {
                 const this: *Task = @fieldParentPtr("task", task);
 
-                this.run() catch |err| switch (err) {
+                const res = this.run() catch |err| switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                 };
+
+                switch (res) {
+                    .yield => {},
+                }
             }
+        };
+
+        const Symlinker = struct {
+            dest: *const bun.Path(.{ .sep = .auto }),
+            target: *const bun.RelPath(.{ .sep = .auto }),
+            fallback_junction_target: *const bun.AbsPath(.{ .sep = .auto }),
+
+            pub fn init(
+                dest: *const bun.Path(.{ .sep = .auto }),
+                target: *const bun.RelPath(.{ .sep = .auto }),
+                fallback_junction_target: *const bun.AbsPath(.{ .sep = .auto }),
+            ) @This() {
+                return .{
+                    .dest = dest,
+                    .target = target,
+                    .fallback_junction_target = fallback_junction_target,
+                };
+            }
+
+            pub fn symlink(this: *const @This()) sys.Maybe(void) {
+                if (comptime Environment.isWindows) {
+                    return sys.symlinkOrJunction(this.dest.sliceZ(), this.target.sliceZ(), this.fallback_junction_target.sliceZ());
+                }
+                return sys.symlink(this.target.sliceZ(), this.dest.sliceZ());
+            }
+
+            pub const Strategy = enum {
+                expect_existing,
+                expect_missing,
+                ignore_failure,
+            };
+
+            pub fn ensureSymlink(
+                this: *const @This(),
+                strategy: Strategy,
+            ) sys.Maybe(void) {
+                return switch (strategy) {
+                    .ignore_failure => {
+                        return switch (this.symlink()) {
+                            .result => .success,
+                            .err => |symlink_err| switch (symlink_err.getErrno()) {
+                                .NOENT => {
+                                    const dest_parent = this.dest.dirname() orelse {
+                                        return .success;
+                                    };
+
+                                    FD.cwd().makePath(u8, dest_parent) catch {};
+                                    _ = this.symlink();
+                                    return .success;
+                                },
+                                else => .success,
+                            },
+                        };
+                    },
+                    .expect_missing => {
+                        return switch (this.symlink()) {
+                            .result => .success,
+                            .err => |symlink_err1| switch (symlink_err1.getErrno()) {
+                                .NOENT => {
+                                    const dest_parent = this.dest.dirname() orelse {
+                                        return .initErr(symlink_err1);
+                                    };
+
+                                    FD.cwd().makePath(u8, dest_parent) catch {};
+                                    return this.symlink();
+                                },
+                                .EXIST => {
+                                    FD.cwd().deleteTree(this.dest.sliceZ()) catch {};
+                                    return this.symlink();
+                                },
+                                else => .initErr(symlink_err1),
+                            },
+                        };
+                    },
+                    .expect_existing => {
+                        const current_link_buf = bun.path_buffer_pool.get();
+                        defer bun.path_buffer_pool.put(current_link_buf);
+                        const current_link = switch (sys.readlink(this.dest.sliceZ(), current_link_buf)) {
+                            .result => |res| res,
+                            .err => |readlink_err| return switch (readlink_err.getErrno()) {
+                                .NOENT => switch (this.symlink()) {
+                                    .result => .success,
+                                    .err => |symlink_err| switch (symlink_err.getErrno()) {
+                                        .NOENT => {
+                                            const dest_parent = this.dest.dirname() orelse {
+                                                return .initErr(symlink_err);
+                                            };
+
+                                            FD.cwd().makePath(u8, dest_parent) catch {};
+                                            return this.symlink();
+                                        },
+                                        else => .initErr(symlink_err),
+                                    },
+                                },
+                                else => {
+                                    FD.cwd().deleteTree(this.dest.sliceZ()) catch {};
+                                    return this.symlink();
+                                },
+                            },
+                        };
+
+                        if (strings.eqlLong(current_link, this.target.sliceZ(), true)) {
+                            return .success;
+                        }
+
+                        // this existing link is pointing to the wrong package
+                        _ = sys.unlink(this.dest.sliceZ());
+                        return this.symlink();
+                    },
+                };
+            }
+        };
+
+        const Hardlinker = struct {
+            src: FD,
         };
 
         const PatchInfo = union(enum) {

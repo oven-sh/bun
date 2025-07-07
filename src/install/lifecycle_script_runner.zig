@@ -391,7 +391,7 @@ pub const LifecycleScriptSubprocess = struct {
                         // preinstall
                         0 => {
                             const previous_step = ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].swap(.binaries, .monotonic);
-                            bun.debugAssert(previous_step == .@"run preinstall");
+                            bun.debugAssert(previous_step == .run_preinstall);
                             ctx.installer.resumeTask(ctx.entry_id);
                             _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
                             this.deinit();
@@ -425,7 +425,6 @@ pub const LifecycleScriptSubprocess = struct {
                     bun.debugAssert(this.current_script_index != 0);
                     const previous_step = ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].swap(.done, .monotonic);
                     bun.debugAssert(previous_step == .@"run (post)install and (pre/post)prepare");
-                    this.manager.decrementPendingTasks();
                     ctx.installer.onTask(ctx.entry_id);
                 }
 

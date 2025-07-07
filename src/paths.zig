@@ -16,7 +16,8 @@ pub const os_path_buffer_pool = pools.os_path_buffer_pool;
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.max_path_bytes;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
-pub const WPathBuffer = [std.os.windows.PATH_MAX_WIDE]u16;
+pub const PATH_MAX_WIDE = std.os.windows.PATH_MAX_WIDE;
+pub const WPathBuffer = [PATH_MAX_WIDE]u16;
 pub const OSPathChar = if (Environment.isWindows) u16 else u8;
 pub const OSPathSliceZ = [:0]const OSPathChar;
 pub const OSPathSlice = []const OSPathChar;

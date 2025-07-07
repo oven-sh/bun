@@ -306,7 +306,7 @@ pub const Mapping = struct {
             }
         };
 
-        pub fn ensureWithNames(this: *List, allocator: std.mem.Allocator) !void {
+        fn ensureWithNames(this: *List, allocator: std.mem.Allocator) !void {
             if (this.impl == .with_names) return;
 
             var without_names = this.impl.without_names;

@@ -36,6 +36,7 @@ fn findSourceMap(
 
             source_url_string.deref();
             source_url_slice.deinit();
+            source_url_string = path;
             source_url_slice = path.toUTF8(bun.default_allocator);
             source_url = source_url_slice.slice();
         }

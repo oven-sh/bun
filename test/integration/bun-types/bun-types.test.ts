@@ -124,10 +124,10 @@ describe("@types/bun integration test", () => {
       "Overload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number", // This line truncates because we've seen TypeScript emit differing messages in different environments
       `Type '"direct"' is not assignable to type '"bytes"'`,
       "error TS2339: Property 'write' does not exist on type 'ReadableByteStreamController'.",
-      "error TS2339: Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>",
-      "error TS2339: Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>",
-      "error TS2339: Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>",
-      "error TS2339: Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>",
+      "error TS2339: Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+      "error TS2339: Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+      "error TS2339: Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+      "error TS2339: Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
 
       "websocket.ts",
       `error TS2353: Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.`,

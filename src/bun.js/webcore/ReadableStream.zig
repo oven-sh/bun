@@ -26,7 +26,7 @@ pub const Strong = struct {
 
     pub fn get(this: *const Strong, global: *JSC.JSGlobalObject) ?ReadableStream {
         if (this.held.get()) |value| {
-            return ReadableStream.fromJS(value, global);
+            return ReadableStream.fromJS(value, global) catch null; // TODO: properly propagate exception upwards
         }
         return null;
     }
@@ -38,9 +38,9 @@ pub const Strong = struct {
         this.held.deinit();
     }
 
-    pub fn tee(this: *Strong, global: *JSGlobalObject) ?ReadableStream {
+    pub fn tee(this: *Strong, global: *JSGlobalObject) bun.JSError!?ReadableStream {
         if (this.get(global)) |stream| {
-            const first, const second = stream.tee(global) orelse return null;
+            const first, const second = (try stream.tee(global)) orelse return null;
             this.held.set(global, first.value);
             return second;
         }
@@ -49,14 +49,14 @@ pub const Strong = struct {
 };
 
 extern fn ReadableStream__tee(stream: JSValue, globalThis: *JSGlobalObject, out1: *JSC.JSValue, out2: *JSC.JSValue) bool;
-pub fn tee(this: *const ReadableStream, globalThis: *JSGlobalObject) ?struct { ReadableStream, ReadableStream } {
+pub fn tee(this: *const ReadableStream, globalThis: *JSGlobalObject) bun.JSError!?struct { ReadableStream, ReadableStream } {
     var out1: JSC.JSValue = .zero;
     var out2: JSC.JSValue = .zero;
     if (!ReadableStream__tee(this.value, globalThis, &out1, &out2)) {
         return null;
     }
-    const out_stream2 = ReadableStream.fromJS(out2, globalThis) orelse return null;
-    const out_stream1 = ReadableStream.fromJS(out1, globalThis) orelse return null;
+    const out_stream2 = try ReadableStream.fromJS(out2, globalThis) orelse return null;
+    const out_stream1 = try ReadableStream.fromJS(out1, globalThis) orelse return null;
     return .{ out_stream1, out_stream2 };
 }
 
@@ -64,8 +64,8 @@ pub fn toJS(this: *const ReadableStream) JSValue {
     return this.value;
 }
 
-pub fn reloadTag(this: *ReadableStream, globalThis: *JSC.JSGlobalObject) void {
-    if (ReadableStream.fromJS(this.value, globalThis)) |stream| {
+pub fn reloadTag(this: *ReadableStream, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
+    if (try ReadableStream.fromJS(this.value, globalThis)) |stream| {
         this.* = stream;
     } else {
         this.* = .{ .ptr = .{ .Invalid = {} }, .value = .zero };
@@ -80,7 +80,7 @@ pub fn toAnyBlob(
         return null;
     }
 
-    stream.reloadTag(globalThis);
+    stream.reloadTag(globalThis) catch {}; // TODO: properly propagate exception upwards
 
     switch (stream.ptr) {
         .Blob => |blobby| {
@@ -234,13 +234,13 @@ pub fn isLocked(this: *const ReadableStream, globalObject: *JSGlobalObject) bool
     return ReadableStream__isLocked(this.value, globalObject);
 }
 
-pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {
+pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) bun.JSError!?ReadableStream {
     JSC.markBinding(@src());
     value.ensureStillAlive();
     var out = value;
 
     var ptr: ?*anyopaque = null;
-    return switch (ReadableStreamTag__tagged(globalThis, &out, &ptr)) {
+    return switch (try bun.jsc.fromJSHostCallGeneric(globalThis, @src(), ReadableStreamTag__tagged, .{ globalThis, &out, &ptr })) {
         .JavaScript => ReadableStream{
             .value = out,
             .ptr = .{

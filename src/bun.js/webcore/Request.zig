@@ -66,8 +66,8 @@ pub export fn Request__setTimeout(this: *Request, seconds: JSC.JSValue, globalTh
     this.setTimeout(seconds.to(c_uint));
 }
 
-pub export fn Request__clone(this: *Request, globalThis: *JSC.JSGlobalObject) *Request {
-    return this.clone(bun.default_allocator, globalThis);
+pub export fn Request__clone(this: *Request, globalThis: *JSC.JSGlobalObject) ?*Request {
+    return this.clone(bun.default_allocator, globalThis) catch null;
 }
 
 comptime {
@@ -568,7 +568,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
         if (value_type == .DOMWrapper) {
             if (value.asDirect(Request)) |request| {
                 if (values_to_try.len == 1) {
-                    request.cloneInto(&req, globalThis.allocator(), globalThis, fields.contains(.url));
+                    try request.cloneInto(&req, globalThis.allocator(), globalThis, fields.contains(.url));
                     success = true;
                     return req;
                 }
@@ -591,8 +591,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
                     switch (request.body.value) {
                         .Null, .Empty, .Used => {},
                         else => {
-                            req.body.value = request.body.value.clone(globalThis);
-                            if (globalThis.hasException()) return error.JSError;
+                            req.body.value = try request.body.value.clone(globalThis);
                             fields.insert(.body);
                         },
                     }
@@ -623,7 +622,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
                     switch (response.body.value) {
                         .Null, .Empty, .Used => {},
                         else => {
-                            req.body.value = response.body.value.clone(globalThis);
+                            req.body.value = try response.body.value.clone(globalThis);
                             fields.insert(.body);
                         },
                     }
@@ -769,12 +768,7 @@ pub fn doClone(
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
     const this_value = callframe.this();
-    var cloned = this.clone(bun.default_allocator, globalThis);
-
-    if (globalThis.hasException()) {
-        cloned.finalize();
-        return .zero;
-    }
+    const cloned = try this.clone(bun.default_allocator, globalThis);
 
     const js_wrapper = cloned.toJS(globalThis);
     if (js_wrapper != .zero) {
@@ -899,16 +893,11 @@ pub fn cloneInto(
     allocator: std.mem.Allocator,
     globalThis: *JSGlobalObject,
     preserve_url: bool,
-) void {
+) bun.JSError!void {
     _ = allocator;
     this.ensureURL() catch {};
     const vm = globalThis.bunVM();
-    const body = vm.initRequestBodyValue(this.body.value.clone(globalThis)) catch {
-        if (!globalThis.hasException()) {
-            globalThis.throw("Failed to clone request", .{}) catch {};
-        }
-        return;
-    };
+    const body = try vm.initRequestBodyValue(try this.body.value.clone(globalThis));
     const original_url = req.url;
 
     req.* = Request{
@@ -923,9 +912,10 @@ pub fn cloneInto(
     }
 }
 
-pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Request {
+pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) bun.JSError!*Request {
     const req = Request.new(undefined);
-    this.cloneInto(req, allocator, globalThis, false);
+    errdefer bun.destroy(req);
+    try this.cloneInto(req, allocator, globalThis, false);
     return req;
 }
 

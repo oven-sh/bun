@@ -606,7 +606,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     JSC::EncodedJSValue encodedIsBake)
 {
     auto& vm = plugin->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* setupFunction = jsCast<JSFunction*>(plugin->setupFunction.get(plugin));
     if (!setupFunction) [[unlikely]]
@@ -624,7 +624,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     arguments.append(JSValue::decode(encodedIsBake));
     auto* lexicalGlobalObject = jsCast<JSFunction*>(JSValue::decode(encodedSetupFunction))->globalObject();
 
-    return JSC::JSValue::encode(JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments)));
 }
 
 extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* config)

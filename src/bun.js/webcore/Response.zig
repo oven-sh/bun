@@ -260,11 +260,7 @@ pub fn doClone(
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSValue {
     const this_value = callframe.this();
-    const cloned = this.clone(globalThis);
-    if (globalThis.hasException()) {
-        cloned.finalize();
-        return .zero;
-    }
+    const cloned = try this.clone(globalThis);
 
     const js_wrapper = Response.makeMaybePooled(globalThis, cloned);
 
@@ -293,17 +289,17 @@ pub fn makeMaybePooled(globalObject: *JSC.JSGlobalObject, ptr: *Response) JSValu
 pub fn cloneValue(
     this: *Response,
     globalThis: *JSGlobalObject,
-) Response {
+) bun.JSError!Response {
     return Response{
-        .body = this.body.clone(globalThis),
+        .body = try this.body.clone(globalThis),
         .init = this.init.clone(globalThis),
         .url = this.url.clone(),
         .redirected = this.redirected,
     };
 }
 
-pub fn clone(this: *Response, globalThis: *JSGlobalObject) *Response {
-    return bun.new(Response, this.cloneValue(globalThis));
+pub fn clone(this: *Response, globalThis: *JSGlobalObject) bun.JSError!*Response {
+    return bun.new(Response, try this.cloneValue(globalThis));
 }
 
 pub fn getStatus(

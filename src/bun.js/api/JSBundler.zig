@@ -999,14 +999,14 @@ pub const JSBundler = struct {
             JSC.markBinding(@src());
             const tracer = bun.perf.trace("JSBundler.addPlugin");
             defer tracer.end();
-            return JSBundlerPlugin__runSetupFunction(
+            return bun.jsc.fromJSHostCall(globalObject(this), @src(), JSBundlerPlugin__runSetupFunction, .{
                 this,
                 object,
                 config,
                 onstart_promises_array,
                 JSValue.jsBoolean(is_last),
                 JSValue.jsBoolean(is_bake),
-            ).unwrap();
+            });
         }
 
         pub fn drainDeferred(this: *Plugin, rejected: bool) void {
@@ -1027,7 +1027,7 @@ pub const JSBundler = struct {
             JSC.JSValue,
             JSC.JSValue,
             JSC.JSValue,
-        ) JSValue.MaybeException;
+        ) JSValue;
 
         pub export fn JSBundlerPlugin__addError(
             ctx: *anyopaque,

@@ -495,11 +495,11 @@ const Readable = union(enum) {
         }
     }
 
-    pub fn toJS(this: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) JSValue {
+    pub fn toJS(this: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) bun.JSError!JSValue {
         _ = exited; // autofix
         switch (this.*) {
             // should only be reachable when the entire output is buffered.
-            .memfd => return this.toBufferedValue(globalThis) catch .zero,
+            .memfd => return this.toBufferedValue(globalThis),
 
             .fd => |fd| {
                 return fd.toJS(globalThis);
@@ -516,9 +516,7 @@ const Readable = union(enum) {
                     return JSC.WebCore.ReadableStream.empty(globalThis);
                 }
 
-                const own = buffer.takeSlice(bun.default_allocator) catch {
-                    globalThis.throwOutOfMemory() catch return .zero;
-                };
+                const own = try buffer.takeSlice(bun.default_allocator);
                 return JSC.WebCore.ReadableStream.fromOwnedSlice(globalThis, own, 0);
             },
             else => {
@@ -559,26 +557,17 @@ const Readable = union(enum) {
     }
 };
 
-pub fn getStderr(
-    this: *Subprocess,
-    globalThis: *JSGlobalObject,
-) JSValue {
+pub fn getStderr(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     this.observable_getters.insert(.stderr);
     return this.stderr.toJS(globalThis, this.hasExited());
 }
 
-pub fn getStdin(
-    this: *Subprocess,
-    globalThis: *JSGlobalObject,
-) JSValue {
+pub fn getStdin(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     this.observable_getters.insert(.stdin);
     return this.stdin.toJS(globalThis, this);
 }
 
-pub fn getStdout(
-    this: *Subprocess,
-    globalThis: *JSGlobalObject,
-) JSValue {
+pub fn getStdout(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     this.observable_getters.insert(.stdout);
     // NOTE: ownership of internal buffers is transferred to the JSValue, which
     // gets cached on JSSubprocess (created via bindgen). This makes it
@@ -586,11 +575,7 @@ pub fn getStdout(
     return this.stdout.toJS(globalThis, this.hasExited());
 }
 
-pub fn asyncDispose(
-    this: *Subprocess,
-    global: *JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSValue {
+pub fn asyncDispose(this: *Subprocess, global: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     if (this.process.hasExited()) {
         // rely on GC to clean everything up in this case
         return .js_undefined;
@@ -1110,7 +1095,7 @@ pub const PipeReader = struct {
             this.reader.watch();
     }
 
-    pub fn toReadableStream(this: *PipeReader, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toReadableStream(this: *PipeReader, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         defer this.detach();
 
         switch (this.state) {
@@ -1124,9 +1109,9 @@ pub const PipeReader = struct {
                 return JSC.WebCore.ReadableStream.fromOwnedSlice(globalObject, bytes, 0);
             },
             .err => |err| {
-                _ = err; // autofix
+                _ = err;
                 const empty = JSC.WebCore.ReadableStream.empty(globalObject);
-                JSC.WebCore.ReadableStream.cancel(&JSC.WebCore.ReadableStream.fromJS(empty, globalObject).?, globalObject);
+                JSC.WebCore.ReadableStream.cancel(&(try JSC.WebCore.ReadableStream.fromJS(empty, globalObject)).?, globalObject);
                 return empty;
             },
         }

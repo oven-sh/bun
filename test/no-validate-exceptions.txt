@@ -271,117 +271,6 @@ test/js/deno/url/urlsearchparams.test.ts
 test/js/deno/v8/error.test.ts
 test/js/first_party/undici/undici.test.ts
 test/js/junit-reporter/junit.test.js
-test/js/node/assert/assert-promise.test.ts
-test/js/node/assert/assert.spec.ts
-test/js/node/async_hooks/AsyncLocalStorage.test.ts
-test/js/node/async_hooks/AsyncLocalStorage-tracking.test.ts
-test/js/node/buffer-concat.test.ts
-test/js/node/buffer.test.js
-test/js/node/child_process/child-process-exec.test.ts
-test/js/node/child_process/child-process-stdio.test.js
-test/js/node/child_process/child_process-node.test.js
-test/js/node/child_process/child_process_ipc.test.js
-test/js/node/child_process/child_process_ipc_large_disconnect.test.js
-test/js/node/child_process/child_process_send_cb.test.js
-test/js/node/cluster.test.ts
-test/js/node/cluster/test-docs-http-server.ts
-test/js/node/cluster/test-worker-no-exit-http.ts
-test/js/node/crypto/crypto-hmac-algorithm.test.ts
-test/js/node/crypto/crypto-oneshot.test.ts
-test/js/node/crypto/crypto-random.test.ts
-test/js/node/crypto/crypto-rsa.test.js
-test/js/node/crypto/crypto.hmac.test.ts
-test/js/node/crypto/crypto.key-objects.test.ts
-test/js/node/crypto/crypto.test.ts
-test/js/node/crypto/ecdh.test.ts
-test/js/node/crypto/node-crypto.test.js
-test/js/node/crypto/pbkdf2.test.ts
-test/js/node/diagnostics_channel/diagnostics_channel.test.ts
-test/js/node/dns/dns-lookup-keepalive.test.ts
-test/js/node/dns/node-dns.test.js
-test/js/node/events/event-emitter.test.ts
-test/js/node/fs/cp.test.ts
-test/js/node/fs/dir.test.ts
-test/js/node/fs/fs-leak.test.js
-test/js/node/fs/fs-mkdir.test.ts
-test/js/node/fs/fs-oom.test.ts
-test/js/node/fs/fs-promises-writeFile-async-iterator.test.ts
-test/js/node/fs/fs-stats-truncate.test.ts
-test/js/node/fs/fs.test.ts
-test/js/node/fs/glob.test.ts
-test/js/node/fs/promises.test.js
-test/js/node/http/client-timeout-error.test.ts
-test/js/node/http/node-fetch.test.js
-test/js/node/http/node-http-backpressure.test.ts
-test/js/node/http/node-http-parser.test.ts
-test/js/node/http/node-http-primoridals.test.ts
-test/js/node/http/node-http-transfer-encoding.test.ts
-test/js/node/http/node-http.test.ts
-test/js/node/http/numeric-header.test.ts
-test/js/node/module/node-module-module.test.js
-test/js/node/module/require-extensions.test.ts
-test/js/node/net/double-connect.test.ts
-test/js/node/net/node-net-allowHalfOpen.test.js
-test/js/node/net/node-net-server.test.ts
-test/js/node/net/node-net.test.ts
-test/js/node/net/server.spec.ts
-test/js/node/no-addons.test.ts
-test/js/node/os/os.test.js
-test/js/node/path/browserify.test.js
-test/js/node/path/matches-glob.test.ts
-test/js/node/path/parse-format.test.js
-test/js/node/path/to-namespaced-path.test.js
-test/js/node/process/call-constructor.test.js
-test/js/node/process/process-args.test.js
-test/js/node/process/process-nexttick.test.js
-test/js/node/process/process-stdin.test.ts
-test/js/node/process/process-stdio.test.ts
-test/js/node/process/process.test.js
-test/js/node/promise/reject-tostring.test.ts
-test/js/node/readline/pause_stdin_should_exit.test.ts
-test/js/node/readline/readline.node.test.ts
-test/js/node/readline/readline_never_unrefs.test.ts
-test/js/node/readline/readline_promises.node.test.ts
-test/js/node/readline/stdin_fell_asleep.test.ts
-test/js/node/stream/node-stream-uint8array.test.ts
-test/js/node/stream/node-stream.test.js
-test/js/node/string-module.test.js
-test/js/node/string_decoder/string-decoder.test.js
-test/js/node/stubs.test.js
-test/js/node/test_runner/node-test.test.ts
-test/js/node/timers.promises/timers.promises.test.ts
-test/js/node/timers/node-timers.test.ts
-test/js/node/tls/fetch-tls-cert.test.ts
-test/js/node/tls/node-tls-cert.test.ts
-test/js/node/tls/node-tls-connect.test.ts
-test/js/node/tls/node-tls-context.test.ts
-test/js/node/tls/node-tls-create-secure-context-args.test.ts
-test/js/node/tls/node-tls-no-cipher-match-error.test.ts
-test/js/node/tls/node-tls-server.test.ts
-test/js/node/tls/node-tls-upgrade.test.ts
-test/js/node/tls/renegotiation.test.ts
-test/js/node/url/url-parse-format.test.js
-test/js/node/url/url-parse-ipv6.test.ts
-test/js/node/url/url-relative.test.js
-test/js/node/url/url.test.ts
-test/js/node/util/bun-inspect.test.ts
-test/js/node/util/custom-inspect.test.js
-test/js/node/util/mime-api.test.ts
-test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js
-test/js/node/util/parse_args/default-args.test.mjs
-test/js/node/util/test-util-types.test.js
-test/js/node/util/util-callbackify.test.js
-test/js/node/util/util-promisify.test.js
-test/js/node/util/util.test.js
-test/js/node/v8/capture-stack-trace.test.js
-test/js/node/vm/happy-dom-vm-16277.test.ts
-test/js/node/vm/sourcetextmodule-leak.test.ts
-test/js/node/vm/vm-sourceUrl.test.ts
-test/js/node/vm/vm.test.ts
-test/js/node/watch/fs.watchFile.test.ts
-test/js/node/worker_threads/15787.test.ts
-test/js/node/zlib/zlib.kMaxLength.global.test.js
-test/js/node/zlib/zlib.test.js
 test/js/sql/local-sql.test.ts
 test/js/sql/sql.test.ts
 test/js/third_party/@azure/service-bus/azure-service-bus.test.ts
@@ -715,6 +604,11 @@ test/js/node/test/parallel/test-require-dot.js
 test/js/node/test/parallel/test-util-promisify-custom-names.mjs
 test/js/node/test/parallel/test-whatwg-readablestream.mjs
 test/js/node/test/parallel/test-worker.mjs
+test/js/node/events/event-emitter.test.ts
+test/js/node/module/node-module-module.test.js
+test/js/node/process/call-constructor.test.js
+test/js/node/stubs.test.js
+test/js/node/timers/node-timers.test.ts
 
 # uses node:test
 test/js/node/test/parallel/test-fs-write-stream-flush.js
@@ -736,6 +630,9 @@ test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js
 test/js/node/test/parallel/test-cluster-disconnect-idle-worker.js
 test/js/node/test/parallel/test-cluster-disconnect-leak.js
 test/js/node/test/parallel/test-os.js
+test/js/node/os/os.test.js
+test/js/node/util/util-callbackify.test.js
+test/js/node/vm/happy-dom-vm-16277.test.ts
 # ProgramExecutable::initializeGlobalProperties
 # missing RELEASE_AND_RETURN
 test/js/node/test/parallel/test-repl-syntax-error-handling.js
@@ -745,10 +642,15 @@ test/js/node/test/parallel/test-vm-module-errors.js
 # JSModuleNamespaceObject::overrideExportValue
 # missing RETURN_IF_EXCEPTION
 test/js/node/test/parallel/test-vm-module-synthetic.js
+# ErrorInstance::put
+# missing RETURN_IF_EXCEPTION
+test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js
+test/js/node/vm/vm.test.ts
 
 # llhttp
 test/js/node/test/parallel/test-http-parser-bad-ref.js
 test/js/node/test/parallel/test-http-parser.js
+test/js/node/http/node-http-parser.test.ts
 
 # try again later
 test/js/node/test/parallel/test-promises-warning-on-unhandled-rejection.js
@@ -760,3 +662,6 @@ test/js/node/test/parallel/test-webcrypto-encrypt-decrypt-aes.js
 
 # works but look again
 # test/js/node/test/parallel/test-worker-nested-uncaught.js
+
+# might be hanging or just realllllly slow in debug
+# test/js/node/http/node-http.test.ts

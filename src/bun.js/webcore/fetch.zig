@@ -193,7 +193,7 @@ pub const FetchTasklet = struct {
                     // just grab the ref
                     return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
                 }
-                const readable = body_value.toReadableStream(globalThis);
+                const readable = try body_value.toReadableStream(globalThis);
                 if (!readable.isEmptyOrUndefinedOrNull() and body_value == .Locked and body_value.Locked.readable.has()) {
                     return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
                 }
@@ -2067,7 +2067,7 @@ pub fn Bun__fetch_(
                 if (req.body.value.Locked.readable.has()) {
                     break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
                 }
-                const readable = req.body.value.toReadableStream(globalThis);
+                const readable = try req.body.value.toReadableStream(globalThis);
                 if (!readable.isEmptyOrUndefinedOrNull() and req.body.value == .Locked and req.body.value.Locked.readable.has()) {
                     break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
                 }
@@ -2342,7 +2342,7 @@ pub fn Bun__fetch_(
         prepare_body: {
             // is a S3 file we can use chunked here
 
-            if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
+            if (try JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
                 var old = body;
                 defer old.detach();
                 body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };

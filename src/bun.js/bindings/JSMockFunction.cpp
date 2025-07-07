@@ -387,7 +387,7 @@ public:
         JSArray* val = calls.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
-            // RETURN_IF_EXCEPTION
+            if (!val) return {};
             this->calls.set(vm(), this, val);
         }
         return val;
@@ -397,7 +397,7 @@ public:
         JSArray* val = contexts.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
-            // RETURN_IF_EXCEPTION
+            if (!val) return {};
             this->contexts.set(vm(), this, val);
         }
         return val;
@@ -407,7 +407,7 @@ public:
         JSArray* val = instances.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
-            // RETURN_IF_EXCEPTION
+            if (!val) return {};
             this->instances.set(vm(), this, val);
         }
         return val;
@@ -417,7 +417,7 @@ public:
         JSArray* val = returnValues.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
-            // RETURN_IF_EXCEPTION
+            if (!val) return {};
             this->returnValues.set(vm(), this, val);
         }
         return val;
@@ -427,7 +427,7 @@ public:
         JSArray* val = invocationCallOrder.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
-            // RETURN_IF_EXCEPTION
+            if (!val) return {};
             this->invocationCallOrder.set(vm(), this, val);
         }
         return val;
@@ -839,6 +839,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     JSC::JSArray* calls = fn->calls.get();
     if (calls) {
         calls->push(globalObject, argumentsArray);
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         JSC::ObjectInitializationScope object(vm);
         calls = JSC::JSArray::tryCreateUninitializedRestricted(
@@ -852,6 +853,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     JSC::JSArray* contexts = fn->contexts.get();
     if (contexts) {
         contexts->push(globalObject, thisValue);
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         JSC::ObjectInitializationScope object(vm);
         contexts = JSC::JSArray::tryCreateUninitializedRestricted(
@@ -866,6 +868,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     JSC::JSArray* invocationCallOrder = fn->invocationCallOrder.get();
     if (invocationCallOrder) {
         invocationCallOrder->push(globalObject, jsNumber(invocationId));
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         JSC::ObjectInitializationScope object(vm);
         invocationCallOrder = JSC::JSArray::tryCreateUninitializedRestricted(
@@ -880,6 +883,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     auto setReturnValue = [&](JSC::JSValue value) -> void {
         if (auto* returnValuesArray = fn->returnValues.get()) {
             returnValuesArray->push(globalObject, value);
+            RETURN_IF_EXCEPTION(scope, {});
             returnValueIndex = returnValuesArray->length() - 1;
         } else {
             JSC::ObjectInitializationScope object(vm);
@@ -989,7 +993,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_mock, (JSC::JSGlobalObject * globa
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     CHECK_IS_MOCK_FUNCTION(JSValue::decode(thisValue))
 
-    return JSValue::encode(thisObject->mock.getInitializedOnMainThread(thisObject));
+    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->mock.getInitializedOnMainThread(thisObject)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))

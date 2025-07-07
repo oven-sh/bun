@@ -1252,7 +1252,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     method,
                 );
             } else if (first_arg.as(Request)) |request_| {
-                request_.cloneInto(
+                try request_.cloneInto(
                     &existing_request,
                     bun.default_allocator,
                     ctx,

@@ -919,6 +919,7 @@ static JSC::Structure* createNodeModuleSourceMapEntryStructure(JSC::VM& vm, JSC:
     structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "originalSource"), 0, offset);
     RELEASE_ASSERT(offset == 4);
     structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->name, 0, offset);
+    RELEASE_ASSERT(offset == 5);
 
     return structure;
 }
@@ -956,6 +957,7 @@ static JSC::Structure* createNodeModuleSourceMapOriginStructure(JSC::VM& vm, JSC
     structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "column"), 0, offset);
     RELEASE_ASSERT(offset == 2);
     structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "fileName"), 0, offset);
+    RELEASE_ASSERT(offset == 3);
 
     return structure;
 }

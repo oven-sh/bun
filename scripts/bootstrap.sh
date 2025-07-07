@@ -770,6 +770,8 @@ setup_node_gyp_cache() {
 		$HOME/.npm/_cacache/node-gyp/$nodejs_version
 		$current_home/.node-gyp/$nodejs_version
 		$current_home/.cache/node-gyp/$nodejs_version
+		$home/.node-gyp/$nodejs_version
+		$home/.cache/node-gyp/$nodejs_version
 	"
 
 	for cache_dir in $cache_locations; do

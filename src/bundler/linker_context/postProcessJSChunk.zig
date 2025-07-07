@@ -26,7 +26,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
     {
-        const print_options = js_printer.Options{
+        const print_options = &js_printer.Options{
             .bundling = true,
             .indent = .{},
             .has_run_symbol_renamer = true,
@@ -820,7 +820,7 @@ pub fn generateEntryPointTailJS(
         };
     }
 
-    const print_options = js_printer.Options{
+    const print_options = &js_printer.Options{
         // TODO: IIFE indent
         .indent = .{},
         .has_run_symbol_renamer = true,

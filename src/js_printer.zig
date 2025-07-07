@@ -456,6 +456,7 @@ pub const Options = struct {
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
     print_dce_annotations: bool = true,
+    input_source_map: ?*bun.sourcemap.ParsedSourceMap = null,
 
     transform_only: bool = false,
     inline_require_and_import_errors: bool = true,
@@ -5225,13 +5226,13 @@ fn NewPrinter(
         pub fn init(
             writer: Writer,
             import_records: []const ImportRecord,
-            opts: Options,
+            opts: *const Options,
             renamer: bun.renamer.Renamer,
             source_map_builder: SourceMap.Chunk.Builder,
         ) Printer {
             var printer = Printer{
                 .import_records = import_records,
-                .options = opts,
+                .options = opts.*,
                 .writer = writer,
                 .renamer = renamer,
                 .source_map_builder = source_map_builder,
@@ -5676,7 +5677,7 @@ const GenerateSourceMap = enum {
 pub fn getSourceMapBuilder(
     comptime generate_source_map: GenerateSourceMap,
     comptime is_bun_platform: bool,
-    opts: Options,
+    opts: *const Options,
     source: *const logger.Source,
     tree: *const Ast,
 ) SourceMap.Chunk.Builder {
@@ -5702,6 +5703,7 @@ pub fn getSourceMapBuilder(
             );
             break :brk .empty;
         },
+        .input_source_map = opts.input_source_map,
     };
 }
 
@@ -5712,7 +5714,7 @@ pub fn printAst(
     symbols: js_ast.Symbol.Map,
     source: *const logger.Source,
     comptime ascii_only: bool,
-    opts: Options,
+    opts: *const Options,
     comptime generate_source_map: bool,
 ) !usize {
     var renamer: rename.Renamer = undefined;
@@ -5836,7 +5838,7 @@ pub fn printAst(
         printer.print("var {require}=import.meta;");
     }
 
-    for (tree.parts.slice()) |part| {
+    for (tree.parts.slice()) |*part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
@@ -5875,7 +5877,7 @@ pub fn printJSON(
     _writer: Writer,
     expr: Expr,
     source: *const logger.Source,
-    opts: Options,
+    opts: *const Options,
 ) !usize {
     const PrinterType = NewPrinter(false, Writer, false, false, true, false);
     const writer = _writer;
@@ -5915,7 +5917,7 @@ pub fn print(
     target: options.Target,
     ast: Ast,
     source: *const logger.Source,
-    opts: Options,
+    opts: *const Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
@@ -5947,7 +5949,7 @@ pub fn printWithWriter(
     target: options.Target,
     ast: Ast,
     source: *const logger.Source,
-    opts: Options,
+    opts: *const Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
@@ -5976,7 +5978,7 @@ pub fn printWithWriterAndPlatform(
     comptime is_bun_platform: bool,
     ast: Ast,
     source: *const logger.Source,
-    opts: Options,
+    opts: *const Options,
     import_records: []const ImportRecord,
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
@@ -6066,7 +6068,7 @@ pub fn printCommonJS(
     symbols: js_ast.Symbol.Map,
     source: *const logger.Source,
     comptime ascii_only: bool,
-    opts: Options,
+    opts: *const Options,
     comptime generate_source_map: bool,
 ) !usize {
     const prev_action = bun.crash_handler.current_action;
@@ -6087,7 +6089,7 @@ pub fn printCommonJS(
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
 
-    for (tree.parts.slice()) |part| {
+    for (tree.parts.slice()) |*part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {

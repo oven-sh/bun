@@ -967,7 +967,7 @@ pub const PublishCommand = struct {
             &writer,
             json.*,
             json_source,
-            .{
+            &.{
                 .minify_whitespace = true,
                 .mangled_props = null,
             },

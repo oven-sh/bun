@@ -242,7 +242,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
                 &package_json_writer,
                 value,
                 source,
-                .{
+                &.{
                     .mangled_props = null,
                 },
             );
@@ -278,7 +278,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             &package_json_writer,
             manifest,
             source,
-            .{
+            &.{
                 .mangled_props = null,
                 .indent = .{
                     .count = 2,

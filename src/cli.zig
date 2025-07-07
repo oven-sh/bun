@@ -388,6 +388,7 @@ pub const Command = struct {
         /// compatibility.
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
+        enable_user_source_maps: bool = false,
     };
 
     var global_cli_ctx: Context = undefined;

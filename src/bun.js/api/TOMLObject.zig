@@ -42,7 +42,7 @@ pub fn parse(
         &writer,
         parse_result,
         source,
-        .{
+        &.{
             .mangled_props = null,
         },
     ) catch {

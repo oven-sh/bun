@@ -334,6 +334,26 @@ pub const Data = union(Tag) {
         pub threadlocal var memory_allocator: ?*ASTMemoryAllocator = null;
         pub threadlocal var disable_reset = false;
 
+        pub const DisableResetScope = struct {
+            no_op: bool,
+
+            pub fn exit(self: DisableResetScope) void {
+                if (!self.no_op)
+                    disable_reset = false;
+            }
+        };
+
+        /// Prevent a call to .reset() from doing anything
+        ///
+        /// This is useful for when you may add additional AST nodes immediately after parsing.
+        pub fn disableResetIfNecessary() DisableResetScope {
+            // If we were using ASTMemoryAllocator, or if we were already disabled, then we shouldn't do anything.
+            const no_op = !disable_reset and memory_allocator == null;
+
+            disable_reset = if (!no_op) true else false;
+            return .{ .no_op = no_op };
+        }
+
         pub fn create() void {
             if (instance != null or memory_allocator != null) {
                 return;

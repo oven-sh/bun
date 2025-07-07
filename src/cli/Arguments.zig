@@ -108,6 +108,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
+    clap.parseParam("--enable-source-maps              Enable input source maps for all files") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -667,6 +668,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.runtime_options.smol = args.flag("--smol");
         ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
         ctx.runtime_options.expose_gc = args.flag("--expose-gc");
+        ctx.runtime_options.enable_user_source_maps = args.flag("--enable-source-maps");
 
         if (args.option("--dns-result-order")) |order| {
             ctx.runtime_options.dns_result_order = order;

@@ -52,6 +52,7 @@ pub const ParseResult = struct {
     input_fd: ?StoredFileDescriptorType = null,
     empty: bool = false,
     pending_imports: _resolver.PendingResolution.List = .{},
+    source_map: ?*bun.sourcemap.ParsedSourceMap = null,
 
     runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
@@ -808,6 +809,7 @@ pub const Transpiler = struct {
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache,
+        input_source_map: ?*bun.sourcemap.ParsedSourceMap,
     ) !usize {
         const tracer = if (enable_source_map)
             bun.perf.trace("JSPrinter.printWithSourceMap")
@@ -825,7 +827,7 @@ pub const Transpiler = struct {
                 js_ast.Symbol.Map.initList(symbols),
                 source,
                 false,
-                .{
+                &.{
                     .bundling = false,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
@@ -838,6 +840,7 @@ pub const Transpiler = struct {
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
                     .hmr_ref = ast.wrapper_ref,
+                    .input_source_map = input_source_map,
                 },
                 enable_source_map,
             ),
@@ -849,7 +852,7 @@ pub const Transpiler = struct {
                 js_ast.Symbol.Map.initList(symbols),
                 source,
                 false,
-                .{
+                &.{
                     .bundling = false,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
@@ -863,6 +866,7 @@ pub const Transpiler = struct {
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
                     .hmr_ref = ast.wrapper_ref,
+                    .input_source_map = input_source_map,
                     .mangled_props = null,
                 },
                 enable_source_map,
@@ -875,7 +879,7 @@ pub const Transpiler = struct {
                     js_ast.Symbol.Map.initList(symbols),
                     source,
                     is_bun,
-                    .{
+                    &.{
                         .bundling = false,
                         .runtime_imports = ast.runtime_imports,
                         .require_ref = ast.require_ref,
@@ -899,6 +903,7 @@ pub const Transpiler = struct {
                         .target = transpiler.options.target,
                         .print_dce_annotations = transpiler.options.emit_dce_annotations,
                         .hmr_ref = ast.wrapper_ref,
+                        .input_source_map = input_source_map,
                         .mangled_props = null,
                     },
                     enable_source_map,
@@ -924,12 +929,13 @@ pub const Transpiler = struct {
             false,
             null,
             null,
+            null,
         );
     }
 
     pub fn printWithSourceMap(
         transpiler: *Transpiler,
-        result: ParseResult,
+        result: *const ParseResult,
         comptime Writer: type,
         writer: Writer,
         comptime format: js_printer.Format,
@@ -945,6 +951,7 @@ pub const Transpiler = struct {
                 false,
                 handler,
                 result.runtime_transpiler_cache,
+                result.source_map,
             );
         }
         return transpiler.printWithSourceMapMaybe(
@@ -956,6 +963,7 @@ pub const Transpiler = struct {
             true,
             handler,
             result.runtime_transpiler_cache,
+            result.source_map,
         );
     }
 
@@ -993,6 +1001,7 @@ pub const Transpiler = struct {
 
         keep_json_and_toml_as_one_statement: bool = false,
         allow_bytecode_cache: bool = false,
+        parse_source_map: bool = false,
     };
 
     pub fn parse(
@@ -1175,6 +1184,43 @@ pub const Transpiler = struct {
                         .loader = loader,
                         .input_fd = input_fd,
                         .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
+                        .source_map = if (this_parse.parse_source_map and value.sourceMappingURL.text.len > 0) brk: {
+                            var arena = bun.ArenaAllocator.init(
+                                // Deliberately use default_allocator instead of
+                                // this_parse.allocator this_parse.allocator may
+                                // be an ArenaAllocator. or it might not be,
+                                // depending on the caller Nested arena
+                                // allocators cause the allocation to be freed
+                                // even later, so it's just wasteful.
+                                bun.default_allocator,
+                            );
+                            defer arena.deinit();
+
+                            const reset_scope = js_ast.Expr.Data.Store.disableResetIfNecessary();
+                            const reset_scope2 = js_ast.Stmt.Data.Store.disableResetIfNecessary();
+                            defer reset_scope.exit();
+                            defer reset_scope2.exit();
+
+                            if (bun.sourcemap.parseSourceMappingURL(
+                                allocator,
+                                arena.allocator(),
+                                source,
+                                value.sourceMappingURL.text,
+                                .{
+                                    .all = .{
+                                        .line = 0,
+                                        .column = 0,
+                                    },
+                                },
+                            )) |*source_map| {
+                                break :brk source_map.map;
+                            } else |_| {
+                                // TODO: failing to parse the sourcemap shouldn't cause the build to fail.
+                                // so we for now just ignore failure.
+                            }
+
+                            break :brk null;
+                        } else null,
                     },
                     .cached => .{
                         .ast = undefined,
@@ -1209,8 +1255,7 @@ pub const Transpiler = struct {
                     },
                 };
             },
-            // TODO: use lazy export AST
-            inline .toml, .json, .jsonc => |kind| {
+            .toml, .json, .jsonc => |kind| {
                 var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
@@ -1220,7 +1265,7 @@ pub const Transpiler = struct {
                 else if (kind == .toml)
                     TOML.parse(source, transpiler.log, allocator, false) catch return null
                 else
-                    @compileError("unreachable");
+                    unreachable;
 
                 var symbols: []js_ast.Symbol = &.{};
 

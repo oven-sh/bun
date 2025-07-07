@@ -779,7 +779,7 @@ pub const InitCommand = struct {
                 &package_json_writer,
                 js_ast.Expr{ .data = .{ .e_object = fields.object }, .loc = logger.Loc.Empty },
                 &logger.Source.initEmptyFile("package.json"),
-                .{ .mangled_props = null },
+                &.{ .mangled_props = null },
             ) catch |err| {
                 Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                 package_json_file = null;

@@ -3215,7 +3215,7 @@ const Return = struct {
             .bytesRead = JSC.ZigString.init("bytesRead"),
             .buffer = JSC.ZigString.init("buffer"),
         };
-        pub fn toJS(this: *const ReadPromise, ctx: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: *const ReadPromise, ctx: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
                 this.buffer_val.unprotect();
 
@@ -3238,7 +3238,7 @@ const Return = struct {
         };
 
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
-        pub fn toJS(this: *const WritePromise, globalObject: *JSC.JSGlobalObject) JSC.C.JSValueRef {
+        pub fn toJS(this: *const WritePromise, globalObject: *JSC.JSGlobalObject) bun.JSError!bun.jsc.JSValue {
             defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
                 this.buffer_val.unprotect();
 
@@ -3284,7 +3284,7 @@ const Return = struct {
                     var previous_jsstring: ?*JSC.JSString = null;
                     for (this.with_file_types, 0..) |*item, i| {
                         const res = try item.toJSNewlyCreated(globalObject, &previous_jsstring);
-                        array.putIndex(globalObject, @truncate(i), res);
+                        try array.putIndex(globalObject, @truncate(i), res);
                     }
                     return array;
                 },

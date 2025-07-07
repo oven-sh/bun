@@ -344,6 +344,7 @@ src/cli/package_manager_command.zig
 src/cli/patch_command.zig
 src/cli/patch_commit_command.zig
 src/cli/pm_trusted_command.zig
+src/cli/pm_version_command.zig
 src/cli/pm_view_command.zig
 src/cli/publish_command.zig
 src/cli/remove_command.zig

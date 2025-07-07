@@ -10,7 +10,7 @@ const JSPrinter = bun.js_printer;
 const URL = bun.URL;
 const FileSystem = bun.fs.FileSystem;
 
-const SourceMap = @This();
+pub const SourceMap = @This();
 const debug = bun.Output.scoped(.SourceMap, false);
 
 /// Coordinates in source maps are stored using relative offsets for size
@@ -1671,6 +1671,7 @@ const assert = bun.assert;
 pub const coverage = @import("./CodeCoverage.zig");
 pub const VLQ = @import("./VLQ.zig");
 pub const LineOffsetTable = @import("./LineOffsetTable.zig");
+pub const JSSourceMap = @import("./JSSourceMap.zig").JSSourceMap;
 
 const decodeVLQAssumeValid = VLQ.decodeAssumeValid;
 const decodeVLQ = VLQ.decode;

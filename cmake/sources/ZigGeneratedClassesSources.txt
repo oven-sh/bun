@@ -22,3 +22,4 @@ src/bun.js/resolve_message.classes.ts
 src/bun.js/test/jest.classes.ts
 src/bun.js/webcore/encoding.classes.ts
 src/bun.js/webcore/response.classes.ts
+src/bun.js/api/sourcemap.classes.ts

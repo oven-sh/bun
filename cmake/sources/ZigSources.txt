@@ -121,6 +121,8 @@ src/bun.js/bindings/Exception.zig
 src/bun.js/bindings/FetchHeaders.zig
 src/bun.js/bindings/FFI.zig
 src/bun.js/bindings/generated_classes_list.zig
+src/bun.js/bindings/GeneratedBindings.zig
+src/bun.js/bindings/GeneratedJS2Native.zig
 src/bun.js/bindings/GetterSetter.zig
 src/bun.js/bindings/HTTPServerAgent.zig
 src/bun.js/bindings/JSArray.zig
@@ -729,6 +731,7 @@ src/shell/subproc.zig
 src/shell/util.zig
 src/shell/Yield.zig
 src/sourcemap/CodeCoverage.zig
+src/sourcemap/JSSourceMap.zig
 src/sourcemap/LineOffsetTable.zig
 src/sourcemap/sourcemap.zig
 src/sourcemap/VLQ.zig

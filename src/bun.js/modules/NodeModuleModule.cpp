@@ -20,6 +20,7 @@
 #include "ErrorCode.h"
 
 #include "GeneratedNodeModuleModule.h"
+#include "ZigGeneratedClasses.h"
 
 namespace Bun {
 
@@ -34,9 +35,9 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionSourceMap);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSyncBuiltinExports);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSourceMapStub);
 
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
@@ -294,6 +295,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap,
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSourceMapStub,
+    (JSGlobalObject * globalObject,
+        CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    throwException(globalObject, scope, 
+        createError(globalObject, "SourceMap is not yet implemented"_s));
+    return {};
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))
@@ -301,14 +313,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionSourceMap, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    throwException(globalObject, scope,
-        createError(globalObject, "Not implemented"_s));
-    return {};
-}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
     (JSC::JSGlobalObject * globalObject,
@@ -585,10 +589,10 @@ static JSValue getPathCacheObject(VM& vm, JSObject* moduleObject)
 static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    JSFunction* sourceMapFunction = JSFunction::create(
-        vm, globalObject, 1, "SourceMap"_s, jsFunctionSourceMap,
-        ImplementationVisibility::Public, NoIntrinsic, jsFunctionSourceMap);
-    return sourceMapFunction;
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    
+    // Return the actual SourceMap constructor from code generation
+    return zigGlobalObject->JSSourceMapConstructor();
 }
 
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)

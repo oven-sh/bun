@@ -119,11 +119,11 @@ pub const Loader = struct {
         if (this.get("S3_ENDPOINT")) |endpoint_| {
             const url = bun.URL.parse(endpoint_);
             endpoint = url.hostWithPath();
-            insecure_http = !url.isHTTPS();
+            insecure_http = url.isHTTP();
         } else if (this.get("AWS_ENDPOINT")) |endpoint_| {
             const url = bun.URL.parse(endpoint_);
             endpoint = url.hostWithPath();
-            insecure_http = !url.isHTTPS();
+            insecure_http = url.isHTTP();
         }
         if (this.get("S3_BUCKET")) |bucket_| {
             bucket = bucket_;

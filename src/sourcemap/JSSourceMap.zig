@@ -5,11 +5,6 @@ const JSSourceMap = @This();
 sourcemap: *bun.sourcemap.ParsedSourceMap,
 sources: []bun.String = &.{},
 
-pub const js = JSC.Codegen.JSSourceMap;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
-
 fn findSourceMap(
     globalObject: *JSGlobalObject,
     callFrame: *CallFrame,
@@ -238,9 +233,16 @@ comptime {
 // @sortImports
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const CallFrame = JSC.CallFrame;
 const string = bun.string;
+
+const JSC = bun.JSC;
+const CallFrame = JSC.CallFrame;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+
+pub const js = JSC.Codegen.JSSourceMap;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;

@@ -1477,21 +1477,30 @@ declare module "bun" {
        */
       ssl?: TLSOptions | boolean | undefined;
 
-      /**
-       * Unix domain socket path for connection
-       * @default ""
-       */
-      path?: string | undefined;
+      // `.path` is currently unsupported in Bun, the implementation is incomplete.
+      //
+      // /**
+      //  * Unix domain socket path for connection
+      //  * @default ""
+      //  */
+      // path?: string | undefined;
 
       /**
        * Callback function executed when a connection is established
        */
-      onconnect?: (client: SQL) => void | undefined;
+      onconnect?: ((client: SQL) => void) | undefined;
 
       /**
        * Callback function executed when a connection is closed
        */
-      onclose?: (client: SQL) => void | undefined;
+      onclose?: ((client: SQL) => void) | undefined;
+
+      /**
+       * Postgres client runtime configuration options
+       *
+       * @see https://www.postgresql.org/docs/current/runtime-config-client.html
+       */
+      connection?: Record<string, string | boolean | number> | undefined;
 
       /**
        * Maximum number of connections in the pool

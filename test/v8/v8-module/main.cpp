@@ -1064,6 +1064,56 @@ void test_v8_maybe_local(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void perform_object_get_by_index(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Object> object = info[0].As<Object>();
+  uint32_t index = static_cast<uint32_t>(info[1].As<Number>()->Value());
+  MaybeLocal<Value> get_result = object->Get(context, index);
+  LOG_EXPR(get_result.IsEmpty());
+  if (!get_result.IsEmpty()) {
+    LOG_EXPR(describe(isolate, get_result.ToLocalChecked()));
+  }
+}
+
+void perform_object_set_by_index(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Object> object = info[0].As<Object>();
+  uint32_t index = static_cast<uint32_t>(info[1].As<Number>()->Value());
+  Local<Value> value = info[2];
+  Maybe<bool> set_result = object->Set(context, index, value);
+  LOG_EXPR(set_result.IsJust());
+  if (set_result.IsJust()) {
+    LOG_EXPR(set_result.FromJust());
+  }
+}
+
+void perform_object_get_by_key(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Object> object = info[0].As<Object>();
+  Local<Value> key = info[1];
+  MaybeLocal<Value> get_result = object->Get(context, key);
+  LOG_EXPR(get_result.IsEmpty());
+  if (!get_result.IsEmpty()) {
+    LOG_EXPR(describe(isolate, get_result.ToLocalChecked()));
+  }
+}
+
+void perform_object_set_by_key(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Object> object = info[0].As<Object>();
+  Local<Value> key = info[1];
+  Local<Value> value = info[2];
+  Maybe<bool> set_result = object->Set(context, key, value);
+  LOG_EXPR(set_result.IsJust());
+  if (set_result.IsJust()) {
+    LOG_EXPR(set_result.FromJust());
+  }
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -1107,6 +1157,14 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_array_length", test_v8_array_length);
   NODE_SET_METHOD(exports, "test_v8_array_iterate", test_v8_array_iterate);
   NODE_SET_METHOD(exports, "test_v8_maybe_local", test_v8_maybe_local);
+  NODE_SET_METHOD(exports, "perform_object_get_by_index",
+                  perform_object_get_by_index);
+  NODE_SET_METHOD(exports, "perform_object_set_by_index",
+                  perform_object_set_by_index);
+  NODE_SET_METHOD(exports, "perform_object_get_by_key",
+                  perform_object_get_by_key);
+  NODE_SET_METHOD(exports, "perform_object_set_by_key",
+                  perform_object_set_by_key);
 
   // without this, node hits a UAF deleting the Global
   node::AddEnvironmentCleanupHook(context->GetIsolate(),

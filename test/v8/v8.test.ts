@@ -190,6 +190,9 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     it("can get array elements by index using Object::Get(context, index)", async () => {
       await checkSameOutput("test_v8_object_get_by_index", []);
     });
+    it("correctly handles exceptions from get and set", async () => {
+      await checkSameOutput("test_v8_object_get_set_exceptions", []);
+    });
   });
   describe("Array", () => {
     it("can create an array from a C array of Locals", async () => {

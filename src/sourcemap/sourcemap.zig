@@ -1671,7 +1671,7 @@ const assert = bun.assert;
 pub const coverage = @import("./CodeCoverage.zig");
 pub const VLQ = @import("./VLQ.zig");
 pub const LineOffsetTable = @import("./LineOffsetTable.zig");
-pub const JSSourceMap = @import("./JSSourceMap.zig").JSSourceMap;
+pub const JSSourceMap = @import("./JSSourceMap.zig");
 
 const decodeVLQAssumeValid = VLQ.decodeAssumeValid;
 const decodeVLQ = VLQ.decode;

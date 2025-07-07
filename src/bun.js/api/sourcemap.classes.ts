@@ -10,7 +10,7 @@ export default [
         length: 2,
       },
       findEntry: {
-        fn: "findEntry", 
+        fn: "findEntry",
         length: 2,
       },
       payload: {
@@ -24,6 +24,9 @@ export default [
     },
     finalize: true,
     construct: true,
+    constructNeedsThis: true,
+    memoryCost: true,
+    estimatedSize: true,
     structuredClone: false,
   }),
 ];

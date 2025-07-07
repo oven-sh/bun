@@ -26,10 +26,11 @@ namespace Bun {
 
 using namespace JSC;
 
+BUN_DECLARE_HOST_FUNCTION(Bun__JSSourceMap__find);
+
 BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDebugNoop);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionFindSourceMap);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
@@ -37,7 +38,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSyncBuiltinExports);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionSourceMapStub);
 
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
@@ -288,31 +288,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap,
-    (JSGlobalObject * globalObject,
-        CallFrame* callFrame))
-{
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionSourceMapStub,
-    (JSGlobalObject * globalObject,
-        CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    throwException(globalObject, scope, 
-        createError(globalObject, "SourceMap is not yet implemented"_s));
-    return {};
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))
 {
     return JSValue::encode(jsUndefined());
 }
-
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
     (JSC::JSGlobalObject * globalObject,
@@ -590,7 +571,7 @@ static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
     auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
-    
+
     // Return the actual SourceMap constructor from code generation
     return zigGlobalObject->JSSourceMapConstructor();
 }
@@ -851,7 +832,7 @@ builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 0
-findSourceMap           jsFunctionFindSourceMap           Function 0
+findSourceMap           Bun__JSSourceMap__find           Function 1
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1

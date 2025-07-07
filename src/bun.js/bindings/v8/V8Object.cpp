@@ -51,14 +51,10 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
     Identifier identifier = k.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, Nothing<bool>());
 
-    if (!object->put(object, globalObject, identifier, v, slot)) {
-        scope.clearExceptionExceptTermination();
-        return Nothing<bool>();
-    }
-    if (scope.exception()) [[unlikely]] {
-        scope.clearException();
-        return Nothing<bool>();
-    }
+    // TODO: investigate if we should use the return value (seems like not)
+    bool success = object->methodTable()->put(object, globalObject, identifier, v, slot);
+    (void)success;
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
     return Just(true);
 }
 
@@ -71,13 +67,10 @@ Maybe<bool> Object::Set(Local<Context> context, uint32_t index, Local<Value> val
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
-    // TODO: investigate if we should use the return value
-    bool success = object->putByIndex(object, globalObject, index, v, false);
+    // TODO: investigate if we should use the return value (seems like not)
+    bool success = object->methodTable()->putByIndex(object, globalObject, index, v, false);
     (void)success;
-    if (scope.exception()) [[unlikely]] {
-        scope.clearException();
-        return Nothing<bool>();
-    }
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
 
     return Just(true);
 }

@@ -1009,8 +1009,8 @@ pub const JSBundler = struct {
             });
         }
 
-        pub fn drainDeferred(this: *Plugin, rejected: bool) void {
-            JSBundlerPlugin__drainDeferred(this, rejected);
+        pub fn drainDeferred(this: *Plugin, rejected: bool) bun.JSError!void {
+            return bun.jsc.fromJSHostCallGeneric(this.globalObject(), @src(), JSBundlerPlugin__drainDeferred, .{ this, rejected });
         }
 
         pub fn setConfig(this: *Plugin, config: *anyopaque) void {

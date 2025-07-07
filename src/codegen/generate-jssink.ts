@@ -459,7 +459,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     WebCore::${controller}* controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue());
     if (!controller) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
-        return JSC::JSValue::encode(JSC::jsUndefined());
+        return {};
     }
 
     void *ptr = controller->wrapped();
@@ -468,6 +468,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     }
 
     controller->detach();
+    RETURN_IF_EXCEPTION(scope, {});
     return ${name}__endWithSink(ptr, lexicalGlobalObject);
 }
 

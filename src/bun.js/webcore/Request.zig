@@ -217,7 +217,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
-        try formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+        try formatter.printAs(.Private, Writer, writer, try this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
 
         if (this.body.value == .Blob) {
             try writer.writeAll("\n");
@@ -739,7 +739,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
         req.body.value.Blob.content_type.len > 0 and
         !req._headers.?.fastHas(.ContentType))
     {
-        req._headers.?.put(.ContentType, req.body.value.Blob.content_type, globalThis);
+        try req._headers.?.put(.ContentType, req.body.value.Blob.content_type, globalThis);
     }
 
     req.calculateEstimatedByteSize();
@@ -813,7 +813,7 @@ pub fn setFetchHeaders(
 pub fn ensureFetchHeaders(
     this: *Request,
     globalThis: *JSC.JSGlobalObject,
-) *FetchHeaders {
+) bun.JSError!*FetchHeaders {
     if (this._headers) |headers| {
         // headers is already set
         return headers;
@@ -829,7 +829,7 @@ pub fn ensureFetchHeaders(
         if (this.body.value == .Blob) {
             const content_type = this.body.value.Blob.content_type;
             if (content_type.len > 0) {
-                this._headers.?.put(.ContentType, content_type, globalThis);
+                try this._headers.?.put(.ContentType, content_type, globalThis);
             }
         }
     }
@@ -865,8 +865,8 @@ pub fn getFetchHeaders(
 pub fn getHeaders(
     this: *Request,
     globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    return this.ensureFetchHeaders(globalThis).toJS(globalThis);
+) bun.JSError!JSC.JSValue {
+    return (try this.ensureFetchHeaders(globalThis)).toJS(globalThis);
 }
 
 pub fn cloneHeaders(this: *Request, globalThis: *JSGlobalObject) ?*FetchHeaders {

@@ -166,7 +166,7 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
-        try formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+        try formatter.printAs(.Private, Writer, writer, try this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
         formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
         try writer.writeAll("\n");
 
@@ -232,14 +232,14 @@ pub fn getOK(
     return JSValue.jsBoolean(this.isOK());
 }
 
-fn getOrCreateHeaders(this: *Response, globalThis: *JSC.JSGlobalObject) *FetchHeaders {
+fn getOrCreateHeaders(this: *Response, globalThis: *JSC.JSGlobalObject) bun.JSError!*FetchHeaders {
     if (this.init.headers == null) {
         this.init.headers = FetchHeaders.createEmpty();
 
         if (this.body.value == .Blob) {
             const content_type = this.body.value.Blob.content_type;
             if (content_type.len > 0) {
-                this.init.headers.?.put(.ContentType, content_type, globalThis);
+                try this.init.headers.?.put(.ContentType, content_type, globalThis);
             }
         }
     }
@@ -250,8 +250,8 @@ fn getOrCreateHeaders(this: *Response, globalThis: *JSC.JSGlobalObject) *FetchHe
 pub fn getHeaders(
     this: *Response,
     globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    return this.getOrCreateHeaders(globalThis).toJS(globalThis);
+) bun.JSError!JSC.JSValue {
+    return (try this.getOrCreateHeaders(globalThis)).toJS(globalThis);
 }
 
 pub fn doClone(
@@ -417,8 +417,8 @@ pub fn constructJSON(
         }
     }
 
-    var headers_ref = response.getOrCreateHeaders(globalThis);
-    headers_ref.putDefault(.ContentType, MimeType.json.value, globalThis);
+    var headers_ref = try response.getOrCreateHeaders(globalThis);
+    try headers_ref.putDefault(.ContentType, MimeType.json.value, globalThis);
     did_succeed = true;
     return bun.new(Response, response).toJS(globalThis);
 }
@@ -477,9 +477,9 @@ pub fn constructRedirect(
         break :brk response;
     };
 
-    response.init.headers = response.getOrCreateHeaders(globalThis);
+    response.init.headers = try response.getOrCreateHeaders(globalThis);
     var headers_ref = response.init.headers.?;
-    headers_ref.put(.Location, url_string_slice.slice(), globalThis);
+    try headers_ref.put(.Location, url_string_slice.slice(), globalThis);
     const ptr = bun.new(Response, response);
 
     return ptr.toJS(globalThis);
@@ -531,10 +531,10 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
                     return s3.throwSignError(sign_err, globalThis);
                 };
                 defer result.deinit();
-                response.init.headers = response.getOrCreateHeaders(globalThis);
+                response.init.headers = try response.getOrCreateHeaders(globalThis);
                 response.redirected = true;
                 var headers_ref = response.init.headers.?;
-                headers_ref.put(.Location, result.url, globalThis);
+                try headers_ref.put(.Location, result.url, globalThis);
                 return bun.new(Response, response);
             }
         }
@@ -584,7 +584,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
         response.body.value.Blob.content_type.len > 0 and
         !response.init.headers.?.fastHas(.ContentType))
     {
-        response.init.headers.?.put(.ContentType, response.body.value.Blob.content_type, globalThis);
+        try response.init.headers.?.put(.ContentType, response.body.value.Blob.content_type, globalThis);
     }
 
     response.calculateEstimatedByteSize();
@@ -645,7 +645,7 @@ pub const Init = struct {
                     result.headers = orig.cloneThis(globalThis);
                 }
             } else {
-                result.headers = FetchHeaders.createFromJS(globalThis, headers);
+                result.headers = try FetchHeaders.createFromJS(globalThis, headers);
             }
         }
 

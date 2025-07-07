@@ -2113,7 +2113,7 @@ pub fn Bun__fetch_(
                             break :brk headers__;
                         }
 
-                        if (FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
+                        if (try FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
                             fetch_headers_to_deref = headers__;
                             break :brk headers__;
                         }
@@ -2147,7 +2147,7 @@ pub fn Bun__fetch_(
                             break :brk headers__;
                         }
 
-                        if (FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
+                        if (try FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
                             fetch_headers_to_deref = headers__;
                             break :brk headers__;
                         }

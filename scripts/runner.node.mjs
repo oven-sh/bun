@@ -442,9 +442,7 @@ async function runTests() {
           NO_COLOR: "1",
           BUN_DEBUG_QUIET_LOGS: "1",
         };
-        if (basename(execPath).includes("asan") && shouldValidateExceptions(testPath)) {
-          env.BUN_JSC_validateExceptionChecks = "1";
-        }
+        env.BUN_JSC_validateExceptionChecks = "1";
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,

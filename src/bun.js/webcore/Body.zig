@@ -1351,7 +1351,7 @@ pub const ValueBufferer = struct {
         this.readable_stream_ref.deinit();
 
         if (this.js_sink) |buffer_stream| {
-            buffer_stream.detach();
+            buffer_stream.detach(this.global);
             buffer_stream.sink.destroy();
             this.js_sink = null;
         }
@@ -1479,7 +1479,7 @@ pub const ValueBufferer = struct {
 
     fn handleRejectStream(sink: *@This(), err: JSValue, is_async: bool) void {
         if (sink.js_sink) |wrapper| {
-            wrapper.detach();
+            wrapper.detach(sink.global);
             sink.js_sink = null;
             wrapper.sink.destroy();
         }

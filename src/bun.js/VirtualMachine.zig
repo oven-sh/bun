@@ -1871,7 +1871,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                             specifier,
                         }) catch unreachable,
                     ),
-                ),
+                ) catch |e| globalThis.takeException(e),
             );
         },
     }

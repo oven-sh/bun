@@ -1115,7 +1115,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (assignment_result.toError()) |err_value| {
                 streamLog("returned an error", .{});
-                response_stream.detach();
+                response_stream.detach(globalThis);
                 this.sink = null;
                 response_stream.sink.destroy();
                 return this.handleReject(err_value);
@@ -1123,7 +1123,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (resp.hasResponded()) {
                 streamLog("done", .{});
-                response_stream.detach();
+                response_stream.detach(globalThis);
                 this.sink = null;
                 response_stream.sink.destroy();
                 stream.done(globalThis);
@@ -1191,7 +1191,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 } else {
                     // if is not a promise we treat it as Error
                     streamLog("returned an error", .{});
-                    response_stream.detach();
+                    response_stream.detach(globalThis);
                     this.sink = null;
                     response_stream.sink.destroy();
                     return this.handleReject(assignment_result);
@@ -1199,7 +1199,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
 
             if (this.isAbortedOrEnded()) {
-                response_stream.detach();
+                response_stream.detach(globalThis);
                 stream.cancel(globalThis);
                 defer this.readable_stream_ref.deinit();
 
@@ -1229,7 +1229,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             streamLog("is in progress, but did not return a Promise. Finalizing request context", .{});
             response_stream.sink.onFirstWrite = null;
             response_stream.sink.ctx = null;
-            response_stream.detach();
+            response_stream.detach(globalThis);
             stream.cancel(globalThis);
             response_stream.sink.markDone();
             this.renderMissing();
@@ -1587,7 +1587,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 wrote_anything = wrapper.sink.wrote > 0;
 
                 wrapper.sink.finalize();
-                wrapper.detach();
+                wrapper.detach(wrapper.sink.globalThis);
                 req.sink = null;
                 wrapper.sink.destroy();
             }
@@ -1643,7 +1643,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 wrapper.sink.done = true;
                 req.flags.aborted = req.flags.aborted or wrapper.sink.aborted;
                 wrapper.sink.finalize();
-                wrapper.detach();
+                wrapper.detach(wrapper.sink.globalThis);
                 req.sink = null;
                 wrapper.sink.destroy();
             }

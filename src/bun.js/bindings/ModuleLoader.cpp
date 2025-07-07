@@ -458,7 +458,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     JSC::JSInternalPromise* promise = jsCast<JSC::JSInternalPromise*>(JSC::JSValue::decode(encodedPromiseValue));
 
     if (!res->success) {
-        return promise->reject(globalObject, JSValue::decode(res->result.err.value));
+        RELEASE_AND_RETURN(scope, promise->reject(globalObject, JSValue::decode(res->result.err.value)));
     }
 
     auto specifierValue = Bun::toJS(globalObject, *specifier);
@@ -495,6 +495,7 @@ extern "C" void Bun__onFulfillAsyncModule(
                 if (!vm.isTerminationException(exception)) {
                     scope.clearException();
                     promise->reject(globalObject, exception);
+                    scope.assertNoExceptionExceptTermination();
                 }
             }
         } else {

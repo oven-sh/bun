@@ -256,7 +256,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         const onStartExtern = @extern(OnStartFn, .{ .name = abi_name ++ "__onStart" });
         const createObjectExtern = @extern(CreateObjectFn, .{ .name = abi_name ++ "__createObject" });
         const setDestroyCallbackExtern = @extern(SetDestroyCallbackFn, .{ .name = abi_name ++ "__setDestroyCallback" });
-        const detachPtrExtern = @extern(DetachPtrFn, .{ .name = abi_name ++ "__detachPtr" });
+        const detachPtrExtern = @extern(DetachPtrFn, .{ .name = abi_name ++ "__detachPtr" }).*;
 
         pub fn assignToStream(globalThis: *JSGlobalObject, stream: JSValue, ptr: *anyopaque, jsvalue_ptr: **anyopaque) JSValue {
             return assignToStreamExtern(globalThis, stream, ptr, jsvalue_ptr);
@@ -287,8 +287,8 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             return setDestroyCallbackExtern(value, callback);
         }
 
-        pub fn detachPtr(ptr: JSValue) void {
-            return detachPtrExtern(ptr);
+        pub fn detachPtr(globalThis: *JSGlobalObject, ptr: JSValue) bun.JSError!void {
+            return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), detachPtrExtern, .{ptr});
         }
 
         pub fn construct(globalThis: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -316,7 +316,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             this.sink.finalize();
         }
 
-        pub fn detach(this: *ThisSink) void {
+        pub fn detach(this: *ThisSink, globalThis: *JSGlobalObject) void {
             if (comptime !@hasField(SinkType, "signal"))
                 return;
 
@@ -326,7 +326,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             this.sink.signal.clear();
             const value = @as(JSValue, @enumFromInt(@as(JSC.JSValue.backing_int, @bitCast(@intFromPtr(ptr)))));
             value.unprotect();
-            detachPtr(value);
+            detachPtr(globalThis, value) catch {}; // TODO: properly propagate exception upwards
         }
 
         // The code generator encodes two distinct failure types using 0 and 1

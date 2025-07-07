@@ -1,52 +1,4 @@
 # List of tests for which we do NOT set validateExceptionChecks=1 when running in ASan CI
-test/bake/dev-and-prod.test.ts
-test/bake/dev/plugins.test.ts
-test/bake/dev/vfile.test.ts
-test/bake/dev/ssg-pages-router.test.ts
-test/bake/framework-router.test.ts
-test/bundler/bun-build-api.test.ts
-test/bundler/bundler_banner.test.ts
-test/bundler/bundler_browser.test.ts
-test/bundler/bundler_bun.test.ts
-test/bundler/bundler_cjs2esm.test.ts
-test/bundler/bundler_comments.test.ts
-test/bundler/bundler_compile.test.ts
-test/bundler/bundler_decorator_metadata.test.ts
-test/bundler/bundler_defer.test.ts
-test/bundler/bundler_drop.test.ts
-test/bundler/bundler_env.test.ts
-test/bundler/bundler_footer.test.ts
-test/bundler/bundler_html.test.ts
-test/bundler/bundler_html_server.test.ts
-test/bundler/bundler_jsx.test.ts
-test/bundler/bundler_minify.test.ts
-test/bundler/bundler_naming.test.ts
-test/bundler/bundler_plugin.test.ts
-test/bundler/bundler_regressions.test.ts
-test/bundler/bundler_splitting.test.ts
-test/bundler/bundler_string.test.ts
-test/bundler/css/css-modules.test.ts
-test/bundler/css/wpt/background-computed.test.ts
-test/bundler/css/wpt/color-computed-rgb.test.ts
-test/bundler/css/wpt/color-computed.test.ts
-test/bundler/css/wpt/relative_color_out_of_gamut.test.ts
-test/bundler/esbuild/css.test.ts
-test/bundler/esbuild/dce.test.ts
-test/bundler/esbuild/extra.test.ts
-test/bundler/esbuild/importstar.test.ts
-test/bundler/esbuild/importstar_ts.test.ts
-test/bundler/esbuild/loader.test.ts
-test/bundler/esbuild/lower.test.ts
-test/bundler/esbuild/packagejson.test.ts
-test/bundler/esbuild/splitting.test.ts
-test/bundler/esbuild/ts.test.ts
-test/bundler/esbuild/tsconfig.test.ts
-test/bundler/html-import-manifest.test.ts
-test/bundler/transpiler/bun-pragma.test.ts
-test/bundler/transpiler/jsx-production.test.ts
-test/bundler/transpiler/macro-test.test.ts
-test/bundler/transpiler/runtime-transpiler.test.ts
-test/bundler/transpiler/transpiler.test.js
 test/cli/init/init.test.ts
 test/cli/install/bun-add.test.ts
 test/cli/install/bun-audit.test.ts
@@ -609,6 +561,7 @@ test/js/node/module/node-module-module.test.js
 test/js/node/process/call-constructor.test.js
 test/js/node/stubs.test.js
 test/js/node/timers/node-timers.test.ts
+test/bake/dev/vfile.test.ts
 
 # uses node:test
 test/js/node/test/parallel/test-fs-write-stream-flush.js
@@ -624,6 +577,8 @@ test/js/node/test/parallel/test-assert.js
 # trips asan on my macos test machine
 test/js/node/test/parallel/test-fs-watch.js
 test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js
+# hit a debug assert
+test/bundler/bundler_compile.test.ts
 
 # needs https://github.com/oven-sh/WebKit/pull/94
 # missing RELEASE_AND_RETURN
@@ -633,6 +588,14 @@ test/js/node/test/parallel/test-os.js
 test/js/node/os/os.test.js
 test/js/node/util/util-callbackify.test.js
 test/js/node/vm/happy-dom-vm-16277.test.ts
+test/bundler/bundler_cjs2esm.test.ts
+test/bundler/bundler_html.test.ts
+test/bundler/bundler_naming.test.ts
+test/bundler/esbuild/css.test.ts
+test/bundler/esbuild/dce.test.ts
+test/bundler/esbuild/importstar.test.ts
+test/bundler/esbuild/loader.test.ts
+test/bundler/esbuild/ts.test.ts
 # ProgramExecutable::initializeGlobalProperties
 # missing RELEASE_AND_RETURN
 test/js/node/test/parallel/test-repl-syntax-error-handling.js
@@ -646,6 +609,9 @@ test/js/node/test/parallel/test-vm-module-synthetic.js
 # missing RETURN_IF_EXCEPTION
 test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js
 test/js/node/vm/vm.test.ts
+# moduleLoaderParseModule
+# missing RETURN_IF_EXCEPTION
+test/bundler/transpiler/bun-pragma.test.ts
 
 # llhttp
 test/js/node/test/parallel/test-http-parser-bad-ref.js
@@ -654,6 +620,7 @@ test/js/node/http/node-http-parser.test.ts
 
 # try again later
 test/js/node/test/parallel/test-promises-warning-on-unhandled-rejection.js
+test/bundler/bun-build-api.test.ts
 
 # normalizeCryptoAlgorithmParameters
 test/js/node/test/parallel/test-webcrypto-derivekey.js

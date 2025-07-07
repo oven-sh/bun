@@ -157,7 +157,7 @@ pub const AnyRoute = union(enum) {
 
         try builder.appendSlice(relative_path);
 
-        const fetch_headers = JSC.WebCore.FetchHeaders.createFromJS(init_ctx.global, try argument.get(init_ctx.global, "headers") orelse return null);
+        const fetch_headers = try JSC.WebCore.FetchHeaders.createFromJS(init_ctx.global, try argument.get(init_ctx.global, "headers") orelse return null);
         defer if (fetch_headers) |headers| headers.deref();
         if (init_ctx.global.hasException()) return error.JSError;
 
@@ -842,7 +842,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                             var fetch_headers_to_use: *WebCore.FetchHeaders = headers_value.as(WebCore.FetchHeaders) orelse brk: {
                                 if (headers_value.isObject()) {
-                                    if (WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
+                                    if (try WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
                                         fetch_headers_to_deref = fetch_headers;
                                         break :brk fetch_headers;
                                     }
@@ -970,7 +970,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                         var fetch_headers_to_use: *WebCore.FetchHeaders = headers_value.as(WebCore.FetchHeaders) orelse brk: {
                             if (headers_value.isObject()) {
-                                if (WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
+                                if (try WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
                                     fetch_headers_to_deref = fetch_headers;
                                     break :brk fetch_headers;
                                 }
@@ -1231,7 +1231,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     if (try opts.fastGet(ctx, .headers)) |headers_| {
                         if (headers_.as(WebCore.FetchHeaders)) |headers__| {
                             headers = headers__;
-                        } else if (WebCore.FetchHeaders.createFromJS(ctx, headers_)) |headers__| {
+                        } else if (try WebCore.FetchHeaders.createFromJS(ctx, headers_)) |headers__| {
                             headers = headers__;
                         }
                     }
@@ -2076,11 +2076,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }) orelse return;
 
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
-            var response_value = Bun__ServerRouteList__callRoute(server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req);
-
-            if (server.globalThis.tryTakeException()) |exception| {
-                response_value = exception;
-            }
+            const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
@@ -2327,11 +2323,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, false, method) orelse return;
             prepared.ctx.upgrade_context = upgrade_ctx; // set the upgrade context
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
-            var response_value = Bun__ServerRouteList__callRoute(server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req);
-
-            if (server.globalThis.tryTakeException()) |exception| {
-                response_value = exception;
-            }
+            const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }

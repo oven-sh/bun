@@ -449,13 +449,13 @@ pub const AsyncModule = struct {
 
         var spec = bun.String.init(ZigString.init(this.specifier).withEncoding());
         var ref = bun.String.init(ZigString.init(this.referrer).withEncoding());
-        Bun__onFulfillAsyncModule(
+        bun.jsc.fromJSHostCallGeneric(this.globalThis, @src(), Bun__onFulfillAsyncModule, .{
             this.globalThis,
             this.promise.get().?,
             &errorable,
             &spec,
             &ref,
-        );
+        }) catch {};
         this.deinit();
         jsc_vm.allocator.destroy(this);
     }
@@ -508,14 +508,13 @@ pub const AsyncModule = struct {
 
         debug("fulfill: {any}", .{specifier});
 
-        Bun__onFulfillAsyncModule(
+        bun.jsc.fromJSHostCallGeneric(globalThis, @src(), Bun__onFulfillAsyncModule, .{
             globalThis,
             promise,
             &errorable,
             &specifier,
             &referrer,
-        );
-        try scope.assertNoExceptionExceptTermination();
+        }) catch return error.JSExecutionTerminated;
     }
 
     pub fn resolveError(this: *AsyncModule, vm: *VirtualMachine, import_record_id: u32, result: PackageResolveError) !void {

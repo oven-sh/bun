@@ -3936,7 +3936,7 @@ pub const Expect = struct {
         const result = predicate.call(globalThis, .js_undefined, &.{value}) catch |e| {
             const err = globalThis.takeException(e);
             const fmt = ZigString.init("toSatisfy() predicate threw an exception");
-            return globalThis.throwValue(globalThis.createAggregateError(&.{err}, &fmt));
+            return globalThis.throwValue(try globalThis.createAggregateError(&.{err}, &fmt));
         };
 
         const not = this.flags.not;

@@ -101,7 +101,7 @@ pub fn writeBind(
             .jsonb, .json => {
                 var str = bun.String.empty;
                 defer str.deref();
-                value.jsonStringify(globalObject, 0, &str);
+                try value.jsonStringify(globalObject, 0, &str);
                 const slice = str.toUTF8WithoutRef(bun.default_allocator);
                 defer slice.deinit();
                 const l = try writer.length();

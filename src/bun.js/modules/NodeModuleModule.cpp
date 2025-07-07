@@ -919,7 +919,6 @@ static JSC::Structure* createNodeModuleSourceMapEntryStructure(JSC::VM& vm, JSC:
     structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "originalSource"), 0, offset);
     RELEASE_ASSERT(offset == 4);
     structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->name, 0, offset);
-    RELEASE_ASSERT(offset == 5);
 
     return structure;
 }
@@ -935,7 +934,7 @@ extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapEntryObject(
 {
     auto& vm = globalObject->vm();
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSObject* object = JSC::constructEmptyObject(vm, zigGlobalObject->m_nodeModuleSourceMapEntryStructure.getInitializedOnMainThread(zigGlobalObject));
+    JSObject* object = JSC::constructEmptyObject(vm, zigGlobalObject->m_nodeModuleSourceMapEntryStructure.getInitializedOnMainThread(globalObject));
     object->putDirectOffset(vm, 0, JSC::JSValue::decode(encodedGeneratedLine));
     object->putDirectOffset(vm, 1, JSC::JSValue::decode(encodedGeneratedColumn));
     object->putDirectOffset(vm, 2, JSC::JSValue::decode(encodedOriginalLine));
@@ -957,7 +956,6 @@ static JSC::Structure* createNodeModuleSourceMapOriginStructure(JSC::VM& vm, JSC
     structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "column"), 0, offset);
     RELEASE_ASSERT(offset == 2);
     structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "fileName"), 0, offset);
-    RELEASE_ASSERT(offset == 3);
 
     return structure;
 }

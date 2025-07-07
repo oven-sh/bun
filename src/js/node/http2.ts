@@ -1940,18 +1940,17 @@ class Http2Stream extends Duplex {
     if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL)
       err = $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
 
-    if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
-      markStreamClosed(this);
-      this[bunHTTP2Session] = null;
-      // This notifies the session that this stream has been destroyed and
-      // gives the session the opportunity to clean itself up. The session
-      // will destroy if it has been closed and there are no other open or
-      // pending streams. Delay with setImmediate so we don't do it on the
-      // nghttp2 stack.
-      if (session && typeof this.#id === "number") {
-        setImmediate(rstNextTick.bind(session, this.#id, rstCode));
-      }
+    markStreamClosed(this);
+    this[bunHTTP2Session] = null;
+    // This notifies the session that this stream has been destroyed and
+    // gives the session the opportunity to clean itself up. The session
+    // will destroy if it has been closed and there are no other open or
+    // pending streams. Delay with setImmediate so we don't do it on the
+    // nghttp2 stack.
+    if (session && typeof this.#id === "number") {
+      setImmediate(rstNextTick.bind(session, this.#id, rstCode));
     }
+
     callback(err);
   }
 
@@ -2447,13 +2446,10 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       stream.resume(); // we have a error we consume and close
       pushToStream(stream, null);
     }
-
+    markStreamClosed(stream);
     if (destroy) stream.destroy(error_instance, stream.rstCode);
-    else {
-      markStreamClosed(stream);
-      if (error_instance) {
-        stream.emit("error", error_instance);
-      }
+    else if (error_instance) {
+      stream.emit("error", error_instance);
     }
 
     if (destroy_self) self.destroy();
@@ -2628,8 +2624,8 @@ class ServerHttp2Session extends Http2Session {
       }
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        self.#connections--;
         markStreamClosed(stream);
+        self.#connections--;
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
           self.destroy();
@@ -3113,8 +3109,8 @@ class ClientHttp2Session extends Http2Session {
 
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        self.#connections--;
         markStreamClosed(stream);
+        self.#connections--;
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
           self.destroy();

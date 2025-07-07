@@ -6998,10 +6998,8 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
-
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
-      ? ReadableStream
+      ? ReadableStream<Uint8Array>
       : X extends BunFile | ArrayBufferView | number
         ? number
         : undefined;

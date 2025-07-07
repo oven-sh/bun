@@ -160,7 +160,7 @@ pub const S3ListObjectsV2Result = struct {
                     objectInfo.put(globalObject, JSC.ZigString.static("owner"), jsOwner);
                 }
 
-                jsContents.putIndex(globalObject, @intCast(i), objectInfo);
+                try jsContents.putIndex(globalObject, @intCast(i), objectInfo);
             }
 
             jsResult.put(globalObject, JSC.ZigString.static("contents"), jsContents);
@@ -172,7 +172,7 @@ pub const S3ListObjectsV2Result = struct {
             for (common_prefixes.items, 0..) |prefix, i| {
                 const jsPrefix = JSValue.createEmptyObject(globalObject, 1);
                 jsPrefix.put(globalObject, JSC.ZigString.static("prefix"), bun.String.createUTF8ForJS(globalObject, prefix));
-                jsCommonPrefixes.putIndex(globalObject, @intCast(i), jsPrefix);
+                try jsCommonPrefixes.putIndex(globalObject, @intCast(i), jsPrefix);
             }
 
             jsResult.put(globalObject, JSC.ZigString.static("commonPrefixes"), jsCommonPrefixes);

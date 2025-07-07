@@ -19382,22 +19382,36 @@ fn NewParser_(
                                 // > export default default_export;
                                 // > $RefreshReg(default_export, "App.tsx:default")
                                 const ref = if (data.value == .expr) emit_temp_var: {
-                                    const temp_id = p.generateTempRef("default_export");
-                                    try p.current_scope.generated.push(p.allocator, temp_id);
+                                    const ref_to_use = brk: {
+                                        if (func.func.name) |*loc_ref| {
+                                            // Input:
+                                            //
+                                            //  export default function Foo() {}
+                                            //
+                                            // Output:
+                                            //
+                                            //  const Foo = _s(function Foo() {})
+                                            //  export default Foo;
+                                            if (loc_ref.ref) |ref| break :brk ref;
+                                        }
 
+                                        const temp_id = p.generateTempRef("default_export");
+                                        try p.current_scope.generated.push(p.allocator, temp_id);
+                                        break :brk temp_id;
+                                    };
                                     stmts.append(Stmt.alloc(S.Local, .{
                                         .kind = .k_const,
                                         .decls = try G.Decl.List.fromSlice(p.allocator, &.{
                                             .{
-                                                .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = temp_id }, stmt.loc),
+                                                .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = ref_to_use }, stmt.loc),
                                                 .value = data.value.expr,
                                             },
                                         }),
                                     }, stmt.loc)) catch bun.outOfMemory();
 
-                                    data.value = .{ .expr = .initIdentifier(temp_id, stmt.loc) };
+                                    data.value = .{ .expr = .initIdentifier(ref_to_use, stmt.loc) };
 
-                                    break :emit_temp_var temp_id;
+                                    break :emit_temp_var ref_to_use;
                                 } else data.default_name.ref.?;
 
                                 if (p.options.features.server_components.wrapsExports()) {

@@ -129,6 +129,10 @@ export interface DevServerTest {
   mainDir?: string;
 
   skip?: ("win32" | "darwin" | "linux" | "ci")[];
+  /**
+   * Only run this test.
+   */
+  only?: boolean;
 }
 
 let interactive = false;
@@ -1813,7 +1817,8 @@ function testImpl<T extends DevServerTest>(
       jest.test.todo(name, run);
       return options;
     }
-    jest.test(
+
+    (options.only ? jest.test.only : jest.test)(
       name,
       run,
       isStressTest
@@ -1928,6 +1933,17 @@ export function devTest<T extends DevServerTest>(description: string, options: T
 
   return testImpl(description, options, "development", caller);
 }
+
+devTest.only = function (description: string, options: DevServerTest) {
+  // Capture the caller name as part of the test tempdir
+  const callerLocation = snapshotCallerLocation();
+  const caller = stackTraceFileName(callerLocation);
+  assert(
+    caller.startsWith(devTestRoot) || caller.includes("dev-and-prod"),
+    "dev server tests must be in test/bake/dev, not " + caller,
+  );
+  return testImpl(description, { ...options, only: true }, "development", caller);
+};
 
 export function prodTest<T extends DevServerTest>(description: string, options: T): T {
   const callerLocation = snapshotCallerLocation();

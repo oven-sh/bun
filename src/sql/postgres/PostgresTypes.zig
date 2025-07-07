@@ -13,8 +13,7 @@ pub const int8 = int_types.int8;
 pub const PostgresShort = int_types.short;
 pub const PostgresInt32 = int_types.int4;
 pub const PostgresInt64 = int_types.int8;
-
-// @sortImports
+pub const Int32 = int_types.Int32;
 
 const std = @import("std");
 pub const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;

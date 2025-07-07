@@ -2415,19 +2415,35 @@ pub const WriteBytesFn = *const fn(*anyopaque, ptr: [*]const u8, len: u32) callc
 `;
 
 const classes: ClassDefinition[] = [];
-for (const file of files) {
-  const result = require(path.resolve(file));
-  if (!(result?.default?.length ?? 0)) continue;
-  console.log("Found", result.default.length, "classes from", file);
-  for (let { name, proto = {}, klass = {} } of result.default) {
-    let protoProps = Object.keys(proto).length ? `${Object.keys(proto).length} fields` : "";
-    let klassProps = Object.keys(klass).length ? `${Object.keys(klass).length} class fields` : "";
-    let props = [protoProps, klassProps].filter(Boolean).join(", ");
-    if (props.length) props = ` (${props})`;
-    console.log(`  - ${name}` + props);
+{
+  let errors = [];
+  for (const file of files) {
+    const filepath = path.resolve(file);
+    const result = require(filepath);
+    if (!(result?.default?.length ?? 0)) {
+      errors.push(
+        new TypeError(
+          `Missing classes in "${path.relative(process.cwd(), filepath)}". Expected \`export default [ define(...) ] satisfies Array<ClassDefinition>\` but got ${Bun.inspect(result).slice(0, 100) + "..."} `,
+        ),
+      );
+      continue;
+    }
+
+    console.log("Found", result.default.length, "classes from", file);
+    for (let { name, proto = {}, klass = {} } of result.default) {
+      let protoProps = Object.keys(proto).length ? `${Object.keys(proto).length} fields` : "";
+      let klassProps = Object.keys(klass).length ? `${Object.keys(klass).length} class fields` : "";
+      let props = [protoProps, klassProps].filter(Boolean).join(", ");
+      if (props.length) props = ` (${props})`;
+      console.log(`  - ${name}` + props);
+    }
+
+    classes.push(...result.default);
   }
 
-  classes.push(...result.default);
+  if (errors.length) {
+    throw new AggregateError(errors, "Failed to generate classes");
+  }
 }
 classes.sort((a, b) => (a.name < b.name ? -1 : 1));
 

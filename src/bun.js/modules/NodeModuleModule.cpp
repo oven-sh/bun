@@ -905,7 +905,7 @@ const JSC::ClassInfo JSModuleConstructor::s_info = {
 
 static JSC::Structure* createNodeModuleSourceMapEntryStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
-    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 5);
+    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 6);
     PropertyOffset offset;
 
     structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "generatedLine"), 0, offset);
@@ -934,7 +934,7 @@ extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapEntryObject(
 {
     auto& vm = globalObject->vm();
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSObject* object = JSC::constructEmptyObject(vm, zigGlobalObject->m_nodeModuleSourceMapEntryStructure.getInitializedOnMainThread(globalObject));
+    JSObject* object = JSC::constructEmptyObject(vm, zigGlobalObject->m_nodeModuleSourceMapEntryStructure.getInitializedOnMainThread(zigGlobalObject));
     object->putDirectOffset(vm, 0, JSC::JSValue::decode(encodedGeneratedLine));
     object->putDirectOffset(vm, 1, JSC::JSValue::decode(encodedGeneratedColumn));
     object->putDirectOffset(vm, 2, JSC::JSValue::decode(encodedOriginalLine));

@@ -25,6 +25,7 @@ src/ast/G.zig
 src/ast/ImportScanner.zig
 src/ast/KnownGlobal.zig
 src/ast/Macro.zig
+src/ast/maybe.zig
 src/ast/NewStore.zig
 src/ast/Op.zig
 src/ast/P.zig
@@ -50,6 +51,7 @@ src/ast/TS.zig
 src/ast/TypeScript.zig
 src/ast/UseDirective.zig
 src/ast/visit.zig
+src/ast/visitBinaryExpression.zig
 src/ast/visitExpr.zig
 src/ast/visitStmt.zig
 src/async/posix_event_loop.zig
@@ -143,8 +145,6 @@ src/bun.js/bindings/Exception.zig
 src/bun.js/bindings/FetchHeaders.zig
 src/bun.js/bindings/FFI.zig
 src/bun.js/bindings/generated_classes_list.zig
-src/bun.js/bindings/GeneratedBindings.zig
-src/bun.js/bindings/GeneratedJS2Native.zig
 src/bun.js/bindings/GetterSetter.zig
 src/bun.js/bindings/HTTPServerAgent.zig
 src/bun.js/bindings/JSArray.zig

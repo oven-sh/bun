@@ -200,6 +200,15 @@ expectType(await queryNum.execute()).is<number>();
 expectType(await queryNum.raw()).is<number>();
 expectType(await queryNum.values()).is<number>();
 
+expectType<Bun.SQL.Options>({
+  password: () => "hey",
+  pass: async () => "hey",
+});
+
+expectType<Bun.SQL.Options>({
+  password: "hey",
+});
+
 expectType(sql({ name: "Alice", email: "alice@example.com" })).is<
   Bun.SQL.Helper<{
     name: string;

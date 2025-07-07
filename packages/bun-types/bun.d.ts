@@ -1384,14 +1384,14 @@ declare module "bun" {
        * Database password for authentication
        * @default ""
        */
-      password?: string | (() => Promise<string>) | undefined;
+      password?: string | (() => MaybePromise<string>) | undefined;
 
       /**
        * Database password for authentication (alias for password)
        * @deprecated Prefer {@link password}
        * @default ""
        */
-      pass?: string | (() => Promise<string>) | undefined;
+      pass?: string | (() => MaybePromise<string>) | undefined;
 
       /**
        * Name of the database to connect to

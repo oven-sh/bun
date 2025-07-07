@@ -1339,7 +1339,7 @@ function decodeIfValid(value) {
   }
   return null;
 }
-function loadOptions(o) {
+function loadOptions(o: Bun.SQL.Options) {
   var hostname,
     port,
     username,

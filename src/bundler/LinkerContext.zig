@@ -160,7 +160,13 @@ pub const LinkerContext = struct {
                 return;
             }
 
-            const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
+            // Check if we have an original source from sourcemap
+            const original_source_index = this.parse_graph.input_files.items(.original_source_index)[source_index];
+            const source: *const Logger.Source = if (original_source_index != 0)
+                &this.parse_graph.input_files.items(.source)[original_source_index]
+            else
+                &this.parse_graph.input_files.items(.source)[source_index];
+                
             var mutable = MutableString.initEmpty(bun.default_allocator);
             js_printer.quoteForJSON(source.contents, &mutable, false) catch bun.outOfMemory();
             quoted_source_contents.* = mutable.toDefaultOwned().toOptional();
@@ -745,15 +751,81 @@ pub const LinkerContext = struct {
         );
 
         const source_indices_for_contents = source_id_map.keys();
+        const input_sourcemaps = c.parse_graph.input_files.items(.sourcemap);
         if (source_indices_for_contents.len > 0) {
             j.pushStatic("\n    ");
-            j.pushStatic(
-                quoted_source_map_contents[source_indices_for_contents[0]].getConst() orelse "",
-            );
+            
+            // Try to find sourcemap - either at this index or at a related plugin file index
+            const first_index = source_indices_for_contents[0];
+            var sourcemap_to_use: ?*bun.sourcemap.ParsedSourceMap = null;
+            
+            if (input_sourcemaps[first_index]) |sm| {
+                sourcemap_to_use = sm;
+            } else {
+                // If no sourcemap at this index, check if this might be an original source index
+                // and find the corresponding plugin file index
+                const original_source_indices = c.parse_graph.input_files.items(.original_source_index);
+                for (original_source_indices, 0..) |orig_idx, plugin_idx| {
+                    if (orig_idx == first_index) {
+                        // Found the plugin file that created this original source
+                        if (input_sourcemaps[plugin_idx]) |sm| {
+                            sourcemap_to_use = sm;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (sourcemap_to_use) |input_sourcemap| {
+                if (input_sourcemap.sources_content.len > 0) {
+                    // Use the original source content from the input sourcemap
+                    const original_content = input_sourcemap.sources_content[0];
+                    const mutable = MutableString.initEmpty(worker.allocator);
+                    const quoted = (js_printer.quoteForJSON(original_content, mutable, false) catch bun.outOfMemory()).list.items;
+                    j.pushStatic(quoted);
+                } else {
+                    j.pushStatic(quoted_source_map_contents[first_index].getConst() orelse "");
+                }
+            } else {
+                j.pushStatic(quoted_source_map_contents[first_index].getConst() orelse "");
+            }
 
             for (source_indices_for_contents[1..]) |index| {
                 j.pushStatic(",\n    ");
-                j.pushStatic(quoted_source_map_contents[index].getConst() orelse "");
+                
+                // Try to find sourcemap - either at this index or at a related plugin file index
+                var loop_sourcemap_to_use: ?*bun.sourcemap.ParsedSourceMap = null;
+                
+                if (input_sourcemaps[index]) |sm| {
+                    loop_sourcemap_to_use = sm;
+                } else {
+                    // If no sourcemap at this index, check if this might be an original source index
+                    // and find the corresponding plugin file index
+                    const original_source_indices = c.parse_graph.input_files.items(.original_source_index);
+                    for (original_source_indices, 0..) |orig_idx, plugin_idx| {
+                        if (orig_idx == index) {
+                            // Found the plugin file that created this original source
+                            if (input_sourcemaps[plugin_idx]) |sm| {
+                                loop_sourcemap_to_use = sm;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (loop_sourcemap_to_use) |input_sourcemap| {
+                    if (input_sourcemap.sources_content.len > 0) {
+                        // Use the original source content from the input sourcemap
+                        const original_content = input_sourcemap.sources_content[0];
+                        const mutable = MutableString.initEmpty(worker.allocator);
+                        const quoted = (js_printer.quoteForJSON(original_content, mutable, false) catch bun.outOfMemory()).list.items;
+                        j.pushStatic(quoted);
+                    } else {
+                        j.pushStatic(quoted_source_map_contents[index].getConst() orelse "");
+                    }
+                } else {
+                    j.pushStatic(quoted_source_map_contents[index].getConst() orelse "");
+                }
             }
         }
         j.pushStatic(
@@ -1262,6 +1334,7 @@ pub const LinkerContext = struct {
             else
                 null,
             .mangled_props = &c.mangled_props,
+            .input_source_map = c.parse_graph.input_files.items(.sourcemap)[source_index.get()],
         };
 
         writer.buffer.reset();

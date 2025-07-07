@@ -35,6 +35,8 @@ pub const ParseUrlResultHint = union(enum) {
         column: i32,
         include_names: bool = false,
     },
+    /// Parse mappings and also store sources_content in the ParsedSourceMap
+    mappings_and_source_content,
 };
 
 pub const ParseUrl = struct {
@@ -210,7 +212,19 @@ pub fn parseJSON(
 
         const ptr = bun.new(ParsedSourceMap, map_data);
         ptr.external_source_names = source_paths_slice.?;
-
+        // Store sources_content if requested
+        if (hint == .mappings_and_source_content) {
+            const content_slice = alloc.alloc([]const u8, sources_content.items.len) catch bun.outOfMemory();
+            for (sources_content.items.slice(), 0..) |item, idx| {
+                if (item.data != .e_string) {
+                    content_slice[idx] = "";
+                } else {
+                    content_slice[idx] = alloc.dupe(u8, item.data.e_string.string(alloc) catch "") catch bun.outOfMemory();
+                }
+            }
+            ptr.sources_content = content_slice;
+        }
+        
         break :map ptr;
     } else null;
     errdefer if (map) |m| m.deref();
@@ -223,9 +237,10 @@ pub fn parseJSON(
             break :brk .{ mapping, std.math.cast(u32, mapping.source_index) };
         },
         .mappings_only => .{ null, null },
+        .mappings_and_source_content => .{ null, null },
     };
 
-    const content_slice: ?[]const u8 = if (hint != .mappings_only and
+    const content_slice: ?[]const u8 = if (hint != .mappings_only and hint != .mappings_and_source_content and
         source_index != null and
         source_index.? < sources_content.items.len)
     content: {
@@ -876,6 +891,9 @@ pub const ParsedSourceMap = struct {
     /// loaded without transpilation but with external sources. This array
     /// maps `source_index` to the correct filename.
     external_source_names: []const []const u8 = &.{},
+    /// Sources content from the original sourcemap, indexed the same as external_source_names
+    /// Only populated when parsing sourcemaps from onLoad plugins
+    sources_content: []const []const u8 = &.{},
     /// In order to load source contents from a source-map after the fact,
     /// a handle to the underlying source provider is stored. Within this pointer,
     /// a flag is stored if it is known to be an inline or external source map.
@@ -949,6 +967,12 @@ pub const ParsedSourceMap = struct {
             for (this.external_source_names) |name|
                 allocator.free(name);
             allocator.free(this.external_source_names);
+        }
+
+        if (this.sources_content.len > 0) {
+            for (this.sources_content) |content|
+                allocator.free(content);
+            allocator.free(this.sources_content);
         }
 
         bun.destroy(this);
@@ -1764,6 +1788,7 @@ pub const Chunk = struct {
     pub fn NewBuilder(comptime SourceMapFormatType: type) type {
         return struct {
             const ThisBuilder = @This();
+            input_source_map: ?*ParsedSourceMap = null,
             source_map: SourceMapper,
             line_offset_tables: LineOffsetTable.List = .{},
             prev_state: SourceMapState = SourceMapState{},
@@ -1877,7 +1902,17 @@ pub const Chunk = struct {
                 b.last_generated_update = @as(u32, @truncate(output.len));
             }
 
-            pub fn appendMapping(b: *ThisBuilder, current_state: SourceMapState) void {
+            pub fn appendMapping(b: *ThisBuilder, current_state_: SourceMapState) void {
+                var current_state = current_state_;
+                // If the input file had a source map, map all the way back to the original
+                if (b.input_source_map) |input| {
+                    if (Mapping.find(input.mappings, current_state.original_line, current_state.original_column)) |mapping| {
+                        current_state.source_index = mapping.source_index;
+                        current_state.original_line = mapping.original.lines;
+                        current_state.original_column = mapping.original.columns;
+                    }
+                }
+
                 b.appendMappingWithoutRemapping(current_state);
             }
 

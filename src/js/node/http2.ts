@@ -1940,17 +1940,18 @@ class Http2Stream extends Duplex {
     if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL)
       err = $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
 
-    markStreamClosed(this);
-    this[bunHTTP2Session] = null;
-    // This notifies the session that this stream has been destroyed and
-    // gives the session the opportunity to clean itself up. The session
-    // will destroy if it has been closed and there are no other open or
-    // pending streams. Delay with setImmediate so we don't do it on the
-    // nghttp2 stack.
-    if (session && typeof this.#id === "number") {
-      setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+    if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
+      markStreamClosed(this);
+      this[bunHTTP2Session] = null;
+      // This notifies the session that this stream has been destroyed and
+      // gives the session the opportunity to clean itself up. The session
+      // will destroy if it has been closed and there are no other open or
+      // pending streams. Delay with setImmediate so we don't do it on the
+      // nghttp2 stack.
+      if (session && typeof this.#id === "number") {
+        setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+      }
     }
-
     callback(err);
   }
 

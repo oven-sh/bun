@@ -1,7 +1,6 @@
 const bun = @import("bun");
 const std = @import("std");
 const LineOffsetTable = bun.sourcemap.LineOffsetTable;
-const SourceMap = bun.sourcemap;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const LinesHits = @import("../baby_list.zig").BabyList(u32);
 const Output = bun.Output;

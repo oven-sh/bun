@@ -1,12 +1,3 @@
-// @sortImports
-
-const std = @import("std");
-const bun = @import("bun");
-const sys = bun.sys;
-const Environment = bun.Environment;
-const FD = bun.FD;
-const strings = bun.strings;
-
 pub const Symlinker = struct {
     dest: bun.Path(.{ .sep = .auto }),
     target: bun.RelPath(.{ .sep = .auto }),
@@ -105,3 +96,11 @@ pub const Symlinker = struct {
         };
     }
 };
+
+// @sortImports
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const strings = bun.strings;
+const sys = bun.sys;

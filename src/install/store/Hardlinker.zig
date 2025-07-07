@@ -1,13 +1,3 @@
-// @sortImports
-
-const std = @import("std");
-const bun = @import("bun");
-const FD = bun.FD;
-const OOM = bun.OOM;
-const sys = bun.sys;
-const Walker = @import("../../walker_skippable.zig");
-const Environment = bun.Environment;
-
 pub const Hardlinker = struct {
     src_dir: FD,
     src: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
@@ -126,3 +116,13 @@ pub const Hardlinker = struct {
         return .success;
     }
 };
+
+// @sortImports
+
+const Walker = @import("../../walker_skippable.zig");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const OOM = bun.OOM;
+const sys = bun.sys;

@@ -1,34 +1,3 @@
-// @sortImports
-
-const std = @import("std");
-const bun = @import("bun");
-const install = bun.install;
-const Lockfile = install.Lockfile;
-const PackageInstall = install.PackageInstall;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Progress = bun.Progress;
-const PackageManager = install.PackageManager;
-const Command = bun.CLI.Command;
-const Store = install.Store;
-const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
-const Output = bun.Output;
-const sys = bun.sys;
-const Global = bun.Global;
-const invalid_dependency_id = install.invalid_dependency_id;
-const ThreadPool = bun.ThreadPool;
-const OOM = bun.OOM;
-const FD = bun.FD;
-const Hardlinker = @import("./Hardlinker.zig").Hardlinker;
-const Symlinker = @import("./Symlinker.zig").Symlinker;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const Package = Lockfile.Package;
-const Bin = install.Bin;
-const string = bun.string;
-const String = bun.Semver.String;
-const PackageNameHash = install.PackageNameHash;
-const Resolution = install.Resolution;
-
 pub const Installer = struct {
     trusted_dependencies_mutex: bun.Mutex,
     // this is not const for `lockfile.trusted_dependencies`
@@ -1035,3 +1004,37 @@ pub const Installer = struct {
         }
     }
 };
+
+// @sortImports
+
+const std = @import("std");
+const Hardlinker = @import("./Hardlinker.zig").Hardlinker;
+const Symlinker = @import("./Symlinker.zig").Symlinker;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const Global = bun.Global;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const ThreadPool = bun.ThreadPool;
+const string = bun.string;
+const strings = bun.strings;
+const sys = bun.sys;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const Command = bun.CLI.Command;
+const String = bun.Semver.String;
+
+const install = bun.install;
+const Bin = install.Bin;
+const PackageInstall = install.PackageInstall;
+const PackageManager = install.PackageManager;
+const PackageNameHash = install.PackageNameHash;
+const Resolution = install.Resolution;
+const Store = install.Store;
+const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
+const invalid_dependency_id = install.invalid_dependency_id;
+
+const Lockfile = install.Lockfile;
+const Package = Lockfile.Package;

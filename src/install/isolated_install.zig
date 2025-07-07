@@ -1,29 +1,3 @@
-// @sortImports
-
-const std = @import("std");
-const bun = @import("bun");
-const install = bun.install;
-const PackageManager = install.PackageManager;
-const Command = bun.CLI.Command;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const OOM = bun.OOM;
-const PackageInstall = install.PackageInstall;
-const Store = install.Store;
-const DependencyID = install.DependencyID;
-const PackageID = install.PackageID;
-const invalid_dependency_id = install.invalid_dependency_id;
-const invalid_package_id = install.invalid_package_id;
-const Lockfile = install.Lockfile;
-const Tree = Lockfile.Tree;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const FD = bun.FD;
-const sys = bun.sys;
-const Progress = bun.Progress;
-const ProgressStrings = PackageManager.ProgressStrings;
-const Resolution = install.Resolution;
-
 pub fn installIsolatedPackages(
     manager: *PackageManager,
     command_ctx: Command.Context,
@@ -1068,3 +1042,33 @@ pub fn installIsolatedPackages(
         return installer.summary;
     }
 }
+
+// @sortImports
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const Global = bun.Global;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const sys = bun.sys;
+const Command = bun.CLI.Command;
+
+const install = bun.install;
+const DependencyID = install.DependencyID;
+const PackageID = install.PackageID;
+const PackageInstall = install.PackageInstall;
+const Resolution = install.Resolution;
+const Store = install.Store;
+const invalid_dependency_id = install.invalid_dependency_id;
+const invalid_package_id = install.invalid_package_id;
+
+const Lockfile = install.Lockfile;
+const Tree = Lockfile.Tree;
+
+const PackageManager = install.PackageManager;
+const ProgressStrings = PackageManager.ProgressStrings;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;

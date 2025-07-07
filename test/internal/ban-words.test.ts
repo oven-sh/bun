@@ -45,7 +45,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 174 },
 
   "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 28 },
-  "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 47 },
+  "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 46 },
   "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 140 },
 };
 const words_keys = [...Object.keys(words)];

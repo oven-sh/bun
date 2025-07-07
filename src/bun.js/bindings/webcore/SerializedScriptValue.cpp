@@ -1784,8 +1784,7 @@ private:
                 if (checkForDuplicate(obj))
                     return true;
                 bool success = dumpArrayBufferView(obj, code);
-                if (scope.exception()) [[unlikely]]
-                    return false;
+                RETURN_IF_EXCEPTION(scope, false);
                 recordObject(obj);
                 return success;
             }
@@ -2609,8 +2608,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
 
                 propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
                 array->getOwnNonIndexPropertyNames(m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
-                if (scope.exception()) [[unlikely]]
-                    return SerializationReturnCode::ExistingExceptionError;
+                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
                 if (propertyStack.last().size()) {
                     write(NonIndexPropertiesTag);
                     indexStack.append(0);
@@ -2741,8 +2739,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 ASSERT(jsDynamicCast<JSMap*>(object));
                 propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
                 object->methodTable()->getOwnPropertyNames(object, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
-                if (scope.exception()) [[unlikely]]
-                    return SerializationReturnCode::ExistingExceptionError;
+                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
                 write(NonMapPropertiesTag);
                 indexStack.append(0);
                 goto objectStartVisitMember;
@@ -2789,8 +2786,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 ASSERT(jsDynamicCast<JSSet*>(object));
                 propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
                 object->methodTable()->getOwnPropertyNames(object, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
-                if (scope.exception()) [[unlikely]]
-                    return SerializationReturnCode::ExistingExceptionError;
+                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
                 write(NonSetPropertiesTag);
                 indexStack.append(0);
                 goto objectStartVisitMember;

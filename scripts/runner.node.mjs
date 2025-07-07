@@ -1023,7 +1023,7 @@ function getTestTimeout(testPath) {
   if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
     return integrationTimeout;
   }
-  if (/napi/i.test(testPath) || /v8/i.test(testPath)) {
+  if (/napi/i.test(testPath)) {
     return napiTimeout;
   }
   return testTimeout;

@@ -55,14 +55,12 @@ pub const IPCDecodeError = error{
     NotEnoughBytes,
     /// Format could not be recognized. Report an error and close the socket.
     InvalidFormat,
-} || bun.OOM;
+} || bun.JSError;
 
 pub const IPCSerializationError = error{
     /// Value could not be serialized.
     SerializationFailed,
-    /// Out of memory
-    OutOfMemory,
-};
+} || bun.JSError;
 
 const advanced = struct {
     pub const header_length = @sizeOf(IPCMessageType) + @sizeOf(u32);
@@ -109,11 +107,7 @@ const advanced = struct {
                 }
 
                 const message = data[header_length .. header_length + message_len];
-                const deserialized = JSValue.deserialize(message, global);
-
-                if (deserialized == .zero) {
-                    return IPCDecodeError.InvalidFormat;
-                }
+                const deserialized = try JSValue.deserialize(message, global);
 
                 return .{
                     .bytes_consumed = header_length + message_len,
@@ -137,8 +131,7 @@ const advanced = struct {
     }
 
     pub fn serialize(writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
-        const serialized = value.serialize(global, true) orelse
-            return IPCSerializationError.SerializationFailed;
+        const serialized = try value.serialize(global, true);
         defer serialized.deinit();
 
         const size: u32 = @intCast(serialized.data.len);
@@ -241,7 +234,7 @@ const json = struct {
 
     pub fn serialize(writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
         var out: bun.String = undefined;
-        value.jsonStringify(global, 0, &out);
+        try value.jsonStringify(global, 0, &out);
         defer out.deref();
 
         if (out.tag == .Dead) return IPCSerializationError.SerializationFailed;
@@ -346,13 +339,13 @@ pub const CallbackList = union(enum) {
                 const prev = self.callback;
                 const arr = try JSC.JSValue.createEmptyArray(global, 2);
                 arr.protect();
-                arr.putIndex(global, 0, prev); // add the old callback to the array
-                arr.putIndex(global, 1, callback); // add the new callback to the array
+                try arr.putIndex(global, 0, prev); // add the old callback to the array
+                try arr.putIndex(global, 1, callback); // add the new callback to the array
                 prev.unprotect(); // owned by the array now
                 self.* = .{ .callback_array = arr };
             },
             .callback_array => |arr| {
-                arr.push(global, callback);
+                try arr.push(global, callback);
             },
         }
     }
@@ -1155,7 +1148,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                     log("hit NotEnoughBytes", .{});
                     return;
                 },
-                error.InvalidFormat => {
+                error.InvalidFormat, error.JSError => {
                     send_queue.closeSocket(.failure, .user);
                     return;
                 },
@@ -1188,7 +1181,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                 log("hit NotEnoughBytes2", .{});
                 return;
             },
-            error.InvalidFormat => {
+            error.InvalidFormat, error.JSError => {
                 send_queue.closeSocket(.failure, .user);
                 return;
             },
@@ -1349,7 +1342,7 @@ pub const IPCHandlers = struct {
                         log("hit NotEnoughBytes3", .{});
                         return;
                     },
-                    error.InvalidFormat => {
+                    error.InvalidFormat, error.JSError => {
                         send_queue.closeSocket(.failure, .user);
                         return;
                     },
@@ -1382,15 +1375,11 @@ pub const IPCHandlers = struct {
 extern "C" fn IPCSerialize(globalObject: *JSC.JSGlobalObject, message: JSC.JSValue, handle: JSC.JSValue) JSC.JSValue;
 
 pub fn ipcSerialize(globalObject: *JSC.JSGlobalObject, message: JSC.JSValue, handle: JSC.JSValue) bun.JSError!JSC.JSValue {
-    const result = IPCSerialize(globalObject, message, handle);
-    if (result == .zero) return error.JSError;
-    return result;
+    return bun.jsc.fromJSHostCall(globalObject, @src(), IPCSerialize, .{ globalObject, message, handle });
 }
 
 extern "C" fn IPCParse(globalObject: *JSC.JSGlobalObject, target: JSC.JSValue, serialized: JSC.JSValue, fd: JSC.JSValue) JSC.JSValue;
 
 pub fn ipcParse(globalObject: *JSC.JSGlobalObject, target: JSC.JSValue, serialized: JSC.JSValue, fd: JSC.JSValue) bun.JSError!JSC.JSValue {
-    const result = IPCParse(globalObject, target, serialized, fd);
-    if (result == .zero) return error.JSError;
-    return result;
+    return bun.jsc.fromJSHostCall(globalObject, @src(), IPCParse, .{ globalObject, target, serialized, fd });
 }

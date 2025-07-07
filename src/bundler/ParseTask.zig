@@ -34,10 +34,6 @@ emit_decorator_metadata: bool = false,
 ctx: *BundleV2,
 package_version: string = "",
 is_entry_point: bool = false,
-/// This is set when the file is an entrypoint, and it has an onLoad plugin.
-/// In this case we want to defer adding this to additional_files until after
-/// the onLoad plugin has finished.
-defer_copy_for_bundling: bool = false,
 
 const ParseTaskStage = union(enum) {
     needs_source_code: void,

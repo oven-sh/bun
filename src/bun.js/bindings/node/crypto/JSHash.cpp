@@ -284,11 +284,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     hash->m_finalized = finalized;
 
     // Return the digest with the requested encoding
-    return StringBytes::encode(
-        lexicalGlobalObject,
-        scope,
-        std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), len },
-        encoding);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), len }, encoding));
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

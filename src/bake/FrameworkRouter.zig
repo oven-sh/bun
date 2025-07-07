@@ -1167,7 +1167,7 @@ pub const JSFrameworkRouter = struct {
         if (jsfr.stored_parse_errors.items.len > 0) {
             const arr = try JSValue.createEmptyArray(global, jsfr.stored_parse_errors.items.len);
             for (jsfr.stored_parse_errors.items, 0..) |*item, i| {
-                arr.putIndex(
+                try arr.putIndex(
                     global,
                     @intCast(i),
                     global.createErrorInstance("Invalid route {}: {s}", .{
@@ -1239,7 +1239,7 @@ pub const JSFrameworkRouter = struct {
                 next = route.first_child.unwrap();
                 var i: u32 = 0;
                 while (next) |r| : (next = jsfr.router.routePtr(r).next_sibling.unwrap()) {
-                    arr.putIndex(global, i, try routeToJson(jsfr, global, r, allocator));
+                    try arr.putIndex(global, i, try routeToJson(jsfr, global, r, allocator));
                     i += 1;
                 }
                 break :brk arr;

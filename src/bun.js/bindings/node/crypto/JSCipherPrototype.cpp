@@ -116,7 +116,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
 
     if (!res && cipher->m_kind == CipherKind::Decipher && cipher->m_ctx.isCcmMode()) {
         cipher->m_pendingAuthFailed = true;
-        return JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(outBuf), 0, bufLen));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(outBuf), 0, bufLen)));
     }
 
     if (res != 1) {
@@ -124,7 +124,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         return {};
     }
 
-    return JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(outBuf), 0, bufLen));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(outBuf), 0, bufLen)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -192,7 +192,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
         return {};
     }
 
-    return JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(outBuf), 0, outLen));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(outBuf), 0, outLen)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCipherSetAutoPadding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

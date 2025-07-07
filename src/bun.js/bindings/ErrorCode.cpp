@@ -1583,7 +1583,7 @@ extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* glo
     return JSValue::encode(createError(globalObject, code, message->toWTFString(BunString::ZeroCopy)));
 }
 
-void throwBoringSSLError(JSC::VM& vm, JSC::ThrowScope& scope, JSGlobalObject* globalObject, int errorCode)
+void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode)
 {
     char buf[256] = { 0 };
     ERR_error_string_n(static_cast<uint32_t>(errorCode), buf, sizeof(buf));

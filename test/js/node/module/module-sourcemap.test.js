@@ -18,9 +18,9 @@ test("Can create SourceMap instance from node:module", () => {
     version: 3,
     sources: ["test.js"],
     names: [],
-    mappings: "AAAA"
+    mappings: "AAAA",
   };
-  
+
   const sourceMap = new SourceMap(payload);
   expect(sourceMap).toBeInstanceOf(SourceMap);
   expect(sourceMap.payload).toBe(payload);

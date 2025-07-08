@@ -105,28 +105,30 @@ export default function TestPage() {
     // Check the generated static HTML files
     const indexHtml = await Bun.file(path.join(dir, "dist", "index.html")).text();
     const apiTestHtml = await Bun.file(path.join(dir, "dist", "api", "test", "index.html")).text();
-    
+
     // The HTML output should contain the rendered import.meta values
     // Check for the presence of the expected values in the HTML
-    
+
     // For the index page, check that it contains the expected file paths
     expect(indexHtml).toContain("index.tsx");
     expect(indexHtml).toContain("pages");
-    
+
     // Check if the HTML contains evidence of import.meta values being used
     // The exact format might be HTML-escaped, so we check for key patterns
-    const hasIndexPath = indexHtml.includes("pages/index.tsx") || 
-                        indexHtml.includes("pages&#x2F;index.tsx") ||
-                        indexHtml.includes("pages\\index.tsx");
+    const hasIndexPath =
+      indexHtml.includes("pages/index.tsx") ||
+      indexHtml.includes("pages&#x2F;index.tsx") ||
+      indexHtml.includes("pages\\index.tsx");
     expect(hasIndexPath).toBe(true);
-    
+
     // For the API test page
     expect(apiTestHtml).toContain("test.tsx");
     expect(apiTestHtml).toContain("pages");
-    
-    const hasApiPath = apiTestHtml.includes("pages/api/test.tsx") || 
-                      apiTestHtml.includes("pages&#x2F;api&#x2F;test.tsx") ||
-                      apiTestHtml.includes("pages\\api\\test.tsx");
+
+    const hasApiPath =
+      apiTestHtml.includes("pages/api/test.tsx") ||
+      apiTestHtml.includes("pages&#x2F;api&#x2F;test.tsx") ||
+      apiTestHtml.includes("pages\\api\\test.tsx");
     expect(hasApiPath).toBe(true);
   });
 
@@ -236,54 +238,83 @@ export default function GettingStarted() {
 
     // Check that the build output contains the generated files
     const distFiles = await Bun.$`find dist -name "*.html" -type f | sort`.cwd(dir).text();
-    const htmlFiles = distFiles.trim().split('\n').filter(Boolean);
-    
+    const htmlFiles = distFiles.trim().split("\n").filter(Boolean);
+
     // Should have generated all the static paths
     // Note: React's routing may flatten the paths
-    expect(htmlFiles).toContain('dist/2024/hello-world/index.html');
-    expect(htmlFiles).toContain('dist/2024/tech/bun-framework/index.html');
-    expect(htmlFiles).toContain('dist/tutorials/getting-started/index.html');
-    expect(htmlFiles).toContain('dist/api/reference/index.html');
-    expect(htmlFiles).toContain('dist/guides/advanced/optimization/index.html');
-    expect(htmlFiles).toContain('dist/index.html');
-    expect(htmlFiles).toContain('dist/docs/getting-started/index.html');
+    expect(htmlFiles).toContain("dist/2024/hello-world/index.html");
+    expect(htmlFiles).toContain("dist/2024/tech/bun-framework/index.html");
+    expect(htmlFiles).toContain("dist/tutorials/getting-started/index.html");
+    expect(htmlFiles).toContain("dist/api/reference/index.html");
+    expect(htmlFiles).toContain("dist/guides/advanced/optimization/index.html");
+    expect(htmlFiles).toContain("dist/index.html");
+    expect(htmlFiles).toContain("dist/docs/getting-started/index.html");
 
     // Check blog post with multiple segments
     const blogPostHtml = await Bun.file(path.join(dir, "dist", "2024", "tech", "bun-framework", "index.html")).text();
-    
+
     // Verify the content is rendered (may include HTML comments)
     expect(blogPostHtml).toContain("Blog Post:");
     expect(blogPostHtml).toContain("2024 / tech / bun-framework");
     expect(blogPostHtml).toContain("You are reading:");
     expect(blogPostHtml).toContain("2024/tech/bun-framework");
-    
+
     // Check that import.meta values are inlined in the HTML
     expect(blogPostHtml).toContain('data-file="[...slug].tsx"');
-    expect(blogPostHtml).toContain('data-dir=');
+    expect(blogPostHtml).toContain("data-dir=");
     expect(blogPostHtml).toContain('/pages/blog"'); // The full path will include the temp directory
-    expect(blogPostHtml).toContain('data-path=');
+    expect(blogPostHtml).toContain("data-path=");
     expect(blogPostHtml).toContain('/pages/blog/[...slug].tsx"');
-    
+
     // Check docs catch-all route
     const docsHtml = await Bun.file(path.join(dir, "dist", "guides", "advanced", "optimization", "index.html")).text();
-    
+
     expect(docsHtml).toContain("Reading docs at:");
     expect(docsHtml).toContain("guides/advanced/optimization");
     expect(docsHtml).toContain('data-file="[...path].tsx"');
     expect(docsHtml).toContain('/pages/docs/[...path].tsx"');
-    
+
     // Check that the static getting-started page uses its own file name, not the catch-all
     const staticHtml = await Bun.file(path.join(dir, "dist", "docs", "getting-started", "index.html")).text();
-    
+
     expect(staticHtml).toContain("Getting Started");
     expect(staticHtml).toContain("This is a static page");
     expect(staticHtml).toContain('data-file="getting-started.tsx"');
     expect(staticHtml).toContain('/pages/docs/getting-started.tsx"');
-    expect(staticHtml).not.toContain('[...path].tsx');
-    
+    expect(staticHtml).not.toContain("[...path].tsx");
+
     // Verify that import.meta values are consistent across all catch-all instances
     const blogIndex = await Bun.file(path.join(dir, "dist", "tutorials", "getting-started", "index.html")).text();
     expect(blogIndex).toContain('data-file="[...slug].tsx"');
     expect(blogIndex).toContain('/pages/blog/[...slug].tsx"');
+  });
+
+  test("handles build with no pages directory without crashing", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-no-pages", {
+      "app.ts": `export default { app: { framework: "react" } };`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    // Run the build command - should not crash even with no pages
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(dir)
+      .throws(false);
+
+    // The build should complete successfully (or fail gracefully, not crash)
+    // We're testing that it doesn't crash with the StringBuilder assertion
+    expect(exitCode).toBeDefined();
+    
+    // If it fails, it should be a graceful failure, not a crash
+    if (exitCode !== 0) {
+      expect(stderr.toString()).not.toContain("reached unreachable code");
+      expect(stderr.toString()).not.toContain("assert(this.cap > 0)");
+    }
   });
 });

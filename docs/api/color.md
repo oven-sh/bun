@@ -257,6 +257,6 @@ bun build ./client-side.ts
 This will output the following to `client-side.js`:
 
 ```js
-// client-side.ts
+// client-side.js
 console.log("red");
 ```

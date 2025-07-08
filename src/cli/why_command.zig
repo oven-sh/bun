@@ -40,7 +40,7 @@ pub const WhyCommand = struct {
     };
 
     fn getSpecifierSpecificity(spec: []const u8) u8 {
-        if (spec.len == 0) return 0;
+        if (spec.len == 0) return 9;
         if (spec[0] == '*') return 1;
         if (std.mem.indexOf(u8, spec, ".x")) |_| return 5;
         if (std.mem.indexOfAny(u8, spec, "<>=")) |_| return 6;

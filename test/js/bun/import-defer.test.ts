@@ -22,7 +22,7 @@ describe("import defer", () => {
       `,
     });
 
-    const proc = Bun.spawn({
+    const { stderr, exited } = Bun.spawn({
       cmd: [bunExe(), "main.js"],
       cwd: dir,
       env: bunEnv,
@@ -30,8 +30,8 @@ describe("import defer", () => {
       stderr: "pipe",
     });
 
-    const error = await proc.stderr.text();
-    const exitCode = await proc.exited;
+    const error = await stderr.text();
+    const exitCode = await exited;
 
     expect(exitCode).toBe(0);
     expect(error).toBe("");
@@ -46,7 +46,7 @@ describe("import defer", () => {
       `,
     });
 
-    const proc = Bun.spawn({
+    const { stderr, exited } = Bun.spawn({
       cmd: [bunExe(), "main.js"],
       cwd: dir,
       env: bunEnv,
@@ -54,8 +54,8 @@ describe("import defer", () => {
       stderr: "pipe",
     });
 
-    const error = await proc.stderr.text();
-    const exitCode = await proc.exited;
+    const error = await stderr.text();
+    const exitCode = await exited;
 
     expect(exitCode).toBe(1);
     expect(error).toContain("The 'defer' keyword can only be used with star imports");
@@ -76,7 +76,7 @@ describe("import defer", () => {
       `,
     });
 
-    const proc = Bun.spawn({
+    const { stdout, stderr, exited } = Bun.spawn({
       cmd: [bunExe(), "main.js"],
       cwd: dir,
       env: bunEnv,
@@ -84,9 +84,9 @@ describe("import defer", () => {
       stderr: "pipe",
     });
 
-    const output = await proc.stdout.text();
-    const error = await proc.stderr.text();
-    const exitCode = await proc.exited;
+    const output = await stdout.text();
+    const error = await stderr.text();
+    const exitCode = await exited;
 
     expect(exitCode).toBe(0);
     expect(error).toBe("");
@@ -110,7 +110,7 @@ describe("import defer", () => {
       `,
     });
 
-    const proc = Bun.spawn({
+    const { stderr, exited } = Bun.spawn({
       cmd: [bunExe(), "main.js"],
       cwd: dir,
       env: bunEnv,
@@ -118,8 +118,8 @@ describe("import defer", () => {
       stderr: "pipe",
     });
 
-    const error = await proc.stderr.text();
-    const exitCode = await proc.exited;
+    const error = await stderr.text();
+    const exitCode = await exited;
 
     // According to the TC39 spec, modules with top-level await cannot be deferred
     // The implementation should either reject this or handle it appropriately
@@ -143,7 +143,7 @@ describe("import defer", () => {
       `,
     });
 
-    const proc = Bun.spawn({
+    const { stdout, stderr, exited } = Bun.spawn({
       cmd: [bunExe(), "main.js"],
       cwd: dir,
       env: bunEnv,
@@ -151,9 +151,9 @@ describe("import defer", () => {
       stderr: "pipe",
     });
 
-    const output = await proc.stdout.text();
-    const error = await proc.stderr.text();
-    const exitCode = await proc.exited;
+    const output = await stdout.text();
+    const error = await stderr.text();
+    const exitCode = await exited;
 
     expect(exitCode).toBe(0);
     expect(error).toBe("");
@@ -188,7 +188,7 @@ describe("import defer", () => {
       `,
     });
 
-    const proc = Bun.spawn({
+    const { stdout, stderr, exited } = Bun.spawn({
       cmd: [bunExe(), "main.js"],
       cwd: dir,
       env: bunEnv,
@@ -196,9 +196,9 @@ describe("import defer", () => {
       stderr: "pipe",
     });
 
-    const output = await proc.stdout.text();
-    const error = await proc.stderr.text();
-    const exitCode = await proc.exited;
+    const output = await stdout.text();
+    const error = await stderr.text();
+    const exitCode = await exited;
 
     expect(exitCode).toBe(0);
     expect(error).toBe("");

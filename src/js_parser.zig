@@ -10390,6 +10390,7 @@ fn NewParser_(
                                 .import_record_index = std.math.maxInt(u32),
                                 .items = importClause.items,
                                 .is_single_line = importClause.is_single_line,
+                                .is_deferred = stmt.is_deferred,
                             };
                             try p.lexer.expectContextualKeyword("from");
                         },
@@ -10405,7 +10406,7 @@ fn NewParser_(
                             stmt = S.Import{ .namespace_ref = Ref.None, .import_record_index = std.math.maxInt(u32), .default_name = LocRef{
                                 .loc = p.lexer.loc(),
                                 .ref = try p.storeNameInRef(default_name),
-                            } };
+                            }, .is_deferred = stmt.is_deferred };
                             try p.lexer.next();
 
                             if (comptime is_typescript_enabled) {

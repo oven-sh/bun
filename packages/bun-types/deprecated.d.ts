@@ -30,6 +30,7 @@ declare module "bun" {
    * @deprecated Renamed to `ErrorLike`
    */
   type Errorlike = ErrorLike;
+
   interface TLSOptions {
     /**
      * File path to a TLS key
@@ -39,6 +40,7 @@ declare module "bun" {
      * @deprecated since v0.6.3 - Use `key: Bun.file(path)` instead.
      */
     keyFile?: string;
+
     /**
      * File path to a TLS certificate
      *
@@ -47,6 +49,7 @@ declare module "bun" {
      * @deprecated since v0.6.3 - Use `cert: Bun.file(path)` instead.
      */
     certFile?: string;
+
     /**
      *  File path to a .pem file for a custom root CA
      *
@@ -54,6 +57,9 @@ declare module "bun" {
      */
     caFile?: string;
   }
+
+  /** @deprecated This type is unused in Bun's declarations and may be removed in the future */
+  type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
 }
 
 declare namespace NodeJS {

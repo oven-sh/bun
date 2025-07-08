@@ -7,6 +7,8 @@ pub const Store = struct {
     entries: Entry.List,
     nodes: Node.List,
 
+    const log = Output.scoped(.Store, false);
+
     pub const modules_dir_name = ".bun";
 
     fn NewId(comptime T: type) type {
@@ -264,12 +266,10 @@ pub const Store = struct {
             const pkg_names = pkgs.items(.name);
             const pkg_resolutions = pkgs.items(.resolution);
 
-            std.debug.print("ENTRIES ({d}):\n", .{list.len});
-
             for (0..list.len) |entry_id| {
                 const entry = list.get(entry_id);
                 const entry_pkg_name = pkg_names[entry.pkg_id].slice(string_buf);
-                std.debug.print(
+                log(
                     \\entry ({d}): '{s}@{}'
                     \\  dep_name: {s}
                     \\  pkg_id: {d}
@@ -284,10 +284,10 @@ pub const Store = struct {
                     entry.parent_id,
                 });
 
-                std.debug.print("  dependencies ({d}):\n", .{entry.dependencies.items.len});
+                log("  dependencies ({d}):\n", .{entry.dependencies.items.len});
                 for (entry.dependencies.items) |dep_entry_id| {
                     const dep_entry = list.get(dep_entry_id.get());
-                    std.debug.print("    {s}@{}\n", .{
+                    log("    {s}@{}\n", .{
                         pkg_names[dep_entry.pkg_id].slice(string_buf),
                         pkg_resolutions[dep_entry.pkg_id].fmt(string_buf, .posix),
                     });
@@ -424,22 +424,6 @@ pub const Store = struct {
         pub const List = bun.MultiArrayList(Node);
 
         pub fn deinitList(list: *const List, allocator: std.mem.Allocator) void {
-            const slice = list.slice();
-            const list_dependencies = slice.items(.dependencies);
-            const list_peers = slice.items(.peers);
-            const list_nodes = slice.items(.nodes);
-
-            var total: usize = list.capacity;
-
-            for (list_dependencies, list_peers, list_nodes) |*dependencies, *peers, *nodes| {
-                total += dependencies.capacity + peers.list.capacity + nodes.capacity;
-                dependencies.deinit(allocator);
-                peers.deinit(allocator);
-                nodes.deinit(allocator);
-            }
-
-            std.debug.print("nodes size: {}\n", .{bun.fmt.size(total, .{})});
-
             list.deinit(allocator);
         }
 
@@ -454,9 +438,9 @@ pub const Store = struct {
             const dep_name = if (this.dep_id == invalid_dependency_id) "root" else deps[this.dep_id].name.slice(string_buf);
             const dep_version = if (this.dep_id == invalid_dependency_id) "root" else deps[this.dep_id].version.literal.slice(string_buf);
 
-            std.debug.print(
-                \\node({d}):
-                \\  dep: {s}@{s}
+            log(
+                \\node({d})
+                \\  deps: {s}@{s}
                 \\  res: {s}@{}
                 \\
             , .{
@@ -478,12 +462,10 @@ pub const Store = struct {
             const pkg_names = pkgs.items(.name);
             const pkg_resolutions = pkgs.items(.resolution);
 
-            std.debug.print("NODE ({d}):\n", .{list.len});
-
             for (0..list.len) |node_id| {
                 const node = list.get(node_id);
                 const node_pkg_name = pkg_names[node.pkg_id].slice(string_buf);
-                std.debug.print(
+                log(
                     \\node ({d}): '{s}'
                     \\  dep_id: {d}
                     \\  pkg_id: {d}
@@ -497,7 +479,7 @@ pub const Store = struct {
                     node.parent_id,
                 });
 
-                std.debug.print("  dependencies ({d}):\n", .{node.dependencies.items.len});
+                log("  dependencies ({d}):\n", .{node.dependencies.items.len});
                 for (node.dependencies.items) |ids| {
                     const dep = dependencies[ids.dep_id];
                     const dep_name = dep.name.slice(string_buf);
@@ -505,7 +487,7 @@ pub const Store = struct {
                     const pkg_name = pkg_names[ids.pkg_id].slice(string_buf);
                     const pkg_res = pkg_resolutions[ids.pkg_id];
 
-                    std.debug.print("    {s}@{} ({s}@{s})\n", .{
+                    log("    {s}@{} ({s}@{s})\n", .{
                         pkg_name,
                         pkg_res.fmt(string_buf, .posix),
                         dep_name,
@@ -513,22 +495,22 @@ pub const Store = struct {
                     });
                 }
 
-                std.debug.print("  nodes ({d}): ", .{node.nodes.items.len});
+                log("  nodes ({d}): ", .{node.nodes.items.len});
                 for (node.nodes.items, 0..) |id, i| {
-                    std.debug.print("{d}", .{id.get()});
+                    log("{d}", .{id.get()});
                     if (i != node.nodes.items.len - 1) {
-                        std.debug.print(",", .{});
+                        log(",", .{});
                     }
                 }
 
-                std.debug.print("\n  peers ({d}):\n", .{node.peers.list.items.len});
+                log("\n  peers ({d}):\n", .{node.peers.list.items.len});
                 for (node.peers.list.items) |ids| {
                     const dep = dependencies[ids.dep_id];
                     const dep_name = dep.name.slice(string_buf);
                     const pkg_name = pkg_names[ids.pkg_id].slice(string_buf);
                     const pkg_res = pkg_resolutions[ids.pkg_id];
 
-                    std.debug.print("    {s}@{} ({s}@{s})\n", .{
+                    log("    {s}@{} ({s}@{s})\n", .{
                         pkg_name,
                         pkg_res.fmt(string_buf, .posix),
                         dep_name,
@@ -559,3 +541,4 @@ const invalid_dependency_id = install.invalid_dependency_id;
 
 const Lockfile = install.Lockfile;
 const Package = Lockfile.Package;
+const Output = bun.Output;

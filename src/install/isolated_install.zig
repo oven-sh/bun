@@ -1,3 +1,5 @@
+const log = Output.scoped(.IsolatedInstall, false);
+
 pub fn installIsolatedPackages(
     manager: *PackageManager,
     command_ctx: Command.Context,
@@ -981,28 +983,28 @@ pub fn installIsolatedPackages(
 
                 done = false;
 
-                std.debug.print("entry not done: {d}, {s}\n", .{ entry_id, @tagName(step) });
+                log("entry not done: {d}, {s}\n", .{ entry_id, @tagName(step) });
 
                 const deps = store.entries.items(.dependencies)[entry_id.get()];
                 for (deps.slice()) |dep| {
                     const dep_step = entry_steps[dep.entry_id.get()].load(.monotonic);
                     if (dep_step != .done) {
-                        std.debug.print(", parents:\n - ", .{});
+                        log(", parents:\n - ", .{});
                         const parent_ids = Store.Entry.debugGatherAllParents(entry_id, installer.store);
                         for (parent_ids) |parent_id| {
                             if (parent_id == .root) {
-                                std.debug.print("root ", .{});
+                                log("root ", .{});
                             } else {
-                                std.debug.print("{d} ", .{parent_id.get()});
+                                log("{d} ", .{parent_id.get()});
                             }
                         }
 
-                        std.debug.print("\n", .{});
+                        log("\n", .{});
                         continue :next_entry;
                     }
                 }
 
-                std.debug.print(" and is able to run\n", .{});
+                log(" and is able to run\n", .{});
             }
 
             bun.debugAssert(done);

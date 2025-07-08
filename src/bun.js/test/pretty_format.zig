@@ -1362,7 +1362,7 @@ pub const JestPrettyFormat = struct {
                             .formatter = this,
                             .writer = writer_,
                         };
-                        value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                        try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                     }
                     this.writeIndent(Writer, writer_) catch {};
                     writer.writeAll("}");
@@ -1392,7 +1392,7 @@ pub const JestPrettyFormat = struct {
                             .formatter = this,
                             .writer = writer_,
                         };
-                        value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                        try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                     }
                     this.writeIndent(Writer, writer_) catch {};
                     writer.writeAll("}");

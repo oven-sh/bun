@@ -666,7 +666,7 @@ pub const Expect = struct {
                 .expected = expected,
                 .pass = &pass,
             };
-            list_value.forEach(globalThis, &expected_entry, struct {
+            try list_value.forEach(globalThis, &expected_entry, struct {
                 pub fn sameValueIterator(
                     _: *JSC.VM,
                     _: *JSGlobalObject,
@@ -762,7 +762,7 @@ pub const Expect = struct {
                 .expected = expected,
                 .pass = &pass,
             };
-            value.forEach(globalThis, &expected_entry, struct {
+            try value.forEach(globalThis, &expected_entry, struct {
                 pub fn sameValueIterator(
                     _: *JSC.VM,
                     _: *JSGlobalObject,
@@ -1360,7 +1360,7 @@ pub const Expect = struct {
                 .expected = expected,
                 .pass = &pass,
             };
-            value.forEach(globalThis, &expected_entry, struct {
+            try value.forEach(globalThis, &expected_entry, struct {
                 pub fn deepEqualsIterator(
                     _: *JSC.VM,
                     _: *JSGlobalObject,
@@ -2980,7 +2980,7 @@ pub const Expect = struct {
             if (value.jsTypeLoose().isObject()) {
                 if (try value.isIterable(globalThis)) {
                     var any_properties_in_iterator = false;
-                    value.forEach(globalThis, &any_properties_in_iterator, struct {
+                    try value.forEach(globalThis, &any_properties_in_iterator, struct {
                         pub fn anythingInIterator(
                             _: *JSC.VM,
                             _: *JSGlobalObject,

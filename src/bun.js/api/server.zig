@@ -427,7 +427,7 @@ const ServePlugins = struct {
         } };
 
         global.bunVM().eventLoop().enter();
-        const result = JSBundlerPlugin__loadAndResolvePluginsForServe(plugin, plugin_js_array, bunfig_folder_bunstr);
+        const result = try bun.jsc.fromJSHostCall(global, @src(), JSBundlerPlugin__loadAndResolvePluginsForServe, .{ plugin, plugin_js_array, bunfig_folder_bunstr });
         global.bunVM().eventLoop().exit();
 
         // handle the case where js synchronously throws an error

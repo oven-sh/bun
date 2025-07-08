@@ -529,8 +529,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 2) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwTypeError(globalObject, throwScope, "Expected 2 values to compare"_s);
+        throwTypeError(globalObject, scope, "Expected 2 values to compare"_s);
         return {};
     }
 
@@ -538,8 +537,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
     JSC::JSValue object = callFrame->uncheckedArgument(1);
 
     if (!subset.isObject() || !object.isObject()) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwTypeError(globalObject, throwScope, "Expected 2 objects to match"_s);
+        throwTypeError(globalObject, scope, "Expected 2 objects to match"_s);
         return {};
     }
 
@@ -547,7 +545,6 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
     std::set<EncodedJSValue> subsetVisited;
     MarkedArgumentBuffer gcBuffer;
     bool match = Bun__deepMatch</* enableAsymmetricMatchers */ false>(object, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, false, false);
-
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(match));
 }

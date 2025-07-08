@@ -3720,7 +3720,6 @@ bool JSC__JSValue__isIterable(JSC::EncodedJSValue JSValue, JSC::JSGlobalObject* 
 
 void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* ctx, void (*ArgFn3)(JSC::VM* arg0, JSC::JSGlobalObject* arg1, void* arg2, JSC::EncodedJSValue JSValue3))
 {
-
     JSC::forEachInIterable(
         arg1, JSC::JSValue::decode(JSValue0),
         [ArgFn3, ctx](JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSValue value) -> void {

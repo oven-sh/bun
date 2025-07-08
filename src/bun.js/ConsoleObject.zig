@@ -544,7 +544,7 @@ pub const TablePrinter = struct {
         {
             if (this.is_iterable) {
                 var ctx_: struct { this: *TablePrinter, columns: *@TypeOf(columns), idx: u32 = 0, err: bool = false } = .{ .this = this, .columns = &columns };
-                this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
+                try this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
                     fn callback(_: *JSC.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.C) void {
                         updateColumnsForRow(ctx.this, ctx.columns, .{ .num = ctx.idx }, value) catch {
                             ctx.err = true;
@@ -618,7 +618,7 @@ pub const TablePrinter = struct {
         {
             if (this.is_iterable) {
                 var ctx_: struct { this: *TablePrinter, columns: *@TypeOf(columns), writer: Writer, idx: u32 = 0, err: bool = false } = .{ .this = this, .columns = &columns, .writer = writer };
-                this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
+                try this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
                     fn callback(_: *JSC.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.C) void {
                         printRow(ctx.this, Writer, ctx.writer, enable_ansi_colors, ctx.columns, .{ .num = ctx.idx }, value) catch {
                             ctx.err = true;
@@ -2722,7 +2722,7 @@ pub const Formatter = struct {
                                 .formatter = this,
                                 .writer = writer_,
                             };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                            try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                             if (this.failed) return;
                             if (single_line and iter.count > 0) {
                                 writer.writeAll(" ");
@@ -2752,7 +2752,7 @@ pub const Formatter = struct {
                                 .formatter = this,
                                 .writer = writer_,
                             };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                            try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                             if (this.failed) return;
                             if (iter.count > 0) {
                                 if (single_line) {
@@ -2786,7 +2786,7 @@ pub const Formatter = struct {
                                 .formatter = this,
                                 .writer = writer_,
                             };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                            try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                             if (this.failed) return;
                             if (iter.count > 0 and !single_line) {
                                 writer.writeAll("\n");
@@ -2829,7 +2829,7 @@ pub const Formatter = struct {
                                 .formatter = this,
                                 .writer = writer_,
                             };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                            try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                             if (this.failed) return;
                             if (single_line and !iter.is_first) {
                                 writer.writeAll(" ");

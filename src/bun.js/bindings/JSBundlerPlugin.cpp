@@ -579,7 +579,7 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedPlugins, JSC::EncodedJSValue encodedBunfigFolder)
 {
     auto& vm = plugin->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* loadAndResolvePluginsForServeBuiltinFn = JSC::JSFunction::create(vm, plugin->globalObject(), WebCore::bundlerPluginLoadAndResolvePluginsForServeCodeGenerator(vm), plugin->globalObject());
 
@@ -594,7 +594,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bu
     arguments.append(JSValue::decode(encodedBunfigFolder));
     arguments.append(runSetupFn);
 
-    return JSC::JSValue::encode(JSC::profiledCall(plugin->globalObject(), ProfilingReason::API, loadAndResolvePluginsForServeBuiltinFn, callData, plugin, arguments));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(plugin->globalObject(), ProfilingReason::API, loadAndResolvePluginsForServeBuiltinFn, callData, plugin, arguments)));
 }
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(

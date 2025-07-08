@@ -2108,8 +2108,8 @@ pub const JSValue = enum(i64) {
         globalObject: *JSGlobalObject,
         ctx: ?*anyopaque,
         callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void,
-    ) void {
-        return JSC__JSValue__forEach(this, globalObject, ctx, callback);
+    ) bun.JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__forEach, .{ this, globalObject, ctx, callback });
     }
 
     /// Same as `forEach` but accepts a typed context struct without need for @ptrCasts
@@ -2118,9 +2118,9 @@ pub const JSValue = enum(i64) {
         globalObject: *JSGlobalObject,
         ctx: anytype,
         callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: @TypeOf(ctx), nextValue: JSValue) callconv(.C) void,
-    ) void {
+    ) bun.JSError!void {
         const func = @as(*const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void, @ptrCast(callback));
-        return JSC__JSValue__forEach(this, globalObject, ctx, func);
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__forEach, .{ this, globalObject, ctx, func });
     }
 
     extern fn JSC__JSValue__isIterable(this: JSValue, globalObject: *JSGlobalObject) bool;

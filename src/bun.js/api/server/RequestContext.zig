@@ -2123,7 +2123,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.cookies) |cookies| {
                 this.cookies = null;
                 defer cookies.deref();
-                cookies.write(this.server.?.globalThis, ssl_enabled, @ptrCast(this.resp.?));
+                cookies.write(this.server.?.globalThis, ssl_enabled, @ptrCast(this.resp.?)) catch return; // TODO: properly propagate exception upwards
             }
 
             if (needs_content_type and

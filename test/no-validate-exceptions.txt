@@ -1,24 +1,4 @@
 # List of tests for which we do NOT set validateExceptionChecks=1 when running in ASan CI
-test/integration/bun-types/bun-types.test.ts
-test/integration/bun-types/fixture/serve-types.test.ts
-test/integration/esbuild/esbuild.test.ts
-test/integration/jsdom/jsdom.test.ts
-test/integration/mysql2/mysql2.test.ts
-test/integration/nest/nest_metadata.test.ts
-test/integration/sass/sass.test.ts
-test/integration/sharp/sharp.test.ts
-test/integration/svelte/client-side.test.ts
-test/integration/typegraphql/src/typegraphql.test.ts
-test/internal/bindgen.test.ts
-test/js/bun/bun-object/deep-match.spec.ts
-test/js/bun/bun-object/write.spec.ts
-test/js/bun/console/bun-inspect-table.test.ts
-test/js/bun/console/console-iterator.test.ts
-test/js/bun/console/console-table.test.ts
-test/js/bun/cookie/cookie-expires-validation.test.ts
-test/js/bun/cookie/cookie-map.test.ts
-test/js/bun/cookie/cookie.test.ts
-test/js/bun/crypto/cipheriv-decipheriv.test.ts
 test/js/bun/crypto/wpt-webcrypto.generateKey.test.ts
 test/js/bun/dns/resolve-dns.test.ts
 test/js/bun/glob/scan.test.ts
@@ -562,6 +542,8 @@ test/bundler/esbuild/ts.test.ts
 test/cli/install/bun-install-registry.test.ts
 test/cli/install/bun-workspaces.test.ts
 test/cli/install/bunx.test.ts
+test/integration/jsdom/jsdom.test.ts
+test/integration/svelte/client-side.test.ts
 # ProgramExecutable::initializeGlobalProperties
 # missing RELEASE_AND_RETURN
 test/js/node/test/parallel/test-repl-syntax-error-handling.js
@@ -587,6 +569,7 @@ test/js/node/http/node-http-parser.test.ts
 # try again later
 test/js/node/test/parallel/test-promises-warning-on-unhandled-rejection.js
 test/bundler/bun-build-api.test.ts
+test/integration/sharp/sharp.test.ts
 
 # normalizeCryptoAlgorithmParameters
 test/js/node/test/parallel/test-webcrypto-derivekey.js

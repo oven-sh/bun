@@ -2106,7 +2106,7 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
         const promise = if (!this.main_is_html_entrypoint)
             JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name)) orelse return error.JSError
         else
-            Bun__loadHTMLEntryPoint(this.global);
+            try bun.jsc.fromJSHostCallGeneric(this.global, @src(), Bun__loadHTMLEntryPoint, .{this.global});
 
         this.pending_internal_promise = promise;
         JSValue.fromCell(promise).ensureStillAlive();
@@ -2354,16 +2354,16 @@ pub fn printErrorlikeObject(
             pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                 iterator(vm, globalObject, nextValue, ctx.?, false);
             }
-            inline fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+            fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                 const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
                 VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
             }
         };
         var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list, .formatter = formatter };
         if (comptime allow_ansi_color) {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor);
+            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor) catch return; // TODO: properly propagate exception upwards
         } else {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor);
+            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return; // TODO: properly propagate exception upwards
         }
         return;
     }

@@ -39,6 +39,48 @@ pub const WhyCommand = struct {
         optional_peer,
     };
 
+    fn getSpecifierSpecificity(spec: []const u8) u8 {
+        if (spec.len == 0) return 0;
+        if (spec[0] == '*') return 1;
+        if (std.mem.indexOf(u8, spec, ".x")) |_| return 5;
+        if (std.mem.indexOfAny(u8, spec, "<>=")) |_| return 6;
+        if (spec[0] == '~') return 7;
+        if (spec[0] == '^') return 8;
+        if (std.mem.indexOf(u8, spec, "workspace:")) |_| return 9;
+        if (std.ascii.isDigit(spec[0])) return 10;
+        return 3;
+    }
+
+    fn getDependencyTypePriority(dep_type: DependencyType) u8 {
+        return switch (dep_type) {
+            .prod => 4,
+            .peer => 3,
+            .optional_peer => 2,
+            .optional => 1,
+            .dev => 0,
+        };
+    }
+
+    fn compareDependents(context: void, a: DependentInfo, b: DependentInfo) bool {
+        _ = context;
+
+        const a_specificity = getSpecifierSpecificity(a.spec);
+        const b_specificity = getSpecifierSpecificity(b.spec);
+
+        if (a_specificity != b_specificity) {
+            return a_specificity > b_specificity;
+        }
+
+        const a_type_priority = getDependencyTypePriority(a.dep_type);
+        const b_type_priority = getDependencyTypePriority(b.dep_type);
+
+        if (a_type_priority != b_type_priority) {
+            return a_type_priority > b_type_priority;
+        }
+
+        return std.mem.lessThan(u8, a.name, b.name);
+    }
+
     const GlobPattern = struct {
         pattern_type: enum {
             exact,
@@ -310,29 +352,33 @@ pub const WhyCommand = struct {
         }
 
         for (target_versions.items) |target_version| {
-            const dependents = if (all_dependents.get(target_version.pkg_id)) |deps| deps else std.ArrayList(DependentInfo).init(arena_allocator);
-
             const target_pkg = packages.get(target_version.pkg_id);
             const target_name = target_pkg.name.slice(string_bytes);
             Output.prettyln("<b>{s}@{s}<r>", .{ target_name, target_version.version });
 
-            if (dependents.items.len == 0) {
-                Output.prettyln("<d>  └─ No dependents found<r>", .{});
-            } else if (max_depth == 0) {
-                Output.prettyln("<d>  └─ (deeper dependencies hidden)<r>", .{});
-            } else {
-                var ctx_data = TreeContext.init(arena_allocator, string_bytes, top_only, &all_dependents);
-                defer ctx_data.clearPathTracker();
+            if (all_dependents.get(target_version.pkg_id)) |dependents| {
+                if (dependents.items.len == 0) {
+                    Output.prettyln("<d>  └─ No dependents found<r>", .{});
+                } else if (max_depth == 0) {
+                    Output.prettyln("<d>  └─ (deeper dependencies hidden)<r>", .{});
+                } else {
+                    var ctx_data = TreeContext.init(arena_allocator, string_bytes, top_only, &all_dependents);
+                    defer ctx_data.clearPathTracker();
 
-                for (dependents.items, 0..) |dep, dep_idx| {
-                    const is_last = dep_idx == dependents.items.len - 1;
-                    const prefix = if (is_last) PREFIX_LAST else PREFIX_MIDDLE;
+                    std.sort.insertion(DependentInfo, dependents.items, {}, compareDependents);
 
-                    printPackageWithType(prefix, &dep);
-                    if (!top_only) {
-                        try printDependencyTree(&ctx_data, dep.pkg_id, if (is_last) PREFIX_SPACE else PREFIX_CONTINUE, 1, is_last, dep.workspace);
+                    for (dependents.items, 0..) |dep, dep_idx| {
+                        const is_last = dep_idx == dependents.items.len - 1;
+                        const prefix = if (is_last) PREFIX_LAST else PREFIX_MIDDLE;
+
+                        printPackageWithType(prefix, &dep);
+                        if (!top_only) {
+                            try printDependencyTree(&ctx_data, dep.pkg_id, if (is_last) PREFIX_SPACE else PREFIX_CONTINUE, 1, is_last, dep.workspace);
+                        }
                     }
                 }
+            } else {
+                Output.prettyln("<d>  └─ No dependents found<r>", .{});
             }
 
             Output.prettyln("", .{});
@@ -409,7 +455,12 @@ pub const WhyCommand = struct {
         defer _ = ctx.path_tracker.remove(current_pkg_id);
 
         if (ctx.all_dependents.get(current_pkg_id)) |dependents| {
-            for (dependents.items, 0..) |dep, dep_idx| {
+            const sorted_dependents = try ctx.allocator.dupe(DependentInfo, dependents.items);
+            defer ctx.allocator.free(sorted_dependents);
+
+            std.sort.insertion(DependentInfo, sorted_dependents, {}, compareDependents);
+
+            for (sorted_dependents, 0..) |dep, dep_idx| {
                 if (parent_is_workspace and dep.version.len == 0) {
                     continue;
                 }
@@ -419,7 +470,7 @@ pub const WhyCommand = struct {
                     return;
                 }
 
-                const is_dep_last = dep_idx == dependents.items.len - 1;
+                const is_dep_last = dep_idx == sorted_dependents.len - 1;
                 const prefix_char = if (is_dep_last) "└─ " else "├─ ";
 
                 const full_prefix = try std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ prefix, prefix_char });
@@ -427,7 +478,7 @@ pub const WhyCommand = struct {
 
                 const next_prefix = try std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ prefix, if (is_dep_last) "   " else "│  " });
 
-                const print_break_line = is_dep_last and dependents.items.len > 1 and !printed_break_line;
+                const print_break_line = is_dep_last and sorted_dependents.len > 1 and !printed_break_line;
                 try printDependencyTree(ctx, dep.pkg_id, next_prefix, depth + 1, printed_break_line or print_break_line, dep.workspace);
 
                 if (print_break_line) {

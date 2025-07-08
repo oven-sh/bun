@@ -74,10 +74,26 @@ pub fn runTasks(
         var iter = batch.iterator();
         while (iter.next()) |task| {
             defer installer.preallocated_tasks.put(task);
-            if (task.err) |err| {
-                installer.onTaskFail(task.entry_id, err);
-            } else {
-                installer.onTask(task.entry_id);
+            switch (task.result) {
+                .none => {
+                    if (comptime Environment.ci_assert) {
+                        bun.assertWithLocation(false, @src());
+                    }
+                    installer.onTaskComplete(task.entry_id, .success);
+                },
+                .err => |err| {
+                    installer.onTaskFail(task.entry_id, err);
+                },
+                .blocked => {
+                    installer.onTaskBlocked(task.entry_id);
+                },
+                .done => {
+                    if (comptime Environment.ci_assert) {
+                        const step = installer.store.entries.items(.step)[task.entry_id.get()].load(.monotonic);
+                        bun.assertWithLocation(step == .done, @src());
+                    }
+                    installer.onTaskComplete(task.entry_id, .success);
+                },
             }
         }
     }

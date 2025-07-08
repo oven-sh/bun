@@ -635,37 +635,41 @@ pub fn installIsolatedPackages(
                 else => {
                     // this is `uninitialized` or `single_file_module`.
                     bun.debugAssert(false);
-                    installer.onTaskSkipped(entry_id);
+                    entry_steps[entry_id.get()].store(.done, .monotonic);
+                    installer.onTaskComplete(entry_id, .skipped);
                     continue;
                 },
                 .root => {
                     if (entry_id == .root) {
                         entry_steps[entry_id.get()].store(.symlink_dependencies, .monotonic);
-                        installer.resumeTask(entry_id);
+                        installer.startTask(entry_id);
                         continue;
                     }
-                    installer.onTaskSkipped(entry_id);
+                    entry_steps[entry_id.get()].store(.done, .monotonic);
+                    installer.onTaskComplete(entry_id, .skipped);
                     continue;
                 },
                 .workspace => {
                     // if injected=true this might be false
                     if (!(try seen_workspace_ids.getOrPut(lockfile.allocator, pkg_id)).found_existing) {
                         entry_steps[entry_id.get()].store(.symlink_dependencies, .monotonic);
-                        installer.resumeTask(entry_id);
+                        installer.startTask(entry_id);
                         continue;
                     }
-                    installer.onTaskSkipped(entry_id);
+                    entry_steps[entry_id.get()].store(.done, .monotonic);
+                    installer.onTaskComplete(entry_id, .success);
                     continue;
                 },
                 .symlink => {
                     // no installation required, will only need to be linked to packages that depend on it.
                     bun.debugAssert(entry_dependencies[entry_id.get()].list.items.len == 0);
-                    installer.onTaskSkipped(entry_id);
+                    entry_steps[entry_id.get()].store(.done, .monotonic);
+                    installer.onTaskComplete(entry_id, .skipped);
                     continue;
                 },
                 .folder => {
                     // folders are always hardlinked to keep them up-to-date
-                    installer.resumeTask(entry_id);
+                    installer.startTask(entry_id);
                     continue;
                 },
 
@@ -704,7 +708,8 @@ pub fn installIsolatedPackages(
                         };
 
                     if (!needs_install) {
-                        installer.onTaskSkipped(entry_id);
+                        entry_steps[entry_id.get()].store(.done, .monotonic);
+                        installer.onTaskComplete(entry_id, .skipped);
                         continue;
                     }
 
@@ -747,7 +752,7 @@ pub fn installIsolatedPackages(
                     };
 
                     if (!missing_from_cache) {
-                        installer.resumeTask(entry_id);
+                        installer.startTask(entry_id);
                         continue;
                     }
 
@@ -778,9 +783,8 @@ pub fn installIsolatedPackages(
                                     if (manager.options.enable.fail_early) {
                                         Global.exit(1);
                                     }
-                                    installer.summary.fail += 1;
-                                    installer.decrementPendingTasks(entry_id);
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
+                                    installer.onTaskComplete(entry_id, .fail);
                                     continue;
                                 },
                             };
@@ -814,9 +818,8 @@ pub fn installIsolatedPackages(
                                     if (manager.options.enable.fail_early) {
                                         Global.exit(1);
                                     }
-                                    installer.summary.fail += 1;
-                                    installer.decrementPendingTasks(entry_id);
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
+                                    installer.onTaskComplete(entry_id, .fail);
                                     continue;
                                 },
                             };
@@ -847,9 +850,8 @@ pub fn installIsolatedPackages(
                                     if (manager.options.enable.fail_early) {
                                         Global.exit(1);
                                     }
-                                    installer.summary.fail += 1;
-                                    installer.decrementPendingTasks(entry_id);
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
+                                    installer.onTaskComplete(entry_id, .fail);
                                     continue;
                                 },
                             };

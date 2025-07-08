@@ -22,13 +22,12 @@ pub const Installer = struct {
         this.trusted_dependencies_from_update_requests.deinit(this.lockfile.allocator);
     }
 
-    pub fn resumeTask(this: *Installer, entry_id: Store.Entry.Id) void {
+    pub fn startTask(this: *Installer, entry_id: Store.Entry.Id) void {
         const task = this.preallocated_tasks.get();
 
         task.* = .{
             .entry_id = entry_id,
             .installer = this,
-            .err = null,
         };
 
         this.manager.thread_pool.schedule(.from(&task.task));
@@ -38,7 +37,7 @@ pub const Installer = struct {
         if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
             for (removed.value.items) |install_ctx| {
                 const entry_id = install_ctx.isolated_package_install_context;
-                this.resumeTask(entry_id);
+                this.startTask(entry_id);
             }
         }
     }
@@ -116,20 +115,7 @@ pub const Installer = struct {
         this.summary.fail += 1;
 
         this.decrementPendingTasks(entry_id);
-        this.resumeAvailableTasks();
-    }
-
-    pub fn onTask(this: *Installer, task_entry_id: Store.Entry.Id) void {
-        const entries = this.store.entries.slice();
-        const entry_steps = entries.items(.step);
-        const step = entry_steps[task_entry_id.get()].load(.monotonic);
-
-        if (step != .done) {
-            // only done will unblock other packages
-            return;
-        }
-
-        this.onTaskSuccess(task_entry_id);
+        this.resumeUnblockedTasks();
     }
 
     pub fn decrementPendingTasks(this: *Installer, entry_id: Store.Entry.Id) void {
@@ -137,19 +123,72 @@ pub const Installer = struct {
         this.manager.decrementPendingTasks();
     }
 
-    pub fn onTaskSkipped(this: *Installer, entry_id: Store.Entry.Id) void {
-        this.summary.skipped += 1;
+    pub fn onTaskBlocked(this: *Installer, entry_id: Store.Entry.Id) void {
+
+        // race: task decides it is blocked because one of it's dependencies has not finished.
+        // before the task can mark itself as blocked, the dependency finishes it's install,
+        // causing the task to never finish because resumeUnblockedTasks is called before
+        // it's state is set to blocked.
+        //
+        // fix: check if the task is unblocked after the task returns blocked, and only set/unset
+        // blocked from the main thread.
+
+        var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
+        defer parent_dedupe.deinit();
+
+        if (this.isTaskUnblocked(entry_id, &parent_dedupe)) {
+            this.store.entries.items(.step)[entry_id.get()].store(.symlink_dependency_binaries, .monotonic);
+            this.startTask(entry_id);
+            return;
+        }
+
+        this.store.entries.items(.step)[entry_id.get()].store(.blocked, .monotonic);
+    }
+
+    fn isTaskUnblocked(this: *Installer, entry_id: Store.Entry.Id, parent_dedupe: *std.AutoArrayHashMap(Store.Entry.Id, void)) bool {
+        const entries = this.store.entries.slice();
+        const entry_deps = entries.items(.dependencies);
+        const entry_steps = entries.items(.step);
+
+        const deps = entry_deps[entry_id.get()];
+        for (deps.slice()) |dep| {
+            if (entry_steps[dep.entry_id.get()].load(.monotonic) != .done) {
+                parent_dedupe.clearRetainingCapacity();
+                if (this.store.isCycle(entry_id, dep.entry_id, parent_dedupe)) {
+                    continue;
+                }
+
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    pub fn onTaskComplete(this: *Installer, entry_id: Store.Entry.Id, state: enum { success, skipped, fail }) void {
+        if (comptime Environment.ci_assert) {
+            bun.assertWithLocation(this.store.entries.items(.step)[entry_id.get()].load(.monotonic) == .done, @src());
+        }
+
         this.decrementPendingTasks(entry_id);
-        this.store.entries.items(.step)[entry_id.get()].store(.done, .monotonic);
+        this.resumeUnblockedTasks();
+
         if (this.install_node) |node| {
             node.completeOne();
         }
-        this.resumeAvailableTasks();
-    }
 
-    pub fn onTaskSuccess(this: *Installer, entry_id: Store.Entry.Id) void {
-        this.decrementPendingTasks(entry_id);
-        this.resumeAvailableTasks();
+        switch (state) {
+            .success => {
+                this.summary.success += 1;
+            },
+            .skipped => {
+                this.summary.skipped += 1;
+            },
+            .fail => {
+                this.summary.fail += 1;
+                return;
+            },
+        }
 
         const pkg_id = pkg_id: {
             if (entry_id == .root) {
@@ -179,20 +218,16 @@ pub const Installer = struct {
         const is_duplicate = this.installed.isSet(pkg_id);
         this.summary.success += @intFromBool(!is_duplicate);
         this.installed.set(pkg_id);
-        if (this.install_node) |node| {
-            node.completeOne();
-        }
     }
 
-    pub fn resumeAvailableTasks(this: *Installer) void {
+    pub fn resumeUnblockedTasks(this: *Installer) void {
         const entries = this.store.entries.slice();
-        const entry_deps = entries.items(.dependencies);
         const entry_steps = entries.items(.step);
 
         var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
         defer parent_dedupe.deinit();
 
-        next_entry: for (0..this.store.entries.len) |_entry_id| {
+        for (0..this.store.entries.len) |_entry_id| {
             const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
 
             const entry_step = entry_steps[entry_id.get()].load(.monotonic);
@@ -200,21 +235,12 @@ pub const Installer = struct {
                 continue;
             }
 
-            const deps = entry_deps[entry_id.get()];
-            for (deps.slice()) |dep| {
-                switch (entry_steps[dep.entry_id.get()].load(.monotonic)) {
-                    .done => {},
-                    else => {
-                        parent_dedupe.clearRetainingCapacity();
-                        if (!this.store.isCycle(entry_id, dep.entry_id, &parent_dedupe)) {
-                            continue :next_entry;
-                        }
-                    },
-                }
+            if (!this.isTaskUnblocked(entry_id, &parent_dedupe)) {
+                continue;
             }
 
             entry_steps[entry_id.get()].store(.symlink_dependency_binaries, .monotonic);
-            this.resumeTask(entry_id);
+            this.startTask(entry_id);
         }
     }
 
@@ -227,7 +253,14 @@ pub const Installer = struct {
         task: ThreadPool.Task = .{ .callback = &callback },
         next: ?*Task = null,
 
-        err: ?Error,
+        result: Result = .none,
+
+        const Result = union(enum) {
+            none,
+            err: Error,
+            blocked,
+            done,
+        };
 
         const Error = union(Step) {
             link_package: sys.Error,
@@ -274,6 +307,9 @@ pub const Installer = struct {
             // pause again while remaining scripts run.
 
             done,
+
+            // only the main thread sets blocked, and only the main thread
+            // sets a blocked task to symlink_dependency_binaries
             blocked,
         };
 
@@ -300,6 +336,7 @@ pub const Installer = struct {
         const Yield = union(enum) {
             yield,
             done,
+            blocked,
             fail: Error,
 
             pub fn failure(e: Error) Yield {
@@ -341,51 +378,61 @@ pub const Installer = struct {
                 inline .link_package => |current_step| {
                     const string_buf = lockfile.buffers.string_bytes.items;
 
-                    if (pkg_res.tag == .folder) {
-                        // the folder does not exist in the cache
-                        const folder_dir = switch (bun.openDirForIteration(FD.cwd(), pkg_res.value.folder.slice(string_buf))) {
-                            .result => |fd| fd,
-                            .err => |err| return .failure(.{ .link_package = err }),
-                        };
-                        defer folder_dir.close();
-
-                        var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDir();
-                        defer src.deinit();
-                        src.append(pkg_res.value.folder.slice(string_buf));
-
-                        var dest: bun.RelPath(.{ .unit = .os, .sep = .auto }) = .init();
-                        defer dest.deinit();
-
-                        installer.appendStorePath(&dest, this.entry_id);
-
-                        var hardlinker: Hardlinker = .{
-                            .src_dir = folder_dir,
-                            .src = src,
-                            .dest = dest,
-                        };
-
-                        switch (try hardlinker.link(&.{comptime bun.OSPathLiteral("node_modules")})) {
-                            .result => {},
-                            .err => |err| return .failure(.{ .link_package = err }),
-                        }
-
-                        continue :next_step this.nextStep(current_step);
-                    }
-
-                    const patch_info = try installer.packagePatchInfo(
-                        pkg_name,
-                        pkg_name_hash,
-                        &pkg_res,
-                    );
-
                     var pkg_cache_dir_subpath: bun.RelPath(.{ .sep = .auto }) = .from(switch (pkg_res.tag) {
-                        .npm => manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.value.npm.version, patch_info.contentsHash()),
-                        .git => manager.cachedGitFolderName(&pkg_res.value.git, patch_info.contentsHash()),
-                        .github => manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
-                        .local_tarball => manager.cachedTarballFolderName(pkg_res.value.local_tarball, patch_info.contentsHash()),
-                        .remote_tarball => manager.cachedTarballFolderName(pkg_res.value.remote_tarball, patch_info.contentsHash()),
+                        else => |tag| pkg_cache_dir_subpath: {
+                            const patch_info = try installer.packagePatchInfo(
+                                pkg_name,
+                                pkg_name_hash,
+                                &pkg_res,
+                            );
 
-                        else => unreachable,
+                            break :pkg_cache_dir_subpath switch (tag) {
+                                .npm => manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.value.npm.version, patch_info.contentsHash()),
+                                .git => manager.cachedGitFolderName(&pkg_res.value.git, patch_info.contentsHash()),
+                                .github => manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
+                                .local_tarball => manager.cachedTarballFolderName(pkg_res.value.local_tarball, patch_info.contentsHash()),
+                                .remote_tarball => manager.cachedTarballFolderName(pkg_res.value.remote_tarball, patch_info.contentsHash()),
+
+                                else => {
+                                    if (comptime Environment.ci_assert) {
+                                        bun.assertWithLocation(false, @src());
+                                    }
+
+                                    continue :next_step this.nextStep(current_step);
+                                },
+                            };
+                        },
+
+                        .folder => {
+                            // the folder does not exist in the cache
+                            const folder_dir = switch (bun.openDirForIteration(FD.cwd(), pkg_res.value.folder.slice(string_buf))) {
+                                .result => |fd| fd,
+                                .err => |err| return .failure(.{ .link_package = err }),
+                            };
+                            defer folder_dir.close();
+
+                            var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDir();
+                            defer src.deinit();
+                            src.append(pkg_res.value.folder.slice(string_buf));
+
+                            var dest: bun.RelPath(.{ .unit = .os, .sep = .auto }) = .init();
+                            defer dest.deinit();
+
+                            installer.appendStorePath(&dest, this.entry_id);
+
+                            var hardlinker: Hardlinker = .{
+                                .src_dir = folder_dir,
+                                .src = src,
+                                .dest = dest,
+                            };
+
+                            switch (try hardlinker.link(&.{comptime bun.OSPathLiteral("node_modules")})) {
+                                .result => {},
+                                .err => |err| return .failure(.{ .link_package = err }),
+                            }
+
+                            continue :next_step this.nextStep(current_step);
+                        },
                     });
                     defer pkg_cache_dir_subpath.deinit();
 
@@ -537,17 +584,8 @@ pub const Installer = struct {
                     var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
                     defer parent_dedupe.deinit();
 
-                    const deps = entry_dependencies[this.entry_id.get()];
-                    for (deps.slice()) |dep| {
-                        if (entry_steps[dep.entry_id.get()].load(.monotonic) != .done) {
-                            if (installer.store.isCycle(this.entry_id, dep.entry_id, &parent_dedupe)) {
-                                parent_dedupe.clearRetainingCapacity();
-                                continue;
-                            }
-
-                            entry_steps[this.entry_id.get()].store(.blocked, .monotonic);
-                            return .yield;
-                        }
+                    if (!installer.isTaskUnblocked(this.entry_id, &parent_dedupe)) {
+                        return .blocked;
                     }
 
                     continue :next_step this.nextStep(current_step);
@@ -813,12 +851,27 @@ pub const Installer = struct {
             switch (res) {
                 .yield => {},
                 .done => {
+                    if (comptime Environment.ci_assert) {
+                        bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .done, @src());
+                    }
+                    this.result = .done;
+                    this.installer.tasks.push(this);
+                    this.installer.manager.wake();
+                },
+                .blocked => {
+                    if (comptime Environment.ci_assert) {
+                        bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .check_if_blocked, @src());
+                    }
+                    this.result = .blocked;
                     this.installer.tasks.push(this);
                     this.installer.manager.wake();
                 },
                 .fail => |err| {
+                    if (comptime Environment.ci_assert) {
+                        bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) != .done, @src());
+                    }
                     this.installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .monotonic);
-                    this.err = err.clone(bun.default_allocator);
+                    this.result = .{ .err = err.clone(bun.default_allocator) };
                     this.installer.tasks.push(this);
                     this.installer.manager.wake();
                 },

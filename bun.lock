@@ -12,9 +12,9 @@
         "react": "^18.3.1",
         "react-dom": "^18.3.1",
         "source-map-js": "^1.2.0",
-        "tree-sitter": "0.22.4",
-        "tree-sitter-cpp": "0.23.4",
+        "tree-sitter-cpp": "^0.23.4",
         "typescript": "^5.7.2",
+        "web-tree-sitter": "^0.25.6",
       },
     },
     "packages/@types/bun": {
@@ -166,5 +166,7 @@
     "upper-case": ["upper-case@2.0.2", "", { "dependencies": { "tslib": "^2.0.3" } }, "sha512-KgdgDGJt2TpuwBUIjgG6lzw2GWFRCW9Qkfkiv0DxqHHLYJHmtmdUIKcZd8rHgFSjopVTlw6ggzCm1b8MFQwikg=="],
 
     "upper-case-first": ["upper-case-first@2.0.2", "", { "dependencies": { "tslib": "^2.0.3" } }, "sha512-514ppYHBaKwfJRK/pNC6c/OxfGa0obSnAl106u97Ed0I625Nin96KAjttZF6ZL3e1XLtphxnqrOi9iWgm+u+bg=="],
+
+    "web-tree-sitter": ["web-tree-sitter@0.25.6", "", {}, "sha512-WG+/YGbxw8r+rLlzzhV+OvgiOJCWdIpOucG3qBf3RCBFMkGDb1CanUi2BxCxjnkpzU3/hLWPT8VO5EKsMk9Fxg=="],
   }
 }

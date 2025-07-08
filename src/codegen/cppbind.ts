@@ -1,7 +1,7 @@
 import { mkdir } from "fs/promises";
 import { join, relative } from "path";
-import Parser, { Language, Query, SyntaxNode } from "tree-sitter";
-import Cpp from "tree-sitter-cpp";
+import { Parser, Language, Query, Node } from "web-tree-sitter";
+import CppPath from "tree-sitter-cpp/tree-sitter-cpp.wasm";
 import { sharedTypes, typeDeclarations } from "./shared-types";
 
 // https://tree-sitter.github.io/tree-sitter/7-playground.html
@@ -236,10 +236,19 @@ function generateZigSourceComment(dstDir: string, resultSourceLinks: string[], f
   return `    /// Source: ${fn.name}`;
 }
 
+function closest(node: Node | null, type: string): Node | null {
+  while (node) {
+    if (node.type === type) return node;
+    node = node.parent;
+  }
+  return null;
+}
+
 async function processFile(parserAndQueries: ParserAndQueries, file: string, allFunctions: CppFn[]) {
   const sourceCode = await Bun.file(file).text();
   if (!sourceCode.includes("ZIG_EXPORT")) return;
   const tree = parserAndQueries.parser.parse(sourceCode);
+  if (!tree) return appendError({ file, start: { line: 0, column: 0 }, end: { line: 0, column: 0 } }, "no tree found");
 
   const matches = parserAndQueries.query.matches(tree.rootNode);
 
@@ -248,7 +257,7 @@ async function processFile(parserAndQueries: ParserAndQueries, file: string, all
     const fnCapture = match.captures.find(c => c.name === "fn");
     if (!identifierCapture || !fnCapture) continue;
 
-    const linkage = fnCapture.node.closest("linkage_specification");
+    const linkage = closest(fnCapture.node, "linkage_specification");
     const value = linkage?.childrenForFieldName("value")[0];
     if (!linkage || value?.type !== "string_literal" || value.text !== '"C"') {
       appendError(nodePosition(file, fnCapture.node), 'exported function must be extern "C"');
@@ -343,6 +352,9 @@ async function main() {
     process.exit(1);
   }
   await mkdir(dstDir, { recursive: true });
+
+  await Parser.init();
+  const Cpp = await Language.load(CppPath);
 
   const parser = new Parser();
   parser.setLanguage(Cpp as unknown as Language);

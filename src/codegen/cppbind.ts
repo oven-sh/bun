@@ -1,7 +1,7 @@
-import Parser, { Language, SyntaxNode, TreeCursor, Query } from "tree-sitter";
-import Cpp from "tree-sitter-cpp";
-import { mkdir, readdir } from "fs/promises";
+import { mkdir } from "fs/promises";
 import { join, relative } from "path";
+import Parser, { Language, Query, SyntaxNode } from "tree-sitter";
+import Cpp from "tree-sitter-cpp";
 import { sharedTypes, typeDeclarations } from "./shared-types";
 
 // https://tree-sitter.github.io/tree-sitter/7-playground.html

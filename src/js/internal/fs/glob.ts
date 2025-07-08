@@ -13,15 +13,9 @@ interface GlobOptions {
   withFileTypes?: boolean;
 }
 
-interface ExcludeOptionFn {
-  exclude: (ent: string) => boolean;
+interface ExtendedGlobOptions extends GlobScanOptions {
+  exclude: ((ent: string) => boolean) | string[];
 }
-
-interface ExcludeOptionArray {
-  exclude: string[];
-}
-
-type ExtendedGlobOptions = GlobScanOptions & (ExcludeOptionFn | ExcludeOptionArray);
 
 async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGenerator<string> {
   pattern = validatePattern(pattern);

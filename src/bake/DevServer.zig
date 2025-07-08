@@ -8040,6 +8040,7 @@ pub const SourceMapStore = struct {
             null,
             @intCast(entry.paths.len),
             0, // unused
+            .{},
         )) {
             .fail => |fail| {
                 Output.debugWarn("Failed to re-parse source map: {s}", .{fail.msg});
@@ -8199,7 +8200,7 @@ const ErrorReportRequest = struct {
             const result: *const SourceMapStore.GetResult = &(gop.value_ptr.* orelse continue);
 
             // When before the first generated line, remap to the HMR runtime
-            const generated_mappings = result.mappings.items(.generated);
+            const generated_mappings = result.mappings.generated();
             if (frame.position.line.oneBased() < generated_mappings[1].lines) {
                 frame.source_url = .init(runtime_name); // matches value in source map
                 frame.position = .invalid;
@@ -8207,8 +8208,7 @@ const ErrorReportRequest = struct {
             }
 
             // Remap the frame
-            const remapped = SourceMap.Mapping.find(
-                result.mappings,
+            const remapped = result.mappings.find(
                 frame.position.line.oneBased(),
                 frame.position.column.zeroBased(),
             );

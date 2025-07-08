@@ -712,9 +712,12 @@ pub const Installer = struct {
 
                     const dep_name = dependencies[dep_id].name.slice(string_buf);
 
-                    var abs_target_buf: bun.PathBuffer = undefined;
-                    var abs_dest_buf: bun.PathBuffer = undefined;
-                    var rel_buf: bun.PathBuffer = undefined;
+                    const abs_target_buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(abs_target_buf);
+                    const abs_dest_buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(abs_target_buf);
+                    const rel_buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(abs_target_buf);
 
                     var seen: bun.StringHashMap(void) = .init(bun.default_allocator);
                     defer seen.deinit();
@@ -732,9 +735,9 @@ pub const Installer = struct {
                         .extern_string_buf = installer.lockfile.buffers.extern_strings.items,
                         .seen = &seen,
                         .node_modules_path = &node_modules_path,
-                        .abs_target_buf = &abs_target_buf,
-                        .abs_dest_buf = &abs_dest_buf,
-                        .rel_buf = &rel_buf,
+                        .abs_target_buf = abs_target_buf,
+                        .abs_dest_buf = abs_dest_buf,
+                        .rel_buf = rel_buf,
                     };
 
                     bin_linker.link(false);
@@ -919,9 +922,12 @@ pub const Installer = struct {
         const pkgs = lockfile.packages.slice();
         const pkg_bins = pkgs.items(.bin);
 
-        var link_target_buf: bun.PathBuffer = undefined;
-        var link_dest_buf: bun.PathBuffer = undefined;
-        var link_rel_buf: bun.PathBuffer = undefined;
+        const link_target_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(link_target_buf);
+        const link_dest_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(link_dest_buf);
+        const link_rel_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(link_rel_buf);
 
         var seen: bun.StringHashMap(void) = .init(bun.default_allocator);
         defer seen.deinit();
@@ -950,9 +956,9 @@ pub const Installer = struct {
                 .extern_string_buf = extern_string_buf,
                 .seen = &seen,
                 .node_modules_path = &node_modules_path,
-                .abs_target_buf = &link_target_buf,
-                .abs_dest_buf = &link_dest_buf,
-                .rel_buf = &link_rel_buf,
+                .abs_target_buf = link_target_buf,
+                .abs_dest_buf = link_dest_buf,
+                .rel_buf = link_rel_buf,
             };
 
             bin_linker.link(false);

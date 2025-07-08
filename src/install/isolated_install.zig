@@ -6,7 +6,6 @@ pub fn installIsolatedPackages(
     install_root_dependencies: bool,
     workspace_filters: []const WorkspaceFilter,
 ) OOM!PackageInstall.Summary {
-    // var total_time = std.time.Timer.start() catch unreachable;
     bun.Analytics.Features.isolated_bun_install += 1;
 
     const lockfile = manager.lockfile;
@@ -165,10 +164,6 @@ pub fn installIsolatedPackages(
                     manager,
                     lockfile,
                 )) {
-                    // std.debug.print("filtered: {s}@{s}\n", .{
-                    //     dependencies[dep_id].name.slice(string_buf),
-                    //     dependencies[dep_id].version.literal.slice(string_buf),
-                    // });
                     continue;
                 }
 
@@ -330,8 +325,6 @@ pub fn installIsolatedPackages(
             timer.reset();
             Output.prettyErrorln("Resolved peers [{}]", .{bun.fmt.fmtDurationOneDecimal(full_tree_end)});
         }
-
-        // Store.Node.debugPrintList(&nodes, lockfile);
 
         const DedupeInfo = struct {
             entry_id: Store.Entry.Id,
@@ -499,24 +492,6 @@ pub fn installIsolatedPackages(
             Output.prettyErrorln("Created store [{}]", .{bun.fmt.fmtDurationOneDecimal(dedupe_end)});
         }
 
-        // Store.Entry.debugPrintList(&store, lockfile);
-
-        // std.debug.print(
-        //     \\Build tree ({d}): [{}]
-        //     \\Deduplicate tree ({d}): [{}]
-        //     \\Total: [{}]
-        //     \\
-        //     \\
-        // , .{
-        //     nodes.len,
-        //     bun.fmt.fmtDurationOneDecimal(full_tree_end),
-        //     store.len,
-        //     bun.fmt.fmtDurationOneDecimal(dedupe_end),
-        //     bun.fmt.fmtDurationOneDecimal(full_tree_end + dedupe_end),
-        // });
-
-        // Store.Node.deinitList(&nodes, lockfile.allocator);
-
         break :store .{
             .entries = store,
             .nodes = nodes,
@@ -588,9 +563,6 @@ pub fn installIsolatedPackages(
     _ = bun_modules_dir;
     // _ = is_new_bun_modules;
 
-    // var link_timer = std.time.Timer.start() catch unreachable;
-    // const total_links: usize = 0;
-
     {
         var root_node: *Progress.Node = undefined;
         // var download_node: Progress.Node = undefined;
@@ -646,49 +618,11 @@ pub fn installIsolatedPackages(
             .trusted_dependencies_from_update_requests = manager.findTrustedDependenciesFromUpdateRequests(),
         };
 
-        // var install_stack: std.ArrayListUnmanaged(Store.Entry.Id) = try .initCapacity(lockfile.allocator, store.entries.len);
-        // defer install_stack.deinit(lockfile.allocator);
-
-        // var curr_entry_id: Store.Entry.Id = .from(0);
-        // while (curr_entry_id != .invalid) {
-        //     install_stack.appendAssumeCapacity(curr_entry_id);
-        //     const deps = entry_dependencies[curr_entry_id.get()];
-        //     for (deps.slice()) |entry_id
-        // }
-
-        // var install_queue: std.fifo.LinearFifo(Store.Entry.Id, .Dynamic) = .init(lockfile.allocator);
-        // defer install_queue.deinit();
-        // try install_queue.ensureTotalCapacity(store.entries.len);
-
-        // // find and queue entries without dependencies. we want to start downloading
-        // // their tarballs first because their lifecycle scripts can start running
-        // // immediately
-        // for (0..store.entries.len) |_entry_id| {
-        //     const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
-
-        //     const dependencies = entry_dependencies[entry_id.get()];
-
-        //     if (dependencies.list.items.len != 0) {
-        //         continue;
-        //     }
-
-        //     seen_entry_ids.putAssumeCapacityNoClobber(entry_id, {});
-        //     install_queue.writeItemAssumeCapacity(entry_id);
-        // }
-
         // add the pending task count upfront
         _ = manager.incrementPendingTasks(@intCast(store.entries.len));
 
-        // while (install_queue.readItem()) |entry_id| {
         for (0..store.entries.len) |_entry_id| {
             const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
-            // const parent_entry_id = entry_parent_ids[entry_id.get()];
-            // if (parent_entry_id != .invalid) {
-            //     const entry = try seen_entry_ids.getOrPut(lockfile.allocator, parent_entry_id);
-            //     if (!entry.found_existing) {
-            //         install_queue.writeItemAssumeCapacity(parent_entry_id);
-            //     }
-            // }
 
             const node_id = entry_node_ids[entry_id.get()];
             const pkg_id = node_pkg_ids[node_id.get()];
@@ -971,7 +905,7 @@ pub fn installIsolatedPackages(
             progress.* = .{};
         }
 
-        if (comptime Environment.isDebug) {
+        if (comptime Environment.ci_assert) {
             var done = true;
             next_entry: for (store.entries.items(.step), 0..) |entry_step, _entry_id| {
                 const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));

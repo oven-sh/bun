@@ -1968,6 +1968,8 @@ pub fn spawnMaybeSync(
     var windows_hide: bool = false;
     var windows_verbatim_arguments: bool = false;
     var abort_signal: ?*JSC.WebCore.AbortSignal = null;
+    var uid: if (Environment.isPosix) ?std.posix.uid_t else void = if (Environment.isPosix) null else {};
+    var gid: if (Environment.isPosix) ?std.posix.gid_t else void = if (Environment.isPosix) null else {};
     defer {
         // Ensure we clean it up on error.
         if (abort_signal) |signal| {
@@ -2179,6 +2181,15 @@ pub fn spawnMaybeSync(
                     }
                 }
             }
+
+            if (comptime Environment.isPosix) {
+                if (try args.getTruthy(globalThis, "uid")) |uid_val| {
+                    uid = @intCast(try globalThis.validateIntegerRange(uid_val, u32, 0, .{ .field_name = "uid" }));
+                }
+                if (try args.getTruthy(globalThis, "gid")) |gid_val| {
+                    gid = @intCast(try globalThis.validateIntegerRange(gid_val, u32, 0, .{ .field_name = "gid" }));
+                }
+            }
         } else {
             try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
         }
@@ -2310,13 +2321,15 @@ pub fn spawnMaybeSync(
         },
         .extra_fds = extra_fds.items,
         .argv0 = argv0,
+        .uid = if (comptime Environment.isPosix) uid else {},
+        .gid = if (comptime Environment.isPosix) gid else {},
         .can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
             .verbatim_arguments = windows_verbatim_arguments,
             .loop = JSC.EventLoopHandle.init(jsc_vm),
-        },
+        } else {},
     };
 
     var spawned = switch (bun.spawn.spawnProcess(

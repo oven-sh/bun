@@ -595,8 +595,7 @@ pub const MarkedArrayBuffer = struct {
 
     pub fn toJS(this: *const MarkedArrayBuffer, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         if (!this.buffer.value.isEmptyOrUndefinedOrNull()) {
-            if (true) @panic("todo");
-            return this.buffer.value.asObjectRef();
+            return this.buffer.value;
         }
         if (this.buffer.byte_len == 0) {
             return makeTypedArrayWithBytesNoCopy(
@@ -650,10 +649,10 @@ const std = @import("std");
 extern fn Bun__makeArrayBufferWithBytesNoCopy(*JSC.JSGlobalObject, ?*anyopaque, usize, JSC.C.JSTypedArrayBytesDeallocator, ?*anyopaque) JSC.JSValue;
 extern fn Bun__makeTypedArrayWithBytesNoCopy(*JSC.JSGlobalObject, ArrayBuffer.TypedArrayType, ?*anyopaque, usize, JSC.C.JSTypedArrayBytesDeallocator, ?*anyopaque) JSC.JSValue;
 
-fn makeArrayBufferWithBytesNoCopy(globalObject: *JSC.JSGlobalObject, ptr: ?*anyopaque, len: usize, deallocator: JSC.C.JSTypedArrayBytesDeallocator, deallocatorContext: ?*anyopaque) bun.JSError!JSC.JSValue {
+pub fn makeArrayBufferWithBytesNoCopy(globalObject: *JSC.JSGlobalObject, ptr: ?*anyopaque, len: usize, deallocator: JSC.C.JSTypedArrayBytesDeallocator, deallocatorContext: ?*anyopaque) bun.JSError!JSC.JSValue {
     return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__makeArrayBufferWithBytesNoCopy, .{ globalObject, ptr, len, deallocator, deallocatorContext });
 }
 
-fn makeTypedArrayWithBytesNoCopy(globalObject: *JSC.JSGlobalObject, arrayType: ArrayBuffer.TypedArrayType, ptr: ?*anyopaque, len: usize, deallocator: JSC.C.JSTypedArrayBytesDeallocator, deallocatorContext: ?*anyopaque) bun.JSError!JSC.JSValue {
+pub fn makeTypedArrayWithBytesNoCopy(globalObject: *JSC.JSGlobalObject, arrayType: ArrayBuffer.TypedArrayType, ptr: ?*anyopaque, len: usize, deallocator: JSC.C.JSTypedArrayBytesDeallocator, deallocatorContext: ?*anyopaque) bun.JSError!JSC.JSValue {
     return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__makeTypedArrayWithBytesNoCopy, .{ globalObject, arrayType, ptr, len, deallocator, deallocatorContext });
 }

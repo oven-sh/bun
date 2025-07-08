@@ -249,14 +249,14 @@ function closest(node: Node | null, type: string): Node | null {
 
 async function processFile(parserAndQueries: ParserAndQueries, file: string, allFunctions: CppFn[]) {
   const sourceCode = await Bun.file(file).text();
-  if (!sourceCode.includes("ZIG_EXPORT")) return;
+  if (!sourceCode.includes("[[ZIG_EXPORT(")) return;
 
   // Find all line numbers with "ZIG_EXPORT" using a simple text search.
   // This will be our ground truth.
   const sourceCodeLines = sourceCode.split("\n");
   const manualFindLines = new Set<number>();
   for (let i = 0; i < sourceCodeLines.length; i++) {
-    if (sourceCodeLines[i].includes("ZIG_EXPORT")) {
+    if (sourceCodeLines[i].includes("[[ZIG_EXPORT(")) {
       manualFindLines.add(i + 1); // Line numbers are 1-based
     }
   }
@@ -267,12 +267,12 @@ async function processFile(parserAndQueries: ParserAndQueries, file: string, all
     // If the tree fails to parse, all manual finds are errors.
     for (const lineNumber of manualFindLines) {
       const lineContent = sourceCodeLines[lineNumber - 1];
-      const column = lineContent.indexOf("ZIG_EXPORT") + 1;
+      const column = lineContent.indexOf("[[ZIG_EXPORT(") + 3;
       appendError(
         {
           file,
           start: { line: lineNumber, column },
-          end: { line: lineNumber, column: column + "ZIG_EXPORT".length },
+          end: { line: lineNumber, column: column + "ZIG_EXPORT(".length },
         },
         "ZIG_EXPORT found, but tree-sitter failed to parse the file.",
       );
@@ -325,11 +325,11 @@ async function processFile(parserAndQueries: ParserAndQueries, file: string, all
   for (const lineNumber of manualFindLines) {
     if (!queryFoundLines.has(lineNumber)) {
       const lineContent = sourceCodeLines[lineNumber - 1];
-      const column = lineContent.indexOf("ZIG_EXPORT") + 1;
+      const column = lineContent.indexOf("[[ZIG_EXPORT(") + 3;
       const position: Srcloc = {
         file,
         start: { line: lineNumber, column },
-        end: { line: lineNumber, column: column + "ZIG_EXPORT".length },
+        end: { line: lineNumber, column: column + "ZIG_EXPORT(".length },
       };
       appendError(
         position,

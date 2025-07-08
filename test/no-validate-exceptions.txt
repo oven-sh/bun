@@ -1523,6 +1523,7 @@ test/js/node/test/parallel/test-vm-module-errors.js
 test/js/node/test/parallel/test-vm-module-import-meta.js
 test/js/node/test/parallel/test-vm-module-link.js
 test/js/node/test/parallel/test-vm-module-reevaluate.js
+test/js/node/test/parallel/test-vm-module-referrer-realm.mjs
 test/js/node/test/parallel/test-vm-module-synthetic.js
 test/js/node/test/parallel/test-vm-new-script-context.js
 test/js/node/test/parallel/test-vm-new-script-new-context.js

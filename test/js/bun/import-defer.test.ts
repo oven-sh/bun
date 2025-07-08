@@ -91,7 +91,6 @@ describe("import defer", () => {
     expect(exitCode).toBe(0);
     expect(error).toBe("");
 
-    // The order should be: "Before access", then "Module evaluated!", then "After access: 42"
     const lines = output.trim().split("\n");
     expect(lines[0]).toBe("Before access");
     expect(lines[1]).toBe("Module evaluated!");
@@ -121,8 +120,7 @@ describe("import defer", () => {
     const error = await stderr.text();
     const exitCode = await exited;
 
-    // According to the TC39 spec, modules with top-level await cannot be deferred
-    // The implementation should either reject this or handle it appropriately
+    expect(stderr).not.toBe(""); // TODO: Not sure what the error message should be yet
     expect(exitCode).toBe(1);
   });
 

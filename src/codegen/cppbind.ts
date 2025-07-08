@@ -196,8 +196,8 @@ for (const line of sharedTypesLines) {
 const errorsForTypes: Map<string, PositionedError> = new Map();
 function generateZigType(type: CppType, subLevel?: boolean) {
   if (type.type === "pointer") {
-    if (type.isConst) return `*const ${generateZigType(type.child, true)}`;
-    return `*${generateZigType(type.child, true)}`;
+    if (type.isConst) return `?*const ${generateZigType(type.child, true)}`;
+    return `?*${generateZigType(type.child, true)}`;
   }
   if (type.type === "reference") {
     if (type.isConst) return `*const ${generateZigType(type.child, true)}`;
@@ -230,8 +230,16 @@ function formatZigName(name: string): string {
   if (name.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/)) return name;
   return "@" + JSON.stringify(name);
 }
-function generateZigParameterList(parameters: CppParameter[]): string {
-  return parameters.map(p => `${formatZigName(p.name)}: ${generateZigType(p.type, false)}`).join(", ");
+function generateZigParameterList(parameters: CppParameter[], globalThisArg?: CppParameter): string {
+  return parameters
+    .map(p => {
+      if (p === globalThisArg) {
+        return `${formatZigName(p.name)}: *JSC.JSGlobalObject`;
+      } else {
+        return `${formatZigName(p.name)}: ${generateZigType(p.type, false)}`;
+      }
+    })
+    .join(", ");
 }
 function generateZigSourceComment(dstDir: string, resultSourceLinks: string[], fn: CppFn): string {
   const fileName = relative(dstDir, fn.position.file);
@@ -373,12 +381,19 @@ function generateZigFn(
     resultRaw.push(
       `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
     );
-    const globalThisArg = fn.parameters.find(param => generateZigType(param.type) === "*JSC.JSGlobalObject");
+    let globalThisArg: CppParameter | undefined;
+    for (const param of fn.parameters) {
+      const type = generateZigType(param.type);
+      if (type === "*JSC.JSGlobalObject" || type === "?*JSC.JSGlobalObject") {
+        globalThisArg = param;
+        break;
+      }
+    }
     if (!globalThisArg) throwError(fn.position, "no globalThis argument found");
     resultBindings.push(generateZigSourceComment(dstDir, resultSourceLinks, fn));
     if (fn.tag === "check_slow") {
       resultBindings.push(
-        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) bun.JSError!${generateZigType(fn.returnType)} {`,
+        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${generateZigType(fn.returnType)} {`,
         `        var scope: JSC.CatchScope = undefined;`,
         `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
         `        defer scope.deinit();`,
@@ -390,7 +405,7 @@ function generateZigFn(
       );
     } else if (fn.tag === "zero_is_throw") {
       resultBindings.push(
-        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) bun.JSError!${generateZigType(fn.returnType)} {`,
+        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${generateZigType(fn.returnType)} {`,
         `        var scope: JSC.ExceptionValidationScope = undefined;`,
         `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
         `        defer scope.deinit();`,

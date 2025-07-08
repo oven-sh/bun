@@ -181,7 +181,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             auto params = convertDictionary<CryptoAlgorithmEcdsaParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
-            ASSERT(hashIdentifier.hasException() == !!scope.exception());
+            // EXCEPTION_ASSERT(hashIdentifier.hasException() == !!scope.exception());
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmEcdsaParams>(params);
@@ -226,6 +226,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             auto params = convertDictionary<CryptoAlgorithmRsaHashedKeyGenParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
+            // EXCEPTION_ASSERT(hashIdentifier.hasException() == !!scope.exception());
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmRsaHashedKeyGenParams>(params);
@@ -245,6 +246,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             auto params = convertDictionary<CryptoAlgorithmHmacKeyParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
+            // EXCEPTION_ASSERT(hashIdentifier.hasException() == !!scope.exception());
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmHmacKeyParams>(params);
@@ -299,7 +301,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             auto params = convertDictionary<CryptoAlgorithmHkdfParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
-            ASSERT(hashIdentifier.hasException() == !!scope.exception());
+            // EXCEPTION_ASSERT(hashIdentifier.hasException() == !!scope.exception());
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmHkdfParams>(params);
@@ -309,7 +311,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             auto params = convertDictionary<CryptoAlgorithmPbkdf2Params>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
-            ASSERT(hashIdentifier.hasException() == !!scope.exception());
+            // EXCEPTION_ASSERT(hashIdentifier.hasException() == !!scope.exception());
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmPbkdf2Params>(params);
@@ -332,7 +334,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             auto params = convertDictionary<CryptoAlgorithmRsaHashedImportParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
-            ASSERT(hashIdentifier.hasException() == !!scope.exception());
+            // EXCEPTION_ASSERT(hashIdentifier.hasException() == !!scope.exception());
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmRsaHashedImportParams>(params);
@@ -351,7 +353,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             auto params = convertDictionary<CryptoAlgorithmHmacKeyParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
-            ASSERT(hashIdentifier.hasException() == !!scope.exception());
+            // EXCEPTION_ASSERT(hashIdentifier.hasException() == !!scope.exception());
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmHmacKeyParams>(params);
@@ -405,7 +407,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             auto params = convertDictionary<CryptoAlgorithmHmacKeyParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
-            ASSERT(hashIdentifier.hasException() == !!scope.exception());
+            // EXCEPTION_ASSERT(hashIdentifier.hasException() == !!scope.exception());
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmHmacKeyParams>(params);

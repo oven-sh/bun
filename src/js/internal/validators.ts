@@ -70,7 +70,7 @@ function validateString(value, name) {
 }
 
 function validateFunction(value, name) {
-  if (typeof value !== "function") throw $ERR_INVALID_ARG_TYPE(name, "Function", value);
+  if (typeof value !== "function") throw $ERR_INVALID_ARG_TYPE(name, "function", value);
 }
 
 function validateBoolean(value, name) {

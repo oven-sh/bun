@@ -85,9 +85,7 @@ pub const Loader = struct {
             this.get("bamboo.buildKey")) != null;
     }
 
-    pub fn loadTracy(this: *const Loader) void {
-        _ = this; // autofix
-    }
+    pub fn loadTracy(_: *const Loader) void {}
 
     pub fn getS3Credentials(this: *Loader) s3.S3Credentials {
         if (this.aws_credentials) |credentials| {
@@ -100,6 +98,7 @@ pub const Loader = struct {
         var endpoint: []const u8 = "";
         var bucket: []const u8 = "";
         var session_token: []const u8 = "";
+        var insecure_http: bool = false;
 
         if (this.get("S3_ACCESS_KEY_ID")) |access_key| {
             accessKeyId = access_key;
@@ -118,9 +117,13 @@ pub const Loader = struct {
             region = region_;
         }
         if (this.get("S3_ENDPOINT")) |endpoint_| {
-            endpoint = bun.URL.parse(endpoint_).hostWithPath();
+            const url = bun.URL.parse(endpoint_);
+            endpoint = url.hostWithPath();
+            insecure_http = url.isHTTP();
         } else if (this.get("AWS_ENDPOINT")) |endpoint_| {
-            endpoint = bun.URL.parse(endpoint_).hostWithPath();
+            const url = bun.URL.parse(endpoint_);
+            endpoint = url.hostWithPath();
+            insecure_http = url.isHTTP();
         }
         if (this.get("S3_BUCKET")) |bucket_| {
             bucket = bucket_;
@@ -140,6 +143,7 @@ pub const Loader = struct {
             .endpoint = endpoint,
             .bucket = bucket,
             .sessionToken = session_token,
+            .insecure_http = insecure_http,
         };
 
         return this.aws_credentials.?;

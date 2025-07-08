@@ -38,3 +38,10 @@ await writer.close();
 for await (const chunk of uint8Transform.readable) {
   expectType(chunk).is<Uint8Array<ArrayBuffer>>();
 }
+
+declare const stream: ReadableStream<Uint8Array>;
+
+expectType(stream.json()).is<Promise<any>>();
+expectType(stream.bytes()).is<Promise<Uint8Array>>();
+expectType(stream.text()).is<Promise<string>>();
+expectType(stream.blob()).is<Promise<Blob>>();

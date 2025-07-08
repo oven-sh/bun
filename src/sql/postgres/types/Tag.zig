@@ -1,14 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const postgres = bun.api.Postgres;
-const Data = postgres.Data;
-const String = bun.String;
-const JSValue = JSC.JSValue;
-const JSC = bun.JSC;
-const short = postgres.short;
-const int4 = postgres.int4;
-const AnyPostgresError = postgres.AnyPostgresError;
-
 //     select b.typname,  b.oid, b.typarray
 //       from pg_catalog.pg_type a
 //       left join pg_catalog.pg_type b on b.oid = a.typelem
@@ -402,153 +391,21 @@ pub const Tag = enum(short) {
     }
 };
 
-pub const string = struct {
-    pub const to = 25;
-    pub const from = [_]short{1002};
+const @"bool" = @import("./bool.zig");
 
-    pub fn toJSWithType(
-        globalThis: *JSC.JSGlobalObject,
-        comptime Type: type,
-        value: Type,
-    ) AnyPostgresError!JSValue {
-        switch (comptime Type) {
-            [:0]u8, []u8, []const u8, [:0]const u8 => {
-                var str = String.fromUTF8(value);
-                defer str.deinit();
-                return str.toJS(globalThis);
-            },
+// @sortImports
 
-            bun.String => {
-                return value.toJS(globalThis);
-            },
+const bun = @import("bun");
+const bytea = @import("./bytea.zig");
+const date = @import("./date.zig");
+const json = @import("./json.zig");
+const numeric = @import("./numeric.zig");
+const std = @import("std");
+const string = @import("./PostgresString.zig");
+const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 
-            *Data => {
-                var str = String.fromUTF8(value.slice());
-                defer str.deinit();
-                defer value.deinit();
-                return str.toJS(globalThis);
-            },
+const int_types = @import("./int_types.zig");
+const short = int_types.short;
 
-            else => {
-                @compileError("unsupported type " ++ @typeName(Type));
-            },
-        }
-    }
-
-    pub fn toJS(
-        globalThis: *JSC.JSGlobalObject,
-        value: anytype,
-    ) !JSValue {
-        var str = try toJSWithType(globalThis, @TypeOf(value), value);
-        defer str.deinit();
-        return str.toJS(globalThis);
-    }
-};
-
-pub const numeric = struct {
-    pub const to = 0;
-    pub const from = [_]short{ 21, 23, 26, 700, 701 };
-
-    pub fn toJS(
-        _: *JSC.JSGlobalObject,
-        value: anytype,
-    ) AnyPostgresError!JSValue {
-        return JSValue.jsNumber(value);
-    }
-};
-
-pub const json = struct {
-    pub const to = 114;
-    pub const from = [_]short{ 114, 3802 };
-
-    pub fn toJS(
-        globalObject: *JSC.JSGlobalObject,
-        value: *Data,
-    ) AnyPostgresError!JSValue {
-        defer value.deinit();
-        var str = bun.String.fromUTF8(value.slice());
-        defer str.deref();
-        const parse_result = JSValue.parse(str.toJS(globalObject), globalObject);
-        if (parse_result.AnyPostgresError()) {
-            return globalObject.throwValue(parse_result);
-        }
-
-        return parse_result;
-    }
-};
-
-pub const @"bool" = struct {
-    pub const to = 16;
-    pub const from = [_]short{16};
-
-    pub fn toJS(
-        _: *JSC.JSGlobalObject,
-        value: bool,
-    ) AnyPostgresError!JSValue {
-        return JSValue.jsBoolean(value);
-    }
-};
-
-pub const date = struct {
-    pub const to = 1184;
-    pub const from = [_]short{ 1082, 1114, 1184 };
-
-    // Postgres stores timestamp and timestampz as microseconds since 2000-01-01
-    // This is a signed 64-bit integer.
-    const POSTGRES_EPOCH_DATE = 946684800000;
-
-    pub fn fromBinary(bytes: []const u8) f64 {
-        const microseconds = std.mem.readInt(i64, bytes[0..8], .big);
-        const double_microseconds: f64 = @floatFromInt(microseconds);
-        return (double_microseconds / std.time.us_per_ms) + POSTGRES_EPOCH_DATE;
-    }
-
-    pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) i64 {
-        const double_value = if (value.isDate())
-            value.getUnixTimestamp()
-        else if (value.isNumber())
-            value.asNumber()
-        else if (value.isString()) brk: {
-            var str = value.toBunString(globalObject) catch @panic("unreachable");
-            defer str.deref();
-            break :brk str.parseDate(globalObject);
-        } else return 0;
-
-        const unix_timestamp: i64 = @intFromFloat(double_value);
-        return (unix_timestamp - POSTGRES_EPOCH_DATE) * std.time.us_per_ms;
-    }
-
-    pub fn toJS(
-        globalObject: *JSC.JSGlobalObject,
-        value: anytype,
-    ) JSValue {
-        switch (@TypeOf(value)) {
-            i64 => {
-                // Convert from Postgres timestamp (μs since 2000-01-01) to Unix timestamp (ms)
-                const ms = @divFloor(value, std.time.us_per_ms) + POSTGRES_EPOCH_DATE;
-                return JSValue.fromDateNumber(globalObject, @floatFromInt(ms));
-            },
-            *Data => {
-                defer value.deinit();
-                return JSValue.fromDateString(globalObject, value.sliceZ().ptr);
-            },
-            else => @compileError("unsupported type " ++ @typeName(@TypeOf(value))),
-        }
-    }
-};
-
-pub const bytea = struct {
-    pub const to = 17;
-    pub const from = [_]short{17};
-
-    pub fn toJS(
-        globalObject: *JSC.JSGlobalObject,
-        value: *Data,
-    ) AnyPostgresError!JSValue {
-        defer value.deinit();
-
-        // var slice = value.slice()[@min(1, value.len)..];
-        // _ = slice;
-        return JSValue.createBuffer(globalObject, value.slice(), null);
-    }
-};
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;

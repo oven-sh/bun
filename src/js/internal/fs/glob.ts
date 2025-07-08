@@ -23,12 +23,12 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
   let it = new Bun.Glob(pattern).scan(globOptions);
   const exclude = globOptions.exclude;
   const excludeGlobs = Array.isArray(exclude)
-    ? exclude.flatMap(pattern => [new Bun.Glob(pattern), new Bun.Glob(`${pattern}/**/*`)])
+    ? exclude.map(p => [new Bun.Glob(p), p] as const)
     : null;
 
   for await (const ent of it) {
     if (typeof exclude === "function" && exclude(ent)) continue;
-    if (excludeGlobs?.some(glob => glob.match(ent))) continue;
+    if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || ent.startsWith(p))) continue;
     yield ent;
   }
 }
@@ -39,12 +39,12 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
   const g = new Bun.Glob(pattern);
   const exclude = globOptions.exclude;
   const excludeGlobs = Array.isArray(exclude)
-    ? exclude.flatMap(pattern => [new Bun.Glob(pattern), new Bun.Glob(`${pattern}/**/*`)])
+    ? exclude.map(p => [new Bun.Glob(p), p] as const)
     : null;
 
   for (const ent of g.scanSync(globOptions)) {
     if (typeof exclude === "function" && exclude(ent)) continue;
-    if (excludeGlobs?.some(glob => glob.match(ent))) continue;
+    if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || ent.startsWith(p))) continue;
     yield ent;
   }
 }

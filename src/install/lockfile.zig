@@ -55,7 +55,7 @@ pub const DepSorter = struct {
         const deps_buf = sorter.lockfile.buffers.dependencies.items;
         const string_buf = sorter.lockfile.buffers.string_bytes.items;
 
-        const l_dep = deps_buf[l];
+        const l_dep = &deps_buf[l];
         const r_dep = &deps_buf[r];
 
         return switch (l_dep.behavior.cmp(r_dep.behavior)) {

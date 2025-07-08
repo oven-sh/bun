@@ -1,5 +1,6 @@
 import type { GlobScanOptions } from "bun";
 const { validateObject, validateString, validateFunction, validateArray } = require("internal/validators");
+const { sep } = require("node:path");
 
 const isWindows = process.platform === "win32";
 
@@ -21,8 +22,9 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
 
   for (const pat of patterns) {
     for await (const ent of new Bun.Glob(pat).scan(globOptions)) {
+      const _ent = ent.replaceAll("/", sep);
       if (typeof exclude === "function" && exclude(ent)) continue;
-      if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || ent.startsWith(p))) continue;
+      if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || _ent === p || _ent.startsWith(p + sep))) continue;
       yield ent;
     }
   }
@@ -36,8 +38,9 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
 
   for (const pat of patterns) {
     for (const ent of new Bun.Glob(pat).scanSync(globOptions)) {
+      const _ent = ent.replaceAll("/", sep);
       if (typeof exclude === "function" && exclude(ent)) continue;
-      if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || ent.startsWith(p))) continue;
+      if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || _ent === p || _ent.startsWith(p + sep))) continue;
       yield ent;
     }
   }
@@ -46,12 +49,12 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
 function validatePattern(pattern: string | string[]): string[] {
   if (typeof pattern === "string") {
     validateString(pattern, "pattern");
-    return [isWindows ? pattern.replaceAll("/", "\\") : pattern];
+    return [isWindows ? pattern.replaceAll("/", sep) : pattern];
   }
   validateArray(pattern, "pattern");
   return pattern.map(p => {
     validateString(p, "pattern");
-    return isWindows ? p.replaceAll("/", "\\") : p;
+    return isWindows ? p.replaceAll("/", sep) : p;
   });
 }
 
@@ -62,7 +65,7 @@ function mapOptions(options: GlobOptions): GlobScanOptions & { exclude: GlobOpti
   if (Array.isArray(exclude)) {
     validateArray(exclude, "options.exclude");
     if (isWindows) {
-      exclude = exclude.map((pattern: string) => pattern.replaceAll("/", "\\"));
+      exclude = exclude.map((pattern: string) => pattern.replaceAll("/", sep));
     }
   } else {
     validateFunction(exclude, "options.exclude");

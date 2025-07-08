@@ -1522,10 +1522,21 @@ declare module "bun" {
     }
 
     /**
+     * Calling sql`` will always return an array of values, ResultLike represents "at least" that list.
+     *
+     * @example
+     * ```ts
+     * const [one] = await sql<[{value}]>`SELECT 1 as value`;
+     * console.log(one.value); // => 1
+     * ```
+     */
+    export type ResultLike = unknown[];
+
+    /**
      * Represents a SQL query that can be executed, with additional control methods
      * Extends Promise to allow for async/await usage
      */
-    interface Query<T> extends Promise<T> {
+    interface Query<T extends ResultLike> extends Promise<T> {
       /**
        * Indicates if the query is currently executing
        */
@@ -1601,12 +1612,12 @@ declare module "bun" {
      * const [user] = await sql`select * from users where id = ${1}`;
      * ```
      */
-    <T = any>(strings: TemplateStringsArray, ...values: unknown[]): SQL.Query<T>;
+    <T extends SQL.ResultLike = any[]>(strings: TemplateStringsArray, ...values: unknown[]): SQL.Query<T>;
 
     /**
      * Execute a SQL query using a string
      */
-    <T = any>(string: string): SQL.Query<T>;
+    <T extends SQL.ResultLike = any[]>(string: string): SQL.Query<T>;
 
     /**
      * Helper function for inserting an object into a query
@@ -1883,7 +1894,7 @@ declare module "bun" {
      * @example
      * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
      */
-    unsafe<T = any>(string: string, values?: any[]): SQL.Query<T>;
+    unsafe<T extends SQL.ResultLike = any[]>(string: string, values?: any[]): SQL.Query<T>;
 
     /**
      * Reads a file and uses the contents as a query.
@@ -1891,7 +1902,7 @@ declare module "bun" {
      * @example
      * const result = await sql.file("query.sql", [1, 2, 3]);
      */
-    file<T = any>(filename: string, values?: any[]): SQL.Query<T>;
+    file<T extends SQL.ResultLike = any[]>(filename: string, values?: any[]): SQL.Query<T>;
 
     /**
      * Current client options

@@ -15,7 +15,7 @@ declare module "bun" {
   }
 
   /** @deprecated Use {@link SQL.Query Bun.SQL.Query} */
-  type SQLQuery<T = any> = SQL.Query<T>;
+  type SQLQuery<T extends SQL.ResultLike = any[]> = SQL.Query<T>;
 
   /** @deprecated Use {@link SQL.TransactionContextCallback Bun.SQL.TransactionContextCallback} */
   type SQLTransactionContextCallback<T> = SQL.TransactionContextCallback<T>;

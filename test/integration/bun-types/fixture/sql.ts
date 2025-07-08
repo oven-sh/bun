@@ -29,13 +29,13 @@ const sql2 = new Bun.SQL("postgres://localhost:5432/mydb");
 const sql3 = new Bun.SQL(new URL("postgres://localhost:5432/mydb"));
 const sql4 = new Bun.SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
 
-const query1 = sql1<string>`SELECT * FROM users WHERE id = ${1}`;
+const query1 = sql1<[{ id: string; name: string }]>`SELECT * FROM users WHERE id = ${1}`;
 const query2 = sql2({ foo: "bar" });
 
 query1.cancel().simple().execute().raw().values();
 
 expectType(query1).extends<Promise<any>>();
-expectType(query1).extends<Promise<string>>();
+expectType(query1).extends<Promise<[{ id: string; name: string }]>>();
 
 sql1.connect();
 sql1.close();
@@ -111,9 +111,9 @@ expectType(
   expectType(tx).is<readonly [[9], [10]]>();
 }
 
-expectType(sql1.unsafe("SELECT * FROM users")).is<Bun.SQL.Query<any>>();
+expectType(sql1.unsafe("SELECT * FROM users")).is<Bun.SQL.Query<any[]>>();
 expectType(sql1.unsafe<{ id: string }[]>("SELECT * FROM users")).is<Bun.SQL.Query<{ id: string }[]>>();
-expectType(sql1.file("query.sql", [1, 2, 3])).is<Bun.SQL.Query<any>>();
+expectType(sql1.file("query.sql", [1, 2, 3])).is<Bun.SQL.Query<any[]>>();
 
 sql1.reserve().then(reserved => {
   reserved.release();
@@ -151,21 +151,20 @@ sql1.begin("read write", 123);
 // @ts-expect-error
 sql1.transaction("read write", 123);
 
-const sqlQueryAny: Bun.SQL.Query<any> = {} as any;
-const sqlQueryNumber: Bun.SQL.Query<number> = {} as any;
-const sqlQueryString: Bun.SQL.Query<string> = {} as any;
+const sqlQueryAny: Bun.SQL.Query<any[]> = {} as any;
+const sqlQueryNumber: Bun.SQL.Query<[number]> = {} as any;
+const sqlQueryString: Bun.SQL.Query<[string]> = {} as any;
 
 expectAssignable<Promise<any>>(sqlQueryAny);
-expectAssignable<Promise<number>>(sqlQueryNumber);
-expectAssignable<Promise<string>>(sqlQueryString);
+expectAssignable<Promise<[number]>>(sqlQueryNumber);
+expectAssignable<Promise<[string]>>(sqlQueryString);
 
-expectType(sqlQueryNumber).is<Bun.SQL.Query<number>>();
-expectType(sqlQueryString).is<Bun.SQL.Query<string>>();
-expectType(sqlQueryNumber).is<Bun.SQL.Query<number>>();
+expectType(sqlQueryNumber).is<Bun.SQL.Query<[number]>>();
+expectType(sqlQueryString).is<Bun.SQL.Query<[string]>>();
 
 const queryA = sql`SELECT 1`;
-expectType(queryA).is<Bun.SQL.Query<any>>();
-expectType(await queryA).is<any>();
+expectType(queryA).is<Bun.SQL.Query<any[]>>();
+expectType(await queryA).is<any[]>();
 
 const queryB = sql({ foo: "bar" });
 expectType(queryB).is<Bun.SQL.Helper<{ foo: string }>>();
@@ -181,24 +180,24 @@ const spCb = (async sql => [sql<[2]>`SELECT 2`]) satisfies Bun.SQL.SavepointCont
 expectType(await sql.begin(txCb)).is<[1][]>();
 expectType(await sql.begin(spCb)).is<[2][]>();
 
-expectType(queryA.cancel()).is<Bun.SQL.Query<any>>();
-expectType(queryA.simple()).is<Bun.SQL.Query<any>>();
-expectType(queryA.execute()).is<Bun.SQL.Query<any>>();
-expectType(queryA.raw()).is<Bun.SQL.Query<any>>();
-expectType(queryA.values()).is<Bun.SQL.Query<any>>();
+expectType(queryA.cancel()).is<Bun.SQL.Query<any[]>>();
+expectType(queryA.simple()).is<Bun.SQL.Query<any[]>>();
+expectType(queryA.execute()).is<Bun.SQL.Query<any[]>>();
+expectType(queryA.raw()).is<Bun.SQL.Query<any[]>>();
+expectType(queryA.values()).is<Bun.SQL.Query<any[]>>();
 
-declare const queryNum: Bun.SQL.Query<number>;
-expectType(queryNum.cancel()).is<Bun.SQL.Query<number>>();
-expectType(queryNum.simple()).is<Bun.SQL.Query<number>>();
-expectType(queryNum.execute()).is<Bun.SQL.Query<number>>();
-expectType(queryNum.raw()).is<Bun.SQL.Query<number>>();
-expectType(queryNum.values()).is<Bun.SQL.Query<number>>();
+declare const queryNum: Bun.SQL.Query<number[]>;
+expectType(queryNum.cancel()).is<Bun.SQL.Query<number[]>>();
+expectType(queryNum.simple()).is<Bun.SQL.Query<number[]>>();
+expectType(queryNum.execute()).is<Bun.SQL.Query<number[]>>();
+expectType(queryNum.raw()).is<Bun.SQL.Query<number[]>>();
+expectType(queryNum.values()).is<Bun.SQL.Query<number[]>>();
 
-expectType(await queryNum.cancel()).is<number>();
-expectType(await queryNum.simple()).is<number>();
-expectType(await queryNum.execute()).is<number>();
-expectType(await queryNum.raw()).is<number>();
-expectType(await queryNum.values()).is<number>();
+expectType(await queryNum.cancel()).is<number[]>();
+expectType(await queryNum.simple()).is<number[]>();
+expectType(await queryNum.execute()).is<number[]>();
+expectType(await queryNum.raw()).is<number[]>();
+expectType(await queryNum.values()).is<number[]>();
 
 expectType<Bun.SQL.Options>({
   password: () => "hey",
@@ -246,8 +245,8 @@ expectType(sql(users, "id")).is<Bun.SQL.Helper<{ id: number }>>();
 expectType(sql([1, 2, 3])).is<Bun.SQL.Helper<number[]>>();
 expectType(sql([1, 2, 3] as const)).is<Bun.SQL.Helper<readonly [1, 2, 3]>>();
 
-expectType(sql("users")).is<Bun.SQL.Query<any>>();
-expectType(sql<1>("users")).is<Bun.SQL.Query<1>>();
+expectType(sql("users")).is<Bun.SQL.Query<any[]>>();
+expectType(sql<[1]>("users")).is<Bun.SQL.Query<[1]>>();
 
 // @ts-expect-error - missing key in object
 sql(user, "notAKey");
@@ -262,6 +261,7 @@ sql(users, "notAKey");
 sql([1, 2, 3], "notAKey");
 
 // check the deprecated stuff still exists
-expectType<Bun.SQLQuery<"hey">>();
+expectType<Bun.SQLQuery<"hey"[]>>();
+expectType(Bun.sql`hello world`).is<Bun.SQLQuery>();
 expectType<Bun.SQLTransactionContextCallback<"hey">>();
 expectType<Bun.SQLSavepointContextCallback<"hey">>();

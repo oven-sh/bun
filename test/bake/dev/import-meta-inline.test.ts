@@ -272,8 +272,7 @@ export default function GettingStarted(req, meta) {
 
     // Test catch-all route - should match for non-static paths
     const guideResponse = await dev.fetch("/docs/guides/advanced/optimization");
-    const guideText = await guideResponse.text();
-    console.log("Guide text", guideText);
+    expect(guideResponse.status).toBe(200);
     const guideJson = await guideResponse.json();
 
     expect(guideJson.type).toBe("catch-all");

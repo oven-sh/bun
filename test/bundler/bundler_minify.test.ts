@@ -554,7 +554,7 @@ describe("bundler", () => {
         export function jsx(type, props) {
           return {type, props};
         }
-        export const Fragment = Symbol.for("jsx-runtime");
+        export const Fragment = (globalThis.doNotDCE = Symbol.for("jsx-runtime"));
       `,
       "/node_modules/dev-trap/package.json": `{
         "name": "dev-trap",

@@ -183,7 +183,7 @@ pub const Call = struct {
     }
 };
 
-pub const CallUnwrap = enum {
+pub const CallUnwrap = enum(u2) {
     never,
     if_unused,
     if_unused_and_toString_safe,

@@ -35,56 +35,111 @@ pub const UserDefinesArray = bun.StringArrayHashMap(DefineData);
 
 pub const DefineData = struct {
     value: js_ast.Expr.Data,
-    valueless: bool = false,
-    original_name: ?string = null,
 
-    // True if accessing this value is known to not have any side effects. For
-    // example, a bare reference to "Object.create" can be removed because it
-    // does not have any observable side effects.
-    can_be_removed_if_unused: bool = false,
+    // Not using a slice here shrinks the size from 48 bytes to 40 bytes.
+    original_name_ptr: ?[*]const u8 = null,
+    original_name_len: u32 = 0,
 
-    // True if a call to this value is known to not have any side effects. For
-    // example, a bare call to "Object()" can be removed because it does not
-    // have any observable side effects.
-    call_can_be_unwrapped_if_unused: js_ast.E.CallUnwrap = .never,
+    flags: Flags = .{},
 
-    method_call_must_be_replaced_with_undefined: bool = false,
+    pub const Flags = packed struct(u8) {
+        _padding: u3 = 0,
 
-    pub fn isUndefined(self: *const DefineData) bool {
-        return self.valueless;
+        valueless: bool = false,
+
+        can_be_removed_if_unused: bool = false,
+
+        call_can_be_unwrapped_if_unused: js_ast.E.CallUnwrap = .never,
+
+        method_call_must_be_replaced_with_undefined: bool = false,
+    };
+
+    pub const Options = struct {
+        original_name: ?[]const u8 = null,
+        value: js_ast.Expr.Data,
+        valueless: bool = false,
+        can_be_removed_if_unused: bool = false,
+        call_can_be_unwrapped_if_unused: js_ast.E.CallUnwrap = .never,
+        method_call_must_be_replaced_with_undefined: bool = false,
+    };
+
+    pub fn init(options: Options) DefineData {
+        return DefineData{
+            .value = options.value,
+            .flags = .{
+                .valueless = options.valueless,
+                .can_be_removed_if_unused = options.can_be_removed_if_unused,
+                .call_can_be_unwrapped_if_unused = options.call_can_be_unwrapped_if_unused,
+                .method_call_must_be_replaced_with_undefined = options.method_call_must_be_replaced_with_undefined,
+            },
+            .original_name_ptr = if (options.original_name) |name| name.ptr else null,
+            .original_name_len = if (options.original_name) |name| @truncate(name.len) else 0,
+        };
+    }
+
+    pub inline fn original_name(self: *const DefineData) ?[]const u8 {
+        if (self.original_name_len > 0) {
+            return self.original_name_ptr.?[0..self.original_name_len];
+        }
+        return null;
+    }
+
+    /// True if accessing this value is known to not have any side effects. For
+    /// example, a bare reference to "Object.create" can be removed because it
+    /// does not have any observable side effects.
+    pub inline fn can_be_removed_if_unused(self: *const DefineData) bool {
+        return self.flags.can_be_removed_if_unused;
+    }
+
+    /// True if a call to this value is known to not have any side effects. For
+    /// example, a bare call to "Object()" can be removed because it does not
+    /// have any observable side effects.
+    pub inline fn call_can_be_unwrapped_if_unused(self: *const DefineData) js_ast.E.CallUnwrap {
+        return self.flags.call_can_be_unwrapped_if_unused;
+    }
+
+    pub inline fn method_call_must_be_replaced_with_undefined(self: *const DefineData) bool {
+        return self.flags.method_call_must_be_replaced_with_undefined;
+    }
+
+    pub inline fn valueless(self: *const DefineData) bool {
+        return self.flags.valueless;
     }
 
     pub fn initBoolean(value: bool) DefineData {
         return .{
             .value = .{ .e_boolean = .{ .value = value } },
-            .can_be_removed_if_unused = true,
+            .flags = .{ .can_be_removed_if_unused = true },
         };
     }
 
     pub fn initStaticString(str: *const js_ast.E.String) DefineData {
         return .{
             .value = .{ .e_string = @constCast(str) },
-            .can_be_removed_if_unused = true,
+            .flags = .{ .can_be_removed_if_unused = true },
         };
     }
 
     pub fn merge(a: DefineData, b: DefineData) DefineData {
         return DefineData{
             .value = b.value,
-            .can_be_removed_if_unused = a.can_be_removed_if_unused,
-            .call_can_be_unwrapped_if_unused = a.call_can_be_unwrapped_if_unused,
-            .original_name = b.original_name,
-            .valueless = a.method_call_must_be_replaced_with_undefined or b.method_call_must_be_replaced_with_undefined,
-            .method_call_must_be_replaced_with_undefined = a.method_call_must_be_replaced_with_undefined or b.method_call_must_be_replaced_with_undefined,
+            .flags = .{
+                .can_be_removed_if_unused = a.can_be_removed_if_unused(),
+                .call_can_be_unwrapped_if_unused = a.call_can_be_unwrapped_if_unused(),
+                .method_call_must_be_replaced_with_undefined = a.method_call_must_be_replaced_with_undefined() or b.method_call_must_be_replaced_with_undefined(),
+                .valueless = a.flags.valueless or b.flags.valueless,
+            },
+            .original_name_ptr = b.original_name_ptr,
+            .original_name_len = b.original_name_len,
         };
     }
 
-    pub fn fromMergeableInputEntry(user_defines: *UserDefines, key: []const u8, value_str: []const u8, value_is_undefined: bool, method_call_must_be_replaced_with_undefined: bool, log: *logger.Log, allocator: std.mem.Allocator) !void {
+    pub fn fromMergeableInputEntry(user_defines: *UserDefines, key: []const u8, value_str: []const u8, value_is_undefined: bool, method_call_must_be_replaced_with_undefined_: bool, log: *logger.Log, allocator: std.mem.Allocator) !void {
         user_defines.putAssumeCapacity(key, try .parse(
             key,
             value_str,
             value_is_undefined,
-            method_call_must_be_replaced_with_undefined,
+            method_call_must_be_replaced_with_undefined_,
             log,
             allocator,
         ));
@@ -94,7 +149,7 @@ pub const DefineData = struct {
         key: []const u8,
         value_str: []const u8,
         value_is_undefined: bool,
-        method_call_must_be_replaced_with_undefined: bool,
+        method_call_must_be_replaced_with_undefined_: bool,
         log: *logger.Log,
         allocator: std.mem.Allocator,
     ) !DefineData {
@@ -134,10 +189,13 @@ pub const DefineData = struct {
 
             return .{
                 .value = value,
-                .original_name = value_str,
-                .can_be_removed_if_unused = true,
-                .valueless = value_is_undefined,
-                .method_call_must_be_replaced_with_undefined = method_call_must_be_replaced_with_undefined,
+                .original_name_ptr = if (value_str.len > 0) value_str.ptr else null,
+                .original_name_len = @truncate(value_str.len),
+                .flags = .{
+                    .can_be_removed_if_unused = true,
+                    .valueless = value_is_undefined,
+                    .method_call_must_be_replaced_with_undefined = method_call_must_be_replaced_with_undefined_,
+                },
             };
         }
         const _log = log;
@@ -149,9 +207,13 @@ pub const DefineData = struct {
         const cloned = try expr.data.deepClone(allocator);
         return .{
             .value = cloned,
-            .can_be_removed_if_unused = expr.isPrimitiveLiteral(),
-            .valueless = value_is_undefined,
-            .method_call_must_be_replaced_with_undefined = method_call_must_be_replaced_with_undefined,
+            .original_name_ptr = if (value_str.len > 0) value_str.ptr else null,
+            .original_name_len = @truncate(value_str.len),
+            .flags = .{
+                .can_be_removed_if_unused = expr.isPrimitiveLiteral(),
+                .valueless = value_is_undefined,
+                .method_call_must_be_replaced_with_undefined = method_call_must_be_replaced_with_undefined_,
+            },
         };
     }
 
@@ -204,12 +266,16 @@ pub const Define = struct {
 
     pub const Data = DefineData;
 
-    pub fn forIdentifier(this: *const Define, name: []const u8) ?IdentifierDefine {
-        if (this.identifiers.get(name)) |data| {
+    pub fn forIdentifier(this: *const Define, name: []const u8) ?*const IdentifierDefine {
+        if (this.identifiers.getPtr(name)) |data| {
             return data;
         }
 
-        return table.pure_global_identifier_map.get(name);
+        if (table.pure_global_identifier_map.get(name)) |id| {
+            return id.value();
+        }
+
+        return null;
     }
 
     pub fn insertFromIterator(define: *Define, allocator: std.mem.Allocator, comptime Iterator: type, iter: Iterator) !void {
@@ -299,8 +365,10 @@ pub const Define = struct {
 
         const value_define = &DefineData{
             .value = .{ .e_undefined = .{} },
-            .valueless = true,
-            .can_be_removed_if_unused = true,
+            .flags = .{
+                .valueless = true,
+                .can_be_removed_if_unused = true,
+            },
         };
         // Step 1. Load the globals into the hash tables
         for (global_no_side_effect_property_accesses) |global| {
@@ -309,9 +377,11 @@ pub const Define = struct {
 
         const to_string_safe = &DefineData{
             .value = .{ .e_undefined = .{} },
-            .valueless = true,
-            .can_be_removed_if_unused = true,
-            .call_can_be_unwrapped_if_unused = .if_unused_and_toString_safe,
+            .flags = .{
+                .valueless = true,
+                .can_be_removed_if_unused = true,
+                .call_can_be_unwrapped_if_unused = .if_unused_and_toString_safe,
+            },
         };
 
         if (omit_unused_global_calls) {

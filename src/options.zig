@@ -1484,11 +1484,11 @@ pub fn definesFromTransformOptions(
 
     if (target.isBun()) {
         if (!user_defines.contains("window")) {
-            _ = try environment_defines.getOrPutValue("window", .{
+            _ = try environment_defines.getOrPutValue("window", .init(.{
                 .valueless = true,
                 .original_name = "window",
                 .value = .{ .e_undefined = .{} },
-            });
+            }));
         }
     }
 

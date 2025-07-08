@@ -12,6 +12,7 @@ interface BundlerPlugin {
     internalID,
     sourceCode: string | Uint8Array | ArrayBuffer | DataView | null,
     loaderKey: number | null,
+    sourcemap?: string | Uint8Array | ArrayBuffer | DataView | null,
   ): void;
   /** Binding to `JSBundlerPlugin__onResolveAsync` */
   onResolveAsync(internalID, a, b, c): void;
@@ -490,7 +491,7 @@ export function runOnLoadPlugins(
           continue;
         }
 
-        var { contents, loader = defaultLoader } = result as any;
+        var { contents, loader = defaultLoader, sourcemap } = result as any;
         if ((loader as any) === "object") {
           if (!("exports" in result)) {
             throw new TypeError('onLoad plugin returning loader: "object" must have "exports" property');
@@ -511,12 +512,19 @@ export function runOnLoadPlugins(
           throw new TypeError('onLoad plugins must return an object with "loader" as a string');
         }
 
+        // Validate sourcemap if provided
+        if (sourcemap !== undefined && sourcemap !== null) {
+          if (!(typeof sourcemap === "string") && !$isTypedArrayView(sourcemap)) {
+            throw new TypeError('onLoad plugin "sourcemap" must be a string or Uint8Array');
+          }
+        }
+
         const chosenLoader = LOADERS_MAP[loader];
         if (chosenLoader === undefined) {
           throw new TypeError(`Loader ${loader} is not supported.`);
         }
 
-        this.onLoadAsync(internalID, contents as any, chosenLoader);
+        this.onLoadAsync(internalID, contents as any, chosenLoader, sourcemap);
         return null;
       }
     }

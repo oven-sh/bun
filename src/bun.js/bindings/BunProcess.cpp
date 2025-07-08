@@ -1145,27 +1145,22 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
 
     JSValue reasonStack {};
     auto is_errorlike = Bun__promises__isErrorLike(globalObject, JSValue::decode(reason));
-    if (scope.exception()) [[unlikely]]
-        scope.clearException();
+    CLEAR_IF_EXCEPTION(scope);
     if (is_errorlike) {
         reasonStack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
-        if (scope.exception()) [[unlikely]]
-            scope.clearException();
+        CLEAR_IF_EXCEPTION(scope);
         warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {
         reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));
-        if (scope.exception()) [[unlikely]]
-            scope.clearException();
+        CLEAR_IF_EXCEPTION(scope);
     }
     if (!reasonStack) reasonStack = jsUndefined();
 
     Process::emitWarning(globalObject, reasonStack, jsString(globalObject->vm(), "UnhandledPromiseRejectionWarning"_str), jsUndefined(), jsUndefined());
-    if (scope.exception()) [[unlikely]]
-        scope.clearException();
+    CLEAR_IF_EXCEPTION(scope);
     Process::emitWarningErrorInstance(globalObject, warning);
-    if (scope.exception()) [[unlikely]]
-        scope.clearException();
+    CLEAR_IF_EXCEPTION(scope);
 }
 
 extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue reason, JSC::JSValue promise)
@@ -1202,8 +1197,7 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
 
     if (Bun__VM__allowRejectionHandledWarning(globalObject->bunVM())) {
         Process::emitWarning(globalObject, jsString(globalObject->vm(), String("Promise rejection was handled asynchronously"_s)), jsString(globalObject->vm(), String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
-        if (scope.exception()) [[unlikely]]
-            scope.clearException();
+        CLEAR_IF_EXCEPTION(scope);
     }
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {

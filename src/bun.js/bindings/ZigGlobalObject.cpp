@@ -429,9 +429,7 @@ static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zi
 
         auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(globalObject);
         prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "prepareStackTrace"_s));
-        if (scope.exception()) [[unlikely]] {
-            scope.clearException();
-        }
+        CLEAR_IF_EXCEPTION(scope);
     }
 
     return formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);
@@ -2070,8 +2068,7 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
     }
 #endif
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
-    if (scope.exception()) [[unlikely]]
-        return {};
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2)
@@ -4027,8 +4024,7 @@ void GlobalObject::handleRejectedPromises()
                 continue;
 
             Bun__handleRejectedPromise(this, promise.get());
-            if (scope.exception()) [[unlikely]]
-                scope.clearException(); // is this right?
+            CLEAR_IF_EXCEPTION(scope); // is this right?
         }
     } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
 }

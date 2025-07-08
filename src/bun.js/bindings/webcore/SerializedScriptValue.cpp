@@ -2621,8 +2621,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 break;
             }
             inValue = array->getDirectIndex(m_lexicalGlobalObject, index);
-            if (scope.exception()) [[unlikely]]
-                return SerializationReturnCode::ExistingExceptionError;
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             if (!inValue) {
                 indexStack.last()++;
                 goto arrayStartVisitMember;
@@ -2631,8 +2630,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             write(index);
             auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
             auto dumped = dumpIfTerminal(inValue, terminalCode);
-            if (scope.exception()) [[unlikely]]
-                return SerializationReturnCode::ExistingExceptionError;
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             if (dumped) {
                 if (terminalCode != SerializationReturnCode::SuccessfullyCompleted)
                     return terminalCode;
@@ -2664,8 +2662,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             indexStack.append(0);
             propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
             inObject->methodTable()->getOwnPropertyNames(inObject, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
-            if (scope.exception()) [[unlikely]]
-                return SerializationReturnCode::ExistingExceptionError;
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
         }
         objectStartVisitMember:
             [[fallthrough]];
@@ -2681,8 +2678,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 break;
             }
             inValue = getProperty(object, properties[index]);
-            if (scope.exception()) [[unlikely]]
-                return SerializationReturnCode::ExistingExceptionError;
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
 
             if (!inValue) {
                 // Property was removed during serialisation
@@ -2691,13 +2687,11 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             }
             write(properties[index]);
 
-            if (scope.exception()) [[unlikely]]
-                return SerializationReturnCode::ExistingExceptionError;
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
 
             auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
             auto dumped = dumpIfTerminal(inValue, terminalCode);
-            if (scope.exception()) [[unlikely]]
-                return SerializationReturnCode::ExistingExceptionError;
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             if (!dumped) {
                 stateStack.append(ObjectEndVisitMember);
                 goto stateUnknown;
@@ -2707,8 +2701,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             [[fallthrough]];
         }
         case ObjectEndVisitMember: {
-            if (scope.exception()) [[unlikely]]
-                return SerializationReturnCode::ExistingExceptionError;
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
 
             indexStack.last()++;
             goto objectStartVisitMember;
@@ -2721,8 +2714,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             if (!startMap(inMap))
                 break;
             JSMapIterator* iterator = JSMapIterator::create(m_lexicalGlobalObject, m_lexicalGlobalObject->mapIteratorStructure(), inMap, IterationKind::Entries);
-            if (scope.exception()) [[unlikely]]
-                return SerializationReturnCode::ExistingExceptionError;
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             m_gcBuffer.appendWithCrashOnOverflow(inMap);
             m_gcBuffer.appendWithCrashOnOverflow(iterator);
             mapIteratorStack.append(iterator);
@@ -2768,8 +2760,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             if (!startSet(inSet))
                 break;
             JSSetIterator* iterator = JSSetIterator::create(m_lexicalGlobalObject, m_lexicalGlobalObject->setIteratorStructure(), inSet, IterationKind::Keys);
-            if (scope.exception()) [[unlikely]]
-                return SerializationReturnCode::ExistingExceptionError;
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             m_gcBuffer.appendWithCrashOnOverflow(inSet);
             m_gcBuffer.appendWithCrashOnOverflow(iterator);
             setIteratorStack.append(iterator);
@@ -2803,8 +2794,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
         case StateUnknown: {
             auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
             auto dumped = dumpIfTerminal(inValue, terminalCode);
-            if (scope.exception()) [[unlikely]]
-                return SerializationReturnCode::ExistingExceptionError;
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             if (dumped) {
                 if (terminalCode != SerializationReturnCode::SuccessfullyCompleted)
                     return terminalCode;

@@ -471,5 +471,11 @@ ALWAYS_INLINE void BunString::deref()
     }
 }
 
+#define CLEAR_IF_EXCEPTION(scope__)           \
+    do {                                      \
+        if (scope__.exception()) [[unlikely]] \
+            scope__.clearException();         \
+    } while (false);
+
 #endif // __cplusplus
 #endif // HEADERS_HANDWRITTEN

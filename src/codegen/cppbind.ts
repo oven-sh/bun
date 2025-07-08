@@ -1,7 +1,7 @@
 import { mkdir } from "fs/promises";
 import { join, relative } from "path";
-import { Parser, Language, Query, Node } from "web-tree-sitter";
 import CppPath from "tree-sitter-cpp/tree-sitter-cpp.wasm";
+import { Language, Node, Parser, Query } from "web-tree-sitter";
 import { sharedTypes, typeDeclarations } from "./shared-types";
 
 // https://tree-sitter.github.io/tree-sitter/7-playground.html

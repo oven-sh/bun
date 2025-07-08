@@ -1144,8 +1144,8 @@ pub const JSValue = enum(i64) {
     }
     extern fn JSC__JSValue__fromTimevalNoTruncate(globalObject: *JSGlobalObject, nsec: i64, sec: i64) JSValue;
     /// This always returns a JS BigInt using std.posix.timeval from std.posix.rusage
-    pub fn fromTimevalNoTruncate(globalObject: *JSGlobalObject, nsec: i64, sec: i64) JSValue {
-        return JSC__JSValue__fromTimevalNoTruncate(globalObject, nsec, sec);
+    pub fn fromTimevalNoTruncate(globalObject: *JSGlobalObject, nsec: i64, sec: i64) bun.JSError!JSValue {
+        return bun.jsc.fromJSHostCall(globalObject, @src(), JSC__JSValue__fromTimevalNoTruncate, .{ globalObject, nsec, sec });
     }
     extern fn JSC__JSValue__bigIntSum(globalObject: *JSGlobalObject, a: JSValue, b: JSValue) JSValue;
     /// Sums two JS BigInts

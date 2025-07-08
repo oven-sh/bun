@@ -579,7 +579,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
                 }
 
                 if (!fields.contains(.headers)) {
-                    if (request.cloneHeaders(globalThis)) |headers| {
+                    if (try request.cloneHeaders(globalThis)) |headers| {
                         req._headers = headers;
                         fields.insert(.headers);
                     }
@@ -606,7 +606,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
 
                 if (!fields.contains(.headers)) {
                     if (response.init.headers) |headers| {
-                        req._headers = headers.cloneThis(globalThis);
+                        req._headers = try headers.cloneThis(globalThis);
                         fields.insert(.headers);
                     }
                 }
@@ -869,7 +869,7 @@ pub fn getHeaders(
     return (try this.ensureFetchHeaders(globalThis)).toJS(globalThis);
 }
 
-pub fn cloneHeaders(this: *Request, globalThis: *JSGlobalObject) ?*FetchHeaders {
+pub fn cloneHeaders(this: *Request, globalThis: *JSGlobalObject) bun.JSError!?*FetchHeaders {
     if (this._headers == null) {
         if (this.request_context.getRequest()) |uws_req| {
             this._headers = FetchHeaders.createFromUWS(uws_req);
@@ -904,7 +904,7 @@ pub fn cloneInto(
         .body = body,
         .url = if (preserve_url) original_url else this.url.dupeRef(),
         .method = this.method,
-        ._headers = this.cloneHeaders(globalThis),
+        ._headers = try this.cloneHeaders(globalThis),
     };
 
     if (this.signal) |signal| {

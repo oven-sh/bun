@@ -1967,15 +1967,13 @@ export fn Bun__logUnhandledException(exception: JSValue) void {
     get().runErrorHandler(exception, null);
 }
 
-pub fn clearEntryPoint(
-    this: *VirtualMachine,
-) void {
+pub fn clearEntryPoint(this: *VirtualMachine) bun.JSError!void {
     if (this.main.len == 0) {
         return;
     }
 
     var str = ZigString.init(main_file_name);
-    this.global.deleteModuleRegistryEntry(&str);
+    try this.global.deleteModuleRegistryEntry(&str);
 }
 
 fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {

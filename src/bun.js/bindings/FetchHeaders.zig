@@ -402,11 +402,8 @@ pub const FetchHeaders = opaque {
     pub fn cloneThis(
         this: *FetchHeaders,
         global: *JSGlobalObject,
-    ) ?*FetchHeaders {
-        return WebCore__FetchHeaders__cloneThis(
-            this,
-            global,
-        );
+    ) bun.JSError!?*FetchHeaders {
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), WebCore__FetchHeaders__cloneThis, .{ this, global });
     }
 
     pub fn deref(

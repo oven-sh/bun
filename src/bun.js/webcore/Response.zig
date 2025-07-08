@@ -292,7 +292,7 @@ pub fn cloneValue(
 ) bun.JSError!Response {
     return Response{
         .body = try this.body.clone(globalThis),
-        .init = this.init.clone(globalThis),
+        .init = try this.init.clone(globalThis),
         .url = this.url.clone(),
         .redirected = this.redirected,
     };
@@ -598,11 +598,11 @@ pub const Init = struct {
     status_text: bun.String = bun.String.empty,
     method: Method = Method.GET,
 
-    pub fn clone(this: Init, ctx: *JSGlobalObject) Init {
+    pub fn clone(this: Init, ctx: *JSGlobalObject) bun.JSError!Init {
         var that = this;
         const headers = this.headers;
         if (headers) |head| {
-            that.headers = head.cloneThis(ctx);
+            that.headers = try head.cloneThis(ctx);
         }
         that.status_text = this.status_text.clone();
 
@@ -623,7 +623,7 @@ pub const Init = struct {
             // we can skip calling JS getters
             if (response_init.asDirect(Request)) |req| {
                 if (req.getFetchHeadersUnlessEmpty()) |headers| {
-                    result.headers = headers.cloneThis(globalThis);
+                    result.headers = try headers.cloneThis(globalThis);
                 }
 
                 result.method = req.method;
@@ -631,7 +631,7 @@ pub const Init = struct {
             }
 
             if (response_init.asDirect(Response)) |resp| {
-                return resp.init.clone(globalThis);
+                return try resp.init.clone(globalThis);
             }
         }
 
@@ -642,7 +642,7 @@ pub const Init = struct {
         if (try response_init.fastGet(globalThis, .headers)) |headers| {
             if (headers.as(FetchHeaders)) |orig| {
                 if (!orig.isEmpty()) {
-                    result.headers = orig.cloneThis(globalThis);
+                    result.headers = try orig.cloneThis(globalThis);
                 }
             } else {
                 result.headers = try FetchHeaders.createFromJS(globalThis, headers);

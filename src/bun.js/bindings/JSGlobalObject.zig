@@ -559,8 +559,8 @@ pub const JSGlobalObject = opaque {
         return JSC__JSGlobalObject__vm(this);
     }
 
-    pub fn deleteModuleRegistryEntry(this: *JSGlobalObject, name_: *ZigString) void {
-        return JSC__JSGlobalObject__deleteModuleRegistryEntry(this, name_);
+    pub fn deleteModuleRegistryEntry(this: *JSGlobalObject, name_: *ZigString) bun.JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__deleteModuleRegistryEntry, .{ this, name_ });
     }
 
     fn bunVMUnsafe(this: *JSGlobalObject) *anyopaque {

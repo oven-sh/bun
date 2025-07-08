@@ -2559,13 +2559,11 @@ JSC::EncodedJSValue JSC__JSGlobalObject__putCachedObject(JSC::JSGlobalObject* gl
 
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, ZigString* arg1)
 {
-    JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(
-        global->moduleLoader()->getDirect(global->vm(), JSC::Identifier::fromString(global->vm(), "registry"_s)));
-    if (!map)
-        return;
+    auto& vm = global->vm();
+    JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(global->moduleLoader()->getDirect(vm, JSC::Identifier::fromString(vm, "registry"_s)));
+    if (!map) return;
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
-    JSC::JSValue val = JSC::identifierToJSValue(global->vm(), identifier);
-
+    JSC::JSValue val = JSC::identifierToJSValue(vm, identifier);
     map->remove(global, val);
 }
 
@@ -3885,14 +3883,22 @@ JSC::EncodedJSValue JSC__JSValue__fromInt64NoTruncate(JSC::JSGlobalObject* globa
 
 JSC::EncodedJSValue JSC__JSValue__fromTimevalNoTruncate(JSC::JSGlobalObject* globalObject, int64_t nsec, int64_t sec)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto big_nsec = JSC::JSBigInt::createFrom(globalObject, nsec);
+    RETURN_IF_EXCEPTION(scope, {});
     auto big_sec = JSC::JSBigInt::createFrom(globalObject, sec);
+    RETURN_IF_EXCEPTION(scope, {});
     auto big_1e6 = JSC::JSBigInt::createFrom(globalObject, 1e6);
+    RETURN_IF_EXCEPTION(scope, {});
     auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject, big_1e6, big_sec);
+    RETURN_IF_EXCEPTION(scope, {});
     ASSERT(sec_as_nsec.isHeapBigInt());
     auto* big_sec_as_nsec = sec_as_nsec.asHeapBigInt();
     ASSERT(big_sec_as_nsec);
-    return JSC::JSValue::encode(JSC::JSBigInt::add(globalObject, big_sec_as_nsec, big_nsec));
+    auto result = JSC::JSBigInt::add(globalObject, big_sec_as_nsec, big_nsec);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(result);
 }
 
 JSC::EncodedJSValue JSC__JSValue__bigIntSum(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue a, JSC::EncodedJSValue b)

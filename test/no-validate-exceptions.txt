@@ -1,43 +1,4 @@
 # List of tests for which we do NOT set validateExceptionChecks=1 when running in ASan CI
-test/cli/init/init.test.ts
-test/cli/install/bun-add.test.ts
-test/cli/install/bun-audit.test.ts
-test/cli/install/bun-create.test.ts
-test/cli/install/bun-info.test.ts
-test/cli/install/bun-install-dep.test.ts
-test/cli/install/bun-install-lifecycle-scripts.test.ts
-test/cli/install/bun-install-patch.test.ts
-test/cli/install/bun-install-registry.test.ts
-test/cli/install/bun-install-retry.test.ts
-test/cli/install/bun-link.test.ts
-test/cli/install/bun-lock.test.ts
-test/cli/install/bun-lockb.test.ts
-test/cli/install/bun-pack.test.ts
-test/cli/install/bun-patch.test.ts
-test/cli/install/bun-pm.test.ts
-test/cli/install/bun-pm-version.test.ts
-test/cli/install/bun-publish.test.ts
-test/cli/install/bun-remove.test.ts
-test/cli/install/bun-update.test.ts
-test/cli/install/bun-upgrade.test.ts
-test/cli/install/bun-workspaces.test.ts
-test/cli/install/bunx.test.ts
-test/cli/install/catalogs.test.ts
-test/cli/install/npmrc.test.ts
-test/cli/install/overrides.test.ts
-test/cli/run/env.test.ts
-test/cli/run/esm-defineProperty.test.ts
-test/cli/run/garbage-env.test.ts
-test/cli/run/jsx-namespaced-attributes.test.ts
-test/cli/run/log-test.test.ts
-test/cli/run/require-and-import-trailing.test.ts
-test/cli/run/run-autoinstall.test.ts
-test/cli/run/run-eval.test.ts
-test/cli/run/self-reference.test.ts
-test/cli/run/shell-keepalive.test.ts
-test/cli/test/bun-test.test.ts
-test/cli/watch/watch.test.ts
-test/config/bunfig/preload.test.ts
 test/integration/bun-types/bun-types.test.ts
 test/integration/bun-types/fixture/serve-types.test.ts
 test/integration/esbuild/esbuild.test.ts
@@ -562,6 +523,8 @@ test/js/node/process/call-constructor.test.js
 test/js/node/stubs.test.js
 test/js/node/timers/node-timers.test.ts
 test/bake/dev/vfile.test.ts
+test/cli/run/run-eval.test.ts
+test/cli/run/self-reference.test.ts
 
 # uses node:test
 test/js/node/test/parallel/test-fs-write-stream-flush.js
@@ -596,6 +559,9 @@ test/bundler/esbuild/dce.test.ts
 test/bundler/esbuild/importstar.test.ts
 test/bundler/esbuild/loader.test.ts
 test/bundler/esbuild/ts.test.ts
+test/cli/install/bun-install-registry.test.ts
+test/cli/install/bun-workspaces.test.ts
+test/cli/install/bunx.test.ts
 # ProgramExecutable::initializeGlobalProperties
 # missing RELEASE_AND_RETURN
 test/js/node/test/parallel/test-repl-syntax-error-handling.js

@@ -983,7 +983,9 @@ void populateESMExports(
         if (!ignoreESModuleAnnotation) {
             auto catchScope = DECLARE_CATCH_SCOPE(vm);
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
-            if (exports->getPropertySlot(globalObject, esModuleMarker, slot)) {
+            auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
+            RETURN_IF_EXCEPTION(catchScope, );
+            if (has) {
                 JSValue value = slot.getValue(globalObject, esModuleMarker);
                 if (!value.isUndefinedOrNull()) {
                     if (value.pureToBoolean() == TriState::True) {
@@ -1039,8 +1041,9 @@ void populateESMExports(
                         continue;
 
                     JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
-                    if (!exports->getPropertySlot(globalObject, property, slot))
-                        continue;
+                    auto has = exports->getPropertySlot(globalObject, property, slot);
+                    RETURN_IF_EXCEPTION(catchScope, );
+                    if (!has) continue;
 
                     // Allow DontEnum properties which are not getter/setters
                     // https://github.com/oven-sh/bun/issues/4432
@@ -1096,8 +1099,9 @@ void populateESMExports(
                     continue;
 
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
-                if (!exports->getPropertySlot(globalObject, property, slot))
-                    continue;
+                auto has = exports->getPropertySlot(globalObject, property, slot);
+                RETURN_IF_EXCEPTION(catchScope, );
+                if (!has) continue;
 
                 if (slot.attributes() & PropertyAttribute::DontEnum) {
                     // Allow DontEnum properties which are not getter/setters

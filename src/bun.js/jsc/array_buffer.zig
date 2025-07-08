@@ -601,7 +601,7 @@ pub const MarkedArrayBuffer = struct {
             return makeTypedArrayWithBytesNoCopy(
                 globalObject,
                 this.buffer.typed_array_type.toTypedArrayType(),
-                undefined,
+                null,
                 0,
                 null,
                 null,

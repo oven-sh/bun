@@ -6,6 +6,9 @@ import { sharedTypes, typeDeclarations } from "./shared-types";
 
 // https://tree-sitter.github.io/tree-sitter/7-playground.html
 
+// NOTE: Added this alias to match existing code, as SyntaxNode is used but not defined/imported.
+type SyntaxNode = Node;
+
 type Point = {
   line: number;
   column: number;
@@ -247,12 +250,48 @@ function closest(node: Node | null, type: string): Node | null {
 async function processFile(parserAndQueries: ParserAndQueries, file: string, allFunctions: CppFn[]) {
   const sourceCode = await Bun.file(file).text();
   if (!sourceCode.includes("ZIG_EXPORT")) return;
+
+  // Find all line numbers with "ZIG_EXPORT" using a simple text search.
+  // This will be our ground truth.
+  const sourceCodeLines = sourceCode.split("\n");
+  const manualFindLines = new Set<number>();
+  for (let i = 0; i < sourceCodeLines.length; i++) {
+    if (sourceCodeLines[i].includes("ZIG_EXPORT")) {
+      manualFindLines.add(i + 1); // Line numbers are 1-based
+    }
+  }
+
   const tree = parserAndQueries.parser.parse(sourceCode);
-  if (!tree) return appendError({ file, start: { line: 0, column: 0 }, end: { line: 0, column: 0 } }, "no tree found");
+  if (!tree) {
+    appendError({ file, start: { line: 0, column: 0 }, end: { line: 0, column: 0 } }, "no tree found");
+    // If the tree fails to parse, all manual finds are errors.
+    for (const lineNumber of manualFindLines) {
+      const lineContent = sourceCodeLines[lineNumber - 1];
+      const column = lineContent.indexOf("ZIG_EXPORT") + 1;
+      appendError(
+        {
+          file,
+          start: { line: lineNumber, column },
+          end: { line: lineNumber, column: column + "ZIG_EXPORT".length },
+        },
+        "ZIG_EXPORT found, but tree-sitter failed to parse the file.",
+      );
+    }
+    return;
+  }
 
   const matches = parserAndQueries.query.matches(tree.rootNode);
+  const queryFoundLines = new Set<number>();
 
   for (const match of matches) {
+    // The `attribute.name` capture will point to the "ZIG_EXPORT" identifier.
+    // Record the line number so we can compare against our manual search later.
+    const attributeNameCapture = match.captures.find(c => c.name === "attribute.name");
+    if (attributeNameCapture) {
+      // node.startPosition.row is 0-based.
+      queryFoundLines.add(attributeNameCapture.node.startPosition.row + 1);
+    }
+
     const identifierCapture = match.captures.find(c => c.name === "attribute.identifier");
     const fnCapture = match.captures.find(c => c.name === "fn");
     if (!identifierCapture || !fnCapture) continue;
@@ -280,7 +319,24 @@ async function processFile(parserAndQueries: ParserAndQueries, file: string, all
       appendErrorFromCatch(e, nodePosition(file, fnCapture.node));
     }
   }
-  // processNode(file, cursor, allFunctions, {}, false, []);
+
+  // Compare the manually found lines with the lines found by the query.
+  // Any line that has ZIG_EXPORT but was not found by the query is an error.
+  for (const lineNumber of manualFindLines) {
+    if (!queryFoundLines.has(lineNumber)) {
+      const lineContent = sourceCodeLines[lineNumber - 1];
+      const column = lineContent.indexOf("ZIG_EXPORT") + 1;
+      const position: Srcloc = {
+        file,
+        start: { line: lineNumber, column },
+        end: { line: lineNumber, column: column + "ZIG_EXPORT".length },
+      };
+      appendError(
+        position,
+        "ZIG_EXPORT was found on this line, but the tree-sitter query did not match it. Ensure it's in the form `[[ZIG_EXPORT(tag)]]` before a function definition.",
+      );
+    }
+  }
 }
 
 async function renderError(position: Srcloc, message: string, label: string, color: string) {
@@ -462,8 +518,3 @@ async function main() {
 
 // Run the main function
 await main();
-
-/*
-TODO:
-move the output into codegen, use @import("cpp")
-*/

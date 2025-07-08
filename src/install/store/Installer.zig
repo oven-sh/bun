@@ -113,10 +113,9 @@ pub const Installer = struct {
             Global.exit(1);
         }
 
-        this.manager.decrementPendingTasks();
-
         this.summary.fail += 1;
-        this.store.entries.items(.step)[entry_id.get()].store(.done, .monotonic);
+
+        this.decrementPendingTasks(entry_id);
         this.resumeAvailableTasks();
     }
 
@@ -133,8 +132,24 @@ pub const Installer = struct {
         this.onTaskSuccess(task_entry_id);
     }
 
-    pub fn onTaskSuccess(this: *Installer, entry_id: Store.Entry.Id) void {
+    pub fn decrementPendingTasks(this: *Installer, entry_id: Store.Entry.Id) void {
+        _ = entry_id;
         this.manager.decrementPendingTasks();
+    }
+
+    pub fn onTaskSkipped(this: *Installer, entry_id: Store.Entry.Id) void {
+        this.summary.skipped += 1;
+        this.decrementPendingTasks(entry_id);
+        this.store.entries.items(.step)[entry_id.get()].store(.done, .monotonic);
+        if (this.install_node) |node| {
+            node.completeOne();
+        }
+        this.resumeAvailableTasks();
+    }
+
+    pub fn onTaskSuccess(this: *Installer, entry_id: Store.Entry.Id) void {
+        this.decrementPendingTasks(entry_id);
+        this.resumeAvailableTasks();
 
         const pkg_id = pkg_id: {
             if (entry_id == .root) {
@@ -224,6 +239,20 @@ pub const Installer = struct {
             @"run (post)install and (pre/post)prepare": anyerror,
             done,
             blocked,
+
+            pub fn clone(this: *const Error, allocator: std.mem.Allocator) Error {
+                return switch (this.*) {
+                    .link_package => |err| .{ .link_package = err.clone(allocator) },
+                    .symlink_dependencies => |err| .{ .symlink_dependencies = err.clone(allocator) },
+                    .check_if_blocked => .check_if_blocked,
+                    .symlink_dependency_binaries => .symlink_dependency_binaries,
+                    .run_preinstall => |err| .{ .run_preinstall = err },
+                    .binaries => |err| .{ .binaries = err },
+                    .@"run (post)install and (pre/post)prepare" => |err| .{ .@"run (post)install and (pre/post)prepare" = err },
+                    .done => .done,
+                    .blocked => .blocked,
+                };
+            }
         };
 
         pub const Step = enum(u8) {
@@ -268,20 +297,15 @@ pub const Installer = struct {
             return next_step;
         }
 
-        fn fail(this: *Task, err: Error) Yield {
-            this.err = err;
-            this.installer.tasks.push(this);
-            this.installer.manager.wake();
-            return .yield;
-        }
+        const Yield = union(enum) {
+            yield,
+            done,
+            fail: Error,
 
-        fn yield(this: *Task) Yield {
-            this.installer.tasks.push(this);
-            this.installer.manager.wake();
-            return .yield;
-        }
-
-        const Yield = enum { yield };
+            pub fn failure(e: Error) Yield {
+                return .{ .fail = e };
+            }
+        };
 
         fn run(this: *Task) OOM!Yield {
             const installer = this.installer;
@@ -321,7 +345,7 @@ pub const Installer = struct {
                         // the folder does not exist in the cache
                         const folder_dir = switch (bun.openDirForIteration(FD.cwd(), pkg_res.value.folder.slice(string_buf))) {
                             .result => |fd| fd,
-                            .err => |err| return this.fail(.{ .link_package = err.clone(bun.default_allocator) }),
+                            .err => |err| return .failure(.{ .link_package = err }),
                         };
                         defer folder_dir.close();
 
@@ -342,7 +366,7 @@ pub const Installer = struct {
 
                         switch (try hardlinker.link(&.{comptime bun.OSPathLiteral("node_modules")})) {
                             .result => {},
-                            .err => |err| return this.fail(.{ .link_package = err.clone(bun.default_allocator) }),
+                            .err => |err| return .failure(.{ .link_package = err }),
                         }
 
                         continue :next_step this.nextStep(current_step);
@@ -387,7 +411,7 @@ pub const Installer = struct {
                                         .OPNOTSUPP => break :hardlink_fallback,
                                         .NOENT => {
                                             const parent_dest_dir = std.fs.path.dirname(dest_subpath.slice()) orelse {
-                                                return this.fail(.{ .link_package = clonefile_err1 });
+                                                return .failure(.{ .link_package = clonefile_err1 });
                                             };
 
                                             FD.cwd().makePath(u8, parent_dest_dir) catch {};
@@ -397,7 +421,7 @@ pub const Installer = struct {
                                                     continue :next_step this.nextStep(current_step);
                                                 },
                                                 .err => |clonefile_err2| {
-                                                    return this.fail(.{ .link_package = clonefile_err2 });
+                                                    return .failure(.{ .link_package = clonefile_err2 });
                                                 },
                                             }
                                         },
@@ -419,7 +443,7 @@ pub const Installer = struct {
                             )) {
                                 .result => |dir_fd| dir_fd,
                                 .err => |err| {
-                                    return this.fail(.{ .link_package = err });
+                                    return .failure(.{ .link_package = err });
                                 },
                             };
                         }
@@ -431,7 +455,7 @@ pub const Installer = struct {
                         )) {
                             .result => |fd| fd,
                             .err => |err| {
-                                return this.fail(.{ .link_package = err });
+                                return .failure(.{ .link_package = err });
                             },
                         };
                     };
@@ -449,7 +473,7 @@ pub const Installer = struct {
 
                     switch (try hardlinker.link(&.{})) {
                         .result => {},
-                        .err => |err| return this.fail(.{ .link_package = err.clone(bun.default_allocator) }),
+                        .err => |err| return .failure(.{ .link_package = err }),
                     }
 
                     continue :next_step this.nextStep(current_step);
@@ -500,7 +524,7 @@ pub const Installer = struct {
                         switch (symlinker.ensureSymlink(link_strategy)) {
                             .result => {},
                             .err => |err| {
-                                return this.fail(.{ .symlink_dependencies = err });
+                                return .failure(.{ .symlink_dependencies = err });
                             },
                         }
                     }
@@ -522,7 +546,7 @@ pub const Installer = struct {
                             }
 
                             entry_steps[this.entry_id.get()].store(.blocked, .monotonic);
-                            return this.yield();
+                            return .yield;
                         }
                     }
 
@@ -530,7 +554,7 @@ pub const Installer = struct {
                 },
                 inline .symlink_dependency_binaries => |current_step| {
                     installer.linkDependencyBins(this.entry_id) catch |err| {
-                        return this.fail(.{ .binaries = err });
+                        return .failure(.{ .binaries = err });
                     };
 
                     switch (pkg_res.tag) {
@@ -627,7 +651,7 @@ pub const Installer = struct {
                             dep.name.slice(string_buf),
                             &pkg_res,
                         ) catch |err| {
-                            return this.fail(.{ .run_preinstall = err });
+                            return .failure(.{ .run_preinstall = err });
                         };
 
                         if (scripts_list) |list| {
@@ -664,10 +688,10 @@ pub const Installer = struct {
                                     .installer = installer,
                                 },
                             ) catch |err| {
-                                return this.fail(.{ .run_preinstall = err });
+                                return .failure(.{ .run_preinstall = err });
                             };
 
-                            return this.yield();
+                            return .yield;
                         }
                     }
 
@@ -716,7 +740,7 @@ pub const Installer = struct {
                     bin_linker.link(false);
 
                     if (bin_linker.err) |err| {
-                        return this.fail(.{ .binaries = err });
+                        return .failure(.{ .binaries = err });
                     }
 
                     continue :next_step this.nextStep(current_step);
@@ -755,23 +779,23 @@ pub const Installer = struct {
                             .installer = installer,
                         },
                     ) catch |err| {
-                        return this.fail(.{ .@"run (post)install and (pre/post)prepare" = err });
+                        return .failure(.{ .@"run (post)install and (pre/post)prepare" = err });
                     };
 
                     // when these scripts finish the package install will be
                     // complete. the task does not have anymore work to complete
                     // so it does not return to the thread pool.
 
-                    return this.yield();
+                    return .yield;
                 },
 
                 .done => {
-                    return this.yield();
+                    return .done;
                 },
 
                 .blocked => {
                     bun.debugAssert(false);
-                    return this.yield();
+                    return .yield;
                 },
             };
         }
@@ -785,6 +809,16 @@ pub const Installer = struct {
 
             switch (res) {
                 .yield => {},
+                .done => {
+                    this.installer.tasks.push(this);
+                    this.installer.manager.wake();
+                },
+                .fail => |err| {
+                    this.installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .monotonic);
+                    this.err = err.clone(bun.default_allocator);
+                    this.installer.tasks.push(this);
+                    this.installer.manager.wake();
+                },
             }
         }
     };

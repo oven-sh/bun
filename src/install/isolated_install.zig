@@ -597,7 +597,7 @@ pub fn installIsolatedPackages(
 
     {
         var root_node: *Progress.Node = undefined;
-        var download_node: Progress.Node = undefined;
+        // var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
         var scripts_node: Progress.Node = undefined;
         var progress = &manager.progress;
@@ -605,19 +605,12 @@ pub fn installIsolatedPackages(
         if (manager.options.log_level.showProgress()) {
             progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             root_node = progress.start("", 0);
-            download_node = root_node.start(ProgressStrings.download(), 0);
+            // download_node = root_node.start(ProgressStrings.download(), 0);
             install_node = root_node.start(ProgressStrings.install(), store.entries.len);
             scripts_node = root_node.start(ProgressStrings.script(), 0);
 
-            manager.downloads_node = &download_node;
+            manager.downloads_node = null;
             manager.scripts_node = &scripts_node;
-        }
-
-        defer {
-            if (manager.options.log_level.showProgress()) {
-                progress.root.end();
-                progress.* = .{};
-            }
         }
 
         const nodes_slice = store.nodes.slice();
@@ -712,45 +705,32 @@ pub fn installIsolatedPackages(
                 else => {
                     // this is `uninitialized` or `single_file_module`.
                     bun.debugAssert(false);
-                    manager.decrementPendingTasks();
-                    entry_steps[entry_id.get()].store(.done, .monotonic);
-                    installer.resumeAvailableTasks();
+                    installer.onTaskSkipped(entry_id);
                     continue;
                 },
                 .root => {
-                    installer.summary.skipped += 1;
-
                     if (entry_id == .root) {
                         entry_steps[entry_id.get()].store(.symlink_dependencies, .monotonic);
                         installer.resumeTask(entry_id);
                         continue;
                     }
-                    manager.decrementPendingTasks();
-                    entry_steps[entry_id.get()].store(.done, .monotonic);
-                    installer.resumeAvailableTasks();
+                    installer.onTaskSkipped(entry_id);
                     continue;
                 },
                 .workspace => {
                     // if injected=true this might be false
-                    installer.summary.skipped += 1;
-
                     if (!(try seen_workspace_ids.getOrPut(lockfile.allocator, pkg_id)).found_existing) {
                         entry_steps[entry_id.get()].store(.symlink_dependencies, .monotonic);
                         installer.resumeTask(entry_id);
                         continue;
                     }
-                    manager.decrementPendingTasks();
-                    entry_steps[entry_id.get()].store(.done, .monotonic);
-                    installer.resumeAvailableTasks();
+                    installer.onTaskSkipped(entry_id);
                     continue;
                 },
                 .symlink => {
                     // no installation required, will only need to be linked to packages that depend on it.
                     bun.debugAssert(entry_dependencies[entry_id.get()].list.items.len == 0);
-                    installer.summary.skipped += 1;
-                    manager.decrementPendingTasks();
-                    entry_steps[entry_id.get()].store(.done, .monotonic);
-                    installer.resumeAvailableTasks();
+                    installer.onTaskSkipped(entry_id);
                     continue;
                 },
                 .folder => {
@@ -794,13 +774,7 @@ pub fn installIsolatedPackages(
                         };
 
                     if (!needs_install) {
-                        installer.summary.skipped += 1;
-                        manager.decrementPendingTasks();
-                        entry_steps[entry_id.get()].store(.done, .monotonic);
-                        if (installer.install_node) |node| {
-                            node.completeOne();
-                        }
-                        installer.resumeAvailableTasks();
+                        installer.onTaskSkipped(entry_id);
                         continue;
                     }
 
@@ -875,7 +849,7 @@ pub fn installIsolatedPackages(
                                         Global.exit(1);
                                     }
                                     installer.summary.fail += 1;
-                                    manager.decrementPendingTasks();
+                                    installer.decrementPendingTasks(entry_id);
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
                                     continue;
                                 },
@@ -911,7 +885,7 @@ pub fn installIsolatedPackages(
                                         Global.exit(1);
                                     }
                                     installer.summary.fail += 1;
-                                    manager.decrementPendingTasks();
+                                    installer.decrementPendingTasks(entry_id);
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
                                     continue;
                                 },
@@ -944,7 +918,7 @@ pub fn installIsolatedPackages(
                                         Global.exit(1);
                                     }
                                     installer.summary.fail += 1;
-                                    manager.decrementPendingTasks();
+                                    installer.decrementPendingTasks(entry_id);
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
                                     continue;
                                 },
@@ -979,8 +953,6 @@ pub fn installIsolatedPackages(
                         return true;
                     };
 
-                    wait.installer.resumeAvailableTasks();
-
                     return wait.manager.pendingTaskCount() == 0;
                 }
             };
@@ -998,6 +970,11 @@ pub fn installIsolatedPackages(
             }
         }
 
+        if (manager.options.log_level.showProgress()) {
+            progress.root.end();
+            progress.* = .{};
+        }
+
         if (comptime Environment.isDebug) {
             var done = true;
             next_entry: for (store.entries.items(.step), 0..) |entry_step, _entry_id| {
@@ -1010,7 +987,7 @@ pub fn installIsolatedPackages(
 
                 done = false;
 
-                std.debug.print("entry not done: {d}", .{entry_id});
+                std.debug.print("entry not done: {d}, {s}\n", .{ entry_id, @tagName(step) });
 
                 const deps = store.entries.items(.dependencies)[entry_id.get()];
                 for (deps.slice()) |dep| {

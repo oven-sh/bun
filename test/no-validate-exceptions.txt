@@ -34,6 +34,7 @@ test/bundler/esbuild/css.test.ts
 test/bundler/esbuild/dce.test.ts
 test/bundler/esbuild/extra.test.ts
 test/bundler/esbuild/importstar.test.ts
+test/cli/install/isolated-install.test.ts
 test/bundler/esbuild/importstar_ts.test.ts
 test/bundler/esbuild/loader.test.ts
 test/bundler/esbuild/lower.test.ts

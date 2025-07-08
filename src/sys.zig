@@ -2708,13 +2708,19 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
             }
 
             if (errno.toSystemErrno()) |err| {
-                if (err == .ENOENT) {
-                    return .{
-                        .err = .{
-                            .errno = @intFromEnum(err),
-                            .syscall = .symlink,
-                        },
-                    };
+                switch (err) {
+                    .ENOENT,
+                    .EEXIST,
+                    => {
+                        return .{
+                            .err = .{
+                                .errno = @intFromEnum(err),
+                                .syscall = .symlink,
+                            },
+                        };
+                    },
+
+                    else => {},
                 }
                 WindowsSymlinkOptions.has_failed_to_create_symlink = true;
                 return .{
@@ -2822,7 +2828,7 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
     if (comptime Environment.isWindows) {
         const w_buf = bun.w_path_buffer_pool.get();
         defer bun.w_path_buffer_pool.put(w_buf);
-        return unlinkW(bun.strings.toNTPath(w_buf, from));
+        return unlinkW(bun.strings.toWPathNormalizeAutoExtend(w_buf, from));
     }
 
     while (true) {

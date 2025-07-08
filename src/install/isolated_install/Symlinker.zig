@@ -61,7 +61,7 @@ pub const Symlinker = struct {
             .expect_existing => {
                 const current_link_buf = bun.path_buffer_pool.get();
                 defer bun.path_buffer_pool.put(current_link_buf);
-                const current_link = switch (sys.readlink(this.dest.sliceZ(), current_link_buf)) {
+                var current_link: []const u8 = switch (sys.readlink(this.dest.sliceZ(), current_link_buf)) {
                     .result => |res| res,
                     .err => |readlink_err| return switch (readlink_err.getErrno()) {
                         .NOENT => switch (this.symlink()) {
@@ -85,8 +85,17 @@ pub const Symlinker = struct {
                     },
                 };
 
+                // libuv adds a trailing slash to junctions.
+                current_link = strings.withoutTrailingSlash(current_link);
+
                 if (strings.eqlLong(current_link, this.target.sliceZ(), true)) {
                     return .success;
+                }
+
+                if (comptime Environment.isWindows) {
+                    if (strings.eqlLong(current_link, this.fallback_junction_target.slice(), true)) {
+                        return .success;
+                    }
                 }
 
                 // this existing link is pointing to the wrong package

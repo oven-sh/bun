@@ -289,7 +289,7 @@ inline fn globMatchImpl(state: *State, glob: []const u8, glob_start: u32, path: 
                 }
                 const cc_len = bun.strings.wtf8ByteSequenceLength(cc);
 
-                const is_match = if (cc == bun.path.sep)
+                const is_match = if (cc == '/')
                     isSeparator(path[state.path_index])
                 else if (cc_len > 1)
                     state.path_index + cc_len <= path.len and std.mem.eql(u8, path[state.path_index..][0..cc_len], glob[state.glob_index..][0..cc_len])

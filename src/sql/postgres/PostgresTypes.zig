@@ -6,7 +6,7 @@ pub const bytea = @import("./types/bytea.zig");
 pub const date = @import("./types/date.zig");
 pub const json = @import("./types/json.zig");
 pub const numeric = @import("./types/numeric.zig");
-pub const string = @import("./types/string.zig");
+pub const string = @import("./types/PostgresString.zig");
 pub const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 pub const Tag = @import("./types/Tag.zig").Tag;
 

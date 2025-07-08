@@ -401,7 +401,7 @@ const date = @import("./date.zig");
 const json = @import("./json.zig");
 const numeric = @import("./numeric.zig");
 const std = @import("std");
-const string = @import("./string.zig");
+const string = @import("./PostgresString.zig");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 
 const int_types = @import("./int_types.zig");

@@ -10,7 +10,7 @@ const JSPrinter = bun.js_printer;
 const URL = bun.URL;
 const FileSystem = bun.fs.FileSystem;
 
-const SourceMap = @This();
+pub const SourceMap = @This();
 const debug = bun.Output.scoped(.SourceMap, false);
 
 /// Coordinates in source maps are stored using relative offsets for size
@@ -42,7 +42,11 @@ pub const ParseUrlResultHint = union(enum) {
     /// In order to fetch source contents, you need to know the
     /// index, but you cant know the index until the mappings
     /// are loaded. So pass in line+col.
-    all: struct { line: i32, column: i32 },
+    all: struct {
+        line: i32,
+        column: i32,
+        include_names: bool = false,
+    },
 };
 
 pub const ParseUrl = struct {
@@ -179,19 +183,46 @@ pub fn parseJSON(
     };
 
     const map = if (hint != .source_only) map: {
-        const map_data = switch (Mapping.parse(
+        var map_data = switch (Mapping.parse(
             alloc,
             mappings_str.data.e_string.slice(arena),
             null,
             std.math.maxInt(i32),
             std.math.maxInt(i32),
+            .{ .allow_names = hint == .all and hint.all.include_names, .sort = true },
         )) {
             .success => |x| x,
             .fail => |fail| return fail.err,
         };
 
+        if (hint == .all and hint.all.include_names and map_data.mappings.impl == .with_names) {
+            if (json.get("names")) |names| {
+                if (names.data == .e_array) {
+                    var names_list = try std.ArrayListUnmanaged(bun.Semver.String).initCapacity(alloc, names.data.e_array.items.len);
+                    errdefer names_list.deinit(alloc);
+
+                    var names_buffer = std.ArrayListUnmanaged(u8){};
+                    errdefer names_buffer.deinit(alloc);
+
+                    for (names.data.e_array.items.slice()) |*item| {
+                        if (item.data != .e_string) {
+                            return error.InvalidSourceMap;
+                        }
+
+                        const str = try item.data.e_string.string(arena);
+
+                        names_list.appendAssumeCapacity(try bun.Semver.String.initAppendIfNeeded(alloc, &names_buffer, str));
+                    }
+
+                    map_data.mappings.names = names_list.items;
+                    map_data.mappings.names_buffer = .fromList(names_buffer);
+                }
+            }
+        }
+
         const ptr = bun.new(ParsedSourceMap, map_data);
         ptr.external_source_names = source_paths_slice.?;
+
         break :map ptr;
     } else null;
     errdefer if (map) |m| m.deref();
@@ -199,7 +230,7 @@ pub fn parseJSON(
     const mapping, const source_index = switch (hint) {
         .source_only => |index| .{ null, index },
         .all => |loc| brk: {
-            const mapping = Mapping.find(map.?.mappings, loc.line, loc.column) orelse
+            const mapping = map.?.mappings.find(loc.line, loc.column) orelse
                 break :brk .{ null, null };
             break :brk .{ mapping, std.math.cast(u32, mapping.source_index) };
         },
@@ -234,8 +265,206 @@ pub const Mapping = struct {
     generated: LineColumnOffset,
     original: LineColumnOffset,
     source_index: i32,
+    name_index: i32 = -1,
 
-    pub const List = bun.MultiArrayList(Mapping);
+    /// Optimization: if we don't care about the "names" column, then don't store the names.
+    pub const MappingWithoutName = struct {
+        generated: LineColumnOffset,
+        original: LineColumnOffset,
+        source_index: i32,
+
+        pub fn toNamed(this: *const MappingWithoutName) Mapping {
+            return .{
+                .generated = this.generated,
+                .original = this.original,
+                .source_index = this.source_index,
+                .name_index = -1,
+            };
+        }
+    };
+
+    pub const List = struct {
+        impl: Value = .{ .without_names = .{} },
+        names: []const bun.Semver.String = &[_]bun.Semver.String{},
+        names_buffer: bun.ByteList = .{},
+
+        pub const Value = union(enum) {
+            without_names: bun.MultiArrayList(MappingWithoutName),
+            with_names: bun.MultiArrayList(Mapping),
+
+            pub fn memoryCost(this: *const Value) usize {
+                return switch (this.*) {
+                    .without_names => |*list| list.memoryCost(),
+                    .with_names => |*list| list.memoryCost(),
+                };
+            }
+
+            pub fn ensureTotalCapacity(this: *Value, allocator: std.mem.Allocator, count: usize) !void {
+                switch (this.*) {
+                    inline else => |*list| try list.ensureTotalCapacity(allocator, count),
+                }
+            }
+        };
+
+        fn ensureWithNames(this: *List, allocator: std.mem.Allocator) !void {
+            if (this.impl == .with_names) return;
+
+            var without_names = this.impl.without_names;
+            var with_names = bun.MultiArrayList(Mapping){};
+            try with_names.ensureTotalCapacity(allocator, without_names.len);
+            defer without_names.deinit(allocator);
+
+            with_names.len = without_names.len;
+            var old_slices = without_names.slice();
+            var new_slices = with_names.slice();
+
+            @memcpy(new_slices.items(.generated), old_slices.items(.generated));
+            @memcpy(new_slices.items(.original), old_slices.items(.original));
+            @memcpy(new_slices.items(.source_index), old_slices.items(.source_index));
+            @memset(new_slices.items(.name_index), -1);
+
+            this.impl = .{ .with_names = with_names };
+        }
+
+        fn findIndexFromGenerated(line_column_offsets: []const LineColumnOffset, line: i32, column: i32) ?usize {
+            var count = line_column_offsets.len;
+            var index: usize = 0;
+            while (count > 0) {
+                const step = count / 2;
+                const i: usize = index + step;
+                const mapping = line_column_offsets[i];
+                if (mapping.lines < line or (mapping.lines == line and mapping.columns <= column)) {
+                    index = i + 1;
+                    count -|= step + 1;
+                } else {
+                    count = step;
+                }
+            }
+
+            if (index > 0) {
+                if (line_column_offsets[index - 1].lines == line) {
+                    return index - 1;
+                }
+            }
+
+            return null;
+        }
+
+        pub fn findIndex(this: *const List, line: i32, column: i32) ?usize {
+            switch (this.impl) {
+                inline else => |*list| {
+                    if (findIndexFromGenerated(list.items(.generated), line, column)) |i| {
+                        return i;
+                    }
+                },
+            }
+
+            return null;
+        }
+
+        const SortContext = struct {
+            generated: []const LineColumnOffset,
+            pub fn lessThan(ctx: SortContext, a_index: usize, b_index: usize) bool {
+                const a = ctx.generated[a_index];
+                const b = ctx.generated[b_index];
+
+                return a.lines < b.lines or (a.lines == b.lines and a.columns <= b.columns);
+            }
+        };
+
+        pub fn sort(this: *List) void {
+            switch (this.impl) {
+                .without_names => |*list| list.sort(SortContext{ .generated = list.items(.generated) }),
+                .with_names => |*list| list.sort(SortContext{ .generated = list.items(.generated) }),
+            }
+        }
+
+        pub fn append(this: *List, allocator: std.mem.Allocator, mapping: *const Mapping) !void {
+            switch (this.impl) {
+                .without_names => |*list| {
+                    try list.append(allocator, .{
+                        .generated = mapping.generated,
+                        .original = mapping.original,
+                        .source_index = mapping.source_index,
+                    });
+                },
+                .with_names => |*list| {
+                    try list.append(allocator, mapping.*);
+                },
+            }
+        }
+
+        pub fn find(this: *const List, line: i32, column: i32) ?Mapping {
+            switch (this.impl) {
+                inline else => |*list, tag| {
+                    if (findIndexFromGenerated(list.items(.generated), line, column)) |i| {
+                        if (tag == .without_names) {
+                            return list.get(i).toNamed();
+                        } else {
+                            return list.get(i);
+                        }
+                    }
+                },
+            }
+
+            return null;
+        }
+        pub fn generated(self: *const List) []const LineColumnOffset {
+            return switch (self.impl) {
+                inline else => |*list| list.items(.generated),
+            };
+        }
+
+        pub fn original(self: *const List) []const LineColumnOffset {
+            return switch (self.impl) {
+                inline else => |*list| list.items(.original),
+            };
+        }
+
+        pub fn sourceIndex(self: *const List) []const i32 {
+            return switch (self.impl) {
+                inline else => |*list| list.items(.source_index),
+            };
+        }
+
+        pub fn nameIndex(self: *const List) []const i32 {
+            return switch (self.impl) {
+                inline else => |*list| list.items(.name_index),
+            };
+        }
+
+        pub fn deinit(self: *List, allocator: std.mem.Allocator) void {
+            switch (self.impl) {
+                inline else => |*list| list.deinit(allocator),
+            }
+
+            self.names_buffer.deinitWithAllocator(allocator);
+            allocator.free(self.names);
+        }
+
+        pub fn getName(this: *List, index: i32) ?[]const u8 {
+            if (index < 0) return null;
+            const i: usize = @intCast(index);
+
+            if (i >= this.names.len) return null;
+
+            if (this.impl == .with_names) {
+                const str: *const bun.Semver.String = &this.names[i];
+                return str.slice(this.names_buffer.slice());
+            }
+
+            return null;
+        }
+
+        pub fn memoryCost(this: *const List) usize {
+            return this.impl.memoryCost() + this.names_buffer.memoryCost() +
+                (this.names.len * @sizeOf(bun.Semver.String));
+        }
+
+        pub fn ensureTotalCapacity(this: *List, allocator: std.mem.Allocator, count: usize) !void {
+            try this.impl.ensureTotalCapacity(allocator, count);
+        }
+    };
 
     pub const Lookup = struct {
         mapping: Mapping,
@@ -243,6 +472,8 @@ pub const Mapping = struct {
         /// Owned by default_allocator always
         /// use `getSourceCode` to access this as a Slice
         prefetched_source_code: ?[]const u8,
+
+        name: ?[]const u8 = null,
 
         /// This creates a bun.String if the source remap *changes* the source url,
         /// which is only possible if the executed file differs from the source file:
@@ -336,58 +567,28 @@ pub const Mapping = struct {
         }
     };
 
-    pub inline fn generatedLine(mapping: Mapping) i32 {
+    pub inline fn generatedLine(mapping: *const Mapping) i32 {
         return mapping.generated.lines;
     }
 
-    pub inline fn generatedColumn(mapping: Mapping) i32 {
+    pub inline fn generatedColumn(mapping: *const Mapping) i32 {
         return mapping.generated.columns;
     }
 
-    pub inline fn sourceIndex(mapping: Mapping) i32 {
+    pub inline fn sourceIndex(mapping: *const Mapping) i32 {
         return mapping.source_index;
     }
 
-    pub inline fn originalLine(mapping: Mapping) i32 {
+    pub inline fn originalLine(mapping: *const Mapping) i32 {
         return mapping.original.lines;
     }
 
-    pub inline fn originalColumn(mapping: Mapping) i32 {
+    pub inline fn originalColumn(mapping: *const Mapping) i32 {
         return mapping.original.columns;
     }
 
-    pub fn find(mappings: Mapping.List, line: i32, column: i32) ?Mapping {
-        if (findIndex(mappings, line, column)) |i| {
-            return mappings.get(i);
-        }
-
-        return null;
-    }
-
-    pub fn findIndex(mappings: Mapping.List, line: i32, column: i32) ?usize {
-        const generated = mappings.items(.generated);
-
-        var count = generated.len;
-        var index: usize = 0;
-        while (count > 0) {
-            const step = count / 2;
-            const i: usize = index + step;
-            const mapping = generated[i];
-            if (mapping.lines < line or (mapping.lines == line and mapping.columns <= column)) {
-                index = i + 1;
-                count -|= step + 1;
-            } else {
-                count = step;
-            }
-        }
-
-        if (index > 0) {
-            if (generated[index - 1].lines == line) {
-                return index - 1;
-            }
-        }
-
-        return null;
+    pub inline fn nameIndex(mapping: *const Mapping) i32 {
+        return mapping.name_index;
     }
 
     pub fn parse(
@@ -396,19 +597,35 @@ pub const Mapping = struct {
         estimated_mapping_count: ?usize,
         sources_count: i32,
         input_line_count: usize,
+        options: struct {
+            allow_names: bool = false,
+            sort: bool = false,
+        },
     ) ParseResult {
         debug("parse mappings ({d} bytes)", .{bytes.len});
 
         var mapping = Mapping.List{};
+        errdefer mapping.deinit(allocator);
+
         if (estimated_mapping_count) |count| {
-            mapping.ensureTotalCapacity(allocator, count) catch unreachable;
+            mapping.ensureTotalCapacity(allocator, count) catch {
+                return .{
+                    .fail = .{
+                        .msg = "Out of memory",
+                        .err = error.OutOfMemory,
+                        .loc = .{},
+                    },
+                };
+            };
         }
 
         var generated = LineColumnOffset{ .lines = 0, .columns = 0 };
         var original = LineColumnOffset{ .lines = 0, .columns = 0 };
+        var name_index: i32 = 0;
         var source_index: i32 = 0;
         var needs_sort = false;
         var remain = bytes;
+        var has_names = false;
         while (remain.len > 0) {
             if (remain[0] == ';') {
                 generated.columns = 0;
@@ -558,26 +775,68 @@ pub const Mapping = struct {
             if (remain.len > 0) {
                 switch (remain[0]) {
                     ',' => {
+                        // 4 column, but there's more on this line.
                         remain = remain[1..];
                     },
+                    // 4 column, and there's no more on this line.
                     ';' => {},
+
+                    // 5th column: the name
                     else => |c| {
-                        return .{
-                            .fail = .{
-                                .msg = "Invalid character after mapping",
-                                .err = error.InvalidSourceMap,
-                                .value = @as(i32, @intCast(c)),
-                                .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                            },
-                        };
+                        // Read the name index
+                        const name_index_delta = decodeVLQ(remain, 0);
+                        if (name_index_delta.start == 0) {
+                            return .{
+                                .fail = .{
+                                    .msg = "Invalid name index delta",
+                                    .err = error.InvalidNameIndexDelta,
+                                    .value = @intCast(c),
+                                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                                },
+                            };
+                        }
+                        remain = remain[name_index_delta.start..];
+
+                        if (options.allow_names) {
+                            name_index += name_index_delta.value;
+                            if (!has_names) {
+                                mapping.ensureWithNames(allocator) catch {
+                                    return .{
+                                        .fail = .{
+                                            .msg = "Out of memory",
+                                            .err = error.OutOfMemory,
+                                            .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                                        },
+                                    };
+                                };
+                            }
+                            has_names = true;
+                        }
+
+                        if (remain.len > 0) {
+                            switch (remain[0]) {
+                                // There's more on this line.
+                                ',' => {
+                                    remain = remain[1..];
+                                },
+                                // That's the end of the line.
+                                ';' => {},
+                                else => {},
+                            }
+                        }
                     },
                 }
             }
-            mapping.append(allocator, .{
+            mapping.append(allocator, &.{
                 .generated = generated,
                 .original = original,
                 .source_index = source_index,
+                .name_index = name_index,
             }) catch bun.outOfMemory();
+        }
+
+        if (needs_sort and options.sort) {
+            mapping.sort();
         }
 
         return .{ .success = .{
@@ -622,6 +881,7 @@ pub const ParsedSourceMap = struct {
 
     input_line_count: usize = 0,
     mappings: Mapping.List = .{},
+
     /// If this is empty, this implies that the source code is a single file
     /// transpiled on-demand. If there are items, then it means this is a file
     /// loaded without transpilation but with external sources. This array
@@ -710,16 +970,20 @@ pub const ParsedSourceMap = struct {
         return @ptrFromInt(this.underlying_provider.data);
     }
 
-    pub fn writeVLQs(map: ParsedSourceMap, writer: anytype) !void {
+    pub fn memoryCost(this: *const ParsedSourceMap) usize {
+        return @sizeOf(ParsedSourceMap) + this.mappings.memoryCost() + this.external_source_names.len * @sizeOf([]const u8);
+    }
+
+    pub fn writeVLQs(map: *const ParsedSourceMap, writer: anytype) !void {
         var last_col: i32 = 0;
         var last_src: i32 = 0;
         var last_ol: i32 = 0;
         var last_oc: i32 = 0;
         var current_line: i32 = 0;
         for (
-            map.mappings.items(.generated),
-            map.mappings.items(.original),
-            map.mappings.items(.source_index),
+            map.mappings.generated(),
+            map.mappings.original(),
+            map.mappings.sourceIndex(),
             0..,
         ) |gen, orig, source_index, i| {
             if (current_line != gen.lines) {
@@ -1056,7 +1320,7 @@ pub fn find(
     line: i32,
     column: i32,
 ) ?Mapping {
-    return Mapping.find(this.mapping, line, column);
+    return this.mapping.find(line, column);
 }
 
 pub const SourceMapShifts = struct {
@@ -1671,6 +1935,7 @@ const assert = bun.assert;
 pub const coverage = @import("./CodeCoverage.zig");
 pub const VLQ = @import("./VLQ.zig");
 pub const LineOffsetTable = @import("./LineOffsetTable.zig");
+pub const JSSourceMap = @import("./JSSourceMap.zig");
 
 const decodeVLQAssumeValid = VLQ.decodeAssumeValid;
 const decodeVLQ = VLQ.decode;

@@ -55,14 +55,14 @@ function validatePattern(pattern: string | string[]): string[] {
   });
 }
 
-function mapOptions(options: GlobOptions): GlobScanOptions {
+function mapOptions(options: GlobOptions): GlobScanOptions & { exclude: GlobOptions["exclude"] } {
   validateObject(options, "options");
 
-  const exclude = options.exclude ?? no;
+  let exclude = options.exclude ?? no;
   if (Array.isArray(exclude)) {
     validateArray(exclude, "options.exclude");
     if (isWindows) {
-      options.exclude = exclude.map((pattern: string) => pattern.replaceAll("/", "\\"));
+      exclude = exclude.map((pattern: string) => pattern.replaceAll("/", "\\"));
     }
   } else {
     validateFunction(exclude, "options.exclude");

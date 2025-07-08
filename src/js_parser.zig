@@ -1208,7 +1208,7 @@ pub const KnownGlobal = @import("ast/KnownGlobal.zig").KnownGlobal;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 pub const Parser = @import("ast/Parser.zig").Parser;
 pub const SideEffects = @import("ast/SideEffects.zig").SideEffects;
-pub const foldStringAddition = @import("ast/FoldStringAddition.zig").foldStringAddition;
+pub const foldStringAddition = @import("ast/foldStringAddition.zig").foldStringAddition;
 pub const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
 
 const Index = @import("./ast/base.zig").Index;

@@ -801,7 +801,6 @@ src/sql/postgres/types/date.zig
 src/sql/postgres/types/int_types.zig
 src/sql/postgres/types/json.zig
 src/sql/postgres/types/numeric.zig
-src/sql/postgres/types/PostgresString.zig
 src/sql/postgres/types/Tag.zig
 src/StandaloneModuleGraph.zig
 src/StaticHashMap.zig

@@ -126,8 +126,11 @@ pub const DefineData = struct {
             .flags = .{
                 .can_be_removed_if_unused = a.can_be_removed_if_unused(),
                 .call_can_be_unwrapped_if_unused = a.call_can_be_unwrapped_if_unused(),
+
+                // TODO: investigate if this is correct. This is what it was before. But that looks strange.
+                .valueless = a.method_call_must_be_replaced_with_undefined() or b.method_call_must_be_replaced_with_undefined(),
+
                 .method_call_must_be_replaced_with_undefined = a.method_call_must_be_replaced_with_undefined() or b.method_call_must_be_replaced_with_undefined(),
-                .valueless = a.flags.valueless or b.flags.valueless,
             },
             .original_name_ptr = b.original_name_ptr,
             .original_name_len = b.original_name_len,

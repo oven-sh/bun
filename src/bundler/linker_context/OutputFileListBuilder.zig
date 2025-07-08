@@ -33,6 +33,8 @@ index_for_chunk: u32,
 index_for_sourcemaps_and_bytecode: ?u32,
 additional_output_files_start: u32,
 
+total_insertions: u32,
+
 pub fn init(
     allocator: std.mem.Allocator,
     c: *const bun.bundle_v2.LinkerContext,
@@ -51,17 +53,27 @@ pub fn init(
         .index_for_chunk = 0,
         .index_for_sourcemaps_and_bytecode = if (source_map_and_bytecode_count == 0) null else @as(u32, @truncate(chunks.len)),
         .additional_output_files_start = @as(u32, @intCast(chunks.len)) + source_map_and_bytecode_count,
+        .total_insertions = 0,
     };
 }
 
 pub fn take(this: *@This()) std.ArrayList(options.OutputFile) {
+    bun.assertf(this.total_insertions == this.output_files.items.len, "total_insertions ({d}) != output_files.items.len ({d})", .{ this.total_insertions, this.output_files.items.len });
     const list = this.output_files;
     this.output_files = std.ArrayList(options.OutputFile).init(bun.default_allocator);
     return list;
 }
 
 pub fn calculateOutputFileListCapacity(c: *const bun.bundle_v2.LinkerContext, chunks: []const bun.bundle_v2.Chunk) struct { u32, u32 } {
-    const source_map_count = if (c.options.source_maps.hasExternalFiles()) chunks.len else 0;
+    const source_map_count = if (c.options.source_maps.hasExternalFiles()) brk: {
+        var count: usize = 0;
+        for (chunks) |*chunk| {
+            if (chunk.content.sourcemap(c.options.source_maps).hasExternalFiles()) {
+                count += 1;
+            }
+        }
+        break :brk count;
+    } else 0;
     const bytecode_count = if (c.options.generate_bytecode_cache) bytecode_count: {
         var bytecode_count: usize = 0;
         for (chunks) |*chunk| {
@@ -93,6 +105,7 @@ pub fn insertForChunk(this: *OutputFileList, output_file: options.OutputFile) u3
     const index = this.indexForChunk();
     bun.assertf(index < this.index_for_sourcemaps_and_bytecode orelse std.math.maxInt(u32), "index ({d}) \\< index_for_sourcemaps_and_bytecode ({d})", .{ index, this.index_for_sourcemaps_and_bytecode orelse std.math.maxInt(u32) });
     this.output_files.items[index] = output_file;
+    this.total_insertions += 1;
     return index;
 }
 
@@ -100,6 +113,7 @@ pub fn insertForSourcemapOrBytecode(this: *OutputFileList, output_file: options.
     const index = this.indexForSourcemapOrBytecode() orelse return error.NoSourceMapsOrBytecode;
     bun.assertf(index < this.additional_output_files_start, "index ({d}) \\< additional_output_files_start ({d})", .{ index, this.additional_output_files_start });
     this.output_files.items[index] = output_file;
+    this.total_insertions += 1;
     return index;
 }
 
@@ -110,6 +124,7 @@ pub fn insertAdditionalOutputFiles(this: *OutputFileList, additional_output_file
         this.getMutableAdditionalOutputFiles(),
         additional_output_files,
     );
+    this.total_insertions += @as(u32, @intCast(additional_output_files.len));
 }
 
 pub fn getMutableAdditionalOutputFiles(this: *OutputFileList) []options.OutputFile {

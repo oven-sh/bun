@@ -22,8 +22,9 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
 
   for (const pat of patterns) {
     for await (const ent of new Bun.Glob(pat).scan(globOptions)) {
+      const _ent = ent.replaceAll(sep, "/");
       if (typeof exclude === "function" && exclude(ent)) continue;
-      if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || ent === p || ent.startsWith(p + sep))) continue;
+      if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || _ent === p || _ent.startsWith(p + sep))) continue;
       yield ent;
     }
   }
@@ -37,8 +38,9 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
 
   for (const pat of patterns) {
     for (const ent of new Bun.Glob(pat).scanSync(globOptions)) {
+      const _ent = ent.replaceAll(sep, "/");
       if (typeof exclude === "function" && exclude(ent)) continue;
-      if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || ent === p || ent.startsWith(p + sep))) continue;
+      if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || _ent === p || _ent.startsWith(p + sep))) continue;
       yield ent;
     }
   }

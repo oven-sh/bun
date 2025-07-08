@@ -729,6 +729,7 @@ src/shell/subproc.zig
 src/shell/util.zig
 src/shell/Yield.zig
 src/sourcemap/CodeCoverage.zig
+src/sourcemap/JSSourceMap.zig
 src/sourcemap/LineOffsetTable.zig
 src/sourcemap/sourcemap.zig
 src/sourcemap/VLQ.zig

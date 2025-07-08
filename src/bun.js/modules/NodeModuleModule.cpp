@@ -20,21 +20,22 @@
 #include "ErrorCode.h"
 
 #include "GeneratedNodeModuleModule.h"
+#include "ZigGeneratedClasses.h"
 
 namespace Bun {
 
 using namespace JSC;
 
+BUN_DECLARE_HOST_FUNCTION(Bun__JSSourceMap__find);
+
 BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDebugNoop);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionFindSourceMap);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionSourceMap);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSyncBuiltinExports);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 
@@ -287,27 +288,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap,
-    (JSGlobalObject * globalObject,
-        CallFrame* callFrame))
-{
-    return JSValue::encode(jsUndefined());
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))
 {
     return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionSourceMap, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    throwException(globalObject, scope,
-        createError(globalObject, "Not implemented"_s));
-    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
@@ -585,10 +570,10 @@ static JSValue getPathCacheObject(VM& vm, JSObject* moduleObject)
 static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    JSFunction* sourceMapFunction = JSFunction::create(
-        vm, globalObject, 1, "SourceMap"_s, jsFunctionSourceMap,
-        ImplementationVisibility::Public, NoIntrinsic, jsFunctionSourceMap);
-    return sourceMapFunction;
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+
+    // Return the actual SourceMap constructor from code generation
+    return zigGlobalObject->JSSourceMapConstructor();
 }
 
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
@@ -847,7 +832,7 @@ builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 0
-findSourceMap           jsFunctionFindSourceMap           Function 0
+findSourceMap           Bun__JSSourceMap__find           Function 1
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1
@@ -918,6 +903,82 @@ const JSC::ClassInfo JSModuleConstructor::s_info = {
     CREATE_METHOD_TABLE(JSModuleConstructor)
 };
 
+static JSC::Structure* createNodeModuleSourceMapEntryStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 6);
+    PropertyOffset offset;
+
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "generatedLine"), 0, offset);
+    RELEASE_ASSERT(offset == 0);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "generatedColumn"), 0, offset);
+    RELEASE_ASSERT(offset == 1);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "originalLine"), 0, offset);
+    RELEASE_ASSERT(offset == 2);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "originalColumn"), 0, offset);
+    RELEASE_ASSERT(offset == 3);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "originalSource"), 0, offset);
+    RELEASE_ASSERT(offset == 4);
+    structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->name, 0, offset);
+    RELEASE_ASSERT(offset == 5);
+
+    return structure;
+}
+
+extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapEntryObject(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue encodedGeneratedLine,
+    JSC::EncodedJSValue encodedGeneratedColumn,
+    JSC::EncodedJSValue encodedOriginalLine,
+    JSC::EncodedJSValue encodedOriginalColumn,
+    JSC::EncodedJSValue encodedOriginalSource,
+    JSC::EncodedJSValue encodedName)
+{
+    auto& vm = globalObject->vm();
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSObject* object = JSC::constructEmptyObject(vm, zigGlobalObject->m_nodeModuleSourceMapEntryStructure.getInitializedOnMainThread(zigGlobalObject));
+    object->putDirectOffset(vm, 0, JSC::JSValue::decode(encodedGeneratedLine));
+    object->putDirectOffset(vm, 1, JSC::JSValue::decode(encodedGeneratedColumn));
+    object->putDirectOffset(vm, 2, JSC::JSValue::decode(encodedOriginalLine));
+    object->putDirectOffset(vm, 3, JSC::JSValue::decode(encodedOriginalColumn));
+    object->putDirectOffset(vm, 4, JSC::JSValue::decode(encodedOriginalSource));
+    object->putDirectOffset(vm, 5, JSC::JSValue::decode(encodedName));
+    return JSValue::encode(object);
+}
+
+static JSC::Structure* createNodeModuleSourceMapOriginStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 4);
+    PropertyOffset offset;
+
+    structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->name, 0, offset);
+    RELEASE_ASSERT(offset == 0);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "line"), 0, offset);
+    RELEASE_ASSERT(offset == 1);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "column"), 0, offset);
+    RELEASE_ASSERT(offset == 2);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "fileName"), 0, offset);
+    RELEASE_ASSERT(offset == 3);
+
+    return structure;
+}
+
+extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapOriginObject(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue encodedName,
+    JSC::EncodedJSValue encodedLine,
+    JSC::EncodedJSValue encodedColumn,
+    JSC::EncodedJSValue encodedSource)
+{
+    auto& vm = globalObject->vm();
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSObject* object = JSC::constructEmptyObject(vm, zigGlobalObject->m_nodeModuleSourceMapOriginStructure.getInitializedOnMainThread(zigGlobalObject));
+    object->putDirectOffset(vm, 0, JSC::JSValue::decode(encodedName));
+    object->putDirectOffset(vm, 1, JSC::JSValue::decode(encodedLine));
+    object->putDirectOffset(vm, 2, JSC::JSValue::decode(encodedColumn));
+    object->putDirectOffset(vm, 3, JSC::JSValue::decode(encodedSource));
+    return JSValue::encode(object);
+}
+
 void addNodeModuleConstructorProperties(JSC::VM& vm,
     Zig::GlobalObject* globalObject)
 {
@@ -926,6 +987,15 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             JSObject* moduleConstructor = JSModuleConstructor::create(
                 init.vm, static_cast<Zig::GlobalObject*>(init.owner));
             init.set(moduleConstructor);
+        });
+
+    globalObject->m_nodeModuleSourceMapEntryStructure.initLater(
+        [](const Zig::GlobalObject::Initializer<Structure>& init) {
+            init.set(createNodeModuleSourceMapEntryStructure(init.vm, init.owner));
+        });
+    globalObject->m_nodeModuleSourceMapOriginStructure.initLater(
+        [](const Zig::GlobalObject::Initializer<Structure>& init) {
+            init.set(createNodeModuleSourceMapOriginStructure(init.vm, init.owner));
         });
 
     globalObject->m_moduleRunMainFunction.initLater(

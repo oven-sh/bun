@@ -1,5 +1,6 @@
 import { mkdir } from "fs/promises";
 import { join, relative } from "path";
+// @ts-ignore
 import CppPath from "tree-sitter-cpp/tree-sitter-cpp.wasm";
 import { Language, Node, Parser, Query } from "web-tree-sitter";
 import { sharedTypes, typeDeclarations } from "./shared-types";
@@ -85,9 +86,9 @@ class PositionedErrorClass extends Error {
 }
 
 const allowedTypes = new Set(["primitive_type", "qualified_identifier", "type_identifier"]);
-function processRootmostType(file: string, types: SyntaxNode[]): CppType {
-  const type = types[0];
-  if (!type) throwError(nodePosition(file, types[0]), "no type found");
+function processRootmostType(file: string, node: SyntaxNode): CppType {
+  const type = node.childrenForFieldName("type")[0];
+  if (!type) throwError(nodePosition(file, node), "no type found");
   if (!allowedTypes.has(type.type)) throwError(nodePosition(file, type), "not supported: " + type.type);
   return { type: "named", name: type.text, position: nodePosition(file, type) };
 }
@@ -102,12 +103,12 @@ function processDeclarator(
 
   const declarators = node.childrenForFieldName("declarator");
   const declarator = declarators[0];
-  if (!declarator) throwError(nodePosition(file, declarators[0]), "no declarator found");
+  if (!declarator) throwError(nodePosition(file, node), "no declarator found");
 
-  rootmostType ??= processRootmostType(file, node.childrenForFieldName("type"));
+  rootmostType ??= processRootmostType(file, node);
   if (!rootmostType) throwError(nodePosition(file, node), "no rootmost type found");
 
-  const isConst = node.children.some(child => child.type === "type_qualifier" && child.text === "const");
+  const isConst = node.children.some(child => child && child.type === "type_qualifier" && child.text === "const");
   if (declarator.type === "pointer_declarator") {
     return processDeclarator(file, declarator, {
       type: "pointer",
@@ -123,27 +124,23 @@ function processFunction(file: string, node: SyntaxNode, tag: ExportTag): CppFn 
   // void* spiral()
 
   const declarator = processDeclarator(file, node);
-  if (!declarator) throwError(nodePosition(file, node.childrenForFieldName("declarator")[0]), "no declarator found");
+  if (!declarator) throwError(nodePosition(file, node), "no declarator found");
   const final = declarator.final;
   if (final.type !== "function_declarator") {
     throwError(nodePosition(file, final), "not a function_declarator: " + final.type);
   }
   const name = final.childrenForFieldName("declarator")[0];
-  if (!name) throwError(nodePosition(file, final.childrenForFieldName("declarator")[0]), "no name found");
+  if (!name) throwError(nodePosition(file, final), "no name found");
   const parameterList = final.childrenForFieldName("parameters")[0];
   if (!parameterList || parameterList.type !== "parameter_list")
-    throwError(nodePosition(file, final.childrenForFieldName("parameters")[0]), "no parameter list found");
+    throwError(nodePosition(file, final), "no parameter list found");
 
   const parameters: CppParameter[] = [];
   for (const parameter of parameterList.children) {
-    if (parameter.type !== "parameter_declaration") continue;
+    if (!parameter || parameter.type !== "parameter_declaration") continue;
 
     const declarator = processDeclarator(file, parameter);
-    if (!declarator)
-      throwError(
-        nodePosition(file, parameter.childrenForFieldName("declarator")[0]),
-        "no declarator found for parameter",
-      );
+    if (!declarator) throwError(nodePosition(file, parameter), "no declarator found for parameter");
     const name = declarator.final;
     if (name.type !== "identifier") {
       if (name.type === "reference_declarator") {

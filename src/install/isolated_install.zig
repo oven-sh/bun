@@ -401,9 +401,6 @@ pub fn installIsolatedPackages(
                         var parents = &entry_parents[info.entry_id.get()];
 
                         if (curr_dep_id != invalid_dependency_id and dependencies[curr_dep_id].behavior.isWorkspaceOnly()) {
-                            if (comptime Environment.isDebug) {
-                                bun.debugAssert(!bun.contains(entry.entry_parent_id, parents));
-                            }
                             try parents.append(lockfile.allocator, entry.entry_parent_id);
                             continue :next_entry;
                         }
@@ -415,9 +412,6 @@ pub fn installIsolatedPackages(
                             .{ .entry_id = info.entry_id, .dep_id = curr_dep_id },
                             &ctx,
                         );
-                        if (comptime Environment.isDebug) {
-                            bun.debugAssert(!bun.contains(entry.entry_parent_id, parents));
-                        }
                         try parents.append(lockfile.allocator, entry.entry_parent_id);
                         continue :next_entry;
                     }

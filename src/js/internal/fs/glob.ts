@@ -1,5 +1,5 @@
 import type { GlobScanOptions } from "bun";
-const { validateObject, validateString, validateFunction } = require("internal/validators");
+const { validateObject, validateString, validateFunction, validateArray } = require("internal/validators");
 
 const isWindows = process.platform === "win32";
 
@@ -13,9 +13,15 @@ interface GlobOptions {
   withFileTypes?: boolean;
 }
 
-interface ExtendedGlobOptions extends GlobScanOptions {
-  exclude(ent: string): boolean;
+interface ExcludeOptionFn {
+  exclude: (ent: string) => boolean;
 }
+
+interface ExcludeOptionArray {
+  exclude: string[];
+}
+
+type ExtendedGlobOptions = GlobScanOptions & (ExcludeOptionFn | ExcludeOptionArray);
 
 async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGenerator<string> {
   pattern = validatePattern(pattern);
@@ -24,7 +30,11 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
   const exclude = globOptions.exclude;
 
   for await (const ent of it) {
-    if (exclude(ent)) continue;
+    if (typeof exclude === "function" && exclude(ent)) continue;
+    if (Array.isArray(exclude)) {
+      if (exclude.some(pattern => new Bun.Glob(pattern).match(ent))) continue;
+      if (exclude.some(pattern => ent.includes(pattern))) continue;
+    }
     yield ent;
   }
 }
@@ -34,8 +44,13 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
   const globOptions = mapOptions(options || {});
   const g = new Bun.Glob(pattern);
   const exclude = globOptions.exclude;
+
   for (const ent of g.scanSync(globOptions)) {
-    if (exclude(ent)) continue;
+    if (typeof exclude === "function" && exclude(ent)) continue;
+    if (Array.isArray(exclude)) {
+      if (exclude.some(pattern => new Bun.Glob(pattern).match(ent))) continue;
+      if (exclude.some(pattern => ent.includes(pattern))) continue;
+    }
     yield ent;
   }
 }
@@ -52,7 +67,11 @@ function mapOptions(options: GlobOptions): ExtendedGlobOptions {
   validateObject(options, "options");
 
   const exclude = options.exclude ?? no;
-  validateFunction(exclude, "options.exclude");
+  if (Array.isArray(exclude)) {
+    validateArray(exclude, "options.exclude");
+  } else {
+    validateFunction(exclude, "options.exclude");
+  }
 
   if (options.withFileTypes) {
     throw new TypeError("fs.glob does not support options.withFileTypes yet. Please open an issue on GitHub.");

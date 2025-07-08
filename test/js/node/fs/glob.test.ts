@@ -16,7 +16,9 @@ beforeAll(() => {
     },
     "folder.test": {
       "file.txt": "content",
-      "another-folder": {},
+      "another-folder": {
+        "some-file.txt": "content",
+      },
     },
   });
 });
@@ -46,6 +48,19 @@ describe("fs.glob", () => {
 
   it("can filter out files", done => {
     const exclude = (path: string) => path.endsWith(".js");
+    fs.glob("a/*", { cwd: tmp, exclude }, (err, paths) => {
+      if (err) done(err);
+      if (isWindows) {
+        expect(paths).toStrictEqual(["a\\bar.txt"]);
+      } else {
+        expect(paths).toStrictEqual(["a/bar.txt"]);
+      }
+      done();
+    });
+  });
+
+  it("can filter out files (2)", done => {
+    const exclude = ["**/*.js"];
     fs.glob("a/*", { cwd: tmp, exclude }, (err, paths) => {
       if (err) done(err);
       if (isWindows) {
@@ -107,6 +122,11 @@ describe("fs.globSync", () => {
 
   it("can filter out files", () => {
     const exclude = (path: string) => path.endsWith(".js");
+    const expected = isWindows ? ["a\\bar.txt"] : ["a/bar.txt"];
+    expect(fs.globSync("a/*", { cwd: tmp, exclude })).toStrictEqual(expected);
+  });
+  it("can filter out files (2)", () => {
+    const exclude = ["**/*.js"];
     const expected = isWindows ? ["a\\bar.txt"] : ["a/bar.txt"];
     expect(fs.globSync("a/*", { cwd: tmp, exclude })).toStrictEqual(expected);
   });
@@ -184,5 +204,21 @@ describe("fs.promises.glob", () => {
       count++;
     }
     expect(count).toBe(1);
+  });
+
+  it("can filter out files", async () => {
+    const exclude = (path: string) => path.endsWith(".js");
+    const expected = isWindows ? ["a\\bar.txt"] : ["a/bar.txt"];
+    expect(Array.fromAsync(fs.promises.glob("a/*", { cwd: tmp, exclude }))).resolves.toStrictEqual(expected);
+  });
+
+  it("can filter out files (2)", async () => {
+    const exclude = ["**/*.js"];
+    const expected = isWindows ? ["a\\bar.txt"] : ["a/bar.txt"];
+    expect(Array.fromAsync(fs.promises.glob("a/*", { cwd: tmp, exclude }))).resolves.toStrictEqual(expected);
+
+    const exclude2 = ["another-folder"];
+    const expected2 = isWindows ? ["folder.test\\file.txt"] : ["folder.test/file.txt"];
+    expect(Array.fromAsync(fs.promises.glob("folder.test/**/*", { cwd: tmp, exclude: exclude2 }))).resolves.toStrictEqual(expected2);
   });
 }); // </fs.promises.glob>

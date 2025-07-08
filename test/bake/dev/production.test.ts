@@ -129,4 +129,161 @@ export default function TestPage() {
                       apiTestHtml.includes("pages\\api\\test.tsx");
     expect(hasApiPath).toBe(true);
   });
+
+  test("import.meta properties are inlined in catch-all routes during production build", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-catch-all", {
+      "src/index.tsx": `export default { 
+        app: { 
+          framework: "react",
+        } 
+      };`,
+      "pages/blog/[...slug].tsx": `
+export default function BlogPost({ params }) {
+  const slug = params.slug || [];
+  
+  const metaInfo = {
+    file: import.meta.file,
+    dir: import.meta.dir,
+    path: import.meta.path,
+    url: import.meta.url,
+    dirname: import.meta.dirname,
+  };
+  
+  return (
+    <article>
+      <h1>Blog Post: {slug.join(' / ')}</h1>
+      <p>You are reading: {slug.length === 0 ? 'the blog index' : slug.join('/')}</p>
+      <div id="blog-meta" data-file={metaInfo.file} data-dir={metaInfo.dir} data-path={metaInfo.path}>
+        <pre>{JSON.stringify(metaInfo, null, 2)}</pre>
+      </div>
+    </article>
+  );
+}
+
+export async function getStaticPaths() {
+  return {
+    paths: [
+      { params: { slug: ['2024', 'hello-world'] } },
+      { params: { slug: ['2024', 'tech', 'bun-framework'] } },
+      { params: { slug: ['tutorials', 'getting-started'] } },
+    ],
+    fallback: false,
+  };
+}
+`,
+      "pages/docs/[...path].tsx": `
+export default function DocsPage({ params }) {
+  const path = params.path || [];
+  
+  return (
+    <div>
+      <h1>Documentation</h1>
+      <nav aria-label="Breadcrumb">
+        <ol>
+          <li>Docs</li>
+          {path.map((segment, i) => (
+            <li key={i}>{segment}</li>
+          ))}
+        </ol>
+      </nav>
+      <div id="docs-content">
+        <p>Reading docs at: /{path.join('/')}</p>
+        <div id="docs-meta" style={{display: 'none'}}>
+          <span data-file={import.meta.file}></span>
+          <span data-dir={import.meta.dir}></span>
+          <span data-path={import.meta.path}></span>
+          <span data-url={import.meta.url}></span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export async function getStaticPaths() {
+  return {
+    paths: [
+      { params: { path: ['api', 'reference'] } },
+      { params: { path: ['guides', 'advanced', 'optimization'] } },
+      { params: { path: [] } }, // docs index
+    ],
+    fallback: false,
+  };
+}
+`,
+      "pages/docs/getting-started.tsx": `
+export default function GettingStarted() {
+  return (
+    <div>
+      <h1>Getting Started</h1>
+      <p>This is a static page, not a catch-all route.</p>
+      <div id="static-meta" style={{display: 'none'}}>
+        <span data-file={import.meta.file}></span>
+        <span data-path={import.meta.path}></span>
+      </div>
+    </div>
+  );
+}
+`,
+    });
+
+    // Run the build command
+    const buildProc = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+
+    expect(buildProc.exitCode).toBe(0);
+
+    // Check that the build output contains the generated files
+    const distFiles = await Bun.$`find dist -name "*.html" -type f | sort`.cwd(dir).text();
+    const htmlFiles = distFiles.trim().split('\n').filter(Boolean);
+    
+    // Should have generated all the static paths
+    // Note: React's routing may flatten the paths
+    expect(htmlFiles).toContain('dist/2024/hello-world/index.html');
+    expect(htmlFiles).toContain('dist/2024/tech/bun-framework/index.html');
+    expect(htmlFiles).toContain('dist/tutorials/getting-started/index.html');
+    expect(htmlFiles).toContain('dist/api/reference/index.html');
+    expect(htmlFiles).toContain('dist/guides/advanced/optimization/index.html');
+    expect(htmlFiles).toContain('dist/index.html');
+    expect(htmlFiles).toContain('dist/docs/getting-started/index.html');
+
+    // Check blog post with multiple segments
+    const blogPostHtml = await Bun.file(path.join(dir, "dist", "2024", "tech", "bun-framework", "index.html")).text();
+    
+    // Verify the content is rendered (may include HTML comments)
+    expect(blogPostHtml).toContain("Blog Post:");
+    expect(blogPostHtml).toContain("2024 / tech / bun-framework");
+    expect(blogPostHtml).toContain("You are reading:");
+    expect(blogPostHtml).toContain("2024/tech/bun-framework");
+    
+    // Check that import.meta values are inlined in the HTML
+    expect(blogPostHtml).toContain('data-file="[...slug].tsx"');
+    expect(blogPostHtml).toContain('data-dir=');
+    expect(blogPostHtml).toContain('/pages/blog"'); // The full path will include the temp directory
+    expect(blogPostHtml).toContain('data-path=');
+    expect(blogPostHtml).toContain('/pages/blog/[...slug].tsx"');
+    
+    // Check docs catch-all route
+    const docsHtml = await Bun.file(path.join(dir, "dist", "guides", "advanced", "optimization", "index.html")).text();
+    
+    expect(docsHtml).toContain("Reading docs at:");
+    expect(docsHtml).toContain("guides/advanced/optimization");
+    expect(docsHtml).toContain('data-file="[...path].tsx"');
+    expect(docsHtml).toContain('/pages/docs/[...path].tsx"');
+    
+    // Check that the static getting-started page uses its own file name, not the catch-all
+    const staticHtml = await Bun.file(path.join(dir, "dist", "docs", "getting-started", "index.html")).text();
+    
+    expect(staticHtml).toContain("Getting Started");
+    expect(staticHtml).toContain("This is a static page");
+    expect(staticHtml).toContain('data-file="getting-started.tsx"');
+    expect(staticHtml).toContain('/pages/docs/getting-started.tsx"');
+    expect(staticHtml).not.toContain('[...path].tsx');
+    
+    // Verify that import.meta values are consistent across all catch-all instances
+    const blogIndex = await Bun.file(path.join(dir, "dist", "tutorials", "getting-started", "index.html")).text();
+    expect(blogIndex).toContain('data-file="[...slug].tsx"');
+    expect(blogIndex).toContain('/pages/blog/[...slug].tsx"');
+  });
 });

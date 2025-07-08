@@ -18763,11 +18763,8 @@ fn NewParser_(
 
                     // Inline import.meta properties for Bake
                     if (p.options.framework != null) {
-                        if (strings.eqlComptime(name, "dir")) {
+                        if (strings.eqlComptime(name, "dir") or strings.eqlComptime(name, "dirname")) {
                             // Inline import.meta.dir
-                            return p.newExpr(E.String.init(p.source.path.name.dir), name_loc);
-                        } else if (strings.eqlComptime(name, "dirname")) {
-                            // Inline import.meta.dirname (same as dir)
                             return p.newExpr(E.String.init(p.source.path.name.dir), name_loc);
                         } else if (strings.eqlComptime(name, "file")) {
                             // Inline import.meta.file (filename only)
@@ -18779,7 +18776,7 @@ fn NewParser_(
                             // Inline import.meta.url as file:// URL
                             const bunstr = bun.String.fromBytes(p.source.path.text);
                             defer bunstr.deref();
-                            const url = std.fmt.allocPrint(p.allocator, "file://{s}", .{JSC.URL.fileURLFromString(bunstr)}) catch unreachable;
+                            const url = std.fmt.allocPrint(p.allocator, "{s}", .{JSC.URL.fileURLFromString(bunstr)}) catch unreachable;
                             return p.newExpr(E.String.init(url), name_loc);
                         }
                     }

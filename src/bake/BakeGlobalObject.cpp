@@ -140,7 +140,17 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
                     JSC::SourceProviderSourceType::Module));
                 return resolvedInternalPromise(globalObject, JSC::JSSourceCode::create(vm, WTFMove(sourceCode)));
             }
-            return rejectedInternalPromise(globalObject, createTypeError(globalObject, makeString("Bundle does not have \""_s, moduleKey, "\". This is a bug in Bun's bundler."_s)));
+
+            // We unconditionally prefix the key with "bake:" inside
+            // BakeProdResolve in production.zig.
+            //
+            // But if someone does: `await import(resolve(import.meta.dir, "nav.ts"))`
+            // we don't actually want to load it from the Bake production module
+            // map and instead make it go through the normal codepath.
+            auto bakePrefixRemoved = moduleKey.substringSharingImpl("bake:"_s.length());
+            JSString* bakePrefixRemovedString = jsNontrivialString(vm, bakePrefixRemoved);
+            JSValue bakePrefixRemovedJsvalue = bakePrefixRemovedString;
+            return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, parameters, script);
         }
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "BakeGlobalObject does not have per-thread data configured"_s));
     }

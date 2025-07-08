@@ -315,17 +315,36 @@ function generateZigFn(
     if (resultRaw.length) resultRaw.push("");
     if (resultBindings.length) resultBindings.push("");
     resultRaw.push(
-      generateZigSourceComment(dstDir, resultSourceLinks, fn),
       `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
     );
     const globalThisArg = fn.parameters.find(param => generateZigType(param.type) === "*JSC.JSGlobalObject");
     if (!globalThisArg) throwError(fn.position, "no globalThis argument found");
-    const callName = fn.tag === "check_slow" ? "fromJSHostCallGeneric" : "fromJSHostCall";
-    resultBindings.push(
-      `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) bun.JSError!${generateZigType(fn.returnType)} {`,
-      `        return bun.JSC.${callName}(${formatZigName(globalThisArg.name)}, @src(), raw.${formatZigName(fn.name)}, .{ ${fn.parameters.map(p => formatZigName(p.name)).join(", ")} });`,
-      `    }`,
-    );
+    resultBindings.push(generateZigSourceComment(dstDir, resultSourceLinks, fn));
+    if (fn.tag === "check_slow") {
+      resultBindings.push(
+        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) bun.JSError!${generateZigType(fn.returnType)} {`,
+        `        var scope: JSC.CatchScope = undefined;`,
+        `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
+        `        defer scope.deinit();`,
+        ``,
+        `        const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+        `        try scope.returnIfException();`,
+        `        return result;`,
+        `    }`,
+      );
+    } else if (fn.tag === "zero_is_throw") {
+      resultBindings.push(
+        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) bun.JSError!${generateZigType(fn.returnType)} {`,
+        `        var scope: JSC.ExceptionValidationScope = undefined;`,
+        `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
+        `        defer scope.deinit();`,
+        ``,
+        `        const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+        `        scope.assertExceptionPresenceMatches(value == .zero);`,
+        `        return if (value == .zero) error.JSError else value;`,
+        `    }`,
+      );
+    } else assertNever(fn.tag);
   } else assertNever(fn.tag);
 }
 

@@ -715,9 +715,9 @@ pub const Installer = struct {
                     const abs_target_buf = bun.path_buffer_pool.get();
                     defer bun.path_buffer_pool.put(abs_target_buf);
                     const abs_dest_buf = bun.path_buffer_pool.get();
-                    defer bun.path_buffer_pool.put(abs_target_buf);
+                    defer bun.path_buffer_pool.put(abs_dest_buf);
                     const rel_buf = bun.path_buffer_pool.get();
-                    defer bun.path_buffer_pool.put(abs_target_buf);
+                    defer bun.path_buffer_pool.put(rel_buf);
 
                     var seen: bun.StringHashMap(void) = .init(bun.default_allocator);
                     defer seen.deinit();

@@ -100,7 +100,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, ptr->sourceCode());
     RETURN_IF_EXCEPTION(scope, {});
     if (!executable) {
-        ASSERT(!scope.exception());
+        EXCEPTION_ASSERT(!scope.exception());
         throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
         return nullptr;
     }
@@ -360,7 +360,7 @@ RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalOb
             ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, m_sourceCode);
             RETURN_IF_EXCEPTION(scope, {});
             if (!executable) {
-                ASSERT(!scope.exception());
+                EXCEPTION_ASSERT(!scope.exception());
                 throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
                 return nullptr;
             }

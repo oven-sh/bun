@@ -2815,7 +2815,7 @@ extern "C" JSC::JSInternalPromise* JSModuleLoader__import(JSC::JSGlobalObject* g
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), jsUndefined(), jsUndefined(), jsUndefined());
 
-    ASSERT(!!scope.exception() == !promise);
+    EXCEPTION_ASSERT(!!scope.exception() == !promise);
     return promise;
 }
 
@@ -3257,7 +3257,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
         vm, globalObject, 1, String(), resolverFunctionCallback);
 
     auto* newPromise = promise->then(globalObject, resolverFunction, nullptr);
-    ASSERT(!!scope.exception() == !newPromise);
+    EXCEPTION_ASSERT(!!scope.exception() == !newPromise);
     return newPromise;
 }
 #pragma mark - JSC::JSPromise

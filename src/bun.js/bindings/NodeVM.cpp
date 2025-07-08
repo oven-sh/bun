@@ -708,7 +708,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
             PropertySlot target_slot(receiver, PropertySlot::InternalMethodType::Get);
             JSObject* target = proxyObject->target();
             bool hasProperty = target->getPropertySlot(globalObject, propertyName, target_slot);
-            ASSERT(!scope.exception() || !hasProperty);
+            EXCEPTION_ASSERT(!scope.exception() || !hasProperty);
             if (hasProperty) {
                 unsigned ignoredAttributes = 0;
                 JSValue result = target_slot.getValue(globalObject, propertyName);
@@ -723,7 +723,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
         {
             bool hasProperty = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
-            ASSERT(!scope.exception() || !hasProperty);
+            EXCEPTION_ASSERT(!scope.exception() || !hasProperty);
             if (hasProperty) {
                 return true;
             }

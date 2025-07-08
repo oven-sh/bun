@@ -422,7 +422,7 @@ pub const Loader = struct {
                                 key_str,
                                 .{
                                     .can_be_removed_if_unused = true,
-                                    .call_can_be_unwrapped_if_unused = true,
+                                    .call_can_be_unwrapped_if_unused = .if_unused,
                                     .value = expr_data,
                                 },
                             );
@@ -446,7 +446,7 @@ pub const Loader = struct {
                                     framework_defaults.keys[key_i],
                                     .{
                                         .can_be_removed_if_unused = true,
-                                        .call_can_be_unwrapped_if_unused = true,
+                                        .call_can_be_unwrapped_if_unused = .if_unused,
                                         .value = expr_data,
                                     },
                                 );
@@ -472,7 +472,7 @@ pub const Loader = struct {
                             key,
                             .{
                                 .can_be_removed_if_unused = true,
-                                .call_can_be_unwrapped_if_unused = true,
+                                .call_can_be_unwrapped_if_unused = .if_unused,
                                 .value = expr_data,
                             },
                         );

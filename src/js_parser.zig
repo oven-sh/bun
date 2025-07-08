@@ -1741,9 +1741,17 @@ pub const SideEffects = enum(u1) {
             inline .e_call, .e_new => |call| {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
-                if (call.can_be_unwrapped_if_unused) {
+                if (call.can_be_unwrapped_if_unused != .never) {
                     if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
+                        const joined = Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
+                        if (joined != null and call.can_be_unwrapped_if_unused == .if_unused_and_toString_safe) {
+                            @branchHint(.unlikely);
+                            // For now, only support this for 1 argument.
+                            if (joined.?.data.isSafeToString()) {
+                                return null;
+                            }
+                        }
+                        return joined;
                     } else {
                         return null;
                     }
@@ -4521,7 +4529,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new WeakSet()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -4531,12 +4539,12 @@ pub const KnownGlobal = enum {
                         .e_null, .e_undefined => {
                             // "new WeakSet(null)" is pure
                             // "new WeakSet(void 0)" is pure
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         .e_array => |array| {
                             if (array.items.len == 0) {
                                 // "new WeakSet([])" is pure
-                                e.can_be_unwrapped_if_unused = true;
+                                e.can_be_unwrapped_if_unused = .if_unused;
                             } else {
                                 // "new WeakSet([x])" is impure because an exception is thrown if "x" is not an object
                             }
@@ -4552,7 +4560,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Date()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -4566,7 +4574,7 @@ pub const KnownGlobal = enum {
                             // "new Date(true)" is pure
                             // "new Date(false)" is pure
                             // "new Date(undefined)" is pure
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         else => {
                             // "new Date(x)" is impure because the argument could be a string with side effects
@@ -4581,7 +4589,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Set()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
                     return;
                 }
 
@@ -4591,7 +4599,7 @@ pub const KnownGlobal = enum {
                             // "new Set([a, b, c])" is pure
                             // "new Set(null)" is pure
                             // "new Set(void 0)" is pure
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         else => {
                             // "new Set(x)" is impure because the iterator for "x" could have side effects
@@ -4605,7 +4613,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Headers()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -4616,7 +4624,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Response()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -4631,7 +4639,7 @@ pub const KnownGlobal = enum {
                             // "new Response(false)" is pure
                             // "new Response(undefined)" is pure
 
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         else => {
                             // "new Response(x)" is impure
@@ -4645,7 +4653,7 @@ pub const KnownGlobal = enum {
                 if (n == 0) {
                     // "new TextEncoder()" is pure
                     // "new TextDecoder()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -4659,7 +4667,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Map()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
                     return;
                 }
 
@@ -4668,7 +4676,7 @@ pub const KnownGlobal = enum {
                         .e_null, .e_undefined => {
                             // "new Map(null)" is pure
                             // "new Map(void 0)" is pure
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         .e_array => |array| {
                             var all_items_are_arrays = true;
@@ -4681,7 +4689,7 @@ pub const KnownGlobal = enum {
 
                             if (all_items_are_arrays) {
                                 // "new Map([[a, b], [c, d]])" is pure
-                                e.can_be_unwrapped_if_unused = true;
+                                e.can_be_unwrapped_if_unused = .if_unused;
                             }
                         },
                         else => {
@@ -13007,10 +13015,10 @@ fn NewParser_(
                 expr = try p.parseSuffix(expr, @as(Level, @enumFromInt(@intFromEnum(Level.call) - 1)), errors, flags);
                 switch (expr.data) {
                     .e_call => |ex| {
-                        ex.can_be_unwrapped_if_unused = true;
+                        ex.can_be_unwrapped_if_unused = .if_unused;
                     },
                     .e_new => |ex| {
-                        ex.can_be_unwrapped_if_unused = true;
+                        ex.can_be_unwrapped_if_unused = .if_unused;
                     },
                     else => {},
                 }
@@ -16252,7 +16260,7 @@ fn NewParser_(
                             if (def.can_be_removed_if_unused) {
                                 e_.can_be_removed_if_unused = true;
                             }
-                            if (def.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
+                            if (def.call_can_be_unwrapped_if_unused == .if_unused and !p.options.ignore_dce_annotations) {
                                 e_.call_can_be_unwrapped_if_unused = true;
                             }
 
@@ -16350,7 +16358,7 @@ fn NewParser_(
                                     .target = if (runtime == .classic) target else p.jsxImport(.createElement, expr.loc),
                                     .args = ExprNodeList.init(args[0..i]),
                                     // Enable tree shaking
-                                    .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                    .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations) .if_unused else .never,
                                     .close_paren_loc = e_.close_tag_loc,
                                 }, expr.loc);
                             }
@@ -16455,7 +16463,7 @@ fn NewParser_(
                                     .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
                                     .args = ExprNodeList.init(args),
                                     // Enable tree shaking
-                                    .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                    .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations) .if_unused else .never,
                                     .was_jsx_element = true,
                                     .close_paren_loc = e_.close_tag_loc,
                                 }, expr.loc);
@@ -16910,7 +16918,7 @@ fn NewParser_(
                     const is_call_target = @as(Expr.Tag, p.call_target) == .e_dot and expr.data.e_dot == p.call_target.e_dot;
 
                     if (p.define.dots.get(e_.name)) |parts| {
-                        for (parts) |define| {
+                        for (parts) |*define| {
                             if (p.isDotDefineMatch(expr, define.parts)) {
                                 if (in.assign_target == .none) {
                                     // Substitute user-specified defines
@@ -16928,8 +16936,8 @@ fn NewParser_(
                                     e_.can_be_removed_if_unused = true;
                                 }
 
-                                if (define.data.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
-                                    e_.call_can_be_unwrapped_if_unused = true;
+                                if (define.data.call_can_be_unwrapped_if_unused != .never and !p.options.ignore_dce_annotations) {
+                                    e_.call_can_be_unwrapped_if_unused = define.data.call_can_be_unwrapped_if_unused;
                                 }
 
                                 break;
@@ -17233,7 +17241,8 @@ fn NewParser_(
                     // Copy the call side effect flag over if this is a known target
                     switch (e_.target.data) {
                         .e_identifier => |ident| {
-                            e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or ident.call_can_be_unwrapped_if_unused;
+                            if (ident.call_can_be_unwrapped_if_unused)
+                                e_.can_be_unwrapped_if_unused = .if_unused;
 
                             // Detect if this is a direct eval. Note that "(1 ? eval : 0)(x)" will
                             // become "eval(x)" after we visit the target due to dead code elimination,
@@ -17269,7 +17278,9 @@ fn NewParser_(
                             }
                         },
                         .e_dot => |dot| {
-                            e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or dot.call_can_be_unwrapped_if_unused;
+                            if (dot.call_can_be_unwrapped_if_unused != .never) {
+                                e_.can_be_unwrapped_if_unused = dot.call_can_be_unwrapped_if_unused;
+                            }
                         },
                         else => {},
                     }
@@ -17340,7 +17351,7 @@ fn NewParser_(
                     }
 
                     if (e_.target.data == .e_require_call_target) {
-                        e_.can_be_unwrapped_if_unused = false;
+                        e_.can_be_unwrapped_if_unused = .never;
 
                         // Heuristic: omit warnings inside try/catch blocks because presumably
                         // the try/catch statement is there to handle the potential run-time
@@ -17948,9 +17959,9 @@ fn NewParser_(
                 .e_call => |ex| {
                     // A call that has been marked "__PURE__" can be removed if all arguments
                     // can be removed. The annotation causes us to ignore the target.
-                    if (ex.can_be_unwrapped_if_unused) {
+                    if (ex.can_be_unwrapped_if_unused != .never) {
                         for (ex.args.slice()) |*arg| {
-                            if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg)) {
+                            if (!(p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg) or (ex.can_be_unwrapped_if_unused == .if_unused_and_toString_safe and arg.data.isSafeToString()))) {
                                 return false;
                             }
                         }
@@ -17961,9 +17972,9 @@ fn NewParser_(
 
                     // A call that has been marked "__PURE__" can be removed if all arguments
                     // can be removed. The annotation causes us to ignore the target.
-                    if (ex.can_be_unwrapped_if_unused) {
+                    if (ex.can_be_unwrapped_if_unused != .never) {
                         for (ex.args.slice()) |*arg| {
-                            if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg)) {
+                            if (!(p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg) or (ex.can_be_unwrapped_if_unused == .if_unused_and_toString_safe and arg.data.isSafeToString()))) {
                                 return false;
                             }
                         }

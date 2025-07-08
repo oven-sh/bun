@@ -18,54 +18,19 @@ const defines = @import("./defines.zig");
 // Note that membership in this list says nothing about whether calling any of
 // these functions has any side effects. It only says something about
 // referencing these function without calling them.
-pub const GlobalDefinesKey = [_][]const string{
-
+pub const global_no_side_effect_property_accesses = &[_][]const string{
     // Array: Static methods
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array#Static_methods
     &[_]string{ "Array", "from" },
-    &[_]string{ "Array", "of" },
     &[_]string{ "Array", "isArray" },
+    &[_]string{ "Array", "of" },
 
-    // Object: Static methods
-    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object#Static_methods
-    &[_]string{ "Object", "assign" },
-    &[_]string{ "Object", "create" },
-    &[_]string{ "Object", "defineProperties" },
-    &[_]string{ "Object", "defineProperty" },
-    &[_]string{ "Object", "entries" },
-    &[_]string{ "Object", "freeze" },
-    &[_]string{ "Object", "fromEntries" },
-    &[_]string{ "Object", "getOwnPropertyDescriptor" },
-    &[_]string{ "Object", "getOwnPropertyDescriptors" },
-    &[_]string{ "Object", "getOwnPropertyNames" },
-    &[_]string{ "Object", "getOwnPropertySymbols" },
-    &[_]string{ "Object", "getPrototypeOf" },
-    &[_]string{ "Object", "groupBy" },
-    &[_]string{ "Object", "hasOwn" },
-    &[_]string{ "Object", "is" },
-    &[_]string{ "Object", "isExtensible" },
-    &[_]string{ "Object", "isFrozen" },
-    &[_]string{ "Object", "isSealed" },
-    &[_]string{ "Object", "keys" },
-    &[_]string{ "Object", "preventExtensions" },
-    &[_]string{ "Object", "seal" },
-    &[_]string{ "Object", "setPrototypeOf" },
-    &[_]string{ "Object", "values" },
+    // Date: Static methods
+    &[_]string{ "Date", "now" },
 
-    // Object: Instance methods
-    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object#Instance_methods
-    &[_]string{ "Object", "prototype", "__defineGetter__" },
-    &[_]string{ "Object", "prototype", "__defineSetter__" },
-    &[_]string{ "Object", "prototype", "__lookupGetter__" },
-    &[_]string{ "Object", "prototype", "__lookupSetter__" },
-    &[_]string{ "Object", "prototype", "hasOwnProperty" },
-    &[_]string{ "Object", "prototype", "isPrototypeOf" },
-    &[_]string{ "Object", "prototype", "propertyIsEnumerable" },
-    &[_]string{ "Object", "prototype", "toLocaleString" },
-    &[_]string{ "Object", "prototype", "toString" },
-    &[_]string{ "Object", "prototype", "unwatch" },
-    &[_]string{ "Object", "prototype", "valueOf" },
-    &[_]string{ "Object", "prototype", "watch" },
+    // JSON: Static methods
+    &[_]string{ "JSON", "parse" },
+    &[_]string{ "JSON", "stringify" },
 
     // Math: Static properties
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math#Static_properties
@@ -116,10 +81,70 @@ pub const GlobalDefinesKey = [_][]const string{
     &[_]string{ "Math", "tanh" },
     &[_]string{ "Math", "trunc" },
 
-    // Symbol: Static methods
-    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol#static_methods
-    &[_]string{ "Symbol", "for" },
-    &[_]string{ "Symbol", "keyFor" },
+    // Number: Static methods
+    &[_]string{ "Number", "isFinite" },
+    &[_]string{ "Number", "isInteger" },
+    &[_]string{ "Number", "isNaN" },
+    &[_]string{ "Number", "isSafeInteger" },
+    &[_]string{ "Number", "parseFloat" },
+    &[_]string{ "Number", "parseInt" },
+
+    // Object: Static methods
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object#Static_methods
+    &[_]string{ "Object", "assign" },
+    &[_]string{ "Object", "create" },
+    &[_]string{ "Object", "defineProperties" },
+    &[_]string{ "Object", "defineProperty" },
+    &[_]string{ "Object", "entries" },
+    &[_]string{ "Object", "freeze" },
+    &[_]string{ "Object", "fromEntries" },
+    &[_]string{ "Object", "getOwnPropertyDescriptor" },
+    &[_]string{ "Object", "getOwnPropertyDescriptors" },
+    &[_]string{ "Object", "getOwnPropertyNames" },
+    &[_]string{ "Object", "getOwnPropertySymbols" },
+    &[_]string{ "Object", "getPrototypeOf" },
+    &[_]string{ "Object", "groupBy" },
+    &[_]string{ "Object", "hasOwn" },
+    &[_]string{ "Object", "is" },
+    &[_]string{ "Object", "isExtensible" },
+    &[_]string{ "Object", "isFrozen" },
+    &[_]string{ "Object", "isSealed" },
+    &[_]string{ "Object", "keys" },
+    &[_]string{ "Object", "preventExtensions" },
+    &[_]string{ "Object", "seal" },
+    &[_]string{ "Object", "setPrototypeOf" },
+    &[_]string{ "Object", "values" },
+
+    // Object: Instance methods
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object#Instance_methods
+    &[_]string{ "Object", "prototype", "__defineGetter__" },
+    &[_]string{ "Object", "prototype", "__defineSetter__" },
+    &[_]string{ "Object", "prototype", "__lookupGetter__" },
+    &[_]string{ "Object", "prototype", "__lookupSetter__" },
+    &[_]string{ "Object", "prototype", "hasOwnProperty" },
+    &[_]string{ "Object", "prototype", "isPrototypeOf" },
+    &[_]string{ "Object", "prototype", "propertyIsEnumerable" },
+    &[_]string{ "Object", "prototype", "toLocaleString" },
+    &[_]string{ "Object", "prototype", "toString" },
+    &[_]string{ "Object", "prototype", "unwatch" },
+    &[_]string{ "Object", "prototype", "valueOf" },
+    &[_]string{ "Object", "prototype", "watch" },
+
+    // Reflect: Static methods
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect#static_methods
+    &[_]string{ "Reflect", "apply" },
+    &[_]string{ "Reflect", "construct" },
+    &[_]string{ "Reflect", "defineProperty" },
+    &[_]string{ "Reflect", "deleteProperty" },
+    &[_]string{ "Reflect", "get" },
+    &[_]string{ "Reflect", "getOwnPropertyDescriptor" },
+    &[_]string{ "Reflect", "getPrototypeOf" },
+    &[_]string{ "Reflect", "has" },
+    &[_]string{ "Reflect", "isExtensible" },
+    &[_]string{ "Reflect", "ownKeys" },
+    &[_]string{ "Reflect", "preventExtensions" },
+    &[_]string{ "Reflect", "set" },
+    &[_]string{ "Reflect", "setPrototypeOf" },
 
     // Symbol: Static properties
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol#static_properties
@@ -139,24 +164,9 @@ pub const GlobalDefinesKey = [_][]const string{
     &[_]string{ "Symbol", "toStringTag" },
     &[_]string{ "Symbol", "unscopables" },
 
-    // Reflect: Static methods
-    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect#static_methods
-    &[_]string{ "Reflect", "apply" },
-    &[_]string{ "Reflect", "construct" },
-    &[_]string{ "Reflect", "defineProperty" },
-    &[_]string{ "Reflect", "deleteProperty" },
-    &[_]string{ "Reflect", "get" },
-    &[_]string{ "Reflect", "getOwnPropertyDescriptor" },
-    &[_]string{ "Reflect", "getPrototypeOf" },
-    &[_]string{ "Reflect", "has" },
-    &[_]string{ "Reflect", "isExtensible" },
-    &[_]string{ "Reflect", "ownKeys" },
-    &[_]string{ "Reflect", "preventExtensions" },
-    &[_]string{ "Reflect", "set" },
-    &[_]string{ "Reflect", "setPrototypeOf" },
-
-    &[_]string{ "JSON", "parse" },
-    &[_]string{ "JSON", "stringify" },
+    // Symbol: Static methods
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol#static_methods
+    &[_]string{ "Symbol", "keyFor" },
 
     // Console method references are assumed to have no side effects
     // https://developer.mozilla.org/en-US/docs/Web/API/console
@@ -180,7 +190,17 @@ pub const GlobalDefinesKey = [_][]const string{
     &[_]string{ "console", "trace" },
     &[_]string{ "console", "warn" },
 
+    // Crypto: Static methods
     &[_]string{ "crypto", "randomUUID" },
+};
+
+pub const global_no_side_effect_function_calls_safe_for_to_string = &[_][]const string{
+
+    // Calling Symbol.for("foo") never throws (unless it's a rope string)
+    // This improves React bundle sizes slightly.
+    &[_]string{ "Symbol", "for" },
+
+    // Haven't seen a bundle size improvement from adding more to this list yet.
 };
 
 const pure_global_identifier_define = defines.IdentifierDefine{

@@ -10,7 +10,8 @@ const strings = bun.strings;
 
 const Ref = @import("ast/base.zig").Ref;
 
-const GlobalDefinesKey = @import("./defines-table.zig").GlobalDefinesKey;
+const global_no_side_effect_property_accesses = table.global_no_side_effect_property_accesses;
+const global_no_side_effect_function_calls_safe_for_to_string = table.global_no_side_effect_function_calls_safe_for_to_string;
 const table = @import("./defines-table.zig");
 
 const Globals = struct {
@@ -45,7 +46,7 @@ pub const DefineData = struct {
     // True if a call to this value is known to not have any side effects. For
     // example, a bare call to "Object()" can be removed because it does not
     // have any observable side effects.
-    call_can_be_unwrapped_if_unused: bool = false,
+    call_can_be_unwrapped_if_unused: js_ast.E.CallUnwrap = .never,
 
     method_call_must_be_replaced_with_undefined: bool = false,
 
@@ -265,7 +266,30 @@ pub const Define = struct {
         }
     }
 
-    pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray, drop_debugger: bool) bun.OOM!*@This() {
+    fn insertGlobal(define: *Define, allocator: std.mem.Allocator, global: []const string, value_define: *const DefineData) !void {
+        const key = global[global.len - 1];
+        const gpe = try define.dots.getOrPut(key);
+        if (gpe.found_existing) {
+            var list = try std.ArrayList(DotDefine).initCapacity(allocator, gpe.value_ptr.*.len + 1);
+            list.appendSliceAssumeCapacity(gpe.value_ptr.*);
+            list.appendAssumeCapacity(DotDefine{
+                .parts = global[0..global.len],
+                .data = value_define.*,
+            });
+
+            gpe.value_ptr.* = try list.toOwnedSlice();
+        } else {
+            var list = try std.ArrayList(DotDefine).initCapacity(allocator, 1);
+            list.appendAssumeCapacity(DotDefine{
+                .parts = global[0..global.len],
+                .data = value_define.*,
+            });
+
+            gpe.value_ptr.* = try list.toOwnedSlice();
+        }
+    }
+
+    pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray, drop_debugger: bool, omit_unused_global_calls: bool) bun.OOM!*@This() {
         const define = try allocator.create(Define);
         define.allocator = allocator;
         define.identifiers = bun.StringHashMap(IdentifierDefine).init(allocator);
@@ -273,32 +297,30 @@ pub const Define = struct {
         define.drop_debugger = drop_debugger;
         try define.dots.ensureTotalCapacity(124);
 
-        const value_define = DefineData{
+        const value_define = &DefineData{
             .value = .{ .e_undefined = .{} },
             .valueless = true,
             .can_be_removed_if_unused = true,
         };
         // Step 1. Load the globals into the hash tables
-        for (GlobalDefinesKey) |global| {
-            const key = global[global.len - 1];
-            const gpe = try define.dots.getOrPut(key);
-            if (gpe.found_existing) {
-                var list = try std.ArrayList(DotDefine).initCapacity(allocator, gpe.value_ptr.*.len + 1);
-                list.appendSliceAssumeCapacity(gpe.value_ptr.*);
-                list.appendAssumeCapacity(DotDefine{
-                    .parts = global[0..global.len],
-                    .data = value_define,
-                });
+        for (global_no_side_effect_property_accesses) |global| {
+            try define.insertGlobal(allocator, global, value_define);
+        }
 
-                gpe.value_ptr.* = try list.toOwnedSlice();
-            } else {
-                var list = try std.ArrayList(DotDefine).initCapacity(allocator, 1);
-                list.appendAssumeCapacity(DotDefine{
-                    .parts = global[0..global.len],
-                    .data = value_define,
-                });
+        const to_string_safe = &DefineData{
+            .value = .{ .e_undefined = .{} },
+            .valueless = true,
+            .can_be_removed_if_unused = true,
+            .call_can_be_unwrapped_if_unused = .if_unused_and_toString_safe,
+        };
 
-                gpe.value_ptr.* = try list.toOwnedSlice();
+        if (omit_unused_global_calls) {
+            for (global_no_side_effect_function_calls_safe_for_to_string) |global| {
+                try define.insertGlobal(allocator, global, to_string_safe);
+            }
+        } else {
+            for (global_no_side_effect_function_calls_safe_for_to_string) |global| {
+                try define.insertGlobal(allocator, global, value_define);
             }
         }
 

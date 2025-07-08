@@ -275,6 +275,11 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         .{ .js = vm.event_loop },
     );
     const bundled_outputs = bundled_outputs_list.items;
+    if (bundled_outputs.len == 0) {
+        Output.prettyln("done", .{});
+        Output.flush();
+        return;
+    }
 
     Output.prettyErrorln("Rendering routes", .{});
     Output.flush();

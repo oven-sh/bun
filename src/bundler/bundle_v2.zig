@@ -1484,6 +1484,10 @@ pub const BundleV2 = struct {
             reachable_files,
         );
 
+        if (chunks.len == 0) {
+            return std.ArrayList(options.OutputFile).init(bun.default_allocator);
+        }
+
         return try this.linker.generateChunksInParallel(chunks, false);
     }
 

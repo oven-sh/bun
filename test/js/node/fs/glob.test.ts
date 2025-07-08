@@ -217,7 +217,7 @@ describe("fs.promises.glob", () => {
     const expected = isWindows ? ["a\\bar.txt"] : ["a/bar.txt"];
     expect(Array.fromAsync(fs.promises.glob("a/*", { cwd: tmp, exclude }))).resolves.toStrictEqual(expected);
 
-    const exclude2 = ["another-folder"];
+    const exclude2 = ["folder.test/another-folder"];
     const expected2 = isWindows ? ["folder.test\\file.txt"] : ["folder.test/file.txt"];
     expect(
       Array.fromAsync(fs.promises.glob("folder.test/**/*", { cwd: tmp, exclude: exclude2 })),

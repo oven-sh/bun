@@ -210,7 +210,7 @@ append_to_profile() {
 	content="$1"
 	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
 	for profile in $profiles; do
-		for profile_path in "$home/$profile"; do
+		for profile_path in "$current_home/$profile" "$home/$profile"; do
 			if [ "$ci" = "1" ] || [ -f "$profile_path" ]; then
 				append_file "$profile_path" "$content"
 			fi
@@ -430,8 +430,7 @@ check_package_manager() {
 	case "$pm" in
 	apt)
 		export DEBIAN_FRONTEND=noninteractive
-		# package_manager update -y
-		sudo apt update -y || cat /var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_*_InRelease
+		package_manager update -y
 		;;
 	apk)
 		package_manager update
@@ -472,6 +471,7 @@ check_user() {
 
 	current_user="$user"
 	current_group="$group"
+	current_home="$home"
 }
 
 check_ulimit() {

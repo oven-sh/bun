@@ -6,59 +6,64 @@ const isWindows = process.platform === "win32";
 interface GlobOptions {
   /** @default process.cwd() */
   cwd?: string;
-  exclude?: (ent: string) => boolean;
+  exclude?: ((ent: string) => boolean) | string[];
   /**
    * Should glob return paths as {@link Dirent} objects. `false` for strings.
    * @default false */
   withFileTypes?: boolean;
 }
 
-interface ExtendedGlobOptions extends GlobScanOptions {
-  exclude: ((ent: string) => boolean) | string[];
-}
-
 async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGenerator<string> {
-  pattern = validatePattern(pattern);
+  const patterns = validatePattern(pattern);
   const globOptions = mapOptions(options || {});
-  let it = new Bun.Glob(pattern).scan(globOptions);
   const exclude = globOptions.exclude;
   const excludeGlobs = Array.isArray(exclude) ? exclude.map(p => [new Bun.Glob(p), p] as const) : null;
 
-  for await (const ent of it) {
-    if (typeof exclude === "function" && exclude(ent)) continue;
-    if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || ent.startsWith(p))) continue;
-    yield ent;
+  for (const pat of patterns) {
+    for await (const ent of new Bun.Glob(pat).scan(globOptions)) {
+      if (typeof exclude === "function" && exclude(ent)) continue;
+      if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || ent.startsWith(p))) continue;
+      yield ent;
+    }
   }
 }
 
 function* globSync(pattern: string | string[], options?: GlobOptions): Generator<string> {
-  pattern = validatePattern(pattern);
+  const patterns = validatePattern(pattern);
   const globOptions = mapOptions(options || {});
-  const g = new Bun.Glob(pattern);
   const exclude = globOptions.exclude;
   const excludeGlobs = Array.isArray(exclude) ? exclude.map(p => [new Bun.Glob(p), p] as const) : null;
 
-  for (const ent of g.scanSync(globOptions)) {
-    if (typeof exclude === "function" && exclude(ent)) continue;
-    if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || ent.startsWith(p))) continue;
-    yield ent;
+  for (const pat of patterns) {
+    for (const ent of new Bun.Glob(pat).scanSync(globOptions)) {
+      if (typeof exclude === "function" && exclude(ent)) continue;
+      if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || ent.startsWith(p))) continue;
+      yield ent;
+    }
   }
 }
 
-function validatePattern(pattern: string | string[]): string {
-  if ($isArray(pattern)) {
-    throw new TypeError("fs.glob does not support arrays of patterns yet. Please open an issue on GitHub.");
+function validatePattern(pattern: string | string[]): string[] {
+  if (typeof pattern === "string") {
+    validateString(pattern, "pattern");
+    return [isWindows ? pattern.replaceAll("/", "\\") : pattern];
   }
-  validateString(pattern, "pattern");
-  return isWindows ? pattern.replaceAll("/", "\\") : pattern;
+  validateArray(pattern, "pattern");
+  return pattern.map(p => {
+    validateString(p, "pattern");
+    return isWindows ? p.replaceAll("/", "\\") : p;
+  });
 }
 
-function mapOptions(options: GlobOptions): ExtendedGlobOptions {
+function mapOptions(options: GlobOptions): GlobScanOptions {
   validateObject(options, "options");
 
   const exclude = options.exclude ?? no;
   if (Array.isArray(exclude)) {
     validateArray(exclude, "options.exclude");
+    if (isWindows) {
+      options.exclude = exclude.map((pattern: string) => pattern.replaceAll("/", "\\"));
+    }
   } else {
     validateFunction(exclude, "options.exclude");
   }

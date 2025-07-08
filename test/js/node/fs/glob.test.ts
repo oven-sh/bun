@@ -85,6 +85,11 @@ describe("fs.glob", () => {
     const paths = fs.globSync("*.test", { cwd: tmp });
     expect(paths).toContain("folder.test");
   });
+
+  it("supports arrays of patterns", () => {
+    const expected = isWindows ? ["a\\bar.txt", "a\\baz.js"] : ["a/bar.txt", "a/baz.js"];
+    expect(fs.globSync(["a/bar.txt", "a/baz.js"], { cwd: tmp })).toStrictEqual(expected);
+  });
 }); // </fs.glob>
 
 describe("fs.globSync", () => {
@@ -143,16 +148,14 @@ describe("fs.globSync", () => {
     }
   });
 
-  describe("invalid arguments", () => {
-    // TODO: GlobSet
-    it("does not support arrays of patterns yet", () => {
-      expect(() => fs.globSync(["*.txt"])).toThrow(TypeError);
-    });
-  });
-
   it("matches directories", () => {
     const paths = fs.globSync("*.test", { cwd: tmp });
     expect(paths).toContain("folder.test");
+  });
+
+  it("supports arrays of patterns", () => {
+    const expected = isWindows ? ["a\\bar.txt", "a\\baz.js"] : ["a/bar.txt", "a/baz.js"];
+    expect(fs.globSync(["a/bar.txt", "a/baz.js"], { cwd: tmp })).toStrictEqual(expected);
   });
 }); // </fs.globSync>
 
@@ -222,5 +225,10 @@ describe("fs.promises.glob", () => {
     expect(
       Array.fromAsync(fs.promises.glob("folder.test/**/*", { cwd: tmp, exclude: exclude2 })),
     ).resolves.toStrictEqual(expected2);
+  });
+
+  it("supports arrays of patterns", async () => {
+    const expected = isWindows ? ["a\\bar.txt", "a\\baz.js"] : ["a/bar.txt", "a/baz.js"];
+    expect(Array.fromAsync(fs.promises.glob(["a/bar.txt", "a/baz.js"], { cwd: tmp }))).resolves.toStrictEqual(expected);
   });
 }); // </fs.promises.glob>

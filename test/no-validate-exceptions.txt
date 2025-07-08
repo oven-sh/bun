@@ -195,6 +195,7 @@ test/js/bun/spawn/spawn-stdin-readable-stream-sync.test.ts
 test/js/bun/spawn/spawn-stdin-readable-stream.test.ts
 test/js/bun/spawn/spawn-stream-serve.test.ts
 test/js/bun/spawn/spawn-streaming-stdout.test.ts
+test/js/node/module/sourcemap.test.js
 test/js/bun/spawn/spawn-stress.test.ts
 test/js/bun/spawn/spawn.ipc.bun-node.test.ts
 test/js/bun/spawn/spawn.ipc.node-bun.test.ts

@@ -327,7 +327,7 @@ register_command(
       ${CWD}/src
       ${CODEGEN_PATH}
   SOURCES
-    ${CWD}/src/codegen/cppbind.ts
+    ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
     ${BUN_CXX_SOURCES}
   OUTPUTS
     ${BUN_CPP_OUTPUTS}

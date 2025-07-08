@@ -347,17 +347,6 @@ declare module "bun" {
 
   type WorkerType = "classic" | "module";
 
-  /**
-   * This type-only interface is identical at runtime to {@link ReadableStream},
-   * and exists to document types that do not exist yet in libdom.
-   */
-  interface BunReadableStream<T = any> extends ReadableStream<T> {
-    text(): Promise<string>;
-    bytes(): Promise<Uint8Array>;
-    json(): Promise<any>;
-    blob(): Promise<Blob>;
-  }
-
   interface AbstractWorker {
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/ServiceWorker/error_event) */
     onerror: ((this: AbstractWorker, ev: ErrorEvent) => any) | null;
@@ -864,6 +853,8 @@ declare module "bun" {
    *
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as a {@link Uint8Array}.
+   *
+   * @deprecated Use {@link ReadableStream.bytes}
    */
   function readableStreamToBytes(
     stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
@@ -876,6 +867,8 @@ declare module "bun" {
    *
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks as a {@link Blob}.
+   *
+   * @deprecated Use {@link ReadableStream.blob}
    */
   function readableStreamToBlob(stream: ReadableStream): Promise<Blob>;
 
@@ -918,6 +911,8 @@ declare module "bun" {
    *
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks as a {@link String}.
+   *
+   * @deprecated Use {@link ReadableStream.text}
    */
   function readableStreamToText(stream: ReadableStream): Promise<string>;
 
@@ -928,6 +923,8 @@ declare module "bun" {
    *
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks as a {@link String}.
+   *
+   * @deprecated Use {@link ReadableStream.json}
    */
   function readableStreamToJSON(stream: ReadableStream): Promise<any>;
 
@@ -1254,9 +1251,9 @@ declare module "bun" {
      */
     writer(options?: { highWaterMark?: number }): FileSink;
 
-    readonly readable: BunReadableStream;
-
-    // TODO: writable: WritableStream;
+    // TODO
+    // readonly readable: ReadableStream<Uint8Array>;
+    // readonly writable: WritableStream<Uint8Array>;
 
     /**
      * A UNIX timestamp indicating when the file was last modified.
@@ -7008,7 +7005,7 @@ declare module "bun" {
        *
        * For stdout and stdin you may pass:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link BunReadableStream} for standard output/error
+       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
@@ -7034,7 +7031,7 @@ declare module "bun" {
       /**
        * The file descriptor for the standard output. It may be:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link BunReadableStream} for standard output/error
+       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
@@ -7046,7 +7043,7 @@ declare module "bun" {
       /**
        * The file descriptor for the standard error. It may be:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link BunReadableStream} for standard output/error
+       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
@@ -7206,10 +7203,8 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
-
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
-      ? BunReadableStream
+      ? ReadableStream<Uint8Array>
       : X extends BunFile | ArrayBufferView | number
         ? number
         : undefined;

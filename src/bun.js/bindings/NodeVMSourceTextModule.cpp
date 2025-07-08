@@ -429,9 +429,8 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
     ASSERT(moduleEnvironment != nullptr);
 
     JSValue metaValue = moduleEnvironment->get(globalObject, globalObject->vm().propertyNames->builtinNames().metaPrivateName());
-    if (auto ex = scope.exception()) {
-        if (vm.isTerminationException(ex)) return;
-    }
+    scope.assertNoExceptionExceptTermination();
+    RETURN_IF_EXCEPTION(scope, );
     ASSERT(metaValue);
     ASSERT(metaValue.isObject());
 

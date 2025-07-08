@@ -37,12 +37,6 @@ type CppType =
       isConst: boolean;
     }
   | {
-      type: "reference";
-      child: CppType;
-      position: Srcloc;
-      isConst: boolean;
-    }
-  | {
       type: "named";
       name: string;
       position: Srcloc;
@@ -90,9 +84,11 @@ class PositionedErrorClass extends Error {
   }
 }
 
+const allowedTypes = new Set(["primitive_type", "qualified_identifier", "type_identifier"]);
 function processRootmostType(file: string, types: SyntaxNode[]): CppType {
   const type = types[0];
   if (!type) throwError(nodePosition(file, types[0]), "no type found");
+  if (!allowedTypes.has(type.type)) throwError(nodePosition(file, type), "not supported: " + type.type);
   return { type: "named", name: type.text, position: nodePosition(file, type) };
 }
 
@@ -115,14 +111,6 @@ function processDeclarator(
   if (declarator.type === "pointer_declarator") {
     return processDeclarator(file, declarator, {
       type: "pointer",
-      child: rootmostType,
-      position: nodePosition(file, declarator),
-      isConst,
-    });
-  }
-  if (declarator.type === "reference_declarator") {
-    return processDeclarator(file, declarator, {
-      type: "reference",
       child: rootmostType,
       position: nodePosition(file, declarator),
       isConst,
@@ -157,6 +145,12 @@ function processFunction(file: string, node: SyntaxNode, tag: ExportTag): CppFn 
         "no declarator found for parameter",
       );
     const name = declarator.final;
+    if (name.type !== "identifier") {
+      if (name.type === "reference_declarator") {
+        throwError(nodePosition(file, name), "references are not allowed");
+      }
+      throwError(nodePosition(file, name), "not an identifier: " + name.type);
+    }
     if (!name) throwError(nodePosition(file, parameter), "no name found for parameter");
 
     parameters.push({ type: declarator.type, name: name.text });
@@ -198,10 +192,6 @@ function generateZigType(type: CppType, subLevel?: boolean) {
   if (type.type === "pointer") {
     if (type.isConst) return `?*const ${generateZigType(type.child, true)}`;
     return `?*${generateZigType(type.child, true)}`;
-  }
-  if (type.type === "reference") {
-    if (type.isConst) return `*const ${generateZigType(type.child, true)}`;
-    return `*${generateZigType(type.child, true)}`;
   }
   if (type.type === "named" && type.name === "void") {
     if (subLevel) return "anyopaque";
@@ -384,12 +374,12 @@ function generateZigFn(
     let globalThisArg: CppParameter | undefined;
     for (const param of fn.parameters) {
       const type = generateZigType(param.type);
-      if (type === "*JSC.JSGlobalObject" || type === "?*JSC.JSGlobalObject") {
+      if (type === "?*JSC.JSGlobalObject") {
         globalThisArg = param;
         break;
       }
     }
-    if (!globalThisArg) throwError(fn.position, "no globalThis argument found");
+    if (!globalThisArg) throwError(fn.position, "no globalThis argument found (required for " + fn.tag + ")");
     resultBindings.push(generateZigSourceComment(dstDir, resultSourceLinks, fn));
     if (fn.tag === "check_slow") {
       resultBindings.push(

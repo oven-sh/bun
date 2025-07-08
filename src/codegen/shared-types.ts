@@ -42,4 +42,5 @@ export const sharedTypes: Record<string, string> = {
   "ServerId": "HTTPServerAgent.ServerId",
   "Route": "HTTPServerAgent.Route",
   "Zig::GlobalObject": "JSC.JSGlobalObject",
+  "JSC::VM": "JSC.VM",
 };

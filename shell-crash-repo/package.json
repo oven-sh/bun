@@ -1,0 +1,10 @@
+{
+  "name": "shell-crash-test",
+  "version": "1.0.0",
+  "scripts": {
+    "format": "npx prettier --write src/**/*.ts"
+  },
+  "devDependencies": {
+    "prettier": "^3.0.0"
+  }
+}

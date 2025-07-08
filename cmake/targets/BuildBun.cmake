@@ -316,6 +316,16 @@ set(BUN_CPP_OUTPUTS
   ${CODEGEN_PATH}/cpp.zig
 )
 
+set(TREE_SITTER_INSTALLED ${CWD}/node_modules/tree-sitter)
+register_command(
+  COMMAND
+    ${BUN_EXECUTABLE}
+      install
+      --frozen-lockfile
+  OUTPUTS
+    ${TREE_SITTER_INSTALLED}
+)
+
 register_command(
   TARGET
     bun-cppbind
@@ -329,6 +339,7 @@ register_command(
   SOURCES
     ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
     ${BUN_CXX_SOURCES}
+    ${TREE_SITTER_INSTALLED}
   OUTPUTS
     ${BUN_CPP_OUTPUTS}
 )

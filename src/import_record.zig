@@ -134,6 +134,9 @@ pub const ImportRecord = struct {
     /// out to be type-only imports after analyzing the whole file.
     is_unused: bool = false,
 
+    /// True if this import uses the "defer" keyword
+    is_deferred: bool = false,
+
     /// If this is true, the import contains syntax like "* as ns". This is used
     /// to determine whether modules that have no exports need to be wrapped in a
     /// CommonJS wrapper or not.

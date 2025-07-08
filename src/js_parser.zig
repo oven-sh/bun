@@ -8932,6 +8932,7 @@ fn NewParser_(
 
             stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
             p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
+            p.import_records.items[stmt.import_record_index].is_deferred = stmt.is_deferred;
 
             if (stmt.star_name_loc) |star| {
                 const name = p.loadNameFromRef(stmt.namespace_ref);
@@ -8993,6 +8994,7 @@ fn NewParser_(
 
                         p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
                         p.import_records.items[new_import_id].is_unused = true;
+                        p.import_records.items[new_import_id].is_deferred = stmt.is_deferred;
                         if (comptime only_scan_imports_and_do_not_visit) {
                             p.import_records.items[new_import_id].is_internal = true;
                             p.import_records.items[new_import_id].path.is_disabled = true;
@@ -9052,6 +9054,7 @@ fn NewParser_(
 
                         p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
                         p.import_records.items[new_import_id].is_unused = true;
+                        p.import_records.items[new_import_id].is_deferred = stmt.is_deferred;
                         if (comptime only_scan_imports_and_do_not_visit) {
                             p.import_records.items[new_import_id].is_internal = true;
                             p.import_records.items[new_import_id].path.is_disabled = true;
@@ -10318,6 +10321,12 @@ fn NewParser_(
                     };
                     var was_originally_bare_import = false;
 
+                    // Check for "import defer" syntax
+                    if (p.lexer.isContextualKeyword("defer")) {
+                        stmt.is_deferred = true;
+                        try p.lexer.next();
+                    }
+
                     // "export import foo = bar"
                     if ((opts.is_export or (opts.is_namespace_scope and !opts.is_typescript_declare)) and p.lexer.token != .t_identifier) {
                         try p.lexer.expected(.t_identifier);
@@ -10343,7 +10352,7 @@ fn NewParser_(
                             was_originally_bare_import = true;
                         },
                         .t_asterisk => {
-                            // "import * as ns from 'path'"
+                            // "import * as ns from 'path'" or "import defer * as ns from 'path'"
                             if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
                                 try p.lexer.unexpected();
                                 return error.SyntaxError;
@@ -10355,6 +10364,7 @@ fn NewParser_(
                                 .namespace_ref = try p.storeNameInRef(p.lexer.identifier),
                                 .star_name_loc = p.lexer.loc(),
                                 .import_record_index = std.math.maxInt(u32),
+                                .is_deferred = stmt.is_deferred,
                             };
                             try p.lexer.expect(.t_identifier);
                             try p.lexer.expectContextualKeyword("from");
@@ -10484,6 +10494,12 @@ fn NewParser_(
                             try p.lexer.unexpected();
                             return error.SyntaxError;
                         },
+                    }
+
+                    // Validate that deferred imports are only allowed with star imports
+                    if (stmt.is_deferred and stmt.star_name_loc == null) {
+                        try p.log.addError(p.source, loc, "The 'defer' keyword can only be used with star imports: import defer * as ns from 'module'");
+                        return error.SyntaxError;
                     }
 
                     const path = try p.parsePath();

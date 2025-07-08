@@ -143,7 +143,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     // wrap the arguments in an anonymous function expression
     int startOffset = 0;
     String code = stringifyAnonymousFunction(globalObject, args, throwScope, &startOffset);
-    ASSERT(!!throwScope.exception() == code.isNull());
+    EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
 
     SourceCode sourceCode(
         JSC::StringSourceProvider::create(code, sourceOrigin, WTFMove(options.filename), sourceTaintOrigin, position, SourceProviderSourceType::Program),
@@ -829,11 +829,17 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
+    if (thisObject->m_contextOptions.notContextified) {
+        JSObject* specialSandbox = thisObject->specialSandbox();
+        slot.setThisValue(specialSandbox);
+        RELEASE_AND_RETURN(scope, specialSandbox->putInline(globalObject, propertyName, value, slot));
+    }
+
     slot.setThisValue(sandbox);
 
-    auto did = sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, slot);
+    bool result = sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, slot);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!did) return false;
+    if (!result) return false;
 
     if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
         return true;
@@ -954,12 +960,10 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
             goto try_from_global;
         }
 
-        {
-            bool hasProperty = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
-            EXCEPTION_ASSERT(!scope.exception() || !hasProperty);
-            if (hasProperty) {
-                return true;
-            }
+        if (!notContextified) {
+            bool result = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (result) return true;
         }
 
     try_from_global:
@@ -989,7 +993,7 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
-    if (!thisObject->m_sandbox) {
+    if (!thisObject->m_sandbox) [[likely]] {
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
     }
 
@@ -1409,8 +1413,7 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
         RETURN_IF_EXCEPTION(scope, );
     }
 
-    Base::getOwnPropertyNames(cell, globalObject, propertyNames, mode);
-    RETURN_IF_EXCEPTION(scope, );
+    RELEASE_AND_RETURN(scope, Base::getOwnPropertyNames(cell, globalObject, propertyNames, mode));
 }
 
 JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObject, CallFrame* callFrame))

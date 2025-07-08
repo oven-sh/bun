@@ -715,6 +715,7 @@ test/js/node/test/parallel/test-require-dot.js
 test/js/node/test/parallel/test-util-promisify-custom-names.mjs
 test/js/node/test/parallel/test-whatwg-readablestream.mjs
 test/js/node/test/parallel/test-worker.mjs
+test/js/node/test/parallel/test-vm-module-referrer-realm.mjs
 
 # uses node:test
 test/js/node/test/parallel/test-fs-write-stream-flush.js
@@ -764,3 +765,6 @@ test/js/node/test/parallel/test-webcrypto-sign-verify.js
 test/js/node/test/parallel/test-webcrypto-cryptokey-workers.js
 test/js/node/test/parallel/test-crypto-oaep-zero-length.js
 test/js/node/test/parallel/test-crypto-psychic-signatures.js
+test/js/node/test/parallel/test-crypto-subtle-zero-length.js
+test/js/node/test/parallel/test-crypto-worker-thread.js
+test/js/node/test/parallel/test-crypto-webcrypto-aes-decrypt-tag-too-small.js

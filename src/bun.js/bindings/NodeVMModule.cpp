@@ -413,9 +413,6 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalOb
 
     if (auto* thisObject = jsDynamicCast<NodeVMModule*>(callFrame->thisValue())) {
         RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->evaluate(globalObject, timeout, breakOnSigint)));
-    } else {
-        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
-        return {};
     }
 
     throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
@@ -440,12 +437,6 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject
 
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
         RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->link(globalObject, specifiers, moduleNatives, callFrame->argument(2))));
-        // return thisObject->link(globalObject, linker);
-        // } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
-        //     return thisObject->link(globalObject, specifiers, moduleNatives);
-    } else {
-        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
-        return {};
     }
 
     throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule"_s);

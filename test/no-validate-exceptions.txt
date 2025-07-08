@@ -759,3 +759,8 @@ test/js/node/test/parallel/test-worker-nested-uncaught.js
 test/js/node/test/parallel/test-webcrypto-derivekey.js
 test/js/node/test/parallel/test-webcrypto-digest.js
 test/js/node/test/parallel/test-webcrypto-encrypt-decrypt-aes.js
+test/js/node/test/parallel/test-webcrypto-encrypt-decrypt.js
+test/js/node/test/parallel/test-webcrypto-sign-verify.js
+test/js/node/test/parallel/test-webcrypto-cryptokey-workers.js
+test/js/node/test/parallel/test-crypto-oaep-zero-length.js
+test/js/node/test/parallel/test-crypto-psychic-signatures.js

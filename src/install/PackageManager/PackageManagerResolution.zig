@@ -86,8 +86,8 @@ pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, ver
     var arena = bun.ArenaAllocator.init(this.allocator);
     defer arena.deinit();
     const arena_alloc = arena.allocator();
-    var stack_fallback = std.heap.stackFallback(4096, arena_alloc);
-    const allocator = stack_fallback.get();
+    var stack_fallback: std.heap.StackFallbackAllocator(4096) = undefined;
+    const allocator = bun.getStackFallback(&stack_fallback, arena_alloc);
     var tags_buf = std.ArrayList(u8).init(allocator);
     const installed_versions = this.getInstalledVersionsFromDiskCache(&tags_buf, package_name, allocator) catch |err| {
         Output.debug("error getting installed versions from disk cache: {s}", .{bun.span(@errorName(err))});

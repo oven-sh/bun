@@ -633,8 +633,8 @@ pub fn preparePatch(manager: *PackageManager) !void {
             };
 
             const existing_patchfile_hash = existing_patchfile_hash: {
-                var __sfb = std.heap.stackFallback(1024, manager.allocator);
-                const allocator = __sfb.get();
+                var stack_fallback: std.heap.StackFallbackAllocator(1024) = undefined;
+                const allocator = bun.getStackFallback(&stack_fallback, manager.allocator);
                 const name_and_version = std.fmt.allocPrint(allocator, "{s}@{}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
                 defer allocator.free(name_and_version);
                 const name_and_version_hash = String.Builder.stringHash(name_and_version);
@@ -671,8 +671,8 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const pkg_name = pkg.name.slice(strbuf);
 
             const existing_patchfile_hash = existing_patchfile_hash: {
-                var __sfb = std.heap.stackFallback(1024, manager.allocator);
-                const sfballoc = __sfb.get();
+                var stack_fallback: std.heap.StackFallbackAllocator(1024) = undefined;
+                const sfballoc = bun.getStackFallback(&stack_fallback, manager.allocator);
                 const name_and_version = std.fmt.allocPrint(sfballoc, "{s}@{}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
                 defer sfballoc.free(name_and_version);
                 const name_and_version_hash = String.Builder.stringHash(name_and_version);
@@ -923,8 +923,8 @@ fn pkgInfoForNameAndVersion(
     name: []const u8,
     version: ?[]const u8,
 ) struct { PackageID, Lockfile.Tree.Iterator(.node_modules).Next } {
-    var sfb = std.heap.stackFallback(@sizeOf(IdPair) * 4, lockfile.allocator);
-    var pairs = std.ArrayList(IdPair).initCapacity(sfb.get(), 8) catch bun.outOfMemory();
+    var stack_fallback: std.heap.StackFallbackAllocator(@sizeOf(IdPair) * 4) = undefined;
+    var pairs = std.ArrayList(IdPair).initCapacity(bun.getStackFallback(&stack_fallback, lockfile.allocator), 8) catch bun.outOfMemory();
     defer pairs.deinit();
 
     const name_hash = String.Builder.stringHash(name);

@@ -1063,8 +1063,8 @@ pub fn getSourceMapImpl(
     // TODO: Experiment in debug builds calculating how much stack space we have left and using that to
     //       adjust the size
     const STACK_SPACE_TO_USE = 1024;
-    var sfb = std.heap.stackFallback(STACK_SPACE_TO_USE, bun.default_allocator);
-    var arena = bun.ArenaAllocator.init(sfb.get());
+    var stack_fallback: std.heap.StackFallbackAllocator(STACK_SPACE_TO_USE) = undefined;
+    var arena = bun.ArenaAllocator.init(bun.getStackFallback(&stack_fallback, bun.default_allocator));
     defer arena.deinit();
     const allocator = arena.allocator();
 
@@ -1355,8 +1355,8 @@ pub const SourceMapPieces = struct {
         // the joiner's node allocator contains string join nodes as well as some vlq encodings
         // it doesnt contain json payloads or source code, so 16kb is probably going to cover
         // most applications.
-        var sfb = std.heap.stackFallback(16384, bun.default_allocator);
-        var j = StringJoiner{ .allocator = sfb.get() };
+        var stack_fallback: std.heap.StackFallbackAllocator(16384) = undefined;
+        var j = StringJoiner{ .allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator) };
 
         j.pushStatic(this.prefix.items);
         const mappings = this.mappings.items;

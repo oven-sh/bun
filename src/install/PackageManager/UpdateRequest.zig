@@ -34,8 +34,8 @@ pub fn getResolvedName(this: *const UpdateRequest, lockfile: *const Lockfile) st
 pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) bun.JSError!JSC.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
-    var stack = std.heap.stackFallback(1024, arena.allocator());
-    const allocator = stack.get();
+    var stack_fallback: std.heap.StackFallbackAllocator(1024) = undefined;
+    const allocator = bun.getStackFallback(&stack_fallback, arena.allocator());
     var all_positionals = std.ArrayList([]const u8).init(allocator);
 
     var log = logger.Log.init(allocator);

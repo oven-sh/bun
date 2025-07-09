@@ -47,6 +47,8 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 28 },
   "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 47 },
   "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 140 },
+
+  "std.heap.stackFallback": { reason: "std.heap.stackFallback pages in the entire stack buffer. Use std.heap.StackFallbackAllocator(size) and bun.getStackFallback instead" },
 };
 const words_keys = [...Object.keys(words)];
 

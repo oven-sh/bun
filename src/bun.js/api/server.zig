@@ -409,8 +409,8 @@ const ServePlugins = struct {
         defer this.deref();
 
         const plugin = bun.JSC.API.JSBundler.Plugin.create(global, .browser);
-        var sfb = std.heap.stackFallback(@sizeOf(bun.String) * 4, bun.default_allocator);
-        const alloc = sfb.get();
+        var sfb: std.heap.StackFallbackAllocator(@sizeOf(bun.String) * 4) = undefined;
+        const alloc = bun.getStackFallback(&sfb, bun.default_allocator);
         const bunstring_array = alloc.alloc(bun.String, plugin_list.len) catch bun.outOfMemory();
         defer alloc.free(bunstring_array);
         for (plugin_list, bunstring_array) |raw_plugin, *out| {
@@ -1870,8 +1870,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.pending_requests += 1;
             defer this.pending_requests -= 1;
             req.setYield(false);
-            var stack_fallback = std.heap.stackFallback(8192, this.allocator);
-            const allocator = stack_fallback.get();
+            var stack_fallback: std.heap.StackFallbackAllocator(8192) = undefined;
+            const allocator = bun.getStackFallback(&stack_fallback, this.allocator);
 
             const buffer_writer = js_printer.BufferWriter.init(allocator);
             var writer = js_printer.BufferPrinter.init(buffer_writer);

@@ -91,8 +91,8 @@ pub const Yield = union(enum) {
         //
         // This means we need to store a reference to the pipeline. And
         // there can be nested pipelines, so we need a stack.
-        var sfb = std.heap.stackFallback(@sizeOf(*Pipeline) * 4, bun.default_allocator);
-        const alloc = sfb.get();
+        var stack_fallback: std.heap.StackFallbackAllocator(@sizeOf(*Pipeline) * 4) = undefined;
+        const alloc = bun.getStackFallback(&stack_fallback, bun.default_allocator);
         var pipeline_stack = std.ArrayList(*Pipeline).initCapacity(alloc, 4) catch bun.outOfMemory();
         defer pipeline_stack.deinit();
 

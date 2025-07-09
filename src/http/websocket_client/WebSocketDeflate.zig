@@ -38,12 +38,7 @@ pub const RareData = struct {
     }
 
     pub fn allocator(this: *RareData) std.mem.Allocator {
-        this.stack_fallback = .{
-            .buffer = undefined,
-            .fallback_allocator = bun.default_allocator,
-            .fixed_buffer_allocator = undefined,
-        };
-        return this.stack_fallback.get();
+        return bun.getStackFallback(&this.stack_fallback, bun.default_allocator);
     }
 
     pub fn decompressor(this: *RareData) *libdeflate.Decompressor {

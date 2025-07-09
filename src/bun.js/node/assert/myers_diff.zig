@@ -1,16 +1,9 @@
-//! ## IMPORTANT NOTE
-//!
-//! Do _NOT_ import from "bun" in this file! Do _NOT_ use the Bun object in this file!
-//!
-//! This file has tests defined in it which _cannot_ be run if `@import("bun")` is used!
-//!
-//! Run tests with `:zig test %`
 const std = @import("std");
 const builtin = @import("builtin");
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const stackFallback = std.heap.stackFallback;
-const assert = std.debug.assert;
+const bun = @import("bun");
+const assert = bun.assert;
 
 /// Comptime diff configuration. Defaults are usually sufficient.
 pub const Options = struct {
@@ -128,12 +121,12 @@ pub fn DifferWithEql(comptime Line: type, comptime opts: Options, comptime areLi
         pub fn diff(bun_allocator: Allocator, actual: []const Line, expected: []const Line) Error!DiffList(Line) {
 
             // Edit graph's allocator
-            var graph_stack_alloc = stackFallback(graph_initial_size, bun_allocator);
-            const graph_alloc = graph_stack_alloc.get();
+            var graph_stack_alloc: std.heap.StackFallbackAllocator(graph_initial_size) = undefined;
+            const graph_alloc = bun.getStackFallback(&graph_stack_alloc, bun_allocator);
 
             // Match point trace's allocator
-            var trace_stack_alloc = stackFallback(opts.initial_trace_capacity, bun_allocator);
-            const trace_alloc = trace_stack_alloc.get();
+            var trace_stack_alloc: std.heap.StackFallbackAllocator(opts.initial_trace_capacity) = undefined;
+            const trace_alloc = bun.getStackFallback(&trace_stack_alloc, bun_allocator);
 
             // const MAX \in [0, M+N]
             // let V: int array = [-MAX..MAX]. V is a flattened representation of the edit graph.
@@ -420,187 +413,6 @@ pub fn DiffList(comptime T: type) type {
 // =============================================================================
 
 const t = std.testing;
-test areLinesEqual {
-    // check_comma_disparity is never respected when comparing chars
-    try t.expect(areLinesEqual(u8, 'a', 'a', false));
-    try t.expect(areLinesEqual(u8, 'a', 'a', true));
-    try t.expect(!areLinesEqual(u8, ',', 'a', false));
-    try t.expect(!areLinesEqual(u8, ',', 'a', true));
-
-    // strings w/o comma check
-    try t.expect(areLinesEqual([]const u8, "", "", false));
-    try t.expect(areLinesEqual([]const u8, "a", "a", false));
-    try t.expect(areLinesEqual([]const u8, "Bun", "Bun", false));
-    try t.expect(areLinesEqual([]const u8, "😤", "😤", false));
-    // not equal
-    try t.expect(!areLinesEqual([]const u8, "", "a", false));
-    try t.expect(!areLinesEqual([]const u8, "", " ", false));
-    try t.expect(!areLinesEqual([]const u8, "\n", "\t", false));
-    try t.expect(!areLinesEqual([]const u8, "bun", "Bun", false));
-    try t.expect(!areLinesEqual([]const u8, "😤", "😩", false));
-
-    // strings w/ comma check
-    try t.expect(areLinesEqual([]const u8, "", "", true));
-    try t.expect(areLinesEqual([]const u8, "", ",", true));
-    try t.expect(areLinesEqual([]const u8, " ", " ,", true));
-    try t.expect(areLinesEqual([]const u8, "I am speed", "I am speed", true));
-    try t.expect(areLinesEqual([]const u8, "I am speed,", "I am speed", true));
-    try t.expect(areLinesEqual([]const u8, "I am speed", "I am speed,", true));
-    try t.expect(areLinesEqual([]const u8, "😤", "😤", false));
-    // try t.expect(areLinesEqual([]const u8, "😤", "😤,", false));
-    // try t.expect(areLinesEqual([]const u8, "😤,", "😤", false));
-    // not equal
-    try t.expect(!areLinesEqual([]const u8, "", "Bun", true));
-    try t.expect(!areLinesEqual([]const u8, "bun", "Bun", true));
-    try t.expect(!areLinesEqual([]const u8, ",Bun", "Bun", true));
-    try t.expect(!areLinesEqual([]const u8, "Bun", ",Bun", true));
-    try t.expect(!areLinesEqual([]const u8, "", " ,", true));
-    try t.expect(!areLinesEqual([]const u8, " ", " , ", true));
-    try t.expect(!areLinesEqual([]const u8, "I, am speed", "I am speed", true));
-    try t.expect(!areLinesEqual([]const u8, ",😤", "😤", true));
-}
-
-// const CharList = DiffList(u8);
-// const CDiff = Diff(u8);
-// const CharDiffer = Differ(u8, .{});
-
-// fn testCharDiff(actual: []const u8, expected: []const u8, expected_diff: []const Diff(u8)) !void {
-//     const allocator = t.allocator;
-//     const actual_diff = try CharDiffer.diff(allocator, actual, expected);
-//     defer actual_diff.deinit();
-//     try t.expectEqualSlices(Diff(u8), expected_diff, actual_diff.items);
-// }
-
-// test CharDiffer {
-//     const TestCase = std.meta.Tuple(&[_]type{ []const CDiff, []const u8, []const u8 });
-//     const test_cases = &[_]TestCase{
-//         .{ &[_]CDiff{}, "foo", "foo" },
-//     };
-//     for (test_cases) |test_case| {
-//         const expected_diff, const actual, const expected = test_case;
-//         try testCharDiff(actual, expected, expected_diff);
-//     }
-// }
-
-const StrDiffer = Differ([]const u8, .{ .check_comma_disparity = true });
-test StrDiffer {
-    const a = t.allocator;
-    inline for (.{
-        .{ "foo", "foo" },
-        .{ "foo", "bar" },
-        .{
-            // actual
-            \\[
-            \\  1,
-            \\  2,
-            \\  3,
-            \\  4,
-            \\  5,
-            \\  6,
-            \\  7
-            \\]
-            ,
-            // expected
-            \\[
-            \\  1,
-            \\  2,
-            \\  3,
-            \\  4,
-            \\  5,
-            \\  9,
-            \\  7
-            \\]
-        },
-        // remove line
-        .{
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-            \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
-            \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-            \\culpa qui officia deserunt mollit anim id est laborum.
-            ,
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-            \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-            \\culpa qui officia deserunt mollit anim id est laborum.
-            ,
-        },
-        // add some line
-        .{
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-            \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
-            \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-            \\culpa qui officia deserunt mollit anim id est laborum.
-            ,
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-            \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-            \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-            \\culpa qui officia deserunt mollit anim id est laborum.
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            ,
-        },
-        // modify lines
-        .{
-            \\foo
-            \\bar
-            \\baz
-            ,
-            \\foo
-            \\barrr
-            \\baz
-        },
-        .{
-            \\foooo
-            \\bar
-            \\baz
-            ,
-            \\foo
-            \\bar
-            \\baz
-        },
-        .{
-            \\foo
-            \\bar
-            \\baz
-            ,
-            \\foo
-            \\bar
-            \\baz
-        },
-        .{
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
-            \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
-            \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-            \\culpa qui officia deserunt mollit anim id est laborum.
-            ,
-            \\Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor modified
-            \\incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
-            \\nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-            \\Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
-            \\fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in also modified
-            \\culpa qui officia deserunt mollit anim id est laborum.
-            ,
-        },
-    }) |thing| {
-        var actual = try split(u8, a, thing[0]);
-        var expected = try split(u8, a, thing[1]);
-        defer {
-            actual.deinit(a);
-            expected.deinit(a);
-        }
-        var d = try StrDiffer.diff(a, actual.items, expected.items);
-        defer d.deinit();
-    }
-}
 
 pub fn split(
     comptime T: type,

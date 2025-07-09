@@ -3224,16 +3224,16 @@ pub const Parser = struct {
 
         defer p.lexer.deinit();
 
-        var binary_expression_stack_heap = std.heap.stackFallback(42 * @sizeOf(ParserType.BinaryExpressionVisitor), bun.default_allocator);
+        var binary_expression_stack_heap: std.heap.StackFallbackAllocator(42 * @sizeOf(ParserType.BinaryExpressionVisitor)) = undefined;
         p.binary_expression_stack = std.ArrayList(ParserType.BinaryExpressionVisitor).initCapacity(
-            binary_expression_stack_heap.get(),
+            bun.getStackFallback(&binary_expression_stack_heap, bun.default_allocator),
             41, // one less in case of unlikely alignment between the stack buffer and reality
         ) catch unreachable; // stack allocation cannot fail
         defer p.binary_expression_stack.clearAndFree();
 
-        var binary_expression_simplify_stack_heap = std.heap.stackFallback(48 * @sizeOf(SideEffects.BinaryExpressionSimplifyVisitor), bun.default_allocator);
+        var binary_expression_simplify_stack_heap: std.heap.StackFallbackAllocator(48 * @sizeOf(SideEffects.BinaryExpressionSimplifyVisitor)) = undefined;
         p.binary_expression_simplify_stack = std.ArrayList(SideEffects.BinaryExpressionSimplifyVisitor).initCapacity(
-            binary_expression_simplify_stack_heap.get(),
+            bun.getStackFallback(&binary_expression_simplify_stack_heap, bun.default_allocator),
             47,
         ) catch unreachable; // stack allocation cannot fail
         defer p.binary_expression_simplify_stack.clearAndFree();
@@ -15771,8 +15771,8 @@ fn NewParser_(
             // Insert any relocated variable statements now
             if (p.relocated_top_level_vars.items.len > 0) {
                 var already_declared = RefMap{};
-                var already_declared_allocator_stack = std.heap.stackFallback(1024, allocator);
-                const already_declared_allocator = already_declared_allocator_stack.get();
+                var already_declared_allocator_stack: std.heap.StackFallbackAllocator(1024) = undefined;
+                const already_declared_allocator = bun.getStackFallback(&already_declared_allocator_stack, allocator);
                 defer if (already_declared_allocator_stack.fixed_buffer_allocator.end_index >= 1023) already_declared.deinit(already_declared_allocator);
 
                 for (p.relocated_top_level_vars.items) |*local| {

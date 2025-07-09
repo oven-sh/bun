@@ -174,22 +174,22 @@ export fn Bun__getVerboseFetchValue() i32 {
 
 const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
 export fn Bun__addBakeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
-    const slice = specifier.toUTF8(sfb.get());
+    var sfb: std.heap.StackFallbackAllocator(4096) = undefined;
+    const slice = specifier.toUTF8(bun.getStackFallback(&sfb, bun.default_allocator));
     defer slice.deinit();
     vm.source_mappings.putBakeSourceProvider(@as(*BakeSourceProvider, @ptrCast(opaque_source_provider)), slice.slice());
 }
 
 export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
-    const slice = specifier.toUTF8(sfb.get());
+    var sfb: std.heap.StackFallbackAllocator(4096) = undefined;
+    const slice = specifier.toUTF8(bun.getStackFallback(&sfb, bun.default_allocator));
     defer slice.deinit();
     vm.source_mappings.putZigSourceProvider(opaque_source_provider, slice.slice());
 }
 
 export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
-    const slice = specifier.toUTF8(sfb.get());
+    var sfb: std.heap.StackFallbackAllocator(4096) = undefined;
+    const slice = specifier.toUTF8(bun.getStackFallback(&sfb, bun.default_allocator));
     defer slice.deinit();
     vm.source_mappings.removeZigSourceProvider(opaque_source_provider, slice.slice());
 }

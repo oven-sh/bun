@@ -129,7 +129,11 @@ pub inline fn getRequestBodySendBuffer(this: *@This(), estimated_size: usize) Re
         return .{ .heap = bun.take(&this.lazy_request_body_buffer).? };
     }
     return .{
-        .stack = std.heap.stackFallback(request_body_send_stack_buffer_size, bun.default_allocator),
+        .stack = std.heap.StackFallbackAllocator(request_body_send_stack_buffer_size){
+            .buffer = undefined,
+            .fallback_allocator = bun.default_allocator,
+            .fixed_buffer_allocator = undefined,
+        },
     };
 }
 

@@ -82,8 +82,8 @@ pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_
     // the idea here is:
     // we want to avoid re-allocating this array _most_ of the time
     // when lines _do_ have unicode characters, they probably still won't be longer than 255 much
-    var stack_fallback = std.heap.stackFallback(@sizeOf(i32) * 256, allocator);
-    var columns_for_non_ascii = std.ArrayList(i32).initCapacity(stack_fallback.get(), 120) catch unreachable;
+    var stack_fallback: std.heap.StackFallbackAllocator(@sizeOf(i32) * 256) = undefined;
+    var columns_for_non_ascii = std.ArrayList(i32).initCapacity(bun.getStackFallback(&stack_fallback, allocator), 120) catch unreachable;
     const reset_end_index = stack_fallback.fixed_buffer_allocator.end_index;
     const initial_columns_for_non_ascii = columns_for_non_ascii;
 

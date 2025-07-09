@@ -469,8 +469,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         ) ?*Context {
             debug("connect({s}, {d})", .{ host, port });
 
-            var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
-            var allocator = stack_fallback.get();
+            var stack_fallback: std.heap.StackFallbackAllocator(1024) = undefined;
+            var allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator);
 
             // remove brackets from IPv6 addresses, as getaddrinfo doesn't understand them
             const clean_host = if (host.len > 1 and host[0] == '[' and host[host.len - 1] == ']')
@@ -576,8 +576,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             allowHalfOpen: bool,
         ) !ThisSocket {
             debug("connect(unix:{s})", .{path});
-            var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
-            var allocator = stack_fallback.get();
+            var stack_fallback: std.heap.StackFallbackAllocator(1024) = undefined;
+            var allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator);
             const path_ = allocator.dupeZ(u8, path) catch bun.outOfMemory();
             defer allocator.free(path_);
 
@@ -599,8 +599,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             allowHalfOpen: bool,
         ) !ThisSocket {
             debug("connect({s}, {d})", .{ raw_host, port });
-            var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
-            var allocator = stack_fallback.get();
+            var stack_fallback: std.heap.StackFallbackAllocator(1024) = undefined;
+            var allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator);
 
             // remove brackets from IPv6 addresses, as getaddrinfo doesn't understand them
             const clean_host = if (raw_host.len > 1 and raw_host[0] == '[' and raw_host[raw_host.len - 1] == ']')

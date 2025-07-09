@@ -208,8 +208,8 @@ pub fn initJS(global: *JSC.JSGlobalObject, options: Options) bun.JSError!SocketA
 
     // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
     // copy the string.
-    var stackfb = std.heap.stackFallback(64, bun.default_allocator);
-    const alloc = stackfb.get();
+    var stack_fallback: std.heap.StackFallbackAllocator(64) = undefined;
+    const alloc = bun.getStackFallback(&stack_fallback, bun.default_allocator);
 
     // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
     // Switch back to `htons(options.port)` when this issue gets resolved:

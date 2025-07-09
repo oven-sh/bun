@@ -272,8 +272,8 @@ pub const JSGlobalObject = opaque {
 
     pub fn createErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
-            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
+            var stack_fallback: std.heap.StackFallbackAllocator(1024 * 4) = undefined;
+            var buf = bun.MutableString.init2048(bun.getStackFallback(&stack_fallback, this.allocator())) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch
@@ -295,8 +295,8 @@ pub const JSGlobalObject = opaque {
 
     pub fn createTypeErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
-            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
+            var stack_fallback: std.heap.StackFallbackAllocator(1024 * 4) = undefined;
+            var buf = bun.MutableString.init2048(bun.getStackFallback(&stack_fallback, this.allocator())) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
@@ -309,8 +309,8 @@ pub const JSGlobalObject = opaque {
 
     pub fn createDOMExceptionInstance(this: *JSGlobalObject, code: JSC.WebCore.DOMExceptionCode, comptime fmt: [:0]const u8, args: anytype) JSError!JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
-            var buf = try bun.MutableString.init2048(stack_fallback.get());
+            var stack_fallback: std.heap.StackFallbackAllocator(1024 * 4) = undefined;
+            var buf = bun.MutableString.init2048(bun.getStackFallback(&stack_fallback, this.allocator())) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
             try writer.print(fmt, args);
@@ -323,8 +323,8 @@ pub const JSGlobalObject = opaque {
 
     pub fn createSyntaxErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
-            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
+            var stack_fallback: std.heap.StackFallbackAllocator(1024 * 4) = undefined;
+            var buf = bun.MutableString.init2048(bun.getStackFallback(&stack_fallback, this.allocator())) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
@@ -337,8 +337,8 @@ pub const JSGlobalObject = opaque {
 
     pub fn createRangeErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
-            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
+            var stack_fallback: std.heap.StackFallbackAllocator(1024 * 4) = undefined;
+            var buf = bun.MutableString.init2048(bun.getStackFallback(&stack_fallback, this.allocator())) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
@@ -454,8 +454,8 @@ pub const JSGlobalObject = opaque {
         bun.debugAssert(err != error.JSError);
 
         // Avoid tiny extra allocation
-        var stack = std.heap.stackFallback(128, bun.default_allocator);
-        const allocator_ = stack.get();
+        var stack_fallback: std.heap.StackFallbackAllocator(128) = undefined;
+        const allocator_ = bun.getStackFallback(&stack_fallback, bun.default_allocator);
         const buffer = try std.fmt.allocPrint(allocator_, comptime "{s} " ++ fmt, .{@errorName(err)});
         defer allocator_.free(buffer);
         const str = ZigString.initUTF8(buffer);
@@ -845,8 +845,8 @@ pub const JSGlobalObject = opaque {
 
             return zig_str.toErrorInstance(globalThis);
         } else {
-            var fallback = std.heap.stackFallback(256, bun.default_allocator);
-            var alloc = fallback.get();
+            var stack_fallback: std.heap.StackFallbackAllocator(256) = undefined;
+            var alloc = bun.getStackFallback(&stack_fallback, bun.default_allocator);
 
             const buf = std.fmt.allocPrint(alloc, fmt, args) catch unreachable;
             var zig_str = JSC.ZigString.init(buf);

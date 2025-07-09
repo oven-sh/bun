@@ -3761,3 +3761,20 @@ pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item)
         else => std.mem.indexOfScalar(T, list.items, item) != null,
     };
 }
+
+/// Initialize a std.heap.StackFallbackAllocator
+///
+/// This avoids paging in the entire `buffer`.
+pub fn getStackFallback(instance_ptr: anytype, fallback_allocator: std.mem.Allocator) std.mem.Allocator {
+    instance_ptr.fallback_allocator = fallback_allocator;
+
+    if (comptime Environment.ci_assert) {
+        instance_ptr.buffer = undefined;
+    }
+
+    if (comptime std.debug.runtime_safety) {
+        instance_ptr.get_called = false;
+    }
+
+    return instance_ptr.get();
+}

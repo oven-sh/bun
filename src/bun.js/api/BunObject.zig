@@ -851,8 +851,8 @@ fn doResolveWithArgs(ctx: *JSC.JSGlobalObject, specifier: bun.String, from: bun.
     }
 
     if (query_string.len > 0) {
-        var stack = std.heap.stackFallback(1024, ctx.allocator());
-        const allocator = stack.get();
+        var stack: std.heap.StackFallbackAllocator(1024) = undefined;
+        const allocator = bun.getStackFallback(&stack, ctx.allocator());
         var arraylist = std.ArrayList(u8).initCapacity(allocator, 1024) catch unreachable;
         defer arraylist.deinit();
         try arraylist.writer().print("{any}{any}", .{
@@ -1135,8 +1135,8 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
     assert(len > 0);
 
     const input_slice = ptr[0..len];
-    var stack_allocator = std.heap.stackFallback(256, globalObject.bunVM().allocator);
-    const allocator = if (input_slice.len <= 32) stack_allocator.get() else stack_allocator.fallback_allocator;
+    var stack_allocator: std.heap.StackFallbackAllocator(256) = undefined;
+    const allocator = if (input_slice.len <= 32) bun.getStackFallback(&stack_allocator, globalObject.bunVM().allocator) else globalObject.bunVM().allocator;
 
     const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
         return globalObject.throwValue(bun.String.static("Out of memory").toJS(globalObject)) catch .zero;

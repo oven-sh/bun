@@ -1293,8 +1293,8 @@ pub const LinkerContext = struct {
         const all_sources: []Logger.Source = c.parse_graph.input_files.items(.source);
 
         // Collect all local css names
-        var sfb = std.heap.stackFallback(512, c.allocator);
-        const allocator = sfb.get();
+        var stack_fallback: std.heap.StackFallbackAllocator(512) = undefined;
+        const allocator = bun.getStackFallback(&stack_fallback, c.allocator);
         var local_css_names = std.AutoHashMap(bun.bundle_v2.Ref, void).init(allocator);
         defer local_css_names.deinit();
 

@@ -615,10 +615,11 @@ pub fn installIsolatedPackages(
             .install_node = if (manager.options.log_level.showProgress()) &install_node else null,
             .scripts_node = if (manager.options.log_level.showProgress()) &scripts_node else null,
             .store = &store,
-            .preallocated_tasks = .init(bun.default_allocator),
+            .preallocated_tasks = undefined,
             .trusted_dependencies_mutex = .{},
             .trusted_dependencies_from_update_requests = manager.findTrustedDependenciesFromUpdateRequests(),
         };
+        installer.preallocated_tasks.zero(bun.default_allocator);
 
         // add the pending task count upfront
         _ = manager.incrementPendingTasks(@intCast(store.entries.len));

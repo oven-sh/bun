@@ -128,8 +128,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             if (this.added_head_tags) return;
             this.added_head_tags = true;
 
-            var html_appender = std.heap.stackFallback(256, bun.default_allocator);
-            const allocator = html_appender.get();
+            var stack_fallback: std.heap.StackFallbackAllocator(256) = undefined;
+            const allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator);
             const slices = this.getHeadTags(allocator);
             defer for (slices.slice()) |slice|
                 allocator.free(slice);
@@ -230,8 +230,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
     } else brk: {
         if (!html_loader.added_head_tags) {
             @branchHint(.cold); // this is if the document is missing all head, body, and html elements.
-            var html_appender = std.heap.stackFallback(256, bun.default_allocator);
-            const allocator = html_appender.get();
+            var stack_fallback: std.heap.StackFallbackAllocator(256) = undefined;
+            const allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator);
             const slices = html_loader.getHeadTags(allocator);
             for (slices.slice()) |slice| {
                 html_loader.output.appendSlice(slice) catch bun.outOfMemory();

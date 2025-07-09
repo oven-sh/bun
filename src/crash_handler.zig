@@ -1646,8 +1646,8 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
 
     var arena = bun.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
-    var sfa = std.heap.stackFallback(16384, arena.allocator());
-    const alloc = sfa.get();
+    var stack_fallback: std.heap.StackFallbackAllocator(16384) = undefined;
+    const alloc = bun.getStackFallback(&stack_fallback, arena.allocator());
 
     var argv = std.ArrayList([]const u8).init(alloc);
 

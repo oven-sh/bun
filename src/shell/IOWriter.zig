@@ -417,8 +417,8 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
     const ee = err__.toShellSystemError();
     this.err = ee;
     log("IOWriter(0x{x}, fd={}) onError errno={s} errmsg={} errsyscall={}", .{ @intFromPtr(this), this.fd, @tagName(ee.getErrno()), ee.message, ee.syscall });
-    var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.default_allocator);
-    var seen = std.ArrayList(usize).initCapacity(seen_alloc.get(), 64) catch bun.outOfMemory();
+    var stack_fallback: std.heap.StackFallbackAllocator(@sizeOf(usize) * 64) = undefined;
+    var seen = std.ArrayList(usize).initCapacity(bun.getStackFallback(&stack_fallback, bun.default_allocator), 64) catch bun.outOfMemory();
     defer seen.deinit();
     writer_loop: for (this.writers.slice()) |w| {
         if (w.isDead()) continue;

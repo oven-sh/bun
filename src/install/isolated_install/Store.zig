@@ -152,7 +152,7 @@ pub const Store = struct {
                     else => {
                         try writer.print("{}@{}", .{
                             pkg_name.fmtStorePath(string_buf),
-                            pkg_res.fmt(string_buf, .posix),
+                            pkg_res.fmtStorePath(string_buf),
                         });
                     },
                 }

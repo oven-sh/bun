@@ -403,7 +403,8 @@ pub fn installIsolatedPackages(
                             .string_buf = string_buf,
                             .dependencies = dependencies,
                         };
-                        entry_dependencies[entry.entry_parent_id.get()].insertAssumeCapacity(
+                        try entry_dependencies[entry.entry_parent_id.get()].insert(
+                            lockfile.allocator,
                             .{ .entry_id = info.entry_id, .dep_id = curr_dep_id },
                             &ctx,
                         );
@@ -467,7 +468,8 @@ pub fn installIsolatedPackages(
                     .string_buf = string_buf,
                     .dependencies = dependencies,
                 };
-                entry_dependencies[entry_parent_id].insertAssumeCapacity(
+                try entry_dependencies[entry_parent_id].insert(
+                    lockfile.allocator,
                     .{ .entry_id = new_entry_id, .dep_id = new_entry_dep_id },
                     &ctx,
                 );

@@ -27,10 +27,9 @@ function test<T, R extends { [K in keyof R]: Bun.RouterTypes.RouteValue<K & stri
     overrideExpectBehavior?: (server: Bun.Server) => void | Promise<void>;
   } = {},
 ) {
-  if ("unix" in serveConfig && typeof serveConfig.unix === "string" && process.platform === "win32") {
-    // Skip unix socket tests on Windows
-    return;
-  }
+  const name = `Bun.serve() types test ${++id}`;
+
+  const skip = "unix" in serveConfig && typeof serveConfig.unix === "string" && process.platform === "win32";
 
   async function testServer(server: Bun.Server) {
     if (overrideExpectBehavior) {
@@ -44,7 +43,7 @@ function test<T, R extends { [K in keyof R]: Bun.RouterTypes.RouteValue<K & stri
     }
   }
 
-  it(`Bun.serve() types test ${++id}`, async () => {
+  it.skipIf(skip)(name, async () => {
     try {
       using server = Bun.serve(serveConfig);
       try {

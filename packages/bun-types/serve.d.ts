@@ -499,7 +499,7 @@ declare module "bun" {
     clone(): BunRequest<T>;
   }
 
-  interface GenericServeOptions {
+  interface BaseServeOptions {
     /**
      * What URI should be used to make {@link Request.url} absolute?
      *
@@ -594,7 +594,7 @@ declare module "bun" {
     id?: string | null;
   }
 
-  interface ServeOptions extends GenericServeOptions {
+  interface ServeOptions extends BaseServeOptions {
     /**
      * What port should the server listen on?
      * @default process.env.PORT || "3000"
@@ -658,7 +658,7 @@ declare module "bun" {
     fetch(this: Server, request: Request, server: Server): Response | Promise<Response>;
   }
 
-  interface UnixServeOptions extends GenericServeOptions {
+  interface UnixServeOptions extends BaseServeOptions {
     /**
      * If set, the HTTP server will listen on a unix socket instead of a port.
      * (Cannot be used with hostname+port)
@@ -672,7 +672,7 @@ declare module "bun" {
     fetch(this: Server, request: Request, server: Server): Response | Promise<Response>;
   }
 
-  interface WebSocketServeOptions<WebSocketDataType = undefined> extends GenericServeOptions {
+  interface WebSocketServeOptions<WebSocketDataType = undefined> extends BaseServeOptions {
     /**
      * What port should the server listen on?
      * @default process.env.PORT || "3000"
@@ -748,7 +748,7 @@ declare module "bun" {
     ): Response | undefined | void | Promise<Response | undefined | void>;
   }
 
-  interface UnixWebSocketServeOptions<WebSocketDataType = undefined> extends GenericServeOptions {
+  interface UnixWebSocketServeOptions<WebSocketDataType = undefined> extends BaseServeOptions {
     /**
      * If set, the HTTP server will listen on a unix socket instead of a port.
      * (Cannot be used with hostname+port)

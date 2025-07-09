@@ -31,6 +31,25 @@ static_routes: StaticRouteMap,
 // TODO: no code to sort this data structure
 dynamic_routes: DynamicRouteMap,
 
+/// Arena allocator for pattern strings.
+///
+/// This should be passed into `EncodedPattern.initFromParts` or should be the
+/// allocator used to allocate `StaticRoute.route_path`.
+///
+/// Q: Why use this and not just free the strings for `EncodedPattern` and
+///    `StaticRoute` manually?
+///
+/// A: Inside `fr.insert(...)` we iterate over `EncodedPattern/StaticRoute`,
+///    turning them into a bunch of `Route.Part`s, and we discard the original
+///    `EncodePattern/StaticRoute` structure.
+///
+///    In this process it's too easy to lose the original base pointer and
+///    length of the entire allocation. So we'll just allocate everything in
+///    this arena to ensure that everything gets freed.
+///
+///    Thank you to `AllocationScope` for catching this! Hell yeah!
+pattern_string_arena: bun.ArenaAllocator,
+
 /// The above structure is optimized for incremental updates, but
 /// production has a different set of requirements:
 /// - Trivially serializable to a binary file (no pointers)
@@ -128,6 +147,7 @@ pub fn initEmpty(root: []const u8, types: []Type, allocator: Allocator) !Framewo
         .routes = routes,
         .dynamic_routes = .{},
         .static_routes = .{},
+        .pattern_string_arena = bun.ArenaAllocator.init(allocator),
     };
 }
 
@@ -136,6 +156,7 @@ pub fn deinit(fr: *FrameworkRouter, allocator: Allocator) void {
     fr.static_routes.deinit(allocator);
     fr.dynamic_routes.deinit(allocator);
     allocator.free(fr.types);
+    fr.pattern_string_arena.deinit();
 }
 
 pub fn memoryCost(fr: *FrameworkRouter) usize {
@@ -1029,9 +1050,9 @@ fn scanInner(
                     const result = switch (param_count > 0) {
                         inline else => |has_dynamic_comptime| result: {
                             const pattern = if (has_dynamic_comptime)
-                                try EncodedPattern.initFromParts(parsed.parts, alloc)
+                                try EncodedPattern.initFromParts(parsed.parts, fr.pattern_string_arena.allocator())
                             else static_route: {
-                                const allocation = try bun.default_allocator.alloc(u8, static_total_len);
+                                const allocation = try fr.pattern_string_arena.allocator().alloc(u8, static_total_len);
                                 var s = std.io.fixedBufferStream(allocation);
                                 for (parsed.parts) |part|
                                     switch (part) {
@@ -1110,7 +1131,7 @@ pub const JSFrameworkRouter = struct {
             return global.throwInvalidArguments("Missing options.root", .{});
         defer root.deinit();
 
-        var style = try Style.fromJS(try opts.getOptional(global, "style", JSValue) orelse .undefined, global);
+        var style = try Style.fromJS(try opts.getOptional(global, "style", JSValue) orelse .js_undefined, global);
         errdefer style.deinit();
 
         const abs_root = try bun.default_allocator.dupe(u8, bun.strings.withoutTrailingSlash(
@@ -1146,7 +1167,7 @@ pub const JSFrameworkRouter = struct {
         if (jsfr.stored_parse_errors.items.len > 0) {
             const arr = try JSValue.createEmptyArray(global, jsfr.stored_parse_errors.items.len);
             for (jsfr.stored_parse_errors.items, 0..) |*item, i| {
-                arr.putIndex(
+                try arr.putIndex(
                     global,
                     @intCast(i),
                     global.createErrorInstance("Invalid route {}: {s}", .{
@@ -1218,7 +1239,7 @@ pub const JSFrameworkRouter = struct {
                 next = route.first_child.unwrap();
                 var i: u32 = 0;
                 while (next) |r| : (next = jsfr.router.routePtr(r).next_sibling.unwrap()) {
-                    arr.putIndex(global, i, try routeToJson(jsfr, global, r, allocator));
+                    try arr.putIndex(global, i, try routeToJson(jsfr, global, r, allocator));
                     i += 1;
                 }
                 break :brk arr;

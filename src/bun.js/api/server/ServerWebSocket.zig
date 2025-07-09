@@ -143,7 +143,7 @@ pub fn onMessage(
         this.getThisValue(),
         switch (opcode) {
             .text => bun.String.createUTF8ForJS(globalObject, message),
-            .binary => this.binaryToJS(globalObject, message),
+            .binary => this.binaryToJS(globalObject, message) catch .zero, // TODO: properly propagate exception upwards
             else => unreachable,
         },
     };
@@ -208,7 +208,7 @@ pub fn onDrain(this: *ServerWebSocket, _: uws.AnyWebSocket) void {
     }
 }
 
-fn binaryToJS(this: *const ServerWebSocket, globalThis: *JSC.JSGlobalObject, data: []const u8) JSC.JSValue {
+fn binaryToJS(this: *const ServerWebSocket, globalThis: *JSC.JSGlobalObject, data: []const u8) bun.JSError!JSC.JSValue {
     return switch (this.flags.binary_type) {
         .Buffer => JSC.ArrayBuffer.createBuffer(
             globalThis,
@@ -243,8 +243,8 @@ pub fn onPing(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) voi
 
     _ = cb.call(
         globalThis,
-        .undefined,
-        &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
+        .js_undefined,
+        &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) catch .zero }, // TODO: properly propagate exception upwards
     ) catch |e| {
         const err = globalThis.takeException(e);
         log("onPing error", .{});
@@ -271,8 +271,8 @@ pub fn onPong(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) voi
 
     _ = cb.call(
         globalThis,
-        .undefined,
-        &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
+        .js_undefined,
+        &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) catch .zero }, // TODO: properly propagate exception upwards
     ) catch |e| {
         const err = globalThis.takeException(e);
         log("onPong error", .{});
@@ -324,7 +324,7 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
 
         _ = handler.onClose.call(
             globalObject,
-            .undefined,
+            .js_undefined,
             &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), bun.String.createUTF8ForJS(globalObject, message) },
         ) catch |e| {
             const err = globalObject.takeException(e);
@@ -674,7 +674,7 @@ pub fn cork(
     }
 
     if (this.isClosed()) {
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
 
     var corker = Corker{
@@ -1027,7 +1027,7 @@ pub fn getData(
     _: *JSC.JSGlobalObject,
 ) JSValue {
     log("getData()", .{});
-    return JSValue.jsUndefined();
+    return .js_undefined;
 }
 
 pub fn setData(
@@ -1064,7 +1064,7 @@ pub fn close(
     this.this_value = this_value;
 
     if (this.isClosed()) {
-        return .undefined;
+        return .js_undefined;
     }
 
     const code = brk: {
@@ -1077,7 +1077,7 @@ pub fn close(
             return globalThis.throwInvalidArguments("close requires a numeric code or undefined", .{});
         }
 
-        break :brk args.ptr[0].coerce(i32, globalThis);
+        break :brk try args.ptr[0].coerce(i32, globalThis);
     };
 
     var message_value: ZigString.Slice = brk: {
@@ -1089,7 +1089,7 @@ pub fn close(
 
     this.flags.closed = true;
     this.websocket().end(code, message_value.slice());
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn terminate(
@@ -1107,14 +1107,14 @@ pub fn terminate(
     this.this_value = this_value;
 
     if (this.isClosed()) {
-        return .undefined;
+        return .js_undefined;
     }
 
     this.flags.closed = true;
     this.this_value.unprotect();
     this.websocket().close();
 
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn getBinaryType(
@@ -1244,7 +1244,7 @@ pub fn getRemoteAddress(
     globalThis: *JSC.JSGlobalObject,
 ) JSValue {
     if (this.isClosed()) {
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
 
     var buf: [64]u8 = [_]u8{0} ** 64;
@@ -1254,7 +1254,7 @@ pub fn getRemoteAddress(
     const address: std.net.Address = switch (address_bytes.len) {
         4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
         16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
-        else => return JSValue.jsUndefined(),
+        else => return .js_undefined,
     };
 
     const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
@@ -1272,7 +1272,7 @@ const Corker = struct {
         const this_value = this.this_value;
         this.result = this.callback.call(
             this.globalObject,
-            if (this_value == .zero) .undefined else this_value,
+            if (this_value == .zero) .js_undefined else this_value,
             this.args,
         ) catch |err| this.globalObject.takeException(err);
     }

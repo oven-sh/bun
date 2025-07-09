@@ -760,6 +760,9 @@ pub fn deinit(dev: *DevServer) void {
             .html_routes_hard_affected = dev.incremental_result.html_routes_hard_affected.deinit(allocator),
         }),
         .has_tailwind_plugin_hack = if (dev.has_tailwind_plugin_hack) |*hack| {
+            for (hack.keys()) |key| {
+                allocator.free(key);
+            }
             hack.deinit(allocator);
         },
         .directory_watchers = {
@@ -1140,20 +1143,20 @@ pub fn setRoutes(dev: *DevServer, server: anytype) !bool {
     }
 }
 
-fn onNotFound(_: *DevServer, _: *Request, resp: anytype) void {
+fn onNotFound(_: *DevServer, _: *Request, resp: AnyResponse) void {
     notFound(resp);
 }
 
-fn notFound(resp: anytype) void {
+fn notFound(resp: AnyResponse) void {
     resp.corked(onNotFoundCorked, .{resp});
 }
 
-fn onNotFoundCorked(resp: anytype) void {
+fn onNotFoundCorked(resp: AnyResponse) void {
     resp.writeStatus("404 Not Found");
     resp.end("Not Found", false);
 }
 
-fn onOutdatedJSCorked(resp: anytype) void {
+fn onOutdatedJSCorked(resp: AnyResponse) void {
     // Send a payload to instantly reload the page. This only happens when the
     // client bundle is invalidated while the page is loading, aka when you
     // perform many file updates that cannot be hot-updated.
@@ -1273,11 +1276,11 @@ inline fn redirectHandler(comptime path: []const u8, comptime is_ssl: bool) fn (
     }.handle;
 }
 
-fn onIncrementalVisualizer(_: *DevServer, _: *Request, resp: anytype) void {
+fn onIncrementalVisualizer(_: *DevServer, _: *Request, resp: AnyResponse) void {
     resp.corked(onIncrementalVisualizerCorked, .{resp});
 }
 
-fn onIncrementalVisualizerCorked(resp: anytype) void {
+fn onIncrementalVisualizerCorked(resp: AnyResponse) void {
     const code = if (Environment.codegen_embed)
         @embedFile("incremental_visualizer.html")
     else
@@ -1285,11 +1288,11 @@ fn onIncrementalVisualizerCorked(resp: anytype) void {
     resp.end(code, false);
 }
 
-fn onMemoryVisualizer(_: *DevServer, _: *Request, resp: anytype) void {
+fn onMemoryVisualizer(_: *DevServer, _: *Request, resp: AnyResponse) void {
     resp.corked(onMemoryVisualizerCorked, .{resp});
 }
 
-fn onMemoryVisualizerCorked(resp: anytype) void {
+fn onMemoryVisualizerCorked(resp: AnyResponse) void {
     const code = if (Environment.codegen_embed)
         @embedFile("memory_visualizer.html")
     else
@@ -1528,7 +1531,60 @@ fn onFrameworkRequestWithBundle(
 ) bun.JSError!void {
     const route_bundle = dev.routeBundlePtr(route_bundle_index);
     assert(route_bundle.data == .framework);
+
     const bundle = &route_bundle.data.framework;
+
+    // Extract route params by re-matching the URL
+    var params: FrameworkRouter.MatchedParams = undefined;
+    const url_bunstr = switch (req) {
+        .stack => |r| bun.String{
+            .tag = .ZigString,
+            .value = .{ .ZigString = bun.ZigString.fromUTF8(r.url()) },
+        },
+        .saved => |data| brk: {
+            const url = data.request.url;
+            url.ref();
+            break :brk url;
+        },
+    };
+    defer url_bunstr.deref();
+    const url = url_bunstr.toUTF8(bun.default_allocator);
+    defer url.deinit();
+
+    // Extract pathname from URL (remove protocol, host, query, hash)
+    const pathname = if (std.mem.indexOf(u8, url.byteSlice(), "://")) |proto_end| blk: {
+        const after_proto = url.byteSlice()[proto_end + 3 ..];
+        if (std.mem.indexOfScalar(u8, after_proto, '/')) |path_start| {
+            const path_with_query = after_proto[path_start..];
+            // Remove query string and hash
+            const end = bun.strings.indexOfAny(path_with_query, "?#") orelse path_with_query.len;
+            break :blk path_with_query[0..end];
+        }
+        break :blk "/";
+    } else url.byteSlice();
+
+    // Create params JSValue
+    // TODO: lazy structure caching since we are making these objects a lot
+    const params_js_value = if (dev.router.matchSlow(pathname, &params)) |_| blk: {
+        const global = dev.vm.global;
+        const params_array = params.params.slice();
+
+        if (params_array.len == 0) {
+            break :blk JSValue.null;
+        }
+
+        // Create a JavaScript object with params
+        const obj = JSValue.createEmptyObject(global, params_array.len);
+        for (params_array) |param| {
+            const key_str = bun.String.createUTF8(param.key);
+            defer key_str.deref();
+            const value_str = bun.String.createUTF8(param.value);
+            defer value_str.deref();
+
+            obj.put(global, key_str, value_str.toJS(global));
+        }
+        break :blk obj;
+    } else JSValue.null;
 
     const server_request_callback = dev.server_fetch_function_callback.get() orelse
         unreachable; // did not initialize server code
@@ -1539,7 +1595,7 @@ fn onFrameworkRequestWithBundle(
         req,
         resp,
         server_request_callback,
-        4,
+        5,
         .{
             // routerTypeMain
             router_type.server_file_string.get() orelse str: {
@@ -1562,14 +1618,14 @@ fn onFrameworkRequestWithBundle(
                 const arr = try JSValue.createEmptyArray(global, n);
                 route = dev.router.routePtr(bundle.route_index);
                 var route_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
-                arr.putIndex(global, 0, route_name.transferToJS(global));
+                try arr.putIndex(global, 0, route_name.transferToJS(global));
                 dev.releaseRelativePathBuf();
                 n = 1;
                 while (true) {
                     if (route.file_layout.unwrap()) |layout| {
                         var layout_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, layout).get()]));
                         defer dev.releaseRelativePathBuf();
-                        arr.putIndex(global, @intCast(n), layout_name.transferToJS(global));
+                        try arr.putIndex(global, @intCast(n), layout_name.transferToJS(global));
                         n += 1;
                     }
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
@@ -1596,6 +1652,8 @@ fn onFrameworkRequestWithBundle(
                 bundle.cached_css_file_array = .create(js, dev.vm.global);
                 break :arr js;
             },
+            // params
+            params_js_value,
         },
     );
 }
@@ -2151,7 +2209,7 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!J
         }) catch unreachable;
         const str = bun.String.createUTF8(path);
         defer str.deref();
-        arr.putIndex(dev.vm.global, @intCast(i), str.toJS(dev.vm.global));
+        try arr.putIndex(dev.vm.global, @intCast(i), str.toJS(dev.vm.global));
     }
     return arr;
 }
@@ -2195,7 +2253,7 @@ fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *JSC.JSGlobalObjec
         const str = bun.String.createUTF8(dev.relativePath(names[item.get()]));
         defer dev.releaseRelativePathBuf();
         defer str.deref();
-        arr.putIndex(global, @intCast(i), str.toJS(global));
+        try arr.putIndex(global, @intCast(i), str.toJS(global));
     }
     return arr;
 }
@@ -2411,9 +2469,14 @@ pub fn finalizeBundle(
         if (dev.has_tailwind_plugin_hack) |*map| {
             const first_1024 = code.buffer[0..@min(code.buffer.len, 1024)];
             if (std.mem.indexOf(u8, first_1024, "tailwind") != null) {
-                try map.put(dev.allocator, key, {});
+                const entry = try map.getOrPut(dev.allocator, key);
+                if (!entry.found_existing) {
+                    entry.key_ptr.* = try dev.allocator.dupe(u8, key);
+                }
             } else {
-                _ = map.swapRemove(key);
+                if (map.fetchSwapRemove(key)) |entry| {
+                    dev.allocator.free(entry.key);
+                }
             }
         }
 
@@ -3075,12 +3138,8 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
         return;
     }
 
-    if (DevServer.AnyResponse != @typeInfo(@TypeOf(resp)).pointer.child) {
-        unreachable; // mismatch between `is_ssl` with server and response types. optimize these checks out.
-    }
-
-    if (dev.server.?.config.onRequest != .zero) {
-        dev.server.?.onRequest(req, resp);
+    if (dev.server.?.config().onRequest != .zero) {
+        dev.server.?.onRequest(req, AnyResponse.init(resp));
         return;
     }
 
@@ -4850,11 +4909,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // Additionally, clear the cached entry of the file from the path to
             // source index map.
             const hash = bun.hash(abs_path);
-            for ([_]*bun.bundle_v2.PathToSourceIndexMap{
-                &bv2.graph.path_to_source_index_map,
-                &bv2.graph.client_path_to_source_index_map,
-                &bv2.graph.ssr_path_to_source_index_map,
-            }) |map| {
+            for (&bv2.graph.build_graphs.values) |*map| {
                 _ = map.remove(hash);
             }
         }
@@ -7985,6 +8040,7 @@ pub const SourceMapStore = struct {
             null,
             @intCast(entry.paths.len),
             0, // unused
+            .{},
         )) {
             .fail => |fail| {
                 Output.debugWarn("Failed to re-parse source map: {s}", .{fail.msg});
@@ -8144,7 +8200,7 @@ const ErrorReportRequest = struct {
             const result: *const SourceMapStore.GetResult = &(gop.value_ptr.* orelse continue);
 
             // When before the first generated line, remap to the HMR runtime
-            const generated_mappings = result.mappings.items(.generated);
+            const generated_mappings = result.mappings.generated();
             if (frame.position.line.oneBased() < generated_mappings[1].lines) {
                 frame.source_url = .init(runtime_name); // matches value in source map
                 frame.position = .invalid;
@@ -8152,8 +8208,7 @@ const ErrorReportRequest = struct {
             }
 
             // Remap the frame
-            const remapped = SourceMap.Mapping.find(
-                result.mappings,
+            const remapped = result.mappings.find(
                 frame.position.line.oneBased(),
                 frame.position.column.zeroBased(),
             );

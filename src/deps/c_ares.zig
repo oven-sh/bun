@@ -227,7 +227,7 @@ pub const struct_hostent = extern struct {
         while (this.h_aliases.?[count]) |alias| {
             const alias_len = bun.len(alias);
             const alias_slice = alias[0..alias_len];
-            array.putIndex(globalThis, count, JSC.ZigString.fromUTF8(alias_slice).toJS(globalThis));
+            try array.putIndex(globalThis, count, JSC.ZigString.fromUTF8(alias_slice).toJS(globalThis));
             count += 1;
         }
 
@@ -332,8 +332,8 @@ pub const hostent_with_ttls = struct {
                     bun.dns.addressToJS(&std.net.Address.initIp4(addr[0..4].*, 0), globalThis)) catch return globalThis.throwOutOfMemoryValue();
 
                 const ttl: ?c_int = if (count < this.ttls.len) this.ttls[count] else null;
-                const resultObject = JSC.JSValue.createObject2(globalThis, &addressKey, &ttlKey, addrString, if (ttl) |val| JSC.jsNumber(val) else .undefined);
-                array.putIndex(globalThis, count, resultObject);
+                const resultObject = try JSC.JSValue.createObject2(globalThis, &addressKey, &ttlKey, addrString, if (ttl) |val| JSC.jsNumber(val) else .js_undefined);
+                try array.putIndex(globalThis, count, resultObject);
             }
 
             return array;
@@ -437,17 +437,17 @@ pub const struct_nameinfo = extern struct {
         if (this.node != null) {
             const node_len = bun.len(this.node);
             const node_slice = this.node[0..node_len];
-            array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(node_slice).toJS(globalThis));
+            try array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(node_slice).toJS(globalThis));
         } else {
-            array.putIndex(globalThis, 0, .undefined);
+            try array.putIndex(globalThis, 0, .js_undefined);
         }
 
         if (this.service != null) {
             const service_len = bun.len(this.service);
             const service_slice = this.service[0..service_len];
-            array.putIndex(globalThis, 1, JSC.ZigString.fromUTF8(service_slice).toJS(globalThis));
+            try array.putIndex(globalThis, 1, JSC.ZigString.fromUTF8(service_slice).toJS(globalThis));
         } else {
-            array.putIndex(globalThis, 1, .undefined);
+            try array.putIndex(globalThis, 1, .js_undefined);
         }
 
         return array;
@@ -516,7 +516,7 @@ pub const AddrInfo = extern struct {
             var j: u32 = 0;
             var current: ?*AddrInfo_node = addr_info.node;
             while (current) |this_node| : (current = this_node.next) {
-                array.putIndex(
+                try array.putIndex(
                     globalThis,
                     j,
                     GetAddrInfo.Result.toJS(
@@ -887,7 +887,7 @@ pub const struct_ares_caa_reply = extern struct {
         var i: u32 = 0;
         while (caa != null) {
             var node = caa.?;
-            array.putIndex(globalThis, i, node.toJS(globalThis, allocator));
+            try array.putIndex(globalThis, i, node.toJS(globalThis, allocator));
             caa = node.next;
             i += 1;
         }
@@ -965,7 +965,7 @@ pub const struct_ares_srv_reply = extern struct {
         var i: u32 = 0;
         while (srv != null) {
             var node = srv.?;
-            array.putIndex(globalThis, i, node.toJS(globalThis, allocator));
+            try array.putIndex(globalThis, i, node.toJS(globalThis, allocator));
             srv = node.next;
             i += 1;
         }
@@ -1048,7 +1048,7 @@ pub const struct_ares_mx_reply = extern struct {
         var i: u32 = 0;
         while (mx != null) {
             var node = mx.?;
-            array.putIndex(globalThis, i, node.toJS(globalThis, allocator));
+            try array.putIndex(globalThis, i, node.toJS(globalThis, allocator));
             mx = node.next;
             i += 1;
         }
@@ -1122,7 +1122,7 @@ pub const struct_ares_txt_reply = extern struct {
         var i: u32 = 0;
         while (txt != null) {
             var node = txt.?;
-            array.putIndex(globalThis, i, try node.toJS(globalThis, allocator));
+            try array.putIndex(globalThis, i, try node.toJS(globalThis, allocator));
             txt = node.next;
             i += 1;
         }
@@ -1133,7 +1133,7 @@ pub const struct_ares_txt_reply = extern struct {
     pub fn toJS(this: *struct_ares_txt_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) bun.JSError!JSC.JSValue {
         const array = try JSC.JSValue.createEmptyArray(globalThis, 1);
         const value = this.txt[0..this.length];
-        array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(value).toJS(globalThis));
+        try array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(value).toJS(globalThis));
         return array;
     }
 
@@ -1150,7 +1150,7 @@ pub const struct_ares_txt_reply = extern struct {
         var i: u32 = 0;
         while (txt != null) : (txt = txt.?.next) {
             var node = txt.?;
-            array.putIndex(globalThis, i, JSC.ZigString.fromUTF8(node.txt[0..node.length]).toJS(globalThis));
+            try array.putIndex(globalThis, i, JSC.ZigString.fromUTF8(node.txt[0..node.length]).toJS(globalThis));
             i += 1;
         }
 
@@ -1224,7 +1224,7 @@ pub const struct_ares_naptr_reply = extern struct {
         var i: u32 = 0;
         while (naptr != null) {
             var node = naptr.?;
-            array.putIndex(globalThis, i, node.toJS(globalThis, allocator));
+            try array.putIndex(globalThis, i, node.toJS(globalThis, allocator));
             naptr = node.next;
             i += 1;
         }
@@ -1407,7 +1407,7 @@ pub const struct_any_reply = struct {
         }
 
         transformed.put(globalThis, "type", bun.String.ascii(&upper).toJS(globalThis));
-        array.putIndex(globalThis, i.*, transformed);
+        try array.putIndex(globalThis, i.*, transformed);
         i.* += 1;
     }
 
@@ -1418,8 +1418,8 @@ pub const struct_any_reply = struct {
             reply.toJSResponse(allocator, globalThis, lookup_name);
 
         if (response.isArray()) {
-            var iterator = response.arrayIterator(globalThis);
-            while (iterator.next()) |item| {
+            var iterator = try response.arrayIterator(globalThis);
+            while (try iterator.next()) |item| {
                 try append(globalThis, array, i, item, lookup_name);
             }
         } else {
@@ -1697,7 +1697,10 @@ pub const Error = enum(i32) {
             const system_error = JSC.SystemError{
                 .errno = @intFromEnum(this.errno),
                 .code = bun.String.static(this.errno.code()),
-                .message = if (this.hostname) |hostname| bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }) catch bun.outOfMemory() else bun.String.empty,
+                .message = if (this.hostname) |hostname|
+                    bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }) catch bun.outOfMemory()
+                else
+                    bun.String.createFormat("{s} {s}", .{ this.syscall, this.errno.code()[4..] }) catch bun.outOfMemory(),
                 .syscall = bun.String.createUTF8(this.syscall),
                 .hostname = this.hostname orelse bun.String.empty,
             };
@@ -1745,31 +1748,23 @@ pub const Error = enum(i32) {
         return Deferred.init(this, syscall, host_string, promise.*);
     }
 
-    pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSWithSyscall(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: [:0]const u8) JSC.JSValue {
         const instance = (JSC.SystemError{
             .errno = @intFromEnum(this),
-            .code = bun.String.static(this.code()),
+            .code = bun.String.static(this.code()[4..]),
+            .syscall = bun.String.static(syscall),
+            .message = bun.String.createFormat("{s} {s}", .{ syscall, this.code()[4..] }) catch bun.outOfMemory(),
         }).toErrorInstance(globalThis);
         instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
         return instance;
     }
 
-    pub fn toJSWithSyscall(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8) JSC.JSValue {
+    pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: [:0]const u8, hostname: []const u8) JSC.JSValue {
         const instance = (JSC.SystemError{
             .errno = @intFromEnum(this),
-            .code = bun.String.static(this.code()),
-            .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
-        }).toErrorInstance(globalThis);
-        instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
-        return instance;
-    }
-
-    pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8, hostname: []const u8) JSC.JSValue {
-        const instance = (JSC.SystemError{
-            .errno = @intFromEnum(this),
-            .code = bun.String.static(this.code()),
+            .code = bun.String.static(this.code()[4..]),
             .message = bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname }) catch bun.outOfMemory(),
-            .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
+            .syscall = bun.String.static(syscall),
             .hostname = bun.String.createUTF8(hostname),
         }).toErrorInstance(globalThis);
         instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
@@ -2021,8 +2016,9 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
         const addr_slice = addr.toSlice(bun.default_allocator);
         const addr_str = addr_slice.slice();
         if (addr_str.len >= INET6_ADDRSTRLEN) {
-            return .undefined;
+            return .js_undefined;
         }
+        for (addr_str) |char| if (char == '/') return .js_undefined; // CIDR not allowed
 
         var ip_std_text: [INET6_ADDRSTRLEN + 1]u8 = undefined;
         // we need a null terminated string as input
@@ -2035,12 +2031,12 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
         if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
             af = AF.INET6;
             if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
-                return .undefined;
+                return .js_undefined;
             }
         }
         // ip_addr will contain the null-terminated string of the cannonicalized IP
         if (ares_inet_ntop(af, &ip_std_text, &ip_addr, @sizeOf(@TypeOf(ip_addr))) == null) {
-            return .undefined;
+            return .js_undefined;
         }
         // use the null-terminated size to return the string
         const size = bun.len(bun.cast([*:0]u8, &ip_addr));

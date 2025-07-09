@@ -74,6 +74,11 @@ pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
     clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
     clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
+    clap.parseParam("--git-tag-version <BOOL>               Create a git commit and tag") catch unreachable,
+    clap.parseParam("--no-git-tag-version") catch unreachable,
+    clap.parseParam("--allow-same-version                   Allow bumping to the same version") catch unreachable,
+    clap.parseParam("-m, --message <STR>                    Use the given message for the commit") catch unreachable,
+    clap.parseParam("--preid <STR>                          Identifier to be used to prefix premajor, preminor, prepatch or prerelease version increments") catch unreachable,
     clap.parseParam("<POS> ...                         ") catch unreachable,
 });
 
@@ -119,6 +124,11 @@ const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
 
 const audit_params: []const ParamType = &([_]ParamType{
     clap.parseParam("<POS> ...                              Check installed packages for vulnerabilities") catch unreachable,
+    clap.parseParam("--json                                 Output in JSON format") catch unreachable,
+});
+
+const info_params: []const ParamType = &(shared_params ++ [_]ParamType{
+    clap.parseParam("<POS> ...                              Package name or path to package.json") catch unreachable,
     clap.parseParam("--json                                 Output in JSON format") catch unreachable,
 });
 
@@ -194,6 +204,12 @@ ca_file_name: string = "",
 save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
+
+// `bun pm version` options
+git_tag_version: bool = true,
+allow_same_version: bool = false,
+preid: string = "",
+message: ?string = null,
 
 const PatchOpts = union(enum) {
     nothing: struct {},
@@ -571,6 +587,38 @@ pub fn printHelp(subcommand: Subcommand) void {
             Output.pretty(outro_text, .{});
             Output.flush();
         },
+        .info => {
+            const intro_text =
+                \\
+                \\<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\<package\><r><d>[@\<version\>]<r>
+                \\
+                \\  View package metadata from the registry.
+                \\
+                \\<b>Flags:<r>
+            ;
+
+            const outro_text =
+                \\
+                \\
+                \\<b>Examples:<r>
+                \\  <d>Display metadata for the 'react' package<r>
+                \\  <b><green>bun info<r> <blue>react<r>
+                \\
+                \\  <d>Display a specific version of a package<r>
+                \\  <b><green>bun info<r> <blue>react@18.0.0<r>
+                \\
+                \\  <d>Display a specific property in JSON format<r>
+                \\  <b><green>bun info<r> <blue>react<r> version <cyan>--json<r>
+                \\
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/info<r>.
+                \\
+            ;
+
+            Output.pretty(intro_text, .{});
+            clap.simpleHelp(info_params);
+            Output.pretty(outro_text, .{});
+            Output.flush();
+        },
     }
 }
 
@@ -594,6 +642,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         // TODO: we will probably want to do this for other *_params. this way extra params
         // are not included in the help text
         .audit => shared_params ++ audit_params,
+        .info => info_params,
     };
 
     var diag = clap.Diagnostic{};
@@ -840,6 +889,28 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (cli.analyze and cli.positionals.len == 0) {
         Output.errGeneric("Missing script(s) to analyze. Pass paths to scripts to analyze their dependencies and add any missing ones to the lockfile.\n", .{});
         Global.crash();
+    }
+
+    if (comptime subcommand == .pm) {
+        // `bun pm version` command options
+        if (args.option("--git-tag-version")) |git_tag_version| {
+            if (strings.eqlComptime(git_tag_version, "true")) {
+                cli.git_tag_version = true;
+            } else if (strings.eqlComptime(git_tag_version, "false")) {
+                cli.git_tag_version = false;
+            }
+        } else if (args.flag("--no-git-tag-version")) {
+            cli.git_tag_version = false;
+        } else {
+            cli.git_tag_version = true;
+        }
+        cli.allow_same_version = args.flag("--allow-same-version");
+        if (args.option("--preid")) |preid| {
+            cli.preid = preid;
+        }
+        if (args.option("--message")) |message| {
+            cli.message = message;
+        }
     }
 
     return cli;

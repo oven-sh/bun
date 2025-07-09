@@ -50,6 +50,7 @@ pub const SavedMappings = struct {
             @as(usize, @bitCast(this.data[8..16].*)),
             1,
             @as(usize, @bitCast(this.data[16..24].*)),
+            .{},
         );
         switch (result) {
             .fail => |fail| {
@@ -78,6 +79,8 @@ pub const SavedMappings = struct {
     }
 };
 
+const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
+
 /// ParsedSourceMap is the canonical form for sourcemaps,
 ///
 /// but `SavedMappings` and `SourceProviderMap` are much cheaper to construct.
@@ -86,6 +89,7 @@ pub const Value = bun.TaggedPointerUnion(.{
     ParsedSourceMap,
     SavedMappings,
     SourceProviderMap,
+    BakeSourceProvider,
 });
 
 pub const MissingSourceMapNoteInfo = struct {
@@ -101,6 +105,10 @@ pub const MissingSourceMapNoteInfo = struct {
         }
     }
 };
+
+pub fn putBakeSourceProvider(this: *SavedSourceMap, opaque_source_provider: *BakeSourceProvider, path: []const u8) void {
+    this.putValue(path, Value.init(opaque_source_provider)) catch bun.outOfMemory();
+}
 
 pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
     const source_provider: *SourceProviderMap = @ptrCast(opaque_source_provider);
@@ -120,7 +128,7 @@ pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *a
         }
     } else if (old_value.get(ParsedSourceMap)) |map| {
         if (map.underlying_provider.provider()) |prov| {
-            if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
+            if (@intFromPtr(prov.ptr()) == @intFromPtr(opaque_source_provider)) {
                 this.map.removeByPtr(entry.key_ptr);
                 map.deref();
             }
@@ -130,7 +138,7 @@ pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *a
 
 pub const HashTable = std.HashMap(u64, *anyopaque, bun.IdentityContext(u64), 80);
 
-pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
     try this.putMappings(source, chunk.buffer);
 }
 
@@ -159,7 +167,7 @@ pub fn deinit(this: *SavedSourceMap) void {
     this.map.deinit();
 }
 
-pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
+pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
     try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)));
 }
 
@@ -246,11 +254,39 @@ fn getWithContent(
             MissingSourceMapNoteInfo.path = storage;
             return .{};
         },
+        @field(Value.Tag, @typeName(BakeSourceProvider)) => {
+            // TODO: This is a copy-paste of above branch
+            const ptr: *BakeSourceProvider = Value.from(mapping.value_ptr.*).as(BakeSourceProvider);
+            this.unlock();
+
+            // Do not lock the mutex while we're parsing JSON!
+            if (ptr.getSourceMap(path, .none, hint)) |parse| {
+                if (parse.map) |map| {
+                    map.ref();
+                    // The mutex is not locked. We have to check the hash table again.
+                    this.putValue(path, Value.init(map)) catch bun.outOfMemory();
+
+                    return parse;
+                }
+            }
+
+            this.lock();
+            defer this.unlock();
+            // does not have a valid source map. let's not try again
+            _ = this.map.remove(hash);
+
+            // Store path for a user note.
+            const storage = MissingSourceMapNoteInfo.storage[0..path.len];
+            @memcpy(storage, path);
+            MissingSourceMapNoteInfo.path = storage;
+            return .{};
+        },
         else => {
             if (Environment.allow_assert) {
                 @panic("Corrupt pointer tag");
             }
             this.unlock();
+
             return .{};
         },
     }
@@ -275,7 +311,7 @@ pub fn resolveMapping(
     const map = parse.map orelse return null;
 
     const mapping = parse.mapping orelse
-        SourceMap.Mapping.find(map.mappings, line, column) orelse
+        map.mappings.find(line, column) orelse
         return null;
 
     return .{

@@ -611,15 +611,12 @@ pub fn onReaderDone(this: *FileReader) void {
                     this.eventLoop().js.runCallback(
                         cb,
                         globalThis,
-                        .undefined,
+                        .js_undefined,
                         &.{
-                            JSC.ArrayBuffer.fromBytes(
-                                buffered.items,
-                                .Uint8Array,
-                            ).toJS(
-                                globalThis,
-                                null,
-                            ),
+                            JSC.ArrayBuffer.fromBytes(buffered.items, .Uint8Array).toJS(globalThis, null) catch |err| {
+                                this.pending.result = .{ .err = .{ .WeakJSValue = globalThis.takeException(err) } };
+                                return;
+                            },
                         },
                     );
                 }

@@ -255,7 +255,7 @@ pub const RESPValue = union(RESPType) {
     fn valkeyStrToJSValue(globalObject: *JSC.JSGlobalObject, str: []const u8, options: *const ToJSOptions) bun.JSError!JSC.JSValue {
         if (options.return_as_buffer) {
             // TODO: handle values > 4.7 GB
-            const buf = JSC.ArrayBuffer.createBuffer(globalObject, str);
+            const buf = try JSC.ArrayBuffer.createBuffer(globalObject, str);
             return buf.toJS(globalObject);
         } else {
             return bun.String.createUTF8ForJS(globalObject, str);
@@ -278,7 +278,7 @@ pub const RESPValue = union(RESPType) {
                 var js_array = try JSC.JSValue.createEmptyArray(globalObject, array.len);
                 for (array, 0..) |*item, i| {
                     const js_item = try item.toJSWithOptions(globalObject, options);
-                    js_array.putIndex(globalObject, @intCast(i), js_item);
+                    try js_array.putIndex(globalObject, @intCast(i), js_item);
                 }
                 return js_array;
             },
@@ -303,7 +303,7 @@ pub const RESPValue = union(RESPType) {
                 var js_array = try JSC.JSValue.createEmptyArray(globalObject, set.len);
                 for (set, 0..) |*item, i| {
                     const js_item = try item.toJSWithOptions(globalObject, options);
-                    js_array.putIndex(globalObject, @intCast(i), js_item);
+                    try js_array.putIndex(globalObject, @intCast(i), js_item);
                 }
                 return js_array;
             },
@@ -323,7 +323,7 @@ pub const RESPValue = union(RESPType) {
                 var data_array = try JSC.JSValue.createEmptyArray(globalObject, push.data.len);
                 for (push.data, 0..) |*item, i| {
                     const js_item = try item.toJSWithOptions(globalObject, options);
-                    data_array.putIndex(globalObject, @intCast(i), js_item);
+                    try data_array.putIndex(globalObject, @intCast(i), js_item);
                 }
                 js_obj.put(globalObject, "data", data_array);
 

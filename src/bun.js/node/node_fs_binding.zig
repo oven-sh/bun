@@ -34,7 +34,7 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
 
             var result = function(&this.node_fs, args, .sync);
             return switch (result) {
-                .err => |err| globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject))),
+                .err => |err| globalObject.throwValue(err.toJS(globalObject)),
                 .result => |*res| globalObject.toJS(res),
             };
         }
@@ -218,7 +218,7 @@ pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.
     const arguments = callFrame.arguments_old(1);
 
     if (arguments.len < 1) {
-        return .undefined;
+        return .js_undefined;
     }
 
     if (comptime !bun.Environment.isLinux) {
@@ -232,7 +232,7 @@ pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.
             return JSC.JSValue.jsNumber(fd.cast());
         },
         .err => |err| {
-            return globalObject.throwValue(err.toJSC(globalObject));
+            return globalObject.throwValue(err.toJS(globalObject));
         },
     }
 }

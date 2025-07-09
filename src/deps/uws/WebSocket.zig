@@ -1,6 +1,6 @@
 pub fn NewWebSocket(comptime ssl_flag: c_int) type {
     return opaque {
-        const WebSocket = @This();
+        const WebSocket = NewWebSocket(ssl_flag);
 
         pub fn raw(this: *WebSocket) *RawWebSocket {
             return @as(*RawWebSocket, @ptrCast(this));

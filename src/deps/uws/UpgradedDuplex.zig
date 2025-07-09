@@ -96,7 +96,10 @@ fn callWriteOrEnd(this: *UpgradedDuplex, data: ?[]const u8, msg_more: bool) void
         const globalThis = this.global.?;
         const writeOrEnd = if (msg_more) duplex.getFunction(globalThis, "write") catch return orelse return else duplex.getFunction(globalThis, "end") catch return orelse return;
         if (data) |data_| {
-            const buffer = JSC.ArrayBuffer.BinaryType.toJS(.Buffer, data_, globalThis);
+            const buffer = JSC.ArrayBuffer.BinaryType.toJS(.Buffer, data_, globalThis) catch |err| {
+                this.handlers.onError(this.handlers.ctx, globalThis.takeException(err));
+                return;
+            };
             buffer.ensureStillAlive();
 
             _ = writeOrEnd.call(globalThis, duplex, &.{buffer}) catch |err| {
@@ -149,7 +152,7 @@ fn onReceivedData(
             const data_arg = args.ptr[0];
             if (this.origin.has()) {
                 if (data_arg.isEmptyOrUndefinedOrNull()) {
-                    return JSC.JSValue.jsUndefined();
+                    return .js_undefined;
                 }
                 if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
                     // yay we can read the data
@@ -164,7 +167,7 @@ fn onReceivedData(
             }
         }
     }
-    return JSC.JSValue.jsUndefined();
+    return .js_undefined;
 }
 
 fn onEnd(
@@ -203,7 +206,7 @@ fn onWritable(
         this.handlers.onWritable(this.handlers.ctx);
     }
 
-    return JSC.JSValue.jsUndefined();
+    return .js_undefined;
 }
 
 fn onCloseJS(
@@ -223,7 +226,7 @@ fn onCloseJS(
         }
     }
 
-    return JSC.JSValue.jsUndefined();
+    return .js_undefined;
 }
 
 pub fn onTimeout(this: *UpgradedDuplex) EventLoopTimer.Arm {
@@ -278,7 +281,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
             this.onDataCallback = .create(dataCallback, globalThis);
             break :brk dataCallback;
         };
-        array.putIndex(globalThis, 0, callback);
+        try array.putIndex(globalThis, 0, callback);
     }
 
     {
@@ -298,7 +301,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
             this.onEndCallback = .create(endCallback, globalThis);
             break :brk endCallback;
         };
-        array.putIndex(globalThis, 1, callback);
+        try array.putIndex(globalThis, 1, callback);
     }
 
     {
@@ -317,7 +320,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
             this.onWritableCallback = .create(writableCallback, globalThis);
             break :brk writableCallback;
         };
-        array.putIndex(globalThis, 2, callback);
+        try array.putIndex(globalThis, 2, callback);
     }
 
     {
@@ -336,7 +339,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
             this.onCloseCallback = .create(closeCallback, globalThis);
             break :brk closeCallback;
         };
-        array.putIndex(globalThis, 3, callback);
+        try array.putIndex(globalThis, 3, callback);
     }
 
     return array;
@@ -355,15 +358,15 @@ pub fn startTLS(this: *UpgradedDuplex, ssl_options: JSC.API.ServerConfig.SSLConf
     this.wrapper.?.start();
 }
 
-pub fn encodeAndWrite(this: *UpgradedDuplex, data: []const u8, is_end: bool) i32 {
-    log("encodeAndWrite (len: {} - is_end: {})", .{ data.len, is_end });
+pub fn encodeAndWrite(this: *UpgradedDuplex, data: []const u8) i32 {
+    log("encodeAndWrite (len: {})", .{data.len});
     if (this.wrapper) |*wrapper| {
         return @as(i32, @intCast(wrapper.writeData(data) catch 0));
     }
     return 0;
 }
 
-pub fn rawWrite(this: *UpgradedDuplex, encoded_data: []const u8, _: bool) i32 {
+pub fn rawWrite(this: *UpgradedDuplex, encoded_data: []const u8) i32 {
     this.internalWrite(encoded_data);
     return @intCast(encoded_data.len);
 }

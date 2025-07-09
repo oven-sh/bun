@@ -220,6 +220,12 @@ pub const Installer = struct {
         this.installed.set(pkg_id);
     }
 
+    // This function runs only on the main thread. The installer tasks threads
+    // will be changing values in `entry_step`, but the blocked state is only
+    // set on the main thread, allowing the code between
+    // `entry_steps[entry_id.get()].load(.monotonic)`
+    // and
+    // `entry_steps[entry_id.get()].store(.symlink_dependency_binaries, .monotonic)`
     pub fn resumeUnblockedTasks(this: *Installer) void {
         const entries = this.store.entries.slice();
         const entry_steps = entries.items(.step);

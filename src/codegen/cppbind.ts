@@ -85,7 +85,7 @@ class PositionedErrorClass extends Error {
   }
 }
 
-const allowedTypes = new Set(["primitive_type", "qualified_identifier", "type_identifier"]);
+const allowedTypes = new Set(["primitive_type", "qualified_identifier", "type_identifier", "sized_type_specifier"]);
 function processRootmostType(file: string, node: SyntaxNode): CppType {
   const type = node.childrenForFieldName("type")[0];
   if (!type) throwError(nodePosition(file, node), "no type found");

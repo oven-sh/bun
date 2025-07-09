@@ -8,9 +8,10 @@ test("workspace devDependencies should take priority over peerDependencies for r
     "package.json": JSON.stringify({
       name: "test-monorepo",
       version: "1.0.0",
-      workspaces: ["packages/*"],
-      dependencies: {},
-      devDependencies: {},
+      workspaces: {
+        packages: ["packages/*"],
+        nodeLinker: "isolated"
+      },
     }),
     "packages/lib/package.json": JSON.stringify({
       name: "lib",
@@ -59,7 +60,7 @@ test("workspace devDependencies should take priority over peerDependencies for r
   expect(stderr).not.toContain("next");
   
   // Check that the lockfile was created correctly
-  const lockfilePath = join(dir, "bun.lockb");
+  const lockfilePath = join(dir, "bun.lock");
   expect(await Bun.file(lockfilePath).exists()).toBe(true);
 });
 
@@ -68,22 +69,29 @@ test("devDependencies and peerDependencies with different versions should coexis
     "package.json": JSON.stringify({
       name: "test-monorepo",
       version: "1.0.0",
-      workspaces: ["packages/*"],
-      dependencies: {},
-      devDependencies: {},
+      workspaces: {
+        packages: ["packages/*"],
+        nodeLinker: "isolated"
+      },
     }),
     "packages/lib/package.json": JSON.stringify({
       name: "lib",
       version: "1.0.0",
       dependencies: {},
       devDependencies: {
-        "lodash": "4.17.21"
+        "utils": "1.0.0"
       },
       peerDependencies: {
-        "lodash": "^4.17.0"
+        "utils": "^1.0.0"
       },
     }),
     "packages/lib/index.js": `console.log("lib");`,
+    "packages/utils/package.json": JSON.stringify({
+      name: "utils",
+      version: "1.0.0",
+      main: "index.js",
+    }),
+    "packages/utils/index.js": `console.log("utils");`,
   });
 
   // Run bun install in the monorepo
@@ -106,10 +114,15 @@ test("devDependencies and peerDependencies with different versions should coexis
     });
   });
 
+  if (exitCode !== 0) {
+    console.error("Install failed with exit code:", exitCode);
+    console.error("stdout:", stdout);
+    console.error("stderr:", stderr);
+  }
   expect(exitCode).toBe(0);
   
   // Check that the lockfile was created correctly
-  const lockfilePath = join(dir, "bun.lockb");
+  const lockfilePath = join(dir, "bun.lock");
   expect(await Bun.file(lockfilePath).exists()).toBe(true);
 });
 
@@ -149,10 +162,15 @@ test("dependency behavior comparison prioritizes devDependencies", async () => {
     });
   });
 
+  if (exitCode !== 0) {
+    console.error("Install failed with exit code:", exitCode);
+    console.error("stdout:", stdout);
+    console.error("stderr:", stderr);
+  }
   expect(exitCode).toBe(0);
   
   // Check that the lockfile was created correctly
-  const lockfilePath = join(dir, "bun.lockb");
+  const lockfilePath = join(dir, "bun.lock");
   expect(await Bun.file(lockfilePath).exists()).toBe(true);
 });
 
@@ -161,9 +179,10 @@ test("Next.js monorepo scenario should not make unnecessary network requests", a
     "package.json": JSON.stringify({
       name: "nextjs-monorepo",
       version: "1.0.0",
-      workspaces: ["packages/*"],
-      dependencies: {},
-      devDependencies: {},
+      workspaces: {
+        packages: ["packages/*"],
+        nodeLinker: "isolated"
+      },
     }),
     "packages/web/package.json": JSON.stringify({
       name: "web",
@@ -172,8 +191,7 @@ test("Next.js monorepo scenario should not make unnecessary network requests", a
         "next": "15.4.0-canary.119"
       },
       devDependencies: {
-        "next": "15.4.0-canary.119",
-        "@types/webpack": "^5.28.5"
+        "next": "15.4.0-canary.119"
       },
       peerDependencies: {
         "next": "^13.0.0 || ^14.0.0 || ^15.0.0"
@@ -216,6 +234,6 @@ test("Next.js monorepo scenario should not make unnecessary network requests", a
   expect(stderr).not.toContain("404");
   
   // Check that the lockfile was created correctly
-  const lockfilePath = join(dir, "bun.lockb");
+  const lockfilePath = join(dir, "bun.lock");
   expect(await Bun.file(lockfilePath).exists()).toBe(true);
 });

@@ -2,7 +2,7 @@
 name: Spawn a child process
 ---
 
-Use [`Bun.spawn()`](https://bun.sh/docs/api/spawn) to spawn a child process.
+Use [`Bun.spawn()`](https://bun.com/docs/api/spawn) to spawn a child process.
 
 ```ts
 const proc = Bun.spawn(["echo", "hello"]);
@@ -38,4 +38,4 @@ output; // => "hello\n"
 
 ---
 
-See [Docs > API > Child processes](https://bun.sh/docs/api/spawn) for complete documentation.
+See [Docs > API > Child processes](https://bun.com/docs/api/spawn) for complete documentation.

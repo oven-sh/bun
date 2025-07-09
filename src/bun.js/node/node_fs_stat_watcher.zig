@@ -465,8 +465,8 @@ pub const StatWatcher = struct {
     pub fn init(args: Arguments) !*StatWatcher {
         log("init", .{});
 
-        const buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(buf);
+        const buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(buf);
         var slice = args.path.slice();
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];

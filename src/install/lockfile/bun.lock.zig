@@ -91,6 +91,14 @@ pub const Stringifier = struct {
             try writer.print("\"lockfileVersion\": {d},\n", .{@intFromEnum(Version.current)});
             try writeIndent(writer, indent);
 
+            if (lockfile.node_linker != .auto) {
+                try writer.print(
+                    \\"nodeLinker": "{s}",
+                    \\
+                , .{@tagName(lockfile.node_linker)});
+                try writeIndent(writer, indent);
+            }
+
             try writer.writeAll("\"workspaces\": {\n");
             try incIndent(writer, indent);
             {
@@ -1002,6 +1010,7 @@ const ParseError = OOM || error{
     InvalidOverridesObject,
     InvalidCatalogObject,
     InvalidCatalogsObject,
+    InvalidNodeLinkerValue,
     InvalidDependencyName,
     InvalidDependencyVersion,
     InvalidPackageResolution,
@@ -1344,7 +1353,7 @@ pub fn parseIntoBinaryLockfile(
 
                 if (!key.isString() or key.data.e_string.len() == 0) {
                     try log.addError(source, key.loc, "Expected a non-empty string");
-                    return error.InvalidCatalogObject;
+                    return error.InvalidCatalogsObject;
                 }
 
                 const dep_name_str = key.asString(allocator).?;
@@ -1353,7 +1362,7 @@ pub fn parseIntoBinaryLockfile(
 
                 if (!value.isString()) {
                     try log.addError(source, value.loc, "Expected a string");
-                    return error.InvalidCatalogObject;
+                    return error.InvalidCatalogsObject;
                 }
 
                 const version_str = value.asString(allocator).?;
@@ -1374,7 +1383,7 @@ pub fn parseIntoBinaryLockfile(
                         manager,
                     ) orelse {
                         try log.addError(source, value.loc, "Invalid catalog version");
-                        return error.InvalidCatalogObject;
+                        return error.InvalidCatalogsObject;
                     },
                 };
 
@@ -1386,12 +1395,27 @@ pub fn parseIntoBinaryLockfile(
 
                 if (entry.found_existing) {
                     try log.addError(source, key.loc, "Duplicate catalog entry");
-                    return error.InvalidCatalogObject;
+                    return error.InvalidCatalogsObject;
                 }
 
                 entry.value_ptr.* = dep;
             }
         }
+    }
+
+    if (root.get("nodeLinker")) |node_linker_expr| {
+        if (!node_linker_expr.isString()) {
+            try log.addError(source, node_linker_expr.loc, "Expected a string");
+            return error.InvalidNodeLinkerValue;
+        }
+
+        const node_linker_str = node_linker_expr.data.e_string.slice(allocator);
+        lockfile.node_linker = BinaryLockfile.NodeLinker.fromStr(node_linker_str) orelse {
+            try log.addError(source, node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
+            return error.InvalidNodeLinkerValue;
+        };
+    } else {
+        lockfile.node_linker = .auto;
     }
 
     const workspaces_obj = root.getObject("workspaces") orelse {

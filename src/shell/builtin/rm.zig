@@ -860,7 +860,7 @@ pub const ShellRmTask = struct {
             return Maybe(void).success;
         }
 
-        var iterator = DirIterator.iterate(fd.stdDir(), .u8);
+        var iterator = DirIterator.iterate(fd, .u8);
         var entry = iterator.next();
 
         var remove_child_vtable = RemoveFileVTable{

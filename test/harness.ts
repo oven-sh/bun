@@ -1123,7 +1123,7 @@ export function tmpdirSync(pattern: string = "bun.test."): string {
 }
 
 export async function runBunInstall(
-  env: NodeJS.ProcessEnv,
+  env: NodeJS.Dict<string>,
   cwd: string,
   options?: {
     allowWarnings?: boolean;
@@ -1211,7 +1211,7 @@ export async function runBunUpdate(
   return { out: out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/), err, exitCode };
 }
 
-export async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
+export async function pack(cwd: string, env: NodeJS.Dict<string>, ...args: string[]) {
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: [bunExe(), "pm", "pack", ...args],
     cwd,
@@ -1645,7 +1645,7 @@ export class VerdaccioRegistry {
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
     let bunfig = `
     [install]
-    cache = "${join(dir, ".bun-cache")}"
+    cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
     `;
     if ("saveTextLockfile" in opts) {
       bunfig += `saveTextLockfile = ${opts.saveTextLockfile}

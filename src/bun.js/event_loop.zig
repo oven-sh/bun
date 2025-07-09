@@ -314,7 +314,7 @@ pub fn tickConcurrentWithCount(this: *EventLoop) usize {
     return this.tasks.count - start_count;
 }
 
-pub inline fn usocketsLoop(this: *const EventLoop) *uws.Loop {
+pub fn usocketsLoop(this: *const EventLoop) *uws.Loop {
     if (comptime Environment.isWindows) {
         return this.uws_loop.?;
     }
@@ -552,6 +552,11 @@ pub fn ensureWaker(this: *EventLoop) void {
         this.virtual_machine.gc_controller.init(this.virtual_machine);
         // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
         // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.jsc, JSC.VM.drainMicrotasks);
+    }
+    if (comptime Environment.isWindows) {
+        if (this.uws_loop == null) {
+            this.uws_loop = bun.uws.Loop.get();
+        }
     }
     bun.uws.Loop.get().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(this));
 }

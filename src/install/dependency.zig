@@ -52,10 +52,12 @@ version: Dependency.Version = .{},
 behavior: Behavior = .{},
 
 /// Sorting order for dependencies is:
-/// 1. [ `peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies` ]
+/// 1. [ `devDependencies`, `peerDependencies`, `optionalDependencies`, `dependencies` ]
 /// 2. name ASC
 /// "name" must be ASC so that later, when we rebuild the lockfile
 /// we insert it back in reverse order without an extra sorting pass
+/// Note: devDependencies are prioritized over peerDependencies to ensure
+/// that dev dependencies are resolved first when both exist for the same package
 pub fn isLessThan(string_buf: []const u8, lhs: Dependency, rhs: Dependency) bool {
     const behavior = lhs.behavior.cmp(rhs.behavior);
     if (behavior != .eq) {
@@ -1420,6 +1422,8 @@ pub const Behavior = packed struct(u8) {
                 .lt;
         }
 
+        // Prioritize devDependencies over peerDependencies for resolution
+        // This ensures that when both exist for the same package, dev deps win
         if (lhs.isDev() != rhs.isDev()) {
             return if (lhs.isDev())
                 .gt
@@ -1427,15 +1431,15 @@ pub const Behavior = packed struct(u8) {
                 .lt;
         }
 
-        if (lhs.isOptional() != rhs.isOptional()) {
-            return if (lhs.isOptional())
+        if (lhs.isPeer() != rhs.isPeer()) {
+            return if (lhs.isPeer())
                 .gt
             else
                 .lt;
         }
 
-        if (lhs.isPeer() != rhs.isPeer()) {
-            return if (lhs.isPeer())
+        if (lhs.isOptional() != rhs.isOptional()) {
+            return if (lhs.isOptional())
                 .gt
             else
                 .lt;

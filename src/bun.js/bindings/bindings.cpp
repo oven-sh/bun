@@ -5180,7 +5180,7 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
     return {};
 }
 
-extern "C" void [[ZIG_EXPORT(check_slow)]] JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
 {
     JSC::JSValue value = JSC::JSValue::decode(jsException);
     if (value == JSC::JSValue {}) {
@@ -5279,7 +5279,7 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
     return vm->heap.sizeAfterLastFullCollection();
 }
 
-bool [[ZIG_EXPORT(nothrow)]] JSC__VM__isJITEnabled()
+[[ZIG_EXPORT(nothrow)]] bool JSC__VM__isJITEnabled()
 {
     return JSC::Options::useJIT();
 }

@@ -221,7 +221,7 @@ function generateZigParameterList(parameters: CppParameter[], globalThisArg?: Cp
   return parameters
     .map(p => {
       if (p === globalThisArg) {
-        return `${formatZigName(p.name)}: *JSC.JSGlobalObject`;
+        return `${formatZigName(p.name)}: *jsc.JSGlobalObject`;
       } else {
         return `${formatZigName(p.name)}: ${generateZigType(p.type, false)}`;
       }
@@ -371,7 +371,7 @@ function generateZigFn(
     let globalThisArg: CppParameter | undefined;
     for (const param of fn.parameters) {
       const type = generateZigType(param.type);
-      if (type === "?*JSC.JSGlobalObject") {
+      if (type === "?*jsc.JSGlobalObject") {
         globalThisArg = param;
         break;
       }
@@ -381,7 +381,7 @@ function generateZigFn(
     if (fn.tag === "check_slow") {
       resultBindings.push(
         `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${generateZigType(fn.returnType)} {`,
-        `        var scope: JSC.CatchScope = undefined;`,
+        `        var scope: jsc.CatchScope = undefined;`,
         `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
         `        defer scope.deinit();`,
         ``,
@@ -393,7 +393,7 @@ function generateZigFn(
     } else if (fn.tag === "zero_is_throw") {
       resultBindings.push(
         `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${generateZigType(fn.returnType)} {`,
-        `        var scope: JSC.ExceptionValidationScope = undefined;`,
+        `        var scope: jsc.ExceptionValidationScope = undefined;`,
         `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
         `        defer scope.deinit();`,
         ``,

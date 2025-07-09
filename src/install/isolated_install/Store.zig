@@ -342,7 +342,9 @@ pub const Store = struct {
 
                     const order = ctx.order(new, existing);
 
-                    bun.debugAssert(order != .eq);
+                    if (order == .eq) {
+                        return;
+                    }
 
                     if (order == .lt) {
                         try this.list.insert(allocator, i, new);
@@ -362,7 +364,9 @@ pub const Store = struct {
 
                     const order = ctx.order(new, existing);
 
-                    bun.debugAssert(order != .eq);
+                    if (order == .eq) {
+                        return;
+                    }
 
                     if (order == .lt) {
                         this.list.insertAssumeCapacity(i, new);

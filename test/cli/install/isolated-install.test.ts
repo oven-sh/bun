@@ -1,6 +1,6 @@
 import { file, write } from "bun";
-import { afterAll, beforeAll, describe, expect, test, setDefaultTimeout } from "bun:test";
-import { readlinkSync, existsSync } from "fs";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { existsSync, readlinkSync } from "fs";
 import { VerdaccioRegistry, bunEnv, readdirSorted, runBunInstall } from "harness";
 import { join } from "path";
 

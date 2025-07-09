@@ -350,6 +350,10 @@ pub const LifecycleScriptSubprocess = struct {
 
                 if (exit.code > 0) {
                     if (this.optional) {
+                        if (this.ctx) |ctx| {
+                            ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].store(.done, .monotonic);
+                            ctx.installer.onTaskComplete(ctx.entry_id, .fail);
+                        }
                         _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
                         this.deinitAndDeletePackage();
                         return;
@@ -449,6 +453,10 @@ pub const LifecycleScriptSubprocess = struct {
             },
             .err => |err| {
                 if (this.optional) {
+                    if (this.ctx) |ctx| {
+                        ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].store(.done, .monotonic);
+                        ctx.installer.onTaskComplete(ctx.entry_id, .fail);
+                    }
                     _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
                     this.deinitAndDeletePackage();
                     return;

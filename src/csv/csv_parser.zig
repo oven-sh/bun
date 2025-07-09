@@ -54,7 +54,7 @@ pub const CSVParserOptions = struct {
     quote: []const u8 = "\"",
 
     comment_char: []const u8 = "#",
-    comments: bool = true,
+    comments: bool = false,
     preview: ?usize = null,
     skip_empty_lines: bool = false,
 };
@@ -394,7 +394,7 @@ pub const CSV = struct {
                     }
                 }
 
-                // Check for comment character (comments can appear anywhere in the line)
+                // Check for comment character (end of field)
                 if (p.options.comments and p.isCommentLine()) {
                     break;
                 }
@@ -482,14 +482,37 @@ pub const CSV = struct {
             return fields;
         }
 
+        // Check for comment at start of line (before first field)
+        if (p.options.comments and p.isCommentLine()) {
+            const comment_text = try p.parseCommentLine();
+            errdefer p.allocator.free(comment_text);
+            try p.addCommentToArray(comment_text);
+            return fields; // Return empty record, comment will be processed
+        }
+
         // Parse first field
         const first_field = try p.parseField(row_index);
         try fields.append(first_field);
 
         // Parse remaining fields
         while (p.consumeDelimiter()) {
+            // Check for comment after delimiter (before next field)
+            if (p.options.comments and p.isCommentLine()) {
+                const comment_text = try p.parseCommentLine();
+                errdefer p.allocator.free(comment_text);
+                try p.addCommentToArray(comment_text);
+                break; // Stop parsing fields, rest of line is comment
+            }
+
             const field = try p.parseField(row_index);
             try fields.append(field);
+        }
+
+        // Check for comment at the end of the line (after all fields)
+        if (p.options.comments and p.isCommentLine()) {
+            const comment_text = try p.parseCommentLine();
+            errdefer p.allocator.free(comment_text);
+            try p.addCommentToArray(comment_text);
         }
 
         return fields;
@@ -504,14 +527,37 @@ pub const CSV = struct {
             return fields;
         }
 
+        // Check for comment at start of line (before first field)
+        if (p.options.comments and p.isCommentLine()) {
+            const comment_text = try p.parseCommentLine();
+            errdefer p.allocator.free(comment_text);
+            try p.addCommentToArray(comment_text);
+            return fields; // Return empty record, comment will be processed
+        }
+
         // Parse first header field
         const first_field = try p.parseHeaderField();
         try fields.append(first_field);
 
         // Parse remaining header fields
         while (p.consumeDelimiter()) {
+            // Check for comment after delimiter (before next field)
+            if (p.options.comments and p.isCommentLine()) {
+                const comment_text = try p.parseCommentLine();
+                errdefer p.allocator.free(comment_text);
+                try p.addCommentToArray(comment_text);
+                break; // Stop parsing fields, rest of line is comment
+            }
+
             const field = try p.parseHeaderField();
             try fields.append(field);
+        }
+
+        // Check for comment at the end of the line (after all fields)
+        if (p.options.comments and p.isCommentLine()) {
+            const comment_text = try p.parseCommentLine();
+            errdefer p.allocator.free(comment_text);
+            try p.addCommentToArray(comment_text);
         }
 
         return fields;

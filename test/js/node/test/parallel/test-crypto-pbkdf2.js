@@ -220,7 +220,7 @@ assert.throws(
   }
 );
 
-if (!common.openSSLIsBoringSSL) {
+if (!hasOpenSSL3) {
   const kNotPBKDF2Supported = ['shake128', 'shake256'];
   crypto.getHashes()
     .filter((hash) => !kNotPBKDF2Supported.includes(hash))

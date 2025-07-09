@@ -86,11 +86,9 @@ pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *JSC.CppT
 
 pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
     JSC.markBinding(@src());
-    // This JSGlobalObject might not be the main script execution context
-    // See the crash in https://github.com/oven-sh/bun/issues/9778
-    const vm = JSC.VirtualMachine.get();
-    if (!value.isTerminationException(vm.jsc)) {
-        _ = vm.uncaughtException(globalObject, value, false);
+
+    if (!value.isTerminationException()) {
+        _ = globalObject.bunVM().uncaughtException(globalObject, value, false);
     }
     return .js_undefined;
 }
@@ -172,6 +170,14 @@ export fn Bun__getVerboseFetchValue() i32 {
         .headers => 1,
         .curl => 2,
     };
+}
+
+const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
+export fn Bun__addBakeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const slice = specifier.toUTF8(sfb.get());
+    defer slice.deinit();
+    vm.source_mappings.putBakeSourceProvider(@as(*BakeSourceProvider, @ptrCast(opaque_source_provider)), slice.slice());
 }
 
 export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {

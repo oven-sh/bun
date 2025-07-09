@@ -30,8 +30,8 @@ pub fn start(this: *Which) Yield {
     }
 
     if (this.bltn().stdout.needsIO() == null) {
-        const path_buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(path_buf);
+        const path_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(path_buf);
         const PATH = this.bltn().parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
         var had_not_found = false;
         for (args) |arg_raw| {
@@ -68,8 +68,8 @@ pub fn next(this: *Which) Yield {
     const arg_raw = multiargs.args_slice[multiargs.arg_idx];
     const arg = arg_raw[0..std.mem.len(arg_raw)];
 
-    const path_buf = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(path_buf);
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
     const PATH = this.bltn().parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
 
     const resolved = which(path_buf, PATH.slice(), this.bltn().parentCmd().base.shell.cwdZ(), arg) orelse {

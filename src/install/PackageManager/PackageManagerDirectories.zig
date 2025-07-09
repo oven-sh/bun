@@ -5,6 +5,11 @@ pub inline fn getCacheDirectory(this: *PackageManager) std.fs.Dir {
     };
 }
 
+pub inline fn getCacheDirectoryAndAbsPath(this: *PackageManager) struct { FD, bun.AbsPath(.{}) } {
+    const cache_dir = this.getCacheDirectory();
+    return .{ .fromStdDir(cache_dir), .from(this.cache_directory_path) };
+}
+
 pub inline fn getTemporaryDirectory(this: *PackageManager) std.fs.Dir {
     return this.temp_dir_ orelse brk: {
         this.temp_dir_ = ensureTemporaryDirectory(this);
@@ -356,21 +361,41 @@ pub fn setupGlobalDir(manager: *PackageManager, ctx: Command.Context) !void {
     manager.options.bin_path = path.ptr[0..path.len :0];
 }
 
-pub fn globalLinkDir(this: *PackageManager) !std.fs.Dir {
+pub fn globalLinkDir(this: *PackageManager) std.fs.Dir {
     return this.global_link_dir orelse brk: {
-        var global_dir = try Options.openGlobalDir(this.options.explicit_global_directory);
+        var global_dir = Options.openGlobalDir(this.options.explicit_global_directory) catch |err| switch (err) {
+            error.@"No global directory found" => {
+                Output.errGeneric("failed to find a global directory for package caching and global link directories", .{});
+                Global.exit(1);
+            },
+            else => {
+                Output.err(err, "failed to open the global directory", .{});
+                Global.exit(1);
+            },
+        };
         this.global_dir = global_dir;
-        this.global_link_dir = try global_dir.makeOpenPath("node_modules", .{});
+        this.global_link_dir = global_dir.makeOpenPath("node_modules", .{}) catch |err| {
+            Output.err(err, "failed to open global link dir node_modules at '{}'", .{FD.fromStdDir(global_dir)});
+            Global.exit(1);
+        };
         var buf: bun.PathBuffer = undefined;
-        const _path = try bun.getFdPath(.fromStdDir(this.global_link_dir.?), &buf);
-        this.global_link_dir_path = try Fs.FileSystem.DirnameStore.instance.append([]const u8, _path);
+        const _path = bun.getFdPath(.fromStdDir(this.global_link_dir.?), &buf) catch |err| {
+            Output.err(err, "failed to get the full path of the global directory", .{});
+            Global.exit(1);
+        };
+        this.global_link_dir_path = Fs.FileSystem.DirnameStore.instance.append([]const u8, _path) catch bun.outOfMemory();
         break :brk this.global_link_dir.?;
     };
 }
 
-pub fn globalLinkDirPath(this: *PackageManager) ![]const u8 {
-    _ = try this.globalLinkDir();
+pub fn globalLinkDirPath(this: *PackageManager) []const u8 {
+    _ = this.globalLinkDir();
     return this.global_link_dir_path;
+}
+
+pub fn globalLinkDirAndPath(this: *PackageManager) struct { std.fs.Dir, []const u8 } {
+    const dir = this.globalLinkDir();
+    return .{ dir, this.global_link_dir_path };
 }
 
 pub fn pathForCachedNPMPath(
@@ -492,14 +517,7 @@ pub fn computeCacheDirAndSubpath(
             cache_dir = std.fs.cwd();
         },
         .symlink => {
-            const directory = manager.globalLinkDir() catch |err| {
-                const fmt = "\n<r><red>error:<r> unable to access global directory while installing <b>{s}<r>: {s}\n";
-                const args = .{ name, @errorName(err) };
-
-                Output.prettyErrorln(fmt, args);
-
-                Global.exit(1);
-            };
+            const directory = manager.globalLinkDir();
 
             const folder = resolution.value.symlink.slice(buf);
 
@@ -507,7 +525,7 @@ pub fn computeCacheDirAndSubpath(
                 cache_dir_subpath = ".";
                 cache_dir = std.fs.cwd();
             } else {
-                const global_link_dir = manager.globalLinkDirPath() catch unreachable;
+                const global_link_dir = manager.globalLinkDirPath();
                 var ptr = folder_path_buf;
                 var remain: []u8 = folder_path_buf[0..];
                 @memcpy(ptr[0..global_link_dir.len], global_link_dir);
@@ -721,90 +739,6 @@ const PatchHashFmt = struct {
     }
 };
 
-pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
-    if (this.node_gyp_tempdir_name.len > 0) return;
-
-    const tempdir = this.getTemporaryDirectory();
-    var path_buf: bun.PathBuffer = undefined;
-    const node_gyp_tempdir_name = bun.span(try Fs.FileSystem.instance.tmpname("node-gyp", &path_buf, 12345));
-
-    // used later for adding to path for scripts
-    this.node_gyp_tempdir_name = try this.allocator.dupe(u8, node_gyp_tempdir_name);
-
-    var node_gyp_tempdir = tempdir.makeOpenPath(this.node_gyp_tempdir_name, .{}) catch |err| {
-        if (err == error.EEXIST) {
-            // it should not exist
-            Output.prettyErrorln("<r><red>error<r>: node-gyp tempdir already exists", .{});
-            Global.crash();
-        }
-        Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
-        Global.crash();
-    };
-    defer node_gyp_tempdir.close();
-
-    const file_name = switch (Environment.os) {
-        else => "node-gyp",
-        .windows => "node-gyp.cmd",
-    };
-    const mode = switch (Environment.os) {
-        else => 0o755,
-        .windows => 0, // windows does not have an executable bit
-    };
-
-    var node_gyp_file = node_gyp_tempdir.createFile(file_name, .{ .mode = mode }) catch |err| {
-        Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
-        Global.crash();
-    };
-    defer node_gyp_file.close();
-
-    const content = switch (Environment.os) {
-        .windows =>
-        \\if not defined npm_config_node_gyp (
-        \\  bun x --silent node-gyp %*
-        \\) else (
-        \\  node "%npm_config_node_gyp%" %*
-        \\)
-        \\
-        ,
-        else =>
-        \\#!/bin/sh
-        \\if [ "x$npm_config_node_gyp" = "x" ]; then
-        \\  bun x --silent node-gyp $@
-        \\else
-        \\  "$npm_config_node_gyp" $@
-        \\fi
-        \\
-        ,
-    };
-
-    node_gyp_file.writeAll(content) catch |err| {
-        Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@errorName(err)});
-        Global.crash();
-    };
-
-    // Add our node-gyp tempdir to the path
-    const existing_path = this.env.get("PATH") orelse "";
-    var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + this.temp_dir_name.len + 1 + this.node_gyp_tempdir_name.len);
-    try PATH.appendSlice(existing_path);
-    if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
-        try PATH.append(std.fs.path.delimiter);
-    try PATH.appendSlice(strings.withoutTrailingSlash(this.temp_dir_name));
-    try PATH.append(std.fs.path.sep);
-    try PATH.appendSlice(this.node_gyp_tempdir_name);
-    try this.env.map.put("PATH", PATH.items);
-
-    const npm_config_node_gyp = try std.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
-        strings.withoutTrailingSlash(this.temp_dir_name),
-        std.fs.path.sep_str,
-        strings.withoutTrailingSlash(this.node_gyp_tempdir_name),
-        std.fs.path.sep_str,
-        file_name,
-    });
-
-    const node_gyp_abs_dir = std.fs.path.dirname(npm_config_node_gyp).?;
-    try this.env.map.putAllocKeyAndValue(this.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
-}
-
 var using_fallback_temp_dir: bool = false;
 
 // @sortImports
@@ -823,7 +757,6 @@ const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
 const string = bun.string;
 const stringZ = bun.stringZ;
-const strings = bun.strings;
 const Command = bun.CLI.Command;
 const File = bun.sys.File;
 

@@ -242,7 +242,6 @@ pub const PackageInstaller = struct {
     pub fn incrementTreeInstallCount(
         this: *PackageInstaller,
         tree_id: Lockfile.Tree.Id,
-        maybe_destination_dir: ?*LazyPackageDestinationDir,
         comptime should_install_packages: bool,
         log_level: Options.LogLevel,
     ) void {
@@ -269,19 +268,13 @@ pub const PackageInstaller = struct {
 
         this.completed_trees.set(tree_id);
 
-        // Avoid opening this directory if we don't need to.
         if (tree.binaries.count() > 0) {
-            // Don't close this directory in here. It will be closed by the caller.
-            if (maybe_destination_dir) |maybe| {
-                if (maybe.getDir() catch null) |destination_dir| {
-                    this.seen_bin_links.clearRetainingCapacity();
+            this.seen_bin_links.clearRetainingCapacity();
 
-                    var link_target_buf: bun.PathBuffer = undefined;
-                    var link_dest_buf: bun.PathBuffer = undefined;
-                    var link_rel_buf: bun.PathBuffer = undefined;
-                    this.linkTreeBins(tree, tree_id, destination_dir, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
-                }
-            }
+            var link_target_buf: bun.PathBuffer = undefined;
+            var link_dest_buf: bun.PathBuffer = undefined;
+            var link_rel_buf: bun.PathBuffer = undefined;
+            this.linkTreeBins(tree, tree_id, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
         }
 
         if (comptime should_install_packages) {
@@ -295,7 +288,6 @@ pub const PackageInstaller = struct {
         this: *PackageInstaller,
         tree: *TreeContext,
         tree_id: TreeContext.Id,
-        destination_dir: std.fs.Dir,
         link_target_buf: []u8,
         link_dest_buf: []u8,
         link_rel_buf: []u8,
@@ -303,6 +295,9 @@ pub const PackageInstaller = struct {
     ) void {
         const lockfile = this.lockfile;
         const string_buf = lockfile.buffers.string_bytes.items;
+        var node_modules_path: bun.AbsPath(.{}) = .from(this.node_modules.path.items);
+        defer node_modules_path.deinit();
+
         while (tree.binaries.removeOrNull()) |dep_id| {
             bun.assertWithLocation(dep_id < lockfile.buffers.dependencies.items.len, @src());
             const package_id = lockfile.buffers.resolutions.items[dep_id];
@@ -319,8 +314,7 @@ pub const PackageInstaller = struct {
                 .string_buf = string_buf,
                 .extern_string_buf = lockfile.buffers.extern_strings.items,
                 .seen = &this.seen_bin_links,
-                .node_modules_path = this.node_modules.path.items,
-                .node_modules = .fromStdDir(destination_dir),
+                .node_modules_path = &node_modules_path,
                 .abs_target_buf = link_target_buf,
                 .abs_dest_buf = link_dest_buf,
                 .rel_buf = link_rel_buf,
@@ -385,18 +379,7 @@ pub const PackageInstaller = struct {
 
                 this.node_modules.path.appendSlice(rel_path) catch bun.outOfMemory();
 
-                var destination_dir = this.node_modules.openDir(this.root_node_modules_folder) catch |err| {
-                    if (log_level != .silent) {
-                        Output.err(err, "Failed to open node_modules folder at {s}", .{
-                            bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
-                        });
-                    }
-
-                    continue;
-                };
-                defer destination_dir.close();
-
-                this.linkTreeBins(tree, @intCast(tree_id), destination_dir, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
+                this.linkTreeBins(tree, @intCast(tree_id), &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
             }
         }
     }
@@ -417,6 +400,7 @@ pub const PackageInstaller = struct {
                     entry.list,
                     optional,
                     output_in_foreground,
+                    null,
                 ) catch |err| {
                     if (log_level != .silent) {
                         const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
@@ -498,7 +482,7 @@ pub const PackageInstaller = struct {
 
             const optional = entry.optional;
             const output_in_foreground = false;
-            this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, optional, output_in_foreground) catch |err| {
+            this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, optional, output_in_foreground, null) catch |err| {
                 if (log_level != .silent) {
                     const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                     const args = .{ package_name, @errorName(err) };
@@ -594,39 +578,24 @@ pub const PackageInstaller = struct {
     /// Install versions of a package which are waiting on a network request
     pub fn installEnqueuedPackagesAfterExtraction(
         this: *PackageInstaller,
+        task_id: Task.Id,
         dependency_id: DependencyID,
         data: *const ExtractData,
         log_level: Options.LogLevel,
     ) void {
         const package_id = this.lockfile.buffers.resolutions.items[dependency_id];
         const name = this.names[package_id];
-        const resolution = &this.resolutions[package_id];
-        const task_id = switch (resolution.tag) {
-            .git => Task.Id.forGitCheckout(data.url, data.resolved),
-            .github => Task.Id.forTarball(data.url),
-            .local_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.local_tarball)),
-            .remote_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.remote_tarball)),
-            .npm => Task.Id.forNPMPackage(name.slice(this.lockfile.buffers.string_bytes.items), resolution.value.npm.version),
-            else => unreachable,
-        };
 
-        if (!this.installEnqueuedPackagesImpl(name, task_id, log_level)) {
-            if (comptime Environment.allow_assert) {
-                Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {}:{} (dependency_id: {d})", .{
-                    bun.fmt.quote(name.slice(this.lockfile.buffers.string_bytes.items)),
-                    bun.fmt.quote(data.url),
-                    dependency_id,
-                });
-            }
-        }
-    }
+        // const resolution = &this.resolutions[package_id];
+        // const task_id = switch (resolution.tag) {
+        //     .git => Task.Id.forGitCheckout(data.url, data.resolved),
+        //     .github => Task.Id.forTarball(data.url),
+        //     .local_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.local_tarball)),
+        //     .remote_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.remote_tarball)),
+        //     .npm => Task.Id.forNPMPackage(name.slice(this.lockfile.buffers.string_bytes.items), resolution.value.npm.version),
+        //     else => unreachable,
+        // };
 
-    pub fn installEnqueuedPackagesImpl(
-        this: *PackageInstaller,
-        name: String,
-        task_id: Task.Id.Type,
-        log_level: Options.LogLevel,
-    ) bool {
         if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
             var callbacks = removed.value;
             defer callbacks.deinit(this.manager.allocator);
@@ -638,7 +607,7 @@ pub const PackageInstaller = struct {
 
             if (callbacks.items.len == 0) {
                 debug("Unexpected state: no callbacks for async task.", .{});
-                return true;
+                return;
             }
 
             for (callbacks.items) |*cb| {
@@ -664,9 +633,16 @@ pub const PackageInstaller = struct {
                 );
                 this.node_modules.deinit();
             }
-            return true;
+            return;
         }
-        return false;
+
+        if (comptime Environment.allow_assert) {
+            Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {}:{} (dependency_id: {d})", .{
+                bun.fmt.quote(name.slice(this.lockfile.buffers.string_bytes.items)),
+                bun.fmt.quote(data.url),
+                dependency_id,
+            });
+        }
     }
 
     fn getInstalledPackageScriptsCount(
@@ -674,7 +650,7 @@ pub const PackageInstaller = struct {
         alias: string,
         package_id: PackageID,
         resolution_tag: Resolution.Tag,
-        node_modules_folder: *LazyPackageDestinationDir,
+        folder_path: *bun.AbsPath(.{ .sep = .auto }),
         log_level: Options.LogLevel,
     ) usize {
         if (comptime Environment.allow_assert) {
@@ -696,8 +672,7 @@ pub const PackageInstaller = struct {
                 this.lockfile.allocator,
                 &string_builder,
                 this.manager.log,
-                node_modules_folder,
-                alias,
+                folder_path,
             ) catch |err| {
                 if (log_level != .silent) {
                     Output.errGeneric("failed to fill lifecycle scripts for <b>{s}<r>: {s}", .{
@@ -835,11 +810,10 @@ pub const PackageInstaller = struct {
             .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,
             .allocator = this.lockfile.allocator,
             .package_name = pkg_name,
-            .patch = if (patch_patch) |p| PackageInstall.Patch{
-                .patch_contents_hash = patch_contents_hash.?,
-                .patch_path = p,
-                .root_project_dir = FileSystem.instance.top_level_dir,
-            } else PackageInstall.Patch.NULL,
+            .patch = if (patch_patch) |p| .{
+                .contents_hash = patch_contents_hash.?,
+                .path = p,
+            } else null,
             .package_version = package_version,
             .node_modules = &this.node_modules,
             .lockfile = this.lockfile,
@@ -848,7 +822,6 @@ pub const PackageInstaller = struct {
             pkg_name.slice(this.lockfile.buffers.string_bytes.items),
             resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
         });
-        const pkg_has_patch = !installer.patch.isNull();
 
         switch (resolution.tag) {
             .npm => {
@@ -917,32 +890,7 @@ pub const PackageInstaller = struct {
                 installer.cache_dir = std.fs.cwd();
             },
             .symlink => {
-                const directory = this.manager.globalLinkDir() catch |err| {
-                    if (log_level != .silent) {
-                        const fmt = "\n<r><red>error:<r> unable to access global directory while installing <b>{s}<r>: {s}\n";
-                        const args = .{ pkg_name.slice(this.lockfile.buffers.string_bytes.items), @errorName(err) };
-
-                        if (log_level.showProgress()) {
-                            switch (Output.enable_ansi_colors) {
-                                inline else => |enable_ansi_colors| {
-                                    this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
-                                },
-                            }
-                        } else {
-                            Output.prettyErrorln(fmt, args);
-                        }
-                    }
-
-                    if (this.manager.options.enable.fail_early) {
-                        Global.exit(1);
-                    }
-
-                    Output.flush();
-                    this.summary.fail += 1;
-
-                    if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
-                    return;
-                };
+                const directory = this.manager.globalLinkDir();
 
                 const folder = resolution.value.symlink.slice(this.lockfile.buffers.string_bytes.items);
 
@@ -950,7 +898,7 @@ pub const PackageInstaller = struct {
                     installer.cache_dir_subpath = ".";
                     installer.cache_dir = std.fs.cwd();
                 } else {
-                    const global_link_dir = this.manager.globalLinkDirPath() catch unreachable;
+                    const global_link_dir = this.manager.globalLinkDirPath();
                     var ptr = &this.folder_path_buf;
                     var remain: []u8 = this.folder_path_buf[0..];
                     @memcpy(ptr[0..global_link_dir.len], global_link_dir);
@@ -971,7 +919,7 @@ pub const PackageInstaller = struct {
                 if (comptime Environment.allow_assert) {
                     @panic("Internal assertion failure: unexpected resolution tag");
                 }
-                if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+                this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                 return;
             },
         }
@@ -983,7 +931,7 @@ pub const PackageInstaller = struct {
         this.summary.skipped += @intFromBool(!needs_install);
 
         if (needs_install) {
-            if (!remove_patch and resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id, resolution.tag)) {
+            if (resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id, resolution.tag)) {
                 if (comptime Environment.allow_assert) {
                     bun.assertWithLocation(resolution.canEnqueueInstallTask(), @src());
                 }
@@ -1017,7 +965,6 @@ pub const PackageInstaller = struct {
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
                             error.InvalidURL => this.failWithInvalidUrl(
-                                pkg_has_patch,
                                 is_pending_package_install,
                                 log_level,
                             ),
@@ -1041,7 +988,6 @@ pub const PackageInstaller = struct {
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
                             error.InvalidURL => this.failWithInvalidUrl(
-                                pkg_has_patch,
                                 is_pending_package_install,
                                 log_level,
                             ),
@@ -1070,7 +1016,6 @@ pub const PackageInstaller = struct {
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
                             error.InvalidURL => this.failWithInvalidUrl(
-                                pkg_has_patch,
                                 is_pending_package_install,
                                 log_level,
                             ),
@@ -1080,7 +1025,7 @@ pub const PackageInstaller = struct {
                         if (comptime Environment.allow_assert) {
                             @panic("unreachable, handled above");
                         }
-                        if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+                        this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                         this.summary.fail += 1;
                     },
                 }
@@ -1090,12 +1035,12 @@ pub const PackageInstaller = struct {
 
             // above checks if unpatched package is in cache, if not null apply patch in temp directory, copy
             // into cache, then install into node_modules
-            if (!installer.patch.isNull()) {
+            if (installer.patch) |patch| {
                 if (installer.patchedPackageMissingFromCache(this.manager, package_id)) {
                     const task = PatchTask.newApplyPatchHash(
                         this.manager,
                         package_id,
-                        installer.patch.patch_contents_hash,
+                        patch.contents_hash,
                         patch_name_and_version_hash.?,
                     );
                     task.callback.apply.install_context = .{
@@ -1126,7 +1071,7 @@ pub const PackageInstaller = struct {
                     });
                 }
                 this.summary.fail += 1;
-                if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+                this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                 return;
             };
 
@@ -1185,10 +1130,14 @@ pub const PackageInstaller = struct {
                     };
 
                     if (resolution.tag != .root and (resolution.tag == .workspace or is_trusted)) {
+                        var folder_path: bun.AbsPath(.{ .sep = .auto }) = .from(this.node_modules.path.items);
+                        defer folder_path.deinit();
+                        folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
+
                         if (this.enqueueLifecycleScripts(
                             alias.slice(this.lockfile.buffers.string_bytes.items),
                             log_level,
-                            &lazy_package_dir,
+                            &folder_path,
                             package_id,
                             dep.behavior.optional,
                             resolution,
@@ -1212,11 +1161,15 @@ pub const PackageInstaller = struct {
                         else => if (!is_trusted and this.metas[package_id].hasInstallScript()) {
                             // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
                             // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
+                            var folder_path: bun.AbsPath(.{ .sep = .auto }) = .from(this.node_modules.path.items);
+                            defer folder_path.deinit();
+                            folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
+
                             const count = this.getInstalledPackageScriptsCount(
                                 alias.slice(this.lockfile.buffers.string_bytes.items),
                                 package_id,
                                 resolution.tag,
-                                &lazy_package_dir,
+                                &folder_path,
                                 log_level,
                             );
                             if (count > 0) {
@@ -1234,7 +1187,7 @@ pub const PackageInstaller = struct {
                         },
                     }
 
-                    if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, &lazy_package_dir, !is_pending_package_install, log_level);
+                    this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                 },
                 .failure => |cause| {
                     if (comptime Environment.allow_assert) {
@@ -1243,7 +1196,7 @@ pub const PackageInstaller = struct {
 
                     // even if the package failed to install, we still need to increment the install
                     // counter for this tree
-                    if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, &lazy_package_dir, !is_pending_package_install, log_level);
+                    this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
 
                     if (cause.err == error.DanglingSymlink) {
                         Output.prettyErrorln(
@@ -1333,7 +1286,7 @@ pub const PackageInstaller = struct {
                 destination_dir.close();
             }
 
-            defer if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, &destination_dir, !is_pending_package_install, log_level);
+            defer this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
 
             const dep = this.lockfile.buffers.dependencies.items[dependency_id];
             const truncated_dep_name_hash: TruncatedPackageNameHash = @truncate(dep.name_hash);
@@ -1349,10 +1302,14 @@ pub const PackageInstaller = struct {
             };
 
             if (resolution.tag != .root and is_trusted) {
+                var folder_path: bun.AbsPath(.{ .sep = .auto }) = .from(this.node_modules.path.items);
+                defer folder_path.deinit();
+                folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
+
                 if (this.enqueueLifecycleScripts(
                     alias.slice(this.lockfile.buffers.string_bytes.items),
                     log_level,
-                    &destination_dir,
+                    &folder_path,
                     package_id,
                     dep.behavior.optional,
                     resolution,
@@ -1375,12 +1332,11 @@ pub const PackageInstaller = struct {
 
     fn failWithInvalidUrl(
         this: *PackageInstaller,
-        pkg_has_patch: bool,
         comptime is_pending_package_install: bool,
         log_level: Options.LogLevel,
     ) void {
         this.summary.fail += 1;
-        if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+        this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
     }
 
     // returns true if scripts are enqueued
@@ -1388,7 +1344,7 @@ pub const PackageInstaller = struct {
         this: *PackageInstaller,
         folder_name: string,
         log_level: Options.LogLevel,
-        node_modules_folder: *LazyPackageDestinationDir,
+        package_path: *bun.AbsPath(.{ .sep = .auto }),
         package_id: PackageID,
         optional: bool,
         resolution: *const Resolution,
@@ -1397,8 +1353,7 @@ pub const PackageInstaller = struct {
         const scripts_list = scripts.getList(
             this.manager.log,
             this.lockfile,
-            node_modules_folder,
-            this.node_modules.path.items,
+            package_path,
             folder_name,
             resolution,
         ) catch |err| {

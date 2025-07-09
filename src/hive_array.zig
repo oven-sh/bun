@@ -3,6 +3,7 @@ const bun = @import("bun");
 const assert = bun.assert;
 const mem = std.mem;
 const testing = std.testing;
+const OOM = bun.OOM;
 
 /// An array that efficiently tracks which elements are in use.
 /// The pointers are intended to be stable
@@ -119,7 +120,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
                 return self.allocator.create(T) catch bun.outOfMemory();
             }
 
-            pub fn tryGet(self: *This) !*T {
+            pub fn tryGet(self: *This) OOM!*T {
                 if (comptime capacity > 0) {
                     if (self.hive.get()) |value| {
                         return value;

@@ -75,24 +75,15 @@ export function renderRoutesForProdStatic(
     if (files == null) {
       throw new Error(`Route ${JSON.stringify(sourceRouteFiles[i])} cannot be pre-rendered to a static page.`);
     }
+
     await Promise.all(
       Object.entries(files).map(([key, value]) => {
         if (params != null) {
           $assert(patterns[i].includes(`:`));
-          const matches = regex.exec(patterns[i]);
-          const [_, p1] = matches!;
-          if (typeof params[p1] === "string") {
-            // replace the :paramName part of patterns[i] with the value of params[paramName]
-            // use a regex in replace with a callback
-            const newKey = params[p1];
-            return Bun.write(pathJoin(outBase, newKey + key), value);
-          }
-          if (Array.isArray(params[p1])) {
-            return Bun.write(pathJoin(outBase, ...params[p1], key), value);
-          }
-          throw new Error(
-            `Route ${JSON.stringify(sourceRouteFiles[i])} has a param that is not a string or array of strings: ${p1}`,
+          const newKey = patterns[i].replace(/:(\w+)/g, (_, p1) =>
+            typeof params[p1] === "string" ? params[p1] : params[p1].join("/"),
           );
+          return Bun.write(pathJoin(outBase, newKey + key), value);
         }
         return Bun.write(pathJoin(outBase, patterns[i] + key), value);
       }),

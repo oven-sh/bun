@@ -58,6 +58,7 @@ pub fn init(
 }
 
 pub fn take(this: *@This()) std.ArrayList(options.OutputFile) {
+    // TODO: should this return an error
     bun.assertf(this.total_insertions == this.output_files.items.len, "total_insertions ({d}) != output_files.items.len ({d})", .{ this.total_insertions, this.output_files.items.len });
     const list = this.output_files;
     this.output_files = std.ArrayList(options.OutputFile).init(bun.default_allocator);
@@ -118,7 +119,7 @@ pub fn insertForSourcemapOrBytecode(this: *OutputFileList, output_file: options.
 }
 
 pub fn insertAdditionalOutputFiles(this: *OutputFileList, additional_output_files: []const options.OutputFile) void {
-    bun.assertf(this.index_for_sourcemaps_and_bytecode orelse std.math.maxInt(u32) <= this.additional_output_files_start, "index_for_sourcemaps_and_bytecode ({d}) \\< additional_output_files_start ({d})", .{ this.index_for_sourcemaps_and_bytecode orelse std.math.maxInt(u32), this.additional_output_files_start });
+    bun.assertf(this.index_for_sourcemaps_and_bytecode orelse 0 <= this.additional_output_files_start, "index_for_sourcemaps_and_bytecode ({d}) \\< additional_output_files_start ({d})", .{ this.index_for_sourcemaps_and_bytecode orelse 0, this.additional_output_files_start });
     bun.copy(
         options.OutputFile,
         this.getMutableAdditionalOutputFiles(),

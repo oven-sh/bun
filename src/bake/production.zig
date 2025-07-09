@@ -469,11 +469,28 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         str.* = (try bun.String.createFormat("{s}{s}", .{ public_path, output_file.dest_path })).toJS(global);
     }
 
+    // Route URL patterns with parameter placeholders.
+    // Examples: "/", "/about", "/blog/:slug", "/products/:category/:id"
     const route_patterns = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+    
+    // File indices for each route's components (page, layouts).
+    // Example: [2, 5, 0] = page at index 2, layout at 5, root layout at 0
     const route_nested_files = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+    
+    // Router type index (lower 8 bits) and flags (upper 24 bits).
+    // Example: 0x00000001 = router type 1, no flags
     const route_type_and_flags = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+    
+    // Source file paths relative to project root.
+    // Examples: "pages/index.tsx", "pages/blog/[slug].tsx"
     const route_source_files = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+    
+    // Parameter names for dynamic routes (reversed order), null for static routes.
+    // Examples: ["slug"] for /blog/[slug], ["id", "category"] for /products/[category]/[id]
     const route_param_info = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+    
+    // CSS chunk URLs for each route.
+    // Example: ["/assets/main.css", "/assets/blog.css"]
     const route_style_references = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
 
     var params_buf: std.ArrayListUnmanaged([]const u8) = .{};
@@ -652,18 +669,30 @@ fn BakeGetOnModuleNamespace(global: *JSC.JSGlobalObject, module: JSValue, proper
     return result;
 }
 
+/// Renders all routes for static site generation by calling the JavaScript implementation.
 extern fn BakeRenderRoutesForProdStatic(
     *JSC.JSGlobalObject,
+    /// Output directory path (e.g., "./dist")
     out_base: bun.String,
+    /// Server module paths (e.g., ["bake://page.js", "bake://layout.js"])
     all_server_files: JSValue,
+    /// Framework prerender functions by router type
     render_static: JSValue,
+    /// Framework getParams functions by router type
     get_params: JSValue,
+    /// Client entry URLs by router type (e.g., ["/client.js", null])
     client_entry_urls: JSValue,
+    /// Route patterns (e.g., ["/", "/about", "/blog/:slug"])
     patterns: JSValue,
+    /// File indices per route (e.g., [[0], [1], [2, 0]])
     files: JSValue,
+    /// Packed router type and flags (e.g., [0x00000000, 0x00000001])
     type_and_flags: JSValue,
+    /// Source paths (e.g., ["pages/index.tsx", "pages/blog/[slug].tsx"])
     src_route_files: JSValue,
+    /// Dynamic route params (e.g., [null, null, ["slug"]])
     param_information: JSValue,
+    /// CSS URLs per route (e.g., [["/main.css"], ["/main.css", "/blog.css"]])
     styles: JSValue,
 ) *JSC.JSPromise;
 

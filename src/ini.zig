@@ -1031,9 +1031,21 @@ pub fn loadNpmrc(
         }
     }
 
-    if (out.get("ignore-scripts")) |ignore_scripts| {
+    if (out.get("ignore-scripts")) |*ignore_scripts| {
         if (ignore_scripts.isBoolean()) {
             install.ignore_scripts = ignore_scripts.data.e_boolean.value;
+        }
+    }
+
+    if (out.get("link-workspace-packages")) |*link_workspace_packages| {
+        if (link_workspace_packages.isBoolean()) {
+            install.link_workspace_packages = link_workspace_packages.data.e_boolean.value;
+        }
+    }
+
+    if (out.get("save-exact")) |*save_exact| {
+        if (save_exact.isBoolean()) {
+            install.exact = save_exact.data.e_boolean.value;
         }
     }
 

@@ -2462,8 +2462,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             // So we first use a hash of the main field:
             const first_hash_segment: [8]u8 = brk: {
-                const buffer = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(buffer);
+                const buffer = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buffer);
                 const main = JSC.VirtualMachine.get().main;
                 const len = @min(main.len, buffer.len);
                 break :brk @bitCast(bun.hash(bun.strings.copyLowercase(main[0..len], buffer[0..len])));
@@ -2471,8 +2471,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             // And then we use a hash of their project root directory:
             const second_hash_segment: [8]u8 = brk: {
-                const buffer = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(buffer);
+                const buffer = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buffer);
                 const root = this.dev_server.?.root;
                 const len = @min(root.len, buffer.len);
                 break :brk @bitCast(bun.hash(bun.strings.copyLowercase(root[0..len], buffer[0..len])));

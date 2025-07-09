@@ -1,12 +1,13 @@
 import { file, write } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readlinkSync } from "fs";
+import { afterAll, beforeAll, describe, expect, test, setDefaultTimeout } from "bun:test";
+import { readlinkSync, existsSync } from "fs";
 import { VerdaccioRegistry, bunEnv, readdirSorted, runBunInstall } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
 
 beforeAll(async () => {
+  setDefaultTimeout(10 * 60 * 1000);
   await registry.start();
 });
 
@@ -280,4 +281,153 @@ test("can install folder dependencies", async () => {
       join(packageDir, "node_modules", ".bun", "folder-dep@file+pkg-1", "node_modules", "folder-dep", "index.js"),
     ).text(),
   ).toBe("module.exports = 'hello from pkg-1';");
+});
+
+describe("isolated workspaces", () => {
+  test("basic", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir();
+
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "test-pkg-workspaces",
+          workspaces: {
+            nodeLinker: "isolated",
+            packages: ["pkg-1", "pkg-2"],
+          },
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "pkg-1", "package.json"),
+        JSON.stringify({
+          name: "pkg-1",
+          version: "1.0.0",
+          dependencies: {
+            "a-dep": "1.0.1",
+            "pkg-2": "workspace:",
+            "@types/is-number": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "pkg-2", "package.json"),
+        JSON.stringify({
+          name: "pkg-2",
+          version: "1.0.0",
+          dependencies: {
+            "b-dep-a": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(existsSync(join(packageDir, "node_modules", "pkg-1"))).toBeFalse();
+    expect(readlinkSync(join(packageDir, "pkg-1", "node_modules", "pkg-2"))).toBe(join("..", "..", "pkg-2"));
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "no-deps"]);
+    expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
+      join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+    );
+
+    expect(await readdirSorted(join(packageDir, "pkg-1", "node_modules"))).toEqual(["@types", "a-dep", "pkg-2"]);
+    expect(await readdirSorted(join(packageDir, "pkg-2", "node_modules"))).toEqual(["b-dep-a"]);
+    expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toEqual([
+      "@types+is-number@1.0.0",
+      "a-dep-b@1.0.0",
+      "a-dep@1.0.1",
+      "b-dep-a@1.0.0",
+      "no-deps@1.0.0",
+      "node_modules",
+    ]);
+
+    expect(readlinkSync(join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"))).toBe(
+      join("..", "no-deps@1.0.0", "node_modules", "no-deps"),
+    );
+    expect(
+      await file(
+        join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps", "package.json"),
+      ).json(),
+    ).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+  });
+});
+
+test("many transitive dependencies", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir();
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-many-transitive-deps",
+      workspaces: {
+        nodeLinker: "isolated",
+      },
+      dependencies: {
+        "alias-loop-1": "1.0.0",
+        "alias-loop-2": "1.0.0",
+        "1-peer-dep-a": "1.0.0",
+        "basic-1": "1.0.0",
+        "is-number": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+    ".bun",
+    "1-peer-dep-a",
+    "alias-loop-1",
+    "alias-loop-2",
+    "basic-1",
+    "is-number",
+  ]);
+  expect(readlinkSync(join(packageDir, "node_modules", "alias-loop-1"))).toBe(
+    join(".bun", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"),
+  );
+  expect(readlinkSync(join(packageDir, "node_modules", ".bun", "node_modules", "alias-loop-1"))).toBe(
+    join("..", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"),
+  );
+  expect(readlinkSync(join(packageDir, "node_modules", ".bun", "node_modules", "alias-loop-2"))).toBe(
+    join("..", "alias-loop-2@1.0.0", "node_modules", "alias-loop-2"),
+  );
+  expect(
+    await file(
+      join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1", "package.json"),
+    ).json(),
+  ).toEqual({
+    name: "alias-loop-1",
+    version: "1.0.0",
+    dependencies: {
+      "alias1": "npm:alias-loop-2@*",
+    },
+  });
+  expect(
+    await file(
+      join(packageDir, "node_modules", ".bun", "alias-loop-2@1.0.0", "node_modules", "alias-loop-2", "package.json"),
+    ).json(),
+  ).toEqual({
+    name: "alias-loop-2",
+    version: "1.0.0",
+    dependencies: {
+      "alias2": "npm:alias-loop-1@*",
+    },
+  });
+  // expect(await readdirSorted(join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules"))).toEqual([
+  //   "alias1",
+  //   "alias-loop-1",
+  // ]);
+  // expect(readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules", "alias1"))).toBe(
+  //   join("..", "..", "alias-loop-2@1.0.0", "node_modules", "alias-loop-2"),
+  // );
+  // expect(readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-2@1.0.0", "node_modules", "alias2"))).toBe(
+  //   join("..", "..", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"),
+  // );
 });

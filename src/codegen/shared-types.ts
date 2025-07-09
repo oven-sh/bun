@@ -14,6 +14,7 @@ export const sharedTypes: Record<string, string> = {
   "short": "c_short",
   "unsigned short": "c_ushort",
   "int": "c_int",
+  "unsigned": "c_uint",
   "unsigned int": "c_uint",
   "long": "c_long",
   "unsigned long": "c_ulong",

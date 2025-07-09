@@ -3510,7 +3510,13 @@ declare module "bun" {
       [K in HTTPMethod]?: RouteHandlerWithWebSocketUpgrade<T>;
     };
 
-    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T> | HTMLBundle | BunFile;
+    type RouteValue<T extends string> =
+      | Response
+      | false
+      | RouteHandler<T>
+      | RouteHandlerObject<T>
+      | HTMLBundle
+      | BunFile;
     type RouteValueWithWebSocketUpgrade<T extends string> =
       | RouteValue<T>
       | RouteHandlerWithWebSocketUpgrade<T>

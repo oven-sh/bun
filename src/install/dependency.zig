@@ -52,12 +52,12 @@ version: Dependency.Version = .{},
 behavior: Behavior = .{},
 
 /// Sorting order for dependencies is:
-/// 1. [ `devDependencies`, `peerDependencies`, `optionalDependencies`, `dependencies` ]
+/// 1. [ `peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies` ]
 /// 2. name ASC
 /// "name" must be ASC so that later, when we rebuild the lockfile
 /// we insert it back in reverse order without an extra sorting pass
-/// Note: devDependencies are prioritized over peerDependencies to ensure
-/// that dev dependencies are resolved first when both exist for the same package
+/// Note: For workspace packages with both dev and peer dependencies,
+/// dev dependencies are prioritized to prevent unnecessary network requests
 pub fn isLessThan(string_buf: []const u8, lhs: Dependency, rhs: Dependency) bool {
     const behavior = lhs.behavior.cmp(rhs.behavior);
     if (behavior != .eq) {
@@ -1422,8 +1422,19 @@ pub const Behavior = packed struct(u8) {
                 .lt;
         }
 
-        // Prioritize devDependencies over peerDependencies for resolution
-        // This ensures that when both exist for the same package, dev deps win
+        // Special handling for workspace packages with both dev and peer dependencies
+        // If both behaviors have workspace flag, prioritize dev over peer
+        if (lhs.workspace and rhs.workspace) {
+            if (lhs.dev and lhs.peer and rhs.peer and !rhs.dev) {
+                // lhs is workspace + dev + peer, rhs is workspace + peer only
+                return .gt;
+            }
+            if (rhs.dev and rhs.peer and lhs.peer and !lhs.dev) {
+                // rhs is workspace + dev + peer, lhs is workspace + peer only
+                return .lt;
+            }
+        }
+
         if (lhs.isDev() != rhs.isDev()) {
             return if (lhs.isDev())
                 .gt

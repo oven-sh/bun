@@ -44,7 +44,19 @@ class MockBehavior {
       return this.isProd() ? "gt" : "lt";
     }
 
-    // This is the key change: prioritize devDependencies over peerDependencies
+    // Special handling for workspace packages with both dev and peer dependencies
+    // If both behaviors have workspace flag, prioritize dev over peer
+    if (this.workspace && other.workspace) {
+      if (this.dev && this.peer && other.peer && !other.dev) {
+        // this is workspace + dev + peer, other is workspace + peer only
+        return "gt";
+      }
+      if (other.dev && other.peer && this.peer && !this.dev) {
+        // other is workspace + dev + peer, this is workspace + peer only
+        return "lt";
+      }
+    }
+
     if (this.isDev() !== other.isDev()) {
       return this.isDev() ? "gt" : "lt";
     }
@@ -65,11 +77,20 @@ class MockBehavior {
   }
 }
 
-test("dependency behavior comparison prioritizes devDependencies over peerDependencies", () => {
+test("dependency behavior comparison for workspace packages prioritizes dev+peer over peer-only", () => {
+  const workspaceDevPeer = new MockBehavior({ workspace: true, dev: true, peer: true });
+  const workspacePeerOnly = new MockBehavior({ workspace: true, peer: true });
+
+  // workspace + dev + peer should have higher priority than workspace + peer only
+  expect(workspaceDevPeer.cmp(workspacePeerOnly)).toBe("gt");
+  expect(workspacePeerOnly.cmp(workspaceDevPeer)).toBe("lt");
+});
+
+test("regular dev vs peer dependencies follow standard priority", () => {
   const devBehavior = new MockBehavior({ dev: true });
   const peerBehavior = new MockBehavior({ peer: true });
 
-  // devDependencies should have higher priority (greater than) peerDependencies
+  // Without workspace flag, dev and peer follow standard ordering
   expect(devBehavior.cmp(peerBehavior)).toBe("gt");
   expect(peerBehavior.cmp(devBehavior)).toBe("lt");
 });
@@ -110,19 +131,29 @@ test("dependency behavior comparison handles optional dependencies", () => {
   expect(optionalBehavior.cmp(peerBehavior)).toBe("lt");
 });
 
-test("dependency behavior comparison handles complex scenarios", () => {
+test("workspace-specific behavior for dev+peer vs peer dependencies", () => {
+  // Test the specific Next.js monorepo scenario
+  const workspaceDevPeer = new MockBehavior({ workspace: true, dev: true, peer: true });
+  const workspacePeer = new MockBehavior({ workspace: true, peer: true });
+  const workspaceDev = new MockBehavior({ workspace: true, dev: true });
+  
+  // Workspace dev+peer should be prioritized over workspace peer-only
+  expect(workspaceDevPeer.cmp(workspacePeer)).toBe("gt");
+  expect(workspacePeer.cmp(workspaceDevPeer)).toBe("lt");
+  
+  // Workspace dev+peer vs workspace dev-only follows standard rules
+  expect(workspaceDevPeer.cmp(workspaceDev)).toBe("gt"); // peer flag adds to priority
+});
+
+test("non-workspace behavior remains unchanged", () => {
   const devPeerBehavior = new MockBehavior({ dev: true, peer: true });
   const peerOnlyBehavior = new MockBehavior({ peer: true });
   const devOnlyBehavior = new MockBehavior({ dev: true });
 
-  // Dev + peer behavior should be equal to itself
+  // Without workspace flag, behavior follows standard priority rules
   expect(devPeerBehavior.cmp(devPeerBehavior)).toBe("eq");
-  
-  // Dev + peer should have higher priority than peer-only due to dev flag
   expect(devPeerBehavior.cmp(peerOnlyBehavior)).toBe("gt");
-  
-  // Dev + peer should be equal to dev-only in terms of dev priority
-  expect(devPeerBehavior.cmp(devOnlyBehavior)).toBe("gt"); // because it has peer as well
+  expect(devPeerBehavior.cmp(devOnlyBehavior)).toBe("gt"); // dev+peer has higher priority than dev-only
 });
 
 test("dependency sorting order matches intended priority", () => {

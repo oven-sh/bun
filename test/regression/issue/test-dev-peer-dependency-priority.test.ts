@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { mkdirSync, rmSync } from "fs";
 
-test("devDependencies should take priority over peerDependencies for resolution", async () => {
+test("workspace devDependencies should take priority over peerDependencies for resolution", async () => {
   const dir = tempDirWithFiles("dev-peer-priority", {
     "package.json": JSON.stringify({
       name: "test-monorepo",

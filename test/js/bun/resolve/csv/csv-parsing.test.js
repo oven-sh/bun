@@ -662,6 +662,40 @@ a,b,c
       const parsed = CSV.parse(`a,b,c\n1,2,3\n# Comment`, { comments: true });
       expect(parsed.data).toEqual([{ a: "1", b: "2", c: "3" }]);
     });
+
+    it("should handle comments inside a line", () => {
+      const parsed = CSV.parse(
+        `#foo
+a#foo
+a #foo
+a,#foo`,
+        { header: false, comments: true },
+      );
+
+      expect(parsed).toEqual({
+        data: [["a"], ["a "], ["a"]],
+        rows: 3,
+        columns: 1,
+        comments: [
+          {
+            line: 1,
+            text: "foo",
+          },
+          {
+            line: 2,
+            text: "foo",
+          },
+          {
+            line: 3,
+            text: "foo",
+          },
+          {
+            line: 4,
+            text: "foo",
+          },
+        ],
+      });
+    });
   });
 
   describe("Row Preview Option", () => {
@@ -937,11 +971,60 @@ row4col1,row4col2,row4col3,row4col4`,
   });
 
   describe("Header Edge Cases", () => {
-    // TODO: figure out numeric keys in objects
-    // it("should handle numeric headers", () => {
-    //   const parsed = CSV.parse(`1,2,3\na,b,c`);
-    //   expect(parsed.data[0]).toEqual({ "1": "a", "2": "b", "3": "c" });
-    // });
+    it("should handle numeric headers", () => {
+      const parsed = CSV.parse(`1,2,3\na,b,c`);
+      expect(parsed.data[0]).toEqual({ "1": "a", "2": "b", "3": "c" });
+    });
+
+    it("should handle emoji headers", () => {
+      const parsed = CSV.parse(`🔥,💯,🚀\nhot,perfect,fast`);
+      expect(parsed.data[0]).toEqual({ "🔥": "hot", "💯": "perfect", "🚀": "fast" });
+    });
+
+    it("should handle unicode headers with combining characters", () => {
+      const parsed = CSV.parse(`é,ñ,ü\naccent1,accent2,accent3`);
+      expect(parsed.data[0]).toEqual({ "é": "accent1", "ñ": "accent2", "ü": "accent3" });
+    });
+
+    it("should handle complex unicode headers", () => {
+      const parsed = CSV.parse(`👨‍👩‍👧‍👦,🏳️‍🌈,🧑‍💻\nfamily,flag,developer`);
+      expect(parsed.data[0]).toEqual({ "👨‍👩‍👧‍👦": "family", "🏳️‍🌈": "flag", "🧑‍💻": "developer" });
+    });
+
+    it("should handle headers with various unicode categories", () => {
+      const parsed = CSV.parse(`α,β,γ,Ω,Δ\nalpha,beta,gamma,omega,delta`);
+      expect(parsed.data[0]).toEqual({ "α": "alpha", "β": "beta", "γ": "gamma", "Ω": "omega", "Δ": "delta" });
+    });
+
+    it("should handle headers with CJK characters", () => {
+      const parsed = CSV.parse(`名前,年齢,職業\n田中,30,エンジニア`);
+      expect(parsed.data[0]).toEqual({ "名前": "田中", "年齢": "30", "職業": "エンジニア" });
+    });
+
+    it("should handle headers with right-to-left text", () => {
+      const parsed = CSV.parse(`שם,גיל,מקצוע\nיוסי,25,מתכנת`);
+      expect(parsed.data[0]).toEqual({ "שם": "יוסי", "גיל": "25", "מקצוע": "מתכנת" });
+    });
+
+    it("should handle headers with mixed unicode and ASCII", () => {
+      const parsed = CSV.parse(`user_🆔,email_📧,status_✅\n123,test@example.com,active`);
+      expect(parsed.data[0]).toEqual({ "user_🆔": "123", "email_📧": "test@example.com", "status_✅": "active" });
+    });
+
+    it("should handle headers with mathematical symbols", () => {
+      const parsed = CSV.parse(`∑,∆,∞,√,π\nsum,delta,infinity,sqrt,pi`);
+      expect(parsed.data[0]).toEqual({ "∑": "sum", "∆": "delta", "∞": "infinity", "√": "sqrt", "π": "pi" });
+    });
+
+    it("should handle headers with zero-width characters", () => {
+      const parsed = CSV.parse(`a\u200Bb,c\u200Cd,e\u200Df\nval1,val2,val3`);
+      expect(Object.keys(parsed.data[0])).toEqual(["a\u200Bb", "c\u200Cd", "e\u200Df"]);
+    });
+
+    it("should handle headers with control characters", () => {
+      const parsed = CSV.parse(`col\u0001,col\u0002,col\u0003\nval1,val2,val3`);
+      expect(Object.keys(parsed.data[0])).toEqual(["col\u0001", "col\u0002", "col\u0003"]);
+    });
 
     it("should handle headers with only whitespace", () => {
       const parsed = CSV.parse(`   ,\t,
@@ -1011,6 +1094,27 @@ a,b,c`);
       const longField = "x".repeat(100000);
       const parsed = CSV.parse(`field\n"${longField}"`);
       expect(parsed.data[0].field.length).toEqual(100000);
+    });
+
+    it("should handle files with many rows (100k)", () => {
+      const headers = "id,name,value";
+      const rows = Array.from({ length: 100000 }, (_, i) => `${i},user${i},${i * 10}`);
+      const csv = `${headers}\n${rows.join("\n")}`;
+
+      const parsed = CSV.parse(csv);
+
+      expect(parsed.data.length).toEqual(100000);
+      expect(parsed.rows).toEqual(100000);
+      expect(parsed.columns).toEqual(3);
+
+      // Check first row
+      expect(parsed.data[0]).toEqual({ id: "0", name: "user0", value: "0" });
+
+      // Check middle row
+      expect(parsed.data[50000]).toEqual({ id: "50000", name: "user50000", value: "500000" });
+
+      // Check last row
+      expect(parsed.data[99999]).toEqual({ id: "99999", name: "user99999", value: "999990" });
     });
   });
 

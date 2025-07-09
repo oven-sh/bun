@@ -12,7 +12,7 @@ beforeEach(() => {
   packageDir = tmpdirSync();
 });
 
-async function packExpectError(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
+async function packExpectError(cwd: string, env: NodeJS.Dict<string>, ...args: string[]) {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "pack", ...args],
     cwd,

@@ -55,7 +55,7 @@ fn unlink(ctx: Command.Context) !void {
             }
         }
 
-        switch (Syscall.lstat(Path.joinAbsStringZ(try manager.globalLinkDirPath(), &.{name}, .auto))) {
+        switch (Syscall.lstat(Path.joinAbsStringZ(manager.globalLinkDirPath(), &.{name}, .auto))) {
             .result => |stat| {
                 if (!bun.S.ISLNK(@intCast(stat.mode))) {
                     Output.prettyErrorln("<r><green>success:<r> package \"{s}\" is not globally linked, so there's nothing to do.", .{name});
@@ -91,17 +91,18 @@ fn unlink(ctx: Command.Context) !void {
             var link_target_buf: bun.PathBuffer = undefined;
             var link_dest_buf: bun.PathBuffer = undefined;
             var link_rel_buf: bun.PathBuffer = undefined;
-            var node_modules_path_buf: bun.PathBuffer = undefined;
+
+            var node_modules_path = bun.AbsPath(.{}).initFdPath(.fromStdDir(node_modules)) catch |err| {
+                if (manager.options.log_level != .silent) {
+                    Output.err(err, "failed to link binary", .{});
+                }
+                Global.crash();
+            };
+            defer node_modules_path.deinit();
 
             var bin_linker = Bin.Linker{
                 .bin = package.bin,
-                .node_modules = .fromStdDir(node_modules),
-                .node_modules_path = bun.getFdPath(.fromStdDir(node_modules), &node_modules_path_buf) catch |err| {
-                    if (manager.options.log_level != .silent) {
-                        Output.err(err, "failed to link binary", .{});
-                    }
-                    Global.crash();
-                },
+                .node_modules_path = &node_modules_path,
                 .global_bin_path = manager.options.bin_path,
                 .package_name = strings.StringOrTinyString.init(name),
                 .string_buf = lockfile.buffers.string_bytes.items,

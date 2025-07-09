@@ -18,27 +18,31 @@ test("workspace devDependencies should take priority over peerDependencies for r
       version: "1.0.0",
       dependencies: {},
       devDependencies: {
-        "next": "15.4.0-canary.119"
+        "my-dep": "workspace:*"  // Use workspace protocol for dev
       },
       peerDependencies: {
-        "next": "^13.0.0 || ^14.0.0 || ^15.0.0"
+        "my-dep": "^1.0.0"  // Range that wants 1.x
       },
     }),
-    "packages/lib/index.js": `console.log("lib");`,
-    "packages/next/package.json": JSON.stringify({
-      name: "next",
-      version: "15.4.0-canary.119",
+    "packages/lib/test.js": `const dep = require("my-dep"); console.log(dep.version);`,
+    // Only provide workspace package with version 2.0.0
+    "packages/my-dep/package.json": JSON.stringify({
+      name: "my-dep",
+      version: "2.0.0",
       main: "index.js",
     }),
-    "packages/next/index.js": `console.log("next workspace");`,
+    "packages/my-dep/index.js": `module.exports = { version: "2.0.0" };`,
   });
 
-  // Run bun install in the monorepo
+  // Run bun install with a dead registry to ensure no network requests
   const { stdout, stderr, exitCode } = await new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
     const proc = Bun.spawn({
       cmd: [bunExe(), "install", "--no-progress", "--no-summary"],
       cwd: dir,
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        NPM_CONFIG_REGISTRY: "http://localhost:9999/", // Dead URL - will fail if used
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -53,15 +57,35 @@ test("workspace devDependencies should take priority over peerDependencies for r
     });
   });
 
+  if (exitCode !== 0) {
+    console.error("Install failed with exit code:", exitCode);
+    console.error("stdout:", stdout);
+    console.error("stderr:", stderr);
+  }
   expect(exitCode).toBe(0);
   
   // Check that no network requests were made for packages that should be resolved locally
   expect(stderr).not.toContain("GET");
-  expect(stderr).not.toContain("next");
+  expect(stderr).not.toContain("http");
   
   // Check that the lockfile was created correctly
   const lockfilePath = join(dir, "bun.lock");
   expect(await Bun.file(lockfilePath).exists()).toBe(true);
+  
+  // Verify that version 2.0.0 (devDependency) was linked
+  // If peerDependency range ^1.0.0 was used, it would try to fetch from npm and fail
+  const testResult = await new Promise<string>((resolve) => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "packages/lib/test.js"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    
+    new Response(proc.stdout).text().then(resolve);
+  });
+  
+  expect(testResult.trim()).toBe("2.0.0");
 });
 
 test("devDependencies and peerDependencies with different versions should coexist", async () => {
@@ -187,31 +211,33 @@ test("Next.js monorepo scenario should not make unnecessary network requests", a
     "packages/web/package.json": JSON.stringify({
       name: "web",
       version: "1.0.0",
-      dependencies: {
-        "next": "15.4.0-canary.119"
-      },
+      dependencies: {},
       devDependencies: {
-        "next": "15.4.0-canary.119"
+        "next": "15.0.0-canary.119"  // Specific canary version for dev
       },
       peerDependencies: {
-        "next": "^13.0.0 || ^14.0.0 || ^15.0.0"
+        "next": "^14.0.0 || ^15.0.0"  // Range that would accept 14.x or 15.x stable
       },
     }),
-    "packages/web/index.js": `console.log("web");`,
+    "packages/web/test.js": `const next = require("next/package.json"); console.log(next.version);`,
+    // Only provide the canary version that matches devDependencies
     "packages/next/package.json": JSON.stringify({
       name: "next",
-      version: "15.4.0-canary.119",
+      version: "15.0.0-canary.119",
       main: "index.js",
     }),
     "packages/next/index.js": `console.log("next workspace");`,
   });
 
-  // Run bun install
+  // Run bun install with dead registry
   const { stdout, stderr, exitCode } = await new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
     const proc = Bun.spawn({
       cmd: [bunExe(), "install", "--no-progress", "--no-summary"],
       cwd: dir,
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        NPM_CONFIG_REGISTRY: "http://localhost:9999/", // Dead URL
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -232,8 +258,24 @@ test("Next.js monorepo scenario should not make unnecessary network requests", a
   // When devDependencies are prioritized over peerDependencies, the workspace version should be used
   expect(stderr).not.toContain("GET");
   expect(stderr).not.toContain("404");
+  expect(stderr).not.toContain("http");
   
   // Check that the lockfile was created correctly
   const lockfilePath = join(dir, "bun.lock");
   expect(await Bun.file(lockfilePath).exists()).toBe(true);
+  
+  // Verify that version 15.0.0-canary.119 (devDependency) was used
+  // If peer range was used, it would try to fetch a stable version from npm and fail
+  const testResult = await new Promise<string>((resolve) => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "packages/web/test.js"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    
+    new Response(proc.stdout).text().then(resolve);
+  });
+  
+  expect(testResult.trim()).toBe("15.0.0-canary.119");
 });

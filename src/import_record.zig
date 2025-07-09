@@ -107,6 +107,15 @@ pub const ImportKind = enum(u8) {
 pub const ImportRecord = struct {
     pub const Index = bun.GenericIndex(u32, ImportRecord);
 
+    // none = default behaviour
+    // deferred = https://github.com/tc39/proposal-defer-import-eval
+    // source = https://github.com/tc39/proposal-source-phase-imports
+    pub const ImportPhase = enum {
+        none,
+        deferred,
+        source, // Not implemented yet, just laying groundwork
+    };
+
     range: logger.Range,
     path: fs.Path,
     kind: ImportKind,
@@ -134,8 +143,7 @@ pub const ImportRecord = struct {
     /// out to be type-only imports after analyzing the whole file.
     is_unused: bool = false,
 
-    /// True if this import uses the "defer" keyword
-    is_deferred: bool = false,
+    phase: ImportPhase = .none,
 
     /// If this is true, the import contains syntax like "* as ns". This is used
     /// to determine whether modules that have no exports need to be wrapped in a

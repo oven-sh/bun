@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 describe("import defer", () => {
   test("should parse import defer syntax", async () => {

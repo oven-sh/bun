@@ -1086,7 +1086,7 @@ pub const PipeReader = struct {
             },
             .err => |err| {
                 _ = err;
-                const empty = JSC.WebCore.ReadableStream.empty(globalObject);
+                const empty = try JSC.WebCore.ReadableStream.empty(globalObject);
                 JSC.WebCore.ReadableStream.cancel(&(try JSC.WebCore.ReadableStream.fromJS(empty, globalObject)).?, globalObject);
                 return empty;
             },

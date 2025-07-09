@@ -259,7 +259,9 @@ JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t ind
     args.append(request);
     args.append(serverValue);
 
-    RELEASE_AND_RETURN(scope, AsyncContextFrame::call(globalObject, callback, serverValue, args));
+    auto result = AsyncContextFrame::call(globalObject, callback, serverValue, args);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
 }
 
 extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRoute(

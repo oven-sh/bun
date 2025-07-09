@@ -460,7 +460,7 @@ pub const Value = union(Tag) {
                 var blob = this.use();
                 defer blob.detach();
                 blob.resolveSize();
-                const value = JSC.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &blob, blob.size);
+                const value = try JSC.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &blob, blob.size);
 
                 this.* = .{
                     .Locked = .{
@@ -509,7 +509,7 @@ pub const Value = union(Tag) {
 
                 locked.readable = JSC.WebCore.ReadableStream.Strong.init(.{
                     .ptr = .{ .Bytes = &reader.context },
-                    .value = reader.toReadableStream(globalThis),
+                    .value = try reader.toReadableStream(globalThis),
                 }, globalThis);
 
                 if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
@@ -1020,7 +1020,7 @@ pub const Value = union(Tag) {
 
         locked.readable = JSC.WebCore.ReadableStream.Strong.init(.{
             .ptr = .{ .Bytes = &reader.context },
-            .value = reader.toReadableStream(globalThis),
+            .value = try reader.toReadableStream(globalThis),
         }, globalThis);
 
         if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {

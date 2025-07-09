@@ -446,6 +446,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     }
 
     controller->detach();
+    RETURN_IF_EXCEPTION(scope, {});
     ${name}__close(lexicalGlobalObject, ptr);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -514,6 +515,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     }
 
     sink->detach();
+    RETURN_IF_EXCEPTION(scope, {});
     ${name}__close(lexicalGlobalObject, ptr);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

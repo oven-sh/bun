@@ -4529,11 +4529,8 @@ pub const Expect = struct {
 
         incrementExpectCallCounter();
 
-        const returns = JSMockFunction__getReturns(value);
-
-        if (returns == .zero or !returns.jsType().isArray()) {
-            return globalThis.throw("Expected value must be a mock function: {}", .{value});
-        }
+        const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
+        if (!returns.jsType().isArray()) return globalThis.throw("Expected value must be a mock function: {}", .{value});
 
         const return_count: i32 = if (known_index) |index| index else brk: {
             if (arguments.len < 1 or !arguments[0].isUInt32AsAnyInt()) {

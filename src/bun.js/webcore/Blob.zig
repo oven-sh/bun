@@ -1031,7 +1031,7 @@ pub fn writeFileWithSourceDestination(ctx: *JSC.JSGlobalObject, source_blob: *Bl
         return file_copier.promise.value();
     } else if (destination_type == .file and source_type == .s3) {
         const s3 = &source_store.data.s3;
-        if (try JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(
+        if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(
             ctx,
             source_blob,
             @truncate(s3.options.partSize),
@@ -1068,7 +1068,7 @@ pub fn writeFileWithSourceDestination(ctx: *JSC.JSGlobalObject, source_blob: *Bl
         switch (source_store.data) {
             .bytes => |bytes| {
                 if (bytes.len > S3.MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
-                    if (try JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(
+                    if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(
                         ctx,
                         source_blob,
                         @truncate(s3.options.partSize),
@@ -1135,7 +1135,7 @@ pub fn writeFileWithSourceDestination(ctx: *JSC.JSGlobalObject, source_blob: *Bl
             },
             .file, .s3 => {
                 // stream
-                if (try JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(
+                if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(
                     ctx,
                     source_blob,
                     @truncate(s3.options.partSize),
@@ -1962,7 +1962,7 @@ pub fn getStream(
 
         recommended_chunk_size = @as(SizeType, @intCast(@max(0, @as(i52, @truncate(arguments[0].toInt64())))));
     }
-    const stream = JSC.WebCore.ReadableStream.fromBlobCopyRef(
+    const stream = try JSC.WebCore.ReadableStream.fromBlobCopyRef(
         globalThis,
         this,
         recommended_chunk_size,

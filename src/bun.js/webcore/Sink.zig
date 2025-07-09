@@ -251,7 +251,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         const DetachPtrFn = *const fn (JSValue) callconv(.C) void;
 
         const assignToStreamExtern = @extern(AssignToStreamFn, .{ .name = abi_name ++ "__assignToStream" });
-        const onCloseExtern = @extern(OnCloseFn, .{ .name = abi_name ++ "__onClose" });
+        const onCloseExtern = @extern(OnCloseFn, .{ .name = abi_name ++ "__onClose" }).*;
         const onReadyExtern = @extern(OnReadyFn, .{ .name = abi_name ++ "__onReady" });
         const onStartExtern = @extern(OnStartFn, .{ .name = abi_name ++ "__onStart" });
         const createObjectExtern = @extern(CreateObjectFn, .{ .name = abi_name ++ "__createObject" });
@@ -264,7 +264,8 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
         pub fn onClose(ptr: JSValue, reason: JSValue) void {
             JSC.markBinding(@src());
-            return onCloseExtern(ptr, reason);
+            const globalThis = bun.jsc.VirtualMachine.get().global; // TODO: this should be got from a parameter
+            return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), onCloseExtern, .{ ptr, reason }) catch return; // TODO: properly propagate exception upwards
         }
 
         pub fn onReady(ptr: JSValue, amount: JSValue, offset: JSValue) void {

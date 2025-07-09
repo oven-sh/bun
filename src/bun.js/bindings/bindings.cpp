@@ -190,12 +190,6 @@ enum class AsymmetricMatcherConstructorType : int8_t {
     InstanceOf = 9,
 };
 
-#if ASSERT_ENABLED
-#define ASSERT_NO_PENDING_EXCEPTION(globalObject) DECLARE_CATCH_SCOPE(globalObject->vm()).assertNoExceptionExceptTermination()
-#else
-#define ASSERT_NO_PENDING_EXCEPTION(globalObject) void()
-#endif
-
 // Ensure we instantiate the true and false variants of this function
 template bool Bun__deepMatch<true>(
     JSValue objValue,
@@ -4739,8 +4733,9 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
 
     } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-
         except->message = Bun::toStringRef(global, message);
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+            return;
     } else {
 
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
@@ -4766,6 +4761,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         if (syscall) {
             if (syscall.isString()) {
                 except->syscall = Bun::toStringRef(global, syscall);
+                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                    return;
             }
         }
 
@@ -4775,6 +4772,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         if (code) {
             if (code.isString() || code.isNumber()) {
                 except->system_code = Bun::toStringRef(global, code);
+                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                    return;
             }
         }
 
@@ -4784,6 +4783,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         if (path) {
             if (path.isString()) {
                 except->path = Bun::toStringRef(global, path);
+                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                    return;
             }
         }
 
@@ -4871,6 +4872,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         if (sourceURL) {
             if (sourceURL.isString()) {
                 except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
+                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                    return;
 
                 // Take care not to make these getter calls observable.
 
@@ -4967,8 +4970,7 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
         }
         if (message) {
             if (message.isString()) {
-                except->message = Bun::toStringRef(
-                    message.toWTFString(global));
+                except->message = Bun::toStringRef(message.toWTFString(global));
             }
         }
 

@@ -591,6 +591,7 @@ pub const Error = struct {
         // format taken from Node.js 'exceptions.cc'
         // search keyword: `Local<Value> UVException(Isolate* isolate,`
         var message_buf: [4096]u8 = undefined;
+        @memset(&message_buf, 0);
         const message = message: {
             var stream = std.io.fixedBufferStream(&message_buf);
             const writer = stream.writer();

@@ -304,7 +304,7 @@ static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
     RETURN_IF_EXCEPTION(scope, {});
-    return sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword);
+    RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
 }
 
 static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
@@ -314,7 +314,7 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
     RETURN_IF_EXCEPTION(scope, {});
     auto clientData = WebCore::clientData(vm);
-    return sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName());
+    RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
 }
 
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);

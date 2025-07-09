@@ -243,30 +243,15 @@ pub const JSGlobalObject = opaque {
 
     pub fn runOnLoadPlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, target: BunPluginTarget) bun.JSError!?JSValue {
         JSC.markBinding(@src());
-        const result = Bun__runOnLoadPlugins(this, if (namespace_.length() > 0) &namespace_ else null, &path, target);
-        if (this.hasException()) {
-            return error.JSError;
-        }
-        if (result.isEmptyOrUndefinedOrNull()) {
-            return null;
-        }
-
+        const result = try bun.jsc.fromJSHostCall(this, @src(), Bun__runOnLoadPlugins, .{ this, if (namespace_.length() > 0) &namespace_ else null, &path, target });
+        if (result.isUndefinedOrNull()) return null;
         return result;
     }
 
     pub fn runOnResolvePlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, source: bun.String, target: BunPluginTarget) bun.JSError!?JSValue {
         JSC.markBinding(@src());
-
-        const result = Bun__runOnResolvePlugins(this, if (namespace_.length() > 0) &namespace_ else null, &path, &source, target);
-
-        if (this.hasException()) {
-            return error.JSError;
-        }
-
-        if (result.isEmptyOrUndefinedOrNull()) {
-            return null;
-        }
-
+        const result = try bun.jsc.fromJSHostCall(this, @src(), Bun__runOnResolvePlugins, .{ this, if (namespace_.length() > 0) &namespace_ else null, &path, &source, target });
+        if (result.isUndefinedOrNull()) return null;
         return result;
     }
 

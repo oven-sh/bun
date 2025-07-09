@@ -71,7 +71,7 @@ extern "C" void* Request__clone(void* internalZigRequestPointer, JSGlobalObject*
 
 JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
 {
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto* structure = createJSBunRequestStructure(vm, defaultGlobalObject(globalObject));
     auto* clone = this->create(vm, structure, Request__clone(this->wrapped(), globalObject), nullptr);
@@ -85,6 +85,7 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
 
         auto propertyNames = PropertyNameArray(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
         JSObject::getOwnPropertyNames(params, globalObject, propertyNames, JSC::DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
 
         for (auto& property : propertyNames) {
             auto value = params->get(globalObject, property);
@@ -217,8 +218,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * global
         JSC::JSValue headersValue = request->get(globalObject, names.headersPublicName());
         RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
         auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(headersValue);
-        if (!headers)
-            return JSValue::encode(jsUndefined());
+        if (!headers) return JSValue::encode(jsUndefined());
 
         auto& fetchHeaders = headers->wrapped();
 
@@ -256,6 +256,7 @@ JSC_DEFINE_HOST_FUNCTION(jsJSBunRequestClone, (JSC::JSGlobalObject * globalObjec
     }
 
     auto clone = request->clone(vm, globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(clone));
 }

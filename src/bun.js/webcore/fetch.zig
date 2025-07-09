@@ -2342,7 +2342,7 @@ pub fn Bun__fetch_(
         prepare_body: {
             // is a S3 file we can use chunked here
 
-            if (try JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
+            if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
                 var old = body;
                 defer old.detach();
                 body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };

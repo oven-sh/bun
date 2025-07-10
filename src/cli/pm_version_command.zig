@@ -349,7 +349,7 @@ pub const PmVersionCommand = struct {
             \\  <d>$<r> <b><green>bun pm version<r> <blue>1.2.3<r> <cyan>--no-git-tag-version<r>
             \\  <d>$<r> <b><green>bun pm version<r> <cyan>prerelease<r> <cyan>--preid<r> <blue>beta<r> <cyan>--message<r> <blue>"Release beta: %s"<r>
             \\
-            \\More info: <magenta>https://bun.sh/docs/cli/pm#version<r>
+            \\More info: <magenta>https://bun.com/docs/cli/pm#version<r>
             \\
         ;
         Output.pretty(set_specific_version_help_text, .{beta_prerelease_version});

@@ -1100,8 +1100,8 @@ pub fn getSourceMapImpl(
 
         // try to load a .map file
         if (load_hint != .is_inline_map) try_external: {
-            var load_path_buf: *bun.PathBuffer = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(load_path_buf);
+            var load_path_buf: *bun.PathBuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(load_path_buf);
             if (source_filename.len + 4 > load_path_buf.len)
                 break :try_external;
             @memcpy(load_path_buf[0..source_filename.len], source_filename);

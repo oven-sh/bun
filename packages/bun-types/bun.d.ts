@@ -2334,7 +2334,7 @@ declare module "bun" {
   }
 
   /**
-   * @see [Bun.build API docs](https://bun.sh/docs/bundler#api)
+   * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
   interface BuildConfig {
     entrypoints: string[]; // list of file path
@@ -2519,7 +2519,7 @@ declare module "bun" {
    *
    * These are fast APIs that can run in a worker thread if used asynchronously.
    *
-   * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
+   * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
    *
    * @category Security
    */
@@ -2555,7 +2555,7 @@ declare module "bun" {
    * Password hashing functions are necessarily slow, and this object will
    * automatically run in a worker thread.
    *
-   * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
+   * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
    *
    * The underlying implementation of these functions are provided by the Zig
    * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
@@ -5719,7 +5719,7 @@ declare module "bun" {
      */
     | "browser";
 
-  /** https://bun.sh/docs/bundler/loaders */
+  /** https://bun.com/docs/bundler/loaders */
   type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
 
   interface PluginConstraints {
@@ -7981,15 +7981,15 @@ declare module "bun" {
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };
-    /** @see https://bun.sh/docs/install/overrides */
+    /** @see https://bun.com/docs/install/overrides */
     overrides?: Record<string, string>;
-    /** @see https://bun.sh/docs/install/patch */
+    /** @see https://bun.com/docs/install/patch */
     patchedDependencies?: Record<string, string>;
-    /** @see https://bun.sh/docs/install/lifecycle#trusteddependencies */
+    /** @see https://bun.com/docs/install/lifecycle#trusteddependencies */
     trustedDependencies?: string[];
-    /** @see https://bun.sh/docs/install/catalogs */
+    /** @see https://bun.com/docs/install/catalogs */
     catalog?: Record<string, string>;
-    /** @see https://bun.sh/docs/install/catalogs */
+    /** @see https://bun.com/docs/install/catalogs */
     catalogs?: Record<string, Record<string, string>>;
 
     /**

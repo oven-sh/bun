@@ -5,8 +5,8 @@ import { expect, test as it } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
-import { expectType } from "./utilities";
 import html from "./html.html";
+import { expectType } from "./utilities";
 
 // XXX: importing this from "harness" caused a failure in bun-types.test.ts
 function tmpdirSync(pattern: string = "bun.test."): string {

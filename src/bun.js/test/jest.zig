@@ -2015,7 +2015,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                 'j', 'o' => {
                     var str = bun.String.empty;
                     defer str.deref();
-                    current_arg.jsonStringify(globalThis, 0, &str);
+                    try current_arg.jsonStringify(globalThis, 0, &str);
                     const owned_slice = str.toOwnedSlice(allocator) catch bun.outOfMemory();
                     defer allocator.free(owned_slice);
                     list.appendSlice(allocator, owned_slice) catch bun.outOfMemory();

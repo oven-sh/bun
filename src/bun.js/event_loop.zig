@@ -110,7 +110,7 @@ extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
 pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, jsc_vm: *JSC.VM) bun.JSExecutionTerminated!void {
     JSC.markBinding(@src());
     var scope: JSC.CatchScope = undefined;
-    scope.init(globalObject, @src(), .enabled);
+    scope.init(globalObject, @src());
     defer scope.deinit();
 
     jsc_vm.releaseWeakRefs();
@@ -314,7 +314,7 @@ pub fn tickConcurrentWithCount(this: *EventLoop) usize {
     return this.tasks.count - start_count;
 }
 
-pub inline fn usocketsLoop(this: *const EventLoop) *uws.Loop {
+pub fn usocketsLoop(this: *const EventLoop) *uws.Loop {
     if (comptime Environment.isWindows) {
         return this.uws_loop.?;
     }
@@ -449,7 +449,7 @@ pub fn processGCTimer(this: *EventLoop) void {
 pub fn tick(this: *EventLoop) void {
     JSC.markBinding(@src());
     var scope: JSC.CatchScope = undefined;
-    scope.init(this.global, @src(), .enabled);
+    scope.init(this.global, @src());
     defer scope.deinit();
     this.entered_event_loop_count += 1;
     this.debug.enter();
@@ -552,6 +552,11 @@ pub fn ensureWaker(this: *EventLoop) void {
         this.virtual_machine.gc_controller.init(this.virtual_machine);
         // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
         // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.jsc, JSC.VM.drainMicrotasks);
+    }
+    if (comptime Environment.isWindows) {
+        if (this.uws_loop == null) {
+            this.uws_loop = bun.uws.Loop.get();
+        }
     }
     bun.uws.Loop.get().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(this));
 }

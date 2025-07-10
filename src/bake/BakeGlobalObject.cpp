@@ -46,6 +46,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
             JSC::jsUndefined(), parameters, JSC::jsUndefined());
     }
 
+    // TODO: make static cast instead of jscast
     // Use Zig::GlobalObject's function
     return jsCast<Zig::GlobalObject*>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, parameters, sourceOrigin);
 }
@@ -69,6 +70,18 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
             RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
 
             return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
+        }
+    }
+
+    if (auto string = jsDynamicCast<JSC::JSString*>(key)) {
+        auto keyView = string->getString(global);
+        RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+
+        if (keyView.startsWith("bake:/"_s)) {
+            BunString result = BakeProdResolve(global, Bun::toString("bake:/"_s), Bun::toString(keyView.substringSharingImpl("bake:"_s.length())));
+            RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+
+            return JSC::Identifier::fromString(vm, result.transferToWTFString());
         }
     }
 
@@ -113,6 +126,7 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
             if (source.tag != BunStringTag::Dead) {
                 JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(moduleKey));
                 JSC::SourceCode sourceCode = JSC::SourceCode(Bake::SourceProvider::create(
+                    globalObject,
                     source.toWTFString(),
                     origin,
                     WTFMove(moduleKey),

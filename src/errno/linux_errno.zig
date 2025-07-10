@@ -222,6 +222,7 @@ pub const UV_E = struct {
     pub const SOCKTNOSUPPORT: i32 = @intFromEnum(SystemErrno.ESOCKTNOSUPPORT);
     pub const NODATA: i32 = @intFromEnum(SystemErrno.ENODATA);
     pub const UNATCH: i32 = @intFromEnum(SystemErrno.EUNATCH);
+    pub const NOEXEC: i32 = @intFromEnum(SystemErrno.ENOEXEC);
 };
 pub fn getErrno(rc: anytype) E {
     const Type = @TypeOf(rc);

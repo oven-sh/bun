@@ -22,9 +22,15 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
 
   for (const pat of patterns) {
     for await (const ent of new Bun.Glob(pat).scan(globOptions)) {
-      const _ent = ent.replaceAll(sep, "/");
-      if (typeof exclude === "function" && exclude(ent)) continue;
-      if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || _ent === p || _ent.startsWith(p + "/"))) continue;
+      if (typeof exclude === "function") {
+        if (exclude(ent)) continue;
+      } else if (excludeGlobs) {
+        const _ent = ent.replaceAll(sep, "/");
+        if (excludeGlobs.some(([glob, p]) => glob.match(ent) || _ent === p || _ent.startsWith(p + "/"))) {
+          continue;
+        }
+      }
+
       yield ent;
     }
   }
@@ -38,24 +44,31 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
 
   for (const pat of patterns) {
     for (const ent of new Bun.Glob(pat).scanSync(globOptions)) {
-      const _ent = ent.replaceAll(sep, "/");
-      if (typeof exclude === "function" && exclude(ent)) continue;
-      if (excludeGlobs?.some(([glob, p]) => glob.match(ent) || _ent === p || _ent.startsWith(p + "/"))) continue;
+      if (typeof exclude === "function") {
+        if (exclude(ent)) continue;
+      } else if (excludeGlobs) {
+        const _ent = ent.replaceAll(sep, "/");
+        if (excludeGlobs.some(([glob, p]) => glob.match(ent) || _ent === p || _ent.startsWith(p + "/"))) {
+          continue;
+        }
+      }
+
       yield ent;
     }
   }
 }
 
 function validatePattern(pattern: string | string[]): string[] {
-  if (typeof pattern === "string") {
-    validateString(pattern, "pattern");
-    return [isWindows ? pattern.replaceAll("/", sep) : pattern];
+  if (Array.isArray(pattern)) {
+    validateArray(pattern, "pattern");
+    return pattern.map(p => {
+      validateString(p, "pattern");
+      return isWindows ? p.replaceAll("/", sep) : p;
+    });
   }
-  validateArray(pattern, "pattern");
-  return pattern.map(p => {
-    validateString(p, "pattern");
-    return isWindows ? p.replaceAll("/", sep) : p;
-  });
+
+  validateString(pattern, "pattern");
+  return [isWindows ? pattern.replaceAll("/", sep) : pattern];
 }
 
 function mapOptions(options: GlobOptions): GlobScanOptions & { exclude: GlobOptions["exclude"] } {

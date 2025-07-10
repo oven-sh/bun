@@ -148,6 +148,10 @@ describe("@types/bun integration test", () => {
       `error TS2339: Property 'pong' does not exist on type 'WebSocket'.`,
       `error TS2339: Property 'terminate' does not exist on type 'WebSocket'.`,
 
+      "spawn.ts",
+      "error TS2339: Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+      "error TS2339: Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+
       "worker.ts",
       "error TS2339: Property 'ref' does not exist on type 'Worker'.",
       "error TS2339: Property 'unref' does not exist on type 'Worker'.",

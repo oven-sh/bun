@@ -480,7 +480,10 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JS
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(script->getBytecodeBuffer()));
+    scope.assertNoExceptionExceptTermination();
+    auto* buffer = script->getBytecodeBuffer();
+    if (!buffer) return JSValue::encode(jsUndefined());
+    return JSValue::encode(buffer);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
@@ -493,7 +496,8 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalOb
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(script->cachedDataProduced())));
+    scope.assertNoExceptionExceptTermination();
+    return JSValue::encode(jsBoolean(script->cachedDataProduced()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))

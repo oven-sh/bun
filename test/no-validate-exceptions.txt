@@ -39,17 +39,6 @@ test/js/third_party/pg-gateway/pglite.test.ts
 test/js/web/websocket/websocket.test.js
 test/js/node/test/parallel/test-vm-module-referrer-realm.mjs
 
-# uses node:test
-test/js/node/test/parallel/test-fs-write-stream-flush.js
-test/js/node/test/parallel/test-fs-write-file-flush.js
-test/js/node/test/parallel/test-fs-operations-with-surrogate-pairs.js
-test/js/node/test/parallel/test-fs-append-file-flush.js
-test/js/node/test/parallel/test-file-write-stream5.js
-test/js/node/test/parallel/test-assert-checktag.js
-test/js/node/test/parallel/test-assert-deep-with-error.js
-test/js/node/test/parallel/test-assert-if-error.js
-test/js/node/test/parallel/test-assert.js
-
 # trips asan on my macos test machine
 test/js/node/test/parallel/test-fs-watch.js
 test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js
@@ -129,6 +118,7 @@ test/js/third_party/grpc-js/test-server-deadlines.test.ts
 test/js/third_party/grpc-js/test-server-errors.test.ts
 test/js/third_party/grpc-js/test-server-interceptors.test.ts
 test/js/third_party/grpc-js/test-server.test.ts
+test/js/node/test/parallel/test-assert-if-error.js
 # ErrorInstance::defineOwnProperty
 test/js/bun/util/inspect-error.test.js
 # moduleLoaderParseModule

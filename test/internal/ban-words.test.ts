@@ -46,7 +46,7 @@ const words: Record<string, { reason: string; regex?: boolean }> = {
   "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead." },
   "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead." },
 
-  ".ptr[": { reason: "'.ptr[' bypasses bounds detection. Slice directly instead." },
+  ".ptr[": { reason: "'.ptr[...]' bypasses bounds detection. Index or slice directly instead." },
 };
 const words_keys = [...Object.keys(words)];
 

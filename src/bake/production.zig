@@ -300,7 +300,8 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     var source_maps: bun.StringArrayHashMapUnmanaged(OutputFile.Index) = .{};
     @memset(module_keys, bun.String.dead);
     for (bundled_outputs, 0..) |file, i| {
-        log("{s} - {s} : {s} - {?d}\n", .{
+        log("src_index={any} {s} - {s} : {s} - {?d}\n", .{
+            file.source_index.unwrap(),
             if (file.side) |s| @tagName(s) else "null",
             file.src_path.text,
             file.dest_path,
@@ -331,7 +332,6 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 };
             },
             .server => {
-                // For Debugging
                 if (ctx.bundler_options.bake_debug_dump_server) {
                     _ = file.writeToDisk(root_dir, ".") catch |err| {
                         bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -387,6 +387,25 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                     .sourcemap => @panic("TODO: register source map"),
                 }
             },
+        }
+
+        // TODO: should we just write the sourcemaps to disk?
+        if (file.source_map_index != std.math.maxInt(u32)) {
+            const source_map_index = file.source_map_index;
+            const source_map_file: *const OutputFile = &bundled_outputs[source_map_index];
+            bun.assert(source_map_file.output_kind == .sourcemap);
+
+            const without_prefix = if (bun.strings.hasPrefixComptime(file.dest_path, "./") or
+                (Environment.isWindows and bun.strings.hasPrefixComptime(file.dest_path, ".\\")))
+                file.dest_path[2..]
+            else
+                file.dest_path;
+
+            try source_maps.put(
+                allocator,
+                try std.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
+                OutputFile.Index.init(@intCast(source_map_index)),
+            );
         }
     }
 
@@ -472,23 +491,23 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     // Route URL patterns with parameter placeholders.
     // Examples: "/", "/about", "/blog/:slug", "/products/:category/:id"
     const route_patterns = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
-    
+
     // File indices for each route's components (page, layouts).
     // Example: [2, 5, 0] = page at index 2, layout at 5, root layout at 0
     const route_nested_files = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
-    
+
     // Router type index (lower 8 bits) and flags (upper 24 bits).
     // Example: 0x00000001 = router type 1, no flags
     const route_type_and_flags = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
-    
+
     // Source file paths relative to project root.
     // Examples: "pages/index.tsx", "pages/blog/[slug].tsx"
     const route_source_files = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
-    
+
     // Parameter names for dynamic routes (reversed order), null for static routes.
     // Examples: ["slug"] for /blog/[slug], ["id", "category"] for /products/[category]/[id]
     const route_param_info = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
-    
+
     // CSS chunk URLs for each route.
     // Example: ["/assets/main.css", "/assets/blog.css"]
     const route_style_references = try JSValue.createEmptyArray(global, navigatable_routes.items.len);

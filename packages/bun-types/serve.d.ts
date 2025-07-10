@@ -464,36 +464,66 @@ declare module "bun" {
           ? {}
           : {};
 
+    type Development =
+      | boolean
+      | {
+          /**
+           * Enable Hot Module Replacement for routes (including React Fast Refresh, if React is in use)
+           *
+           * @default true if process.env.NODE_ENV !== 'production'
+           *
+           */
+          hmr?: boolean;
+
+          /**
+           * Enable console log streaming from browser to server
+           * @default false
+           */
+          console?: boolean;
+
+          /**
+           * Enable automatic workspace folders for Chrome DevTools
+           *
+           * This lets you persistently edit files in the browser. It works by adding the following route to the server:
+           * `/.well-known/appspecific/com.chrome.devtools.json`
+           *
+           * The response is a JSON object with the following shape:
+           * ```json
+           * {
+           *   "workspace": {
+           *     "root": "<cwd>",
+           *     "uuid": "<uuid>"
+           *   }
+           * }
+           * ```
+           *
+           * The `root` field is the current working directory of the server.
+           * The `"uuid"` field is a hash of the file that started the server and a hash of the current working directory.
+           *
+           * For security reasons, if the remote socket address is not from localhost, 127.0.0.1, or ::1, the request is ignored.
+           * @default true
+           */
+          chromeDevToolsAutomaticWorkspaceFolders?: boolean;
+        };
+
     type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
 
     type Handler<Req, S, Res> = (request: Req, server: S) => MaybePromise<Res>;
 
-    type RouteValue<T extends string> =
-      | Response
-      | false
-      | HTMLBundle
-      | BunFile
-      | Handler<BunRequest<T>, Server<undefined>, Response>
-      | {
-          [K in HTTPMethod]?: Handler<BunRequest<T>, Server<undefined>, Response>;
-        };
-
-    type RouteValueWithUpgrade<WebSocketData, T extends string> =
-      | Response
-      | false
-      | HTMLBundle
-      | BunFile
-      | Handler<BunRequest<T>, Server<WebSocketData>, Response | void | undefined>
-      | {
-          [K in HTTPMethod]?: Handler<BunRequest<T>, Server<WebSocketData>, Response | void | undefined>;
-        };
+    type BaseRouteValue = Response | false | HTMLBundle | BunFile;
 
     type Routes<R extends string> = {
-      [Key in R]: RouteValue<Key>;
+      [Path in R]:
+        | BaseRouteValue
+        | Handler<BunRequest<Path>, Server<undefined>, Response>
+        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<undefined>, Response>>>;
     };
 
     type RoutesWithUpgrade<WebSocketData, R extends string> = {
-      [Key in R]: RouteValueWithUpgrade<WebSocketData, Key>;
+      [Path in R]:
+        | BaseRouteValue
+        | Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>
+        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>>>;
     };
 
     type FetchOrRoutes<R extends string> =
@@ -650,48 +680,20 @@ declare module "bun" {
        * Render contextual errors? This enables bun's error page
        * @default process.env.NODE_ENV !== 'production'
        */
-      development?:
-        | boolean
-        | {
-            /**
-             * Enable Hot Module Replacement for routes (including React Fast Refresh, if React is in use)
-             *
-             * @default true if process.env.NODE_ENV !== 'production'
-             *
-             */
-            hmr?: boolean;
+      development?: Development;
 
-            /**
-             * Enable console log streaming from browser to server
-             * @default false
-             */
-            console?: boolean;
-
-            /**
-             * Enable automatic workspace folders for Chrome DevTools
-             *
-             * This lets you persistently edit files in the browser. It works by adding the following route to the server:
-             * `/.well-known/appspecific/com.chrome.devtools.json`
-             *
-             * The response is a JSON object with the following shape:
-             * ```json
-             * {
-             *   "workspace": {
-             *     "root": "<cwd>",
-             *     "uuid": "<uuid>"
-             *   }
-             * }
-             * ```
-             *
-             * The `root` field is the current working directory of the server.
-             * The `"uuid"` field is a hash of the file that started the server and a hash of the current working directory.
-             *
-             * For security reasons, if the remote socket address is not from localhost, 127.0.0.1, or ::1, the request is ignored.
-             * @default true
-             */
-            chromeDevToolsAutomaticWorkspaceFolders?: boolean;
-          };
-
+      /**
+       * Callback called when an error is thrown during request handling
+       * @param error The error that was thrown
+       * @returns A response to send to the client
+       *
+       * @example
+       * ```ts
+       * error: (error) => {
+       *   return new Response("Internal Server Error", { status: 500 });
+       * }
+       * ```
+       */
       error?: (this: Server<WebSocketData>, error: ErrorLike) => Response | Promise<Response> | void | Promise<void>;
 
       /**
@@ -712,7 +714,7 @@ declare module "bun" {
       id?: string | null;
     }
 
-    interface HostnamePortServeOptions<WebSocketData> extends BaseServeOptions<WebSocketData> {
+    interface HostnamePortServeOptions {
       /**
        * Cannot use `.unix` with hostname & port
        */
@@ -768,7 +770,7 @@ declare module "bun" {
       idleTimeout?: number;
     }
 
-    interface UnixServeOptions<WebSocketData> extends BaseServeOptions<WebSocketData> {
+    interface UnixServeOptions {
       /**
        * Cannot use `.hostname` with unix
        */
@@ -790,13 +792,13 @@ declare module "bun" {
       | FetchOrRoutes<R>
       | FetchOrRoutesWithWebSocket<WebSocketData, R>;
 
+    type HostnamePortOrUnix = HostnamePortServeOptions | UnixServeOptions;
+
     /**
      * The type of options that can be passed to {@link serve}, with support for `routes` and a safer requirement for `fetch`
      */
-    type Options<WebSocketData = undefined, R extends string = never> = (
-      | HostnamePortServeOptions<WebSocketData>
-      | UnixServeOptions<WebSocketData>
-    ) &
+    type Options<WebSocketData = undefined, R extends string = never> = BaseServeOptions<WebSocketData> &
+      HostnamePortOrUnix &
       FetchOrRoutesMaybeWebSocket<WebSocketData, R>;
   }
 

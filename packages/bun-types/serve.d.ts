@@ -508,9 +508,19 @@ declare module "bun" {
 
     type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
 
-    type Handler<Req, S, Res> = (request: Req, server: S) => MaybePromise<Res>;
+    type Handler<Req extends Request, S, Res extends Response> = (request: Req, server: S) => MaybePromise<Res>;
 
     type BaseRouteValue = Response | false | HTMLBundle | BunFile;
+
+    type Without<A, B> = A & {
+      [Key in Exclude<keyof B, keyof A>]?: never;
+    };
+
+    type XOR<A, B> = Without<A, B> | Without<B, A>;
+
+    type Prettier<T> = {
+      [Key in keyof T]: T[Key];
+    } & {};
 
     type Routes<R extends string> = {
       [Path in R]:
@@ -528,8 +538,6 @@ declare module "bun" {
 
     type FetchOrRoutes<R extends string> =
       | {
-          websocket?: never;
-
           /**
            * Handle HTTP requests
            *
@@ -540,8 +548,6 @@ declare module "bun" {
           routes: Routes<R>;
         }
       | {
-          websocket?: never;
-
           /**
            * Handle HTTP requests
            *
@@ -714,12 +720,7 @@ declare module "bun" {
       id?: string | null;
     }
 
-    interface HostnamePortServeOptions {
-      /**
-       * Cannot use `.unix` with hostname & port
-       */
-      unix?: never;
-
+    interface HostnamePortServeOptions<WebSocketData> extends BaseServeOptions<WebSocketData> {
       /**
        * What hostname should the server listen on?
        *
@@ -738,7 +739,8 @@ declare module "bun" {
        *
        * note: hostname should not include a {@link port}
        */
-      hostname?: "0.0.0.0" | "127.0.0.1" | "localhost" | (string & {});
+      hostname?: string;
+      // hostname?: "0.0.0.0" | "127.0.0.1" | "localhost" | (string & {});
 
       /**
        * What port should the server listen on?
@@ -765,22 +767,12 @@ declare module "bun" {
        * Sets the the number of seconds to wait before timing out a connection
        * due to inactivity.
        *
-       * Default is `10` seconds.
+       * @default 10
        */
       idleTimeout?: number;
     }
 
-    interface UnixServeOptions {
-      /**
-       * Cannot use `.hostname` with unix
-       */
-      hostname?: never;
-
-      /**
-       * Cannot use `.port` with unix
-       */
-      port?: never;
-
+    interface UnixServeOptions<WebSocketData> extends BaseServeOptions<WebSocketData> {
       /**
        * If set, the HTTP server will listen on a unix socket instead of a port.
        * (Cannot be used with hostname+port)
@@ -788,18 +780,13 @@ declare module "bun" {
       unix?: string;
     }
 
-    type FetchOrRoutesMaybeWebSocket<WebSocketData, R extends string> =
-      | FetchOrRoutes<R>
-      | FetchOrRoutesWithWebSocket<WebSocketData, R>;
-
-    type HostnamePortOrUnix = HostnamePortServeOptions | UnixServeOptions;
-
     /**
      * The type of options that can be passed to {@link serve}, with support for `routes` and a safer requirement for `fetch`
      */
-    type Options<WebSocketData = undefined, R extends string = never> = BaseServeOptions<WebSocketData> &
-      HostnamePortOrUnix &
-      FetchOrRoutesMaybeWebSocket<WebSocketData, R>;
+    type Options<WebSocketData = undefined, R extends string = never> = Bun.Pretty<
+      XOR<HostnamePortServeOptions<WebSocketData>, UnixServeOptions<WebSocketData>> &
+        XOR<FetchOrRoutes<R>, FetchOrRoutesWithWebSocket<WebSocketData, R>>
+    >;
   }
 
   type ServeOptions<T = undefined, R extends string = never> = Serve.Options<T, R>;
@@ -1030,6 +1017,7 @@ declare module "bun" {
      * ```
      */
     timeout(request: Request, seconds: number): void;
+
     /**
      * Undo a call to {@link Server.unref}
      *

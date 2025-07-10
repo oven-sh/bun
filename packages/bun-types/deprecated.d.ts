@@ -14,6 +14,37 @@ declare module "bun" {
     ): void;
   }
 
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type Platform =
+    | "aix"
+    | "android"
+    | "darwin"
+    | "freebsd"
+    | "haiku"
+    | "linux"
+    | "openbsd"
+    | "sunos"
+    | "win32"
+    | "cygwin"
+    | "netbsd";
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type UncaughtExceptionListener = (error: Error, origin: UncaughtExceptionOrigin) => void;
+
+  /**
+   * Most of the time the unhandledRejection will be an Error, but this should not be relied upon
+   * as *anything* can be thrown/rejected, it is therefore unsafe to assume that the value is an Error.
+   *
+   * @deprecated This type is unused in Bun's types and might be removed in the near future
+   */
+  type UnhandledRejectionListener = (reason: unknown, promise: Promise<unknown>) => void;
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type MultipleResolveListener = (type: MultipleResolveType, promise: Promise<unknown>, value: unknown) => void;
+
   /** @deprecated Use {@link SQL.Query Bun.SQL.Query} */
   type SQLQuery<T = any> = SQL.Query<T>;
 

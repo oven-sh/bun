@@ -22,7 +22,7 @@ export default {
 } satisfies Bun.Serve.Options;
 
 let id = 0;
-function test<T, R extends string>(
+function test<T = undefined, R extends string = never>(
   options: Bun.Serve.Options<T, R>,
   {
     onConstructorFailure,
@@ -134,9 +134,9 @@ test({
   },
 });
 
-test<{ name: string }, "">({
+test<{ name: string }, "/">({
   routes: {
-    "": false,
+    "/": false,
   },
   fetch(req, server) {
     expectType(server.upgrade).is<

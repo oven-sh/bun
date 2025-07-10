@@ -53,6 +53,13 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
 
         pub fn pushBatch(self: *Self, first: *T, last: *T) void {
             @field(last, next) = null;
+            if (comptime bun.Environment.allow_assert) {
+                var item = first;
+                while (@field(item, next)) |next_item| {
+                    item = next_item;
+                }
+                assertf(item == last, "`last` should be reachable from `first`", .{});
+            }
             const prev_next_ptr = if (self.back.swap(last, .acq_rel)) |old_back|
                 &@field(old_back, next)
             else

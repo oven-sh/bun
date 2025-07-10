@@ -646,3 +646,113 @@ describe("FormData", () => {
     }
   });
 });
+
+// https://github.com/oven-sh/bun/issues/14988
+describe("Content-Type header propagation", () => {
+  it("new Request({body: FormData}) (subclass) -> fetch(request)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req, res) {
+        if (!req.headers.get("content-type").includes("multipart/form-data")) {
+          return new Response("Hello, world!", { status: 400 });
+        }
+        const body = await req.formData();
+        expect(body.get("foo")!.size).toBe(3);
+        return new Response("Hello, world!", { status: 200 });
+      },
+    });
+    const fd = new FormData();
+    fd.append("foo", new Blob(["bar"]));
+    class CustomRequest extends Request {
+      constructor(input: string | URL | Request, init?: RequestInit) {
+        super(input, init);
+      }
+    }
+
+    const requestInit = {
+      method: "POST",
+      body: fd,
+    };
+
+    const request = new CustomRequest(server.url.toString(), requestInit);
+    const res = await fetch(request);
+    expect(res.status).toBe(200);
+  });
+
+  it("FormData -> Request (subclass) -> ReadableStream -> fetch(request)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req, res) {
+        if (!req.headers.get("content-type").includes("multipart/form-data")) {
+          return new Response("Hello, world!", { status: 400 });
+        }
+        const body = await req.formData();
+        expect(body.get("foo")!.size).toBe(3);
+        return new Response("Hello, world!", { status: 200 });
+      },
+    });
+
+    class CustomRequest extends Request {}
+    const fd = new FormData();
+    fd.append("foo", new Blob(["bar"]));
+    const request = new CustomRequest(server.url.toString(), {
+      method: "POST",
+      body: fd,
+    });
+    const res = await fetch(request);
+    expect(res.status).toBe(200);
+  });
+
+  it("FormData -> Request (subclass) -> fetch(url, {body: request.blob()})", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req, res) {
+        if (!req.headers.get("content-type").includes("multipart/form-data")) {
+          return new Response("Hello, world!", { status: 400 });
+        }
+        const body = await req.formData();
+        expect(body.get("foo")!.size).toBe(3);
+        return new Response("Hello, world!", { status: 200 });
+      },
+    });
+
+    class CustomRequest extends Request {}
+    const fd = new FormData();
+    fd.append("foo", new Blob(["bar"]));
+
+    const request = new CustomRequest(server.url.toString(), {
+      method: "POST",
+      body: fd,
+    });
+    const res = await fetch(server.url.toString(), {
+      method: "POST",
+      body: await request.blob(),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("FormData -> Request -> fetch(request)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req, res) {
+        if (!req.headers.get("content-type").includes("multipart/form-data")) {
+          return new Response("Hello, world!", { status: 400 });
+        }
+        const body = await req.formData();
+        expect(body.get("foo")!.size).toBe(3);
+        return new Response("Hello, world!", { status: 200 });
+      },
+    });
+    const fd = new FormData();
+    fd.append("foo", new Blob(["bar"]));
+
+    const requestInit = {
+      method: "POST",
+      body: fd,
+    };
+
+    const request = new Request(server.url.toString(), requestInit);
+    const res = await fetch(request);
+    expect(res.status).toBe(200);
+  });
+});

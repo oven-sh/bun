@@ -561,12 +561,6 @@ pub const Value = union(Tag) {
                     };
                 }
 
-                // if (bytes.len <= InlineBlob.available_bytes) {
-                //     return Body.Value{
-                //         .InlineBlob = InlineBlob.init(bytes),
-                //     };
-                // }
-
                 return Body.Value{
                     .InternalBlob = .{
                         .bytes = std.ArrayList(u8){
@@ -597,7 +591,8 @@ pub const Value = union(Tag) {
         if (js_type == .DOMWrapper) {
             if (value.as(Blob)) |blob| {
                 return Body.Value{
-                    .Blob = blob.dupe(),
+                    // We must preserve "type" so that DOMFormData and the "type" field are preserved.
+                    .Blob = blob.dupeWithContentType(true),
                 };
             }
         }
@@ -611,17 +606,15 @@ pub const Value = union(Tag) {
 
             switch (readable.ptr) {
                 .Blob => |blob| {
-                    const store = blob.detachStore() orelse {
-                        return Body.Value{ .Blob = Blob.initEmpty(globalThis) };
-                    };
+                    if (blob.toAnyBlob(globalThis)) |any_blob| {
+                        return switch (any_blob) {
+                            .Blob => .{ .Blob = any_blob.Blob },
+                            .InternalBlob => .{ .InternalBlob = any_blob.InternalBlob },
+                            .WTFStringImpl => .{ .WTFStringImpl = any_blob.WTFStringImpl },
+                        };
+                    }
 
-                    readable.forceDetach(globalThis);
-
-                    const result: Value = .{
-                        .Blob = Blob.initWithStore(store, globalThis),
-                    };
-
-                    return result;
+                    return .Empty;
                 },
                 else => {},
             }

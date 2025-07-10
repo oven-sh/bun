@@ -109,6 +109,11 @@ static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* glob
 
 extern "C" BunString BakeProdLoad(void* perThreadData, BunString a);
 
+extern "C" bool BakeGlobalObject__isBaked(JSC::JSGlobalObject* global)
+{
+    return global->JSCell::inherits(Bake::GlobalObject::info());
+}
+
 extern "C" void* BakeGlobalObject__getPerThreadData(JSC::JSGlobalObject* global)
 {
     Bake::GlobalObject* bake = jsCast<Bake::GlobalObject*>(global);

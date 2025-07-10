@@ -4,10 +4,6 @@
 
 namespace Bake {
 
-// Opaque pointer to Zig's bake.production.PerThread structure
-// This must never be dereferenced in C++ code
-// Using void* to avoid any issues with incomplete types
-
 class GlobalObject : public Zig::GlobalObject {
 public:
     using Base = Zig::GlobalObject;

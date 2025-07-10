@@ -836,10 +836,17 @@ pub fn getSourceMapImpl(
 
         // try to load a .map file
         if (load_hint != .is_inline_map) try_external: {
-            if (comptime SourceProviderKind == BakeSourceProvider) {
+            if (comptime SourceProviderKind == BakeSourceProvider) fallback_to_normal: {
+                const global = bun.JSC.VirtualMachine.get().global;
+                // If we're using bake's production build the global object will
+                // be Bake::GlobalObject and we can fetch the sourcemap from it,
+                // if not fallback to the normal way
+                if (!BakeGlobalObject__isBaked(global)) {
+                    break :fallback_to_normal;
+                }
                 const data = BakeSourceProvider.getExternal(
                     provider,
-                    bun.JSC.VirtualMachine.get().global,
+                    global,
                     source_filename,
                 );
                 break :parsed .{
@@ -945,6 +952,9 @@ pub const SourceProviderMap = opaque {
     }
 };
 
+/// ( ͡° ͜ʖ ͡°)
+extern "c" fn BakeGlobalObject__isBaked(global: *bun.JSC.JSGlobalObject) bool;
+
 extern "c" fn BakeGlobalObject__getPerThreadData(global: *bun.JSC.JSGlobalObject) *bun.bake.production.PerThread;
 
 pub const BakeSourceProvider = opaque {
@@ -955,6 +965,7 @@ pub const BakeSourceProvider = opaque {
     }
 
     pub fn getExternal(_: *BakeSourceProvider, global: *bun.JSC.JSGlobalObject, source_filename: []const u8) []const u8 {
+        bun.assert(BakeGlobalObject__isBaked(global));
         const pt = BakeGlobalObject__getPerThreadData(global);
         if (pt.source_maps.get(source_filename)) |value| {
             return pt.bundled_outputs[value.get()].value.asSlice();

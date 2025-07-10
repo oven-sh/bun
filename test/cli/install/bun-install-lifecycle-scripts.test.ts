@@ -809,8 +809,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exited).toBe(1);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
-      expect(await (stdout).text()).toEqual(expect.stringContaining("bun install v1."));
-      const err = await (std(stderr).text()
+      expect(await stdout.text()).toEqual(expect.stringContaining("bun install v1."));
+      const err = await stderr.text();
       expect(err).toContain("error: Oops!");
       expect(err).toContain('error: preinstall script from "fooooooooo" exited with 1');
     });
@@ -990,7 +990,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = stderrForInstall(await (std(stderr).text()
+      err = stderrForInstall(await stderr.text());
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -1223,7 +1223,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = stderrForInstall(await (std(stderr).text()
+      err = stderrForInstall(await stderr.text());
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -1345,11 +1345,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = await (std(stderr).text()
+      const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      const out = await (std(stdout).text()
+      const out = await stdout.text();
       expect(out).not.toContain("Blocked");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
@@ -1379,11 +1379,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = await (std(stderr).text()
+      const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      const out = await (std(stdout).text()
+      const out = await stdout.text();
       expect(out).not.toContain("Blocked");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
@@ -1480,7 +1480,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = stderrForInstall(await (std(stderr).text()
+      err = stderrForInstall(await stderr.text());
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -1683,11 +1683,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await (std(stderr).text()
+      err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      out = await (std(stdout).text()
+      out = await stdout.text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
@@ -1731,8 +1731,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = await (std(stderr).text()
-      const out = await (std(stdout).text()
+      const err = await stderr.text();
+      const out = await stdout.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -1781,11 +1781,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      var err = await (std(stderr).text()
+      var err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      var out = await (std(stdout).text()
+      var out = await stdout.text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
@@ -1823,11 +1823,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await (std(stderr).text()
+      err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      out = await (std(stdout).text()
+      out = await stdout.text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
@@ -1884,7 +1884,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         });
 
-        const err = await (std(stderr).text()
+        const err = await stderr.text();
         expect(err).not.toContain("error:");
 
         expect(await exited).toBe(0);
@@ -1971,12 +1971,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           });
 
-          let err = stderrForInstall(await (std(stderr).text()
+          let err = stderrForInstall(await stderr.text());
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
-          let out = await (std(stdout).text()
+          let out = await stdout.text();
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun add v1."),
             "",
@@ -2004,12 +2004,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = stderrForInstall(await (std(stderr).text()
+          err = stderrForInstall(await stderr.text());
           expect(err).not.toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
-          out = await (std(stdout).text()
+          out = await stdout.text();
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun install v1."),
             "",
@@ -2038,12 +2038,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           });
 
-          const err = stderrForInstall(await (std(stderr).text()
+          const err = stderrForInstall(await stderr.text());
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
-          const out = await (std(stdout).text()
+          const out = await stdout.text();
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun add v1."),
             "",
@@ -2078,12 +2078,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           });
 
-          let err = stderrForInstall(await (std(stderr).text()
+          let err = stderrForInstall(await stderr.text());
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
-          let out = await (std(stdout).text()
+          let out = await stdout.text();
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun add v1."),
             "",
@@ -2116,11 +2116,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           // any lifecycle scripts. It shouldn't automatically add to
           // trustedDependencies.
 
-          err = await (std(stderr).text()
+          err = await stderr.text();
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
-          out = await (std(stdout).text()
+          out = await stdout.text();
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun add v1."),
             "",
@@ -2165,12 +2165,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         });
 
-        let err = stderrForInstall(await (std(stderr).text()
+        let err = stderrForInstall(await stderr.text());
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
         expect(err).not.toContain("warn:");
-        let out = await (std(stdout).text()
+        let out = await stdout.text();
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           expect.stringContaining("bun install v1."),
           "",
@@ -2200,12 +2200,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         }));
 
-        err = stderrForInstall(await (std(stderr).text()
+        err = stderrForInstall(await stderr.text());
         expect(err).not.toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
         expect(err).not.toContain("warn:");
-        out = await (std(stdout).text()
+        out = await stdout.text();
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           expect.stringContaining("bun install v1."),
           "",
@@ -2238,12 +2238,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         });
 
-        let err = stderrForInstall(await (std(stderr).text()
+        let err = stderrForInstall(await stderr.text());
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
         expect(err).not.toContain("warn:");
-        let out = await (std(stdout).text()
+        let out = await stdout.text();
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           expect.stringContaining("bun install v1."),
           "",
@@ -2285,12 +2285,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         }));
 
-        err = stderrForInstall(await (std(stderr).text()
+        err = stderrForInstall(await stderr.text());
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
         expect(err).not.toContain("warn:");
-        out = await (std(stdout).text()
+        out = await stdout.text();
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           expect.stringContaining("bun install v1."),
           "",
@@ -2330,12 +2330,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         });
 
-        let err = stderrForInstall(await (std(stderr).text()
+        let err = stderrForInstall(await stderr.text());
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
         expect(err).not.toContain("warn:");
-        let out = await (std(stdout).text()
+        let out = await stdout.text();
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           expect.stringContaining("bun install v1."),
           "",
@@ -2379,12 +2379,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         }));
 
-        err = stderrForInstall(await (std(stderr).text()
+        err = stderrForInstall(await stderr.text());
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
         expect(err).not.toContain("warn:");
-        out = await (std(stdout).text()
+        out = await stdout.text();
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           expect.stringContaining("bun install v1."),
           "",
@@ -2425,7 +2425,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       env.PATH = originalPath;
 
-      let err = stderrForInstall(await (std(stderr).text()
+      let err = stderrForInstall(await stderr.text());
       expect(err).toContain("No packages! Deleted empty lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -2464,7 +2464,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       env.PATH = originalPath;
 
-      let err = stderrForInstall(await (std(stderr).text()
+      let err = stderrForInstall(await stderr.text());
       expect(err).toContain("No packages! Deleted empty lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -2494,11 +2494,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      let err = stderrForInstall(await (std(stderr).text()
+      let err = stderrForInstall(await stderr.text());
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      let out = await (std(stdout).text()
+      let out = await stdout.text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
@@ -2524,11 +2524,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = stderrForInstall(await (std(stderr).text()
+      err = stderrForInstall(await stderr.text());
       expect(err).toContain("bun pm untrusted");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      out = await (std(stdout).text()
+      out = await stdout.text();
       expect(out).toContain("Found 0 untrusted dependencies with scripts");
       expect(await exited).toBe(0);
 
@@ -2542,10 +2542,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       expect(await exited).toBe(1);
 
-      err = await (std(stderr).text()
+      err = await stderr.text();
       expect(err).toContain("bun pm trust");
       expect(err).toContain("0 scripts ran");
-      expect(err).toContain("uses-what-bin");
+      expect(err).toContain("uses-wha");
     });
 
     describe("add trusted, delete, then add again", async () => {
@@ -2575,12 +2575,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           });
 
-          let err = stderrForInstall(await (std(stderr).text()
+          let err = stderrForInstall(await stderr.text());
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
-          let out = await (std(stdout).text()
+          let out = await stdout.text();
           expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun install v1."),
             "",
@@ -2605,10 +2605,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = stderrForInstall(await (std(stderr).text()
+          err = stderrForInstall(await stderr.text());
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
-          out = await (std(stdout).text()
+          out = await stdout.text();
           expect(out).toContain("1 script ran across 1 package");
           expect(await exited).toBe(0);
 
@@ -2632,12 +2632,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
               env: testEnv,
             }));
 
-            err = stderrForInstall(await (std(stderr).text()
+            err = stderrForInstall(await stderr.text());
             expect(err).toContain("Saved lockfile");
             expect(err).not.toContain("not found");
             expect(err).not.toContain("error:");
             expect(err).not.toContain("warn:");
-            out = await (std(stdout).text()
+            out = await stdout.text();
             expect(out).toContain("1 package removed");
             expect(out).toContain("uses-what-bin");
             expect(await exited).toBe(0);
@@ -2660,12 +2660,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = stderrForInstall(await (std(stderr).text()
+          err = stderrForInstall(await stderr.text());
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
-          out = await (std(stdout).text()
+          out = await stdout.text();
           let expected = withRm
             ? ["", "Checked 1 install across 2 packages (no changes)"]
             : ["", expect.stringContaining("1 package removed")];
@@ -2695,12 +2695,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = stderrForInstall(await (std(stderr).text()
+          err = stderrForInstall(await stderr.text());
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
-          out = await (std(stdout).text()
+          out = await stdout.text();
           expected = withRm
             ? [
                 "",
@@ -2723,10 +2723,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = stderrForInstall(await (std(stderr).text()
+          err = stderrForInstall(await stderr.text());
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
-          out = await (std(stdout).text()
+          out = await stdout.text();
           expect(out).toContain("./node_modules/uses-what-bin @1.0.0".replaceAll("/", sep));
           expect(await exited).toBe(0);
         });
@@ -2835,7 +2835,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = stderrForInstall(await (std(stderr).text()
+      const err = stderrForInstall(await stderr.text());
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
       expect(err.split(/\r?\n/)).toEqual([
@@ -2847,7 +2847,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         `$ ${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
         "",
       ]);
-      const out = await (std(stdout).text()
+      const out = await stdout.text();
       expect(out.split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "install stdout 🚀",
@@ -2888,7 +2888,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = stderrForInstall(await (std(stderr).text()
+      const err = stderrForInstall(await stderr.text());
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
       expect(err.split(/\r?\n/)).toEqual([
@@ -2902,7 +2902,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         `$ ${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
         "",
       ]);
-      const out = await (std(stdout).text()
+      const out = await stdout.text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "install stdout 🚀",

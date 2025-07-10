@@ -167,6 +167,7 @@ pub const Features = struct {
     };
 
     pub const workspace = Features{
+        .check_for_duplicate_dependencies = true,
         .dev_dependencies = true,
         .optional_dependencies = true,
         .trusted_dependencies = true,

@@ -1093,28 +1093,35 @@ pub const Package = extern struct {
             },
             .npm => {
                 const npm = dependency_version.value.npm;
-                if (pm.options.link_workspace_packages) updated: {
-                    if (has_workspace_version) |workspace_version| {
-                        if (has_workspace_path) |workspace_path| {
-                            if (npm.version.satisfies(workspace_version, buf, buf)) {
-                                const path = workspace_path.sliced(buf);
-                                if (Dependency.parseWithTag(
-                                    allocator,
-                                    external_alias.value,
-                                    external_alias.hash,
-                                    path.slice,
-                                    .workspace,
-                                    &path,
-                                    log,
-                                    pm,
-                                )) |dep| {
-                                    dependency_version.tag = dep.tag;
-                                    dependency_version.value = dep.value;
-                                    break :updated;
-                                }
+                if (has_workspace_version) |workspace_version| {
+                    if (pm.options.link_workspace_packages and npm.version.satisfies(workspace_version, buf, buf)) {
+                        const path = has_workspace_path.?.sliced(buf);
+                        if (Dependency.parseWithTag(
+                            allocator,
+                            external_alias.value,
+                            external_alias.hash,
+                            path.slice,
+                            .workspace,
+                            &path,
+                            log,
+                            pm,
+                        )) |dep| {
+                            dependency_version.tag = dep.tag;
+                            dependency_version.value = dep.value;
+                        }
+                    } else {
+                        // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
+                        for (package_dependencies[0..dependencies_count]) |*dep| {
+                            if (dep.name_hash == name_hash and dep.behavior.isWorkspaceOnly()) {
+                                dep.* = .{
+                                    .behavior = if (in_workspace) group.behavior.add(.workspace) else group.behavior,
+                                    .name = external_alias.value,
+                                    .name_hash = external_alias.hash,
+                                    .version = dependency_version,
+                                };
+                                return null;
                             }
                         }
-                        return null;
                     }
                 }
             },
@@ -1227,35 +1234,39 @@ pub const Package = extern struct {
 
         // `peerDependencies` may be specified on existing dependencies. Packages in `workspaces` are deduplicated when
         // the array is processed
-        if (comptime features.check_for_duplicate_dependencies and !group.behavior.isPeer() and !group.behavior.isWorkspace()) {
+        if (comptime features.check_for_duplicate_dependencies) {
             const entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_alias.hash);
             if (entry.found_existing) {
-                // duplicate dependencies are allowed in optionalDependencies
-                if (comptime group.behavior.isOptional()) {
-                    for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                        if (package_dep.name_hash == this_dep.name_hash) {
+                // duplicate dependencies are allowed in optionalDependencies and devDependencies. choose dev over others
+                for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                    if (package_dep.name_hash == this_dep.name_hash) {
+                        if (comptime group.behavior.isOptional() or group.behavior.isDev()) {
                             package_dep.* = this_dep;
-                            break;
+                            return null;
+                        }
+
+                        if (package_dep.behavior.isDev()) {
+                            // choose the existing one.
+                            return null;
                         }
                     }
-                    return null;
-                } else {
-                    var notes = try allocator.alloc(logger.Data, 1);
-
-                    notes[0] = .{
-                        .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{external_alias.slice(buf)}),
-                        .location = logger.Location.initOrNull(source, source.rangeOfString(entry.value_ptr.*)),
-                    };
-
-                    try log.addRangeWarningFmtWithNotes(
-                        source,
-                        source.rangeOfString(key_loc),
-                        lockfile.allocator,
-                        notes,
-                        "Duplicate dependency: \"{s}\" specified in package.json",
-                        .{external_alias.slice(buf)},
-                    );
                 }
+
+                var notes = try allocator.alloc(logger.Data, 1);
+
+                notes[0] = .{
+                    .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{external_alias.slice(buf)}),
+                    .location = logger.Location.initOrNull(source, source.rangeOfString(entry.value_ptr.*)),
+                };
+
+                try log.addRangeWarningFmtWithNotes(
+                    source,
+                    source.rangeOfString(key_loc),
+                    lockfile.allocator,
+                    notes,
+                    "Duplicate dependency: \"{s}\" specified in package.json",
+                    .{external_alias.slice(buf)},
+                );
             }
 
             entry.value_ptr.* = value_loc;

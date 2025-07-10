@@ -69,8 +69,6 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
 
         pub fn pop(self: *Self) ?*T {
             var first = self.front.load(.acquire) orelse return null;
-            // .monotonic is okay because the .acquire load above means we see the modifications
-            // from push/pushBatch.
             const next_item = while (true) {
                 const next_item = @atomicLoad(?*T, &@field(first, next), .acquire);
                 const maybe_first = self.front.cmpxchgWeak(

@@ -29,14 +29,14 @@ function test<T = undefined, R extends string = never>(
     overrideExpectBehavior,
   }: {
     onConstructorFailure?: (error: Error) => void | Promise<void>;
-    overrideExpectBehavior?: (server: NoInfer<Bun.Server>) => void | Promise<void>;
+    overrideExpectBehavior?: (server: NoInfer<Bun.Server<T>>) => void | Promise<void>;
   } = {},
 ) {
   const name = `Bun.serve() types test ${++id}`;
 
   const skip = "unix" in options && typeof options.unix === "string" && process.platform === "win32";
 
-  async function testServer(server: Bun.Server) {
+  async function testServer(server: Bun.Server<T>) {
     if (overrideExpectBehavior) {
       await overrideExpectBehavior(server);
     } else {

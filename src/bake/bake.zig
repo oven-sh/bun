@@ -38,6 +38,18 @@ pub const UserOptions = struct {
         errdefer allocations.free();
         var bundler_options = SplitBundlerOptions.empty;
 
+        if (try config.getOptional(global, "bundlerOptions", JSValue)) |js_options| {
+            if (try js_options.getOptional(global, "server", JSValue)) |server_options| {
+                bundler_options.server = try BuildConfigSubset.fromJS(global, server_options);
+            }
+            if (try js_options.getOptional(global, "client", JSValue)) |client_options| {
+                bundler_options.client = try BuildConfigSubset.fromJS(global, client_options);
+            }
+            if (try js_options.getOptional(global, "ssr", JSValue)) |ssr_options| {
+                bundler_options.ssr = try BuildConfigSubset.fromJS(global, ssr_options);
+            }
+        }
+
         const framework = try Framework.fromJS(
             try config.get(global, "framework") orelse {
                 return global.throwInvalidArguments("'" ++ api_name ++ "' is missing 'framework'", .{});
@@ -157,14 +169,39 @@ const BuildConfigSubset = struct {
     define: bun.Schema.Api.StringMap = .{ .keys = &.{}, .values = &.{} },
     source_map: bun.Schema.Api.SourceMapMode = .external,
 
+    minify_syntax: ?bool = null,
+    minify_identifiers: ?bool = null,
+    minify_whitespace: ?bool = null,
+
     pub fn fromJS(global: *JSC.JSGlobalObject, js_options: JSValue) bun.JSError!BuildConfigSubset {
         var options = BuildConfigSubset{};
 
-        if (try js_options.getOptional(global, "sourcemap", JSValue)) |val| {
+        if (try js_options.getOptional(global, "sourcemap", JSValue)) |val| brk: {
             if (try bun.Schema.Api.SourceMapMode.fromJS(global, val)) |sourcemap| {
                 options.source_map = sourcemap;
+                break :brk;
             }
-            return bun.JSC.Node.validators.throwErrInvalidArgType(global, "sourcemap", .{}, "string", val);
+
+            return bun.JSC.Node.validators.throwErrInvalidArgType(global, "sourcemap", .{}, "\"inline\" | \"external\" | \"linked\"", val);
+        }
+
+        if (try js_options.getOptional(global, "minify", JSValue)) |minify_options| brk: {
+            if (minify_options.isBoolean() and minify_options.asBoolean()) {
+                options.minify_syntax = minify_options.asBoolean();
+                options.minify_identifiers = minify_options.asBoolean();
+                options.minify_whitespace = minify_options.asBoolean();
+                break :brk;
+            }
+
+            if (try minify_options.getBooleanLoose(global, "whitespace")) |value| {
+                options.minify_whitespace = value;
+            }
+            if (try minify_options.getBooleanLoose(global, "syntax")) |value| {
+                options.minify_syntax = value;
+            }
+            if (try minify_options.getBooleanLoose(global, "identifiers")) |value| {
+                options.minify_identifiers = value;
+            }
         }
 
         return options;
@@ -591,18 +628,6 @@ pub const Framework = struct {
             try bundler_options.parsePluginArray(plugin_array, global);
         }
 
-        if (try opts.getOptional(global, "bundlerOptions", JSValue)) |js_options| {
-            if (try js_options.getOptional(global, "server", JSValue)) |server_options| {
-                bundler_options.server = try BuildConfigSubset.fromJS(global, server_options);
-            }
-            if (try js_options.getOptional(global, "client", JSValue)) |client_options| {
-                bundler_options.client = try BuildConfigSubset.fromJS(global, client_options);
-            }
-            if (try js_options.getOptional(global, "ssr", JSValue)) |ssr_options| {
-                bundler_options.ssr = try BuildConfigSubset.fromJS(global, ssr_options);
-            }
-        }
-
         return framework;
     }
 
@@ -624,7 +649,7 @@ pub const Framework = struct {
             else => .none,
         };
 
-        return initTranspilerWithSourceMap(
+        return initTranspilerWithOptions(
             framework,
             arena,
             log,
@@ -633,10 +658,13 @@ pub const Framework = struct {
             out,
             bundler_options,
             source_map,
+            null,
+            null,
+            null,
         );
     }
 
-    pub fn initTranspilerWithSourceMap(
+    pub fn initTranspilerWithOptions(
         framework: *Framework,
         arena: std.mem.Allocator,
         log: *bun.logger.Log,
@@ -645,6 +673,9 @@ pub const Framework = struct {
         out: *bun.transpiler.Transpiler,
         bundler_options: *const BuildConfigSubset,
         source_map: bun.options.SourceMapOption,
+        minify_whitespace: ?bool,
+        minify_syntax: ?bool,
+        minify_identifiers: ?bool,
     ) !void {
         const JSAst = bun.JSAst;
 
@@ -709,9 +740,9 @@ pub const Framework = struct {
 
         out.options.production = mode != .development;
         out.options.tree_shaking = mode != .development;
-        out.options.minify_syntax = mode != .development;
-        out.options.minify_identifiers = mode != .development;
-        out.options.minify_whitespace = mode != .development;
+        out.options.minify_syntax = minify_syntax orelse (mode != .development);
+        out.options.minify_identifiers = minify_identifiers orelse (mode != .development);
+        out.options.minify_whitespace = minify_whitespace orelse (mode != .development);
         out.options.css_chunking = true;
         out.options.framework = framework;
         out.options.inline_entrypoint_import_meta_main = true;

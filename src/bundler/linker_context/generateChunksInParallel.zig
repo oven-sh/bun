@@ -539,6 +539,9 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                     .css => &.{},
                     .html => &.{},
                 },
+                .bake_is_runtime = if (c.framework != null) brk: {
+                    break :brk chunk.files_with_parts_in_chunk.contains(Index.runtime.get());
+                } else false,
             }));
 
             // We want the chunk index to remain the same in `output_files` so the indices in `OutputFile.referenced_css_chunks` work
@@ -580,6 +583,8 @@ const generateCompileResultForJSChunk = LinkerContext.generateCompileResultForJS
 const generateCompileResultForCssChunk = LinkerContext.generateCompileResultForCssChunk;
 const generateCompileResultForHtmlChunk = LinkerContext.generateCompileResultForHtmlChunk;
 const generateChunk = LinkerContext.generateChunk;
+
+const Index = bun.bundle_v2.Index;
 
 const AutoBitSet = bun.bit_set.AutoBitSet;
 

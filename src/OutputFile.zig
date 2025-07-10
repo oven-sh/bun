@@ -22,6 +22,7 @@ side: ?bun.bake.Side,
 entry_point_index: ?u32,
 referenced_css_chunks: []const Index = &.{},
 source_index: Index.Optional = .none,
+bake_is_runtime: bool = false,
 
 pub const Index = bun.GenericIndex(u32, OutputFile);
 
@@ -214,6 +215,7 @@ pub const Options = struct {
     side: ?bun.bake.Side,
     entry_point_index: ?u32,
     referenced_css_chunks: []const Index = &.{},
+    bake_is_runtime: bool = false,
 };
 
 pub fn init(options: Options) OutputFile {
@@ -248,6 +250,7 @@ pub fn init(options: Options) OutputFile {
         .side = options.side,
         .entry_point_index = options.entry_point_index,
         .referenced_css_chunks = options.referenced_css_chunks,
+        .bake_is_runtime = options.bake_is_runtime,
     };
 }
 

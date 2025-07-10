@@ -188,10 +188,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     var client_transpiler: bun.transpiler.Transpiler = undefined;
     var server_transpiler: bun.transpiler.Transpiler = undefined;
     var ssr_transpiler: bun.transpiler.Transpiler = undefined;
-    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .server, &server_transpiler, &options.bundler_options.server, bun.options.SourceMapOption.fromApi(options.bundler_options.server.source_map));
-    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .client, &client_transpiler, &options.bundler_options.client, bun.options.SourceMapOption.fromApi(options.bundler_options.client.source_map));
+    try framework.initTranspilerWithOptions(allocator, vm.log, .production_static, .server, &server_transpiler, &options.bundler_options.server, bun.options.SourceMapOption.fromApi(options.bundler_options.server.source_map), options.bundler_options.server.minify_whitespace, options.bundler_options.server.minify_syntax, options.bundler_options.server.minify_identifiers);
+    try framework.initTranspilerWithOptions(allocator, vm.log, .production_static, .client, &client_transpiler, &options.bundler_options.client, bun.options.SourceMapOption.fromApi(options.bundler_options.client.source_map), options.bundler_options.client.minify_whitespace, options.bundler_options.client.minify_syntax, options.bundler_options.client.minify_identifiers);
     if (separate_ssr_graph) {
-        try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .ssr, &ssr_transpiler, &options.bundler_options.ssr, bun.options.SourceMapOption.fromApi(options.bundler_options.ssr.source_map));
+        try framework.initTranspilerWithOptions(allocator, vm.log, .production_static, .ssr, &ssr_transpiler, &options.bundler_options.ssr, bun.options.SourceMapOption.fromApi(options.bundler_options.ssr.source_map), options.bundler_options.ssr.minify_whitespace, options.bundler_options.ssr.minify_syntax, options.bundler_options.ssr.minify_identifiers);
     }
 
     if (ctx.bundler_options.bake_debug_disable_minify) {
@@ -287,6 +287,8 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     var root_dir = try std.fs.cwd().makeOpenPath("dist", .{});
     defer root_dir.close();
 
+    var maybe_runtime_file_index: ?u32 = null;
+
     var css_chunks_count: usize = 0;
     var css_chunks_first: usize = 0;
 
@@ -319,6 +321,16 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         if (file.entry_point_index) |entry_point| {
             if (entry_point < output_indexes.len) {
                 output_indexes[entry_point] = OutputFile.Index.init(@intCast(i));
+            }
+        }
+
+        // The output file which contains the runtime (Index.runtime, contains
+        // wrapper functions like `__esm`) is marked as server side, but it is
+        // also used by client
+        if (file.bake_is_runtime) {
+            if (comptime bun.Environment.allow_assert) {
+                bun.assertf(maybe_runtime_file_index == null, "Runtime file should only be in one chunk.", .{});
+                maybe_runtime_file_index = @intCast(i);
             }
         }
 
@@ -406,6 +418,29 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 try std.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
                 OutputFile.Index.init(@intCast(source_map_index)),
             );
+        }
+    }
+    // Write the runtime file to disk if there are any client chunks
+    {
+        const runtime_file_index = maybe_runtime_file_index orelse {
+            bun.Output.panic("Runtime file not found. This is an unexpected bug in Bun. Please file a bug report on GitHub.", .{});
+        };
+        const any_client_chunks = any_client_chunks: {
+            for (bundled_outputs) |file| {
+                if (file.side) |s| {
+                    if (s == .client and !bun.strings.eqlComptime(file.src_path.text, "bun-framework-react/client.tsx")) {
+                        break :any_client_chunks true;
+                    }
+                }
+            }
+            break :any_client_chunks false;
+        };
+        if (any_client_chunks) {
+            const runtime_file: *const OutputFile = &bundled_outputs[runtime_file_index];
+            _ = runtime_file.writeToDisk(root_dir, ".") catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(runtime_file.dest_path)});
+            };
         }
     }
 

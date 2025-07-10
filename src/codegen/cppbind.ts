@@ -507,8 +507,12 @@ async function main() {
     await Bun.write(resultSourceLinksFilePath, resultSourceLinksContents);
   }
 
+  const now = Date.now();
+  const sin = Math.round(((Math.sin((now / 1000) * 1) + 1) / 2) * 24);
+
   console.log(
-    (errors.length > 0 ? "✗" : "✓") +
+    " ".repeat(sin) +
+      (errors.length > 0 ? "✗" : "✓") +
       " cppbind.ts generated bindings to " +
       resultFilePath +
       (errors.length > 0 ? " with errors" : ""),

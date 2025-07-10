@@ -1235,41 +1235,43 @@ pub const Package = extern struct {
         // `peerDependencies` may be specified on existing dependencies. Packages in `workspaces` are deduplicated when
         // the array is processed
         if (comptime features.check_for_duplicate_dependencies) {
-            const entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_alias.hash);
-            if (entry.found_existing) {
-                // duplicate dependencies are allowed in optionalDependencies and devDependencies. choose dev over others
-                for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                    if (package_dep.name_hash == this_dep.name_hash) {
-                        if (comptime group.behavior.isOptional() or group.behavior.isDev()) {
-                            package_dep.* = this_dep;
-                            return null;
-                        }
+            if (!this_dep.behavior.isWorkspaceOnly()) {
+                const entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_alias.hash);
+                if (entry.found_existing) {
+                    // duplicate dependencies are allowed in optionalDependencies and devDependencies. choose dev over others
+                    for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                        if (package_dep.name_hash == this_dep.name_hash) {
+                            if (comptime group.behavior.isOptional() or group.behavior.isDev()) {
+                                package_dep.* = this_dep;
+                                return null;
+                            }
 
-                        if (package_dep.behavior.isDev()) {
-                            // choose the existing one.
-                            return null;
+                            if (package_dep.behavior.isDev()) {
+                                // choose the existing one.
+                                return null;
+                            }
                         }
                     }
+
+                    var notes = try allocator.alloc(logger.Data, 1);
+
+                    notes[0] = .{
+                        .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{external_alias.slice(buf)}),
+                        .location = logger.Location.initOrNull(source, source.rangeOfString(entry.value_ptr.*)),
+                    };
+
+                    try log.addRangeWarningFmtWithNotes(
+                        source,
+                        source.rangeOfString(key_loc),
+                        lockfile.allocator,
+                        notes,
+                        "Duplicate dependency: \"{s}\" specified in package.json",
+                        .{external_alias.slice(buf)},
+                    );
                 }
 
-                var notes = try allocator.alloc(logger.Data, 1);
-
-                notes[0] = .{
-                    .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{external_alias.slice(buf)}),
-                    .location = logger.Location.initOrNull(source, source.rangeOfString(entry.value_ptr.*)),
-                };
-
-                try log.addRangeWarningFmtWithNotes(
-                    source,
-                    source.rangeOfString(key_loc),
-                    lockfile.allocator,
-                    notes,
-                    "Duplicate dependency: \"{s}\" specified in package.json",
-                    .{external_alias.slice(buf)},
-                );
+                entry.value_ptr.* = value_loc;
             }
-
-            entry.value_ptr.* = value_loc;
         }
 
         return this_dep;

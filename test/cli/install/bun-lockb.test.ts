@@ -63,7 +63,7 @@ it("should not print anything to stderr when running bun.lockb", async () => {
     cmd: [bunExe(), "bun.lockb"],
     cwd: packageDir,
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
     env,
   });
 

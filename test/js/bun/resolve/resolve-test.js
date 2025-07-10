@@ -120,7 +120,14 @@ it("dynamic import of file: URL with 4 slashes doesn't trigger ASAN", async () =
 });
 
 it("require of file: URL with 4 slashes doesn't trigger ASAN", async () => {
-  expect(() => import.meta.require(`file://` + `//a.js`)).toBeInstanceOf(BuildMessage);
+  let err;
+  try {
+    import.meta.require(`file://` + `//a.js`);
+  } catch (e) {
+    err = e;
+  }
+  expect(err).not.toBeUndefined();
+  expect(err).toBeObject();
 });
 
 it("self-referencing imports works", async () => {

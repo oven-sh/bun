@@ -184,6 +184,7 @@ it("bun add --only-missing should not install existing package", async () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", "bar", "--only-missing"],
       cwd: package_dir,
+      env,
       stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
@@ -260,6 +261,7 @@ it("bun add --analyze should scan dependencies", async () => {
       stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
+      env,
     });
     const out = await stdout.text();
     expect(out).not.toContain("Saved lockfile");
@@ -2266,6 +2268,6 @@ it("should add local tarball dependency", async () => {
   const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
   expect(package_json.name).toBe("baz");
   expect(package_json.version).toBe("0.0.3");
-  (expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
-    await access(join(package_dir, "bun.lockb")));
+  expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
+    await access(join(package_dir, "bun.lockb"));
 });

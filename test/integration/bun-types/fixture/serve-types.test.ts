@@ -18,10 +18,10 @@ function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) =
 
 export default {
   fetch: req => Response.json(req.url),
-} satisfies Bun.Serve.Options;
+} satisfies Bun.ServeOptions;
 
 let id = 0;
-function test<T, R extends string>(
+function test<T = undefined, R extends string = never>(
   options: Bun.Serve.Options<T, R>,
   {
     onConstructorFailure,
@@ -113,18 +113,20 @@ test({
 test({
   websocket: {
     message(ws, message) {
-      expectType<typeof ws>().is<Bun.ServerWebSocket<unknown>>();
+      expectType<typeof ws>().is<Bun.ServerWebSocket<undefined>>();
       ws.send(message);
     },
   },
 
   fetch(req, server) {
+    expectType(req).is<Request>();
+
     // Upgrade to a ServerWebSocket if we can
     // This automatically checks for the `Sec-WebSocket-Key` header
     // meaning you don't have to check headers, you can just call `upgrade()`
     if (server.upgrade(req)) {
       // When upgrading, we return undefined since we don't want to send a Response
-      return;
+      // return;
     }
 
     return new Response("Regular HTTP response");
@@ -281,9 +283,13 @@ test(
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
-      server.upgrade(req);
+      if (server.upgrade(req)) {
+        return;
+      }
+
       return new Response();
     },
+    websocket: { message() {} },
   },
   {
     overrideExpectBehavior: server => {

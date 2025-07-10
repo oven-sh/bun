@@ -1,7 +1,6 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
-import { mkdirSync, rmSync } from "fs";
 
 test("workspace devDependencies should take priority over peerDependencies for resolution", async () => {
   const dir = tempDirWithFiles("dev-peer-priority", {

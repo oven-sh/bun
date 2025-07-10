@@ -123,7 +123,7 @@ without *requiring* a postinstall script.
 
 async function buildModule(
   release: Awaited<ReturnType<typeof getRelease>>,
-  { bin, exe, os, arch }: Platform,
+  { bin, exe, os, arch, abi }: Platform,
 ): Promise<void> {
   const module = `${owner}/${bin}`;
   log("Building:", `${module}@${version}`);
@@ -137,10 +137,16 @@ async function buildModule(
   mkdirSync(dirname(join(cwd, exe)), { recursive: true });
   write(join(cwd, exe), await bun.async("arraybuffer"));
   chmod(join(cwd, exe), 0o755);
+  const osName =
+    {
+      darwin: "macOS",
+      win32: "windows",
+      linux: "linux",
+    }[os] || os;
   writeJson(join(cwd, "package.json"), {
     name: module,
     version: version,
-    description: "This is the macOS arm64 binary for Bun, a fast all-in-one JavaScript runtime.",
+    description: `This is the ${osName} ${arch} binary for Bun, a fast all-in-one JavaScript runtime.`,
     homepage: "https://bun.com",
     bugs: "https://github.com/oven-sh/issues",
     license: "MIT",
@@ -148,6 +154,7 @@ async function buildModule(
     preferUnplugged: true,
     os: [os],
     cpu: [arch],
+    libc: abi ? [abi] : undefined,
   });
   if (exists(".npmrc")) {
     copy(".npmrc", join(cwd, ".npmrc"));

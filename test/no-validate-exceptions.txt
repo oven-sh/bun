@@ -20,6 +20,7 @@ test/bundler/bundler_html.test.ts
 test/bundler/bundler_html_server.test.ts
 test/bundler/bundler_jsx.test.ts
 test/bundler/bundler_minify.test.ts
+test/bundler/bundler_minify_symbol_for.test.ts
 test/bundler/bundler_naming.test.ts
 test/bundler/bundler_plugin.test.ts
 test/bundler/bundler_regressions.test.ts

@@ -1996,7 +1996,9 @@ pub fn parseIntoBinaryLockfile(
                     return error.InvalidPackageInfo;
                 };
 
-                mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions, is_duplicate_dep);
+                if (!is_duplicate_dep) {
+                    mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions, is_duplicate_dep);
+                }
             }
         }
 
@@ -2031,7 +2033,9 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     };
 
-                    mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions, is_duplicate_dep);
+                    if (!is_duplicate_dep) {
+                        mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions, is_duplicate_dep);
+                    }
                 }
             }
         }
@@ -2070,20 +2074,52 @@ pub fn parseIntoBinaryLockfile(
                     },
                 };
 
-                mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions, is_duplicate_dep);
+                if (!is_duplicate_dep) {
+                    mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions, is_duplicate_dep);
+                }
             }
         }
 
         {
+            const SortCtx = struct {
+                dependencies: []Dependency,
+                resolutions: []PackageID,
+                string_buf: []const u8,
+
+                deps_slice: DependencySlice = .{},
+                resolutions_slice: PackageIDSlice = .{},
+
+                pub fn lessThan(ctx: @This(), l: usize, r: usize) bool {
+                    const dependencies = ctx.dependencies;
+
+                    const l_dep = dependencies[l];
+                    const r_dep = dependencies[r];
+
+                    return Dependency.isLessThan(ctx.string_buf, l_dep, r_dep);
+                }
+
+                pub fn swap(ctx: @This(), a: usize, b: usize) void {
+                    std.mem.swap(Dependency, &ctx.dependencies[a], &ctx.dependencies[b]);
+                    std.mem.swap(PackageID, &ctx.resolutions[a], &ctx.resolutions[b]);
+                }
+            };
+
+            var sort_ctx: SortCtx = .{
+                .dependencies = lockfile.buffers.dependencies.items,
+                .resolutions = lockfile.buffers.resolutions.items,
+                .string_buf = lockfile.buffers.string_bytes.items,
+            };
+
             for (0..lockfile.packages.len) |_pkg_id| {
                 const pkg_id: PackageID = @intCast(_pkg_id);
-                const deps = lockfile.packages.items(.dependencies)[pkg_id];
 
-                std.sort.pdq(
-                    Dependency,
-                    lockfile.buffers.dependencies.items[deps.begin()..deps.end()],
-                    lockfile.buffers.string_bytes.items,
-                    Dependency.isLessThan,
+                sort_ctx.deps_slice = pkgs.items(.dependencies)[pkg_id];
+                sort_ctx.resolutions_slice = pkgs.items(.resolutions)[pkg_id];
+
+                std.sort.pdqContext(
+                    0,
+                    sort_ctx.dependencies.len,
+                    &sort_ctx,
                 );
             }
         }
@@ -2284,3 +2320,4 @@ const Negatable = Npm.Negatable;
 const DependencyID = Install.DependencyID;
 const Bin = Install.Bin;
 const ExternalString = Semver.ExternalString;
+const PackageIDSlice = BinaryLockfile.PackageIDSlice;

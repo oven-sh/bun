@@ -153,10 +153,10 @@ describe("ReactDOM", () => {
             expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
             gc();
           });
-          it("readableStreamToText(stream)", async () => {
+          it("(stream).text()", async () => {
             const stream = await renderToReadableStream(reactElement);
             gc();
-            const text = await readableStreamToText(stream);
+            const text = await stream.text();
             gc();
             expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
             gc();

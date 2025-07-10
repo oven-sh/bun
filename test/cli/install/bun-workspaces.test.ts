@@ -244,7 +244,7 @@ test("adding workspace in workspace edits package.json with correct version (wor
     stderr: "inherit",
     env,
   });
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
@@ -477,7 +477,7 @@ describe("workspace aliases", async () => {
         env,
       });
 
-      const err = await Bun.readableStreamToText(stderr);
+      const err = await stderr.text();
       if (version === "workspace:@org/b") {
         expect(err).toContain('Workspace dependency "a1" not found');
       } else {
@@ -593,7 +593,7 @@ describe("relative tarballs", async () => {
       env,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).not.toContain("failed to resolve");
     expect(await exited).toBe(0);
@@ -700,7 +700,7 @@ test("adding packages in a subdirectory of a workspace", async () => {
     stderr: "inherit",
     env,
   });
-  let out = await Bun.readableStreamToText(stdout);
+  let out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -727,7 +727,7 @@ test("adding packages in a subdirectory of a workspace", async () => {
     stderr: "inherit",
     env,
   }));
-  out = await Bun.readableStreamToText(stdout);
+  out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -757,7 +757,7 @@ test("adding packages in a subdirectory of a workspace", async () => {
     stderr: "inherit",
     env,
   }));
-  out = await Bun.readableStreamToText(stdout);
+  out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
@@ -780,7 +780,7 @@ test("adding packages in a subdirectory of a workspace", async () => {
     stderr: "inherit",
     env,
   }));
-  out = await Bun.readableStreamToText(stdout);
+  out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
@@ -833,7 +833,7 @@ test("adding packages in workspaces", async () => {
     env,
   });
 
-  let out = await Bun.readableStreamToText(stdout);
+  let out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
@@ -857,7 +857,7 @@ test("adding packages in workspaces", async () => {
     env,
   }));
 
-  out = await Bun.readableStreamToText(stdout);
+  out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -886,7 +886,7 @@ test("adding packages in workspaces", async () => {
     env,
   }));
 
-  out = await Bun.readableStreamToText(stdout);
+  out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -923,7 +923,7 @@ test("adding packages in workspaces", async () => {
     env,
   }));
 
-  out = await Bun.readableStreamToText(stdout);
+  out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -1749,8 +1749,8 @@ registry = "${verdaccio.registryUrl()}"
       env,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
-    const out = await Bun.readableStreamToText(stdout);
+    const err = await stderr.text();
+    const out = await stdout.text();
 
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
@@ -1799,8 +1799,8 @@ registry = "${verdaccio.registryUrl()}"
       env,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
-    const out = await Bun.readableStreamToText(stdout);
+    const err = await stderr.text();
+    const out = await stdout.text();
 
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");

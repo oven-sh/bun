@@ -521,7 +521,7 @@ for (const { body, fn } of bodyTypes) {
           expect(actual instanceof ReadableStream).toBe(true);
           const stream = actual as ReadableStream;
           expect(stream.locked).toBe(false);
-          expect(await readableStreamToText(stream)).toBe("bun");
+          expect(await stream.text()).toBe("bun");
         });
       }
     });

@@ -1289,7 +1289,7 @@ for (const { desc, dep } of gitNameTests) {
       env,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
 
     expect(await exited).toBe(0);
@@ -1319,7 +1319,7 @@ it("git dep without package.json and with default branch", async () => {
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
 
   expect(await exited).toBe(0);

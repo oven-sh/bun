@@ -1201,8 +1201,8 @@ export async function runBunUpdate(
     env,
   });
 
-  let err = await Bun.readableStreamToText(stderr);
-  let out = await Bun.readableStreamToText(stdout);
+  let err = await stderr.text();
+  let out = await stdout.text();
   let exitCode = await exited;
   if (exitCode !== 0) {
     console.log("stdout:", out);
@@ -1223,13 +1223,13 @@ export async function pack(cwd: string, env: NodeJS.Dict<string>, ...args: strin
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).not.toContain("warning:");
   expect(err).not.toContain("failed");
   expect(err).not.toContain("panic:");
 
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
 
   const exitCode = await exited;
   expect(exitCode).toBe(0);

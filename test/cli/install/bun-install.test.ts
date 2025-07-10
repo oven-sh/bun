@@ -8344,8 +8344,8 @@ it("should handle modified git resolutions in bun.lock", async () => {
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
-  const out = await Bun.readableStreamToText(stdout);
+  const err = await stderr.text();
+  const out = await stdout.text();
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("error:");
 
@@ -8392,10 +8392,10 @@ saveTextLockfile = true
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
   expect(out).toContain("1 package installed");
 
   expect(await exited).toBe(0);
@@ -8446,7 +8446,7 @@ test("providing invalid url in lockfile does not crash", async () => {
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
+  const err = await stderr.text();
   expect(err).toContain(
     'error: Expected tarball URL to start with https:// or http://, got "invalid-url" while fetching package "jquery"',
   );
@@ -8486,9 +8486,9 @@ test("optional dependencies do not need to be resolvable in text lockfile", asyn
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
+  const err = await stderr.text();
   expect(err).not.toContain("Saved lockfile");
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
   expect(out).not.toContain("1 package installed");
 
   expect(await exited).toBe(0);
@@ -8528,10 +8528,10 @@ test("non-optional dependencies need to be resolvable in text lockfile", async (
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
+  const err = await stderr.text();
   expect(err).not.toContain("Saved lockfile");
   expect(err).toContain("error: Failed to resolve root prod dependency 'jquery'");
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
   expect(out).not.toContain("1 package installed");
 
   expect(await exited).toBe(1);

@@ -567,7 +567,7 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
                 error.JSExecutionTerminated => {}, // we are returning anyway
             };
             _ = Bun__handleUnhandledRejection(globalObject, reason, promise);
-            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch {};
+            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
             return;
         },
         .warn_with_error_code => {
@@ -575,7 +575,7 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
                 error.JSExecutionTerminated => {}, // we are returning anyway
             };
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
-            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch {};
+            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
             this.exit_handler.exit_code = 1;
             return;
         },
@@ -586,7 +586,7 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             _ = this.uncaughtException(globalObject, wrapped_reason, true);
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
-            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch {};
+            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
             return;
         },
         .throw => {
@@ -624,7 +624,6 @@ pub fn handledPromise(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, 
 
 pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, err: JSValue, is_rejection: bool) bool {
     if (this.isShuttingDown()) {
-        Output.debugWarn("uncaughtException during shutdown.", .{});
         return true;
     }
 

@@ -1,6 +1,5 @@
-import { file, Glob } from "bun";
+import { file } from "bun";
 import path from "path";
-import { normalize } from "path/posix";
 
 // prettier-ignore
 const words: Record<string, { reason: string; regex?: boolean }> = {

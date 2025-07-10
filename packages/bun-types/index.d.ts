@@ -25,6 +25,10 @@
 
 /// <reference path="./bun.ns.d.ts" />
 
-// @ts-ignore Must disable this so it doesn't conflict with the DOM onmessage type, but still
+// Must disable this so it doesn't conflict with the DOM onmessage type, but still
 // allows us to declare our own globals that Node's types can "see" and not conflict with
-declare var onmessage: never;
+
+// We must declare that `onmessage` exists globally since many of Node's declarations
+// fallback to the globally available versions when, which Bun overrides. It detects
+// if the symbols are available by looking for a declaration of `onmessage`.
+declare var onmessage: Bun.__internal.UseLibDomIfAvailable<"onmessage", never>;

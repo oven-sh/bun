@@ -414,7 +414,7 @@ declare module "bun" {
     /**
      * Sets if the connection should be closed if `backpressureLimit` is reached.
      *
-     * Default is `false`.
+     * @default false
      */
     closeOnBackpressureLimit?: boolean;
 
@@ -422,28 +422,28 @@ declare module "bun" {
      * Sets the the number of seconds to wait before timing out a connection
      * due to no messages or pings.
      *
-     * Default is 2 minutes, or `120` in seconds.
+     * @default 120
      */
     idleTimeout?: number;
 
     /**
      * Should `ws.publish()` also send a message to `ws` (itself), if it is subscribed?
      *
-     * Default is `false`.
+     * @default false
      */
     publishToSelf?: boolean;
 
     /**
      * Should the server automatically send and respond to pings to clients?
      *
-     * Default is `true`.
+     * @default true
      */
     sendPings?: boolean;
 
     /**
      * Sets the compression level for messages, for clients that supports it. By default, compression is disabled.
      *
-     * Default is `false`.
+     * @default false
      */
     perMessageDeflate?:
       | boolean
@@ -459,7 +459,7 @@ declare module "bun" {
         };
   }
 
-  namespace RouterTypes {
+  namespace Serve {
     type ExtractRouteParams<T> = T extends `${string}:${infer Param}/${infer Rest}`
       ? { [K in Param]: string } & ExtractRouteParams<Rest>
       : T extends `${string}:${infer Param}`
@@ -468,363 +468,310 @@ declare module "bun" {
           ? {}
           : {};
 
-    type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | Promise<Response>;
-
-    type RouteHandlerWithWebSocketUpgrade<T extends string> = (
-      req: BunRequest<T>,
-      server: Server,
-    ) => Response | undefined | void | Promise<Response | undefined | void>;
-
     type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
+
+    type RouteHandler<T extends string> = (
+      req: BunRequest<T>,
+      server: Server<undefined>,
+    ) => Response | Promise<Response>;
+
+    type RouteHandlerWithUpgrade<WebSocketData, T extends string> = (
+      req: BunRequest<T>,
+      server: Server<WebSocketData>,
+    ) => Response | void | undefined | Promise<Response | void | undefined>;
 
     type RouteHandlerObject<T extends string> = {
       [K in HTTPMethod]?: RouteHandler<T>;
     };
 
-    type RouteHandlerWithWebSocketUpgradeObject<T extends string> = {
-      [K in HTTPMethod]?: RouteHandlerWithWebSocketUpgrade<T>;
+    type RouteHandlerObjectWithUpgrade<WebSocketData, T extends string> = {
+      [K in HTTPMethod]?: RouteHandlerWithUpgrade<WebSocketData, T>;
     };
 
-    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T> | HTMLBundle;
-    type RouteValueWithWebSocketUpgrade<T extends string> =
-      | RouteValue<T>
-      | RouteHandlerWithWebSocketUpgrade<T>
-      | RouteHandlerWithWebSocketUpgradeObject<T>;
-  }
+    type BaseRouteValue = Response | false | HTMLBundle | BunFile;
 
-  interface BunRequest<T extends string = string> extends Request {
-    params: RouterTypes.ExtractRouteParams<T>;
-    readonly cookies: CookieMap;
+    type RouteValue<T extends string> = BaseRouteValue | RouteHandler<T> | RouteHandlerObject<T>;
 
-    clone(): BunRequest<T>;
-  }
+    type RouteValueWithUpgrade<WebSocketData, T extends string> =
+      | BaseRouteValue
+      | RouteHandlerWithUpgrade<WebSocketData, T>
+      | RouteHandlerObjectWithUpgrade<WebSocketData, T>;
 
-  interface BaseServeOptions {
-    /**
-     * What URI should be used to make {@link Request.url} absolute?
-     *
-     * By default, looks at {@link hostname}, {@link port}, and whether or not SSL is enabled to generate one
-     *
-     * @example
-     * ```js
-     * "http://my-app.com"
-     * ```
-     *
-     * @example
-     * ```js
-     * "https://wongmjane.com/"
-     * ```
-     *
-     * This should be the public, absolute URL – include the protocol and {@link hostname}. If the port isn't 80 or 443, then include the {@link port} too.
-     *
-     * @example
-     * "http://localhost:3000"
-     */
-    // baseURI?: string;
+    type Routes<R extends string> = {
+      [Key in R]: RouteValue<Key>;
+    };
 
-    /**
-     * What is the maximum size of a request body? (in bytes)
-     * @default 1024 * 1024 * 128 // 128MB
-     */
-    maxRequestBodySize?: number;
+    type RoutesWithUpgrade<WebSocketData, R extends string> = {
+      [Key in R]: RouteValueWithUpgrade<WebSocketData, Key>;
+    };
 
-    /**
-     * Render contextual errors? This enables bun's error page
-     * @default process.env.NODE_ENV !== 'production'
-     */
-    development?:
-      | boolean
+    type FetchOrRoutes<R extends string> = {
+      websocket?: never;
+    } & (
       | {
           /**
-           * Enable Hot Module Replacement for routes (including React Fast Refresh, if React is in use)
+           * Handle HTTP requests
            *
-           * @default true if process.env.NODE_ENV !== 'production'
-           *
+           * Respond to {@link Request} objects with a {@link Response} object.
            */
-          hmr?: boolean;
-
+          fetch?(this: Server<undefined>, req: Request, server: Server<undefined>): Response | Promise<Response>;
+          routes: Routes<R>;
+        }
+      | {
           /**
-           * Enable console log streaming from browser to server
-           * @default false
+           * Handle HTTP requests
+           *
+           * Respond to {@link Request} objects with a {@link Response} object.
            */
-          console?: boolean;
+          fetch(this: Server<undefined>, req: Request, server: Server<undefined>): Response | Promise<Response>;
+          routes?: Routes<R>;
+        }
+    );
 
+    type FetchOrRoutesWithWebSocket<WebSocketData, R extends string> = {
+      /**
+       * Enable websockets with {@link Bun.serve}
+       *
+       * @example
+       * ```js
+       * const server: Bun.Server = Bun.serve({
+       *  websocket: {
+       *    open: (ws) => {
+       *      console.log("Client connected");
+       *    },
+       *    message: (ws, message) => {
+       *      console.log("Client sent message", message);
+       *    },
+       *    close: (ws) => {
+       *      console.log("Client disconnected");
+       *    },
+       *  },
+       *  fetch(req, server) {
+       *    const url = new URL(req.url);
+       *    if (url.pathname === "/chat") {
+       *      const upgraded = server.upgrade(req);
+       *      if (!upgraded) {
+       *        return new Response("Upgrade failed", { status: 400 });
+       *      }
+       *    }
+       *    return new Response("Hello World");
+       *  },
+       * });
+       * ```
+       * Upgrade a {@link Request} to a {@link ServerWebSocket} via {@link Server.upgrade}
+       *
+       * Pass `data` in @{link Server.upgrade} to attach data to the {@link ServerWebSocket.data} property
+       */
+      websocket: WebSocketHandler<WebSocketData>;
+    } & (
+      | {
           /**
-           * Enable automatic workspace folders for Chrome DevTools
+           * Handle HTTP requests, or call {@link Server.upgrade} and return early
            *
-           * This lets you persistently edit files in the browser. It works by adding the following route to the server:
-           * `/.well-known/appspecific/com.chrome.devtools.json`
-           *
-           * The response is a JSON object with the following shape:
-           * ```json
-           * {
-           *   "workspace": {
-           *     "root": "<cwd>",
-           *     "uuid": "<uuid>"
-           *   }
-           * }
-           * ```
-           *
-           * The `root` field is the current working directory of the server.
-           * The `"uuid"` field is a hash of the file that started the server and a hash of the current working directory.
-           *
-           * For security reasons, if the remote socket address is not from localhost, 127.0.0.1, or ::1, the request is ignored.
-           * @default true
+           * Respond to {@link Request} objects with a {@link Response} object.
            */
-          chromeDevToolsAutomaticWorkspaceFolders?: boolean;
-        };
+          fetch?(
+            this: Server<WebSocketData>,
+            req: Request,
+            server: Server<WebSocketData>,
+          ): Response | void | undefined | Promise<Response | void | undefined>;
+          routes: RoutesWithUpgrade<WebSocketData, R>;
+        }
+      | {
+          /**
+           * Handle HTTP requests, or call {@link Server.upgrade} and return early
+           *
+           * Respond to {@link Request} objects with a {@link Response} object.
+           */
+          fetch(
+            this: Server<WebSocketData>,
+            req: Request,
+            server: Server<WebSocketData>,
+          ): Response | void | undefined | Promise<Response | void | undefined>;
+          routes?: RoutesWithUpgrade<WebSocketData, R>;
+        }
+    );
 
-    error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | void | Promise<void>;
+    interface BaseServeOptions<WebSocketData> {
+      /**
+       * Set options for using TLS with this server
+       *
+       * @example
+       * ```ts
+       * const server = Bun.serve({
+       *   fetch: request => new Response("Welcome to Bun!"),
+       *   tls: {
+       *     cert: Bun.file("cert.pem"),
+       *     key: Bun.file("key.pem"),
+       *     ca: [Bun.file("ca1.pem"), Bun.file("ca2.pem")],
+       *   },
+       * });
+       * ```
+       */
+      tls?: TLSOptions | TLSOptions[];
+
+      /**
+       * What is the maximum size of a request body? (in bytes)
+       * @default 1024 * 1024 * 128 // 128MB
+       */
+      maxRequestBodySize?: number;
+
+      /**
+       * Render contextual errors? This enables bun's error page
+       * @default process.env.NODE_ENV !== 'production'
+       */
+      development?:
+        | boolean
+        | {
+            /**
+             * Enable Hot Module Replacement for routes (including React Fast Refresh, if React is in use)
+             *
+             * @default true if process.env.NODE_ENV !== 'production'
+             *
+             */
+            hmr?: boolean;
+
+            /**
+             * Enable console log streaming from browser to server
+             * @default false
+             */
+            console?: boolean;
+
+            /**
+             * Enable automatic workspace folders for Chrome DevTools
+             *
+             * This lets you persistently edit files in the browser. It works by adding the following route to the server:
+             * `/.well-known/appspecific/com.chrome.devtools.json`
+             *
+             * The response is a JSON object with the following shape:
+             * ```json
+             * {
+             *   "workspace": {
+             *     "root": "<cwd>",
+             *     "uuid": "<uuid>"
+             *   }
+             * }
+             * ```
+             *
+             * The `root` field is the current working directory of the server.
+             * The `"uuid"` field is a hash of the file that started the server and a hash of the current working directory.
+             *
+             * For security reasons, if the remote socket address is not from localhost, 127.0.0.1, or ::1, the request is ignored.
+             * @default true
+             */
+            chromeDevToolsAutomaticWorkspaceFolders?: boolean;
+          };
+
+      error?: (this: Server<WebSocketData>, error: ErrorLike) => Response | Promise<Response> | void | Promise<void>;
+
+      /**
+       * Uniquely identify a server instance with an ID
+       *
+       * ---
+       *
+       * **When bun is started with the `--hot` flag**:
+       *
+       * This string will be used to hot reload the server without interrupting
+       * pending requests or websockets. If not provided, a value will be
+       * generated. To disable hot reloading, set this value to `null`.
+       *
+       * **When bun is not started with the `--hot` flag**:
+       *
+       * This string will currently do nothing. But in the future it could be useful for logs or metrics.
+       */
+      id?: string | null;
+    }
+
+    interface HostnamePortServeOptions<WebSocketData> extends BaseServeOptions<WebSocketData> {
+      /**
+       * Cannot use `.unix` with hostname & port
+       */
+      unix?: never;
+
+      /**
+       * What hostname should the server listen on?
+       *
+       * @default
+       * ```js
+       * "0.0.0.0" // listen on all interfaces
+       * ```
+       * @example
+       *  ```js
+       * "127.0.0.1" // Only listen locally
+       * ```
+       * @example
+       * ```js
+       * "remix.run" // Only listen on remix.run
+       * ````
+       *
+       * note: hostname should not include a {@link port}
+       */
+      hostname?: "0.0.0.0" | "127.0.0.1" | "localhost" | (string & {});
+
+      /**
+       * What port should the server listen on?
+       * @default process.env.PORT || "3000"
+       */
+      port?: string | number;
+
+      /**
+       * Whether the `SO_REUSEPORT` flag should be set.
+       *
+       * This allows multiple processes to bind to the same port, which is useful for load balancing.
+       *
+       * @default false
+       */
+      reusePort?: boolean;
+
+      /**
+       * Whether the `IPV6_V6ONLY` flag should be set.
+       * @default false
+       */
+      ipv6Only?: boolean;
+
+      /**
+       * Sets the the number of seconds to wait before timing out a connection
+       * due to inactivity.
+       *
+       * Default is `10` seconds.
+       */
+      idleTimeout?: number;
+    }
+
+    interface UnixServeOptions<WebSocketData> extends BaseServeOptions<WebSocketData> {
+      /**
+       * Cannot use `.hostname` with unix
+       */
+      hostname?: never;
+
+      /**
+       * Cannot use `.port` with unix
+       */
+      port?: never;
+
+      /**
+       * If set, the HTTP server will listen on a unix socket instead of a port.
+       * (Cannot be used with hostname+port)
+       */
+      unix?: string;
+    }
 
     /**
-     * Uniquely identify a server instance with an ID
-     *
-     * ---
-     *
-     * **When bun is started with the `--hot` flag**:
-     *
-     * This string will be used to hot reload the server without interrupting
-     * pending requests or websockets. If not provided, a value will be
-     * generated. To disable hot reloading, set this value to `null`.
-     *
-     * **When bun is not started with the `--hot` flag**:
-     *
-     * This string will currently do nothing. But in the future it could be useful for logs or metrics.
+     * The type of options that can be passed to {@link serve}, with support for `routes` and a safer requirement for `fetch`
      */
-    id?: string | null;
+    type Options<WebSocketDataType = undefined, R extends string = never> = (
+      | HostnamePortServeOptions<WebSocketDataType>
+      | UnixServeOptions<WebSocketDataType>
+    ) &
+      (FetchOrRoutes<R> | FetchOrRoutesWithWebSocket<WebSocketDataType, R>);
   }
 
-  interface ServeOptions extends BaseServeOptions {
-    /**
-     * What port should the server listen on?
-     * @default process.env.PORT || "3000"
-     */
-    port?: string | number;
+  export type ServeOptions<T = undefined, R extends string = never> = Serve.Options<T, R>;
 
-    /**
-     * Whether the `SO_REUSEPORT` flag should be set.
-     *
-     * This allows multiple processes to bind to the same port, which is useful for load balancing.
-     *
-     * @default false
-     */
-    reusePort?: boolean;
-
-    /**
-     * Whether the `IPV6_V6ONLY` flag should be set.
-     * @default false
-     */
-    ipv6Only?: boolean;
-
-    /**
-     * What hostname should the server listen on?
-     *
-     * @default
-     * ```js
-     * "0.0.0.0" // listen on all interfaces
-     * ```
-     * @example
-     *  ```js
-     * "127.0.0.1" // Only listen locally
-     * ```
-     * @example
-     * ```js
-     * "remix.run" // Only listen on remix.run
-     * ````
-     *
-     * note: hostname should not include a {@link port}
-     */
-    hostname?: string;
-
-    /**
-     * If set, the HTTP server will listen on a unix socket instead of a port.
-     * (Cannot be used with hostname+port)
-     */
-    unix?: never;
-
-    /**
-     * Sets the the number of seconds to wait before timing out a connection
-     * due to inactivity.
-     *
-     * Default is `10` seconds.
-     */
-    idleTimeout?: number;
-
-    /**
-     * Handle HTTP requests
-     *
-     * Respond to {@link Request} objects with a {@link Response} object.
-     */
-    fetch(this: Server, request: Request, server: Server): Response | Promise<Response>;
-  }
-
-  interface UnixServeOptions extends BaseServeOptions {
-    /**
-     * If set, the HTTP server will listen on a unix socket instead of a port.
-     * (Cannot be used with hostname+port)
-     */
-    unix: string;
-    /**
-     * Handle HTTP requests
-     *
-     * Respond to {@link Request} objects with a {@link Response} object.
-     */
-    fetch(this: Server, request: Request, server: Server): Response | Promise<Response>;
-  }
-
-  interface WebSocketServeOptions<WebSocketDataType = undefined> extends BaseServeOptions {
-    /**
-     * What port should the server listen on?
-     * @default process.env.PORT || "3000"
-     */
-    port?: string | number;
-
-    /**
-     * What hostname should the server listen on?
-     *
-     * @default
-     * ```js
-     * "0.0.0.0" // listen on all interfaces
-     * ```
-     * @example
-     *  ```js
-     * "127.0.0.1" // Only listen locally
-     * ```
-     * @example
-     * ```js
-     * "remix.run" // Only listen on remix.run
-     * ````
-     *
-     * note: hostname should not include a {@link port}
-     */
-    hostname?: string;
-
-    /**
-     * Enable websockets with {@link Bun.serve}
-     *
-     * For simpler type safety, see {@link Bun.websocket}
-     *
-     * @example
-     * ```js
-     * Bun.serve({
-     *  websocket: {
-     *    open: (ws) => {
-     *      console.log("Client connected");
-     *    },
-     *    message: (ws, message) => {
-     *      console.log("Client sent message", message);
-     *    },
-     *    close: (ws) => {
-     *      console.log("Client disconnected");
-     *    },
-     *  },
-     *  fetch(req, server) {
-     *    const url = new URL(req.url);
-     *    if (url.pathname === "/chat") {
-     *      const upgraded = server.upgrade(req);
-     *      if (!upgraded) {
-     *        return new Response("Upgrade failed", { status: 400 });
-     *      }
-     *    }
-     *    return new Response("Hello World");
-     *  },
-     * });
-     * ```
-     * Upgrade a {@link Request} to a {@link ServerWebSocket} via {@link Server.upgrade}
-     *
-     * Pass `data` in @{link Server.upgrade} to attach data to the {@link ServerWebSocket.data} property
-     */
-    websocket: WebSocketHandler<WebSocketDataType>;
-
-    /**
-     * Handle HTTP requests or upgrade them to a {@link ServerWebSocket}
-     *
-     * Respond to {@link Request} objects with a {@link Response} object.
-     */
-    fetch(
-      this: Server,
-      request: Request,
-      server: Server,
-    ): Response | undefined | void | Promise<Response | undefined | void>;
-  }
-
-  interface UnixWebSocketServeOptions<WebSocketDataType = undefined> extends BaseServeOptions {
-    /**
-     * If set, the HTTP server will listen on a unix socket instead of a port.
-     * (Cannot be used with hostname+port)
-     */
-    unix: string;
-
-    /**
-     * Enable websockets with {@link Bun.serve}
-     *
-     * For simpler type safety, see {@link Bun.websocket}
-     *
-     * @example
-     * ```js
-     * import { serve } from "bun";
-     * serve({
-     *  websocket: {
-     *    open: (ws) => {
-     *      console.log("Client connected");
-     *    },
-     *    message: (ws, message) => {
-     *      console.log("Client sent message", message);
-     *    },
-     *    close: (ws) => {
-     *      console.log("Client disconnected");
-     *    },
-     *  },
-     *  fetch(req, server) {
-     *    const url = new URL(req.url);
-     *    if (url.pathname === "/chat") {
-     *      const upgraded = server.upgrade(req);
-     *      if (!upgraded) {
-     *        return new Response("Upgrade failed", { status: 400 });
-     *      }
-     *    }
-     *    return new Response("Hello World");
-     *  },
-     * });
-     * ```
-     * Upgrade a {@link Request} to a {@link ServerWebSocket} via {@link Server.upgrade}
-     *
-     * Pass `data` in @{link Server.upgrade} to attach data to the {@link ServerWebSocket.data} property
-     */
-    websocket: WebSocketHandler<WebSocketDataType>;
-
-    /**
-     * Handle HTTP requests or upgrade them to a {@link ServerWebSocket}
-     *
-     * Respond to {@link Request} objects with a {@link Response} object.
-     */
-    fetch(this: Server, request: Request, server: Server): Response | undefined | Promise<Response | undefined>;
-  }
-
-  interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
-    extends WebSocketServeOptions<WebSocketDataType>,
-      TLSOptionsAsDeprecated {
-    unix?: never;
-    tls?: TLSOptions | TLSOptions[];
-  }
-
-  interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
-    extends UnixWebSocketServeOptions<WebSocketDataType>,
-      TLSOptionsAsDeprecated {
-    /**
-     * If set, the HTTP server will listen on a unix socket instead of a port.
-     * (Cannot be used with hostname+port)
-     */
-    unix: string;
-    tls?: TLSOptions | TLSOptions[];
-  }
-
-  interface TLSServeOptions extends ServeOptions, TLSOptionsAsDeprecated {
-    tls?: TLSOptions | TLSOptions[];
-  }
-
-  interface UnixTLSServeOptions extends UnixServeOptions, TLSOptionsAsDeprecated {
-    tls?: TLSOptions | TLSOptions[];
+  interface BunRequest<T extends string = string> extends Request {
+    readonly params: Serve.ExtractRouteParams<T>;
+    readonly cookies: CookieMap;
+    clone(): BunRequest<T>;
   }
 
   /**
@@ -838,7 +785,7 @@ declare module "bun" {
    *
    * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you \@alexhultman.
    */
-  interface Server extends Disposable {
+  interface Server<WebSocketData> extends Disposable {
     /**
      * Stop listening to prevent new connections from being accepted.
      *
@@ -875,14 +822,7 @@ declare module "bun" {
      *
      * Passing other options such as `port` or `hostname` won't do anything.
      */
-    reload<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
-      options: ServeFunctionOptions<T, R> & {
-        /**
-         * @deprecated Use `routes` instead in new code. This will continue to work for awhile though.
-         */
-        static?: R;
-      },
-    ): Server;
+    reload<T, R extends string>(options: Serve.Options<T, R>): Server<T>;
 
     /**
      * Mock the fetch handler for a running server.
@@ -904,45 +844,79 @@ declare module "bun" {
      * @example
      * ```js
      * import { serve } from "bun";
-     *  serve({
-     *    websocket: {
-     *      open: (ws) => {
-     *        console.log("Client connected");
-     *      },
-     *      message: (ws, message) => {
-     *        console.log("Client sent message", message);
-     *      },
-     *      close: (ws) => {
-     *        console.log("Client disconnected");
-     *      },
-     *    },
-     *    fetch(req, server) {
-     *      const url = new URL(req.url);
-     *      if (url.pathname === "/chat") {
-     *        const upgraded = server.upgrade(req);
-     *        if (!upgraded) {
-     *          return new Response("Upgrade failed", { status: 400 });
-     *        }
-     *      }
-     *      return new Response("Hello World");
-     *    },
-     *  });
+     * const server: Bun.Server<{ user: string }> = serve({
+     *   websocket: {
+     *     open: (ws) => {
+     *       console.log("Client connected");
+     *     },
+     *     message: (ws, message) => {
+     *       console.log("Client sent message", message);
+     *     },
+     *     close: (ws) => {
+     *       console.log("Client disconnected");
+     *     },
+     *   },
+     *   fetch(req, server) {
+     *     const url = new URL(req.url);
+     *     if (url.pathname === "/chat") {
+     *       const upgraded = server.upgrade(req, {
+     *         data: {user: "John Doe"}
+     *       });
+     *       if (!upgraded) {
+     *         return new Response("Upgrade failed", { status: 400 });
+     *       }
+     *     }
+     *     return new Response("Hello World");
+     *   },
+     * });
      * ```
-     *  What you pass to `data` is available on the {@link ServerWebSocket.data} property
+     *
+     * What you pass to `data` is available on the {@link ServerWebSocket.data} property
      */
-    // eslint-disable-next-line @definitelytyped/no-unnecessary-generics
-    upgrade<T = undefined>(
+    upgrade(
       request: Request,
-      options?: {
-        /**
-         * Send any additional headers while upgrading, like cookies
-         */
-        headers?: HeadersInit;
-        /**
-         * This value is passed to the {@link ServerWebSocket.data} property
-         */
-        data?: T;
-      },
+      ...options: [WebSocketData] extends [undefined]
+        ? [
+            options?: {
+              /**
+               */
+              headers?: HeadersInit;
+
+              /**
+               * Data to store on the WebSocket instance
+               *
+               * ---
+               *
+               * **Surprised this line is erroring?**
+               *
+               * Tell TypeScript about the WebSocket data by using `Bun.Server<MyWebSocketData>`
+               *
+               * ```ts
+               * const server: Bun.Server<MyWebSocketData> = Bun.serve({
+               *      fetch: (req, server) => {
+               *          const didUpgrade = server.upgrade(req, {
+               *              data: { ... }, // Works now!
+               *          });
+               *      },
+               * });
+               * ```
+               */
+              data?: undefined;
+            },
+          ]
+        : [
+            options: {
+              /**
+               * Send any additional headers while upgrading, like cookies
+               */
+              headers?: HeadersInit;
+
+              /**
+               * Data to store on the WebSocket instance
+               */
+              data: WebSocketData;
+            },
+          ]
     ): boolean;
 
     /**
@@ -1094,50 +1068,6 @@ declare module "bun" {
      */
     readonly id: string;
   }
-
-  /**
-   * The type of options that can be passed to {@link serve}
-   */
-  type Serve<WebSocketDataType = undefined> =
-    | ServeOptions
-    | TLSServeOptions
-    | UnixServeOptions
-    | UnixTLSServeOptions
-    | WebSocketServeOptions<WebSocketDataType>
-    | TLSWebSocketServeOptions<WebSocketDataType>
-    | UnixWebSocketServeOptions<WebSocketDataType>
-    | UnixTLSWebSocketServeOptions<WebSocketDataType>;
-
-  /**
-   * The type of options that can be passed to {@link serve}, with support for `routes` and a safer requirement for `fetch`
-   */
-  type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<Extract<K, string>> }> =
-    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
-        routes: R;
-        fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-      })
-    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
-        routes?: never;
-        fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-      })
-    | (Omit<WebSocketServeOptions<T>, "fetch"> & {
-        routes: {
-          [K in keyof R]: RouterTypes.RouteValueWithWebSocketUpgrade<Extract<K, string>>;
-        };
-        fetch?: (
-          this: Server,
-          request: Request,
-          server: Server,
-        ) => Response | Promise<Response | void | undefined> | void | undefined;
-      })
-    | (Omit<WebSocketServeOptions<T>, "fetch"> & {
-        routes?: never;
-        fetch: (
-          this: Server,
-          request: Request,
-          server: Server,
-        ) => Response | Promise<Response | void | undefined> | void | undefined;
-      });
 
   /**
    * Bun.serve provides a high-performance HTTP server with built-in routing support.
@@ -1302,12 +1232,5 @@ declare module "bun" {
    * });
    * ```
    */
-  function serve<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
-    options: ServeFunctionOptions<T, R> & {
-      /**
-       * @deprecated Use `routes` instead in new code. This will continue to work for a while though.
-       */
-      static?: R;
-    },
-  ): Server;
+  function serve<T, R extends string>(options: Serve.Options<T, R>): Server<T>;
 }

@@ -165,6 +165,12 @@ pub fn toExternal(this: Dependency) External {
     return bytes;
 }
 
+// Needed when a dependency uses workspace: protocol and isn't
+// marked with workspace behavior.
+pub fn isWorkspaceDep(this: *const Dependency) bool {
+    return this.behavior.isWorkspace() or this.version.tag == .workspace;
+}
+
 pub inline fn isSCPLikePath(dependency: string) bool {
     // Shortest valid expression: h:p
     if (dependency.len < 3) return false;
@@ -1397,6 +1403,14 @@ pub const Behavior = packed struct(u8) {
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
         if (eq(lhs, rhs)) {
             return .eq;
+        }
+
+        if (lhs.isWorkspaceOnly() != rhs.isWorkspaceOnly()) {
+            // ensure isWorkspaceOnly deps are placed at the beginning
+            return if (lhs.isWorkspaceOnly())
+                .lt
+            else
+                .gt;
         }
 
         if (lhs.isProd() != rhs.isProd()) {

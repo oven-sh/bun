@@ -118,7 +118,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                     \\
                     \\The default location for this is `bun.app.ts`
                     \\
-                    \\TODO: insert a link to `bun.sh/docs`
+                    \\TODO: insert a link to `bun.com/docs`
                 , .{});
                 bun.Global.crash();
             }

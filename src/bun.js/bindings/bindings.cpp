@@ -5160,8 +5160,7 @@ extern "C" void JSC__JSValue__getName(JSC::EncodedJSValue JSValue0, JSC::JSGloba
             }
         }
     }
-    if (scope.exception()) [[unlikely]]
-        scope.clearException();
+    CLEAR_IF_EXCEPTION(scope);
 
     *arg2 = Bun::toStringRef(displayName);
 }
@@ -5690,8 +5689,7 @@ restart:
             }
 
             // Ignore exceptions due to getters.
-            if (scope.exception()) [[unlikely]]
-                scope.clearException();
+            CLEAR_IF_EXCEPTION(scope);
 
             if (!propertyValue)
                 return true;
@@ -5706,16 +5704,12 @@ restart:
 
             iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol(), isPrivate);
             // Propagate exceptions from callbacks.
-            if (scope.exception()) [[unlikely]] {
-                return false;
-            }
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         });
 
         // Propagate exceptions from callbacks.
-        if (scope.exception()) [[unlikely]] {
-            return;
-        }
+        RETURN_IF_EXCEPTION(scope, );
 
         if (anyHits) {
             if (prototypeCount++ < 5) {
@@ -5730,9 +5724,7 @@ restart:
                     }
                 }
                 // Ignore exceptions from Proxy "getPrototype" trap.
-                if (scope.exception()) [[unlikely]] {
-                    scope.clearException();
-                }
+                CLEAR_IF_EXCEPTION(scope);
             }
             return;
         }
@@ -5770,9 +5762,7 @@ restart:
                 if (!object->getPropertySlot(globalObject, property, slot))
                     continue;
                 // Ignore exceptions from "Get" proxy traps.
-                if (scope.exception()) [[unlikely]] {
-                    scope.clearException();
-                }
+                CLEAR_IF_EXCEPTION(scope);
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if (property == propertyNames->underscoreProto

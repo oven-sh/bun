@@ -487,8 +487,8 @@ fn initSubproc(this: *Cmd) Yield {
             return this.exec.bltn.start();
         }
 
-        const path_buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(path_buf);
+        const path_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(path_buf);
         const resolved = which(path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
             if (bun.strings.eqlComptime(first_arg_real, "bun") or bun.strings.eqlComptime(first_arg_real, "bun-debug")) blk2: {
                 break :blk bun.selfExePath() catch break :blk2;

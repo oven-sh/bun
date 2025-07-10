@@ -587,9 +587,7 @@ int HTTPParser::onMessageComplete()
     MarkedArgumentBuffer args;
     JSC::profiledCall(globalObject, ProfilingReason::API, onMessageCompleteCallback, callData, thisParser, args);
 
-    if (scope.exception()) [[unlikely]] {
-        return -1;
-    }
+    RETURN_IF_EXCEPTION(scope, -1);
 
     return 0;
 }

@@ -429,9 +429,7 @@ static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zi
 
         auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(globalObject);
         prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "prepareStackTrace"_s));
-        if (scope.exception()) [[unlikely]] {
-            scope.clearException();
-        }
+        CLEAR_IF_EXCEPTION(scope);
     }
 
     return formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);
@@ -2066,10 +2064,14 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
     ASSERT(function.isCallable());
 
     auto callData = JSC::getCallData(function);
-    auto result = call(lexicalGlobalObject, function, callData, thisValue, arguments);
-    scope.assertNoExceptionExceptTermination();
-    if (scope.exception()) [[unlikely]]
-        return {};
+    auto result = call(&lexicalGlobalObject, function, callData, thisValue, arguments);
+#if ASSERT_ENABLED
+    if (scope.exception()) [[unlikely]] {
+        Bun__reportError(&lexicalGlobalObject, JSValue::encode(scope.exception()));
+    }
+#endif
+    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2)
@@ -4020,7 +4022,7 @@ extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JS
 void GlobalObject::handleRejectedPromises()
 {
     JSC::VM& virtual_machine = vm();
-    auto scope = DECLARE_THROW_SCOPE(virtual_machine);
+    auto scope = DECLARE_CATCH_SCOPE(virtual_machine);
     do {
         auto unhandledRejections = WTFMove(m_aboutToBeNotifiedRejectedPromises);
         for (auto& promise : unhandledRejections) {
@@ -4028,8 +4030,7 @@ void GlobalObject::handleRejectedPromises()
                 continue;
 
             Bun__handleRejectedPromise(this, promise.get());
-            if (scope.exception()) [[unlikely]]
-                scope.clearException(); // is this right?
+            if (auto ex = scope.exception()) this->reportUncaughtExceptionAtEventLoop(this, ex);
         }
     } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
 }
@@ -4187,22 +4188,26 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
 {
     auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
 
-    if (JSC::JSInternalPromise* result = NodeVM::importModule(globalObject, moduleNameValue, parameters, sourceOrigin)) {
-        return result;
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    {
+        JSC::JSInternalPromise* result = NodeVM::importModule(globalObject, moduleNameValue, parameters, sourceOrigin);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (result) {
+            return result;
+        }
     }
 
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::Identifier resolvedIdentifier;
 
     auto moduleName = moduleNameValue->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceOrigin.url().protocolIsFile() ? sourceOrigin.url().fileSystemPath() : String())) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
 
-            auto result = JSC::importModule(globalObject, resolvedIdentifier,
-                JSC::jsUndefined(), parameters, JSC::jsUndefined());
+            auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::jsUndefined(), parameters, JSC::jsUndefined());
             if (scope.exception()) [[unlikely]] {
                 auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
                 return promise->rejectWithCaughtException(globalObject, scope);

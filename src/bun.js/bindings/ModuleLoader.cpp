@@ -486,7 +486,7 @@ extern "C" void Bun__onFulfillAsyncModule(
 
         if (res->result.value.isCommonJSModule) {
             auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, res->result.value);
-            ASSERT(created.has_value() == !scope.exception());
+            EXCEPTION_ASSERT(created.has_value() == !scope.exception());
             if (created.has_value()) {
                 JSSourceCode* code = JSSourceCode::create(vm, WTFMove(created.value()));
                 promise->resolve(globalObject, code);
@@ -946,7 +946,7 @@ static JSValue fetchESMSourceCode(
         // This can happen if it's a `bun build --compile`'d CommonJS file
         if (res->result.value.isCommonJSModule) {
             auto created = Bun::createCommonJSModule(globalObject, specifierJS, res->result.value);
-            ASSERT(created.has_value() == !scope.exception());
+            EXCEPTION_ASSERT(created.has_value() == !scope.exception());
             if (created.has_value()) {
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTFMove(created.value()))));
             }
@@ -1012,7 +1012,7 @@ static JSValue fetchESMSourceCode(
 
     if (res->success && res->result.value.isCommonJSModule) {
         auto created = Bun::createCommonJSModule(globalObject, specifierJS, res->result.value);
-        ASSERT(created.has_value() == !scope.exception());
+        EXCEPTION_ASSERT(created.has_value() == !scope.exception());
         if (created.has_value()) {
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTFMove(created.value()))));
         }

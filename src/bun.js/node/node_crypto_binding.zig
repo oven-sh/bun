@@ -78,7 +78,9 @@ fn ExternCryptoJob(comptime name: []const u8) type {
                 return;
             };
 
-            this.ctx.runFromJS(vm.global, callback) catch return;
+            this.ctx.runFromJS(vm.global, callback) catch |err| {
+                _ = vm.global.reportUncaughtException(vm.global.takeException(err).asException(vm.global.vm()).?);
+            };
         }
 
         fn deinit(this: *@This()) void {

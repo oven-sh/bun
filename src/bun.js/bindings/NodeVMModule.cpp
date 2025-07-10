@@ -29,15 +29,20 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
 
     JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, 2);
     RETURN_IF_EXCEPTION(scope, {});
+
     array->putDirectIndex(globalObject, 0, JSC::jsString(globalObject->vm(), m_specifier));
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSObject* attributes = JSC::constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
     for (const auto& [key, value] : m_importAttributes) {
         attributes->putDirect(globalObject->vm(), JSC::Identifier::fromString(globalObject->vm(), key), JSC::jsString(globalObject->vm(), value),
             PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
+        RETURN_IF_EXCEPTION(scope, {});
     }
     array->putDirectIndex(globalObject, 1, attributes);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return array;
 }
@@ -231,13 +236,14 @@ JSModuleNamespaceObject* NodeVMModule::namespaceObject(JSC::JSGlobalObject* glob
     }
 
     if (auto* thisObject = jsDynamicCast<NodeVMModule*>(this)) {
-        auto amr = thisObject->moduleRecord(globalObject);
+        AbstractModuleRecord* amr = thisObject->moduleRecord(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         object = amr->getModuleNamespace(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (object) {
             namespaceObject(vm, object);
         }
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("NodeVMModule::namespaceObject called on an unsupported module type (%s)", classInfo()->className.characters());
     }
@@ -407,10 +413,10 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalOb
 
     if (auto* thisObject = jsDynamicCast<NodeVMModule*>(callFrame->thisValue())) {
         RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->evaluate(globalObject, timeout, breakOnSigint)));
-    } else {
-        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
-        return {};
     }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -431,13 +437,10 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject
 
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
         RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->link(globalObject, specifiers, moduleNatives, callFrame->argument(2))));
-        // return thisObject->link(globalObject, linker);
-        // } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
-        //     return thisObject->link(globalObject, specifiers, moduleNatives);
-    } else {
-        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
-        return {};
     }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule"_s);
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleInstantiate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -446,7 +449,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleInstantiate, (JSC::JSGlobalObject * globa
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
-        return JSValue::encode(thisObject->instantiate(globalObject));
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->instantiate(globalObject)));
     }
 
     if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
@@ -462,7 +465,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleSetExport, (JSC::JSGlobalObject * globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* thisObject = jsCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
+    if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
         JSValue nameValue = callFrame->argument(0);
         if (!nameValue.isString()) {
             Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "name"_str, "string"_s, nameValue);

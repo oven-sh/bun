@@ -239,7 +239,8 @@ fn checkWrapParams(comptime func: anytype, comptime N: u8) []const std.builtin.T
     return params;
 }
 
-/// Uses .SysV callconv on Windows. Use for a function that interfaces with javascript. otherwise use wrap4.
+/// Uses .SysV callconv on Windows. Use to satisfy SYSV_ABI requirement in JSC APIs.
+/// Otherwise (when the C++ counterpart has no explicit calling convention) use wrap4.
 pub fn wrap4v(comptime func: anytype) @"return": {
     const p = checkWrapParams(func, 4);
     break :@"return" fn (p[0].type.?, p[1].type.?, p[2].type.?, p[3].type.?) callconv(jsc.conv) JSValue;

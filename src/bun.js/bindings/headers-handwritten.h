@@ -471,6 +471,8 @@ ALWAYS_INLINE void BunString::deref()
     }
 }
 
+#define CLEAR_IF_EXCEPTION(scope__) scope__.clearException();
+
 #endif // __cplusplus
 #endif // HEADERS_HANDWRITTEN
 

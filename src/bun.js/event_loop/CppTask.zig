@@ -3,7 +3,9 @@ pub const CppTask = opaque {
     extern fn Bun__performTask(globalObject: *JSC.JSGlobalObject, task: *CppTask) void;
     pub fn run(this: *CppTask, global: *JSC.JSGlobalObject) void {
         JSC.markBinding(@src());
-        bun.jsc.fromJSHostCallGeneric(global, @src(), Bun__performTask, .{ global, this }) catch return;
+        bun.jsc.fromJSHostCallGeneric(global, @src(), Bun__performTask, .{ global, this }) catch |err| {
+            _ = global.reportUncaughtException(global.takeException(err).asException(global.vm()).?);
+        };
     }
 };
 

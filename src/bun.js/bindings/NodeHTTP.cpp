@@ -1088,9 +1088,7 @@ static void NodeHTTPServer__writeHead(
 
                 String key = entry.key();
                 String value = headerValue.toWTFString(globalObject);
-                if (scope.exception()) [[unlikely]] {
-                    return false;
-                }
+                RETURN_IF_EXCEPTION(scope, false);
 
                 writeResponseHeader<isSSL>(response, key, value);
 
@@ -1396,9 +1394,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                 unsigned length = array->length();
                 if (length > 0) {
                     JSValue item = array->getIndex(globalObject, 0);
-                    if (scope.exception()) [[unlikely]]
-                        return JSValue::encode(jsUndefined());
-
+                    RETURN_IF_EXCEPTION(scope, {});
                     auto value = item.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
                     impl->set(name, value);
@@ -1406,8 +1402,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                 }
                 for (unsigned i = 1; i < length; ++i) {
                     JSValue value = array->getIndex(globalObject, i);
-                    if (scope.exception()) [[unlikely]]
-                        return JSValue::encode(jsUndefined());
+                    RETURN_IF_EXCEPTION(scope, {});
                     auto string = value.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
                     impl->append(name, string);

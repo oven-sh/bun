@@ -271,8 +271,8 @@ pub fn braces(global: *JSC.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
 
 pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments_ = callframe.arguments_old(2);
-    const path_buf = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(path_buf);
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
     var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
@@ -1252,12 +1252,12 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
         },
     };
 
-    if (true) @panic("todo");
-    return JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(globalThis, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array, @as(?*anyopaque, @ptrCast(map.ptr)), map.len, struct {
+    const S = struct {
         pub fn x(ptr: ?*anyopaque, size: ?*anyopaque) callconv(.C) void {
-            _ = bun.sys.munmap(@as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
+            _ = bun.sys.munmap(@as([*]align(std.heap.page_size_min) const u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
         }
-    }.x, @as(?*anyopaque, @ptrFromInt(map.len)), null).?.value();
+    };
+    return bun.jsc.array_buffer.makeTypedArrayWithBytesNoCopy(globalThis, .TypeUint8, map.ptr, map.len, S.x, @ptrFromInt(map.len));
 }
 
 pub fn getTranspilerConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {

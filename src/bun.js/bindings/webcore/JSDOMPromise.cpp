@@ -57,9 +57,8 @@ auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSOb
     const JSC::Identifier& privateName = vm.propertyNames->builtinNames().thenPrivateName();
     auto thenFunction = promise->get(&lexicalGlobalObject, privateName);
 
-    ASSERT(!scope.exception() || vm.hasPendingTerminationException());
-    if (scope.exception()) [[unlikely]]
-        return IsCallbackRegistered::No;
+    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
+    RETURN_IF_EXCEPTION(scope, IsCallbackRegistered::No);
 
     ASSERT(thenFunction.isCallable());
 

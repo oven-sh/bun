@@ -97,8 +97,8 @@ vendor/elysia/test/ws/destructuring.test.ts
 vendor/elysia/test/ws/message.test.ts
 
 # List of tests that potentially throw inside of reifyStaticProperties
-test/js/node/test/parallel/test-stream-iterator-helpers-test262-tests.mjs
 test/js/node/test/parallel/test-stream-some-find-every.mjs
+test/js/node/test/parallel/test-stream-iterator-helpers-test262-tests.mjs
 test/js/node/test/parallel/test-fs-stat-date.mjs
 test/js/node/test/parallel/test-fs-readSync-position-validation.mjs
 test/js/node/test/parallel/test-fs-read-promises-position-validation.mjs
@@ -133,6 +133,7 @@ test/js/bun/util/BunObject.test.ts
 test/js/bun/util/fuzzy-wuzzy.test.ts
 test/js/third_party/pg-gateway/pglite.test.ts
 test/js/web/websocket/websocket.test.js
+test/js/node/test/parallel/test-vm-module-referrer-realm.mjs
 
 # uses node:test
 test/js/node/test/parallel/test-fs-write-stream-flush.js
@@ -196,6 +197,7 @@ test/js/third_party/grpc-js/test-retry-config.test.ts
 test/js/third_party/grpc-js/test-retry.test.ts
 test/js/third_party/mongodb/mongodb.test.ts
 test/js/third_party/pino/pino.test.js
+test/js/node/test/parallel/test-util-callbackify.js
 # ProgramExecutable::initializeGlobalProperties
 # missing RELEASE_AND_RETURN
 test/js/node/test/parallel/test-repl-syntax-error-handling.js
@@ -236,6 +238,7 @@ test/js/node/http/node-http-parser.test.ts
 
 # try again later
 test/js/node/test/parallel/test-promises-warning-on-unhandled-rejection.js
+test/js/node/test/parallel/test-worker-nested-uncaught.js
 test/bundler/bun-build-api.test.ts
 
 # 3rd party napi
@@ -256,9 +259,14 @@ test/js/node/test/parallel/test-webcrypto-derivekey.js
 test/js/node/test/parallel/test-webcrypto-digest.js
 test/js/node/test/parallel/test-webcrypto-encrypt-decrypt-aes.js
 test/js/bun/crypto/wpt-webcrypto.generateKey.test.ts
-
-# works but look again
-# test/js/node/test/parallel/test-worker-nested-uncaught.js
+test/js/node/test/parallel/test-webcrypto-encrypt-decrypt.js
+test/js/node/test/parallel/test-webcrypto-sign-verify.js
+test/js/node/test/parallel/test-webcrypto-cryptokey-workers.js
+test/js/node/test/parallel/test-crypto-oaep-zero-length.js
+test/js/node/test/parallel/test-crypto-psychic-signatures.js
+test/js/node/test/parallel/test-crypto-subtle-zero-length.js
+test/js/node/test/parallel/test-crypto-worker-thread.js
+test/js/node/test/parallel/test-crypto-webcrypto-aes-decrypt-tag-too-small.js
 
 # might be hanging or just realllllly slow in debug
 # test/js/node/http/node-http.test.ts

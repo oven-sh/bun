@@ -33,7 +33,7 @@ $ $env:FOO="helloworld"; bun run dev
 
 {% details summary="Cross-platform solution with Windows" %}
 
-For a cross-platform solution, you can use [bun shell](https://bun.sh/docs/runtime/shell). For example, the `bun exec` command.
+For a cross-platform solution, you can use [bun shell](https://bun.com/docs/runtime/shell). For example, the `bun exec` command.
 
 ```sh
 $ bun exec 'FOO=helloworld bun run dev'

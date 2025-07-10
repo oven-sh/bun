@@ -624,7 +624,6 @@ pub fn handledPromise(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, 
 
 pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, err: JSValue, is_rejection: bool) bool {
     if (this.isShuttingDown()) {
-        Output.debugWarn("uncaughtException during shutdown.", .{});
         return true;
     }
 
@@ -3409,7 +3408,7 @@ pub fn resolveSourceMapping(
             this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch
                 bun.outOfMemory();
 
-            const mapping = SourceMap.Mapping.find(map.mappings, line, column) orelse
+            const mapping = map.mappings.find(line, column) orelse
                 return null;
 
             return .{

@@ -797,4 +797,3 @@ pub const JSType = enum(u8) {
 };
 
 const bun = @import("bun");
-const C_API = bun.JSC.C;

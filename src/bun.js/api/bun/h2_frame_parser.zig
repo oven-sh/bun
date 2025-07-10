@@ -1329,6 +1329,9 @@ pub const H2FrameParser = struct {
 
     pub fn endStream(this: *H2FrameParser, stream: *Stream, rstCode: ErrorCode) void {
         log("HTTP_FRAME_RST_STREAM id: {} code: {}", .{ stream.id, @intFromEnum(rstCode) });
+        if (stream.state == .CLOSED) {
+            return;
+        }
         var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
         @memset(&buffer, 0);
         var writerStream = std.io.fixedBufferStream(&buffer);

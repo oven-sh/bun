@@ -778,7 +778,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     Vector<JSC::Strong<JSC::JSObject>> transferList;
     Vector<RefPtr<MessagePort>> dummyPorts;
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts);
-    ASSERT(serialized.hasException() == !!throwScope.exception());
+    EXCEPTION_ASSERT(serialized.hasException() == !!throwScope.exception());
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});

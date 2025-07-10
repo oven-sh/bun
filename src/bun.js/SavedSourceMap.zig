@@ -50,6 +50,7 @@ pub const SavedMappings = struct {
             @as(usize, @bitCast(this.data[8..16].*)),
             1,
             @as(usize, @bitCast(this.data[16..24].*)),
+            .{},
         );
         switch (result) {
             .fail => |fail| {
@@ -310,7 +311,7 @@ pub fn resolveMapping(
     const map = parse.map orelse return null;
 
     const mapping = parse.mapping orelse
-        SourceMap.Mapping.find(map.mappings, line, column) orelse
+        map.mappings.find(line, column) orelse
         return null;
 
     return .{

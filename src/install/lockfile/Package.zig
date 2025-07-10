@@ -1112,7 +1112,7 @@ pub const Package = extern struct {
                     } else {
                         // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
                         for (package_dependencies[0..dependencies_count]) |*dep| {
-                            if (dep.name_hash == name_hash and dep.version.tag == .workspace) {
+                            if (dep.name_hash == name_hash and dep.behavior.isWorkspaceOnly()) {
                                 dep.* = .{
                                     .behavior = if (in_workspace) group.behavior.add(.workspace) else group.behavior,
                                     .name = external_alias.value,
@@ -2140,6 +2140,8 @@ pub const Package = extern struct {
         }
     };
 };
+
+// @sortImports
 
 const TrustedDependenciesSet = Lockfile.TrustedDependenciesSet;
 const Aligner = install.Aligner;

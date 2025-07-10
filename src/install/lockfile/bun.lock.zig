@@ -1904,6 +1904,9 @@ pub fn parseIntoBinaryLockfile(
         lockfile.buffers.resolutions.expandToCapacity();
         @memset(lockfile.buffers.resolutions.items, invalid_package_id);
 
+        var seen_deps: bun.StringHashMap(void) = .init(allocator);
+        defer seen_deps.deinit();
+
         const pkgs = lockfile.packages.slice();
         const pkg_deps = pkgs.items(.dependencies);
         const pkg_names = pkgs.items(.name);
@@ -1919,6 +1922,8 @@ pub fn parseIntoBinaryLockfile(
                 const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = &lockfile.buffers.dependencies.items[dep_id];
 
+                const is_duplicate_dep = (try seen_deps.getOrPut(dep.name.slice(lockfile.buffers.string_bytes.items))).found_existing;
+
                 const res_id = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items)) orelse {
                     if (dep.behavior.optional) {
                         continue;
@@ -1927,7 +1932,7 @@ pub fn parseIntoBinaryLockfile(
                     return error.InvalidPackageInfo;
                 };
 
-                mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
+                mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions, is_duplicate_dep);
             }
         }
 
@@ -1939,11 +1944,15 @@ pub fn parseIntoBinaryLockfile(
                 const pkg_id: PackageID = @intCast(_pkg_id);
                 const workspace_name = pkg_names[pkg_id].slice(lockfile.buffers.string_bytes.items);
 
+                seen_deps.clearRetainingCapacity();
+
                 const deps = pkg_deps[pkg_id];
                 for (deps.begin()..deps.end()) |_dep_id| {
                     const dep_id: DependencyID = @intCast(_dep_id);
                     const dep = &lockfile.buffers.dependencies.items[dep_id];
                     const dep_name = dep.name.slice(lockfile.buffers.string_bytes.items);
+
+                    const is_duplicate_dep = (try seen_deps.getOrPut(dep_name)).found_existing;
 
                     const workspace_node_modules = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ workspace_name, dep_name }) catch {
                         try log.addErrorFmt(source, root_pkg_exr.loc, allocator, "Workspace and dependency name too long: '{s}/{s}'", .{ workspace_name, dep_name });
@@ -1958,7 +1967,7 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     };
 
-                    mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
+                    mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions, is_duplicate_dep);
                 }
             }
         }
@@ -1973,11 +1982,15 @@ pub fn parseIntoBinaryLockfile(
                 return error.InvalidPackagesObject;
             };
 
+            seen_deps.clearRetainingCapacity();
+
             // find resolutions. iterate up to root through the pkg path.
             const deps = pkg_deps[pkg_id];
             deps: for (deps.begin()..deps.end()) |_dep_id| {
                 const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = &lockfile.buffers.dependencies.items[dep_id];
+
+                const is_duplicate_dep = (try seen_deps.getOrPut(dep.name.slice(lockfile.buffers.string_bytes.items))).found_existing;
 
                 const res_id = pkg_map.findResolution(pkg_path, dep, lockfile.buffers.string_bytes.items, &path_buf) catch |err| switch (err) {
                     error.InvalidPackageKey => {
@@ -1993,7 +2006,7 @@ pub fn parseIntoBinaryLockfile(
                     },
                 };
 
-                mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
+                mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions, is_duplicate_dep);
             }
         }
 
@@ -2008,12 +2021,15 @@ pub fn parseIntoBinaryLockfile(
     }
 }
 
-fn mapDepToPkg(dep: *Dependency, dep_id: DependencyID, pkg_id: PackageID, lockfile: *BinaryLockfile, pkg_resolutions: []const Resolution) void {
+fn mapDepToPkg(dep: *Dependency, dep_id: DependencyID, pkg_id: PackageID, lockfile: *BinaryLockfile, pkg_resolutions: []const Resolution, is_duplicate_dep: bool) void {
     lockfile.buffers.resolutions.items[dep_id] = pkg_id;
 
     if (lockfile.text_lockfile_version != .v0) {
         const res = &pkg_resolutions[pkg_id];
-        if (res.tag == .workspace) {
+
+        // when a package has duplicate dependencies and one is a workspace
+        // we don't want to override the other because it might not be a workspace.
+        if (res.tag == .workspace and !is_duplicate_dep) {
             dep.version.tag = .workspace;
             dep.version.value = .{ .workspace = res.value.workspace };
 

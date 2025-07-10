@@ -1413,15 +1413,15 @@ pub const Behavior = packed struct(u8) {
                 .gt;
         }
 
-        if (lhs.isProd() != rhs.isProd()) {
-            return if (lhs.isProd())
+        if (lhs.isPeer() != rhs.isPeer()) {
+            return if (lhs.isPeer())
                 .gt
             else
                 .lt;
         }
 
-        if (lhs.isDev() != rhs.isDev()) {
-            return if (lhs.isDev())
+        if (lhs.isProd() != rhs.isProd()) {
+            return if (lhs.isProd())
                 .gt
             else
                 .lt;
@@ -1434,8 +1434,8 @@ pub const Behavior = packed struct(u8) {
                 .lt;
         }
 
-        if (lhs.isPeer() != rhs.isPeer()) {
-            return if (lhs.isPeer())
+        if (lhs.isDev() != rhs.isDev()) {
+            return if (lhs.isDev())
                 .gt
             else
                 .lt;

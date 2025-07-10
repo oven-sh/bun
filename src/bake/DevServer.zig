@@ -1600,7 +1600,7 @@ fn onFrameworkRequestWithBundle(
             // routerTypeMain
             router_type.server_file_string.get() orelse str: {
                 const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, router_type.server_file).get()];
-                const str = bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(name));
+                const str = try bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(name));
                 dev.releaseRelativePathBuf();
                 router_type.server_file_string = .create(str, dev.vm.global);
                 break :str str;

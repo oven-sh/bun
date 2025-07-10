@@ -118,12 +118,9 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     }
 
     ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, ptr->sourceCode());
+    RETURN_IF_EXCEPTION(scope, {});
     if (!executable) {
-        // If an exception is already being thrown, don't throw another one.
-        // ModuleProgramExecutable::tryCreate() sometimes throws on failure, but sometimes it doesn't.
-        if (!scope.exception()) {
-            throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
-        }
+        throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
         return nullptr;
     }
 
@@ -208,9 +205,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     const auto& requests = moduleRecord->requestedModules();
 
     if (requests.isEmpty()) {
-        JSArray* requestsArray = constructEmptyArray(globalObject, nullptr, 0);
-        RETURN_IF_EXCEPTION(scope, {});
-        return requestsArray;
+        RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr, 0));
     }
 
     JSArray* requestsArray = constructEmptyArray(globalObject, nullptr, requests.size());
@@ -361,7 +356,6 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 
     NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
     RETURN_IF_EXCEPTION(scope, {});
-
     if (nodeVmGlobalObject) {
         globalObject = nodeVmGlobalObject;
     }
@@ -392,9 +386,8 @@ RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalOb
             ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, m_sourceCode);
             RETURN_IF_EXCEPTION(scope, nullptr);
             if (!executable) {
-                if (!scope.exception()) {
-                    throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
-                }
+                EXCEPTION_ASSERT(!scope.exception());
+                throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
                 return nullptr;
             }
             m_cachedExecutable.set(vm, this, executable);
@@ -408,7 +401,7 @@ RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalOb
 
 JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
 {
-    VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!m_cachedBytecodeBuffer) {
@@ -429,13 +422,13 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
         return;
     }
 
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSModuleEnvironment* moduleEnvironment = m_moduleRecord->moduleEnvironmentMayBeNull();
     ASSERT(moduleEnvironment != nullptr);
 
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
     JSValue metaValue = moduleEnvironment->get(globalObject, globalObject->vm().propertyNames->builtinNames().metaPrivateName());
+    scope.assertNoExceptionExceptTermination();
     RETURN_IF_EXCEPTION(scope, );
     ASSERT(metaValue);
     ASSERT(metaValue.isObject());
@@ -447,7 +440,7 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
     args.append(m_moduleWrapper.get());
 
     JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
-    RETURN_IF_EXCEPTION(scope, );
+    scope.release();
 }
 
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)

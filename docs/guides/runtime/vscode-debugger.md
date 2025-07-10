@@ -4,7 +4,7 @@ name: Debugging Bun with the VS Code extension
 
 {% note %}
 
-VSCode extension support is currently buggy. We recommend the [Web Debugger](https://bun.sh/guides/runtime/web-debugger) for now.
+VSCode extension support is currently buggy. We recommend the [Web Debugger](https://bun.com/guides/runtime/web-debugger) for now.
 
 {% /note %}
 

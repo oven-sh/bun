@@ -1197,7 +1197,7 @@ pub const RunCommand = struct {
             \\  <b><green>bun run<r> <blue>dev<r>
             \\  <b><green>bun run<r> <blue>lint<r>
             \\
-            \\Full documentation is available at <magenta>https://bun.sh/docs/cli/run<r>
+            \\Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             \\
         ;
 

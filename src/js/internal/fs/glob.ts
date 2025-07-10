@@ -18,15 +18,16 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
   const patterns = validatePattern(pattern);
   const globOptions = mapOptions(options || {});
   const exclude = globOptions.exclude;
-  const excludeGlobs = Array.isArray(exclude) ? exclude.map(p => [new Bun.Glob(p), p] as const) : null;
+  const excludeGlobs = Array.isArray(exclude)
+    ? exclude.flatMap(pattern => [new Bun.Glob(pattern), new Bun.Glob(pattern.replace(/\/+$/, "") + "/**")])
+    : null;
 
   for (const pat of patterns) {
     for await (const ent of new Bun.Glob(pat).scan(globOptions)) {
       if (typeof exclude === "function") {
         if (exclude(ent)) continue;
       } else if (excludeGlobs) {
-        const _ent = ent.replaceAll(sep, "/");
-        if (excludeGlobs.some(([glob, p]) => glob.match(ent) || _ent === p || _ent.startsWith(p + "/"))) {
+        if (excludeGlobs.some(glob => glob.match(ent))) {
           continue;
         }
       }
@@ -40,15 +41,16 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
   const patterns = validatePattern(pattern);
   const globOptions = mapOptions(options || {});
   const exclude = globOptions.exclude;
-  const excludeGlobs = Array.isArray(exclude) ? exclude.map(p => [new Bun.Glob(p), p] as const) : null;
+  const excludeGlobs = Array.isArray(exclude)
+    ? exclude.flatMap(pattern => [new Bun.Glob(pattern), new Bun.Glob(pattern.replace(/\/+$/, "") + "/**")])
+    : null;
 
   for (const pat of patterns) {
     for (const ent of new Bun.Glob(pat).scanSync(globOptions)) {
       if (typeof exclude === "function") {
         if (exclude(ent)) continue;
       } else if (excludeGlobs) {
-        const _ent = ent.replaceAll(sep, "/");
-        if (excludeGlobs.some(([glob, p]) => glob.match(ent) || _ent === p || _ent.startsWith(p + "/"))) {
+        if (excludeGlobs.some(glob => glob.match(ent))) {
           continue;
         }
       }

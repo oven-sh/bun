@@ -1572,7 +1572,14 @@ pub const PackageManifest = struct {
             source,
             log,
             arena.allocator(),
-        ) catch return null;
+        ) catch {
+            // don't use the arena memory!
+            var cloned_log: logger.Log = .init(bun.default_allocator);
+            try log.cloneTo(&cloned_log);
+            log.* = cloned_log;
+
+            return null;
+        };
 
         if (json.asProperty("error")) |error_q| {
             if (error_q.expr.asString(allocator)) |err| {

@@ -29,14 +29,14 @@ function test<T = undefined, R extends string = never>(
     overrideExpectBehavior,
   }: {
     onConstructorFailure?: (error: Error) => void | Promise<void>;
-    overrideExpectBehavior?: (server: NoInfer<Bun.Server<T>>) => void | Promise<void>;
+    overrideExpectBehavior?: (server: NoInfer<Bun.Server>) => void | Promise<void>;
   } = {},
 ) {
   const name = `Bun.serve() types test ${++id}`;
 
   const skip = "unix" in options && typeof options.unix === "string" && process.platform === "win32";
 
-  async function testServer(server: Bun.Server<T>) {
+  async function testServer(server: Bun.Server) {
     if (overrideExpectBehavior) {
       await overrideExpectBehavior(server);
     } else {
@@ -175,10 +175,13 @@ test<{ name: string }, "/">({
     },
 
     message(ws, message) {
+      expectType(message).is<string | Buffer<ArrayBufferLike>>();
       ws.publish("the-group-chat", `${ws.data.name}: ${message.toString()}`);
     },
 
     close(ws, code, reason) {
+      expectType(code).is<number>();
+      expectType(reason).is<string>();
       ws.publish("the-group-chat", `${ws.data.name} left the chat`);
     },
 

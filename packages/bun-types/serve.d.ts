@@ -508,7 +508,7 @@ declare module "bun" {
 
     type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
 
-    type Handler<Req extends Request, S, Res extends Response> = (request: Req, server: S) => MaybePromise<Res>;
+    type Handler<Req extends Request, S, Res> = (request: Req, server: S) => MaybePromise<Res>;
 
     type BaseRouteValue = Response | false | HTMLBundle | BunFile;
 
@@ -525,15 +525,15 @@ declare module "bun" {
     type Routes<R extends string> = {
       [Path in R]:
         | BaseRouteValue
-        | Handler<BunRequest<Path>, Server<undefined>, Response>
-        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<undefined>, Response>>>;
+        | Handler<BunRequest<Path>, Server, Response>
+        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server, Response>>>;
     };
 
     type RoutesWithUpgrade<WebSocketData, R extends string> = {
       [Path in R]:
         | BaseRouteValue
-        | Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>
-        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>>>;
+        | Handler<BunRequest<Path>, Server, Response | undefined | void>
+        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server, Response | undefined | void>>>;
     };
 
     type FetchOrRoutes<R extends string> =
@@ -543,7 +543,7 @@ declare module "bun" {
            *
            * Respond to {@link Request} objects with a {@link Response} object.
            */
-          fetch?(this: Server<undefined>, req: Request, server: Server<undefined>): MaybePromise<Response>;
+          fetch?(this: Server, req: Request, server: Server): MaybePromise<Response>;
 
           routes: Routes<R>;
         }
@@ -553,7 +553,7 @@ declare module "bun" {
            *
            * Respond to {@link Request} objects with a {@link Response} object.
            */
-          fetch(this: Server<undefined>, req: Request, server: Server<undefined>): MaybePromise<Response>;
+          fetch(this: Server, req: Request, server: Server): MaybePromise<Response>;
 
           routes?: Routes<R>;
         };
@@ -600,11 +600,7 @@ declare module "bun" {
            *
            * Respond to {@link Request} objects with a {@link Response} object.
            */
-          fetch?(
-            this: Server<WebSocketData>,
-            req: Request,
-            server: Server<WebSocketData>,
-          ): MaybePromise<Response | void | undefined>;
+          fetch?(this: Server, req: Request, server: Server): MaybePromise<Response | void | undefined>;
 
           routes: RoutesWithUpgrade<WebSocketData, R>;
         }
@@ -649,11 +645,7 @@ declare module "bun" {
            *
            * Respond to {@link Request} objects with a {@link Response} object.
            */
-          fetch(
-            this: Server<WebSocketData>,
-            req: Request,
-            server: Server<WebSocketData>,
-          ): MaybePromise<Response | void | undefined>;
+          fetch(this: Server, req: Request, server: Server): MaybePromise<Response | void | undefined>;
 
           routes?: RoutesWithUpgrade<WebSocketData, R>;
         };
@@ -700,7 +692,7 @@ declare module "bun" {
        * }
        * ```
        */
-      error?: (this: Server<WebSocketData>, error: ErrorLike) => Response | Promise<Response> | void | Promise<void>;
+      error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | void | Promise<void>;
 
       /**
        * Uniquely identify a server instance with an ID
@@ -808,7 +800,7 @@ declare module "bun" {
    *
    * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you \@alexhultman.
    */
-  interface Server<WebSocketData> extends Disposable {
+  interface Server extends Disposable {
     /**
      * Stop listening to prevent new connections from being accepted.
      *
@@ -845,7 +837,7 @@ declare module "bun" {
      *
      * Passing other options such as `port` or `hostname` won't do anything.
      */
-    reload<T, R extends string>(options: Serve.Options<T, R>): Server<T>;
+    reload<WebSocketData, R extends string>(options: Serve.Options<WebSocketData, R>): Server;
 
     /**
      * Mock the fetch handler for a running server.
@@ -896,51 +888,51 @@ declare module "bun" {
      *
      * What you pass to `data` is available on the {@link ServerWebSocket.data} property
      */
-    upgrade(
-      request: Request,
-      ...options: [WebSocketData] extends [undefined]
-        ? [
-            options?: {
-              /**
-               */
-              headers?: HeadersInit;
+    // upgrade(
+    //   request: Request,
+    //   ...options: [WebSocketData] extends [undefined]
+    //     ? [
+    //         options?: {
+    //           /**
+    //            */
+    //           headers?: HeadersInit;
 
-              /**
-               * Data to store on the WebSocket instance
-               *
-               * ---
-               *
-               * **Surprised this line is erroring?**
-               *
-               * Tell TypeScript about the WebSocket data by using `Bun.Server<MyWebSocketData>`
-               *
-               * ```ts
-               * const server: Bun.Server<MyWebSocketData> = Bun.serve({
-               *      fetch: (req, server) => {
-               *          const didUpgrade = server.upgrade(req, {
-               *              data: { ... }, // Works now!
-               *          });
-               *      },
-               * });
-               * ```
-               */
-              data?: undefined;
-            },
-          ]
-        : [
-            options: {
-              /**
-               * Send any additional headers while upgrading, like cookies
-               */
-              headers?: HeadersInit;
+    //           /**
+    //            * Data to store on the WebSocket instance
+    //            *
+    //            * ---
+    //            *
+    //            * **Surprised this line is erroring?**
+    //            *
+    //            * Tell TypeScript about the WebSocket data by using `Bun.Server<MyWebSocketData>`
+    //            *
+    //            * ```ts
+    //            * const server: Bun.Server<MyWebSocketData> = Bun.serve({
+    //            *      fetch: (req, server) => {
+    //            *          const didUpgrade = server.upgrade(req, {
+    //            *              data: { ... }, // Works now!
+    //            *          });
+    //            *      },
+    //            * });
+    //            * ```
+    //            */
+    //           data?: undefined;
+    //         },
+    //       ]
+    //     : [
+    //         options: {
+    //           /**
+    //            * Send any additional headers while upgrading, like cookies
+    //            */
+    //           headers?: HeadersInit;
 
-              /**
-               * Data to store on the WebSocket instance
-               */
-              data: WebSocketData;
-            },
-          ]
-    ): boolean;
+    //           /**
+    //            * Data to store on the WebSocket instance
+    //            */
+    //           data: WebSocketData;
+    //         },
+    //       ]
+    // ): boolean;
 
     /**
      * Send a message to all connected {@link ServerWebSocket} subscribed to a topic
@@ -1256,5 +1248,5 @@ declare module "bun" {
    * });
    * ```
    */
-  function serve<WebSocketData, R extends string>(options: Serve.Options<WebSocketData, R>): Server<WebSocketData>;
+  function serve<WebSocketData, R extends string>(options: Serve.Options<WebSocketData, R>): Server;
 }

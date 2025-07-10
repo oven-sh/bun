@@ -4,7 +4,6 @@ import {
   readableStreamToArrayBuffer,
   readableStreamToBlob,
   readableStreamToBytes,
-  readableStreamToText,
   serve,
   Server,
 } from "bun";

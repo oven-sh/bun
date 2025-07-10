@@ -1,4 +1,4 @@
-import { readableStreamToText, spawn } from "bun";
+import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, DirectoryTree, gunzipJsonRequest, lazyPromiseLike, tempDirWithFiles } from "harness";
 import { join } from "node:path";

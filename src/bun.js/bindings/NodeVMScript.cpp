@@ -482,6 +482,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JS
 
     scope.assertNoExceptionExceptTermination();
     auto* buffer = script->getBytecodeBuffer();
+    RETURN_IF_EXCEPTION(scope, {});
     if (!buffer) return JSValue::encode(jsUndefined());
     return JSValue::encode(buffer);
 }

@@ -440,7 +440,7 @@ async function runTests() {
           NO_COLOR: "1",
           BUN_DEBUG_QUIET_LOGS: "1",
         };
-        if (execPath.includes("asan") && shouldValidateExceptions(testPath)) {
+        if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
           env.BUN_JSC_validateExceptionChecks = "1";
         }
         await runTest(title, async () => {

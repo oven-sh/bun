@@ -317,4 +317,43 @@ export default function GettingStarted() {
       expect(stderr.toString()).not.toContain("assert(this.cap > 0)");
     }
   });
+
+  test("client-side component with default import should work", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-client-import", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import Client from "../components/Client";
+
+export default function IndexPage() {
+  return (
+    <div>
+      <title>LMAO</title>Hello World
+      <Client />
+    </div>
+  );
+}`,
+      "components/Client.tsx": `"use client";
+
+export function Client() {
+  console.log("Client-side!");
+  return <div>Hello World</div>;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    // Run the build command
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .throws(false);
+
+    // The build should succeed - client components should support default imports
+    expect(stderr.toString()).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

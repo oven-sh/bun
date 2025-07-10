@@ -733,27 +733,108 @@ nodejs_version() {
 }
 
 install_nodejs() {
-	case "$pm" in
-	dnf | yum)
-		bash="$(require bash)"
-		script=$(download_file "https://rpm.nodesource.com/setup_$(nodejs_version).x")
-		execute_sudo "$bash" "$script"
+	# Download Node.js directly from nodejs.org
+	nodejs_version="$(nodejs_version_exact)"
+
+	# Determine platform name for Node.js download
+	case "$os" in
+	darwin)
+		nodejs_platform="darwin"
 		;;
-	apt)
-		bash="$(require bash)"
-		script="$(download_file "https://deb.nodesource.com/setup_$(nodejs_version).x")"
-		execute_sudo "$bash" "$script"
+	linux)
+		nodejs_platform="linux"
+		;;
+	*)
+		error "Unsupported OS for Node.js download: $os"
 		;;
 	esac
 
-	case "$pm" in
-	apk)
-		install_packages nodejs npm
+	# Determine architecture name for Node.js download
+	case "$arch" in
+	x64)
+		nodejs_arch="x64"
+		;;
+	aarch64)
+		nodejs_arch="arm64"
 		;;
 	*)
-		install_packages nodejs
+		error "Unsupported architecture for Node.js download: $arch"
 		;;
 	esac
+
+	# Download Node.js binary archive
+	nodejs_filename="node-v$nodejs_version-$nodejs_platform-$nodejs_arch.tar.gz"
+	nodejs_url="https://nodejs.org/dist/v$nodejs_version/$nodejs_filename"
+	nodejs_tar="$(download_file "$nodejs_url")"
+	nodejs_extract_dir="$(dirname "$nodejs_tar")"
+
+	# Extract Node.js
+	execute tar -xzf "$nodejs_tar" -C "$nodejs_extract_dir"
+
+	# Install Node.js binaries to system
+	nodejs_dir="$nodejs_extract_dir/node-v$nodejs_version-$nodejs_platform-$nodejs_arch"
+
+	# Copy bin files preserving symlinks
+	for file in "$nodejs_dir/bin/"*; do
+		filename="$(basename "$file")"
+		if [ -L "$file" ]; then
+			# Get the symlink target
+			target="$(readlink "$file")"
+			# The symlinks are relative (like ../lib/node_modules/npm/bin/npm-cli.js)
+			# and will work correctly from /usr/local/bin since we're copying
+			# node_modules to /usr/local/lib/node_modules
+			execute_sudo ln -sf "$target" "/usr/local/bin/$filename"
+		elif [ -f "$file" ]; then
+			# Copy regular files
+			execute_sudo cp -f "$file" "/usr/local/bin/$filename"
+			execute_sudo chmod +x "/usr/local/bin/$filename"
+		fi
+	done
+
+	# Copy node_modules directory to lib
+	if [ -d "$nodejs_dir/lib/node_modules" ]; then
+		execute_sudo mkdir -p "/usr/local/lib"
+		execute_sudo cp -Rf "$nodejs_dir/lib/node_modules" "/usr/local/lib/"
+	fi
+
+	# Copy include files if they exist
+	if [ -d "$nodejs_dir/include" ]; then
+		execute_sudo mkdir -p "/usr/local/include"
+		execute_sudo cp -Rf "$nodejs_dir/include/node" "/usr/local/include/"
+	fi
+
+	# Copy share files if they exist (man pages, etc.)
+	if [ -d "$nodejs_dir/share" ]; then
+		execute_sudo mkdir -p "/usr/local/share"
+		# Copy only node-specific directories
+		for sharedir in "$nodejs_dir/share/"*; do
+			if [ -d "$sharedir" ]; then
+				dirname="$(basename "$sharedir")"
+				execute_sudo cp -Rf "$sharedir" "/usr/local/share/"
+			fi
+		done
+	fi
+
+	# Ensure /usr/local/bin is in PATH
+	if ! echo "$PATH" | grep -q "/usr/local/bin"; then
+		print "Adding /usr/local/bin to PATH"
+		append_to_profile 'export PATH="/usr/local/bin:$PATH"'
+		export PATH="/usr/local/bin:$PATH"
+	fi
+
+	# Verify Node.js installation
+	if ! command -v node >/dev/null 2>&1; then
+		error "Node.js installation failed: 'node' command not found in PATH"
+	fi
+
+	installed_version="$(node --version 2>/dev/null || echo "unknown")"
+	expected_version="v$nodejs_version"
+
+	if [ "$installed_version" != "$expected_version" ]; then
+		error "Node.js installation failed: expected version $expected_version but got $installed_version. Please check your PATH and try running 'which node' to debug."
+	fi
+
+	print "Node.js $installed_version installed successfully"
 
 	# Ensure that Node.js headers are always pre-downloaded so that we don't rely on node-gyp
 	install_nodejs_headers
@@ -766,7 +847,7 @@ install_nodejs_headers() {
 	execute tar -xzf "$nodejs_headers_tar" -C "$nodejs_headers_dir"
 
 	nodejs_headers_include="$nodejs_headers_dir/node-v$nodejs_version/include"
-	execute_sudo cp -R "$nodejs_headers_include/" "/usr"
+	execute_sudo cp -R "$nodejs_headers_include" "/usr/local/"
 
 	# Also install to node-gyp cache locations for different node-gyp versions
 	# This ensures node-gyp finds headers without downloading them

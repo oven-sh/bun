@@ -15,7 +15,7 @@
     "CLAUDE.md",
     "README.md"
   ],
-  "homepage": "https://bun.sh",
+  "homepage": "https://bun.com",
   "dependencies": {
     "@types/node": "*"
   },

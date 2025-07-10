@@ -237,7 +237,6 @@ test/js/node/test/parallel/test-http-parser.js
 test/js/node/http/node-http-parser.test.ts
 
 # try again later
-test/js/node/test/parallel/test-promises-warning-on-unhandled-rejection.js
 test/js/node/test/parallel/test-worker-nested-uncaught.js
 test/bundler/bun-build-api.test.ts
 

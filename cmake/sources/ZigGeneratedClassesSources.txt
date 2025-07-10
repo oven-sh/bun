@@ -14,6 +14,7 @@ src/bun.js/api/server.classes.ts
 src/bun.js/api/Shell.classes.ts
 src/bun.js/api/ShellArgs.classes.ts
 src/bun.js/api/sockets.classes.ts
+src/bun.js/api/sourcemap.classes.ts
 src/bun.js/api/streams.classes.ts
 src/bun.js/api/valkey.classes.ts
 src/bun.js/api/zlib.classes.ts

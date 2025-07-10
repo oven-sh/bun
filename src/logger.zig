@@ -64,8 +64,8 @@ pub const Kind = enum(u8) {
 pub const Loc = struct {
     start: i32 = -1,
 
-    pub inline fn toNullable(loc: *Loc) ?Loc {
-        return if (loc.start == -1) null else loc.*;
+    pub inline fn toNullable(loc: Loc) ?Loc {
+        return if (loc.start == -1) null else loc;
     }
 
     pub const toUsize = i;

@@ -406,10 +406,17 @@ function generatePrototype(typeName, obj) {
   var staticPrototypeValues = "";
 
   if (obj.construct) {
-    externs += `
+    if (obj.constructNeedsThis) {
+      externs += `
+extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "construct")}(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::EncodedJSValue);
+JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
+`;
+    } else {
+      externs += `
 extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "construct")}(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
 `;
+    }
   }
 
   if (obj.structuredClone) {
@@ -622,7 +629,8 @@ function generateConstructorImpl(typeName, obj: ClassDefinition) {
     externs += `extern JSC_CALLCONV size_t ${symbolName(typeName, "estimatedSize")}(void* ptr);` + "\n";
   }
 
-  return `
+  return (
+    `
 ${renderStaticDecls(classSymbolName, typeName, fields, obj.supportsObjectCreate || false)}
 ${hashTable}
 
@@ -635,14 +643,14 @@ void ${name}::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, ${protot
 }
 
 ${name}::${name}(JSC::VM& vm, JSC::Structure* structure) : Base(vm, structure, ${
-    obj.call ? classSymbolName(typeName, "call") : "call"
-  }, construct) {
+      obj.call ? classSymbolName(typeName, "call") : "call"
+    }, construct) {
 
   }
 
 ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, ${prototypeName(
-    typeName,
-  )}* prototype) {
+      typeName,
+    )}* prototype) {
     ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure);
     ptr->finishCreation(vm, globalObject, prototype);
     return ptr;
@@ -653,6 +661,10 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::call(JSC::JSGlobalObject* 
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSC::VM &vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+${
+  !obj.constructNeedsThis
+    ? `
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
 
     if (!ptr || scope.exception()) [[unlikely]] {
@@ -661,6 +673,21 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::call(JSC::JSGlobalObject* 
 
     Structure* structure = globalObject->${className(typeName)}Structure();
     ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
+`
+    : `
+    Structure* structure = globalObject->${className(typeName)}Structure();
+    ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, nullptr);
+
+    void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame, JSValue::encode(instance));
+    if (scope.exception()) [[unlikely]] {
+      ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
+      return JSValue::encode(JSC::jsUndefined());
+    }
+
+    instance->m_ctx = ptr;
+`
+}
+
     RETURN_IF_EXCEPTION(scope, {});
   ${
     obj.estimatedSize
@@ -694,7 +721,10 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
         functionGlobalObject->${className(typeName)}Structure()
       );
     }
-
+    
+` +
+    (!obj.constructNeedsThis
+      ? `
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
 
     if (scope.exception()) [[unlikely]] {
@@ -704,6 +734,19 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
 
     ASSERT_WITH_MESSAGE(ptr, "Incorrect exception handling: new ${typeName} returned a null pointer, indicating an exception - but did not throw an exception.");
     ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
+`
+      : `
+    ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, nullptr);
+
+    void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame, JSValue::encode(instance));
+    if (scope.exception()) [[unlikely]] {
+      ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
+      return JSValue::encode(JSC::jsUndefined());
+    }
+
+    instance->m_ctx = ptr;
+    `) +
+    `
   ${
     obj.estimatedSize
       ? `
@@ -728,7 +771,8 @@ ${
 }
 
 
-      `;
+      `
+  );
 }
 
 function renderCachedFieldsHeader(typeName, klass, proto, values) {
@@ -1788,6 +1832,7 @@ function generateZig(
     proto = {},
     own = {},
     construct,
+    constructNeedsThis = false,
     finalize,
     noConstructor = false,
     overridesToJS = false,
@@ -1913,7 +1958,21 @@ const JavaScriptCoreBindings = struct {
 
     if (construct && !noConstructor) {
       exports.set("construct", classSymbolName(typeName, "construct"));
-      output += `
+      if (constructNeedsThis) {
+        output += `
+        pub fn ${classSymbolName(typeName, "construct")}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, thisValue: jsc.JSValue) callconv(jsc.conv) ?*anyopaque {
+          if (comptime Environment.enable_logs) log_zig_constructor("${typeName}", callFrame);
+          return @as(*${typeName}, ${typeName}.constructor(globalObject, callFrame, thisValue) catch |err| switch (err) {
+            error.JSError => return null,
+            error.OutOfMemory => {
+              globalObject.throwOutOfMemory() catch {};
+              return null;
+            },
+          });
+        }
+      `;
+      } else {
+        output += `
         pub fn ${classSymbolName(typeName, "construct")}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) ?*anyopaque {
           if (comptime Environment.enable_logs) log_zig_constructor("${typeName}", callFrame);
           return @as(*${typeName}, ${typeName}.constructor(globalObject, callFrame) catch |err| switch (err) {
@@ -1925,6 +1984,7 @@ const JavaScriptCoreBindings = struct {
           });
         }
       `;
+      }
     }
 
     if (call) {

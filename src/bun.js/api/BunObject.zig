@@ -271,8 +271,8 @@ pub fn braces(global: *JSC.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
 
 pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments_ = callframe.arguments_old(2);
-    const path_buf = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(path_buf);
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
     var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
@@ -1328,7 +1328,7 @@ pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) bun.J
         const blob = JSC.WebCore.Blob.new(input_blob.dupeWithContentType(true));
         blob.allocator = bun.default_allocator;
         blob.name = input_blob.name.dupeRef();
-        array.putIndex(globalThis, i, blob.toJS(globalThis));
+        try array.putIndex(globalThis, i, blob.toJS(globalThis));
         i += 1;
     }
 

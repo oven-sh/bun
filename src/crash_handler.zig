@@ -1828,7 +1828,7 @@ pub const js_bindings = struct {
         const list = bun.Analytics.packed_features_list;
         const array = try JSValue.createEmptyArray(global, list.len);
         for (list, 0..) |feature, i| {
-            array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
+            try array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
         }
         obj.put(global, JSC.ZigString.static("features"), array);
         obj.put(global, JSC.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));

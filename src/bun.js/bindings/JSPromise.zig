@@ -194,7 +194,7 @@ pub const JSPromise = opaque {
         };
 
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalObject, @src(), .enabled);
+        scope.init(globalObject, @src());
         defer scope.deinit();
         var ctx = Wrapper{ .args = args };
         const promise = JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
@@ -288,7 +288,7 @@ pub const JSPromise = opaque {
     }
 
     pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
-        JSC__JSPromise__rejectAsHandled(this, globalThis, value);
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSPromise__rejectAsHandled, .{ this, globalThis, value }) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
     pub fn create(globalThis: *JSGlobalObject) *JSPromise {

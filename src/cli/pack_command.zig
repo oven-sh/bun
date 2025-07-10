@@ -297,7 +297,7 @@ pub const PackCommand = struct {
                 }
             }
 
-            var dir_iter = DirIterator.iterate(dir, .u8);
+            var dir_iter = DirIterator.iterate(.fromStdDir(dir), .u8);
             while (dir_iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -451,7 +451,7 @@ pub const PackCommand = struct {
                 }
             }
 
-            var iter = DirIterator.iterate(dir, .u8);
+            var iter = DirIterator.iterate(.fromStdDir(dir), .u8);
             while (iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -565,7 +565,7 @@ pub const PackCommand = struct {
         var additional_bundled_deps: std.ArrayListUnmanaged(DirInfo) = .{};
         defer additional_bundled_deps.deinit(ctx.allocator);
 
-        var iter = DirIterator.iterate(dir, .u8);
+        var iter = DirIterator.iterate(.fromStdDir(dir), .u8);
         while (iter.next().unwrap() catch null) |entry| {
             if (entry.kind != .directory) continue;
 
@@ -579,7 +579,7 @@ pub const PackCommand = struct {
                 };
                 defer scoped_dir.close();
 
-                var scoped_iter = DirIterator.iterate(scoped_dir, .u8);
+                var scoped_iter = DirIterator.iterate(.fromStdDir(scoped_dir), .u8);
                 while (scoped_iter.next().unwrap() catch null) |sub_entry| {
                     const entry_name = try entrySubpath(ctx.allocator, _entry_name, sub_entry.name.slice());
 
@@ -689,7 +689,7 @@ pub const PackCommand = struct {
             var dir, const dir_subpath, const dir_depth = dir_info;
             defer dir.close();
 
-            var iter = DirIterator.iterate(dir, .u8);
+            var iter = DirIterator.iterate(.fromStdDir(dir), .u8);
             while (iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -849,7 +849,7 @@ pub const PackCommand = struct {
                 }
             }
 
-            var dir_iter = DirIterator.iterate(dir, .u8);
+            var dir_iter = DirIterator.iterate(.fromStdDir(dir), .u8);
             while (dir_iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -2674,7 +2674,7 @@ pub const bindings = struct {
             if (entry.contents) |contents| {
                 obj.put(global, "contents", contents.toJS(global));
             }
-            entries.putIndex(global, @intCast(i), obj);
+            try entries.putIndex(global, @intCast(i), obj);
         }
 
         const result = JSValue.createEmptyObject(global, 2);

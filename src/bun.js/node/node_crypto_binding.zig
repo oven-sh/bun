@@ -48,7 +48,7 @@ fn ExternCryptoJob(comptime name: []const u8) type {
         }
 
         pub fn createAndSchedule(global: *JSGlobalObject, ctx: *Ctx, callback: JSValue) callconv(.c) void {
-            var job = create(global, ctx, callback);
+            var job = create(global, ctx, callback.withAsyncContextIfNeeded(global));
             job.schedule();
         }
 
@@ -142,7 +142,7 @@ fn CryptoJob(comptime Ctx: type) type {
                 },
                 .any_task = undefined,
                 .ctx = ctx.*,
-                .callback = .create(callback, global),
+                .callback = .create(callback.withAsyncContextIfNeeded(global), global),
             });
             errdefer bun.destroy(job);
             try job.ctx.init(global);
@@ -266,6 +266,8 @@ const random = struct {
         const res = std.crypto.random.intRangeLessThan(i64, min, max);
 
         if (!callback.isUndefined()) {
+            callback = callback.withAsyncContextIfNeeded(global);
+
             callback.callNextTick(global, [2]JSValue{ .js_undefined, JSValue.jsNumber(res) });
             return .js_undefined;
         }
@@ -513,7 +515,7 @@ fn getHashes(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
 
     for (hashes.keys(), 0..) |hash, i| {
         const str = String.createUTF8ForJS(global, hash);
-        array.putIndex(global, @intCast(i), str);
+        try array.putIndex(global, @intCast(i), str);
     }
 
     return array;

@@ -237,6 +237,7 @@ pub const StandaloneModuleGraph = struct {
                         null,
                         std.math.maxInt(i32),
                         std.math.maxInt(i32),
+                        .{},
                     )) {
                         .success => |x| x,
                         .fail => {
@@ -262,7 +263,7 @@ pub const StandaloneModuleGraph = struct {
                     });
 
                     stored.external_source_names = file_names;
-                    stored.underlying_provider = .{ .data = @truncate(@intFromPtr(data)), .load_hint = .none };
+                    stored.underlying_provider = .{ .data = @truncate(@intFromPtr(data)), .load_hint = .none, .kind = .zig };
                     stored.is_standalone_module_graph = true;
 
                     const parsed = bun.new(SourceMap.ParsedSourceMap, stored);

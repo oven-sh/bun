@@ -562,6 +562,10 @@ declare module "bun" {
       /**
        * Enable websockets with {@link Bun.serve}
        *
+       * Upgrade a {@link Request} to a {@link ServerWebSocket} via {@link Server.upgrade}
+       *
+       * Pass `data` in {@link Server.upgrade} to attach data to the {@link ServerWebSocket.data} property
+       *
        * @example
        * ```js
        * const server: Bun.Server = Bun.serve({
@@ -588,9 +592,6 @@ declare module "bun" {
        *  },
        * });
        * ```
-       * Upgrade a {@link Request} to a {@link ServerWebSocket} via {@link Server.upgrade}
-       *
-       * Pass `data` in @{link Server.upgrade} to attach data to the {@link ServerWebSocket.data} property
        */
       websocket: WebSocketHandler<WebSocketData>;
     } & (

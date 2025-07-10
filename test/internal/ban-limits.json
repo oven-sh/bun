@@ -2,7 +2,7 @@
   ".arguments_old(": 280,
   ".stdDir()": 40,
   ".stdFile()": 18,
-  "// autofix": 173,
+  "// autofix": 169,
   ": [a-zA-Z0-9_\\.\\*\\?\\[\\]\\(\\)]+ = undefined,": 242,
   "allocator.ptr !=": 1,
   "global.hasException": 28,

@@ -1064,11 +1064,11 @@ pub const Package = extern struct {
             else => external_alias.hash,
         };
 
-        var workspace_path: ?String = null;
-        var workspace_version = workspace_ver;
+        var has_workspace_path: ?String = null;
+        var has_workspace_version = workspace_ver;
         if (comptime tag == null) {
-            workspace_path = lockfile.workspace_paths.get(name_hash);
-            workspace_version = lockfile.workspace_versions.get(name_hash);
+            has_workspace_path = lockfile.workspace_paths.get(name_hash);
+            has_workspace_version = lockfile.workspace_versions.get(name_hash);
         }
 
         if (comptime tag != null) {
@@ -1093,44 +1093,37 @@ pub const Package = extern struct {
             },
             .npm => {
                 const npm = dependency_version.value.npm;
-                if (workspace_version != null) {
-                    if (pm.options.link_workspace_packages and npm.version.satisfies(workspace_version.?, buf, buf)) {
-                        const path = workspace_path.?.sliced(buf);
-                        if (Dependency.parseWithTag(
-                            allocator,
-                            external_alias.value,
-                            external_alias.hash,
-                            path.slice,
-                            .workspace,
-                            &path,
-                            log,
-                            pm,
-                        )) |dep| {
-                            dependency_version.tag = dep.tag;
-                            dependency_version.value = dep.value;
-                        }
-                    } else {
-                        // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
-                        for (package_dependencies[0..dependencies_count]) |*dep| {
-                            if (dep.name_hash == name_hash and dep.version.tag == .workspace) {
-                                dep.* = .{
-                                    .behavior = if (in_workspace) group.behavior.add(.workspace) else group.behavior,
-                                    .name = external_alias.value,
-                                    .name_hash = external_alias.hash,
-                                    .version = dependency_version,
-                                };
-                                return null;
+                if (pm.options.link_workspace_packages) updated: {
+                    if (has_workspace_version) |workspace_version| {
+                        if (has_workspace_path) |workspace_path| {
+                            if (npm.version.satisfies(workspace_version, buf, buf)) {
+                                const path = workspace_path.sliced(buf);
+                                if (Dependency.parseWithTag(
+                                    allocator,
+                                    external_alias.value,
+                                    external_alias.hash,
+                                    path.slice,
+                                    .workspace,
+                                    &path,
+                                    log,
+                                    pm,
+                                )) |dep| {
+                                    dependency_version.tag = dep.tag;
+                                    dependency_version.value = dep.value;
+                                    break :updated;
+                                }
                             }
                         }
+                        return null;
                     }
                 }
             },
             .workspace => workspace: {
-                if (workspace_path) |path| {
+                if (has_workspace_path) |workspace_path| {
                     if (workspace_range) |range| {
-                        if (workspace_version) |ver| {
-                            if (range.satisfies(ver, buf, buf)) {
-                                dependency_version.value.workspace = path;
+                        if (has_workspace_version) |workspace_version| {
+                            if (range.satisfies(workspace_version, buf, buf)) {
+                                dependency_version.value.workspace = workspace_path;
                                 break :workspace;
                             }
                         }
@@ -1138,7 +1131,7 @@ pub const Package = extern struct {
                         // important to trim before len == 0 check. `workspace:foo@      ` should install successfully
                         const version_literal = strings.trim(range.input, &strings.whitespace_chars);
                         if (version_literal.len == 0 or range.@"is *"() or Semver.Version.isTaggedVersionOnly(version_literal)) {
-                            dependency_version.value.workspace = path;
+                            dependency_version.value.workspace = workspace_path;
                             break :workspace;
                         }
 
@@ -1157,7 +1150,7 @@ pub const Package = extern struct {
                         return error.InstallFailed;
                     }
 
-                    dependency_version.value.workspace = path;
+                    dependency_version.value.workspace = workspace_path;
                 } else {
                     const workspace = dependency_version.value.workspace.slice(buf);
                     const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
@@ -1190,13 +1183,13 @@ pub const Package = extern struct {
                     const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
                     const found_matching_workspace = workspace_entry.found_existing;
 
-                    if (workspace_version) |ver| {
-                        try lockfile.workspace_versions.put(allocator, name_hash, ver);
+                    if (has_workspace_version) |workspace_version| {
+                        try lockfile.workspace_versions.put(allocator, name_hash, workspace_version);
                         for (package_dependencies[0..dependencies_count]) |*package_dep| {
                             if (switch (package_dep.version.tag) {
                                 // `dependencies` & `workspaces` defined within the same `package.json`
                                 .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
-                                    package_dep.version.value.npm.version.satisfies(ver, buf, buf),
+                                    package_dep.version.value.npm.version.satisfies(workspace_version, buf, buf),
                                 // `workspace:*`
                                 .workspace => found_matching_workspace and
                                     String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,

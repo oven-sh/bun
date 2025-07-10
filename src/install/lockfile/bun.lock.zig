@@ -1119,6 +1119,70 @@ fn PkgMap(comptime T: type) type {
     };
 }
 
+pub const TextLockfileDepSorter = struct {
+    fn cmpBehavior(l: Dependency.Behavior, r: Dependency.Behavior) std.math.Order {
+        if (l.eq(r)) {
+            return .eq;
+        }
+
+        if (l.isWorkspaceOnly() != r.isWorkspaceOnly()) {
+            // ensure isWorkspaceOnly deps are placed at the beginning
+            return if (l.isWorkspaceOnly())
+                .lt
+            else
+                .gt;
+        }
+
+        if (l.isPeer() != r.isPeer()) {
+            return if (l.isPeer())
+                .gt
+            else
+                .lt;
+        }
+
+        if (l.isProd() != r.isProd()) {
+            return if (l.isProd())
+                .gt
+            else
+                .lt;
+        }
+
+        if (l.isOptional() != r.isOptional()) {
+            return if (l.isOptional())
+                .gt
+            else
+                .lt;
+        }
+
+        if (l.isDev() != r.isDev()) {
+            return if (l.isDev())
+                .gt
+            else
+                .lt;
+        }
+
+        if (l.isWorkspace() != r.isWorkspace()) {
+            return if (l.isWorkspace())
+                .gt
+            else
+                .lt;
+        }
+
+        return .eq;
+    }
+
+    pub fn isLessThan(string_buf: []const u8, l: Dependency, r: Dependency) bool {
+        switch (cmpBehavior(l.behavior, r.behavior)) {
+            .eq => {},
+            else => |order| return order == .lt,
+        }
+
+        const l_name = l.name.slice(string_buf);
+        const r_name = r.name.slice(string_buf);
+        return strings.cmpStringsAsc({}, l_name, r_name);
+    }
+};
+
 // const PkgMap = struct {};
 
 pub fn parseIntoBinaryLockfile(
@@ -2010,6 +2074,20 @@ pub fn parseIntoBinaryLockfile(
             }
         }
 
+        {
+            for (0..lockfile.packages.len) |_pkg_id| {
+                const pkg_id: PackageID = @intCast(_pkg_id);
+                const deps = lockfile.packages.items(.dependencies)[pkg_id];
+
+                std.sort.pdq(
+                    Dependency,
+                    lockfile.buffers.dependencies.items[deps.begin()..deps.end()],
+                    lockfile.buffers.string_bytes.items,
+                    Dependency.isLessThan,
+                );
+            }
+        }
+
         lockfile.resolve(log) catch |err| {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
@@ -2169,7 +2247,7 @@ fn parseAppendDependencies(
         Dependency,
         lockfile.buffers.dependencies.items[off..],
         buf.bytes.items,
-        Dependency.isLessThan,
+        TextLockfileDepSorter.isLessThan,
     );
 
     return .{ @intCast(off), @intCast(end - off) };

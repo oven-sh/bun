@@ -2514,15 +2514,9 @@ pub const Data = union(Tag) {
                 e.left.data.writeToHasher(hasher, symbol_table);
                 e.right.data.writeToHasher(hasher, symbol_table);
             },
-            .e_class => |e| {
-                _ = e; // autofix
-            },
-            inline .e_new, .e_call => |e| {
-                _ = e; // autofix
-            },
-            .e_function => |e| {
-                _ = e; // autofix
-            },
+            .e_class => {},
+            inline .e_new, .e_call => {},
+            .e_function => {},
             .e_dot => |e| {
                 writeAnyToHasher(hasher, .{ e.optional_chain, e.name.len });
                 e.target.data.writeToHasher(hasher, symbol_table);
@@ -2533,9 +2527,7 @@ pub const Data = union(Tag) {
                 e.target.data.writeToHasher(hasher, symbol_table);
                 e.index.data.writeToHasher(hasher, symbol_table);
             },
-            .e_arrow => |e| {
-                _ = e; // autofix
-            },
+            .e_arrow => {},
             .e_jsx_element => |e| {
                 _ = e; // autofix
             },

@@ -65,10 +65,10 @@ it("should add existing package", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -110,11 +110,11 @@ it("should reject missing package", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).toContain("error: MissingPackageJSON");
   expect(err).toContain(`note: error occurred while resolving file:${add_path}`);
 
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out).toEqual(expect.stringContaining("bun add v1."));
   expect(await exited).toBe(1);
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
@@ -145,10 +145,10 @@ it("bun add --only-missing should not install existing package", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -188,7 +188,7 @@ it("bun add --only-missing should not install existing package", async () => {
       stdin: "pipe",
       stderr: "pipe",
     });
-    const out = await new Response(stdout).text();
+    const out = await stdout.text();
     expect(out).not.toContain("Saved lockfile");
     expect(out).not.toContain("Installed");
     expect(out.split("\n").filter(Boolean)).toStrictEqual([
@@ -218,10 +218,10 @@ it("bun add --analyze should scan dependencies", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -261,7 +261,7 @@ it("bun add --analyze should scan dependencies", async () => {
       stdin: "pipe",
       stderr: "pipe",
     });
-    const out = await new Response(stdout).text();
+    const out = await stdout.text();
     expect(out).not.toContain("Saved lockfile");
     expect(out).not.toContain("Installed");
     expect(out.split("\n").filter(Boolean)).toStrictEqual([
@@ -303,10 +303,10 @@ for (const pathType of ["absolute", "relative"]) {
         env,
       });
 
-      const err = await new Response(stderr).text();
+      const err = await stderr.text();
       expect(err).not.toContain("error:");
       expect(err).toContain("Saved lockfile");
-      const out = await new Response(stdout).text();
+      const out = await stdout.text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun add v1."),
         "",
@@ -345,10 +345,10 @@ it.each(["fileblah://"])("should reject invalid path without segfault: %s", asyn
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).toContain(`error: unrecognised dependency format: ${dep}`);
 
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out).toEqual(expect.stringContaining("bun add v1."));
   expect(await exited).toBe(1);
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
@@ -386,9 +386,9 @@ it("should handle semver-like names", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err.split(/\r?\n/)).toContain(`error: GET http://localhost:${port}/1.2.3 - 404`);
-  expect(await new Response(stdout).text()).toEqual(expect.stringContaining("bun add v1."));
+  expect(await stdout.text()).toEqual(expect.stringContaining("bun add v1."));
   expect(await exited).toBe(1);
   expect(urls.sort()).toEqual([`${root_url}/1.2.3`]);
   expect(requested).toBe(1);
@@ -427,9 +427,9 @@ it("should handle @scoped names", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err.split(/\r?\n/)).toContain(`error: GET http://localhost:${port}/@bar%2fbaz - 404`);
-  expect(await new Response(stdout).text()).toEqual(expect.stringContaining("bun add v1."));
+  expect(await stdout.text()).toEqual(expect.stringContaining("bun add v1."));
   expect(await exited).toBe(1);
   expect(urls.sort()).toEqual([`${root_url}/@bar%2fbaz`]);
   expect(requested).toBe(1);
@@ -459,10 +459,10 @@ it("should add dependency with capital letters", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -513,10 +513,10 @@ it("should add exact version with --exact", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -566,10 +566,10 @@ it("should add to devDependencies with --dev", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -601,7 +601,7 @@ it("should add to devDependencies with --dev", async () => {
   );
   await access(join(package_dir, "bun.lockb"));
 });
-it.only("should add to optionalDependencies with --optional", async () => {
+it("should add to optionalDependencies with --optional", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
   await writeFile(
@@ -620,10 +620,10 @@ it.only("should add to optionalDependencies with --optional", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -673,10 +673,10 @@ it("should add to peerDependencies with --peer", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -728,10 +728,10 @@ it("should add exact version with install.exact", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -782,9 +782,9 @@ it("should add exact version with -E", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -866,10 +866,10 @@ it("should add dependency with package.json in it and http tarball", async () =>
       "BUN_CONFIG_TOKEN": "npm_******",
     },
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -930,10 +930,10 @@ it("should add dependency with specified semver", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -990,10 +990,10 @@ it("should add dependency (GitHub)", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -1076,10 +1076,10 @@ it("should add dependency alongside workspaces", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -1147,10 +1147,10 @@ it("should add aliased dependency (npm)", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -1207,10 +1207,10 @@ it("should add aliased dependency (GitHub)", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -1731,10 +1731,10 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -1790,10 +1790,10 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -2095,10 +2095,10 @@ it("should add dependencies to workspaces directly", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -2163,10 +2163,10 @@ async function installRedirectsToAdd(saveFlagFirst: boolean) {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -2198,10 +2198,10 @@ it("should add dependency alongside peerDependencies", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -2248,9 +2248,9 @@ it("should add local tarball dependency", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -2266,6 +2266,6 @@ it("should add local tarball dependency", async () => {
   const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
   expect(package_json.name).toBe("baz");
   expect(package_json.version).toBe("0.0.3");
-  (expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
-    await access(join(package_dir, "bun.lockb")));
+  expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
+    await access(join(package_dir, "bun.lockb"));
 });

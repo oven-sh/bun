@@ -1166,7 +1166,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = stderrForInstall(await new Response(stderr).text());
+  let err = stderrForInstall(await stderr.text());
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -1177,7 +1177,7 @@ export async function runBunInstall(
   if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
-  let out = await new Response(stdout).text();
+  let out = await stdout.text();
   expect(await exited).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
 }

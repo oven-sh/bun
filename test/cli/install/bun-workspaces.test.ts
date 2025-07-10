@@ -980,7 +980,7 @@ test("it should detect duplicate workspace dependencies", async () => {
     env,
   });
 
-  var err = await new Response(stderr).text();
+  var err = await stderr.text();
   expect(err).toContain('Workspace name "pkg1" already exists');
   expect(await exited).toBe(1);
 
@@ -996,7 +996,7 @@ test("it should detect duplicate workspace dependencies", async () => {
     env,
   }));
 
-  err = await new Response(stderr).text();
+  err = await stderr.text();
   expect(err).toContain('Workspace name "pkg1" already exists');
   expect(await exited).toBe(1);
 });
@@ -1045,8 +1045,8 @@ for (const rootVersion of versions) {
         env,
       });
 
-      var err = await new Response(stderr).text();
-      var out = await new Response(stdout).text();
+      var err = await stderr.text();
+      var out = await stdout.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -1069,8 +1069,8 @@ for (const rootVersion of versions) {
         env,
       }));
 
-      err = await new Response(stderr).text();
-      out = await new Response(stdout).text();
+      err = await stderr.text();
+      out = await stdout.text();
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -1094,8 +1094,8 @@ for (const rootVersion of versions) {
         env,
       }));
 
-      err = await new Response(stderr).text();
-      out = await new Response(stdout).text();
+      err = await stderr.text();
+      out = await stdout.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -1118,8 +1118,8 @@ for (const rootVersion of versions) {
         env,
       }));
 
-      err = await new Response(stderr).text();
-      out = await new Response(stdout).text();
+      err = await stderr.text();
+      out = await stdout.text();
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -1165,8 +1165,8 @@ for (const version of versions) {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("already exists");
     expect(err).not.toContain("not found");
@@ -1197,8 +1197,8 @@ for (const version of versions) {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("already exists");
@@ -1231,8 +1231,8 @@ for (const version of versions) {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("already exists");
     expect(err).not.toContain("not found");
@@ -1259,8 +1259,8 @@ for (const version of versions) {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("already exists");
     expect(err).not.toContain("not found");

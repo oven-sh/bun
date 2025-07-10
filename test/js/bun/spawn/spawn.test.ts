@@ -98,7 +98,7 @@ for (let [gcTick, label] of [
             stdin: "ignore",
           });
           gcTick();
-          const text = await new Response(stdout).text();
+          const text = await stdout.text();
           expect(text).toBe("hello\n");
         })();
         gcTick();
@@ -118,7 +118,7 @@ for (let [gcTick, label] of [
           stderr: null,
         });
         gcTick();
-        const text = await new Response(stdout).text();
+        const text = await stdout.text();
         expect(text).toBe("bar\n");
         gcTick();
       });

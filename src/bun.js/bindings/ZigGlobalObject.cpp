@@ -429,9 +429,7 @@ static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zi
 
         auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(globalObject);
         prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "prepareStackTrace"_s));
-        if (scope.exception()) [[unlikely]] {
-            scope.clearException();
-        }
+        CLEAR_IF_EXCEPTION(scope);
     }
 
     return formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);
@@ -1790,6 +1788,53 @@ extern "C" JSC::EncodedJSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject*
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
 
+extern "C" JSC::EncodedJSValue Bun__makeArrayBufferWithBytesNoCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
+        if (deallocator) deallocator(p, deallocatorContext);
+    }));
+
+    JSArrayBuffer* jsBuffer = JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTFMove(buffer));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBuffer);
+}
+
+extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalObject* globalObject, TypedArrayType ty, const void* ptr, size_t len, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto buffer_ = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
+        if (deallocator) deallocator(p, deallocatorContext);
+    }));
+    RefPtr<ArrayBuffer>&& buffer = WTFMove(buffer_);
+    if (!buffer) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    unsigned elementByteSize = elementSize(ty);
+    size_t offset = 0;
+    size_t length = len / elementByteSize;
+    bool isResizableOrGrowableShared = buffer->isResizableOrGrowableShared();
+
+    switch (ty) {
+#define JSC_TYPED_ARRAY_FACTORY(type) \
+    case Type##type:                  \
+        RELEASE_AND_RETURN(scope, JSValue::encode(JS##type##Array::create(globalObject, globalObject->typedArrayStructure(Type##type, isResizableOrGrowableShared), WTFMove(buffer), offset, length)));
+#undef JSC_TYPED_ARRAY_CHECK
+        FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(JSC_TYPED_ARRAY_FACTORY)
+    case NotTypedArray:
+    case TypeDataView:
+        ASSERT_NOT_REACHED();
+    }
+
+    return {};
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer);
 JSC_DEFINE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -2023,8 +2068,7 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
     }
 #endif
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
-    if (scope.exception()) [[unlikely]]
-        return {};
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2)
@@ -3972,6 +4016,7 @@ extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JS
 void GlobalObject::handleRejectedPromises()
 {
     JSC::VM& virtual_machine = vm();
+    auto scope = DECLARE_CATCH_SCOPE(virtual_machine);
     do {
         auto unhandledRejections = WTFMove(m_aboutToBeNotifiedRejectedPromises);
         for (auto& promise : unhandledRejections) {
@@ -3979,6 +4024,7 @@ void GlobalObject::handleRejectedPromises()
                 continue;
 
             Bun__handleRejectedPromise(this, promise.get());
+            if (auto ex = scope.exception()) this->reportUncaughtExceptionAtEventLoop(this, ex);
         }
     } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
 }
@@ -4136,22 +4182,26 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
 {
     auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
 
-    if (JSC::JSInternalPromise* result = NodeVM::importModule(globalObject, moduleNameValue, parameters, sourceOrigin)) {
-        return result;
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    {
+        JSC::JSInternalPromise* result = NodeVM::importModule(globalObject, moduleNameValue, parameters, sourceOrigin);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (result) {
+            return result;
+        }
     }
 
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::Identifier resolvedIdentifier;
 
     auto moduleName = moduleNameValue->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceOrigin.url().protocolIsFile() ? sourceOrigin.url().fileSystemPath() : String())) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
 
-            auto result = JSC::importModule(globalObject, resolvedIdentifier,
-                JSC::jsUndefined(), parameters, JSC::jsUndefined());
+            auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::jsUndefined(), parameters, JSC::jsUndefined());
             if (scope.exception()) [[unlikely]] {
                 auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
                 return promise->rejectWithCaughtException(globalObject, scope);

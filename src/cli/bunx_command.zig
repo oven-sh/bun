@@ -196,8 +196,7 @@ pub const BunxCommand = struct {
                 if (bin_prop.expr.asString(transpiler.allocator)) |dir_name| {
                     const bin_dir = try bun.sys.openatA(dir_fd, dir_name, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap();
                     defer bin_dir.close();
-                    const dir = std.fs.Dir{ .fd = bin_dir.cast() };
-                    var iterator = bun.DirIterator.iterate(dir, .u8);
+                    var iterator = bun.DirIterator.iterate(bin_dir, .u8);
                     var entry = iterator.next();
                     while (true) : (entry = iterator.next()) {
                         const current = switch (entry) {

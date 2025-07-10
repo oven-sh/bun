@@ -358,7 +358,7 @@ static JSValue handleVirtualModuleResult(
         if (auto* exception = scope.exception()) {
             if constexpr (allowPromise) {
                 scope.clearException();
-                return rejectedInternalPromise(globalObject, exception);
+                RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
             } else {
                 return exception;
             }
@@ -417,7 +417,7 @@ static JSValue handleVirtualModuleResult(
             JSC::SyntheticSourceProvider::create(WTFMove(function),
                 JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
         JSC::ensureStillAliveHere(object);
-        return rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source)));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source))));
     }
 
     case OnLoadResultTypePromise: {
@@ -485,9 +485,11 @@ extern "C" void Bun__onFulfillAsyncModule(
 
         if (res->result.value.isCommonJSModule) {
             auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, res->result.value);
+            EXCEPTION_ASSERT(created.has_value() == !scope.exception());
             if (created.has_value()) {
                 JSSourceCode* code = JSSourceCode::create(vm, WTFMove(created.value()));
                 promise->resolve(globalObject, code);
+                scope.assertNoExceptionExceptTermination();
             } else {
                 auto* exception = scope.exception();
                 if (!vm.isTerminationException(exception)) {
@@ -888,7 +890,7 @@ static JSValue fetchESMSourceCode(
 
     const auto reject = [&](JSC::JSValue exception) -> JSValue {
         if constexpr (allowPromise) {
-            return rejectedInternalPromise(globalObject, exception);
+            RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
         } else {
             throwException(globalObject, scope, exception);
             return {};
@@ -903,7 +905,7 @@ static JSValue fetchESMSourceCode(
             }
 
             scope.clearException();
-            return rejectedInternalPromise(globalObject, exception);
+            RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
         }
 
         if constexpr (allowPromise) {
@@ -936,15 +938,15 @@ static JSValue fetchESMSourceCode(
         // This can happen if it's a `bun build --compile`'d CommonJS file
         if (res->result.value.isCommonJSModule) {
             auto created = Bun::createCommonJSModule(globalObject, specifierJS, res->result.value);
-
+            EXCEPTION_ASSERT(created.has_value() == !scope.exception());
             if (created.has_value()) {
-                return rejectOrResolve(JSSourceCode::create(vm, WTFMove(created.value())));
+                RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTFMove(created.value()))));
             }
 
             if constexpr (allowPromise) {
                 auto* exception = scope.exception();
                 scope.clearException();
-                return rejectedInternalPromise(globalObject, exception);
+                RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
             } else {
                 scope.release();
                 return {};
@@ -957,13 +959,13 @@ static JSValue fetchESMSourceCode(
         switch (tag) {
         case SyntheticModuleType::ESM: {
             auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
-            return rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider)));
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider))));
         }
 
 #define CASE(str, name)                                                                                                                            \
     case (SyntheticModuleType::name): {                                                                                                            \
         auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateNativeModule_##name, JSC::SourceOrigin(), WTFMove(moduleKey))); \
-        return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));                                                                         \
+        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTFMove(source))));                                                     \
     }
             BUN_FOREACH_ESM_NATIVE_MODULE(CASE)
 #undef CASE
@@ -973,10 +975,10 @@ static JSValue fetchESMSourceCode(
             if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {
                 constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
                 auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, static_cast<InternalModuleRegistry::Field>(tag & mask)), JSC::SourceOrigin(URL(makeString("builtins://"_s, moduleKey))), moduleKey));
-                return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
+                RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTFMove(source))));
             } else {
                 auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
-                return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+                RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider))));
             }
         }
         }
@@ -1000,15 +1002,15 @@ static JSValue fetchESMSourceCode(
 
     if (res->success && res->result.value.isCommonJSModule) {
         auto created = Bun::createCommonJSModule(globalObject, specifierJS, res->result.value);
-
+        EXCEPTION_ASSERT(created.has_value() == !scope.exception());
         if (created.has_value()) {
-            return rejectOrResolve(JSSourceCode::create(vm, WTFMove(created.value())));
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTFMove(created.value()))));
         }
 
         if constexpr (allowPromise) {
             auto* exception = scope.exception();
             scope.clearException();
-            return rejectedInternalPromise(globalObject, exception);
+            RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
         } else {
             scope.release();
             return {};
@@ -1050,7 +1052,7 @@ static JSValue fetchESMSourceCode(
             JSC::SyntheticSourceProvider::create(WTFMove(function),
                 JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
         JSC::ensureStillAliveHere(value);
-        return rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source)));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source))));
     }
     // TOML and JSONC may go through here
     else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
@@ -1067,7 +1069,7 @@ static JSValue fetchESMSourceCode(
             JSC::SyntheticSourceProvider::create(WTFMove(function),
                 JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
         JSC::ensureStillAliveHere(value);
-        return rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source)));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source))));
     } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {
@@ -1082,11 +1084,10 @@ static JSValue fetchESMSourceCode(
             JSC::SyntheticSourceProvider::create(WTFMove(function),
                 JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
         JSC::ensureStillAliveHere(value);
-        return rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source)));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source))));
     }
 
-    return rejectOrResolve(JSC::JSSourceCode::create(vm,
-        JSC::SourceCode(Zig::SourceProvider::create(globalObject, res->result.value))));
+    RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Zig::SourceProvider::create(globalObject, res->result.value)))));
 }
 
 JSValue fetchESMSourceCodeSync(

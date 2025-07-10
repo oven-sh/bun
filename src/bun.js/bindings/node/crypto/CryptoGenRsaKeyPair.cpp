@@ -171,6 +171,7 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
     }
     if (!hashValue.isUndefined()) {
         Bun::Process::emitWarning(globalObject, jsString(vm, makeString("\"options.hash\" is deprecated, use \"options.hashAlgorithm\" instead."_s)), jsString(vm, makeString("DeprecationWarning"_s)), jsString(vm, makeString("DEP0154"_s)), jsUndefined());
+        CLEAR_IF_EXCEPTION(scope);
         V::validateString(scope, globalObject, hashValue, "options.hash"_s);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         hashString = hashValue.toString(globalObject);
@@ -184,6 +185,7 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
     }
     if (!mgf1HashValue.isUndefined()) {
         Bun::Process::emitWarning(globalObject, jsString(vm, makeString("\"options.mgf1Hash\" is deprecated, use \"options.mgf1HashAlgorithm\" instead."_s)), jsString(vm, makeString("DeprecationWarning"_s)), jsString(vm, makeString("DEP0154"_s)), jsUndefined());
+        CLEAR_IF_EXCEPTION(scope);
         V::validateString(scope, globalObject, mgf1HashValue, "options.mgf1Hash"_s);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         mgf1HashString = mgf1HashValue.toString(globalObject);

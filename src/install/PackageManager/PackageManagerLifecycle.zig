@@ -59,7 +59,7 @@ pub fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) vo
     @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
 }
 
-pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *Lockfile, value: PreinstallState) void {
+pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *const Lockfile, value: PreinstallState) void {
     this.ensurePreinstallStateListCapacity(lockfile.packages.len);
     this.preinstall_state.items[package_id] = value;
 }
@@ -218,7 +218,9 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
     const buf = this.lockfile.buffers.string_bytes.items;
     // need to clone because this is a copy before Lockfile.cleanWithLogger
     const name = root_package.name.slice(buf);
-    const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
+
+    var top_level_dir: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+    defer top_level_dir.deinit();
 
     if (root_package.scripts.hasAny()) {
         const add_node_gyp_rebuild_script = root_package.scripts.install.isEmpty() and root_package.scripts.preinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
@@ -226,7 +228,7 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
         this.root_lifecycle_scripts = root_package.scripts.createList(
             this.lockfile,
             buf,
-            top_level_dir_without_trailing_slash,
+            &top_level_dir,
             name,
             .root,
             add_node_gyp_rebuild_script,
@@ -237,7 +239,7 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
             this.root_lifecycle_scripts = root_package.scripts.createList(
                 this.lockfile,
                 buf,
-                top_level_dir_without_trailing_slash,
+                &top_level_dir,
                 name,
                 .root,
                 true,
@@ -252,6 +254,7 @@ pub fn spawnPackageLifecycleScripts(
     list: Lockfile.Package.Scripts.List,
     optional: bool,
     foreground: bool,
+    install_ctx: ?LifecycleScriptSubprocess.InstallCtx,
 ) !void {
     const log_level = this.options.log_level;
     var any_scripts = false;
@@ -268,55 +271,99 @@ pub fn spawnPackageLifecycleScripts(
     try this.ensureTempNodeGypScript();
 
     const cwd = list.cwd;
-    const this_transpiler = try this.configureEnvForScripts(ctx, log_level);
-    const original_path = this_transpiler.env.get("PATH") orelse "";
+    var this_transpiler = try this.configureEnvForScripts(ctx, log_level);
 
-    var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
-    var current_dir: ?*DirInfo = this_transpiler.resolver.readDirInfo(cwd) catch null;
-    bun.assert(current_dir != null);
-    while (current_dir) |dir| {
-        if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
-            try PATH.append(std.fs.path.delimiter);
-        }
-        try PATH.appendSlice(strings.withoutTrailingSlash(dir.abs_path));
-        if (!(dir.abs_path.len == 1 and dir.abs_path[0] == std.fs.path.sep)) {
-            try PATH.append(std.fs.path.sep);
-        }
-        try PATH.appendSlice(this.options.bin_path);
-        current_dir = dir.getParent();
+    var script_env = try this_transpiler.env.map.cloneWithAllocator(bun.default_allocator);
+    defer script_env.map.deinit();
+
+    const original_path = script_env.get("PATH") orelse "";
+
+    var PATH: bun.EnvPath(.{}) = try .initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
+    defer PATH.deinit();
+
+    var parent: ?string = cwd;
+
+    while (parent) |dir| {
+        var builder = PATH.pathComponentBuilder();
+        builder.append(dir);
+        builder.append("node_modules/.bin");
+        try builder.apply();
+
+        parent = std.fs.path.dirname(dir);
     }
 
-    if (original_path.len > 0) {
-        if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
-            try PATH.append(std.fs.path.delimiter);
+    try PATH.append(original_path);
+    try script_env.put("PATH", PATH.slice());
+
+    const envp = try script_env.createNullDelimitedEnvMap(this.allocator);
+
+    const shell_bin = shell_bin: {
+        if (comptime Environment.isWindows) {
+            break :shell_bin null;
         }
 
-        try PATH.appendSlice(original_path);
-    }
+        if (this.env.get("PATH")) |env_path| {
+            break :shell_bin bun.CLI.RunCommand.findShell(env_path, cwd);
+        }
 
-    this_transpiler.env.map.put("PATH", PATH.items) catch unreachable;
+        break :shell_bin null;
+    };
 
-    // Run node-gyp jobs in parallel.
-    // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
-    const thread_count = bun.getThreadCount();
-    if (thread_count > 2) {
-        if (!this_transpiler.env.has("JOBS")) {
-            var int_buf: [10]u8 = undefined;
-            const jobs_str = std.fmt.bufPrint(&int_buf, "{d}", .{thread_count}) catch unreachable;
-            this_transpiler.env.map.putAllocValue(bun.default_allocator, "JOBS", jobs_str) catch unreachable;
+    try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, shell_bin, optional, log_level, foreground, install_ctx);
+}
+
+pub fn findTrustedDependenciesFromUpdateRequests(this: *PackageManager) std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void) {
+    const parts = this.lockfile.packages.slice();
+    // find all deps originating from --trust packages from cli
+    var set: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void) = .{};
+    if (this.options.do.trust_dependencies_from_args and this.lockfile.packages.len > 0) {
+        const root_deps = parts.items(.dependencies)[this.root_package_id.get(this.lockfile, this.workspace_name_hash)];
+        var dep_id = root_deps.off;
+        const end = dep_id +| root_deps.len;
+        while (dep_id < end) : (dep_id += 1) {
+            const root_dep = this.lockfile.buffers.dependencies.items[dep_id];
+            for (this.update_requests) |request| {
+                if (request.matches(root_dep, this.lockfile.buffers.string_bytes.items)) {
+                    const package_id = this.lockfile.buffers.resolutions.items[dep_id];
+                    if (package_id == invalid_package_id) continue;
+
+                    const entry = set.getOrPut(this.lockfile.allocator, @truncate(root_dep.name_hash)) catch bun.outOfMemory();
+                    if (!entry.found_existing) {
+                        const dependency_slice = parts.items(.dependencies)[package_id];
+                        addDependenciesToSet(&set, this.lockfile, dependency_slice);
+                    }
+                    break;
+                }
+            }
         }
     }
 
-    const envp = try this_transpiler.env.map.createNullDelimitedEnvMap(this.allocator);
-    try this_transpiler.env.map.put("PATH", original_path);
-    PATH.deinit();
+    return set;
+}
 
-    try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, optional, log_level, foreground);
+fn addDependenciesToSet(
+    names: *std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
+    lockfile: *Lockfile,
+    dependencies_slice: Lockfile.DependencySlice,
+) void {
+    const begin = dependencies_slice.off;
+    const end = begin +| dependencies_slice.len;
+    var dep_id = begin;
+    while (dep_id < end) : (dep_id += 1) {
+        const package_id = lockfile.buffers.resolutions.items[dep_id];
+        if (package_id == invalid_package_id) continue;
+
+        const dep = lockfile.buffers.dependencies.items[dep_id];
+        const entry = names.getOrPut(lockfile.allocator, @truncate(dep.name_hash)) catch bun.outOfMemory();
+        if (!entry.found_existing) {
+            const dependency_slice = lockfile.packages.items(.dependencies)[package_id];
+            addDependenciesToSet(names, lockfile, dependency_slice);
+        }
+    }
 }
 
 // @sortImports
 
-const DirInfo = @import("../../resolver/dir_info.zig");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -326,7 +373,6 @@ const Path = bun.path;
 const Syscall = bun.sys;
 const default_allocator = bun.default_allocator;
 const string = bun.string;
-const strings = bun.strings;
 const Command = bun.CLI.Command;
 
 const Semver = bun.Semver;
@@ -339,6 +385,8 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const PackageID = bun.install.PackageID;
 const PackageManager = bun.install.PackageManager;
 const PreinstallState = bun.install.PreinstallState;
+const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
+const invalid_package_id = bun.install.invalid_package_id;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;

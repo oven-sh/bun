@@ -513,18 +513,21 @@ extern fn Bun__promises__emitUnhandledRejectionWarning(*JSGlobalObject, reason: 
 extern fn Bun__noSideEffectsToString(vm: *JSC.VM, globalObject: *JSGlobalObject, reason: JSValue) JSValue;
 
 fn isErrorLike(globalObject: *JSGlobalObject, reason: JSValue) bun.JSError!bool {
-    const result = Bun__promises__isErrorLike(globalObject, reason);
-    if (globalObject.hasException()) return error.JSError;
-    return result;
+    return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__isErrorLike, .{ globalObject, reason });
 }
 
 fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject, reason: JSValue) JSValue {
     if (isErrorLike(globalObject, reason) catch blk: {
-        if (globalObject.hasException()) globalObject.clearException();
+        globalObject.clearException();
         break :blk false;
     }) return reason;
-    const reasonStr = Bun__noSideEffectsToString(globalObject.vm(), globalObject, reason);
-    if (globalObject.hasException()) globalObject.clearException();
+    const reasonStr = blk: {
+        var scope: bun.jsc.CatchScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
+        defer if (scope.exception()) |_| scope.clearException();
+        break :blk Bun__noSideEffectsToString(globalObject.vm(), globalObject, reason);
+    };
     const msg = "This error originated either by throwing inside of an async function without a catch block, " ++
         "or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \"" ++
         "{s}" ++
@@ -621,7 +624,6 @@ pub fn handledPromise(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, 
 
 pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, err: JSValue, is_rejection: bool) bool {
     if (this.isShuttingDown()) {
-        Output.debugWarn("uncaughtException during shutdown.", .{});
         return true;
     }
 
@@ -2093,7 +2095,7 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
             if (this.has_patched_run_main) {
                 @branchHint(.cold);
                 this.pending_internal_promise = null;
-                const ret = NodeModuleModule__callOverriddenRunMain(this.global, bun.String.createUTF8ForJS(this.global, main_file_name));
+                const ret = try bun.jsc.fromJSHostCall(this.global, @src(), NodeModuleModule__callOverriddenRunMain, .{ this.global, try bun.String.createUTF8ForJS(this.global, main_file_name) });
                 if (this.pending_internal_promise == prev or this.pending_internal_promise == null) {
                     this.pending_internal_promise = JSInternalPromise.resolvedPromise(this.global, ret);
                     return this.pending_internal_promise.?;
@@ -3408,7 +3410,7 @@ pub fn resolveSourceMapping(
             this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch
                 bun.outOfMemory();
 
-            const mapping = SourceMap.Mapping.find(map.mappings, line, column) orelse
+            const mapping = map.mappings.find(line, column) orelse
                 return null;
 
             return .{

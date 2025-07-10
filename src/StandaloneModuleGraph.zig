@@ -237,6 +237,7 @@ pub const StandaloneModuleGraph = struct {
                         null,
                         std.math.maxInt(i32),
                         std.math.maxInt(i32),
+                        .{},
                     )) {
                         .success => |x| x,
                         .fail => {

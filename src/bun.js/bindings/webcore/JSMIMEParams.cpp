@@ -310,7 +310,9 @@ bool parseMIMEParamsString(JSGlobalObject* globalObject, JSMap* map, StringView 
 
         // Add to map only if the name doesn't exist yet (first one wins)
         JSValue nameJS = jsString(vm, name);
-        if (!map->has(globalObject, nameJS)) {
+        auto has = map->has(globalObject, nameJS);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!has) {
             map->set(globalObject, nameJS, jsString(vm, valueStr));
             RETURN_IF_EXCEPTION(scope, false);
         }
@@ -404,7 +406,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncGet, (JSGlobalObject * globalObjec
 
     // 3. Perform operation on the map
     JSMap* map = thisObject->jsMap();
-    if (!map->has(globalObject, jsString(vm, name))) {
+    auto has = map->has(globalObject, jsString(vm, name));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!has) {
         return JSValue::encode(jsNull());
     }
     JSValue result = map->get(globalObject, jsString(vm, name));
@@ -561,7 +565,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncEntries, (JSGlobalObject * globalO
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }
-    return JSValue::encode(JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), thisObject->jsMap(), IterationKind::Entries));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), thisObject->jsMap(), IterationKind::Entries)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncKeys, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -572,7 +576,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncKeys, (JSGlobalObject * globalObje
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }
-    return JSValue::encode(JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), thisObject->jsMap(), IterationKind::Keys));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), thisObject->jsMap(), IterationKind::Keys)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncValues, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -583,7 +587,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncValues, (JSGlobalObject * globalOb
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }
-    return JSValue::encode(JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), thisObject->jsMap(), IterationKind::Values));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), thisObject->jsMap(), IterationKind::Values)));
 }
 
 // Forward declare constructor functions

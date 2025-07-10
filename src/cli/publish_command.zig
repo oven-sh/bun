@@ -1149,7 +1149,7 @@ pub const PublishCommand = struct {
                     var dir, const dir_subpath, const close_dir = dir_info;
                     defer if (close_dir) dir.close();
 
-                    var iter = bun.DirIterator.iterate(dir, .u8);
+                    var iter = bun.DirIterator.iterate(.fromStdDir(dir), .u8);
                     while (iter.next().unwrap() catch null) |entry| {
                         const name, const subpath = name_and_subpath: {
                             const name = entry.name.slice();

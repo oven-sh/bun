@@ -1,7 +1,6 @@
 const bun = @import("bun");
 const std = @import("std");
 const LineOffsetTable = bun.sourcemap.LineOffsetTable;
-const SourceMap = bun.sourcemap;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const LinesHits = @import("../baby_list.zig").BabyList(u32);
 const Output = bun.Output;
@@ -561,7 +560,7 @@ pub const ByteRangeMapping = struct {
                     }
                     const column_position = byte_offset -| line_start_byte_offset;
 
-                    if (SourceMap.Mapping.find(parsed_mapping.mappings, @intCast(new_line_index), @intCast(column_position))) |point| {
+                    if (parsed_mapping.mappings.find(@intCast(new_line_index), @intCast(column_position))) |*point| {
                         if (point.original.lines < 0) continue;
 
                         const line: u32 = @as(u32, @intCast(point.original.lines));
@@ -605,7 +604,7 @@ pub const ByteRangeMapping = struct {
 
                     const column_position = byte_offset -| line_start_byte_offset;
 
-                    if (SourceMap.Mapping.find(parsed_mapping.mappings, @intCast(new_line_index), @intCast(column_position))) |point| {
+                    if (parsed_mapping.mappings.find(@intCast(new_line_index), @intCast(column_position))) |point| {
                         if (point.original.lines < 0) continue;
 
                         const line: u32 = @as(u32, @intCast(point.original.lines));
@@ -693,7 +692,7 @@ pub const ByteRangeMapping = struct {
             return globalThis.throwOutOfMemoryValue();
         };
 
-        return bun.String.createUTF8ForJS(globalThis, mutable_str.slice());
+        return bun.String.createUTF8ForJS(globalThis, mutable_str.slice()) catch return .zero;
     }
 
     pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.JSC.ZigString.Slice) ByteRangeMapping {

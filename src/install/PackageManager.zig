@@ -1,6 +1,5 @@
 cache_directory_: ?std.fs.Dir = null,
 
-// TODO(dylan-conway): remove this field when we move away from `std.ChildProcess` in repository.zig
 cache_directory_path: stringZ = "",
 temp_dir_: ?std.fs.Dir = null,
 temp_dir_path: stringZ = "",
@@ -96,7 +95,6 @@ preinstall_state: std.ArrayListUnmanaged(PreinstallState) = .{},
 global_link_dir: ?std.fs.Dir = null,
 global_dir: ?std.fs.Dir = null,
 global_link_dir_path: string = "",
-wait_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
 onWake: WakeHandler = .{},
 ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
@@ -310,59 +308,68 @@ pub fn hasEnoughTimePassedBetweenWaitingMessages() bool {
     return false;
 }
 
-pub fn configureEnvForScripts(this: *PackageManager, ctx: Command.Context, log_level: Options.LogLevel) !*transpiler.Transpiler {
-    if (this.env_configure) |*env_configure| {
-        return &env_configure.transpiler;
-    }
-
-    // We need to figure out the PATH and other environment variables
-    // to do that, we re-use the code from bun run
-    // this is expensive, it traverses the entire directory tree going up to the root
-    // so we really only want to do it when strictly necessary
-    this.env_configure = .{
-        .root_dir_info = undefined,
-        .transpiler = undefined,
-    };
-    const this_transpiler: *transpiler.Transpiler = &this.env_configure.?.transpiler;
-
-    const root_dir_info = try RunCommand.configureEnvForRun(
-        ctx,
-        this_transpiler,
-        this.env,
-        log_level != .silent,
-        false,
-    );
-
-    const init_cwd_entry = try this.env.map.getOrPutWithoutValue("INIT_CWD");
-    if (!init_cwd_entry.found_existing) {
-        init_cwd_entry.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_entry.key_ptr.*);
-        init_cwd_entry.value_ptr.* = .{
-            .value = try ctx.allocator.dupe(u8, strings.withoutTrailingSlash(FileSystem.instance.top_level_dir)),
-            .conditional = false,
-        };
-    }
-
-    this.env.loadCCachePath(this_transpiler.fs);
-
-    {
-        var node_path: bun.PathBuffer = undefined;
-        if (this.env.getNodePath(this_transpiler.fs, &node_path)) |node_pathZ| {
-            _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
-        } else brk: {
-            const current_path = this.env.get("PATH") orelse "";
-            var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, current_path.len);
-            try PATH.appendSlice(current_path);
-            var bun_path: string = "";
-            RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
-            try this.env.map.put("PATH", PATH.items);
-            _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, bun_path) catch bun.outOfMemory());
-        }
-    }
-
-    this.env_configure.?.root_dir_info = root_dir_info;
-
-    return this_transpiler;
+pub fn configureEnvForScripts(this: *PackageManager, ctx: Command.Context, log_level: Options.LogLevel) !transpiler.Transpiler {
+    return configureEnvForScriptsOnce.call(.{ this, ctx, log_level });
 }
+
+pub var configureEnvForScriptsOnce = bun.once(struct {
+    pub fn run(this: *PackageManager, ctx: Command.Context, log_level: Options.LogLevel) !transpiler.Transpiler {
+
+        // We need to figure out the PATH and other environment variables
+        // to do that, we re-use the code from bun run
+        // this is expensive, it traverses the entire directory tree going up to the root
+        // so we really only want to do it when strictly necessary
+        var this_transpiler: transpiler.Transpiler = undefined;
+        _ = try RunCommand.configureEnvForRun(
+            ctx,
+            &this_transpiler,
+            this.env,
+            log_level != .silent,
+            false,
+        );
+
+        const init_cwd_entry = try this.env.map.getOrPutWithoutValue("INIT_CWD");
+        if (!init_cwd_entry.found_existing) {
+            init_cwd_entry.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_entry.key_ptr.*);
+            init_cwd_entry.value_ptr.* = .{
+                .value = try ctx.allocator.dupe(u8, strings.withoutTrailingSlash(FileSystem.instance.top_level_dir)),
+                .conditional = false,
+            };
+        }
+
+        this.env.loadCCachePath(this_transpiler.fs);
+
+        {
+            // Run node-gyp jobs in parallel.
+            // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
+            const thread_count = bun.getThreadCount();
+            if (thread_count > 2) {
+                if (!this_transpiler.env.has("JOBS")) {
+                    var int_buf: [10]u8 = undefined;
+                    const jobs_str = std.fmt.bufPrint(&int_buf, "{d}", .{thread_count}) catch unreachable;
+                    this_transpiler.env.map.putAllocValue(bun.default_allocator, "JOBS", jobs_str) catch unreachable;
+                }
+            }
+        }
+
+        {
+            var node_path: bun.PathBuffer = undefined;
+            if (this.env.getNodePath(this_transpiler.fs, &node_path)) |node_pathZ| {
+                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
+            } else brk: {
+                const current_path = this.env.get("PATH") orelse "";
+                var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, current_path.len);
+                try PATH.appendSlice(current_path);
+                var bun_path: string = "";
+                RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
+                try this.env.map.put("PATH", PATH.items);
+                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, bun_path) catch bun.outOfMemory());
+            }
+        }
+
+        return this_transpiler;
+    }
+}.run);
 
 pub fn httpProxy(this: *PackageManager, url: URL) ?URL {
     return this.env.getHttpProxyFor(url);
@@ -412,7 +419,6 @@ pub fn wake(this: *PackageManager) void {
         this.onWake.getHandler()(ctx, this);
     }
 
-    _ = this.wait_count.fetchAdd(1, .monotonic);
     this.event_loop.wakeup();
 }
 
@@ -421,7 +427,7 @@ pub fn sleepUntil(this: *PackageManager, closure: anytype, comptime isDoneFn: an
     this.event_loop.tick(closure, isDoneFn);
 }
 
-pub var cached_package_folder_name_buf: bun.PathBuffer = undefined;
+pub threadlocal var cached_package_folder_name_buf: bun.PathBuffer = undefined;
 
 const Holder = struct {
     pub var ptr: *PackageManager = undefined;
@@ -439,6 +445,96 @@ pub const SuccessFn = *const fn (*PackageManager, DependencyID, PackageID) void;
 pub const FailFn = *const fn (*PackageManager, *const Dependency, PackageID, anyerror) void;
 
 pub const debug = Output.scoped(.PackageManager, true);
+
+pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
+    return ensureTempNodeGypScriptOnce.call(.{this});
+}
+
+var ensureTempNodeGypScriptOnce = bun.once(struct {
+    pub fn run(manager: *PackageManager) !void {
+        if (manager.node_gyp_tempdir_name.len > 0) return;
+
+        const tempdir = manager.getTemporaryDirectory();
+        var path_buf: bun.PathBuffer = undefined;
+        const node_gyp_tempdir_name = bun.span(try Fs.FileSystem.instance.tmpname("node-gyp", &path_buf, 12345));
+
+        // used later for adding to path for scripts
+        manager.node_gyp_tempdir_name = try manager.allocator.dupe(u8, node_gyp_tempdir_name);
+
+        var node_gyp_tempdir = tempdir.makeOpenPath(manager.node_gyp_tempdir_name, .{}) catch |err| {
+            if (err == error.EEXIST) {
+                // it should not exist
+                Output.prettyErrorln("<r><red>error<r>: node-gyp tempdir already exists", .{});
+                Global.crash();
+            }
+            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
+            Global.crash();
+        };
+        defer node_gyp_tempdir.close();
+
+        const file_name = switch (Environment.os) {
+            else => "node-gyp",
+            .windows => "node-gyp.cmd",
+        };
+        const mode = switch (Environment.os) {
+            else => 0o755,
+            .windows => 0, // windows does not have an executable bit
+        };
+
+        var node_gyp_file = node_gyp_tempdir.createFile(file_name, .{ .mode = mode }) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
+            Global.crash();
+        };
+        defer node_gyp_file.close();
+
+        const content = switch (Environment.os) {
+            .windows =>
+            \\if not defined npm_config_node_gyp (
+            \\  bun x --silent node-gyp %*
+            \\) else (
+            \\  node "%npm_config_node_gyp%" %*
+            \\)
+            \\
+            ,
+            else =>
+            \\#!/bin/sh
+            \\if [ "x$npm_config_node_gyp" = "x" ]; then
+            \\  bun x --silent node-gyp $@
+            \\else
+            \\  "$npm_config_node_gyp" $@
+            \\fi
+            \\
+            ,
+        };
+
+        node_gyp_file.writeAll(content) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@errorName(err)});
+            Global.crash();
+        };
+
+        // Add our node-gyp tempdir to the path
+        const existing_path = manager.env.get("PATH") orelse "";
+        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + manager.temp_dir_name.len + 1 + manager.node_gyp_tempdir_name.len);
+        try PATH.appendSlice(existing_path);
+        if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
+            try PATH.append(std.fs.path.delimiter);
+        try PATH.appendSlice(strings.withoutTrailingSlash(manager.temp_dir_name));
+        try PATH.append(std.fs.path.sep);
+        try PATH.appendSlice(manager.node_gyp_tempdir_name);
+        try manager.env.map.put("PATH", PATH.items);
+
+        const npm_config_node_gyp = try std.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
+            strings.withoutTrailingSlash(manager.temp_dir_name),
+            std.fs.path.sep_str,
+            strings.withoutTrailingSlash(manager.node_gyp_tempdir_name),
+            std.fs.path.sep_str,
+            file_name,
+        });
+
+        const node_gyp_abs_dir = std.fs.path.dirname(npm_config_node_gyp).?;
+        try manager.env.map.putAllocKeyAndValue(manager.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
+    }
+}.run);
 
 fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) noreturn {
     switch (err) {
@@ -731,6 +827,10 @@ pub fn init(
         bun.spawn.process.WaiterThread.setShouldUseWaiterThread();
     }
 
+    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS)) {
+        bun.sys.WindowsSymlinkOptions.has_failed_to_create_symlink = true;
+    }
+
     if (PackageManager.verbose_install) {
         Output.prettyErrorln("Cache Dir: {s}", .{options.cache_directory});
         Output.flush();
@@ -1019,17 +1119,19 @@ const default_max_simultaneous_requests_for_bun_install = 64;
 const default_max_simultaneous_requests_for_bun_install_for_proxies = 64;
 
 pub const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
-const TaskDependencyQueue = std.HashMapUnmanaged(u64, TaskCallbackList, IdentityContext(u64), 80);
+const TaskDependencyQueue = std.HashMapUnmanaged(Task.Id, TaskCallbackList, IdentityContext(Task.Id), 80);
 
 const PreallocatedTaskStore = bun.HiveArray(Task, 64).Fallback;
 const PreallocatedNetworkTasks = bun.HiveArray(NetworkTask, 128).Fallback;
 const ResolveTaskQueue = bun.UnboundedQueue(Task, .next);
 
-const RepositoryMap = std.HashMapUnmanaged(u64, bun.FileDescriptor, IdentityContext(u64), 80);
+const RepositoryMap = std.HashMapUnmanaged(Task.Id, bun.FileDescriptor, IdentityContext(Task.Id), 80);
 const NpmAliasMap = std.HashMapUnmanaged(PackageNameHash, Dependency.Version, IdentityContext(u64), 80);
 
 const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
 const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
+
+// pub const ensureTempNodeGypScript = directories.ensureTempNodeGypScript;
 
 // @sortImports
 
@@ -1058,11 +1160,12 @@ pub const cachedNPMPackageFolderPrintBasename = directories.cachedNPMPackageFold
 pub const cachedTarballFolderName = directories.cachedTarballFolderName;
 pub const cachedTarballFolderNamePrint = directories.cachedTarballFolderNamePrint;
 pub const computeCacheDirAndSubpath = directories.computeCacheDirAndSubpath;
-pub const ensureTempNodeGypScript = directories.ensureTempNodeGypScript;
 pub const fetchCacheDirectoryPath = directories.fetchCacheDirectoryPath;
 pub const getCacheDirectory = directories.getCacheDirectory;
+pub const getCacheDirectoryAndAbsPath = directories.getCacheDirectoryAndAbsPath;
 pub const getTemporaryDirectory = directories.getTemporaryDirectory;
 pub const globalLinkDir = directories.globalLinkDir;
+pub const globalLinkDirAndPath = directories.globalLinkDirAndPath;
 pub const globalLinkDirPath = directories.globalLinkDirPath;
 pub const isFolderInCache = directories.isFolderInCache;
 pub const pathForCachedNPMPath = directories.pathForCachedNPMPath;
@@ -1092,6 +1195,7 @@ const lifecycle = @import("PackageManager/PackageManagerLifecycle.zig");
 const LifecycleScriptTimeLog = lifecycle.LifecycleScriptTimeLog;
 pub const determinePreinstallState = lifecycle.determinePreinstallState;
 pub const ensurePreinstallStateListCapacity = lifecycle.ensurePreinstallStateListCapacity;
+pub const findTrustedDependenciesFromUpdateRequests = lifecycle.findTrustedDependenciesFromUpdateRequests;
 pub const getPreinstallState = lifecycle.getPreinstallState;
 pub const hasNoMorePendingLifecycleScripts = lifecycle.hasNoMorePendingLifecycleScripts;
 pub const loadRootLifecycleScripts = lifecycle.loadRootLifecycleScripts;

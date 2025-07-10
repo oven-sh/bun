@@ -223,8 +223,8 @@ pub const HelpCommand = struct {
     ;
     const cli_helptext_footer =
         \\
-        \\Learn more about Bun:            <magenta>https://bun.sh/docs<r>
-        \\Join our Discord community:      <blue>https://bun.sh/discord<r>
+        \\Learn more about Bun:            <magenta>https://bun.com/docs<r>
+        \\Join our Discord community:      <blue>https://bun.com/discord<r>
         \\
     ;
 
@@ -1373,10 +1373,10 @@ pub const Command = struct {
                         \\  <d>Bundle code to be run in Bun (reduces server startup time)<r>
                         \\  <b><green>bun build<r> <cyan>--target=bun --outfile=server.js<r> <blue>./server.ts<r>
                         \\
-                        \\  <d>Creating a standalone executable (see https://bun.sh/docs/bundler/executables)<r>
+                        \\  <d>Creating a standalone executable (see https://bun.com/docs/bundler/executables)<r>
                         \\  <b><green>bun build<r> <cyan>--compile --outfile=my-app<r> <blue>./cli.ts<r>
                         \\
-                        \\A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
+                        \\A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
                         \\
                     ;
 
@@ -1404,7 +1404,7 @@ pub const Command = struct {
                         \\  <d>Run all test files, only including tests whose names includes "baz"<r>
                         \\  <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/test<r>
+                        \\Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
                         \\
                     ;
 
@@ -1444,7 +1444,7 @@ pub const Command = struct {
                         \\  • GitHub: Downloads repository contents as template
                         \\  • Local: Uses templates from $HOME/.bun-create/\<name\> or ./.bun-create/\<name\>
                         \\
-                        \\Learn more: <magenta>https://bun.sh/docs/cli/bun-create<r>
+                        \\Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
                         \\
                     ;
 
@@ -1469,7 +1469,7 @@ pub const Command = struct {
                         \\  <d>{s}<r>
                         \\  <b><green>bun upgrade<r> <cyan>--{s}<r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/installation#upgrading<r>
+                        \\Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>
                         \\
                     ;
 
@@ -1549,7 +1549,7 @@ pub const Command = struct {
                         \\  <b><green>bun info<r> <blue>react<r> dependencies
                         \\  <b><green>bun info<r> <blue>react<r> versions
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/info<r>
+                        \\Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
                         \\
                     ;
 

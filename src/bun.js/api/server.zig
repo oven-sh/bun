@@ -417,7 +417,7 @@ const ServePlugins = struct {
             out.* = bun.String.init(raw_plugin);
         }
         const plugin_js_array = try bun.String.toJSArray(global, bunstring_array);
-        const bunfig_folder_bunstr = bun.String.createUTF8ForJS(global, bunfig_folder);
+        const bunfig_folder_bunstr = try bun.String.createUTF8ForJS(global, bunfig_folder);
 
         this.state = .{ .pending = .{
             .promise = JSC.JSPromise.Strong.init(global),
@@ -676,7 +676,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             };
         }
 
-        pub fn requestIP(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
+        pub fn requestIP(this: *ThisServer, request: *JSC.WebCore.Request) bun.JSError!JSC.JSValue {
             if (this.config.address == .unix) return JSValue.jsNull();
             const info = request.request_context.getRemoteSocketInfo() orelse return JSValue.jsNull();
             return SocketAddress.createDTO(this.globalThis, info.ip, @intCast(info.port), info.is_ipv6);
@@ -1332,24 +1332,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return JSC.JSValue.jsNumber(listener.getLocalPort());
         }
 
-        pub fn getId(
-            this: *ThisServer,
-            globalThis: *JSC.JSGlobalObject,
-        ) JSC.JSValue {
+        pub fn getId(this: *ThisServer, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             return bun.String.createUTF8ForJS(globalThis, this.config.id);
         }
 
-        pub fn getPendingRequests(
-            this: *ThisServer,
-            _: *JSC.JSGlobalObject,
-        ) JSC.JSValue {
+        pub fn getPendingRequests(this: *ThisServer, _: *JSC.JSGlobalObject) JSC.JSValue {
             return JSC.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.pending_requests)))));
         }
 
-        pub fn getPendingWebSockets(
-            this: *ThisServer,
-            _: *JSC.JSGlobalObject,
-        ) JSC.JSValue {
+        pub fn getPendingWebSockets(this: *ThisServer, _: *JSC.JSGlobalObject) JSC.JSValue {
             return JSC.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.activeSocketsCount())))));
         }
 
@@ -2462,8 +2453,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             // So we first use a hash of the main field:
             const first_hash_segment: [8]u8 = brk: {
-                const buffer = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(buffer);
+                const buffer = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buffer);
                 const main = JSC.VirtualMachine.get().main;
                 const len = @min(main.len, buffer.len);
                 break :brk @bitCast(bun.hash(bun.strings.copyLowercase(main[0..len], buffer[0..len])));
@@ -2471,8 +2462,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             // And then we use a hash of their project root directory:
             const second_hash_segment: [8]u8 = brk: {
-                const buffer = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(buffer);
+                const buffer = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buffer);
                 const root = this.dev_server.?.root;
                 const len = @min(root.len, buffer.len);
                 break :brk @bitCast(bun.hash(bun.strings.copyLowercase(root[0..len], buffer[0..len])));
@@ -2905,10 +2896,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn onClientErrorCallback(this: *ThisServer, socket: *uws.Socket, error_code: u8, raw_packet: []const u8) void {
             if (this.on_clienterror.get()) |callback| {
                 const is_ssl = protocol_enum == .https;
-                const node_socket = Bun__createNodeHTTPServerSocket(is_ssl, socket, this.globalThis);
-                if (node_socket.isEmptyOrUndefinedOrNull()) {
-                    return;
-                }
+                const node_socket = bun.jsc.fromJSHostCall(this.globalThis, @src(), Bun__createNodeHTTPServerSocket, .{ is_ssl, socket, this.globalThis }) catch return;
+                if (node_socket.isUndefinedOrNull()) return;
 
                 const error_code_value = JSValue.jsNumber(error_code);
                 const raw_packet_value = JSC.ArrayBuffer.createBuffer(this.globalThis, raw_packet) catch return; // TODO: properly propagate exception upwards

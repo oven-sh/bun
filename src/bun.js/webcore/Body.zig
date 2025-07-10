@@ -606,6 +606,7 @@ pub const Value = union(Tag) {
 
             switch (readable.ptr) {
                 .Blob => |blob| {
+                    defer readable.forceDetach(globalThis);
                     if (blob.toAnyBlob(globalThis)) |any_blob| {
                         return switch (any_blob) {
                             .Blob => .{ .Blob = any_blob.Blob },

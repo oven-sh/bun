@@ -250,7 +250,7 @@ extern "C" __attribute__((used)) char __libc_single_threaded = 0;
 #endif
 
 #ifdef _LIBCPP_VERBOSE_ABORT_NOEXCEPT
-// Workaround for htis error:
+// Workaround for this error:
 // workaround-missing-symbols.cpp:245:11: error: '__libcpp_verbose_abort' is missing exception specification 'noexcept'
 // 2025-07-10 15:59:47 PDT
 //   245 | void std::__libcpp_verbose_abort(char const* format, ...)

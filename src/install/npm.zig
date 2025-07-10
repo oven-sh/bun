@@ -1575,7 +1575,7 @@ pub const PackageManifest = struct {
         ) catch {
             // don't use the arena memory!
             var cloned_log: logger.Log = .init(bun.default_allocator);
-            try log.cloneTo(&cloned_log);
+            try log.cloneToWithRecycled(&cloned_log, true);
             log.* = cloned_log;
 
             return null;

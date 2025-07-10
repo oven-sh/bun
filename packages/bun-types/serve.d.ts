@@ -802,7 +802,7 @@ declare module "bun" {
       FetchOrRoutesMaybeWebSocket<WebSocketData, R>;
   }
 
-  export type ServeOptions<T = undefined, R extends string = string> = Serve.Options<T, R>;
+  type ServeOptions<T = undefined, R extends string = never> = Serve.Options<T, R>;
 
   interface BunRequest<T extends string = string> extends Request {
     readonly params: Serve.ExtractRouteParams<T>;

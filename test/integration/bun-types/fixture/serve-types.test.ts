@@ -18,17 +18,17 @@ function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) =
 
 export default {
   fetch: req => Response.json(req.url),
-} satisfies Bun.ServeOptions;
+} satisfies Bun.Serve.Options;
 
 let id = 0;
-function test<T = undefined, R extends string = never>(
+function test<T, R extends string>(
   options: Bun.Serve.Options<T, R>,
   {
     onConstructorFailure,
     overrideExpectBehavior,
   }: {
     onConstructorFailure?: (error: Error) => void | Promise<void>;
-    overrideExpectBehavior?: (server: Bun.Server<T>) => void | Promise<void>;
+    overrideExpectBehavior?: (server: NoInfer<Bun.Server<T>>) => void | Promise<void>;
   } = {},
 ) {
   const name = `Bun.serve() types test ${++id}`;
@@ -133,14 +133,17 @@ test({
   },
 });
 
-test<{ name: string }, never>({
+test<{ name: string }, "">({
+  routes: {
+    "": false,
+  },
   fetch(req, server) {
     expectType(server.upgrade).is<
       (
         req: Request,
         options: {
           data?: { name: string };
-          headers?: HeadersInit;
+          headers?: Bun.HeadersInit;
         },
       ) => boolean
     >;

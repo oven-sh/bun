@@ -10,6 +10,8 @@ import type { BunFileResult, BunTestResult, TestNode } from "./types";
 
 const DEFAULT_TEST_PATTERN = "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}";
 
+const output = vscode.window.createOutputChannel("Bun - Test Runner");
+
 export class BunTestController implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
   private activeProcesses: Set<ChildProcess> = new Set();
@@ -74,7 +76,7 @@ export class BunTestController implements vscode.Disposable {
       const tests = await this.findTestFiles();
       this.createFileTestItems(tests);
     } catch (error) {
-      // Silent error handling
+      output.appendLine(`Error discovering initial tests: ${error}`);
     }
   }
 
@@ -121,7 +123,7 @@ export class BunTestController implements vscode.Disposable {
           }
         }
       } catch (err) {
-        // Silent error handling
+        output.appendLine(`Error reading .gitignore file at ${ignore.fsPath}: ${err}`);
       }
     }
 
@@ -232,7 +234,7 @@ export class BunTestController implements vscode.Disposable {
 
       this.addTestNodes(testNodes, fileTestItem, targetPath);
     } catch (err) {
-      // Silent error handling
+      output.appendLine(`Error reading test file at ${targetPath}: ${err}`);
     }
   }
 
@@ -350,7 +352,8 @@ export class BunTestController implements vscode.Disposable {
           startIdx: index,
         };
       });
-    } catch {
+    } catch (error) {
+      output.appendLine(`Error parsing .each test values at index ${index}: ${error}`);
       return [
         {
           name: name.replace(/\\/g, ""),
@@ -509,6 +512,8 @@ export class BunTestController implements vscode.Disposable {
         const tempfile = `${tmpdir()}/bun-test-${randomUUID()}.xml`;
         commandArgs.push("--reporter-outfile", tempfile, "--reporter=junit");
 
+        output.appendLine(`Running command: "${command} ${commandArgs.join(" ")}"`);
+
         await new Promise<void>((resolve, reject) => {
           const proc = spawn(command, commandArgs, {
             cwd: this.workspaceFolder.uri.fsPath,
@@ -522,16 +527,16 @@ export class BunTestController implements vscode.Disposable {
             },
           });
 
-          let stdout = "";
-          let stderr = "";
-          let output = "";
+          let _stdout = "";
+          let _stderr = "";
+          let _output = "";
 
           this.activeProcesses.add(proc);
 
           proc.stdout?.on("data", data => {
             const chunk = data.toString();
-            stdout += chunk;
-            output += chunk;
+            _stdout += chunk;
+            _output += chunk;
             const filtered = chunk
               .split(/\r?\n/)
               .filter(
@@ -544,8 +549,8 @@ export class BunTestController implements vscode.Disposable {
 
           proc.stderr?.on("data", data => {
             const chunk = data.toString();
-            stderr += chunk;
-            output += chunk;
+            _stderr += chunk;
+            _output += chunk;
             const filtered = chunk
               .split(/\r?\n/)
               .filter(
@@ -568,7 +573,7 @@ export class BunTestController implements vscode.Disposable {
 
             try {
               if (code === 0 || code === 1) {
-                const parsedOutput = parseBunTestOutput(output, this.workspaceFolder.uri.fsPath, tempfile);
+                const parsedOutput = parseBunTestOutput(_output, this.workspaceFolder.uri.fsPath, tempfile);
                 fs.rm(tempfile).catch(() => {});
 
                 if (!parsedOutput) {
@@ -634,10 +639,10 @@ export class BunTestController implements vscode.Disposable {
                 }
               } else {
                 for (const test of tests) {
-                  run.errored(test, new vscode.TestMessage(`Bun process exited with code ${code}:\n${stderr}`));
+                  run.errored(test, new vscode.TestMessage(`Bun process exited with code ${code}:\n${_stderr}`));
                   if (test.uri) {
                     const location = new vscode.Location(test.uri, new vscode.Position(0, 0));
-                    run.appendOutput(`Error running test: ${stderr}\n`, location);
+                    run.appendOutput(`Error running test: ${_stderr}\n`, location);
                   }
                 }
               }
@@ -650,6 +655,7 @@ export class BunTestController implements vscode.Disposable {
                 }
                 this.removeTestItemAndChildren(test);
               }
+              output.appendLine(`Error processing test results for file ${filePath}: ${e}`);
             } finally {
               if (i++ >= testsByFile.size - 1) {
                 run.end();
@@ -689,6 +695,7 @@ export class BunTestController implements vscode.Disposable {
             this.testController.items.delete(test.id);
           }
         }
+        output.appendLine(`Error running tests for file ${filePath}: ${error}`);
         run.end();
       }
     }
@@ -885,6 +892,8 @@ export class BunTestController implements vscode.Disposable {
       }
     }
 
+    output.appendLine(`Debugging command: "${bunCommand} ${args.join(" ")}"`);
+
     const debugConfiguration: vscode.DebugConfiguration = {
       args: args.slice(1),
       console: "integratedTerminal",
@@ -898,11 +907,13 @@ export class BunTestController implements vscode.Disposable {
     };
 
     try {
-      await vscode.debug.startDebugging(this.workspaceFolder, debugConfiguration);
+      const res = await vscode.debug.startDebugging(this.workspaceFolder, debugConfiguration);
+      if (!res) throw new Error("Failed to start debugging session");
     } catch (error) {
       for (const test of tests) {
         run.errored(test, new vscode.TestMessage(`Error starting debugger: ${error}`));
       }
+      output.appendLine(`Error starting debugger: ${error}`);
     }
     run.end();
   }

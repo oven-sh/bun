@@ -106,7 +106,7 @@ $ bun run clean
  Done.
 ```
 
-Bun executes the script command in a subshell. On Linux & macOS, it checks for the following shells in order, using the first one it finds: `bash`, `sh`, `zsh`. On windows, it uses [bun shell](https://bun.sh/docs/runtime/shell) to support bash-like syntax and many common commands.
+Bun executes the script command in a subshell. On Linux & macOS, it checks for the following shells in order, using the first one it finds: `bash`, `sh`, `zsh`. On windows, it uses [bun shell](https://bun.com/docs/runtime/shell) to support bash-like syntax and many common commands.
 
 {% callout %}
 ⚡️ The startup time for `npm run` on Linux is roughly 170ms; with Bun it is `6ms`.
@@ -164,7 +164,7 @@ bun run --filter 'ba*' <script>
 
 will execute `<script>` in both `bar` and `baz`, but not in `foo`.
 
-Find more details in the docs page for [filter](https://bun.sh/docs/cli/filter#running-scripts-with-filter).
+Find more details in the docs page for [filter](https://bun.com/docs/cli/filter#running-scripts-with-filter).
 
 ## `bun run -` to pipe code from stdin
 

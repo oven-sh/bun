@@ -5,6 +5,7 @@ import { expect, test as it } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
+import html from "./html.html";
 import { expectType } from "./utilities";
 
 // XXX: importing this from "harness" caused a failure in bun-types.test.ts
@@ -480,6 +481,26 @@ test({
 
       return new Response("not upgraded");
     },
+  },
+});
+
+const files = {} as Record<string, Bun.BunFile>;
+
+test({
+  routes: {
+    "/this/:test": Bun.file(import.meta.file),
+    "/index.test-d.ts": Bun.file("index.test-d.ts"),
+    // @ts-expect-error this is invalid
+    "/index.test-d.ts.2": () => Bun.file("index.test-d.ts"),
+    "/ping": new Response("pong"),
+    "/": html,
+    // @ts-expect-error this is invalid, but hopefully not for too long
+    "/index.html": new Response(html),
+    ...files,
+  },
+
+  fetch: (req, server) => {
+    return new Response("cool");
   },
 });
 

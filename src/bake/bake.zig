@@ -905,7 +905,7 @@ pub fn printWarning() void {
         bun.Output.warn(
             \\Be advised that Bun Bake is highly experimental, and its API
             \\will have breaking changes. Join the <magenta>#bake<r> Discord
-            \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
+            \\channel to help us find bugs: <blue>https://bun.com/discord<r>
             \\
             \\
         , .{});

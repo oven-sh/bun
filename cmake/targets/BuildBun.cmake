@@ -956,8 +956,6 @@ if(APPLE)
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
     -Wl,-map,${bun}.linker-map
-    # -Wl,-non_global_symbols_no_strip_list,${CMAKE_SOURCE_DIR}/src/symbols-non-global.txt
-    -Wl,-non_global_symbols_no_strip_list,/Users/zackradisic/Code/bun2/src/symbols-non-global.txt
   )
 
   # don't strip in debug, this seems to be needed so that the Zig std library

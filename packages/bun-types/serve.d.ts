@@ -558,43 +558,43 @@ declare module "bun" {
           routes?: Routes<WebSocketData, R>;
         };
 
-    type FetchOrRoutesWithWebSocket<WebSocketData, R extends string> =
+    type FetchOrRoutesWithWebSocket<WebSocketData, R extends string> = {
+      /**
+       * Enable websockets with {@link Bun.serve}
+       *
+       * @example
+       * ```js
+       * const server: Bun.Server = Bun.serve({
+       *  websocket: {
+       *    open: (ws) => {
+       *      console.log("Client connected");
+       *    },
+       *    message: (ws, message) => {
+       *      console.log("Client sent message", message);
+       *    },
+       *    close: (ws) => {
+       *      console.log("Client disconnected");
+       *    },
+       *  },
+       *  fetch(req, server) {
+       *    const url = new URL(req.url);
+       *    if (url.pathname === "/chat") {
+       *      const upgraded = server.upgrade(req);
+       *      if (!upgraded) {
+       *        return new Response("Upgrade failed", { status: 400 });
+       *      }
+       *    }
+       *    return new Response("Hello World");
+       *  },
+       * });
+       * ```
+       * Upgrade a {@link Request} to a {@link ServerWebSocket} via {@link Server.upgrade}
+       *
+       * Pass `data` in @{link Server.upgrade} to attach data to the {@link ServerWebSocket.data} property
+       */
+      websocket: WebSocketHandler<WebSocketData>;
+    } & (
       | {
-          /**
-           * Enable websockets with {@link Bun.serve}
-           *
-           * @example
-           * ```js
-           * const server: Bun.Server = Bun.serve({
-           *  websocket: {
-           *    open: (ws) => {
-           *      console.log("Client connected");
-           *    },
-           *    message: (ws, message) => {
-           *      console.log("Client sent message", message);
-           *    },
-           *    close: (ws) => {
-           *      console.log("Client disconnected");
-           *    },
-           *  },
-           *  fetch(req, server) {
-           *    const url = new URL(req.url);
-           *    if (url.pathname === "/chat") {
-           *      const upgraded = server.upgrade(req);
-           *      if (!upgraded) {
-           *        return new Response("Upgrade failed", { status: 400 });
-           *      }
-           *    }
-           *    return new Response("Hello World");
-           *  },
-           * });
-           * ```
-           * Upgrade a {@link Request} to a {@link ServerWebSocket} via {@link Server.upgrade}
-           *
-           * Pass `data` in @{link Server.upgrade} to attach data to the {@link ServerWebSocket.data} property
-           */
-          websocket: WebSocketHandler<WebSocketData>;
-
           /**
            * Handle HTTP requests, or call {@link Server.upgrade} and return early
            *
@@ -610,41 +610,6 @@ declare module "bun" {
         }
       | {
           /**
-           * Enable websockets with {@link Bun.serve}
-           *
-           * @example
-           * ```js
-           * const server: Bun.Server = Bun.serve({
-           *  websocket: {
-           *    open: (ws) => {
-           *      console.log("Client connected");
-           *    },
-           *    message: (ws, message) => {
-           *      console.log("Client sent message", message);
-           *    },
-           *    close: (ws) => {
-           *      console.log("Client disconnected");
-           *    },
-           *  },
-           *  fetch(req, server) {
-           *    const url = new URL(req.url);
-           *    if (url.pathname === "/chat") {
-           *      const upgraded = server.upgrade(req);
-           *      if (!upgraded) {
-           *        return new Response("Upgrade failed", { status: 400 });
-           *      }
-           *    }
-           *    return new Response("Hello World");
-           *  },
-           * });
-           * ```
-           * Upgrade a {@link Request} to a {@link ServerWebSocket} via {@link Server.upgrade}
-           *
-           * Pass `data` in @{link Server.upgrade} to attach data to the {@link ServerWebSocket.data} property
-           */
-          websocket: WebSocketHandler<WebSocketData>;
-
-          /**
            * Handle HTTP requests, or call {@link Server.upgrade} and return early
            *
            * Respond to {@link Request} objects with a {@link Response} object.
@@ -656,7 +621,8 @@ declare module "bun" {
           ): MaybePromise<Response | void | undefined>;
 
           routes?: RoutesWithUpgrade<WebSocketData, R>;
-        };
+        }
+    );
 
     interface BaseServeOptions<WebSocketData> {
       /**
@@ -783,10 +749,11 @@ declare module "bun" {
     /**
      * The type of options that can be passed to {@link serve}, with support for `routes` and a safer requirement for `fetch`
      */
-    type Options<WebSocketData = undefined, R extends string = never> = Bun.Pretty<
-      XOR<HostnamePortServeOptions<WebSocketData>, UnixServeOptions<WebSocketData>> &
-        XOR<FetchOrRoutes<WebSocketData, R>, FetchOrRoutesWithWebSocket<WebSocketData, R>>
-    >;
+    type Options<WebSocketData = undefined, R extends string = never> = XOR<
+      HostnamePortServeOptions<WebSocketData>,
+      UnixServeOptions<WebSocketData>
+    > &
+      XOR<FetchOrRoutes<WebSocketData, R>, FetchOrRoutesWithWebSocket<WebSocketData, R>>;
   }
 
   type ServeOptions<T = undefined, R extends string = never> = Serve.Options<T, R>;

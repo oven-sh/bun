@@ -26,18 +26,19 @@ pub const ChildPtr = StatePtrUnion(.{
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Stmt,
     parent: anytype,
     io: IO,
 ) *Stmt {
-    var script = interpreter.allocator.create(Stmt) catch bun.outOfMemory();
-    script.base = .{ .kind = .stmt, .interpreter = interpreter, .shell = shell_state };
-    script.node = node;
-    script.parent = switch (@TypeOf(parent)) {
+    const parent_ptr = switch (@TypeOf(parent)) {
         ParentPtr => parent,
         else => ParentPtr.init(parent),
     };
+    var script = parent_ptr.create(Stmt);
+    script.base = State.initWithNewAllocScope(.stmt, interpreter, shell_state);
+    script.node = node;
+    script.parent = parent_ptr;
     script.idx = 0;
     script.last_exit_code = null;
     script.currently_executing = null;
@@ -46,16 +47,16 @@ pub fn init(
     return script;
 }
 
-pub fn start(this: *Stmt) void {
+pub fn start(this: *Stmt) Yield {
     if (bun.Environment.allow_assert) {
         assert(this.idx == 0);
         assert(this.last_exit_code == null);
         assert(this.currently_executing == null);
     }
-    this.next();
+    return .{ .stmt = this };
 }
 
-pub fn next(this: *Stmt) void {
+pub fn next(this: *Stmt) Yield {
     if (this.idx >= this.node.exprs.len)
         return this.parent.childDone(this, this.last_exit_code orelse 0);
 
@@ -64,50 +65,54 @@ pub fn next(this: *Stmt) void {
         .binary => {
             const binary = Binary.init(this.base.interpreter, this.base.shell, child.binary, Binary.ParentPtr.init(this), this.io.copy());
             this.currently_executing = ChildPtr.init(binary);
-            binary.start();
+            return binary.start();
         },
         .cmd => {
             const cmd = Cmd.init(this.base.interpreter, this.base.shell, child.cmd, Cmd.ParentPtr.init(this), this.io.copy());
             this.currently_executing = ChildPtr.init(cmd);
-            cmd.start();
+            return cmd.start();
         },
         .pipeline => {
             const pipeline = Pipeline.init(this.base.interpreter, this.base.shell, child.pipeline, Pipeline.ParentPtr.init(this), this.io.copy());
             this.currently_executing = ChildPtr.init(pipeline);
-            pipeline.start();
+            return pipeline.start();
         },
         .assign => |assigns| {
-            var assign_machine = this.base.interpreter.allocator.create(Assigns) catch bun.outOfMemory();
-            assign_machine.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
-            assign_machine.start();
+            const assign_machine = Assigns.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
+            return assign_machine.start();
         },
         .subshell => {
-            switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, this.io, .subshell)) {
-                .result => |shell_state| {
-                    var script = Subshell.init(this.base.interpreter, shell_state, child.subshell, Subshell.ParentPtr.init(this), this.io.copy());
-                    script.start();
-                },
+            var script = switch (Subshell.initDupeShellState(
+                this.base.interpreter,
+                this.base.shell,
+                child.subshell,
+                Subshell.ParentPtr.init(this),
+                this.io.copy(),
+            )) {
+                .result => |s| s,
                 .err => |e| {
                     this.base.throw(&bun.shell.ShellErr.newSys(e));
+                    return .failed;
                 },
-            }
+            };
+            return script.start();
         },
         .@"if" => {
             const if_clause = If.init(this.base.interpreter, this.base.shell, child.@"if", If.ParentPtr.init(this), this.io.copy());
-            if_clause.start();
+            return if_clause.start();
         },
         .condexpr => {
             const condexpr = CondExpr.init(this.base.interpreter, this.base.shell, child.condexpr, CondExpr.ParentPtr.init(this), this.io.copy());
-            condexpr.start();
+            return condexpr.start();
         },
         .@"async" => {
             const @"async" = Async.init(this.base.interpreter, this.base.shell, child.@"async", Async.ParentPtr.init(this), this.io.copy());
-            @"async".start();
+            return @"async".start();
         },
     }
 }
 
-pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) void {
+pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) Yield {
     const data = child.ptr.repr.data;
     log("child done Stmt {x} child({s})={x} exit={d}", .{ @intFromPtr(this), child.tagName(), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code });
     this.last_exit_code = exit_code;
@@ -116,7 +121,7 @@ pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) void {
     log("{d} {d}", .{ data, data2 });
     child.deinit();
     this.currently_executing = null;
-    this.next();
+    return this.next();
 }
 
 pub fn deinit(this: *Stmt) void {
@@ -125,16 +130,18 @@ pub fn deinit(this: *Stmt) void {
     if (this.currently_executing) |child| {
         child.deinit();
     }
-    this.base.interpreter.allocator.destroy(this);
+    this.base.endScope();
+    this.parent.destroy(this);
 }
 
 const bun = @import("bun");
 
+const Yield = bun.shell.Yield;
 const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

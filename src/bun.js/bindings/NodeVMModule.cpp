@@ -29,15 +29,20 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
 
     JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, 2);
     RETURN_IF_EXCEPTION(scope, {});
+
     array->putDirectIndex(globalObject, 0, JSC::jsString(globalObject->vm(), m_specifier));
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSObject* attributes = JSC::constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
     for (const auto& [key, value] : m_importAttributes) {
         attributes->putDirect(globalObject->vm(), JSC::Identifier::fromString(globalObject->vm(), key), JSC::jsString(globalObject->vm(), value),
             PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
+        RETURN_IF_EXCEPTION(scope, {});
     }
     array->putDirectIndex(globalObject, 1, attributes);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return array;
 }
@@ -73,6 +78,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     JSValue result {};
 
     NodeVMGlobalObject* nodeVmGlobalObject = NodeVM::getGlobalObjectFromContext(globalObject, m_context.get(), false);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (nodeVmGlobalObject) {
         globalObject = nodeVmGlobalObject;
@@ -82,13 +88,12 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         if (sourceTextThis) {
             status(Status::Evaluating);
             evaluateDependencies(globalObject, record, timeout, breakOnSigint);
+            RETURN_IF_EXCEPTION(scope, );
             sourceTextThis->initializeImportMeta(globalObject);
         } else if (syntheticThis) {
             syntheticThis->evaluate(globalObject);
         }
-        if (scope.exception()) {
-            return;
-        }
+        RETURN_IF_EXCEPTION(scope, );
         result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
     };
 
@@ -206,11 +211,11 @@ NodeVMModule* NodeVMModule::create(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
     JSValue disambiguator = args.at(2);
 
     if (disambiguator.isString()) {
-        return NodeVMSourceTextModule::create(vm, globalObject, args);
+        RELEASE_AND_RETURN(scope, NodeVMSourceTextModule::create(vm, globalObject, args));
     }
 
     if (disambiguator.inherits(JSArray::info())) {
-        return NodeVMSyntheticModule::create(vm, globalObject, args);
+        RELEASE_AND_RETURN(scope, NodeVMSyntheticModule::create(vm, globalObject, args));
     }
 
     throwArgumentTypeError(*globalObject, scope, 2, "sourceText or syntheticExportNames"_s, "Module"_s, "Module"_s, "string or array"_s);
@@ -227,11 +232,14 @@ JSModuleNamespaceObject* NodeVMModule::namespaceObject(JSC::JSGlobalObject* glob
     if (auto* thisObject = jsDynamicCast<NodeVMModule*>(this)) {
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
-        object = thisObject->moduleRecord(globalObject)->getModuleNamespace(globalObject);
+        AbstractModuleRecord* record = thisObject->moduleRecord(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        object = record->getModuleNamespace(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (object) {
             namespaceObject(vm, object);
         }
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("NodeVMModule::namespaceObject called on an unsupported module type (%s)", classInfo()->className.characters());
     }
@@ -333,7 +341,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetNamespace, (JSC::JSGlobalObject * glob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* thisObject = jsDynamicCast<NodeVMModule*>(callFrame->thisValue())) {
-        return JSValue::encode(thisObject->namespaceObject(globalObject));
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->namespaceObject(globalObject)));
     }
 
     throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
@@ -366,6 +374,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject *
 
     if (auto* sourceTextModule = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
         sourceTextModule->ensureModuleRecord(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     const WTF::Vector<NodeVMModuleRequest>& requests = thisObject->moduleRequests();
@@ -399,11 +408,11 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalOb
     }
 
     if (auto* thisObject = jsDynamicCast<NodeVMModule*>(callFrame->thisValue())) {
-        return JSValue::encode(thisObject->evaluate(globalObject, timeout, breakOnSigint));
-    } else {
-        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
-        return {};
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->evaluate(globalObject, timeout, breakOnSigint)));
     }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -423,14 +432,11 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject
     }
 
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
-        return JSValue::encode(thisObject->link(globalObject, specifiers, moduleNatives, callFrame->argument(2)));
-        // return thisObject->link(globalObject, linker);
-        // } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
-        //     return thisObject->link(globalObject, specifiers, moduleNatives);
-    } else {
-        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
-        return {};
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->link(globalObject, specifiers, moduleNatives, callFrame->argument(2))));
     }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule"_s);
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleInstantiate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -439,11 +445,11 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleInstantiate, (JSC::JSGlobalObject * globa
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
-        return JSValue::encode(thisObject->instantiate(globalObject));
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->instantiate(globalObject)));
     }
 
     if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
-        return JSValue::encode(thisObject->instantiate(globalObject));
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->instantiate(globalObject)));
     }
 
     throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
@@ -455,7 +461,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleSetExport, (JSC::JSGlobalObject * globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* thisObject = jsCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
+    if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
         JSValue nameValue = callFrame->argument(0);
         if (!nameValue.isString()) {
             Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "name"_str, "string"_s, nameValue);
@@ -478,7 +484,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData, (JSC::JSGlobalObject * 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
-        return JSValue::encode(thisObject->cachedData(globalObject));
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->cachedData(globalObject)));
     }
 
     throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule"_s);
@@ -517,6 +523,7 @@ constructModule(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     ArgList args(callFrame);
 
     NodeVMModule* module = NodeVMModule::create(vm, globalObject, args);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(module);
 }

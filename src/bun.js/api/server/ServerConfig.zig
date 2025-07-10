@@ -495,7 +495,7 @@ pub fn fromJS(
                     \\    "/path3/:param1/:param2": (req) => new Response("Hello")
                     \\  }
                     \\
-                    \\Learn more at https://bun.sh/docs/api/http
+                    \\Learn more at https://bun.com/docs/api/http
                 , .{});
             };
             args.had_routes_object = true;
@@ -506,12 +506,15 @@ pub fn fromJS(
             }).init(global, static_obj);
             defer iter.deinit();
 
-            var init_ctx: AnyRoute.ServerInitContext = .{
+            var init_ctx_: AnyRoute.ServerInitContext = .{
                 .arena = .init(bun.default_allocator),
                 .dedupe_html_bundle_map = .init(bun.default_allocator),
                 .framework_router_list = .init(bun.default_allocator),
                 .js_string_allocations = .empty,
+                .user_routes = &args.static_routes,
+                .global = global,
             };
+            const init_ctx: *AnyRoute.ServerInitContext = &init_ctx_;
             errdefer {
                 init_ctx.arena.deinit();
                 init_ctx.framework_router_list.deinit();
@@ -579,7 +582,7 @@ pub fn fromJS(
                     };
                     var found = false;
                     inline for (methods) |method| {
-                        if (value.getOwn(global, @tagName(method))) |function| {
+                        if (try value.getOwn(global, @tagName(method))) |function| {
                             if (!found) {
                                 try validateRouteName(global, path);
                             }
@@ -593,7 +596,7 @@ pub fn fromJS(
                                     },
                                     .callback = .create(function.withAsyncContextIfNeeded(global), global),
                                 }) catch bun.outOfMemory();
-                            } else if (try AnyRoute.fromJS(global, path, function, &init_ctx)) |html_route| {
+                            } else if (try AnyRoute.fromJS(global, path, function, init_ctx)) |html_route| {
                                 var method_set = bun.http.Method.Set.initEmpty();
                                 method_set.insert(method);
 
@@ -612,7 +615,7 @@ pub fn fromJS(
                     }
                 }
 
-                const route = try AnyRoute.fromJS(global, path, value, &init_ctx) orelse {
+                const route = try AnyRoute.fromJS(global, path, value, init_ctx) orelse {
                     return global.throwInvalidArguments(
                         \\'routes' expects a Record<string, Response | HTMLBundle | {[method: string]: (req: BunRequest) => Response|Promise<Response>}>
                         \\
@@ -648,7 +651,7 @@ pub fn fromJS(
                         \\});
                         \\```
                         \\
-                        \\See https://bun.sh/docs/api/http for more information.
+                        \\See https://bun.com/docs/api/http for more information.
                     ,
                         .{},
                     );
@@ -749,7 +752,7 @@ pub fn fromJS(
             args.address.tcp.port = @as(
                 u16,
                 @intCast(@min(
-                    @max(0, port_.coerce(i32, global)),
+                    @max(0, try port_.coerce(i32, global)),
                     std.math.maxInt(u16),
                 )),
             );
@@ -833,17 +836,17 @@ pub fn fromJS(
         }
 
         if (try arg.get(global, "reusePort")) |dev| {
-            args.reuse_port = dev.coerce(bool, global);
+            args.reuse_port = dev.toBoolean();
         }
         if (global.hasException()) return error.JSError;
 
         if (try arg.get(global, "ipv6Only")) |dev| {
-            args.ipv6_only = dev.coerce(bool, global);
+            args.ipv6_only = dev.toBoolean();
         }
         if (global.hasException()) return error.JSError;
 
         if (try arg.get(global, "inspector")) |inspector| {
-            args.inspector = inspector.coerce(bool, global);
+            args.inspector = inspector.toBoolean();
 
             if (args.inspector and args.development == .production) {
                 return global.throwInvalidArguments("Cannot enable inspector in production. Please set development: true in Bun.serve()", .{});
@@ -901,7 +904,7 @@ pub fn fromJS(
                 \\       return new Response("Hello")
                 \\     }
                 \\
-                \\Learn more at https://bun.sh/docs/api/http
+                \\Learn more at https://bun.com/docs/api/http
             , .{});
         } else {
             if (global.hasException()) return error.JSError;
@@ -911,11 +914,11 @@ pub fn fromJS(
             if (tls.isFalsey()) {
                 args.ssl_config = null;
             } else if (tls.jsType().isArray()) {
-                var value_iter = tls.arrayIterator(global);
+                var value_iter = try tls.arrayIterator(global);
                 if (value_iter.len == 1) {
                     return global.throwInvalidArguments("tls option expects at least 1 tls object", .{});
                 }
-                while (value_iter.next()) |item| {
+                while (try value_iter.next()) |item| {
                     var ssl_config = try SSLConfig.fromJS(vm, global, item) orelse {
                         if (global.hasException()) {
                             return error.JSError;

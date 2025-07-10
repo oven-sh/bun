@@ -62,30 +62,33 @@ pub const ChildPtr = StatePtrUnion(.{
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.CondExpr,
     parent: ParentPtr,
     io: IO,
 ) *CondExpr {
-    return bun.new(CondExpr, .{
-        .base = .{ .kind = .condexpr, .interpreter = interpreter, .shell = shell_state },
+    const condexpr = parent.create(CondExpr);
+    condexpr.* = .{
+        .base = State.initWithNewAllocScope(.condexpr, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
-        .args = std.ArrayList([:0]const u8).init(bun.default_allocator),
-    });
+        .args = undefined,
+    };
+    condexpr.args = std.ArrayList([:0]const u8).init(condexpr.base.allocator());
+    return condexpr;
 }
 
 pub fn format(this: *const CondExpr, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
     try writer.print("CondExpr(0x{x}, op={s})", .{ @intFromPtr(this), @tagName(this.node.op) });
 }
 
-pub fn start(this: *CondExpr) void {
+pub fn start(this: *CondExpr) Yield {
     log("{} start", .{this});
-    this.next();
+    return .{ .cond_expr = this };
 }
 
-fn next(this: *CondExpr) void {
+pub fn next(this: *CondExpr) Yield {
     while (this.state != .done) {
         switch (this.state) {
             .idle => {
@@ -94,8 +97,7 @@ fn next(this: *CondExpr) void {
             },
             .expanding_args => {
                 if (this.state.expanding_args.idx >= this.node.args.len()) {
-                    this.commandImplStart();
-                    return;
+                    return this.commandImplStart();
                 }
 
                 this.args.ensureUnusedCapacity(1) catch bun.outOfMemory();
@@ -111,39 +113,33 @@ fn next(this: *CondExpr) void {
                     this.io.copy(),
                 );
                 this.state.expanding_args.idx += 1;
-                this.state.expanding_args.expansion.start();
-                return;
+                return this.state.expanding_args.expansion.start();
             },
-            .waiting_stat => return,
+            .waiting_stat => return .suspended,
             .stat_complete => {
                 switch (this.node.op) {
                     .@"-f" => {
-                        this.parent.childDone(this, if (this.state.stat_complete.stat == .result) 0 else 1);
-                        return;
+                        return this.parent.childDone(this, if (this.state.stat_complete.stat == .result) 0 else 1);
                     },
                     .@"-d" => {
                         const st: bun.Stat = switch (this.state.stat_complete.stat) {
                             .result => |st| st,
                             .err => {
                                 // It seems that bash always gives exit code 1
-                                this.parent.childDone(this, 1);
-                                return;
+                                return this.parent.childDone(this, 1);
                             },
                         };
-                        this.parent.childDone(this, if (bun.S.ISDIR(@intCast(st.mode))) 0 else 1);
-                        return;
+                        return this.parent.childDone(this, if (bun.S.ISDIR(@intCast(st.mode))) 0 else 1);
                     },
                     .@"-c" => {
                         const st: bun.Stat = switch (this.state.stat_complete.stat) {
                             .result => |st| st,
                             .err => {
                                 // It seems that bash always gives exit code 1
-                                this.parent.childDone(this, 1);
-                                return;
+                                return this.parent.childDone(this, 1);
                             },
                         };
-                        this.parent.childDone(this, if (bun.S.ISCHR(@intCast(st.mode))) 0 else 1);
-                        return;
+                        return this.parent.childDone(this, if (bun.S.ISCHR(@intCast(st.mode))) 0 else 1);
                     },
                     .@"-z", .@"-n", .@"==", .@"!=" => @panic("This conditional expression op does not need `stat()`. This indicates a bug in Bun. Please file a GitHub issue."),
                     else => {
@@ -158,32 +154,32 @@ fn next(this: *CondExpr) void {
                     },
                 }
             },
-            .waiting_write_err => return,
+            .waiting_write_err => return .suspended,
             .done => assert(false),
         }
     }
 
-    this.parent.childDone(this, 0);
+    return this.parent.childDone(this, 0);
 }
 
-fn commandImplStart(this: *CondExpr) void {
+fn commandImplStart(this: *CondExpr) Yield {
     switch (this.node.op) {
         .@"-c",
         .@"-d",
         .@"-f",
         => {
             this.state = .waiting_stat;
-            this.doStat();
+            return this.doStat();
         },
-        .@"-z" => this.parent.childDone(this, if (this.args.items.len == 0 or this.args.items[0].len == 0) 0 else 1),
-        .@"-n" => this.parent.childDone(this, if (this.args.items.len > 0 and this.args.items[0].len != 0) 0 else 1),
+        .@"-z" => return this.parent.childDone(this, if (this.args.items.len == 0 or this.args.items[0].len == 0) 0 else 1),
+        .@"-n" => return this.parent.childDone(this, if (this.args.items.len > 0 and this.args.items[0].len != 0) 0 else 1),
         .@"==" => {
             const is_eq = this.args.items.len == 0 or (this.args.items.len >= 2 and bun.strings.eql(this.args.items[0], this.args.items[1]));
-            this.parent.childDone(this, if (is_eq) 0 else 1);
+            return this.parent.childDone(this, if (is_eq) 0 else 1);
         },
         .@"!=" => {
             const is_neq = this.args.items.len >= 2 and !bun.strings.eql(this.args.items[0], this.args.items[1]);
-            this.parent.childDone(this, if (is_neq) 0 else 1);
+            return this.parent.childDone(this, if (is_neq) 0 else 1);
         },
         // else => @panic("Invalid node op: " ++ @tagName(this.node.op) ++ ", this indicates a bug in Bun. Please file a GithHub issue."),
         else => {
@@ -200,7 +196,7 @@ fn commandImplStart(this: *CondExpr) void {
     }
 }
 
-fn doStat(this: *CondExpr) void {
+fn doStat(this: *CondExpr) Yield {
     const stat_task = bun.new(ShellCondExprStatTask, .{
         .task = .{
             .event_loop = this.base.eventLoop(),
@@ -211,25 +207,29 @@ fn doStat(this: *CondExpr) void {
         .cwdfd = this.base.shell.cwd_fd,
     });
     stat_task.task.schedule();
+    return .suspended;
 }
 
 pub fn deinit(this: *CondExpr) void {
     this.io.deinit();
-    bun.destroy(this);
+    for (this.args.items) |item| {
+        this.base.allocator().free(item);
+    }
+    this.args.deinit();
+    this.base.endScope();
+    this.parent.destroy(this);
 }
 
-pub fn childDone(this: *CondExpr, child: ChildPtr, exit_code: ExitCode) void {
+pub fn childDone(this: *CondExpr, child: ChildPtr, exit_code: ExitCode) Yield {
     if (child.ptr.is(Expansion)) {
         if (exit_code != 0) {
             const err = this.state.expanding_args.expansion.state.err;
             defer err.deinit(bun.default_allocator);
             this.state.expanding_args.expansion.deinit();
-            this.writeFailingError("{}\n", .{err});
-            return;
+            return this.writeFailingError("{}\n", .{err});
         }
         child.deinit();
-        this.next();
-        return;
+        return this.next();
     }
 
     @panic("Invalid child to cond expression, this indicates a bug in Bun. Please file a report on Github.");
@@ -241,41 +241,42 @@ pub fn onStatTaskComplete(this: *CondExpr, result: Maybe(bun.Stat)) void {
     this.state = .{
         .stat_complete = .{ .stat = result },
     };
-    this.next();
+    this.next().run();
 }
 
-pub fn writeFailingError(this: *CondExpr, comptime fmt: []const u8, args: anytype) void {
+pub fn writeFailingError(this: *CondExpr, comptime fmt: []const u8, args: anytype) Yield {
     const handler = struct {
         fn enqueueCb(ctx: *CondExpr) void {
             ctx.state = .waiting_write_err;
         }
     };
-    this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
+    return this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
 }
 
-pub fn onIOWriterChunk(this: *CondExpr, _: usize, err: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *CondExpr, _: usize, err: ?JSC.SystemError) Yield {
     if (err != null) {
         defer err.?.deref();
         const exit_code: ExitCode = @intFromEnum(err.?.getErrno());
-        this.parent.childDone(this, exit_code);
-        return;
+        return this.parent.childDone(this, exit_code);
     }
 
     if (this.state == .waiting_write_err) {
-        this.parent.childDone(this, 1);
-        return;
+        return this.parent.childDone(this, 1);
     }
+
+    bun.shell.unreachableState("CondExpr.onIOWriterChunk", @tagName(this.state));
 }
 
 const std = @import("std");
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 const shell = bun.shell;
 
 const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

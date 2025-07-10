@@ -269,7 +269,7 @@ pub const Async = struct {
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, @intFromEnum(req.result));
 
                 if (this.result == .err) {
-                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
+                    this.result.err = this.result.err.clone(bun.default_allocator);
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -283,7 +283,7 @@ pub const Async = struct {
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, req, @intFromEnum(req.result));
 
                 if (this.result == .err) {
-                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
+                    this.result.err = this.result.err.clone(bun.default_allocator);
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -296,7 +296,7 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJSC(globalObject),
+                    .err => |err| err.toJS(globalObject),
                     .result => |*res| brk: {
                         break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
@@ -382,7 +382,7 @@ pub const Async = struct {
                 this.result = function(&node_fs, this.args, .@"async");
 
                 if (this.result == .err) {
-                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
+                    this.result.err = this.result.err.clone(bun.default_allocator);
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -395,7 +395,7 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJSC(globalObject),
+                    .err => |err| err.toJS(globalObject),
                     .result => |*res| brk: {
                         break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
@@ -642,7 +642,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             this.result = result;
 
             if (this.result == .err) {
-                this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
+                this.result.err = this.result.err.clone(bun.default_allocator);
             }
 
             if (this.evtloop == .js) {
@@ -669,7 +669,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             var promise_value = this.promise.value();
             var promise = this.promise.get();
             const result = switch (this.result) {
-                .err => |err| err.toJSC(globalObject),
+                .err => |err| err.toJS(globalObject),
                 .result => |*res| brk: {
                     break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                 },
@@ -859,8 +859,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 },
             }
 
-            const dir = fd.stdDir();
-            var iterator = DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
+            var iterator = DirIterator.iterate(fd, if (Environment.isWindows) .u16 else .u8);
             var entry = iterator.next();
             while (switch (entry) {
                 .err => |err| {
@@ -1220,7 +1219,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         const success = this.pending_err == null;
         var promise_value = this.promise.value();
         var promise = this.promise.get();
-        const result = if (this.pending_err) |*err| err.toJSC(globalObject) else brk: {
+        const result = if (this.pending_err) |*err| err.toJS(globalObject) else brk: {
             const res = switch (this.result_list) {
                 .with_file_types => |*res| Return.Readdir{ .with_file_types = res.moveToUnmanaged().items },
                 .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },
@@ -1577,7 +1576,7 @@ pub const Arguments = struct {
             };
             errdefer path.deinit();
 
-            const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const atime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("atime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("atime must be a number or a Date", .{});
@@ -1585,7 +1584,7 @@ pub const Arguments = struct {
 
             arguments.eat();
 
-            const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const mtime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("mtime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("mtime must be a number or a Date", .{});
@@ -2360,14 +2359,14 @@ pub const Arguments = struct {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
-            const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const atime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("atime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("atime must be a number or a Date", .{});
             };
             arguments.eat();
 
-            const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const mtime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("mtime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("mtime must be a number or a Date", .{});
@@ -3085,7 +3084,7 @@ pub const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isNumber()) {
-                    mode = arg.coerce(i32, ctx);
+                    mode = try arg.coerce(i32, ctx);
                 }
             }
 
@@ -3148,7 +3147,7 @@ pub const StatOrNotFound = union(enum) {
         };
     }
 
-    pub fn toJSNewlyCreated(this: *const StatOrNotFound, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSNewlyCreated(this: *const StatOrNotFound, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return switch (this.*) {
             .stats => this.stats.toJSNewlyCreated(globalObject),
             .not_found => .js_undefined,
@@ -3215,7 +3214,7 @@ const Return = struct {
             .bytesRead = JSC.ZigString.init("bytesRead"),
             .buffer = JSC.ZigString.init("buffer"),
         };
-        pub fn toJS(this: *const ReadPromise, ctx: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: *const ReadPromise, ctx: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
                 this.buffer_val.unprotect();
 
@@ -3238,7 +3237,7 @@ const Return = struct {
         };
 
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
-        pub fn toJS(this: *const WritePromise, globalObject: *JSC.JSGlobalObject) JSC.C.JSValueRef {
+        pub fn toJS(this: *const WritePromise, globalObject: *JSC.JSGlobalObject) bun.JSError!bun.jsc.JSValue {
             defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
                 this.buffer_val.unprotect();
 
@@ -3283,13 +3282,8 @@ const Return = struct {
                     var array = try JSC.JSValue.createEmptyArray(globalObject, this.with_file_types.len);
                     var previous_jsstring: ?*JSC.JSString = null;
                     for (this.with_file_types, 0..) |*item, i| {
-                        const res = item.toJSNewlyCreated(globalObject, &previous_jsstring);
-                        if (res == .zero) return .zero;
-                        array.putIndex(
-                            globalObject,
-                            @truncate(i),
-                            res,
-                        );
+                        const res = try item.toJSNewlyCreated(globalObject, &previous_jsstring);
+                        try array.putIndex(globalObject, @truncate(i), res);
                     }
                     return array;
                 },
@@ -3727,8 +3721,8 @@ pub const NodeFS = struct {
         }
 
         if (comptime Environment.isWindows) {
-            const dest_buf = bun.OSPathBufferPool.get();
-            defer bun.OSPathBufferPool.put(dest_buf);
+            const dest_buf = bun.os_path_buffer_pool.get();
+            defer bun.os_path_buffer_pool.put(dest_buf);
 
             const src = bun.strings.toKernel32Path(bun.reinterpretSlice(u16, &fs.sync_error_buf), args.src.slice());
             const dest = bun.strings.toKernel32Path(dest_buf, args.dest.slice());
@@ -3918,8 +3912,8 @@ pub const NodeFS = struct {
     }
 
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
-        const buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(buf);
+        const buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(buf);
         const path = args.path.osPathKernel32(buf);
 
         return switch (args.always_return_none) {
@@ -4430,7 +4424,6 @@ pub const NodeFS = struct {
         comptime ExpectedType: type,
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
-        const dir = fd.stdDir();
         const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == bun.JSC.Node.Dirent);
 
         var dirent_path: bun.String = bun.String.dead;
@@ -4438,15 +4431,15 @@ pub const NodeFS = struct {
             dirent_path.deref();
         }
 
-        var iterator = DirIterator.iterate(dir, comptime if (is_u16) .u16 else .u8);
+        var iterator = DirIterator.iterate(fd, comptime if (is_u16) .u16 else .u8);
         var entry = iterator.next();
 
         const re_encoding_buffer: ?*bun.PathBuffer = if (is_u16 and args.encoding != .utf8)
-            bun.PathBufferPool.get()
+            bun.path_buffer_pool.get()
         else
             null;
         defer if (is_u16 and args.encoding != .utf8)
-            bun.PathBufferPool.put(re_encoding_buffer.?);
+            bun.path_buffer_pool.put(re_encoding_buffer.?);
 
         while (switch (entry) {
             .err => |err| {
@@ -4578,7 +4571,7 @@ pub const NodeFS = struct {
             }
         }
 
-        var iterator = DirIterator.iterate(fd.stdDir(), .u8);
+        var iterator = DirIterator.iterate(fd, .u8);
         var entry = iterator.next();
         var dirent_path_prev: bun.String = bun.String.empty;
         defer {
@@ -4732,7 +4725,7 @@ pub const NodeFS = struct {
                 }
             }
 
-            var iterator = DirIterator.iterate(fd.stdDir(), .u8);
+            var iterator = DirIterator.iterate(fd, .u8);
             var entry = iterator.next();
             var dirent_path_prev: bun.String = bun.String.dead;
             defer {
@@ -5044,7 +5037,7 @@ pub const NodeFS = struct {
                             if (this.vm) |vm| {
                                 // Attempt to create the buffer in JSC's heap.
                                 // This avoids creating a WastefulTypedArray.
-                                const array_buffer = JSC.ArrayBuffer.createBuffer(vm.global, temporary_read_buffer);
+                                const array_buffer = JSC.ArrayBuffer.createBuffer(vm.global, temporary_read_buffer) catch .zero; // TODO: properly propagate exception upwards
                                 array_buffer.ensureStillAlive();
                                 return .{
                                     .result = .{
@@ -5978,8 +5971,8 @@ pub const NodeFS = struct {
 
     pub fn osPathIntoSyncErrorBufOverlap(this: *NodeFS, slice: anytype) []const u8 {
         if (Environment.isWindows) {
-            const tmp = bun.OSPathBufferPool.get();
-            defer bun.OSPathBufferPool.put(tmp);
+            const tmp = bun.os_path_buffer_pool.get();
+            defer bun.os_path_buffer_pool.put(tmp);
             @memcpy(tmp[0..slice.len], slice);
             return bun.strings.fromWPath(&this.sync_error_buf, tmp[0..slice.len]);
         }
@@ -6093,10 +6086,7 @@ pub const NodeFS = struct {
             .result => {},
         }
 
-        var iterator = iterator: {
-            const dir = fd.stdDir();
-            break :iterator DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
-        };
+        var iterator = DirIterator.iterate(fd, if (Environment.isWindows) .u16 else .u8);
         var entry = iterator.next();
         while (switch (entry) {
             .err => |err| {
@@ -6488,8 +6478,8 @@ pub const NodeFS = struct {
                     .err => |err| return .{ .err = err },
                     .result => |src_fd| src_fd,
                 };
-                const wbuf = bun.OSPathBufferPool.get();
-                defer bun.OSPathBufferPool.put(wbuf);
+                const wbuf = bun.os_path_buffer_pool.get();
+                defer bun.os_path_buffer_pool.put(wbuf);
                 const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), wbuf, wbuf.len, 0);
                 if (len == 0) {
                     return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse dst_enoent_maybe;

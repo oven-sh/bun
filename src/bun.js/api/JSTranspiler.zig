@@ -6,7 +6,6 @@ const JSC = bun.JSC;
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
 const ZigString = JSC.ZigString;
-const JSObject = JSC.JSObject;
 const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
@@ -354,13 +353,13 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
                 single_external[0] = std.fmt.allocPrint(allocator, "{}", .{external}) catch unreachable;
                 transpiler.transform.external = single_external;
             } else if (toplevel_type.isArray()) {
-                const count = external.getLength(globalThis);
+                const count = try external.getLength(globalThis);
                 if (count == 0) break :external;
 
                 var externals = allocator.alloc(string, count) catch unreachable;
-                var iter = external.arrayIterator(globalThis);
+                var iter = try external.arrayIterator(globalThis);
                 var i: usize = 0;
-                while (iter.next()) |entry| {
+                while (try iter.next()) |entry| {
                     if (!entry.jsType().isStringLike()) {
                         return globalObject.throwInvalidArguments("external must be a string or string[]", .{});
                     }
@@ -407,9 +406,9 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
             }
 
             if (!kind.isStringLike()) {
-                tsconfig.jsonStringify(globalThis, 0, &out);
+                try tsconfig.jsonStringify(globalThis, 0, &out);
             } else {
-                out = tsconfig.toBunString(globalThis) catch @panic("unexpected exception");
+                out = try tsconfig.toBunString(globalThis);
             }
 
             if (out.isEmpty()) break :tsconfig;
@@ -446,7 +445,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
             defer out.deref();
             // TODO: write a converter between JSC types and Bun AST types
             if (is_object) {
-                macros.jsonStringify(globalThis, 0, &out);
+                try macros.jsonStringify(globalThis, 0, &out);
             } else {
                 out = try macros.toBunString(globalThis);
             }
@@ -487,7 +486,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
 
     if (try object.getTruthy(globalThis, "minify")) |minify| {
         if (minify.isBoolean()) {
-            transpiler.minify_whitespace = minify.coerce(bool, globalThis);
+            transpiler.minify_whitespace = minify.toBoolean();
             transpiler.minify_syntax = transpiler.minify_whitespace;
             transpiler.minify_identifiers = transpiler.minify_syntax;
         } else if (minify.isObject()) {
@@ -550,13 +549,13 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
 
             var total_name_buf_len: u32 = 0;
             var string_count: u32 = 0;
-            const iter = JSC.JSArrayIterator.init(eliminate, globalThis);
+            const iter = try JSC.JSArrayIterator.init(eliminate, globalThis);
             {
                 var length_iter = iter;
-                while (length_iter.next()) |value| {
+                while (try length_iter.next()) |value| {
                     if (value.isString()) {
-                        const length = @as(u32, @truncate(value.getLength(globalThis)));
-                        string_count += @as(u32, @intFromBool(length > 0));
+                        const length: u32 = @truncate(try value.getLength(globalThis));
+                        string_count += @intFromBool(length > 0);
                         total_name_buf_len += length;
                     }
                 }
@@ -567,7 +566,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
                 try replacements.ensureUnusedCapacity(bun.default_allocator, string_count);
                 {
                     var length_iter = iter;
-                    while (length_iter.next()) |value| {
+                    while (try length_iter.next()) |value| {
                         if (!value.isString()) continue;
                         const str = try value.getZigString(globalThis);
                         if (str.len == 0) continue;
@@ -624,10 +623,10 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
                         continue;
                     }
 
-                    if (value.isObject() and value.getLength(globalObject) == 2) {
-                        const replacementValue = JSC.JSObject.getIndex(value, globalThis, 1);
+                    if (value.isObject() and try value.getLength(globalObject) == 2) {
+                        const replacementValue = try value.getIndex(globalThis, 1);
                         if (try exportReplacementValue(replacementValue, globalThis)) |to_replace| {
-                            const replacementKey = JSC.JSObject.getIndex(value, globalThis, 0);
+                            const replacementKey = try value.getIndex(globalThis, 0);
                             var slice = (try (try replacementKey.toSlice(globalThis, bun.default_allocator)).cloneIfNeeded(bun.default_allocator));
                             const replacement_name = slice.slice();
 
@@ -1065,7 +1064,7 @@ fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecor
         array.ensureStillAlive();
         const path = JSC.ZigString.init(record.path.text).toJS(global);
         const kind = JSC.ZigString.init(record.kind.label()).toJS(global);
-        array.putIndex(global, @as(u32, @truncate(i)), JSC.JSValue.createObject2(global, path_label, kind_label, path, kind));
+        try array.putIndex(global, @as(u32, @truncate(i)), try JSC.JSValue.createObject2(global, path_label, kind_label, path, kind));
     }
 
     return array;

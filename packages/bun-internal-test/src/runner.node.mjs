@@ -124,7 +124,7 @@ const argv0 = argv0_stdout.toString().trim();
 
 console.log(`Testing ${argv0} v${revision}`);
 
-const ntStatusPath = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared\\ntstatus.h";
+const ntStatusPath = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\shared\\ntstatus.h";
 let ntstatus_header_cache = null;
 function lookupWindowsError(code) {
   if (ntstatus_header_cache === null) {

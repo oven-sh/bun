@@ -74,6 +74,11 @@ pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
     clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
     clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
+    clap.parseParam("--git-tag-version <BOOL>               Create a git commit and tag") catch unreachable,
+    clap.parseParam("--no-git-tag-version") catch unreachable,
+    clap.parseParam("--allow-same-version                   Allow bumping to the same version") catch unreachable,
+    clap.parseParam("-m, --message <STR>                    Use the given message for the commit") catch unreachable,
+    clap.parseParam("--preid <STR>                          Identifier to be used to prefix premajor, preminor, prepatch or prerelease version increments") catch unreachable,
     clap.parseParam("<POS> ...                         ") catch unreachable,
 });
 
@@ -200,6 +205,12 @@ save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
 
+// `bun pm version` options
+git_tag_version: bool = true,
+allow_same_version: bool = false,
+preid: string = "",
+message: ?string = null,
+
 const PatchOpts = union(enum) {
     nothing: struct {},
     patch: struct {},
@@ -243,7 +254,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Skip devDependencies<r>
                 \\  <b><green>bun install<r> <cyan>--production<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
                 \\
             ;
             Output.pretty(intro_text, .{});
@@ -273,7 +284,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Update specific packages:<r>
                 \\  <b><green>bun update<r> <blue>zod jquery@3<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
                 \\
             ;
             Output.pretty(intro_text, .{});
@@ -304,7 +315,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Generate a patch file in a custom directory for changes made to jquery<r>
                 \\  <b><green>bun patch --patches-dir 'my-patches' 'node_modules/jquery'<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/install/patch<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
                 \\
             ;
 
@@ -332,7 +343,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Generate a patch in a custom directory ("./my-patches")<r>
                 \\  <b><green>bun patch-commit --patches-dir 'my-patches' 'node_modules/jquery'<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/install/patch<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
                 \\
             ;
             Output.pretty(intro_text, .{});
@@ -367,7 +378,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <b><green>bun add<r> <cyan>--optional<r> <blue>lodash<r>
                 \\  <b><green>bun add<r> <cyan>--peer<r> <blue>esbuild<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/add<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
                 \\
             ;
             Output.pretty(intro_text, .{});
@@ -392,7 +403,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Remove a dependency<r>
                 \\  <b><green>bun remove<r> <blue>ts-node<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/remove<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
                 \\
             ;
             Output.pretty(intro_text, .{});
@@ -420,7 +431,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Add a previously-registered linkable package as a dependency of the current project.<r>
                 \\  <b><green>bun link<r> <blue>\<package\><r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/link<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
                 \\
             ;
             Output.pretty(intro_text, .{});
@@ -445,7 +456,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Unregister the current directory as a linkable package.<r>
                 \\  <b><green>bun unlink<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/unlink<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
                 \\
             ;
 
@@ -481,7 +492,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <b><green>bun outdated<r> <blue>"is-*"<r>
                 \\  <b><green>bun outdated<r> <blue>"!is-even"<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/outdated<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/outdated<r>.
                 \\
             ;
 
@@ -506,7 +517,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\<b>Examples:<r>
                 \\  <b><green>bun pm pack<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/pm#pack<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
                 \\
             ;
 
@@ -538,7 +549,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Publish a pre-existing package tarball with tag 'next'.<r>
                 \\  <b><green>bun publish<r> <cyan>--tag next<r> <blue>./path/to/tarball.tgz<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/publish<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
                 \\
             ;
 
@@ -567,7 +578,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Output package vulnerabilities in JSON format.<r>
                 \\  <b><green>bun audit --json<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/install/audit<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/install/audit<r>.
                 \\
             ;
 
@@ -599,7 +610,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Display a specific property in JSON format<r>
                 \\  <b><green>bun info<r> <blue>react<r> version <cyan>--json<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/info<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>.
                 \\
             ;
 
@@ -878,6 +889,28 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (cli.analyze and cli.positionals.len == 0) {
         Output.errGeneric("Missing script(s) to analyze. Pass paths to scripts to analyze their dependencies and add any missing ones to the lockfile.\n", .{});
         Global.crash();
+    }
+
+    if (comptime subcommand == .pm) {
+        // `bun pm version` command options
+        if (args.option("--git-tag-version")) |git_tag_version| {
+            if (strings.eqlComptime(git_tag_version, "true")) {
+                cli.git_tag_version = true;
+            } else if (strings.eqlComptime(git_tag_version, "false")) {
+                cli.git_tag_version = false;
+            }
+        } else if (args.flag("--no-git-tag-version")) {
+            cli.git_tag_version = false;
+        } else {
+            cli.git_tag_version = true;
+        }
+        cli.allow_same_version = args.flag("--allow-same-version");
+        if (args.option("--preid")) |preid| {
+            cli.preid = preid;
+        }
+        if (args.option("--message")) |message| {
+            cli.message = message;
+        }
     }
 
     return cli;

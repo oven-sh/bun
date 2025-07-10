@@ -45,6 +45,7 @@ state: union(enum) {
         }
     },
     done: struct { exit_code: ExitCode },
+    waiting_write_err,
     err: ExitCode,
 } = .idle,
 
@@ -100,13 +101,14 @@ pub const Opts = struct {
     };
 };
 
-pub fn start(this: *Rm) Maybe(void) {
+pub fn start(this: *Rm) Yield {
     return this.next();
 }
 
-pub noinline fn next(this: *Rm) Maybe(void) {
+pub noinline fn next(this: *Rm) Yield {
     while (this.state != .done and this.state != .err) {
         switch (this.state) {
+            .waiting_write_err => return .suspended,
             .idle => {
                 this.state = .{
                     .parse_opts = .{
@@ -127,14 +129,12 @@ pub noinline fn next(this: *Rm) Maybe(void) {
                             const error_string = Builtin.Kind.usageString(.rm);
                             if (this.bltn().stderr.needsIO()) |safeguard| {
                                 parse_opts.state = .wait_write_err;
-                                this.bltn().stderr.enqueue(this, error_string, safeguard);
-                                return Maybe(void).success;
+                                return this.bltn().stderr.enqueue(this, error_string, safeguard);
                             }
 
                             _ = this.bltn().writeNoIO(.stderr, error_string);
 
-                            this.bltn().done(1);
-                            return Maybe(void).success;
+                            return this.bltn().done(1);
                         }
 
                         const idx = parse_opts.idx;
@@ -156,14 +156,11 @@ pub noinline fn next(this: *Rm) Maybe(void) {
                                     const buf = "rm: \"-i\" is not supported yet";
                                     if (this.bltn().stderr.needsIO()) |safeguard| {
                                         parse_opts.state = .wait_write_err;
-                                        this.bltn().stderr.enqueue(this, buf, safeguard);
-                                        continue;
+                                        return this.bltn().stderr.enqueue(this, buf, safeguard);
                                     }
 
                                     _ = this.bltn().writeNoIO(.stderr, buf);
-
-                                    this.bltn().done(1);
-                                    return Maybe(void).success;
+                                    return this.bltn().done(1);
                                 }
 
                                 const filepath_args_start = idx;
@@ -174,7 +171,12 @@ pub noinline fn next(this: *Rm) Maybe(void) {
                                     var buf: bun.PathBuffer = undefined;
                                     const cwd = switch (Syscall.getcwd(&buf)) {
                                         .err => |err| {
-                                            return .{ .err = err };
+                                            const errbuf = this.bltn().fmtErrorArena(
+                                                .rm,
+                                                "{s}: {s}",
+                                                .{ "getcwd", err.msg() orelse "failed to get cwd" },
+                                            );
+                                            return this.writeFailingError(errbuf, 1);
                                         },
                                         .result => |cwd| cwd,
                                     };
@@ -192,16 +194,14 @@ pub noinline fn next(this: *Rm) Maybe(void) {
                                         if (is_root) {
                                             if (this.bltn().stderr.needsIO()) |safeguard| {
                                                 parse_opts.state = .wait_write_err;
-                                                this.bltn().stderr.enqueueFmtBltn(this, .rm, "\"{s}\" may not be removed\n", .{resolved_path}, safeguard);
-                                                return Maybe(void).success;
+                                                return this.bltn().stderr.enqueueFmtBltn(this, .rm, "\"{s}\" may not be removed\n", .{resolved_path}, safeguard);
                                             }
 
                                             const error_string = this.bltn().fmtErrorArena(.rm, "\"{s}\" may not be removed\n", .{resolved_path});
 
                                             _ = this.bltn().writeNoIO(.stderr, error_string);
 
-                                            this.bltn().done(1);
-                                            return Maybe(void).success;
+                                            return this.bltn().done(1);
                                         }
                                     }
                                 }
@@ -224,28 +224,24 @@ pub noinline fn next(this: *Rm) Maybe(void) {
                                 const error_string = "rm: illegal option -- -\n";
                                 if (this.bltn().stderr.needsIO()) |safeguard| {
                                     parse_opts.state = .wait_write_err;
-                                    this.bltn().stderr.enqueue(this, error_string, safeguard);
-                                    return Maybe(void).success;
+                                    return this.bltn().stderr.enqueue(this, error_string, safeguard);
                                 }
 
                                 _ = this.bltn().writeNoIO(.stderr, error_string);
 
-                                this.bltn().done(1);
-                                return Maybe(void).success;
+                                return this.bltn().done(1);
                             },
                             .illegal_option_with_flag => {
                                 const flag = arg;
                                 if (this.bltn().stderr.needsIO()) |safeguard| {
                                     parse_opts.state = .wait_write_err;
-                                    this.bltn().stderr.enqueueFmtBltn(this, .rm, "illegal option -- {s}\n", .{flag[1..]}, safeguard);
-                                    return Maybe(void).success;
+                                    return this.bltn().stderr.enqueueFmtBltn(this, .rm, "illegal option -- {s}\n", .{flag[1..]}, safeguard);
                                 }
                                 const error_string = this.bltn().fmtErrorArena(.rm, "illegal option -- {s}\n", .{flag[1..]});
 
                                 _ = this.bltn().writeNoIO(.stderr, error_string);
 
-                                this.bltn().done(1);
-                                return Maybe(void).success;
+                                return this.bltn().done(1);
                             },
                         }
                     },
@@ -284,26 +280,25 @@ pub noinline fn next(this: *Rm) Maybe(void) {
                 }
 
                 // do nothing
-                return Maybe(void).success;
+                return .suspended;
             },
             .done, .err => unreachable,
         }
     }
 
     switch (this.state) {
-        .done => this.bltn().done(0),
-        .err => this.bltn().done(this.state.err),
-        else => {},
+        .done => return this.bltn().done(0),
+        .err => return this.bltn().done(this.state.err),
+        else => unreachable,
     }
-
-    return Maybe(void).success;
 }
 
-pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) Yield {
     log("Rm(0x{x}).onIOWriterChunk()", .{@intFromPtr(this)});
     if (comptime bun.Environment.allow_assert) {
         assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
-            (this.state == .exec and this.state.exec.state == .waiting and this.state.exec.output_count.load(.seq_cst) > 0));
+            (this.state == .exec and this.state.exec.state == .waiting and this.state.exec.output_count.load(.seq_cst) > 0) or
+            this.state == .waiting_write_err);
     }
 
     if (this.state == .exec and this.state.exec.state == .waiting) {
@@ -311,21 +306,18 @@ pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) void {
         this.state.exec.incrementOutputCount(.output_done);
         if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
             const code: ExitCode = if (this.state.exec.err != null) 1 else 0;
-            this.bltn().done(code);
-            return;
+            return this.bltn().done(code);
         }
-        return;
+        return .suspended;
     }
 
     if (e != null) {
         defer e.?.deref();
         this.state = .{ .err = @intFromEnum(e.?.getErrno()) };
-        this.bltn().done(e.?.getErrno());
-        return;
+        return this.bltn().done(e.?.getErrno());
     }
 
-    this.bltn().done(1);
-    return;
+    return this.bltn().done(1);
 }
 
 pub fn deinit(this: *Rm) void {
@@ -421,7 +413,7 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
                 if (this.bltn().stderr.needsIO()) |safeguard| {
                     log("Rm(0x{x}) task=0x{x} ERROR={s}", .{ @intFromPtr(this), @intFromPtr(task), error_string });
                     exec.incrementOutputCount(.output_count);
-                    this.bltn().stderr.enqueue(this, error_string, safeguard);
+                    this.bltn().stderr.enqueue(this, error_string, safeguard).run();
                     return;
                 } else {
                     _ = this.bltn().writeNoIO(.stderr, error_string);
@@ -437,25 +429,22 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
         exec.getOutputCount(.output_done) >= exec.getOutputCount(.output_count))
     {
         this.state = .{ .done = .{ .exit_code = if (exec.err) |theerr| theerr.errno else 0 } };
-        _ = this.next();
-        return;
+        this.next().run();
     }
 }
 
-fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) void {
+fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) Yield {
     if (this.bltn().stdout.needsIO()) |safeguard| {
         const buf = verbose.takeDeletedEntries();
         defer buf.deinit();
-        this.bltn().stdout.enqueue(this, buf.items, safeguard);
-    } else {
-        _ = this.bltn().writeNoIO(.stdout, verbose.deleted_entries.items);
-        _ = this.state.exec.incrementOutputCount(.output_done);
-        if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
-            this.bltn().done(if (this.state.exec.err != null) @as(ExitCode, 1) else @as(ExitCode, 0));
-            return;
-        }
-        return;
+        return this.bltn().stdout.enqueue(this, buf.items, safeguard);
     }
+    _ = this.bltn().writeNoIO(.stdout, verbose.deleted_entries.items);
+    _ = this.state.exec.incrementOutputCount(.output_done);
+    if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
+        return this.bltn().done(if (this.state.exec.err != null) @as(ExitCode, 1) else @as(ExitCode, 0));
+    }
+    return .done;
 }
 
 pub const ShellRmTask = struct {
@@ -530,7 +519,7 @@ pub const ShellRmTask = struct {
 
         pub fn runFromMainThread(this: *DirTask) void {
             debug("DirTask(0x{x}, path={s}) runFromMainThread", .{ @intFromPtr(this), this.path });
-            this.task_manager.rm.writeVerbose(this);
+            this.task_manager.rm.writeVerbose(this).run();
         }
 
         pub fn runFromMainThreadMini(this: *DirTask, _: *void) void {
@@ -871,7 +860,7 @@ pub const ShellRmTask = struct {
             return Maybe(void).success;
         }
 
-        var iterator = DirIterator.iterate(fd.stdDir(), .u8);
+        var iterator = DirIterator.iterate(fd, .u8);
         var entry = iterator.next();
 
         var remove_child_vtable = RemoveFileVTable{
@@ -1194,10 +1183,21 @@ inline fn fastMod(val: anytype, comptime rhs: comptime_int) @TypeOf(val) {
     return val & (rhs - 1);
 }
 
-// --
+pub fn writeFailingError(this: *Rm, buf: []const u8, exit_code: ExitCode) Yield {
+    if (this.bltn().stderr.needsIO()) |safeguard| {
+        this.state = .waiting_write_err;
+        return this.bltn().stderr.enqueue(this, buf, safeguard);
+    }
+
+    _ = this.bltn().writeNoIO(.stderr, buf);
+
+    return this.bltn().done(exit_code);
+}
+
 const log = bun.Output.scoped(.Rm, true);
 const bun = @import("bun");
 const shell = bun.shell;
+const Yield = shell.Yield;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;

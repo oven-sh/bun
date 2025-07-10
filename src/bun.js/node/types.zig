@@ -400,7 +400,7 @@ pub const Encoding = enum(u8) {
         return globalObject.ERR(.INVALID_ARG_VALUE, "encoding '{}' is an invalid encoding", .{value.fmtString(globalObject)}).throw();
     }
 
-    pub fn encodeWithSize(encoding: Encoding, globalObject: *JSC.JSGlobalObject, comptime size: usize, input: *const [size]u8) JSC.JSValue {
+    pub fn encodeWithSize(encoding: Encoding, globalObject: *JSC.JSGlobalObject, comptime size: usize, input: *const [size]u8) bun.JSError!JSC.JSValue {
         switch (encoding) {
             .base64 => {
                 var buf: [std.base64.standard.Encoder.calcSize(size)]u8 = undefined;
@@ -425,14 +425,14 @@ pub const Encoding = enum(u8) {
             inline else => |enc| {
                 const res = JSC.WebCore.encoding.toStringComptime(input, globalObject, enc);
                 if (res.isError()) {
-                    return globalObject.throwValue(res) catch .zero;
+                    return globalObject.throwValue(res);
                 }
                 return res;
             },
         }
     }
 
-    pub fn encodeWithMaxSize(encoding: Encoding, globalObject: *JSC.JSGlobalObject, comptime max_size: usize, input: []const u8) JSC.JSValue {
+    pub fn encodeWithMaxSize(encoding: Encoding, globalObject: *JSC.JSGlobalObject, comptime max_size: usize, input: []const u8) bun.JSError!JSC.JSValue {
         switch (encoding) {
             .base64 => {
                 var base64_buf: [std.base64.standard.Encoder.calcSize(max_size * 4)]u8 = undefined;
@@ -459,7 +459,7 @@ pub const Encoding = enum(u8) {
             inline else => |enc| {
                 const res = JSC.WebCore.encoding.toStringComptime(input, globalObject, enc);
                 if (res.isError()) {
-                    return globalObject.throwValue(res) catch .zero;
+                    return globalObject.throwValue(res);
                 }
 
                 return res;
@@ -569,8 +569,8 @@ pub const PathLike = union(enum) {
             if (std.fs.path.isAbsolute(sliced)) {
                 if (sliced.len > 2 and bun.path.isDriveLetter(sliced[0]) and sliced[1] == ':' and bun.path.isSepAny(sliced[2])) {
                     // Add the long path syntax. This affects most of node:fs
-                    const drive_resolve_buf = bun.PathBufferPool.get();
-                    defer bun.PathBufferPool.put(drive_resolve_buf);
+                    const drive_resolve_buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(drive_resolve_buf);
                     const rest = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(drive_resolve_buf, sliced) catch @panic("Error while resolving path.");
                     buf[0..4].* = bun.windows.long_path_prefix_u8;
                     // When long path syntax is used, the entire string should be normalized
@@ -619,8 +619,8 @@ pub const PathLike = union(enum) {
     pub fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) callconv(bun.callconv_inline) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             const s = this.slice();
-            const b = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(b);
+            const b = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(b);
             if (s.len > 0 and bun.path.isSepAny(s[0])) {
                 const resolve = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBuf(buf, s) catch @panic("Error while resolving path.");
                 const normal = path_handler.normalizeBuf(resolve, b, .windows);
@@ -800,11 +800,11 @@ pub const VectorArrayBuffer = struct {
 
         var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
-        const len = val.getLength(globalObject);
+        const len = try val.getLength(globalObject);
         bufferlist.ensureTotalCapacityPrecise(len) catch bun.outOfMemory();
 
         while (i < len) {
-            const element = val.getIndex(globalObject, @as(u32, @truncate(i)));
+            const element = try val.getIndex(globalObject, @as(u32, @truncate(i)));
 
             if (!element.isCell()) {
                 return globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});
@@ -1017,7 +1017,7 @@ pub const FileSystemFlags = enum(c_int) {
             if (!val.isInt32()) {
                 return ctx.throwValue(ctx.ERR(.OUT_OF_RANGE, "The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());
             }
-            const number = val.coerce(i32, ctx);
+            const number = try val.coerce(i32, ctx);
             return @as(FileSystemFlags, @enumFromInt(@max(number, 0)));
         }
 
@@ -1126,8 +1126,8 @@ pub const Dirent = struct {
     pub const getConstructor = Bun__JSDirentObjectConstructor;
 
     extern fn Bun__Dirent__toJS(*JSC.JSGlobalObject, i32, *bun.String, *bun.String, cached_previous_path_jsvalue: ?*?*JSC.JSString) JSC.JSValue;
-    pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject, cached_previous_path_jsvalue: ?*?*JSC.JSString) JSC.JSValue {
-        return Bun__Dirent__toJS(
+    pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject, cached_previous_path_jsvalue: ?*?*JSC.JSString) bun.JSError!JSC.JSValue {
+        return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__Dirent__toJS, .{
             globalObject,
             switch (this.kind) {
                 .file => bun.windows.libuv.UV_DIRENT_FILE,
@@ -1136,19 +1136,17 @@ pub const Dirent = struct {
                 .directory => bun.windows.libuv.UV_DIRENT_DIR,
                 // event_port is deliberate there.
                 .event_port, .named_pipe => bun.windows.libuv.UV_DIRENT_FIFO,
-
                 .unix_domain_socket => bun.windows.libuv.UV_DIRENT_SOCKET,
                 .sym_link => bun.windows.libuv.UV_DIRENT_LINK,
-
                 .whiteout, .door, .unknown => bun.windows.libuv.UV_DIRENT_UNKNOWN,
             },
             &this.name,
             &this.path,
             cached_previous_path_jsvalue,
-        );
+        });
     }
 
-    pub fn toJSNewlyCreated(this: *Dirent, globalObject: *JSC.JSGlobalObject, previous_jsstring: ?*?*JSC.JSString) JSC.JSValue {
+    pub fn toJSNewlyCreated(this: *Dirent, globalObject: *JSC.JSGlobalObject, previous_jsstring: ?*?*JSC.JSString) bun.JSError!JSC.JSValue {
         // Shouldn't techcnically be necessary.
         defer this.deref();
         return this.toJS(globalObject, previous_jsstring);

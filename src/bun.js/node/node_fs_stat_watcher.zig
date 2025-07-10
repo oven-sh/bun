@@ -18,7 +18,7 @@ const StatsBig = bun.JSC.Node.StatsBig;
 
 const log = bun.Output.scoped(.StatWatcher, false);
 
-fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: *const bun.Stat, bigint: bool) JSC.JSValue {
+fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: *const bun.Stat, bigint: bool) bun.JSError!JSC.JSValue {
     if (bigint) {
         return StatsBig.init(stats).toJS(globalThis);
     } else {
@@ -279,7 +279,7 @@ pub const StatWatcher = struct {
                         if (!interval_.isNumber() and !interval_.isAnyInt()) {
                             return global.throwInvalidArguments("interval must be a number", .{});
                         }
-                        interval = interval_.coerce(i32, global);
+                        interval = try interval_.coerce(i32, global);
                     }
                 }
             }
@@ -392,7 +392,7 @@ pub const StatWatcher = struct {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
         this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         this.scheduler.data.append(this);
@@ -403,7 +403,7 @@ pub const StatWatcher = struct {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
         this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         _ = js.listenerGetCached(this.js_this).?.call(
@@ -430,7 +430,17 @@ pub const StatWatcher = struct {
             .err => std.mem.zeroes(bun.Stat),
         };
 
-        if (std.mem.eql(u8, std.mem.asBytes(&res), std.mem.asBytes(&this.last_stat))) return;
+        var compare = res;
+        const StatT = @TypeOf(compare);
+        if (@hasField(StatT, "st_atim")) {
+            compare.st_atim = this.last_stat.st_atim;
+        } else if (@hasField(StatT, "st_atimespec")) {
+            compare.st_atimespec = this.last_stat.st_atimespec;
+        } else if (@hasField(StatT, "atim")) {
+            compare.atim = this.last_stat.atim;
+        }
+
+        if (std.mem.eql(u8, std.mem.asBytes(&compare), std.mem.asBytes(&this.last_stat))) return;
 
         this.last_stat = res;
         this.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, swapAndCallListenerOnMainThread));
@@ -439,7 +449,7 @@ pub const StatWatcher = struct {
     /// After a restat found the file changed, this calls the listener function.
     pub fn swapAndCallListenerOnMainThread(this: *StatWatcher) void {
         const prev_jsvalue = this.last_jsvalue.swap();
-        const current_jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
+        const current_jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
         this.last_jsvalue.set(this.globalThis, current_jsvalue);
 
         _ = js.listenerGetCached(this.js_this).?.call(
@@ -455,8 +465,8 @@ pub const StatWatcher = struct {
     pub fn init(args: Arguments) !*StatWatcher {
         log("init", .{});
 
-        const buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(buf);
+        const buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(buf);
         var slice = args.path.slice();
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];

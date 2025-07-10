@@ -70,20 +70,20 @@ pub fn exit(this: *EventLoop) void {
     defer this.debug.exit();
 
     if (count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
-        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc) catch {};
     }
 
     this.entered_event_loop_count -= 1;
 }
 
-pub fn exitMaybeDrainMicrotasks(this: *EventLoop, allow_drain_microtask: bool) void {
+pub fn exitMaybeDrainMicrotasks(this: *EventLoop, allow_drain_microtask: bool) bun.JSExecutionTerminated!void {
     const count = this.entered_event_loop_count;
     log("exit() = {d}", .{count - 1});
 
     defer this.debug.exit();
 
     if (allow_drain_microtask and count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
-        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+        try this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
     }
 
     this.entered_event_loop_count -= 1;
@@ -107,11 +107,15 @@ pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
 }
 
 extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
-pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, jsc_vm: *JSC.VM) void {
+pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, jsc_vm: *JSC.VM) bun.JSExecutionTerminated!void {
     JSC.markBinding(@src());
+    var scope: JSC.CatchScope = undefined;
+    scope.init(globalObject, @src());
+    defer scope.deinit();
 
     jsc_vm.releaseWeakRefs();
     JSC__JSGlobalObject__drainMicrotasks(globalObject);
+    try scope.assertNoExceptionExceptTermination();
 
     this.virtual_machine.is_inside_deferred_task_queue = true;
     this.deferred_tasks.run();
@@ -122,14 +126,14 @@ pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalOb
     }
 }
 
-pub fn drainMicrotasks(this: *EventLoop) void {
-    this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+pub fn drainMicrotasks(this: *EventLoop) bun.JSExecutionTerminated!void {
+    try this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
 }
 
 // should be called after exit()
 pub fn maybeDrainMicrotasks(this: *EventLoop) void {
     if (this.entered_event_loop_count == 0 and !this.virtual_machine.is_inside_deferred_task_queue) {
-        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc) catch {};
     }
 }
 
@@ -310,7 +314,7 @@ pub fn tickConcurrentWithCount(this: *EventLoop) usize {
     return this.tasks.count - start_count;
 }
 
-pub inline fn usocketsLoop(this: *const EventLoop) *uws.Loop {
+pub fn usocketsLoop(this: *const EventLoop) *uws.Loop {
     if (comptime Environment.isWindows) {
         return this.uws_loop.?;
     }
@@ -444,6 +448,9 @@ pub fn processGCTimer(this: *EventLoop) void {
 
 pub fn tick(this: *EventLoop) void {
     JSC.markBinding(@src());
+    var scope: JSC.CatchScope = undefined;
+    scope.init(this.global, @src());
+    defer scope.deinit();
     this.entered_event_loop_count += 1;
     this.debug.enter();
     defer {
@@ -462,7 +469,8 @@ pub fn tick(this: *EventLoop) void {
         while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
             this.tickConcurrent();
         } else {
-            this.drainMicrotasksWithGlobal(global, global_vm);
+            this.drainMicrotasksWithGlobal(global, global_vm) catch return;
+            if (scope.hasException()) return;
             this.tickConcurrent();
             if (this.tasks.count > 0) continue;
         }
@@ -544,6 +552,11 @@ pub fn ensureWaker(this: *EventLoop) void {
         this.virtual_machine.gc_controller.init(this.virtual_machine);
         // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
         // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.jsc, JSC.VM.drainMicrotasks);
+    }
+    if (comptime Environment.isWindows) {
+        if (this.uws_loop == null) {
+            this.uws_loop = bun.uws.Loop.get();
+        }
     }
     bun.uws.Loop.get().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(this));
 }

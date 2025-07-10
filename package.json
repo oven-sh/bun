@@ -1,13 +1,12 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.2.17",
+  "version": "1.2.19",
   "workspaces": [
     "./packages/bun-types",
     "./packages/@types/bun"
   ],
   "devDependencies": {
-    "@types/react": "^18.3.3",
     "esbuild": "^0.21.4",
     "mitata": "^0.1.11",
     "peechy": "0.4.34",
@@ -24,7 +23,8 @@
   },
   "scripts": {
     "build": "bun run build:debug",
-    "watch": "bun run zig build check --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib -Doverride-no-export-cpp-apis=true",
+    "ci": "bun scripts/buildkite-failures.ts ",
+    "watch": "bun run zig build check --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
     "watch-windows": "bun run zig build check-windows --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
     "bd:v": "(bun run --silent build:debug &> /tmp/bun.debug.build.log || (cat /tmp/bun.debug.build.log && rm -rf /tmp/bun.debug.build.log && exit 1)) && rm -f /tmp/bun.debug.build.log && ./build/debug/bun-debug",
     "bd": "BUN_DEBUG_QUIET_LOGS=1 bun bd:v",
@@ -74,7 +74,7 @@
     "clang-tidy:diff": "bun run analysis --target clang-tidy-diff",
     "zig-format": "bun run analysis:no-llvm --target zig-format",
     "zig-format:check": "bun run analysis:no-llvm --target zig-format-check",
-    "prettier": "bunx prettier@latest --plugin=prettier-plugin-organize-imports --config .prettierrc --write scripts packages src docs 'test/**/*.{test,spec}.{ts,tsx,js,jsx,mts,mjs,cjs,cts}' '!test/**/*fixture*.*'",
+    "prettier": "bunx --bun prettier@latest --plugin=prettier-plugin-organize-imports --config .prettierrc --write scripts packages src docs 'test/**/*.{test,spec}.{ts,tsx,js,jsx,mts,mjs,cjs,cts}' '!test/**/*fixture*.*'",
     "node:test": "node ./scripts/runner.node.mjs --quiet --exec-path=$npm_execpath --node-tests ",
     "node:test:cp": "bun ./scripts/fetch-node-test.ts ",
     "clean:zig": "rm -rf build/debug/cache/zig build/debug/CMakeCache.txt 'build/debug/*.o' .zig-cache zig-out || true",

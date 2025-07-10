@@ -3207,16 +3207,16 @@ pub const DNSResolver = struct {
 
             const size = bun.len(bun.cast([*:0]u8, buf[1..])) + 1;
             if (port == IANA_DNS_PORT) {
-                values.putIndex(globalThis, i, JSC.ZigString.init(buf[1..size]).withEncoding().toJS(globalThis));
+                try values.putIndex(globalThis, i, JSC.ZigString.init(buf[1..size]).withEncoding().toJS(globalThis));
             } else {
                 if (family == std.posix.AF.INET6) {
                     buf[0] = '[';
                     buf[size] = ']';
                     const port_slice = std.fmt.bufPrint(buf[size + 1 ..], ":{d}", .{port}) catch unreachable;
-                    values.putIndex(globalThis, i, JSC.ZigString.init(buf[0 .. size + 1 + port_slice.len]).withEncoding().toJS(globalThis));
+                    try values.putIndex(globalThis, i, JSC.ZigString.init(buf[0 .. size + 1 + port_slice.len]).withEncoding().toJS(globalThis));
                 } else {
                     const port_slice = std.fmt.bufPrint(buf[size..], ":{d}", .{port}) catch unreachable;
-                    values.putIndex(globalThis, i, JSC.ZigString.init(buf[1 .. size + port_slice.len]).withEncoding().toJS(globalThis));
+                    try values.putIndex(globalThis, i, JSC.ZigString.init(buf[1 .. size + port_slice.len]).withEncoding().toJS(globalThis));
                 }
             }
         }
@@ -3303,7 +3303,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("setServers", "servers", "array");
         }
 
-        var triplesIterator = argument.arrayIterator(globalThis);
+        var triplesIterator = try argument.arrayIterator(globalThis);
 
         if (triplesIterator.len == 0) {
             const r = c_ares.ares_set_servers_ports(channel, null);
@@ -3321,19 +3321,19 @@ pub const DNSResolver = struct {
 
         var i: u32 = 0;
 
-        while (triplesIterator.next()) |triple| : (i += 1) {
+        while (try triplesIterator.next()) |triple| : (i += 1) {
             if (!triple.isArray()) {
                 return globalThis.throwInvalidArgumentType("setServers", "triple", "array");
             }
 
-            const family = JSValue.getIndex(triple, globalThis, 0).toInt32();
-            const port = JSValue.getIndex(triple, globalThis, 2).toInt32();
+            const family = (try triple.getIndex(globalThis, 0)).toInt32();
+            const port = (try triple.getIndex(globalThis, 2)).toInt32();
 
             if (family != 4 and family != 6) {
                 return globalThis.throwInvalidArguments("Invalid address family", .{});
             }
 
-            const addressString = try JSValue.getIndex(triple, globalThis, 1).toBunString(globalThis);
+            const addressString = try (try triple.getIndex(globalThis, 1)).toBunString(globalThis);
             defer addressString.deref();
 
             const addressSlice = try addressString.toOwnedSlice(allocator);
@@ -3387,11 +3387,11 @@ pub const DNSResolver = struct {
         const options = callframe.argument(0);
         if (options.isObject()) {
             if (try options.getTruthy(globalThis, "timeout")) |timeout| {
-                resolver.options.timeout = timeout.coerceToInt32(globalThis);
+                resolver.options.timeout = try timeout.coerceToInt32(globalThis);
             }
 
             if (try options.getTruthy(globalThis, "tries")) |tries| {
-                resolver.options.tries = tries.coerceToInt32(globalThis);
+                resolver.options.tries = try tries.coerceToInt32(globalThis);
             }
         }
 

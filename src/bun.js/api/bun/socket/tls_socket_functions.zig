@@ -92,7 +92,7 @@ pub fn setMaxSendFragment(this: *This, globalObject: *JSC.JSGlobalObject, callfr
     if (!arg.isNumber()) {
         return globalObject.throw("Expected size to be a number", .{});
     }
-    const size = args.ptr[0].coerceToInt64(globalObject);
+    const size = try args.ptr[0].coerceToInt64(globalObject);
     if (size < 1) {
         return globalObject.throw("Expected size to be greater than 1", .{});
     }
@@ -245,14 +245,14 @@ pub fn getSharedSigalgs(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.
             bun.copy(u8, buffer, sig_with_md);
             buffer[sig_with_md.len] = '+';
             bun.copy(u8, buffer[sig_with_md.len + 1 ..], hash_slice);
-            array.putIndex(globalObject, @as(u32, @intCast(i)), JSC.ZigString.fromUTF8(buffer).toJS(globalObject));
+            try array.putIndex(globalObject, @as(u32, @intCast(i)), JSC.ZigString.fromUTF8(buffer).toJS(globalObject));
         } else {
             const buffer = bun.default_allocator.alloc(u8, sig_with_md.len + 6) catch bun.outOfMemory();
             defer bun.default_allocator.free(buffer);
 
             bun.copy(u8, buffer, sig_with_md);
             bun.copy(u8, buffer[sig_with_md.len..], "+UNDEF");
-            array.putIndex(globalObject, @as(u32, @intCast(i)), JSC.ZigString.fromUTF8(buffer).toJS(globalObject));
+            try array.putIndex(globalObject, @as(u32, @intCast(i)), JSC.ZigString.fromUTF8(buffer).toJS(globalObject));
         }
     }
     return array;
@@ -328,7 +328,7 @@ pub fn exportKeyingMaterial(this: *This, globalObject: *JSC.JSGlobalObject, call
         return globalObject.throw("Expected length to be a number", .{});
     }
 
-    const length = length_arg.coerceToInt64(globalObject);
+    const length = try length_arg.coerceToInt64(globalObject);
     if (length < 0) {
         return globalObject.throw("Expected length to be a positive number", .{});
     }

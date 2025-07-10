@@ -5,7 +5,7 @@ const meta = std.meta;
 const atomic = std.atomic;
 const builtin = std.builtin;
 
-const assert = bun.assert;
+const assertf = bun.assertf;
 
 pub const cache_line_length = switch (@import("builtin").target.cpu.arch) {
     .x86_64, .aarch64, .powerpc64 => 128,
@@ -40,106 +40,89 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
                 return .{ .batch = self };
             }
         };
-        const next = next_name;
 
+        const next = next_name;
         pub const queue_padding_length = cache_line_length / 2;
 
-        back: ?*T align(queue_padding_length) = null,
-        count: usize = 0,
-        front: T align(queue_padding_length) = init: {
-            var stub: T = undefined;
-            @field(stub, next) = null;
-            break :init stub;
-        },
+        back: std.atomic.Value(?*T) align(queue_padding_length) = .init(null),
+        front: std.atomic.Value(?*T) align(queue_padding_length) = .init(null),
 
-        pub fn push(self: *Self, src: *T) void {
-            assert(@atomicRmw(usize, &self.count, .Add, 1, .release) >= 0);
-
-            @field(src, next) = null;
-            const old_back = @atomicRmw(?*T, &self.back, .Xchg, src, .acq_rel) orelse &self.front;
-            @field(old_back, next) = src;
+        pub fn push(self: *Self, item: *T) void {
+            self.pushBatch(item, item);
         }
 
-        pub fn pushBatch(self: *Self, first: *T, last: *T, count: usize) void {
-            assert(@atomicRmw(usize, &self.count, .Add, count, .release) >= 0);
-
+        pub fn pushBatch(self: *Self, first: *T, last: *T) void {
             @field(last, next) = null;
-            const old_back = @atomicRmw(?*T, &self.back, .Xchg, last, .acq_rel) orelse &self.front;
-            @field(old_back, next) = first;
+            const prev_next_ptr = if (self.back.swap(last, .acq_rel)) |old_back|
+                &@field(old_back, next)
+            else
+                &self.front.raw;
+            @atomicStore(?*T, prev_next_ptr, first, .release);
         }
 
         pub fn pop(self: *Self) ?*T {
-            const first = @atomicLoad(?*T, &@field(self.front, next), .acquire) orelse return null;
-            if (@atomicLoad(?*T, &@field(first, next), .acquire)) |next_item| {
-                @atomicStore(?*T, &@field(self.front, next), next_item, .monotonic);
-                assert(@atomicRmw(usize, &self.count, .Sub, 1, .monotonic) >= 1);
+            var first = self.front.load(.acquire) orelse return null;
+            // .monotonic is okay because the .acquire load above means we see the modifications
+            // from push/pushBatch.
+            const next_item = while (true) {
+                const next_item = @atomicLoad(?*T, &@field(first, next), .acquire);
+                const maybe_first = self.front.cmpxchgWeak(
+                    first,
+                    next_item,
+                    .release, // not .acq_rel because we already loaded this value with .acquire
+                    .acquire,
+                ) orelse break next_item;
+                first = maybe_first orelse return null;
+            };
+            if (next_item != null) return first;
+            // `first` was the only item in the queue, so we need to clear `self.back`.
+
+            // Even though this load is .monotonic, it will always be either `first` (in which case
+            // the cmpxchg succeeds) or an item pushed *after* `first`, because the .acquire load of
+            // `self.front` synchronizes-with the .release store in push/pushBatch.
+            if (self.back.cmpxchgStrong(first, null, .monotonic, .monotonic)) |back| {
+                assertf(back != null, "`back` should not be null while popping an item", .{});
+            } else {
                 return first;
             }
-            const last = @atomicLoad(?*T, &self.back, .acquire) orelse &self.front;
-            if (first != last) return null;
-            @atomicStore(?*T, &@field(self.front, next), null, .monotonic);
-            if (@cmpxchgStrong(?*T, &self.back, last, &self.front, .acq_rel, .acquire) == null) {
-                assert(@atomicRmw(usize, &self.count, .Sub, 1, .monotonic) >= 1);
-                return first;
-            }
-            var next_item = @atomicLoad(?*T, &@field(first, next), .acquire);
-            while (next_item == null) : (atomic.spinLoopHint()) {
-                next_item = @atomicLoad(?*T, &@field(first, next), .acquire);
-            }
-            @atomicStore(?*T, &@field(self.front, next), next_item, .monotonic);
-            assert(@atomicRmw(usize, &self.count, .Sub, 1, .monotonic) >= 1);
+
+            // Another item was added to the queue before we could finish removing this one.
+            const new_first = while (true) : (atomic.spinLoopHint()) {
+                // Wait for push/pushBatch to set `next`.
+                break @atomicLoad(?*T, &@field(first, next), .acquire) orelse continue;
+            };
+
+            self.front.store(new_first, .release);
             return first;
         }
 
         pub fn popBatch(self: *Self) Self.Batch {
             var batch: Self.Batch = .{};
 
-            var front = @atomicLoad(?*T, &@field(self.front, next), .acquire) orelse return batch;
-            batch.front = front;
-
-            var next_item = @atomicLoad(?*T, &@field(front, next), .acquire);
-            while (next_item) |next_node| : (next_item = @atomicLoad(?*T, &@field(next_node, next), .acquire)) {
-                batch.count += 1;
-                batch.last = front;
-
-                front = next_node;
-            }
-
-            const last = @atomicLoad(?*T, &self.back, .acquire) orelse &self.front;
-            if (front != last) {
-                @atomicStore(?*T, &@field(self.front, next), front, .release);
-                assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .monotonic) >= batch.count);
-                return batch;
-            }
-
-            @atomicStore(?*T, &@field(self.front, next), null, .monotonic);
-            if (@cmpxchgStrong(?*T, &self.back, last, &self.front, .acq_rel, .acquire) == null) {
-                batch.count += 1;
-                batch.last = front;
-                assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .monotonic) >= batch.count);
-                return batch;
-            }
-
-            next_item = @atomicLoad(?*T, &@field(front, next), .acquire);
-            while (next_item == null) : (atomic.spinLoopHint()) {
-                next_item = @atomicLoad(?*T, &@field(front, next), .acquire);
-            }
-
+            // Not .acq_rel because another thread that sees this `null` doesn't depend on any
+            // visible side-effects from this thread.
+            const first = self.front.swap(null, .acquire) orelse return batch;
             batch.count += 1;
-            @atomicStore(?*T, &@field(self.front, next), next_item, .monotonic);
-            batch.last = front;
-            assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .monotonic) >= batch.count);
+
+            // Even though this load is .monotonic, it will always be either `first` or an item
+            // pushed *after* `first`, because the .acquire load of `self.front` synchronizes-with
+            // the .release store in push/pushBatch. So we know it's reachable from `first`.
+            const last = self.back.swap(null, .monotonic).?;
+            var next_item = first;
+            while (next_item != last) : (batch.count += 1) {
+                next_item = while (true) : (atomic.spinLoopHint()) {
+                    // Wait for push/pushBatch to set `next`.
+                    break @atomicLoad(?*T, &@field(next_item, next), .acquire) orelse continue;
+                };
+            }
+
+            batch.front = first;
+            batch.last = last;
             return batch;
         }
 
-        pub fn peek(self: *Self) usize {
-            const count = @atomicLoad(usize, &self.count, .acquire);
-            assert(count >= 0);
-            return count;
-        }
-
         pub fn isEmpty(self: *Self) bool {
-            return self.peek() == 0;
+            return self.back.load(.acquire) == null;
         }
     };
 }

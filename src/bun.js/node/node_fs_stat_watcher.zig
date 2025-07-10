@@ -56,7 +56,7 @@ pub const StatWatcherScheduler = struct {
     }
 
     fn deinit(this: *StatWatcherScheduler) void {
-        bun.assertf(this.watchers.count == 0, "destroying StatWatcherScheduler while it still has {} watchers", .{this.watchers.count});
+        bun.assertf(!this.watchers.isEmpty(), "destroying StatWatcherScheduler while it still has watchers", .{});
         bun.destroy(this);
     }
 
@@ -67,7 +67,7 @@ pub const StatWatcherScheduler = struct {
 
         watcher.ref();
         this.watchers.push(watcher);
-        log("push watcher {x} -> {d} watchers", .{ @intFromPtr(watcher), this.watchers.count });
+        log("push watcher {x}", .{@intFromPtr(watcher)});
         const current = this.getInterval();
         if (current == 0 or current > watcher.interval) {
             // we are not running or the new watcher has a smaller interval
@@ -151,7 +151,7 @@ pub const StatWatcherScheduler = struct {
         const now = std.time.Instant.now() catch unreachable;
 
         var batch = this.watchers.popBatch();
-        log("pop batch of {d} -> {d} watchers", .{ batch.count, this.watchers.count });
+        log("pop batch of {d} watchers", .{batch.count});
         var iter = batch.iterator();
         var min_interval: i32 = std.math.maxInt(i32);
         var closest_next_check: u64 = @intCast(min_interval);
@@ -174,7 +174,7 @@ pub const StatWatcherScheduler = struct {
             }
             min_interval = @min(min_interval, watcher.interval);
             this.watchers.push(watcher);
-            log("reinsert {x} -> {d} watchers", .{ @intFromPtr(watcher), this.watchers.count });
+            log("reinsert watcher {x}", .{@intFromPtr(watcher)});
         }
 
         if (contain_watchers) {

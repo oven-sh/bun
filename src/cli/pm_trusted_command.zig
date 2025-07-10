@@ -142,7 +142,7 @@ pub const UntrustedCommand = struct {
             \\
             \\This means all packages with scripts are in "trustedDependencies" or none of your dependencies have scripts.
             \\
-            \\For more information, visit <magenta>https://bun.sh/docs/install/lifecycle#trusteddependencies<r>
+            \\For more information, visit <magenta>https://bun.com/docs/install/lifecycle#trusteddependencies<r>
             \\
         , .{});
     }

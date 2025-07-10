@@ -74,7 +74,7 @@ pub const S3ListObjectsV2Result = struct {
         }
     }
 
-    pub fn toJS(this: @This(), globalObject: *JSGlobalObject) JSValue {
+    pub fn toJS(this: @This(), globalObject: *JSGlobalObject) bun.JSError!JSValue {
         const jsResult = JSValue.createEmptyObject(globalObject, 12);
 
         if (this.name) |name| {
@@ -117,7 +117,7 @@ pub const S3ListObjectsV2Result = struct {
         }
 
         if (this.contents) |contents| {
-            const jsContents = JSValue.createEmptyArray(globalObject, contents.items.len);
+            const jsContents = try JSValue.createEmptyArray(globalObject, contents.items.len);
 
             for (contents.items, 0..) |item, i| {
                 const objectInfo = JSValue.createEmptyObject(globalObject, 1);
@@ -160,19 +160,19 @@ pub const S3ListObjectsV2Result = struct {
                     objectInfo.put(globalObject, JSC.ZigString.static("owner"), jsOwner);
                 }
 
-                jsContents.putIndex(globalObject, @intCast(i), objectInfo);
+                try jsContents.putIndex(globalObject, @intCast(i), objectInfo);
             }
 
             jsResult.put(globalObject, JSC.ZigString.static("contents"), jsContents);
         }
 
         if (this.common_prefixes) |common_prefixes| {
-            const jsCommonPrefixes = JSValue.createEmptyArray(globalObject, common_prefixes.items.len);
+            const jsCommonPrefixes = try JSValue.createEmptyArray(globalObject, common_prefixes.items.len);
 
             for (common_prefixes.items, 0..) |prefix, i| {
                 const jsPrefix = JSValue.createEmptyObject(globalObject, 1);
                 jsPrefix.put(globalObject, JSC.ZigString.static("prefix"), bun.String.createUTF8ForJS(globalObject, prefix));
-                jsCommonPrefixes.putIndex(globalObject, @intCast(i), jsPrefix);
+                try jsCommonPrefixes.putIndex(globalObject, @intCast(i), jsPrefix);
             }
 
             jsResult.put(globalObject, JSC.ZigString.static("commonPrefixes"), jsCommonPrefixes);

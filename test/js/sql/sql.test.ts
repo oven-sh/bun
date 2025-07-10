@@ -2318,21 +2318,31 @@ if (isDockerEnabled()) {
   //   ]
   // })
 
-  // t('connect_timeout', { timeout: 20 }, async() => {
-  //   const connect_timeout = 0.2
-  //   const server = net.createServer()
-  //   server.listen()
-  //   const sql = postgres({ port: server.address().port, host: '127.0.0.1', connect_timeout })
-  //   const start = Date.now()
-  //   let end
-  //   await sql`select 1`.catch((e) => {
-  //     if (e.code !== 'CONNECT_TIMEOUT')
-  //       throw e
-  //     end = Date.now()
-  //   })
-  //   server.close()
-  //   return [connect_timeout, Math.floor((end - start) / 100) / 10]
-  // })
+  test.each(["connect_timeout", "connectTimeout", "connectionTimeout", "connection_timeout"] as const)(
+    "connection timeout key %p throws",
+    async key => {
+      const server = net.createServer().listen();
+
+      const port = (server.address() as import("node:net").AddressInfo).port;
+
+      const sql = postgres({ port, host: "127.0.0.1", [key]: 0.2 });
+
+      try {
+        await sql`select 1`;
+        throw new Error("should not reach");
+      } catch (e) {
+        expect(e).toBeInstanceOf(Error);
+        expect(e.code).toBe("ERR_POSTGRES_CONNECTION_TIMEOUT");
+        expect(e.message).toMatch(/Connection timed out after 200ms/);
+      } finally {
+        sql.close();
+        server.close();
+      }
+    },
+    {
+      timeout: 1000,
+    },
+  );
 
   // t('connect_timeout throws proper error', async() => [
   //   'CONNECT_TIMEOUT',

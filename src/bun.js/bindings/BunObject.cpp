@@ -1,4 +1,3 @@
-
 #include "root.h"
 
 #include "JavaScriptCore/HeapProfiler.h"
@@ -71,6 +70,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__cancel);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
+BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
 
 using namespace JSC;
 using namespace WebCore;
@@ -111,15 +111,12 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     size_t arrayLength = array->length();
     const auto returnEmptyArrayBufferView = [&]() -> EncodedJSValue {
         if (asUint8Array) {
-            return JSValue::encode(
-                JSC::JSUint8Array::create(
-                    lexicalGlobalObject,
-                    lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject),
-                    0));
+            RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), 0)));
         }
 
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
     };
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     if (arrayLength < 1) {
         return returnEmptyArrayBufferView();
@@ -228,6 +225,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
 
     if (asUint8Array) {
         auto uint8array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), WTFMove(buffer), 0, byteLength);
+        RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(uint8array);
     }
 
@@ -265,7 +263,7 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
         asUint8Array = arg2.toBoolean(globalObject);
     }
 
-    return flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, arrayValue, maxLength, asUint8Array);
+    RELEASE_AND_RETURN(throwScope, flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, arrayValue, maxLength, asUint8Array));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionConcatTypedArrays);
@@ -359,6 +357,7 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     auto* bunShell = shell.getObject();
 
     auto ShellError = bunShell->get(globalObject, JSC::Identifier::fromString(vm, "ShellError"_s));
+    RETURN_IF_EXCEPTION(scope, {});
     if (!ShellError.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Internal error: BunShell.ShellError is not an object"_s);
         return {};
@@ -460,7 +459,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
 }
 
 extern "C" JSC::EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const LChar* ptr, size_t length);
-extern "C" JSC::EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const UChar* ptr, size_t length);
+extern "C" JSC::EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const char16_t* ptr, size_t length);
 
 JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -570,7 +569,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
 
     {
         WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode({}));
+        RETURN_IF_EXCEPTION(throwScope, {});
         pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
 
         auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
@@ -759,6 +758,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
+    randomUUIDv5                                   Bun__randomUUIDv5                                                   DontDelete|Function 3
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
     readableStreamToBytes                          JSBuiltin                                                           Builtin|Function 1

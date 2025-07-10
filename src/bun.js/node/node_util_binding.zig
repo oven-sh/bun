@@ -101,6 +101,7 @@ pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     if (err_int == -bun.sys.UV_E.SOCKTNOSUPPORT) return bun.String.static("ESOCKTNOSUPPORT").toJS(globalThis);
     if (err_int == -bun.sys.UV_E.NODATA) return bun.String.static("ENODATA").toJS(globalThis);
     if (err_int == -bun.sys.UV_E.UNATCH) return bun.String.static("EUNATCH").toJS(globalThis);
+    if (err_int == -bun.sys.UV_E.NOEXEC) return bun.String.static("ENOEXEC").toJS(globalThis);
 
     var fmtstring = bun.String.createFormat("Unknown system error {d}", .{err_int}) catch bun.outOfMemory();
     return fmtstring.transferToJS(globalThis);
@@ -135,7 +136,7 @@ pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject
         .utf8 => if (bun.strings.isAllASCII(str.byteSlice()))
             return split(.utf8, globalThis, bun.default_allocator, &str)
         else
-            return JSC.JSValue.jsUndefined(),
+            return .js_undefined,
     };
 }
 
@@ -209,7 +210,7 @@ pub fn normalizeEncoding(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     defer str.deref();
     if (str.length() == 0) return JSC.Node.Encoding.utf8.toJS(globalThis);
     if (str.inMapCaseInsensitive(JSC.Node.Encoding.map)) |enc| return enc.toJS(globalThis);
-    return JSC.JSValue.jsUndefined();
+    return .js_undefined;
 }
 
 pub fn parseEnv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

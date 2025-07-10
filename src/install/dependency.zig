@@ -165,6 +165,12 @@ pub fn toExternal(this: Dependency) External {
     return bytes;
 }
 
+// Needed when a dependency uses workspace: protocol and isn't
+// marked with workspace behavior.
+pub fn isWorkspaceDep(this: *const Dependency) bool {
+    return this.behavior.isWorkspace() or this.version.tag == .workspace;
+}
+
 pub inline fn isSCPLikePath(dependency: string) bool {
     // Shortest valid expression: h:p
     if (dependency.len < 3) return false;
@@ -783,10 +789,10 @@ pub const Version = struct {
         pub fn inferFromJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments_old(1).slice();
             if (arguments.len == 0 or !arguments[0].isString()) {
-                return .undefined;
+                return .js_undefined;
             }
 
-            const tag = try Tag.fromJS(globalObject, arguments[0]) orelse return .undefined;
+            const tag = try Tag.fromJS(globalObject, arguments[0]) orelse return .js_undefined;
             var str = bun.String.init(@tagName(tag));
             return str.transferToJS(globalObject);
         }
@@ -1284,19 +1290,19 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     var stack = std.heap.stackFallback(1024, arena.allocator());
     const allocator = stack.get();
 
-    const alias_value = if (arguments.len > 0) arguments[0] else .undefined;
+    const alias_value: JSC.JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
 
     if (!alias_value.isString()) {
-        return .undefined;
+        return .js_undefined;
     }
     const alias_slice = try alias_value.toSlice(globalThis, allocator);
     defer alias_slice.deinit();
 
     if (alias_slice.len == 0) {
-        return .undefined;
+        return .js_undefined;
     }
 
-    const name_value = if (arguments.len > 1) arguments[1] else .undefined;
+    const name_value: JSC.JSValue = if (arguments.len > 1) arguments[1] else .js_undefined;
     const name_slice = try name_value.toSlice(globalThis, allocator);
     defer name_slice.deinit();
 
@@ -1320,7 +1326,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
             return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
         }
 
-        return .undefined;
+        return .js_undefined;
     };
 
     if (log.msgs.items.len > 0) {
@@ -1397,6 +1403,14 @@ pub const Behavior = packed struct(u8) {
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
         if (eq(lhs, rhs)) {
             return .eq;
+        }
+
+        if (lhs.isWorkspaceOnly() != rhs.isWorkspaceOnly()) {
+            // ensure isWorkspaceOnly deps are placed at the beginning
+            return if (lhs.isWorkspaceOnly())
+                .lt
+            else
+                .gt;
         }
 
         if (lhs.isProd() != rhs.isProd()) {

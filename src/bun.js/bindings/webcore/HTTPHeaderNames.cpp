@@ -670,7 +670,7 @@ bool findHTTPHeaderName(const StringView stringView, HTTPHeaderName& headerName)
         LChar characters[maxHTTPHeaderNameLength];
         const auto span = stringView.span16();
         for (unsigned i = 0; i < length; ++i) {
-            UChar character = span.data()[i];
+            char16_t character = span.data()[i];
             if (!isASCII(character))
                 return false;
 

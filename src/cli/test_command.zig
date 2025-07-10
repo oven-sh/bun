@@ -9,7 +9,6 @@ const default_allocator = bun.default_allocator;
 
 const std = @import("std");
 
-
 const FileSystem = @import("../fs.zig").FileSystem;
 const options = @import("../options.zig");
 const js_ast = bun.JSAst;
@@ -399,7 +398,7 @@ pub const JunitReporter = struct {
                     \\    </testcase>
                 , .{});
             },
-            .skip => {
+            .skipped_because_label, .skip => {
                 this.testcases_metrics.skipped += 1;
                 try this.contents.appendSlice(bun.default_allocator, ">\n      <skipped />\n    </testcase>\n");
             },
@@ -463,7 +462,6 @@ pub const CommandLineReporter = struct {
     jest: TestRunner,
     callback: TestRunner.Callback,
     last_dot: u32 = 0,
-    summary: Summary = Summary{},
     prev_file: u64 = 0,
     repeat_count: u32 = 1,
 
@@ -475,15 +473,6 @@ pub const CommandLineReporter = struct {
 
     pub const FileReporter = union(enum) {
         junit: *JunitReporter,
-    };
-
-    pub const Summary = struct {
-        pass: u32 = 0,
-        expectations: u32 = 0,
-        skip: u32 = 0,
-        todo: u32 = 0,
-        fail: u32 = 0,
-        files: u32 = 0,
     };
 
     const DotColorMap = std.EnumMap(TestRunner.Test.Status, string);
@@ -608,6 +597,10 @@ pub const CommandLineReporter = struct {
         }
     }
 
+    pub inline fn summary(this: *CommandLineReporter) *TestRunner.Summary {
+        return &this.jest.summary;
+    }
+
     pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         const writer_ = Output.errorWriter();
         var buffered_writer = std.io.bufferedWriter(writer_);
@@ -621,8 +614,8 @@ pub const CommandLineReporter = struct {
         printTestLine(.pass, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter);
 
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.pass;
-        this.summary.pass += 1;
-        this.summary.expectations += expectations;
+        this.summary().pass += 1;
+        this.summary().expectations += expectations;
     }
 
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
@@ -647,11 +640,11 @@ pub const CommandLineReporter = struct {
         Output.flush();
 
         // this.updateDots();
-        this.summary.fail += 1;
-        this.summary.expectations += expectations;
+        this.summary().fail += 1;
+        this.summary().expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
 
-        if (this.jest.bail == this.summary.fail) {
+        if (this.jest.bail == this.summary().fail) {
             this.printSummary();
             Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.jest.bail, if (this.jest.bail == 1) "" else "s" });
             Global.exit(1);
@@ -677,8 +670,18 @@ pub const CommandLineReporter = struct {
         }
 
         // this.updateDots();
-        this.summary.skip += 1;
-        this.summary.expectations += expectations;
+        this.summary().skip += 1;
+        this.summary().expectations += expectations;
+        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skip;
+    }
+
+    pub fn handleTestFilteredOut(cb: *TestRunner.Callback, id: Test.ID, _: string, _: string, expectations: u32, _: u64, _: ?*jest.DescribeScope) void {
+        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
+
+        // this.updateDots();
+        this.summary().skipped_because_label += 1;
+        this.summary().skip += 1;
+        this.summary().expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skip;
     }
 
@@ -699,16 +702,23 @@ pub const CommandLineReporter = struct {
         Output.flush();
 
         // this.updateDots();
-        this.summary.todo += 1;
-        this.summary.expectations += expectations;
+        this.summary().todo += 1;
+        this.summary().expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.todo;
     }
 
     pub fn printSummary(this: *CommandLineReporter) void {
-        const tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo;
-        const files = this.summary.files;
+        const summary_ = this.summary();
+        const tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo;
+        const files = summary_.files;
 
-        Output.prettyError("Ran {d} tests across {d} files. ", .{ tests, files });
+        Output.prettyError("Ran {d} test{s} across {d} file{s}. ", .{
+            tests,
+            if (tests == 1) "" else "s",
+            files,
+            if (files == 1) "" else "s",
+        });
+
         Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
 
@@ -1064,6 +1074,7 @@ pub const TestCommand = struct {
             .onTestFail = CommandLineReporter.handleTestFail,
             .onTestSkip = CommandLineReporter.handleTestSkip,
             .onTestTodo = CommandLineReporter.handleTestTodo,
+            .onTestFilteredOut = CommandLineReporter.handleTestFilteredOut,
         };
         reporter.repeat_count = @max(ctx.test_options.repeat_count, 1);
         reporter.jest.callback = &reporter.callback;
@@ -1226,33 +1237,33 @@ pub const TestCommand = struct {
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
         var coverage_options = ctx.test_options.coverage;
-        if (reporter.summary.pass > 20) {
-            if (reporter.summary.skip > 0) {
-                Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary.skip});
+        if (reporter.summary().pass > 20) {
+            if (reporter.summary().skip > 0) {
+                Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary().skip});
                 Output.flush();
 
                 var error_writer = Output.errorWriter();
                 error_writer.writeAll(reporter.skips_to_repeat_buf.items) catch unreachable;
             }
 
-            if (reporter.summary.todo > 0) {
-                if (reporter.summary.skip > 0) {
+            if (reporter.summary().todo > 0) {
+                if (reporter.summary().skip > 0) {
                     Output.prettyError("\n", .{});
                 }
 
-                Output.prettyError("\n<r><d>{d} tests todo:<r>\n", .{reporter.summary.todo});
+                Output.prettyError("\n<r><d>{d} tests todo:<r>\n", .{reporter.summary().todo});
                 Output.flush();
 
                 var error_writer = Output.errorWriter();
                 error_writer.writeAll(reporter.todos_to_repeat_buf.items) catch unreachable;
             }
 
-            if (reporter.summary.fail > 0) {
-                if (reporter.summary.skip > 0 or reporter.summary.todo > 0) {
+            if (reporter.summary().fail > 0) {
+                if (reporter.summary().skip > 0 or reporter.summary().todo > 0) {
                     Output.prettyError("\n", .{});
                 }
 
-                Output.prettyError("\n<r><d>{d} tests failed:<r>\n", .{reporter.summary.fail});
+                Output.prettyError("\n<r><d>{d} tests failed:<r>\n", .{reporter.summary().fail});
                 Output.flush();
 
                 var error_writer = Output.errorWriter();
@@ -1262,7 +1273,11 @@ pub const TestCommand = struct {
 
         Output.flush();
 
+        var failed_to_find_any_tests = false;
+
         if (test_files.len == 0) {
+            failed_to_find_any_tests = true;
+
             if (ctx.positionals.len == 0) {
                 Output.prettyErrorln(
                     \\<yellow>No tests found!<r>
@@ -1305,7 +1320,7 @@ pub const TestCommand = struct {
             }
             Output.prettyError(
                 \\
-                \\Learn more about the test runner: <magenta>https://bun.sh/docs/cli/test<r>
+                \\Learn more about the test runner: <magenta>https://bun.com/docs/cli/test<r>
             , .{});
         } else {
             Output.prettyError("\n", .{});
@@ -1322,76 +1337,92 @@ pub const TestCommand = struct {
                 }
             }
 
-            if (reporter.summary.pass > 0) {
-                Output.prettyError("<r><green>", .{});
-            }
+            const summary = reporter.summary();
+            const did_label_filter_out_all_tests = summary.didLabelFilterOutAllTests() and reporter.jest.unhandled_errors_between_tests == 0;
 
-            Output.prettyError(" {d:5>} pass<r>\n", .{reporter.summary.pass});
-
-            if (reporter.summary.skip > 0) {
-                Output.prettyError(" <r><yellow>{d:5>} skip<r>\n", .{reporter.summary.skip});
-            }
-
-            if (reporter.summary.todo > 0) {
-                Output.prettyError(" <r><magenta>{d:5>} todo<r>\n", .{reporter.summary.todo});
-            }
-
-            if (reporter.summary.fail > 0) {
-                Output.prettyError("<r><red>", .{});
-            } else {
-                Output.prettyError("<r><d>", .{});
-            }
-
-            Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
-            if (reporter.jest.unhandled_errors_between_tests > 0) {
-                Output.prettyError(" <r><red>{d:5>} error{s}<r>\n", .{ reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
-            }
-
-            var print_expect_calls = reporter.summary.expectations > 0;
-            if (reporter.jest.snapshots.total > 0) {
-                const passed = reporter.jest.snapshots.passed;
-                const failed = reporter.jest.snapshots.failed;
-                const added = reporter.jest.snapshots.added;
-
-                var first = true;
-                if (print_expect_calls and added == 0 and failed == 0) {
-                    print_expect_calls = false;
-                    Output.prettyError(" {d:5>} snapshots, {d:5>} expect() calls", .{ reporter.jest.snapshots.total, reporter.summary.expectations });
-                } else {
-                    Output.prettyError(" <d>snapshots:<r> ", .{});
-
-                    if (passed > 0) {
-                        Output.prettyError("<d>{d} passed<r>", .{passed});
-                        first = false;
-                    }
-
-                    if (added > 0) {
-                        if (first) {
-                            first = false;
-                            Output.prettyError("<b>+{d} added<r>", .{added});
-                        } else {
-                            Output.prettyError("<b>, {d} added<r>", .{added});
-                        }
-                    }
-
-                    if (failed > 0) {
-                        if (first) {
-                            first = false;
-                            Output.prettyError("<red>{d} failed<r>", .{failed});
-                        } else {
-                            Output.prettyError(", <red>{d} failed<r>", .{failed});
-                        }
-                    }
+            if (!did_label_filter_out_all_tests) {
+                if (summary.pass > 0) {
+                    Output.prettyError("<r><green>", .{});
                 }
 
-                Output.prettyError("\n", .{});
-            }
+                Output.prettyError(" {d:5>} pass<r>\n", .{summary.pass});
 
-            if (print_expect_calls) {
-                Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
-            }
+                if (summary.skip > 0) {
+                    Output.prettyError(" <r><yellow>{d:5>} skip<r>\n", .{summary.skip});
+                } else if (summary.skipped_because_label > 0) {
+                    Output.prettyError(" <r><d>{d:5>} filtered out<r>\n", .{summary.skipped_because_label});
+                }
 
-            reporter.printSummary();
+                if (summary.todo > 0) {
+                    Output.prettyError(" <r><magenta>{d:5>} todo<r>\n", .{summary.todo});
+                }
+
+                if (summary.fail > 0) {
+                    Output.prettyError("<r><red>", .{});
+                } else {
+                    Output.prettyError("<r><d>", .{});
+                }
+
+                Output.prettyError(" {d:5>} fail<r>\n", .{summary.fail});
+                if (reporter.jest.unhandled_errors_between_tests > 0) {
+                    Output.prettyError(" <r><red>{d:5>} error{s}<r>\n", .{ reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
+                }
+
+                var print_expect_calls = reporter.summary().expectations > 0;
+                if (reporter.jest.snapshots.total > 0) {
+                    const passed = reporter.jest.snapshots.passed;
+                    const failed = reporter.jest.snapshots.failed;
+                    const added = reporter.jest.snapshots.added;
+
+                    var first = true;
+                    if (print_expect_calls and added == 0 and failed == 0) {
+                        print_expect_calls = false;
+                        Output.prettyError(" {d:5>} snapshots, {d:5>} expect() calls", .{ reporter.jest.snapshots.total, reporter.summary().expectations });
+                    } else {
+                        Output.prettyError(" <d>snapshots:<r> ", .{});
+
+                        if (passed > 0) {
+                            Output.prettyError("<d>{d} passed<r>", .{passed});
+                            first = false;
+                        }
+
+                        if (added > 0) {
+                            if (first) {
+                                first = false;
+                                Output.prettyError("<b>+{d} added<r>", .{added});
+                            } else {
+                                Output.prettyError("<b>, {d} added<r>", .{added});
+                            }
+                        }
+
+                        if (failed > 0) {
+                            if (first) {
+                                first = false;
+                                Output.prettyError("<red>{d} failed<r>", .{failed});
+                            } else {
+                                Output.prettyError(", <red>{d} failed<r>", .{failed});
+                            }
+                        }
+                    }
+
+                    Output.prettyError("\n", .{});
+                }
+
+                if (print_expect_calls) {
+                    Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary().expectations});
+                }
+
+                reporter.printSummary();
+            } else {
+                Output.prettyError("<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {d} file{s} (skipping {d} test{s}) ", .{
+                    bun.fmt.quote(ctx.test_options.test_filter_pattern.?),
+                    summary.files,
+                    if (summary.files == 1) "" else "s",
+                    summary.skipped_because_label,
+                    if (summary.skipped_because_label == 1) "" else "s",
+                });
+                Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
+            }
         }
 
         Output.prettyError("\n", .{});
@@ -1411,8 +1442,9 @@ pub const TestCommand = struct {
         if (vm.hot_reload == .watch) {
             vm.runWithAPILock(JSC.VirtualMachine, vm, runEventLoopForWatch);
         }
+        const summary = reporter.summary();
 
-        if (reporter.summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
+        if (failed_to_find_any_tests or summary.didLabelFilterOutAllTests() or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             Global.exit(reporter.jest.unhandled_errors_between_tests);
@@ -1524,14 +1556,14 @@ pub const TestCommand = struct {
             Output.flush();
 
             var promise = try vm.loadEntryPointForTestRunner(file_path);
-            reporter.summary.files += 1;
+            reporter.summary().files += 1;
 
             switch (promise.status(vm.global.vm())) {
                 .rejected => {
-                    _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
-                    reporter.summary.fail += 1;
+                    vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
+                    reporter.summary().fail += 1;
 
-                    if (reporter.jest.bail == reporter.summary.fail) {
+                    if (reporter.jest.bail == reporter.summary().fail) {
                         reporter.printSummary();
                         Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
 

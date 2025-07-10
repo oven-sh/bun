@@ -112,7 +112,7 @@ watcher_atomics: WatcherAtomics,
 /// and bundling times, where the test harness (bake-harness.ts) would not wait
 /// long enough for processing to complete. Checking client logs, for example,
 /// not only must wait on DevServer, but also wait on all connected WebSocket
-/// clients to recieve their update, but also wait for those modules
+/// clients to receive their update, but also wait for those modules
 /// (potentially async) to finish loading.
 ///
 /// To solve the first part of this, DevServer exposes a special WebSocket
@@ -133,7 +133,7 @@ testing_batch_events: union(enum) {
     enable_after_bundle,
     /// DevServer will not start new bundles, but instead write all files into
     /// this `TestingBatch` object. Additionally, writes into this will signal
-    /// a message saying that new files have been seen. Once DevServer recieves
+    /// a message saying that new files have been seen. Once DevServer receives
     /// that signal, or times out, it will "release" this batch.
     enabled: TestingBatch,
 },
@@ -642,8 +642,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         errdefer types.deinit(allocator);
 
         for (options.framework.file_system_router_types, 0..) |fsr, i| {
-            const buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
             const joined_root = bun.path.joinAbsStringBuf(dev.root, buf, &.{fsr.root}, .auto);
             const entry = dev.server_transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse
                 continue;
@@ -760,6 +760,9 @@ pub fn deinit(dev: *DevServer) void {
             .html_routes_hard_affected = dev.incremental_result.html_routes_hard_affected.deinit(allocator),
         }),
         .has_tailwind_plugin_hack = if (dev.has_tailwind_plugin_hack) |*hack| {
+            for (hack.keys()) |key| {
+                allocator.free(key);
+            }
             hack.deinit(allocator);
         },
         .directory_watchers = {
@@ -1140,20 +1143,20 @@ pub fn setRoutes(dev: *DevServer, server: anytype) !bool {
     }
 }
 
-fn onNotFound(_: *DevServer, _: *Request, resp: anytype) void {
+fn onNotFound(_: *DevServer, _: *Request, resp: AnyResponse) void {
     notFound(resp);
 }
 
-fn notFound(resp: anytype) void {
+fn notFound(resp: AnyResponse) void {
     resp.corked(onNotFoundCorked, .{resp});
 }
 
-fn onNotFoundCorked(resp: anytype) void {
+fn onNotFoundCorked(resp: AnyResponse) void {
     resp.writeStatus("404 Not Found");
     resp.end("Not Found", false);
 }
 
-fn onOutdatedJSCorked(resp: anytype) void {
+fn onOutdatedJSCorked(resp: AnyResponse) void {
     // Send a payload to instantly reload the page. This only happens when the
     // client bundle is invalidated while the page is loading, aka when you
     // perform many file updates that cannot be hot-updated.
@@ -1273,11 +1276,11 @@ inline fn redirectHandler(comptime path: []const u8, comptime is_ssl: bool) fn (
     }.handle;
 }
 
-fn onIncrementalVisualizer(_: *DevServer, _: *Request, resp: anytype) void {
+fn onIncrementalVisualizer(_: *DevServer, _: *Request, resp: AnyResponse) void {
     resp.corked(onIncrementalVisualizerCorked, .{resp});
 }
 
-fn onIncrementalVisualizerCorked(resp: anytype) void {
+fn onIncrementalVisualizerCorked(resp: AnyResponse) void {
     const code = if (Environment.codegen_embed)
         @embedFile("incremental_visualizer.html")
     else
@@ -1285,11 +1288,11 @@ fn onIncrementalVisualizerCorked(resp: anytype) void {
     resp.end(code, false);
 }
 
-fn onMemoryVisualizer(_: *DevServer, _: *Request, resp: anytype) void {
+fn onMemoryVisualizer(_: *DevServer, _: *Request, resp: AnyResponse) void {
     resp.corked(onMemoryVisualizerCorked, .{resp});
 }
 
-fn onMemoryVisualizerCorked(resp: anytype) void {
+fn onMemoryVisualizerCorked(resp: AnyResponse) void {
     const code = if (Environment.codegen_embed)
         @embedFile("memory_visualizer.html")
     else
@@ -1303,7 +1306,7 @@ fn ensureRouteIsBundled(
     kind: DeferredRequest.Handler.Kind,
     req: *Request,
     resp: AnyResponse,
-) bun.OOM!void {
+) bun.JSError!void {
     assert(dev.magic == .valid);
     assert(dev.server != null);
     sw: switch (dev.routeBundlePtr(route_bundle_index).server_state) {
@@ -1416,7 +1419,7 @@ fn ensureRouteIsBundled(
             );
         },
         .loaded => switch (kind) {
-            .server_handler => dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
+            .server_handler => try dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
             .bundled_html_page => dev.onHtmlRequestWithBundle(route_bundle_index, resp, bun.http.Method.which(req.method()) orelse .POST),
         },
     }
@@ -1525,10 +1528,63 @@ fn onFrameworkRequestWithBundle(
     route_bundle_index: RouteBundle.Index,
     req: bun.JSC.API.SavedRequest.Union,
     resp: AnyResponse,
-) void {
+) bun.JSError!void {
     const route_bundle = dev.routeBundlePtr(route_bundle_index);
     assert(route_bundle.data == .framework);
+
     const bundle = &route_bundle.data.framework;
+
+    // Extract route params by re-matching the URL
+    var params: FrameworkRouter.MatchedParams = undefined;
+    const url_bunstr = switch (req) {
+        .stack => |r| bun.String{
+            .tag = .ZigString,
+            .value = .{ .ZigString = bun.ZigString.fromUTF8(r.url()) },
+        },
+        .saved => |data| brk: {
+            const url = data.request.url;
+            url.ref();
+            break :brk url;
+        },
+    };
+    defer url_bunstr.deref();
+    const url = url_bunstr.toUTF8(bun.default_allocator);
+    defer url.deinit();
+
+    // Extract pathname from URL (remove protocol, host, query, hash)
+    const pathname = if (std.mem.indexOf(u8, url.byteSlice(), "://")) |proto_end| blk: {
+        const after_proto = url.byteSlice()[proto_end + 3 ..];
+        if (std.mem.indexOfScalar(u8, after_proto, '/')) |path_start| {
+            const path_with_query = after_proto[path_start..];
+            // Remove query string and hash
+            const end = bun.strings.indexOfAny(path_with_query, "?#") orelse path_with_query.len;
+            break :blk path_with_query[0..end];
+        }
+        break :blk "/";
+    } else url.byteSlice();
+
+    // Create params JSValue
+    // TODO: lazy structure caching since we are making these objects a lot
+    const params_js_value = if (dev.router.matchSlow(pathname, &params)) |_| blk: {
+        const global = dev.vm.global;
+        const params_array = params.params.slice();
+
+        if (params_array.len == 0) {
+            break :blk JSValue.null;
+        }
+
+        // Create a JavaScript object with params
+        const obj = JSValue.createEmptyObject(global, params_array.len);
+        for (params_array) |param| {
+            const key_str = bun.String.createUTF8(param.key);
+            defer key_str.deref();
+            const value_str = bun.String.createUTF8(param.value);
+            defer value_str.deref();
+
+            obj.put(global, key_str, value_str.toJS(global));
+        }
+        break :blk obj;
+    } else JSValue.null;
 
     const server_request_callback = dev.server_fetch_function_callback.get() orelse
         unreachable; // did not initialize server code
@@ -1539,7 +1595,7 @@ fn onFrameworkRequestWithBundle(
         req,
         resp,
         server_request_callback,
-        4,
+        5,
         .{
             // routerTypeMain
             router_type.server_file_string.get() orelse str: {
@@ -1559,17 +1615,17 @@ fn onFrameworkRequestWithBundle(
                     if (route.file_layout != .none) n += 1;
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
-                const arr = JSValue.createEmptyArray(global, n);
+                const arr = try JSValue.createEmptyArray(global, n);
                 route = dev.router.routePtr(bundle.route_index);
                 var route_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
-                arr.putIndex(global, 0, route_name.transferToJS(global));
+                try arr.putIndex(global, 0, route_name.transferToJS(global));
                 dev.releaseRelativePathBuf();
                 n = 1;
                 while (true) {
                     if (route.file_layout.unwrap()) |layout| {
                         var layout_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, layout).get()]));
                         defer dev.releaseRelativePathBuf();
-                        arr.putIndex(global, @intCast(n), layout_name.transferToJS(global));
+                        try arr.putIndex(global, @intCast(n), layout_name.transferToJS(global));
                         n += 1;
                     }
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
@@ -1596,6 +1652,8 @@ fn onFrameworkRequestWithBundle(
                 bundle.cached_css_file_array = .create(js, dev.vm.global);
                 break :arr js;
             },
+            // params
+            params_js_value,
         },
     );
 }
@@ -2123,7 +2181,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
     return client_bundle;
 }
 
-fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM!JSC.JSValue {
+fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!JSC.JSValue {
     assert(route_bundle.data == .framework); // a JSC.JSValue has no purpose, and therefore isn't implemented.
     if (Environment.allow_assert) assert(!route_bundle.data.framework.cached_css_file_array.has());
     assert(route_bundle.server_state == .loaded); // page is unfit to load
@@ -2143,7 +2201,7 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM!JSC.J
     try dev.traceAllRouteImports(route_bundle, &gts, .find_css);
 
     const names = dev.client_graph.current_css_files.items;
-    const arr = JSC.JSArray.createEmpty(dev.vm.global, names.len);
+    const arr = try JSC.JSArray.createEmpty(dev.vm.global, names.len);
     for (names, 0..) |item, i| {
         var buf: [asset_prefix.len + @sizeOf(u64) * 2 + "/.css".len]u8 = undefined;
         const path = std.fmt.bufPrint(&buf, asset_prefix ++ "/{s}.css", .{
@@ -2151,7 +2209,7 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM!JSC.J
         }) catch unreachable;
         const str = bun.String.createUTF8(path);
         defer str.deref();
-        arr.putIndex(dev.vm.global, @intCast(i), str.toJS(dev.vm.global));
+        try arr.putIndex(dev.vm.global, @intCast(i), str.toJS(dev.vm.global));
     }
     return arr;
 }
@@ -2187,15 +2245,15 @@ fn traceAllRouteImports(dev: *DevServer, route_bundle: *RouteBundle, gts: *Graph
     }
 }
 
-fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *JSC.JSGlobalObject, items: []const IncrementalGraph(.server).FileIndex) JSValue {
+fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *JSC.JSGlobalObject, items: []const IncrementalGraph(.server).FileIndex) bun.JSError!JSValue {
     if (items.len == 0) return .null;
-    const arr = JSC.JSArray.createEmpty(global, items.len);
+    const arr = try JSC.JSArray.createEmpty(global, items.len);
     const names = dev.server_graph.bundled_files.keys();
     for (items, 0..) |item, i| {
         const str = bun.String.createUTF8(dev.relativePath(names[item.get()]));
         defer dev.releaseRelativePathBuf();
         defer str.deref();
-        arr.putIndex(global, @intCast(i), str.toJS(global));
+        try arr.putIndex(global, @intCast(i), str.toJS(global));
     }
     return arr;
 }
@@ -2248,7 +2306,7 @@ pub fn finalizeBundle(
     dev: *DevServer,
     bv2: *bun.bundle_v2.BundleV2,
     result: *const bun.bundle_v2.DevServerOutput,
-) bun.OOM!void {
+) bun.JSError!void {
     assert(dev.magic == .valid);
     var had_sent_hmr_event = false;
     defer {
@@ -2411,9 +2469,14 @@ pub fn finalizeBundle(
         if (dev.has_tailwind_plugin_hack) |*map| {
             const first_1024 = code.buffer[0..@min(code.buffer.len, 1024)];
             if (std.mem.indexOf(u8, first_1024, "tailwind") != null) {
-                try map.put(dev.allocator, key, {});
+                const entry = try map.getOrPut(dev.allocator, key);
+                if (!entry.found_existing) {
+                    entry.key_ptr.* = try dev.allocator.dupe(u8, key);
+                }
             } else {
-                _ = map.swapRemove(key);
+                if (map.fetchSwapRemove(key)) |entry| {
+                    dev.allocator.free(entry.key);
+                }
             }
         }
 
@@ -2539,8 +2602,8 @@ pub fn finalizeBundle(
             dev.vm.global.toJSValue(),
             &.{
                 server_modules,
-                dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_added.items),
-                dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_removed.items),
+                try dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_added.items),
+                try dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_removed.items),
             },
         ) catch |err| {
             // One module replacement error should NOT prevent follow-up
@@ -2902,7 +2965,7 @@ pub fn finalizeBundle(
 
         switch (req.handler) {
             .aborted => continue,
-            .server_handler => |saved| dev.onFrameworkRequestWithBundle(req.route_bundle_index, .{ .saved = saved }, saved.response),
+            .server_handler => |saved| try dev.onFrameworkRequestWithBundle(req.route_bundle_index, .{ .saved = saved }, saved.response),
             .bundled_html_page => |ram| dev.onHtmlRequestWithBundle(req.route_bundle_index, ram.response, ram.method),
         }
     }
@@ -3075,12 +3138,8 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
         return;
     }
 
-    if (DevServer.AnyResponse != @typeInfo(@TypeOf(resp)).pointer.child) {
-        unreachable; // mismatch between `is_ssl` with server and response types. optimize these checks out.
-    }
-
-    if (dev.server.?.config.onRequest != .zero) {
-        dev.server.?.onRequest(req, resp);
+    if (dev.server.?.config().onRequest != .zero) {
+        dev.server.?.onRequest(req, AnyResponse.init(resp));
         return;
     }
 
@@ -4850,11 +4909,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // Additionally, clear the cached entry of the file from the path to
             // source index map.
             const hash = bun.hash(abs_path);
-            for ([_]*bun.bundle_v2.PathToSourceIndexMap{
-                &bv2.graph.path_to_source_index_map,
-                &bv2.graph.client_path_to_source_index_map,
-                &bv2.graph.ssr_path_to_source_index_map,
-            }) |map| {
+            for (&bv2.graph.build_graphs.values) |*map| {
                 _ = map.remove(hash);
             }
         }
@@ -5125,8 +5180,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
             dev.relative_path_buf_lock.lock();
             defer dev.relative_path_buf_lock.unlock();
 
-            const buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
 
             var file_paths = try ArrayListUnmanaged([]const u8).initCapacity(gpa, g.current_chunk_parts.items.len);
             errdefer file_paths.deinit(gpa);
@@ -5409,8 +5464,8 @@ const DirectoryWatchStore = struct {
             => bun.debugAssert(false),
         }
 
-        const buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(buf);
+        const buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(buf);
         const joined = bun.path.joinAbsStringBuf(bun.path.dirname(import_source, .auto), buf, &.{specifier}, .auto);
         const dir = bun.path.dirname(joined, .auto);
 
@@ -5839,8 +5894,8 @@ pub const SerializedFailure = struct {
 
 // For debugging, it is helpful to be able to see bundles.
 fn dumpBundle(dump_dir: std.fs.Dir, graph: bake.Graph, rel_path: []const u8, chunk: []const u8, wrap: bool) !void {
-    const buf = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(buf);
+    const buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(buf);
     const name = bun.path.joinAbsStringBuf("/", buf, &.{
         @tagName(graph),
         rel_path,
@@ -6043,7 +6098,7 @@ pub fn onWebSocketUpgrade(
     dev: *DevServer,
     res: anytype,
     req: *Request,
-    upgrade_ctx: *uws.uws_socket_context_t,
+    upgrade_ctx: *uws.SocketContext,
     id: usize,
 ) void {
     assert(id == 0);
@@ -7593,8 +7648,8 @@ pub const SourceMapStore = struct {
             dev.relative_path_buf_lock.lock();
             defer dev.relative_path_buf_lock.unlock();
 
-            const buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
 
             for (paths) |native_file_path| {
                 try source_map_strings.appendSlice(",");
@@ -7985,6 +8040,7 @@ pub const SourceMapStore = struct {
             null,
             @intCast(entry.paths.len),
             0, // unused
+            .{},
         )) {
             .fail => |fail| {
                 Output.debugWarn("Failed to re-parse source map: {s}", .{fail.msg});
@@ -8144,7 +8200,7 @@ const ErrorReportRequest = struct {
             const result: *const SourceMapStore.GetResult = &(gop.value_ptr.* orelse continue);
 
             // When before the first generated line, remap to the HMR runtime
-            const generated_mappings = result.mappings.items(.generated);
+            const generated_mappings = result.mappings.generated();
             if (frame.position.line.oneBased() < generated_mappings[1].lines) {
                 frame.source_url = .init(runtime_name); // matches value in source map
                 frame.position = .invalid;
@@ -8152,8 +8208,7 @@ const ErrorReportRequest = struct {
             }
 
             // Remap the frame
-            const remapped = SourceMap.Mapping.find(
-                result.mappings,
+            const remapped = result.mappings.find(
                 frame.position.line.oneBased(),
                 frame.position.column.zeroBased(),
             );
@@ -8495,7 +8550,6 @@ const Transpiler = bun.transpiler.Transpiler;
 const BundleV2 = bun.bundle_v2.BundleV2;
 const Chunk = bun.bundle_v2.Chunk;
 const ContentHasher = bun.bundle_v2.ContentHasher;
-
 
 const uws = bun.uws;
 const AnyWebSocket = uws.AnyWebSocket;

@@ -1,8 +1,13 @@
 #include "NodeVMModule.h"
 #include "NodeVMSourceTextModule.h"
+#include "NodeVMSyntheticModule.h"
 
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
+#include "JavaScriptCore/JSPromise.h"
+#include "JavaScriptCore/Watchdog.h"
+
+#include "../vm/SigintWatcher.h"
 
 namespace Bun {
 
@@ -19,56 +24,184 @@ void NodeVMModuleRequest::addImportAttribute(WTF::String key, WTF::String value)
 
 JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, 2);
+    RETURN_IF_EXCEPTION(scope, {});
+
     array->putDirectIndex(globalObject, 0, JSC::jsString(globalObject->vm(), m_specifier));
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSObject* attributes = JSC::constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
     for (const auto& [key, value] : m_importAttributes) {
         attributes->putDirect(globalObject->vm(), JSC::Identifier::fromString(globalObject->vm(), key), JSC::jsString(globalObject->vm(), value),
             PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
+        RETURN_IF_EXCEPTION(scope, {});
     }
     array->putDirectIndex(globalObject, 1, attributes);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return array;
 }
 
-NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context)
+void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout);
+
+JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (m_status != Status::Linked && m_status != Status::Evaluated && m_status != Status::Errored) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be linked, evaluated or errored before evaluating"_s);
+        return {};
+    }
+
+    if (m_status == Status::Evaluated) {
+        return m_evaluationResult.get();
+    }
+
+    auto* sourceTextThis = jsDynamicCast<NodeVMSourceTextModule*>(this);
+    auto* syntheticThis = jsDynamicCast<NodeVMSyntheticModule*>(this);
+
+    AbstractModuleRecord* record {};
+    if (sourceTextThis) {
+        record = sourceTextThis->moduleRecord(globalObject);
+    } else if (syntheticThis) {
+        record = syntheticThis->moduleRecord(globalObject);
+    } else {
+        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid module type");
+    }
+
+    JSValue result {};
+
+    NodeVMGlobalObject* nodeVmGlobalObject = NodeVM::getGlobalObjectFromContext(globalObject, m_context.get(), false);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (nodeVmGlobalObject) {
+        globalObject = nodeVmGlobalObject;
+    }
+
+    auto run = [&] {
+        if (sourceTextThis) {
+            status(Status::Evaluating);
+            evaluateDependencies(globalObject, record, timeout, breakOnSigint);
+            RETURN_IF_EXCEPTION(scope, );
+            sourceTextThis->initializeImportMeta(globalObject);
+        } else if (syntheticThis) {
+            syntheticThis->evaluate(globalObject);
+        }
+        RETURN_IF_EXCEPTION(scope, );
+        result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
+    };
+
+    setSigintReceived(false);
+
+    std::optional<double> oldLimit, newLimit;
+
+    if (timeout != 0) {
+        setupWatchdog(vm, timeout, &oldLimit.emplace(), &newLimit.emplace());
+    }
+
+    if (breakOnSigint) {
+        auto holder = SigintWatcher::hold(nodeVmGlobalObject, this);
+        run();
+    } else {
+        run();
+    }
+
+    if (timeout != 0) {
+        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
+    }
+
+    if (vm.hasPendingTerminationException()) {
+        scope.clearException();
+        vm.clearHasTerminationRequest();
+        if (getSigintReceived()) {
+            setSigintReceived(false);
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+        } else if (timeout != 0) {
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
+        } else {
+            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.SourceTextModule evaluation terminated due neither to SIGINT nor to timeout");
+        }
+    } else {
+        setSigintReceived(false);
+    }
+
+    if (JSC::Exception* exception = scope.exception()) {
+        status(Status::Errored);
+        if (sourceTextThis) {
+            sourceTextThis->m_evaluationException.set(vm, this, exception);
+        }
+        return {};
+    }
+
+    status(Status::Evaluated);
+    m_evaluationResult.set(vm, this, result);
+    return result;
+}
+
+NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper)
     : Base(vm, structure)
     , m_identifier(WTFMove(identifier))
+    , m_moduleWrapper(vm, this, moduleWrapper)
 {
     if (context.isObject()) {
         m_context.set(vm, this, asObject(context));
     }
 }
 
-bool NodeVMModule::finishInstantiate(JSC::JSGlobalObject* globalObject, WTF::Deque<NodeVMSourceTextModule*>& stack, unsigned* dfsIndex)
+void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint)
 {
-    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(this)) {
-        return thisObject->finishInstantiate(globalObject, stack, dfsIndex);
-        // } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(this)) {
-        // return thisObject->finishInstantiate(globalObject);
-    }
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    return true;
+    for (const auto& request : record->requestedModules()) {
+        if (auto iter = m_resolveCache.find(WTF::String(*request.m_specifier)); iter != m_resolveCache.end()) {
+            auto* dependency = jsCast<NodeVMModule*>(iter->value.get());
+            RELEASE_ASSERT(dependency != nullptr);
+
+            if (dependency->status() == Status::Unlinked) {
+                if (auto* syntheticDependency = jsDynamicCast<NodeVMSyntheticModule*>(dependency)) {
+                    syntheticDependency->link(globalObject, nullptr, nullptr, jsUndefined());
+                    RETURN_IF_EXCEPTION(scope, );
+                }
+            }
+
+            if (dependency->status() == Status::Linked) {
+                JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
+                RETURN_IF_EXCEPTION(scope, );
+                RELEASE_ASSERT_WITH_MESSAGE(jsDynamicCast<JSC::JSPromise*>(dependencyResult) == nullptr, "TODO(@heimskr): implement async support for node:vm module dependencies");
+            }
+        }
+    }
 }
 
 JSValue NodeVMModule::createModuleRecord(JSC::JSGlobalObject* globalObject)
 {
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(this)) {
         return thisObject->createModuleRecord(globalObject);
+    } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(this)) {
+        thisObject->createModuleRecord(globalObject);
+        return jsUndefined();
     }
 
-    ASSERT_NOT_REACHED();
-    return JSC::jsUndefined();
+    RELEASE_ASSERT_NOT_REACHED();
+    return jsUndefined();
 }
 
 AbstractModuleRecord* NodeVMModule::moduleRecord(JSC::JSGlobalObject* globalObject)
 {
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(this)) {
         return thisObject->moduleRecord(globalObject);
+    } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(this)) {
+        return thisObject->moduleRecord(globalObject);
     }
 
-    ASSERT_NOT_REACHED();
+    RELEASE_ASSERT_NOT_REACHED();
     return nullptr;
 }
 
@@ -78,11 +211,11 @@ NodeVMModule* NodeVMModule::create(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
     JSValue disambiguator = args.at(2);
 
     if (disambiguator.isString()) {
-        return NodeVMSourceTextModule::create(vm, globalObject, args);
+        RELEASE_AND_RETURN(scope, NodeVMSourceTextModule::create(vm, globalObject, args));
     }
 
     if (disambiguator.inherits(JSArray::info())) {
-        // return NodeVMSyntheticModule::create(vm, globalObject, args);
+        RELEASE_AND_RETURN(scope, NodeVMSyntheticModule::create(vm, globalObject, args));
     }
 
     throwArgumentTypeError(*globalObject, scope, 2, "sourceText or syntheticExportNames"_s, "Module"_s, "Module"_s, "string or array"_s);
@@ -96,16 +229,19 @@ JSModuleNamespaceObject* NodeVMModule::namespaceObject(JSC::JSGlobalObject* glob
         return object;
     }
 
-    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(this)) {
+    if (auto* thisObject = jsDynamicCast<NodeVMModule*>(this)) {
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
-        object = thisObject->moduleRecord(globalObject)->getModuleNamespace(globalObject);
+        AbstractModuleRecord* record = thisObject->moduleRecord(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        object = record->getModuleNamespace(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (object) {
             namespaceObject(vm, object);
         }
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("NodeVMModule::namespaceObject called on an unsupported module type (%s)", info()->className.characters());
+        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("NodeVMModule::namespaceObject called on an unsupported module type (%s)", classInfo()->className.characters());
     }
 
     return object;
@@ -166,19 +302,19 @@ void NodeVMModulePrototype::finishCreation(JSC::VM& vm)
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeVmModuleGetterIdentifier, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    auto* thisObject = jsCast<NodeVMSourceTextModule*>(JSC::JSValue::decode(thisValue));
+    auto* thisObject = jsCast<NodeVMModule*>(JSC::JSValue::decode(thisValue));
     return JSValue::encode(JSC::jsString(globalObject->vm(), thisObject->identifier()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatusCode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* thisObject = jsCast<NodeVMSourceTextModule*>(callFrame->thisValue());
+    auto* thisObject = jsCast<NodeVMModule*>(callFrame->thisValue());
     return JSValue::encode(JSC::jsNumber(static_cast<uint32_t>(thisObject->status())));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatus, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* thisObject = jsCast<NodeVMSourceTextModule*>(callFrame->thisValue());
+    auto* thisObject = jsCast<NodeVMModule*>(callFrame->thisValue());
 
     using enum NodeVMModule::Status;
     switch (thisObject->status()) {
@@ -201,8 +337,15 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatus, (JSC::JSGlobalObject * globalO
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetNamespace, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* thisObject = jsCast<NodeVMSourceTextModule*>(callFrame->thisValue());
-    return JSValue::encode(thisObject->namespaceObject(globalObject));
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* thisObject = jsDynamicCast<NodeVMModule*>(callFrame->thisValue())) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->namespaceObject(globalObject)));
+    }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -224,18 +367,24 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetError, (JSC::JSGlobalObject * globalOb
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     auto* thisObject = jsCast<NodeVMModule*>(callFrame->thisValue());
 
     if (auto* sourceTextModule = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
         sourceTextModule->ensureModuleRecord(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     const WTF::Vector<NodeVMModuleRequest>& requests = thisObject->moduleRequests();
 
     JSArray* array = constructEmptyArray(globalObject, nullptr, requests.size());
+    RETURN_IF_EXCEPTION(scope, {});
 
     for (unsigned i = 0; const NodeVMModuleRequest& request : requests) {
         array->putDirectIndex(globalObject, i++, request.toJS(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSValue::encode(array);
@@ -258,14 +407,12 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalOb
         breakOnSigint = breakOnSigintValue.asBoolean();
     }
 
-    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
-        return JSValue::encode(thisObject->evaluate(globalObject, timeout, breakOnSigint));
-        // } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
-        //     return thisObject->link(globalObject, specifiers, moduleNatives);
-    } else {
-        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
-        return {};
+    if (auto* thisObject = jsDynamicCast<NodeVMModule*>(callFrame->thisValue())) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->evaluate(globalObject, timeout, breakOnSigint)));
     }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -285,25 +432,49 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject
     }
 
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
-        return JSValue::encode(thisObject->link(globalObject, specifiers, moduleNatives, callFrame->argument(2)));
-        // return thisObject->link(globalObject, linker);
-        // } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
-        //     return thisObject->link(globalObject, specifiers, moduleNatives);
-    } else {
-        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
-        return {};
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->link(globalObject, specifiers, moduleNatives, callFrame->argument(2))));
     }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule"_s);
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleInstantiate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    // auto* thisObject = jsCast<NodeVMSourceTextModule*>(callFrame->thisValue());
-    return JSC::encodedJSUndefined();
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->instantiate(globalObject)));
+    }
+
+    if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->instantiate(globalObject)));
+    }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleSetExport, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    // auto* thisObject = jsCast<NodeVMSourceTextModule*>(callFrame->thisValue());
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
+        JSValue nameValue = callFrame->argument(0);
+        if (!nameValue.isString()) {
+            Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "name"_str, "string"_s, nameValue);
+            return {};
+        }
+        JSValue exportValue = callFrame->argument(1);
+        thisObject->setExport(globalObject, nameValue.toWTFString(globalObject), exportValue);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        throwTypeError(globalObject, scope, "This function must be called on a SyntheticModule"_s);
+        return {};
+    }
+
     return JSC::encodedJSUndefined();
 }
 
@@ -313,7 +484,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData, (JSC::JSGlobalObject * 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
-        return JSValue::encode(thisObject->cachedData(globalObject));
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->cachedData(globalObject)));
     }
 
     throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule"_s);
@@ -335,6 +506,8 @@ void NodeVMModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(vmModule->m_namespaceObject);
     visitor.append(vmModule->m_context);
+    visitor.append(vmModule->m_evaluationResult);
+    visitor.append(vmModule->m_moduleWrapper);
 
     auto moduleNatives = vmModule->m_resolveCache.values();
     visitor.append(moduleNatives.begin(), moduleNatives.end());
@@ -350,6 +523,7 @@ constructModule(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     ArgList args(callFrame);
 
     NodeVMModule* module = NodeVMModule::create(vm, globalObject, args);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(module);
 }
@@ -388,8 +562,8 @@ void NodeVMModuleConstructor::finishCreation(VM& vm, JSObject* prototype)
     ASSERT(inherits(info()));
 }
 
-const JSC::ClassInfo NodeVMModule::s_info = { "NodeVMSourceTextModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMSourceTextModule) };
-const JSC::ClassInfo NodeVMModulePrototype::s_info = { "NodeVMSourceTextModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMModulePrototype) };
+const JSC::ClassInfo NodeVMModule::s_info = { "NodeVMModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMModule) };
+const JSC::ClassInfo NodeVMModulePrototype::s_info = { "NodeVMModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMModulePrototype) };
 const JSC::ClassInfo NodeVMModuleConstructor::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMModuleConstructor) };
 
 } // namespace Bun

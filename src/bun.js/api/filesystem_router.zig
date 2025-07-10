@@ -14,7 +14,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
 const Request = WebCore.Request;
 const Environment = bun.Environment;
-const URLPath = @import("../../http/url_path.zig");
+const URLPath = @import("../../http/URLPath.zig");
 const URL = @import("../../url.zig").URL;
 const Log = bun.logger;
 const Resolver = @import("../../resolver/resolver.zig").Resolver;
@@ -99,16 +99,16 @@ pub const FileSystemRouter = struct {
                 return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array", .{});
             }
 
-            var iter = file_extensions.arrayIterator(globalThis);
+            var iter = try file_extensions.arrayIterator(globalThis);
             extensions.ensureTotalCapacityPrecise(iter.len) catch unreachable;
-            while (iter.next()) |val| {
+            while (try iter.next()) |val| {
                 if (!val.isString()) {
                     origin_str.deinit();
                     arena.deinit();
                     globalThis.allocator().destroy(arena);
                     return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array of strings", .{});
                 }
-                if (val.getLength(globalThis) == 0) continue;
+                if (try val.getLength(globalThis) == 0) continue;
                 extensions.appendAssumeCapacity(((try val.toSlice(globalThis, allocator)).clone(allocator) catch unreachable).slice()[1..]);
             }
         }

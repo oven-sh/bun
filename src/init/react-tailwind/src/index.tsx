@@ -37,3 +37,5 @@ const server = serve({
     console: true,
   },
 });
+
+console.log(`🚀 Server running at ${server.url}`);

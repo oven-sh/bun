@@ -177,6 +177,47 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("css/CSSTrimLeadingLayerStatements", {
+    files: {
+      "/main.css": /* css */ `
+        @layer one;
+        @layer two;
+        @layer three;
+
+        @import url("./a.css") layer(one);
+        @import url("./b.css") layer(two);
+        @import url("./c.css") layer(three);
+      `,
+      "/a.css": `body { margin: 0; }`,
+      "/b.css": `h1 { font-family: sans-serif; }`,
+      "/c.css": `.text-centered { text-align: center; }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+  /* a.css */
+  @layer one {
+    body {
+      margin: 0;
+    }
+  }
+  /* b.css */
+  @layer two {
+    h1 {
+      font-family: sans-serif;
+    }
+  }
+  /* c.css */
+  @layer three {
+    .text-centered {
+      text-align: center;
+    }
+  }
+  /* main.css */
+  `);
+    },
+  });
+
   // TODO: re-enable these tests when we do minify local css identifiers
   // itBundled("css/TestImportLocalCSSFromJSMinifyIdentifiersAvoidGlobalNames", {
   //   files: {

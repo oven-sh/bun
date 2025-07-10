@@ -1522,10 +1522,10 @@ pub fn transpileSourceCode(
                     defer buf.deinit();
                     var writer = buf.writer();
                     JSC.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
-                    break :brk bun.String.createUTF8ForJS(globalObject.?, buf.slice());
+                    break :brk try bun.String.createUTF8ForJS(globalObject.?, buf.slice());
                 }
 
-                break :brk bun.String.createUTF8ForJS(globalObject.?, path.text);
+                break :brk try bun.String.createUTF8ForJS(globalObject.?, path.text);
             };
 
             return ResolvedSource{

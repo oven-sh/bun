@@ -495,7 +495,7 @@ pub fn fromJS(
                     \\    "/path3/:param1/:param2": (req) => new Response("Hello")
                     \\  }
                     \\
-                    \\Learn more at https://bun.sh/docs/api/http
+                    \\Learn more at https://bun.com/docs/api/http
                 , .{});
             };
             args.had_routes_object = true;
@@ -651,7 +651,7 @@ pub fn fromJS(
                         \\});
                         \\```
                         \\
-                        \\See https://bun.sh/docs/api/http for more information.
+                        \\See https://bun.com/docs/api/http for more information.
                     ,
                         .{},
                     );
@@ -904,7 +904,7 @@ pub fn fromJS(
                 \\       return new Response("Hello")
                 \\     }
                 \\
-                \\Learn more at https://bun.sh/docs/api/http
+                \\Learn more at https://bun.com/docs/api/http
             , .{});
         } else {
             if (global.hasException()) return error.JSError;

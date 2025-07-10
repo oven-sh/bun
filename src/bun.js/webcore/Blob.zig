@@ -3634,7 +3634,6 @@ pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u
                 global,
                 store,
                 JSC.array_buffer.BlobArrayBuffer_deallocator,
-                null,
             );
         },
         .temporary => {
@@ -3643,10 +3642,7 @@ pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u
                 return global.throwOutOfMemory();
             }
 
-            return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJS(
-                global,
-                null,
-            );
+            return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJS(global);
         },
     }
 }

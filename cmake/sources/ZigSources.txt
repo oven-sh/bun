@@ -562,6 +562,11 @@ src/install/hoisted_install.zig
 src/install/install_binding.zig
 src/install/install.zig
 src/install/integrity.zig
+src/install/isolated_install.zig
+src/install/isolated_install/Hardlinker.zig
+src/install/isolated_install/Installer.zig
+src/install/isolated_install/Store.zig
+src/install/isolated_install/Symlinker.zig
 src/install/lifecycle_script_runner.zig
 src/install/lockfile.zig
 src/install/lockfile/Buffers.zig
@@ -644,6 +649,10 @@ src/options.zig
 src/output.zig
 src/OutputFile.zig
 src/patch.zig
+src/paths.zig
+src/paths/EnvPath.zig
+src/paths/path_buffer_pool.zig
+src/paths/Path.zig
 src/perf.zig
 src/pool.zig
 src/Progress.zig

@@ -148,7 +148,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellman, (JSGlobalObject * lexicalGlobalObject,
     }
 
     std::optional<DhJobCtx> ctx = DhJobCtx::fromJS(lexicalGlobalObject, scope, options);
-    ASSERT(ctx.has_value() == !scope.exception());
+    EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!callbackValue.isUndefined()) {

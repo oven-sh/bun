@@ -1,6 +1,6 @@
 unsafe_http_client: AsyncHTTP = undefined,
 response: bun.http.HTTPClientResult = .{},
-task_id: u64,
+task_id: Task.Id,
 url_buf: []const u8 = &[_]u8{},
 retried: u16 = 0,
 allocator: std.mem.Allocator,
@@ -24,7 +24,7 @@ next: ?*NetworkTask = null,
 pub const DedupeMapEntry = struct {
     is_required: bool,
 };
-pub const DedupeMap = std.HashMap(u64, DedupeMapEntry, IdentityContext(u64), 80);
+pub const DedupeMap = std.HashMap(Task.Id, DedupeMapEntry, IdentityContext(Task.Id), 80);
 
 pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, result: bun.http.HTTPClientResult) void {
     defer this.package_manager.wake();

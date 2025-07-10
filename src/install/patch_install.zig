@@ -84,7 +84,7 @@ pub const PatchTask = struct {
         cache_dir_subpath_without_patch_hash: stringZ,
 
         /// this is non-null if this was called before a Task, for example extracting
-        task_id: ?Task.Id.Type = null,
+        task_id: ?Task.Id = null,
         install_context: ?struct {
             dependency_id: DependencyID,
             tree_id: Lockfile.Tree.Id,
@@ -324,7 +324,7 @@ pub const PatchTask = struct {
             .cache_dir_subpath = this.callback.apply.cache_dir_subpath_without_patch_hash,
             .destination_dir_subpath = tempdir_name,
             .destination_dir_subpath_buf = tmpname_buf[0..],
-            .patch = .{},
+            .patch = null,
             .progress = null,
             .package_name = pkg_name,
             .package_version = resolution_label,

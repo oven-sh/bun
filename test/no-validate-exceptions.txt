@@ -34,6 +34,7 @@ test/bundler/esbuild/css.test.ts
 test/bundler/esbuild/dce.test.ts
 test/bundler/esbuild/extra.test.ts
 test/bundler/esbuild/importstar.test.ts
+test/cli/install/isolated-install.test.ts
 test/bundler/esbuild/importstar_ts.test.ts
 test/bundler/esbuild/loader.test.ts
 test/bundler/esbuild/lower.test.ts
@@ -195,6 +196,7 @@ test/js/bun/spawn/spawn-stdin-readable-stream-sync.test.ts
 test/js/bun/spawn/spawn-stdin-readable-stream.test.ts
 test/js/bun/spawn/spawn-stream-serve.test.ts
 test/js/bun/spawn/spawn-streaming-stdout.test.ts
+test/js/node/module/sourcemap.test.js
 test/js/bun/spawn/spawn-stress.test.ts
 test/js/bun/spawn/spawn.ipc.bun-node.test.ts
 test/js/bun/spawn/spawn.ipc.node-bun.test.ts
@@ -1522,6 +1524,7 @@ test/js/node/test/parallel/test-vm-module-errors.js
 test/js/node/test/parallel/test-vm-module-import-meta.js
 test/js/node/test/parallel/test-vm-module-link.js
 test/js/node/test/parallel/test-vm-module-reevaluate.js
+test/js/node/test/parallel/test-vm-module-referrer-realm.mjs
 test/js/node/test/parallel/test-vm-module-synthetic.js
 test/js/node/test/parallel/test-vm-new-script-context.js
 test/js/node/test/parallel/test-vm-new-script-new-context.js

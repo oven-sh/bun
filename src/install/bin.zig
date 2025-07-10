@@ -563,8 +563,7 @@ pub const Bin = extern struct {
         // linking each tree.
         seen: ?*bun.StringHashMap(void),
 
-        node_modules: bun.FileDescriptor,
-        node_modules_path: []const u8,
+        node_modules_path: *bun.AbsPath(.{}),
 
         /// Used for generating relative paths
         package_name: strings.StringOrTinyString,
@@ -692,7 +691,11 @@ pub const Bin = extern struct {
                     return;
                 }
 
-                bun.makePath(this.node_modules.stdDir(), ".bin") catch {};
+                const node_modules_path_save = this.node_modules_path.save();
+                this.node_modules_path.append(".bin");
+                bun.makePath(std.fs.cwd(), this.node_modules_path.slice()) catch {};
+                node_modules_path_save.restore();
+
                 break :bunx_file bun.sys.File.openatOSPath(bun.invalid_fd, abs_bunx_file, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664).unwrap() catch |real_err| {
                     this.err = real_err;
                     return;
@@ -785,7 +788,11 @@ pub const Bin = extern struct {
                             return;
                         }
 
-                        bun.makePath(this.node_modules.stdDir(), ".bin") catch {};
+                        const node_modules_path_save = this.node_modules_path.save();
+                        this.node_modules_path.append(".bin");
+                        bun.makePath(std.fs.cwd(), this.node_modules_path.slice()) catch {};
+                        node_modules_path_save.restore();
+
                         switch (bun.sys.symlink(rel_target, abs_dest)) {
                             .err => |real_error| {
                                 // It was just created, no need to delete destination and symlink again
@@ -815,7 +822,7 @@ pub const Bin = extern struct {
 
         /// uses `this.abs_target_buf`
         pub fn buildTargetPackageDir(this: *const Linker) []const u8 {
-            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.node_modules_path);
+            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.node_modules_path.slice());
 
             var remain = this.abs_target_buf;
 
@@ -834,7 +841,7 @@ pub const Bin = extern struct {
         }
 
         pub fn buildDestinationDir(this: *const Linker, global: bool) []u8 {
-            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.node_modules_path);
+            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.node_modules_path.slice());
 
             var remain = this.abs_dest_buf;
             if (global) {

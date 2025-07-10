@@ -678,7 +678,7 @@ pub fn AstMaybe(
     };
 }
 
-// @sortImports @noRemoveUnused
+// @sortImports
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -423,7 +423,7 @@ pub fn CreateBinaryExpressionVisitor(
     };
 }
 
-// @sortImports @noRemoveUnused
+// @sortImports
 
 const std = @import("std");
 

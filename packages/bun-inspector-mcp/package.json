@@ -1,12 +1,15 @@
 {
   "name": "bun-inspector-mcp",
-  "module": "index.ts",
+  "main": "./index.ts",
   "type": "module",
   "private": true,
-  "devDependencies": {
-    "@types/bun": "latest"
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "build": "bun build --target=node --outfile=index.js --minify-syntax ./index.ts"
   },
-  "peerDependencies": {
-    "typescript": "^5"
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.15.1",
+    "@types/bun": "latest",
+    "@typescript/native-preview": "^7.0.0-dev.20250711.1"
   }
 }

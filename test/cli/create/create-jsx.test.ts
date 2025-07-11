@@ -160,7 +160,7 @@ for (const development of [true, false]) {
         }
       });
 
-      test.todoIf(isWindows)("build", async () => {
+      test("build", async () => {
         {
           const process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
             cwd: dir,

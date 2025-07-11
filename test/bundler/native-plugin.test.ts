@@ -408,7 +408,7 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
   });
 
   // don't know how to reliably test this on windows
-  it.skipIf(process.platform === "win32")("prints name when plugin crashes", async () => {
+  it("prints name when plugin crashes", async () => {
     const prelude = /* ts */ `import values from "./stuff.ts"
   const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       `;

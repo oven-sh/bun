@@ -11,6 +11,7 @@ export const sharedTypes: Record<string, string> = {
   "char": "u8",
   "unsigned char": "u8",
   "signed char": "i8",
+  "char16_t": "u16",
   "short": "c_short",
   "unsigned short": "c_ushort",
   "int": "c_int",

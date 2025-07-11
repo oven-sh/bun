@@ -58,21 +58,21 @@ extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl)
     impl->ref();
 }
 
-extern "C" bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
+extern "C" [[ZIG_EXPORT(nothrow)]] bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
 {
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     *bunString = Bun::toString(globalObject, value);
     return bunString->tag != BunStringTag::Dead;
 }
 
-extern "C" BunString BunString__createAtom(const char* bytes, size_t length)
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__createAtom(const char* bytes, size_t length)
 {
     ASSERT(simdutf::validate_ascii(bytes, length));
     auto atom = tryMakeAtomString(String(StringImpl::createWithoutCopying({ bytes, length })));
     return { BunStringTag::WTFStringImpl, { .wtf = atom.releaseImpl().leakRef() } };
 }
 
-extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__tryCreateAtom(const char* bytes, size_t length)
 {
     if (simdutf::validate_ascii(bytes, length)) {
         auto atom = tryMakeAtomString(String(StringImpl::createWithoutCopying({ bytes, length })));
@@ -133,7 +133,7 @@ extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC
 }
 
 // int64_t max to say "not a number"
-extern "C" int64_t BunString__toInt32(BunString* bunString)
+extern "C" [[ZIG_EXPORT(nothrow)]] int64_t BunString__toInt32(const BunString* bunString)
 {
     if (bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead) {
         return std::numeric_limits<int64_t>::max();
@@ -190,7 +190,7 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
-extern "C" void BunString__toThreadSafe(BunString* str)
+extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toThreadSafe(BunString* str)
 {
     if (str->tag == BunStringTag::WTFStringImpl) {
         auto impl = str->impl.wtf->isolatedCopy();
@@ -285,7 +285,7 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject
     return JSValue::encode(Bun::toJS(globalObject, *bunString));
 }
 
-extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16Unitialized(size_t length)
 {
     ASSERT(length > 0);
     std::span<char16_t> ptr;
@@ -296,7 +296,7 @@ extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
-extern "C" BunString BunString__fromLatin1Unitialized(size_t length)
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1Unitialized(size_t length)
 {
     ASSERT(length > 0);
     std::span<LChar> ptr;
@@ -329,7 +329,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
     return Bun::toString(impl.leakRef());
 }
 
-extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1(const char* bytes, size_t length)
 {
     ASSERT(length > 0);
     std::span<LChar> ptr;
@@ -342,7 +342,7 @@ extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
-extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t length)
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t length)
 {
     ASSERT(length > 0);
     ASSERT_WITH_MESSAGE(simdutf::validate_utf16le(bytes, length), "This function only accepts ascii UTF16 strings");
@@ -358,7 +358,7 @@ extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t 
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
-extern "C" BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
 {
     ASSERT(length > 0);
     std::span<char16_t> ptr;
@@ -370,7 +370,7 @@ extern "C" BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
-extern "C" BunString BunString__fromBytes(const char* bytes, size_t length)
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromBytes(const char* bytes, size_t length)
 {
     ASSERT(length > 0);
     if (simdutf::validate_ascii(bytes, length)) {
@@ -437,7 +437,7 @@ extern "C" JSC::EncodedJSValue BunString__createArray(
     return JSValue::encode(array);
 }
 
-extern "C" void BunString__toWTFString(BunString* bunString)
+extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toWTFString(BunString* bunString)
 {
     WTF::String str;
     if (bunString->tag == BunStringTag::ZigString) {

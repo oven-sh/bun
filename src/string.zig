@@ -56,15 +56,8 @@ pub const String = extern struct {
     pub const dead = String{ .tag = .Dead, .value = .{ .Dead = {} } };
     pub const StringImplAllocator = @import("string/WTFStringImpl.zig").StringImplAllocator;
 
-    extern fn BunString__fromLatin1(bytes: [*]const u8, len: usize) String;
-    extern fn BunString__fromBytes(bytes: [*]const u8, len: usize) String;
-    extern fn BunString__fromUTF16(bytes: [*]const u16, len: usize) String;
-    extern fn BunString__fromUTF16ToLatin1(bytes: [*]const u16, len: usize) String;
-    extern fn BunString__fromLatin1Unitialized(len: usize) String;
-    extern fn BunString__fromUTF16Unitialized(len: usize) String;
-    extern fn BunString__toInt32(this: String) i64;
-    pub fn toInt32(this: String) ?i32 {
-        const val = BunString__toInt32(this);
+    pub fn toInt32(this: *const String) ?i32 {
+        const val = bun.cpp.BunString__toInt32(this);
         if (val > std.math.maxInt(i32)) return null;
         return @intCast(val);
     }
@@ -122,7 +115,7 @@ pub const String = extern struct {
 
     fn createUninitializedLatin1(len: usize) struct { String, []u8 } {
         bun.assert(len > 0);
-        const string = BunString__fromLatin1Unitialized(len);
+        const string = bun.cpp.BunString__fromLatin1Unitialized(len);
         _ = validateRefCount(string);
         const wtf = string.value.WTFStringImpl;
         return .{
@@ -133,7 +126,7 @@ pub const String = extern struct {
 
     fn createUninitializedUTF16(len: usize) struct { String, []u16 } {
         bun.assert(len > 0);
-        const string = BunString__fromUTF16Unitialized(len);
+        const string = bun.cpp.BunString__fromUTF16Unitialized(len);
         _ = validateRefCount(string);
         const wtf = string.value.WTFStringImpl;
         return .{
@@ -175,7 +168,7 @@ pub const String = extern struct {
     pub fn createLatin1(bytes: []const u8) String {
         JSC.markBinding(@src());
         if (bytes.len == 0) return String.empty;
-        return validateRefCount(BunString__fromLatin1(bytes.ptr, bytes.len));
+        return validateRefCount(bun.cpp.BunString__fromLatin1(&bytes.ptr[0], bytes.len));
     }
 
     pub inline fn validateRefCount(this: String) String {
@@ -197,9 +190,9 @@ pub const String = extern struct {
     pub fn createUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
         if (bun.strings.firstNonASCII16([]const u16, bytes) == null) {
-            return validateRefCount(BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len));
+            return validateRefCount(bun.cpp.BunString__fromUTF16ToLatin1(&bytes.ptr[0], bytes.len));
         }
-        return validateRefCount(BunString__fromUTF16(bytes.ptr, bytes.len));
+        return validateRefCount(bun.cpp.BunString__fromUTF16(&bytes.ptr[0], bytes.len));
     }
 
     pub fn createFormat(comptime fmt: [:0]const u8, args: anytype) OOM!String {
@@ -251,17 +244,14 @@ pub const String = extern struct {
         return createUTF8(this.byteSlice());
     }
 
-    extern fn BunString__createAtom(bytes: [*]const u8, len: usize) String;
-    extern fn BunString__tryCreateAtom(bytes: [*]const u8, len: usize) String;
-
     /// Must be given ascii input
     pub fn createAtomASCII(bytes: []const u8) String {
-        return BunString__createAtom(bytes.ptr, bytes.len);
+        return bun.cpp.BunString__createAtom(&bytes.ptr[0], bytes.len);
     }
 
     /// Will return null if the input is non-ascii or too long
     pub fn tryCreateAtom(bytes: []const u8) ?String {
-        const atom = BunString__tryCreateAtom(bytes.ptr, bytes.len);
+        const atom = bun.cpp.BunString__tryCreateAtom(&bytes.ptr[0], bytes.len);
         return if (atom.tag == .Dead) null else atom;
     }
 
@@ -518,7 +508,7 @@ pub const String = extern struct {
         scope.init(globalObject, @src());
         defer scope.deinit();
         var out: String = String.dead;
-        const ok = BunString__fromJS(globalObject, value, &out);
+        const ok = bun.cpp.BunString__fromJS(globalObject, value, &out);
 
         // If there is a pending exception, but stringifying succeeds, we don't return JSError.
         // We do need to always call hasException() to satisfy the need for an exception check.
@@ -570,7 +560,7 @@ pub const String = extern struct {
     pub fn toWTF(this: *String) void {
         JSC.markBinding(@src());
 
-        BunString__toWTFString(this);
+        bun.cpp.BunString__toWTFString(this);
     }
 
     pub inline fn length(this: String) usize {
@@ -831,12 +821,9 @@ pub const String = extern struct {
         return this.toSlice(allocator);
     }
 
-    extern fn BunString__fromJS(globalObject: *JSC.JSGlobalObject, value: bun.JSC.JSValue, out: *String) bool;
     extern fn BunString__toJS(globalObject: *JSC.JSGlobalObject, in: *const String) JSC.JSValue;
     extern fn BunString__toJSWithLength(globalObject: *JSC.JSGlobalObject, in: *const String, usize) JSC.JSValue;
     extern fn BunString__toJSDOMURL(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
-    extern fn Bun__parseDate(*JSC.JSGlobalObject, *String) f64;
-    extern fn BunString__toWTFString(this: *String) void;
 
     pub fn createUTF8ForJS(globalObject: *JSC.JSGlobalObject, utf8_slice: []const u8) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
@@ -853,7 +840,7 @@ pub const String = extern struct {
 
     pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {
         JSC.markBinding(@src());
-        return Bun__parseDate(globalObject, this);
+        return bun.cpp.Bun__parseDate(globalObject, this);
     }
 
     pub fn ref(this: String) void {
@@ -1049,14 +1036,12 @@ pub const String = extern struct {
         return bun.strings.eqlLong(this.byteSlice(), value, true);
     }
 
-    extern fn BunString__toThreadSafe(this: *String) void;
-
     /// Does not increment the reference count unless the StringImpl is cloned.
     pub fn toThreadSafe(this: *String) void {
         JSC.markBinding(@src());
 
         if (this.tag == .WTFStringImpl) {
-            BunString__toThreadSafe(this);
+            bun.cpp.BunString__toThreadSafe(this);
         }
     }
 
@@ -1068,7 +1053,7 @@ pub const String = extern struct {
 
         if (this.tag == .WTFStringImpl) {
             const orig = this.value.WTFStringImpl;
-            BunString__toThreadSafe(this);
+            bun.cpp.BunString__toThreadSafe(this);
             if (this.value.WTFStringImpl == orig) {
                 orig.ref();
             }

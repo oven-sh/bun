@@ -1,5 +1,6 @@
 {
   "name": "bun-inspector-mcp",
+  "version": "0.0.0",
   "main": "./index.ts",
   "type": "module",
   "private": true,
@@ -12,5 +13,9 @@
     "@types/bun": "latest",
     "@typescript/native-preview": "^7.0.0-dev.20250711.1",
     "bun-inspector-protocol": "../bun-inspector-protocol/"
+  },
+  "dependencies": {
+    "gunshi": "^0.26.3",
+    "zod": "^3.23.8"
   }
 }

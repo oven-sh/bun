@@ -209,8 +209,8 @@ describe("@types/bun integration test", () => {
   test("checks without lib.dom.d.ts", async () => {
     const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {});
 
-    expect(diagnostics).toEqual([]);
     expect(emptyInterfaces).toEqual(new Set());
+    expect(diagnostics).toEqual([]);
   });
 
   test("checks with lib.dom.d.ts", async () => {
@@ -219,7 +219,6 @@ describe("@types/bun integration test", () => {
     });
 
     expect(emptyInterfaces).toEqual(new Set());
-
     expect(diagnostics).toEqual([
       {
         category: "Error",

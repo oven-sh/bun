@@ -336,12 +336,12 @@ pub fn intoDTO(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
 ///
 /// - The address string is assumed to be ASCII and a valid IP address (either v4 or v6).
 /// - Port is a valid `in_port_t` (between 0 and 2^16) in host byte order.
-pub fn createDTO(globalObject: *JSC.JSGlobalObject, addr_: []const u8, port_: u16, is_ipv6: bool) JSC.JSValue {
+pub fn createDTO(globalObject: *JSC.JSGlobalObject, addr_: []const u8, port_: u16, is_ipv6: bool) bun.JSError!JSC.JSValue {
     if (comptime bun.Environment.isDebug) {
         bun.assertWithLocation(addr_.len > 0, @src());
     }
 
-    return JSSocketAddressDTO__create(globalObject, bun.String.createUTF8ForJS(globalObject, addr_), port_, is_ipv6);
+    return JSSocketAddressDTO__create(globalObject, try bun.String.createUTF8ForJS(globalObject, addr_), port_, is_ipv6);
 }
 
 extern "c" fn JSSocketAddressDTO__create(globalObject: *JSC.JSGlobalObject, address_: JSC.JSValue, port_: u16, is_ipv6: bool) JSC.JSValue;

@@ -837,11 +837,10 @@ pub const String = extern struct {
     extern fn BunString__toJSDOMURL(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
     extern fn Bun__parseDate(*JSC.JSGlobalObject, *String) f64;
     extern fn BunString__toWTFString(this: *String) void;
-    extern fn BunString__createUTF8ForJS(globalObject: *JSC.JSGlobalObject, ptr: [*]const u8, len: usize) JSC.JSValue;
 
     pub fn createUTF8ForJS(globalObject: *JSC.JSGlobalObject, utf8_slice: []const u8) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createUTF8ForJS, .{ globalObject, utf8_slice.ptr, utf8_slice.len });
+        return bun.cpp.BunString__createUTF8ForJS(globalObject, &utf8_slice.ptr[0], utf8_slice.len);
     }
 
     pub fn createFormatForJS(globalObject: *JSC.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError!JSC.JSValue {
@@ -849,7 +848,7 @@ pub const String = extern struct {
         var builder = std.ArrayList(u8).init(bun.default_allocator);
         defer builder.deinit();
         builder.writer().print(fmt, args) catch bun.outOfMemory();
-        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createUTF8ForJS, .{ globalObject, builder.items.ptr, builder.items.len });
+        return bun.cpp.BunString__createUTF8ForJS(globalObject, &builder.items.ptr[0], builder.items.len);
     }
 
     pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {

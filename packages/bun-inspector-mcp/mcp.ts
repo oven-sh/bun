@@ -319,6 +319,317 @@ export async function createMcpServer(): Promise<McpServer> {
     },
   );
 
+  // Debugger control flow tools
+  server.registerTool(
+    "Debugger.pause",
+    {
+      title: "pause debugger",
+      description: "Pause JavaScript execution on the next statement",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+      },
+    },
+    async ({ url }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+      
+      try {
+        await inspector.send("Debugger.pause");
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Debugger will pause on the next statement",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to pause debugger: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "Debugger.resume",
+    {
+      title: "resume debugger",
+      description: "Resume JavaScript execution when paused",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+      },
+    },
+    async ({ url }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+      
+      try {
+        await inspector.send("Debugger.resume");
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Debugger resumed execution",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to resume debugger: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "Debugger.stepInto",
+    {
+      title: "step into",
+      description: "Step into the next function call when paused",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+      },
+    },
+    async ({ url }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+      
+      try {
+        await inspector.send("Debugger.stepInto");
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Stepped into the next function call",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to step into: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "Debugger.stepOver",
+    {
+      title: "step over",
+      description: "Step over the current line when paused",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+      },
+    },
+    async ({ url }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+      
+      try {
+        await inspector.send("Debugger.stepOver");
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Stepped over the current line",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to step over: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "Debugger.stepOut",
+    {
+      title: "step out",
+      description: "Step out of the current function when paused",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+      },
+    },
+    async ({ url }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+      
+      try {
+        await inspector.send("Debugger.stepOut");
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Stepped out of the current function",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to step out: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "Debugger.continueToLocation",
+    {
+      title: "continue to location",
+      description: "Continue execution to a specific location when paused",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+        scriptId: z.string().describe("Script ID to continue to"),
+        lineNumber: z.number().int().min(0).describe("Line number to continue to (0-based)"),
+        columnNumber: z.number().int().min(0).optional().describe("Column number to continue to (0-based)"),
+      },
+    },
+    async ({ url, scriptId, lineNumber, columnNumber }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+      
+      try {
+        await inspector.send("Debugger.continueToLocation", {
+          location: {
+            scriptId: scriptId as string,
+            lineNumber: lineNumber as number,
+            columnNumber: columnNumber as number | undefined,
+          },
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Continuing to ${scriptId}:${lineNumber}${columnNumber !== undefined ? `:${columnNumber}` : ""}`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to continue to location: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "Debugger.setPauseOnExceptions",
+    {
+      title: "set pause on exceptions",
+      description: "Configure the debugger to pause on exceptions",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+        state: z.enum(["none", "uncaught", "all"]).describe("Exception pause mode: none, uncaught, or all"),
+      },
+    },
+    async ({ url, state }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+      
+      try {
+        await inspector.send("Debugger.setPauseOnExceptions", {
+          state: state as "none" | "uncaught" | "all",
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Exception pause mode set to: ${state}`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to set pause on exceptions: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "Debugger.evaluateOnCallFrame",
+    {
+      title: "evaluate on call frame",
+      description: "Evaluate JavaScript expression in the context of a paused call frame",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+        callFrameId: z.string().describe("Call frame ID to evaluate in"),
+        expression: z.string().describe("JavaScript expression to evaluate"),
+        objectGroup: z.string().optional().describe("Symbolic group name for result"),
+        includeCommandLineAPI: z.boolean().optional().describe("Include command line API in evaluation context"),
+        returnByValue: z.boolean().optional().describe("Return result by value instead of reference"),
+      },
+    },
+    async ({ url, callFrameId, expression, objectGroup, includeCommandLineAPI, returnByValue }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+      
+      try {
+        const result = await inspector.send("Debugger.evaluateOnCallFrame", {
+          callFrameId: callFrameId as string,
+          expression: expression as string,
+          objectGroup: objectGroup as string | undefined,
+          includeCommandLineAPI: includeCommandLineAPI as boolean | undefined,
+          returnByValue: returnByValue as boolean | undefined,
+        });
+        
+        const resultString = remoteObjectToString(result.result, true);
+        
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                result: resultString,
+                wasThrown: result.wasThrown,
+                exceptionDetails: result.exceptionDetails,
+              }),
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to evaluate on call frame: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
   // Heap profiling tools
   server.registerTool(
     "Heap.enable",

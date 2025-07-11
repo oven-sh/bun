@@ -99,6 +99,6 @@
 #endif
 
 // can be nothrow | zero_is_throw | check_slow
-#define ZIG_EXPORT(mode)
+#define ZIG_EXPORT(...)
 
 #endif

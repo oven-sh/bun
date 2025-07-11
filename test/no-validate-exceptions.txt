@@ -91,6 +91,7 @@ test/js/third_party/grpc-js/test-retry.test.ts
 test/js/third_party/mongodb/mongodb.test.ts
 test/js/third_party/pino/pino.test.js
 test/js/node/test/parallel/test-util-callbackify.js
+test/js/bun/http/serve.test.ts
 # ProgramExecutable::initializeGlobalProperties
 # missing RELEASE_AND_RETURN
 test/js/node/test/parallel/test-repl-syntax-error-handling.js

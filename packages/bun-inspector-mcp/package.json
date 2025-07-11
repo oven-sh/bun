@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "typecheck": "tsgo --noEmit",
-    "build": "bun build --target=node --outfile=index.js --minify-syntax ./index.ts"
+    "build": "bun build --target=node --outfile=index.js --minify-syntax ./index.ts",
+    "build:memory": "bun build --target=node --outfile=memory-index.js --minify-syntax ./memory-index.ts"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",

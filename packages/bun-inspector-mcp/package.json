@@ -8,7 +8,7 @@
     "typecheck": "tsgo --noEmit",
     "build": "bun build --target=node --outfile=index.js --minify-syntax ./index.ts",
     "start": "bun run index.ts",
-    "inspect": "DANGEROUSLY_OMIT_AUTH=true bun x mcp-inspector"
+    "inspect": "DANGEROUSLY_OMIT_AUTH=true bun x mcp-inspector bun index.ts"
   },
   "devDependencies": {
     "@modelcontextprotocol/inspector": "^0.16.1",

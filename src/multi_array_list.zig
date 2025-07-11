@@ -369,7 +369,7 @@ pub fn MultiArrayList(comptime T: type) type {
 
             const other_bytes = gpa.alignedAlloc(
                 u8,
-                @alignOf(Elem),
+                .fromByteUnits(@alignOf(Elem)),
                 capacityInBytes(new_len),
             ) catch {
                 const self_slice = self.slice();
@@ -444,7 +444,7 @@ pub fn MultiArrayList(comptime T: type) type {
             assert(new_capacity >= self.len);
             const new_bytes = try gpa.alignedAlloc(
                 u8,
-                @alignOf(Elem),
+                .fromByteUnits(@alignOf(Elem)),
                 capacityInBytes(new_capacity),
             );
             if (self.len == 0) {

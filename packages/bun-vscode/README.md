@@ -119,6 +119,6 @@ You can use the following configurations to customize the behavior of the Bun ex
   "bun.test.filePattern": "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}",
 
   // The custom script to call for testing instead of `bun test`
-  "bun.test.customScript": "bun-debug test"
+  "bun.test.customScript": "bun-debug test",
 }
 ```

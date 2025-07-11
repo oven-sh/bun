@@ -56,7 +56,7 @@ pub const StatWatcherScheduler = struct {
     }
 
     fn deinit(this: *StatWatcherScheduler) void {
-        bun.assertf(!this.watchers.isEmpty(), "destroying StatWatcherScheduler while it still has watchers", .{});
+        bun.assertf(this.watchers.isEmpty(), "destroying StatWatcherScheduler while it still has watchers", .{});
         bun.destroy(this);
     }
 

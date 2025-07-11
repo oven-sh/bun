@@ -44,6 +44,13 @@ extern "C" JSC::Exception* CatchScope__exceptionIncludingTraps(void* ptr)
     return nullptr;
 }
 
+extern "C" void CatchScope__clearException(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
+    auto* scope = static_cast<CatchScope*>(ptr);
+    scope->clearException();
+}
+
 extern "C" void CatchScope__destruct(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);

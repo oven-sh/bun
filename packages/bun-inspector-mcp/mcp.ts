@@ -12,6 +12,7 @@ import {
   gcEventsMap,
   cpuProfilesMap,
 } from "./inspector";
+import { Hono } from "hono";
 
 export async function createMcpServer(): Promise<McpServer> {
   const server = new McpServer({

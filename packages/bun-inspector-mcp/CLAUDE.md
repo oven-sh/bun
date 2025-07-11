@@ -42,6 +42,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 2. **Runtime.evaluate** - Execute JavaScript in the runtime context
 3. **Debugger.getScriptSource** - Retrieve source code for a specific script
 4. **getConsoleMessages** - Get buffered console messages from the inspector
+5. **Debugger.setBreakpointByUrl** - Set a breakpoint by file URL and line number
+6. **Debugger.setBreakpoint** - Set a breakpoint by script ID and line number
+7. **Debugger.removeBreakpoint** - Remove a breakpoint by its ID
+8. **Debugger.setBreakpointsActive** - Activate or deactivate all breakpoints
 
 ### Protocol Integration
 
@@ -55,11 +59,12 @@ This package depends on `../bun-inspector-protocol/` which provides:
 
 1. User registers an inspector URL through the `registerInspector` tool
 2. A WebSocket connection is established to the Bun debugger
-3. Event listeners are set up for:
+3. On successful connection, the debugger is automatically enabled via `Debugger.enable`
+4. Event listeners are set up for:
    - `Inspector.connected/error` - Connection status
    - `Debugger.paused` - Breakpoint hits with call frames
    - `Runtime.consoleAPICalled` - Console messages
-4. Tools can then interact with the connected debugger
+5. Tools can then interact with the connected debugger
 
 ### State Storage
 
@@ -73,10 +78,11 @@ The inspector maintains three key maps:
 ### Adding New Tools
 
 To add a new debugging tool:
-1. Define the tool in `mcp.ts` using the MCP SDK's `server.tool()` method
+1. Define the tool in `mcp.ts` using the MCP SDK's `server.registerTool()` method (not `server.tool()`)
 2. Implement the handler that interacts with the inspector instance
 3. Use appropriate protocol methods from the WebKit Inspector Protocol
 4. Handle errors gracefully and return structured responses
+5. Use type assertions for zod-parsed inputs when TypeScript inference fails
 
 ### Type Safety
 
@@ -96,3 +102,6 @@ To add a new debugging tool:
 - The MCP server uses stdio transport for communication
 - Console messages are buffered in memory - consider limits for production use
 - The inspector connection is stateful - ensure proper cleanup on disconnection
+- When registering MCP tools, always use `server.registerTool()` method instead of `server.tool()` for compatibility
+- Type assertions may be needed when working with zod-parsed inputs in tool handlers
+- The debugger is automatically enabled when connecting to an inspector

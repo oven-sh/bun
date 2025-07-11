@@ -398,6 +398,40 @@ class Database {
     return SQL.loadExtension(this.#handle, name, entryPoint);
   }
 
+  // Code for transactions is largely copied from better-sqlite3
+  // https://github.com/JoshuaWise/better-sqlite3/blob/master/lib/methods/function.js
+  // thank you @JoshuaWise!
+  defineFunction(name, options, fn) {
+    // Apply defaults
+    options ??= {};
+    if (typeof options === "function") {
+      fn = options;
+      options = {};
+    }
+
+    // Validate arguments
+    if (typeof name !== "string") throw new TypeError("Expected first argument to be a string");
+    if (typeof fn !== "function") throw new TypeError("Expected last argument to be a function");
+    if (typeof options !== "object") throw new TypeError("Expected second argument to be an options object");
+    if (!name) throw new TypeError("User-defined function name cannot be an empty string");
+
+    // Interpret options
+    const deterministic = getBooleanOption(options, "deterministic");
+    const directOnly = getBooleanOption(options, "directOnly");
+    const varargs = getBooleanOption(options, "varargs");
+    let argCount = -1;
+
+    // Determine argument count
+    if (!varargs) {
+      argCount = fn.length;
+      if (!Number.isInteger(argCount) || argCount < 0)
+        throw new TypeError("Expected function.length to be a positive integer");
+      if (argCount > 100) throw new RangeError("User-defined functions cannot have more than 100 arguments");
+    }
+
+    SQL.defineFunction(this.#handle, fn, name, argCount, deterministic, directOnly);
+  }
+
   serialize(optionalName) {
     return SQL.serialize(this.#handle, optionalName || "main");
   }
@@ -613,6 +647,14 @@ const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, 
       throw ex;
     }
   };
+
+const getBooleanOption = (options, key) => {
+  let value = false;
+  if (key in options && typeof (value = options[key]) !== "boolean") {
+    throw new TypeError(`Expected the "${key}" option to be a boolean`);
+  }
+  return value;
+};
 
 // This class is never actually thrown
 // so we implement instanceof so that it could theoretically be caught

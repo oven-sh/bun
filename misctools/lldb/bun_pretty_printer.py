@@ -7,6 +7,7 @@ class bun_BabyList_SynthProvider:
         self.value = value
         
     def update(self):
+
         try:
             self.ptr = self.value.GetChildMemberWithName('ptr')
             self.len = self.value.GetChildMemberWithName('len').unsigned
@@ -14,7 +15,10 @@ class bun_BabyList_SynthProvider:
             self.elem_type = self.ptr.type.GetPointeeType()
             self.elem_size = self.elem_type.size
         except:
+            self.len = 0
+            self.cap = 0
             pass
+
             
     def has_children(self): 
         return True

@@ -4,7 +4,14 @@ import { remoteObjectToString } from "bun-inspector-protocol";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as Pkg from "./package.json";
-import { getInspector, consoleMessagesMap, callFramesMap, heapSnapshotsMap, gcEventsMap, cpuProfilesMap } from "./inspector";
+import {
+  getInspector,
+  consoleMessagesMap,
+  callFramesMap,
+  heapSnapshotsMap,
+  gcEventsMap,
+  cpuProfilesMap,
+} from "./inspector";
 
 export async function createMcpServer(): Promise<McpServer> {
   const server = new McpServer({
@@ -331,7 +338,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("Debugger.pause");
         return {
@@ -366,7 +373,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("Debugger.resume");
         return {
@@ -401,7 +408,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("Debugger.stepInto");
         return {
@@ -436,7 +443,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("Debugger.stepOver");
         return {
@@ -471,7 +478,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("Debugger.stepOut");
         return {
@@ -509,7 +516,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url, scriptId, lineNumber, columnNumber }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("Debugger.continueToLocation", {
           location: {
@@ -551,7 +558,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url, state }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("Debugger.setPauseOnExceptions", {
           state: state as "none" | "uncaught" | "all",
@@ -593,7 +600,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url, callFrameId, expression, objectGroup, includeCommandLineAPI, returnByValue }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         const result = await inspector.send("Debugger.evaluateOnCallFrame", {
           callFrameId: callFrameId as string,
@@ -602,9 +609,9 @@ export async function createMcpServer(): Promise<McpServer> {
           includeCommandLineAPI: includeCommandLineAPI as boolean | undefined,
           returnByValue: returnByValue as boolean | undefined,
         });
-        
+
         const resultString = remoteObjectToString(result.result, true);
-        
+
         return {
           content: [
             {
@@ -642,7 +649,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("Heap.enable");
         return {
@@ -677,7 +684,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("Heap.disable");
         return {
@@ -712,15 +719,18 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         const result = await inspector.send("Heap.snapshot");
-        
+
         // Store the snapshot
         const urlObj = new URL(url as string);
         const snapshots = heapSnapshotsMap.get(urlObj) ?? [];
-        heapSnapshotsMap.set(urlObj, [...snapshots, { timestamp: result.timestamp, snapshotData: result.snapshotData }]);
-        
+        heapSnapshotsMap.set(urlObj, [
+          ...snapshots,
+          { timestamp: result.timestamp, snapshotData: result.snapshotData },
+        ]);
+
         return {
           content: [
             {
@@ -757,7 +767,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("Heap.gc");
         return {
@@ -792,7 +802,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("Heap.startTracking");
         return {
@@ -827,7 +837,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("Heap.stopTracking");
         return {
@@ -916,12 +926,12 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url, heapObjectId }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         const result = await inspector.send("Heap.getPreview", {
           heapObjectId: heapObjectId as number,
         });
-        
+
         return {
           content: [
             {
@@ -960,15 +970,15 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url, heapObjectId, objectGroup }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         const result = await inspector.send("Heap.getRemoteObject", {
           heapObjectId: heapObjectId as number,
           objectGroup: objectGroup as string | undefined,
         });
-        
+
         const resultString = remoteObjectToString(result.result, true);
-        
+
         return {
           content: [
             {
@@ -1006,7 +1016,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url, includeSamples }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("ScriptProfiler.startTracking", {
           includeSamples: includeSamples as boolean | undefined,
@@ -1043,7 +1053,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         await inspector.send("ScriptProfiler.stopTracking");
         return {
@@ -1112,7 +1122,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url, objectId, ownProperties, accessorPropertiesOnly, generatePreview }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         const result = await inspector.send("Runtime.getProperties", {
           objectId: objectId as string,
@@ -1120,7 +1130,7 @@ export async function createMcpServer(): Promise<McpServer> {
           accessorPropertiesOnly: accessorPropertiesOnly as boolean | undefined,
           generatePreview: generatePreview as boolean | undefined,
         });
-        
+
         return {
           content: [
             {
@@ -1161,7 +1171,7 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url, functionDeclaration, objectId, arguments: args, returnByValue, generatePreview }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         const result = await inspector.send("Runtime.callFunctionOn", {
           functionDeclaration: functionDeclaration as string,
@@ -1170,9 +1180,9 @@ export async function createMcpServer(): Promise<McpServer> {
           returnByValue: returnByValue as boolean | undefined,
           generatePreview: generatePreview as boolean | undefined,
         });
-        
+
         const resultString = remoteObjectToString(result.result, true);
-        
+
         return {
           content: [
             {
@@ -1212,16 +1222,16 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async ({ url, promiseObjectId, returnByValue, generatePreview }) => {
       const inspector = getInspector({ url: new URL(url as string) });
-      
+
       try {
         const result = await inspector.send("Runtime.awaitPromise", {
           promiseObjectId: promiseObjectId as string,
           returnByValue: returnByValue as boolean | undefined,
           generatePreview: generatePreview as boolean | undefined,
         });
-        
+
         const resultString = remoteObjectToString(result.result, true);
-        
+
         return {
           content: [
             {
@@ -1254,5 +1264,5 @@ export async function startMcpServer(): Promise<void> {
   const server = await createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.info("MCP Server running on stdio");
+  console.warn("MCP Server running on stdio");
 }

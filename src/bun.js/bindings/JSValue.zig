@@ -46,14 +46,12 @@ pub const JSValue = enum(i64) {
         return @as(JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(ptr)))));
     }
 
-    extern fn JSC__JSValue__coerceToInt32(this: JSValue, globalThis: *JSC.JSGlobalObject) i32;
     pub fn coerceToInt32(this: JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!i32 {
-        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__coerceToInt32, .{ this, globalThis });
+        return bun.cpp.JSC__JSValue__coerceToInt32(this, globalThis);
     }
 
-    extern fn JSC__JSValue__coerceToInt64(this: JSValue, globalThis: *JSC.JSGlobalObject) i64;
     pub fn coerceToInt64(this: JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!i64 {
-        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__coerceToInt64, .{ this, globalThis });
+        return bun.cpp.JSC__JSValue__coerceToInt64(this, globalThis);
     }
 
     pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSError!JSValue {
@@ -644,16 +642,13 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    extern fn JSC__JSValue__jsBoolean(i: bool) JSValue;
     pub inline fn jsBoolean(i: bool) JSValue {
-        return JSC__JSValue__jsBoolean(i);
+        return bun.cpp.JSC__JSValue__jsBoolean(i);
     }
 
-    extern fn JSC__JSValue__jsDoubleNumber(i: f64) JSValue;
 
-    extern fn JSC__JSValue__jsEmptyString(globalThis: *JSGlobalObject) JSValue;
     pub inline fn jsEmptyString(globalThis: *JSGlobalObject) JSValue {
-        return JSC__JSValue__jsEmptyString(globalThis);
+        return bun.cpp.JSC__JSValue__jsEmptyString(globalThis);
     }
 
     pub inline fn jsNull() JSValue {
@@ -664,9 +659,8 @@ pub const JSValue = enum(i64) {
         return jsNumberWithType(@TypeOf(number), number);
     }
 
-    extern fn JSC__JSValue__jsTDZValue() JSValue;
     pub inline fn jsTDZValue() JSValue {
-        return JSC__JSValue__jsTDZValue();
+        return bun.cpp.JSC__JSValue__jsTDZValue();
     }
 
     pub fn className(this: JSValue, globalThis: *JSGlobalObject) ZigString {
@@ -765,13 +759,11 @@ pub const JSValue = enum(i64) {
     pub fn jsDoubleNumber(i: f64) JSValue {
         return FFI.DOUBLE_TO_JSVALUE(i).asJSValue;
     }
-    extern fn JSC__JSValue__jsNumberFromChar(i: u8) JSValue;
     pub fn jsNumberFromChar(i: u8) JSValue {
-        return JSC__JSValue__jsNumberFromChar(i);
+        return bun.cpp.JSC__JSValue__jsNumberFromChar(i);
     }
-    extern fn JSC__JSValue__jsNumberFromU16(i: u16) JSValue;
     pub fn jsNumberFromU16(i: u16) JSValue {
-        return JSC__JSValue__jsNumberFromU16(i);
+        return bun.cpp.JSC__JSValue__jsNumberFromU16(i);
     }
     pub fn jsNumberFromInt32(i: i32) JSValue {
         return FFI.INT32_TO_JSVALUE(i).asJSValue;

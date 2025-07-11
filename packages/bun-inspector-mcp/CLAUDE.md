@@ -50,22 +50,37 @@ For general Bun development guidance and API reference, see: https://bun.sh/llms
 7. **Debugger.removeBreakpoint** - Remove a breakpoint by its ID
 8. **Debugger.setBreakpointsActive** - Activate or deactivate all breakpoints
 
+#### Debugger Control Flow Tools
+9. **Debugger.pause** - Pause JavaScript execution on the next statement
+10. **Debugger.resume** - Resume JavaScript execution when paused
+11. **Debugger.stepInto** - Step into the next function call when paused
+12. **Debugger.stepOver** - Step over the current line when paused
+13. **Debugger.stepOut** - Step out of the current function when paused
+14. **Debugger.continueToLocation** - Continue execution to a specific location when paused
+15. **Debugger.setPauseOnExceptions** - Configure the debugger to pause on exceptions (none/uncaught/all)
+16. **Debugger.evaluateOnCallFrame** - Evaluate JavaScript expression in the context of a paused call frame
+
 #### Memory Profiling Tools
-9. **Heap.enable** - Enable heap profiling events including garbage collection tracking
-10. **Heap.disable** - Disable heap profiling events
-11. **Heap.snapshot** - Take a heap memory snapshot
-12. **Heap.gc** - Trigger a full garbage collection
-13. **Heap.startTracking** - Start tracking heap memory changes
-14. **Heap.stopTracking** - Stop tracking heap memory changes
-15. **Heap.getPreview** - Get preview of a heap object by ID
-16. **Heap.getRemoteObject** - Get remote object reference for heap object
-17. **getHeapSnapshots** - Get all heap snapshots that have been taken
-18. **getGCEvents** - Get all garbage collection events that have occurred
+17. **Heap.enable** - Enable heap profiling events including garbage collection tracking
+18. **Heap.disable** - Disable heap profiling events
+19. **Heap.snapshot** - Take a heap memory snapshot
+20. **Heap.gc** - Trigger a full garbage collection
+21. **Heap.startTracking** - Start tracking heap memory changes
+22. **Heap.stopTracking** - Stop tracking heap memory changes
+23. **Heap.getPreview** - Get preview of a heap object by ID
+24. **Heap.getRemoteObject** - Get remote object reference for heap object
+25. **getHeapSnapshots** - Get all heap snapshots that have been taken
+26. **getGCEvents** - Get all garbage collection events that have occurred
 
 #### CPU Profiling Tools
-19. **ScriptProfiler.startTracking** - Start CPU profiling with optional sampling
-20. **ScriptProfiler.stopTracking** - Stop CPU profiling and get results
-21. **getCPUProfiles** - Get all CPU profiling data that has been collected
+27. **ScriptProfiler.startTracking** - Start CPU profiling with optional sampling
+28. **ScriptProfiler.stopTracking** - Stop CPU profiling and get results
+29. **getCPUProfiles** - Get all CPU profiling data that has been collected
+
+#### Runtime Object Inspection Tools
+30. **Runtime.getProperties** - Get properties of a remote object
+31. **Runtime.callFunctionOn** - Call a function on a remote object
+32. **Runtime.awaitPromise** - Wait for a promise to resolve and return the result
 
 ### Protocol Integration
 

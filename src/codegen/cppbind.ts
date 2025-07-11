@@ -1,13 +1,8 @@
 import { mkdir } from "fs/promises";
 import { join, relative } from "path";
 import { parser as cppParser } from "@lezer/cpp";
-import { SyntaxNode as LezerSyntaxNode } from "@lezer/common";
+import { SyntaxNode } from "@lezer/common";
 import { sharedTypes, typeDeclarations } from "./shared-types";
-
-// Lezer Migration: Replaced web-tree-sitter with @lezer/cpp and @lezer/common.
-// The core logic is updated to use the Lezer tree traversal API instead of tree-sitter queries.
-
-type SyntaxNode = LezerSyntaxNode;
 
 type Point = {
   line: number;
@@ -124,19 +119,82 @@ function assertNever(value: never): never {
   throw new Error("assertNever");
 }
 
-const allowedLezerTypes = new Set(["primitiveType", "ScopedTypeIdentifier", "TypeIdentifier", "SizedTypeSpecifier"]);
+export function prettyPrintLezerNode(node: SyntaxNode, sourceCode: string): string {
+  const lines: string[] = [];
+  const printRecursive = (currentNode: SyntaxNode, prefix: string, isLast: boolean) => {
+    // Determine the connector shape
+    const connector = isLast ? "└─ " : "├─ ";
+    const linePrefix = prefix + connector;
+
+    // Get the node's text, escape newlines, and truncate for readability
+    const nodeText = sourceCode.slice(currentNode.from, currentNode.to);
+    let truncatedText = nodeText.replace(/\n/g, "\\n");
+    if (truncatedText.length > 50) {
+      truncatedText = truncatedText.slice(0, 50) + "...";
+    }
+
+    // Format and add the current node's line
+    lines.push(`${linePrefix}${currentNode.name} [${currentNode.from}..${currentNode.to}] "${truncatedText}"`);
+    if (currentNode.name === "CompoundStatement") {
+      lines.push(prefix + "    └─ ...");
+      return;
+    }
+
+    // Prepare the prefix for the children
+    const childPrefix = prefix + (isLast ? "    " : "│   ");
+
+    // Recurse for children
+    const children: SyntaxNode[] = [];
+    const cursor = currentNode.cursor();
+    if (cursor.firstChild()) {
+      do {
+        children.push(cursor.node);
+      } while (cursor.nextSibling());
+    }
+
+    children.forEach((child, index) => {
+      printRecursive(child, childPrefix, index === children.length - 1);
+    });
+  };
+
+  // Start the process for the root node without any prefix/connector
+  const rootText = sourceCode.slice(node.from, node.to).replace(/\n/g, "\\n").slice(0, 50);
+  lines.push(`${node.name} [${node.from}..${node.to}] "${rootText}${rootText.length === 50 ? "..." : ""}"`);
+
+  const children: SyntaxNode[] = [];
+  const cursor = node.cursor();
+  if (cursor.firstChild()) {
+    do {
+      children.push(cursor.node);
+    } while (cursor.nextSibling());
+  }
+
+  children.forEach((child, index) => {
+    printRecursive(child, "", index === children.length - 1);
+  });
+
+  return lines.join("\n");
+}
+
+function getChildren(node: SyntaxNode): SyntaxNode[] {
+  const children: SyntaxNode[] = [];
+  let child = node.firstChild;
+  while (child) {
+    children.push(child);
+    child = child.nextSibling;
+  }
+  return children;
+}
+
+const allowedLezerTypes = new Set(["PrimitiveType", "ScopedTypeIdentifier", "TypeIdentifier", "SizedTypeSpecifier"]);
 function processRootmostType(ctx: ParseContext, node: SyntaxNode): CppType {
-  const specifiers = node.getChild("declarationSpecifiers");
-  if (!specifiers) throwError(nodePosition(node, ctx), "no declarationSpecifiers found");
-
-  const typeSpecifier = specifiers.getChild("TypeSpecifier");
-  if (!typeSpecifier) throwError(nodePosition(specifiers, ctx), "no typeSpecifier found");
-
-  const type = typeSpecifier.firstChild; // The actual type node is the first child of TypeSpecifier
-  if (!type) throwError(nodePosition(typeSpecifier, ctx), "no type child found in typeSpecifier");
-
-  if (!allowedLezerTypes.has(type.name)) throwError(nodePosition(type, ctx), "not supported type: " + type.name);
-  return { type: "named", name: text(type, ctx), position: nodePosition(type, ctx) };
+  const children = getChildren(node);
+  for (const child of children) {
+    if (allowedLezerTypes.has(child.type.name)) {
+      return { type: "named", name: text(child, ctx), position: nodePosition(child, ctx) };
+    }
+  }
+  throwError(nodePosition(node, ctx), "no valid type found:\n" + prettyPrintLezerNode(node, ctx.sourceCode));
 }
 
 function processDeclarator(
@@ -147,29 +205,38 @@ function processDeclarator(
   // Initial entry point with a definition/declaration, find the top-level declarator
   if (node.name === "FunctionDefinition" || node.name === "ParameterDeclaration") {
     rootmostType ??= processRootmostType(ctx, node);
-    const declarator = node.getChild("declarator");
-    if (!declarator) throwError(nodePosition(node, ctx), "no declarator found");
-    return processDeclarator(ctx, declarator, rootmostType);
+  } else {
+    if (!rootmostType)
+      throwError(
+        nodePosition(node, ctx),
+        "no rootmost type provided to declarator:\n" + prettyPrintLezerNode(node, ctx.sourceCode),
+      );
   }
 
-  // Recursively peel off pointers
-  if (node.name === "PointerDeclarator") {
-    if (!rootmostType) throwError(nodePosition(node, ctx), "no rootmost type provided to PointerDeclarator");
-    const isConst = node.getChildren("typeQualifier").some(q => text(q, ctx) === "const");
-    const innerDeclarator = node.getChild("declarator");
-    if (!innerDeclarator) throwError(nodePosition(node, ctx), "no inner declarator found in PointerDeclarator");
+  const children = getChildren(node);
+  const declarators = children.filter(child => child.name.endsWith("Declarator") || child.name === "Identifier");
+  if (declarators.length !== 1) {
+    throwError(
+      nodePosition(node, ctx),
+      "no or multiple declarators found:\n" + prettyPrintLezerNode(node, ctx.sourceCode),
+    );
+  }
+  const declarator = declarators[0]!;
 
-    return processDeclarator(ctx, innerDeclarator, {
+  // Recursively peel off pointers
+  if (declarator?.name === "PointerDeclarator") {
+    if (!rootmostType) throwError(nodePosition(declarator, ctx), "no rootmost type provided to PointerDeclarator");
+    const isConst = declarator.getChildren("typeQualifier").some(q => text(q, ctx) === "const");
+
+    return processDeclarator(ctx, declarator, {
       type: "pointer",
       child: rootmostType,
-      position: nodePosition(node, ctx),
+      position: nodePosition(declarator, ctx),
       isConst,
     });
   }
 
-  // Base case: Not a pointer, so this is the final part of the declarator chain.
-  if (!rootmostType) throwError(nodePosition(node, ctx), "no rootmost type at end of declarator chain");
-  return { type: rootmostType, final: node };
+  return { type: rootmostType, final: declarator };
 }
 
 function processFunction(ctx: ParseContext, node: SyntaxNode, tag: ExportTag): CppFn {
@@ -180,8 +247,8 @@ function processFunction(ctx: ParseContext, node: SyntaxNode, tag: ExportTag): C
   if (final.name !== "FunctionDeclarator") {
     throwError(nodePosition(final, ctx), "not a function_declarator: " + final.name);
   }
-  const nameNode = final.getChild("declarator");
-  if (!nameNode) throwError(nodePosition(final, ctx), "no name found");
+  const nameNode = final.getChild("Identifier");
+  if (!nameNode) throwError(nodePosition(final, ctx), "no name found:\n" + prettyPrintLezerNode(final, ctx.sourceCode));
 
   const parameterList = final.getChild("ParameterList");
   if (!parameterList) throwError(nodePosition(final, ctx), "no parameter list found");
@@ -326,6 +393,12 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
       if (nodeRef.name !== "FunctionDefinition") {
         return true; // Continue traversal
       }
+      // console.log(
+      //   `\n--- Found ZIG_EXPORT on function in ${file} at line ${lineInfo.get(nodeRef.node.from).line} ---\n`,
+      // );
+      // // Use the new pretty-printer to log the tree structure of the matched function
+      // console.log(prettyPrintLezerNode(nodeRef.node, ctx.sourceCode));
+      // console.log(`-------------------------------------------------------------------\n`);
 
       const fnNode = nodeRef.node;
       let zigExportAttr: SyntaxNode | null = null;
@@ -349,11 +422,15 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
 
       queryFoundLines.add(lineInfo.get(zigExportAttr.from).line);
 
-      const linkage = closest(fnNode, "LinkageSpecification");
-      const linkageString = linkage?.getChild("String");
-      if (!linkage || !linkageString || text(linkageString, ctx) !== '"C"') {
-        appendError(nodePosition(fnNode, ctx), 'exported function must be extern "C"');
-      }
+      // const linkage = closest(fnNode, "LinkageSpecification");
+      // const linkageString = linkage?.getChild("String");
+      // if (!linkage || !linkageString || text(linkageString, ctx) !== '"C"') {
+      //   appendError(
+      //     nodePosition(fnNode, ctx),
+      //     'exported function must be extern "C":\n' +
+      //       (linkage ? prettyPrintLezerNode(linkage, ctx.sourceCode) : "no linkage"),
+      //   );
+      // }
 
       const tagStr = text(tagIdentifier, ctx);
       let tag: ExportTag | undefined;

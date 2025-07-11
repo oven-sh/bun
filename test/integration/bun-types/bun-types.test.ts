@@ -241,24 +241,26 @@ describe("@types/bun integration test", () => {
   });
 
   describe("test-globals reference", () => {
+    const code = `
+      const test_shouldBeAFunction: Function = test;
+      const it_shouldBeAFunction: Function = it;
+      const describe_shouldBeAFunction: Function = describe;
+      const expect_shouldBeAFunction: Function = expect;
+      const beforeAll_shouldBeAFunction: Function = beforeAll;
+      const beforeEach_shouldBeAFunction: Function = beforeEach;
+      const afterEach_shouldBeAFunction: Function = afterEach;
+      const afterAll_shouldBeAFunction: Function = afterAll;
+      const setDefaultTimeout_shouldBeAFunction: Function = setDefaultTimeout;
+      const mock_shouldBeAFunction: Function = mock;
+      const spyOn_shouldBeAFunction: Function = spyOn;
+      const jest_shouldBeDefined: object = jest;
+    `;
+
     test("checks without lib.dom.d.ts and test-globals references", async () => {
       const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
         files: {
           "reference-the-globals.ts": `/// <reference types="bun/test-globals" />`,
-          "my-test.test.ts": `
-             const test_shouldBeAFunction: Function = test;
-             const it_shouldBeAFunction: Function = it;
-             const describe_shouldBeAFunction: Function = describe;
-             const expect_shouldBeAFunction: Function = expect;
-             const beforeAll_shouldBeAFunction: Function = beforeAll;
-             const beforeEach_shouldBeAFunction: Function = beforeEach;
-             const afterEach_shouldBeAFunction: Function = afterEach;
-             const afterAll_shouldBeAFunction: Function = afterAll;
-             const setDefaultTimeout_shouldBeAFunction: Function = setDefaultTimeout;
-             const mock_shouldBeAFunction: Function = mock;
-             const spyOn_shouldBeAFunction: Function = spyOn;
-             const jest_shouldBeDefined: object = jest;
-           `,
+          "my-test.test.ts": code,
         },
       });
 
@@ -268,24 +270,7 @@ describe("@types/bun integration test", () => {
 
     test("test-globals FAILS when the test-globals.d.ts is not references", async () => {
       const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
-        files: {
-          // Intentionally left out to demonstrate that this should fail
-          // "reference-the-globals.ts": `/// <reference types="bun/test-globals" />`,
-          "my-test.test.ts": `
-             const test_shouldBeAFunction: Function = test;
-             const it_shouldBeAFunction: Function = it;
-             const describe_shouldBeAFunction: Function = describe;
-             const expect_shouldBeAFunction: Function = expect;
-             const beforeAll_shouldBeAFunction: Function = beforeAll;
-             const beforeEach_shouldBeAFunction: Function = beforeEach;
-             const afterEach_shouldBeAFunction: Function = afterEach;
-             const afterAll_shouldBeAFunction: Function = afterAll;
-             const setDefaultTimeout_shouldBeAFunction: Function = setDefaultTimeout;
-             const mock_shouldBeAFunction: Function = mock;
-             const spyOn_shouldBeAFunction: Function = spyOn;
-             const jest_shouldBeDefined: object = jest;
-           `,
-        },
+        files: { "my-test.test.ts": code }, // no reference to bun/test-globals
       });
 
       expect(emptyInterfaces).toEqual(new Set()); // should still have no empty interfaces

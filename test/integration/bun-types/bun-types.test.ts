@@ -87,7 +87,6 @@ async function diagnose(fixtureDir: string, tsconfig: Partial<ts.CompilerOptions
     ...DEFAULT_COMPILER_OPTIONS,
     ...tsconfig,
     skipLibCheck: false, // always check lib files for this integration test (prevent https://github.com/oven-sh/bun/issues/8761 ever happening again)
-    rootDir: root,
   };
 
   const language: ts.LanguageServiceHost = {

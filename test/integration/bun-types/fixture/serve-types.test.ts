@@ -17,23 +17,26 @@ function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) =
   expect(value).toBeInstanceOf(constructor);
 }
 
+export default {
+  fetch: req => Response.json(req.url),
+} satisfies Bun.Serve.Options;
+
 let id = 0;
-function test<T, R extends { [K in keyof R]: Bun.RouterTypes.RouteValue<K & string> }>(
-  serveConfig: Bun.ServeFunctionOptions<T, R>,
+function test<T = undefined, R extends string = never>(
+  options: Bun.Serve.Options<T, R>,
   {
     onConstructorFailure,
     overrideExpectBehavior,
   }: {
     onConstructorFailure?: (error: Error) => void | Promise<void>;
-    overrideExpectBehavior?: (server: Bun.Server) => void | Promise<void>;
+    overrideExpectBehavior?: (server: NoInfer<Bun.Server<T>>) => void | Promise<void>;
   } = {},
 ) {
-  if ("unix" in serveConfig && typeof serveConfig.unix === "string" && process.platform === "win32") {
-    // Skip unix socket tests on Windows
-    return;
-  }
+  const name = `Bun.serve() types test ${++id}`;
 
-  async function testServer(server: Bun.Server) {
+  const skip = "unix" in options && typeof options.unix === "string" && process.platform === "win32";
+
+  async function testServer(server: Bun.Server<T>) {
     if (overrideExpectBehavior) {
       await overrideExpectBehavior(server);
     } else {
@@ -45,9 +48,9 @@ function test<T, R extends { [K in keyof R]: Bun.RouterTypes.RouteValue<K & stri
     }
   }
 
-  it(`Bun.serve() types test ${++id}`, async () => {
+  it.skipIf(skip)(name, async () => {
     try {
-      using server = Bun.serve(serveConfig);
+      using server = Bun.serve(options);
       try {
         await testServer(server);
       } finally {
@@ -103,28 +106,49 @@ test(
 );
 
 test({
+  routes: {
+    "/lol": Bun.file("hey"),
+  },
+});
+
+test({
   websocket: {
     message(ws, message) {
-      expectType<typeof ws>().is<Bun.ServerWebSocket<unknown>>();
+      expectType<typeof ws>().is<Bun.ServerWebSocket<undefined>>();
       ws.send(message);
     },
   },
 
   fetch(req, server) {
+    expectType(req).is<Request>();
+
     // Upgrade to a ServerWebSocket if we can
     // This automatically checks for the `Sec-WebSocket-Key` header
     // meaning you don't have to check headers, you can just call `upgrade()`
     if (server.upgrade(req)) {
       // When upgrading, we return undefined since we don't want to send a Response
-      return;
+      // return;
     }
 
     return new Response("Regular HTTP response");
   },
 });
 
-test({
+test<{ name: string }, "/">({
+  routes: {
+    "/": false,
+  },
   fetch(req, server) {
+    expectType(server.upgrade).is<
+      (
+        req: Request,
+        options: {
+          data?: { name: string };
+          headers?: Bun.HeadersInit;
+        },
+      ) => boolean
+    >;
+
     const url = new URL(req.url);
     if (url.pathname === "/chat") {
       if (
@@ -145,20 +169,24 @@ test({
   },
 
   websocket: {
-    open(ws: Bun.ServerWebSocket<{ name: string }>) {
+    open(ws) {
       console.log("WebSocket opened");
       ws.subscribe("the-group-chat");
     },
 
     message(ws, message) {
+      expectType(message).is<string | Buffer<ArrayBufferLike>>();
       ws.publish("the-group-chat", `${ws.data.name}: ${message.toString()}`);
     },
 
     close(ws, code, reason) {
+      expectType(code).is<number>();
+      expectType(reason).is<string>();
       ws.publish("the-group-chat", `${ws.data.name} left the chat`);
     },
 
     drain(ws) {
+      expectType(ws.data.name).is<string>();
       console.log("Please send me data. I am ready to receive it.");
     },
 
@@ -198,7 +226,7 @@ test({
   },
   websocket: {
     message(ws) {
-      expectType(ws).is<Bun.ServerWebSocket<unknown>>();
+      expectType(ws).is<Bun.ServerWebSocket<undefined>>();
     },
   },
 });
@@ -220,7 +248,6 @@ test(
 );
 
 test(
-  // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
@@ -240,7 +267,6 @@ test(
 );
 
 test(
-  // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
@@ -264,9 +290,13 @@ test(
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
-      server.upgrade(req);
+      if (server.upgrade(req)) {
+        return;
+      }
+
       return new Response();
     },
+    websocket: { message() {} },
   },
   {
     overrideExpectBehavior: server => {
@@ -278,7 +308,6 @@ test(
 );
 
 test(
-  // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
@@ -496,9 +525,9 @@ test({
 });
 
 test(
+  // @ts-expect-error Cannot pass unix and port
   {
     unix: `${tmpdirSync()}/bun.sock`,
-    // @ts-expect-error
     port: 0,
     fetch() {
       return new Response();
@@ -514,9 +543,9 @@ test(
 );
 
 test(
+  // @ts-expect-error cannot pass unix and port at same time
   {
     unix: `${tmpdirSync()}/bun.sock`,
-    // @ts-expect-error
     port: 0,
     fetch(req, server) {
       server.upgrade(req);

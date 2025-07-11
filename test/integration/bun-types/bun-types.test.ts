@@ -153,7 +153,7 @@ function checkForEmptyInterfaces(program: ts.Program, fixtureDir: string) {
   const globalInterfaceNames = new Set<string>();
 
   ts.forEachChild(globalSourceFile, function visit(node) {
-    if (ts.isInterfaceDeclaration(node) && !ts.isNodeDescendantOf(node, ts.isModuleDeclaration)) {
+    if (ts.isInterfaceDeclaration(node)) {
       globalInterfaceNames.add(node.name.text);
     }
     ts.forEachChild(node, visit);

@@ -1,6 +1,6 @@
 import { fileURLToPath, $ as Shell } from "bun";
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";

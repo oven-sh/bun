@@ -316,16 +316,6 @@ set(BUN_CPP_OUTPUTS
   ${CODEGEN_PATH}/cpp.zig
 )
 
-set(LEZER_CPP_INSTALLED ${CWD}/node_modules/@lezer/cpp)
-register_command(
-  COMMAND
-    ${BUN_EXECUTABLE}
-      install
-      --frozen-lockfile
-  OUTPUTS
-    ${LEZER_CPP_INSTALLED}
-)
-
 register_command(
   TARGET
     bun-cppbind
@@ -339,7 +329,6 @@ register_command(
   SOURCES
     ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
     ${BUN_CXX_SOURCES}
-    ${LEZER_CPP_INSTALLED}
   OUTPUTS
     ${BUN_CPP_OUTPUTS}
 )

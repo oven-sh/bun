@@ -646,7 +646,6 @@ pub const JSValue = enum(i64) {
         return bun.cpp.JSC__JSValue__jsBoolean(i);
     }
 
-
     pub inline fn jsEmptyString(globalThis: *JSGlobalObject) JSValue {
         return bun.cpp.JSC__JSValue__jsEmptyString(globalThis);
     }
@@ -816,7 +815,6 @@ pub const JSValue = enum(i64) {
     pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {
         return coerceJSValueDoubleTruncatingT(i64, this.asNumber());
     }
-
 
     /// Decimal values are truncated without rounding.
     /// `-Infinity` and `NaN` coerce to -minInt(64)

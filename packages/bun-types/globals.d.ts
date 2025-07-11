@@ -15,8 +15,14 @@ declare module "bun" {
     type LibEmptyOrBunWebSocket = LibDomIsLoaded extends true ? {} : Bun.WebSocket;
 
     type LibEmptyOrNodeUtilTextEncoder = LibDomIsLoaded extends true ? {} : import("node:util").TextEncoder;
+    type LibEmptyOrNodeStreamWebTextEncoderStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").TextEncoderStream;
 
     type LibEmptyOrNodeUtilTextDecoder = LibDomIsLoaded extends true ? {} : import("node:util").TextDecoder;
+    type LibEmptyOrNodeStreamWebTextDecoderStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").TextDecoderStream;
 
     type LibEmptyOrNodeReadableStream<T> = LibDomIsLoaded extends true
       ? {}
@@ -1656,13 +1662,13 @@ declare var ReadableStreamBYOBRequest: Bun.__internal.UseLibDomIfAvailable<
   { prototype: ReadableStreamBYOBRequest; new (): ReadableStreamBYOBRequest }
 >;
 
-interface TextDecoderStream {}
+interface TextDecoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextDecoderStream {}
 declare var TextDecoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoderStream",
   { prototype: TextDecoderStream; new (): TextDecoderStream }
 >;
 
-interface TextEncoderStream {}
+interface TextEncoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextEncoderStream {}
 declare var TextEncoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextEncoderStream",
   { prototype: TextEncoderStream; new (): TextEncoderStream }

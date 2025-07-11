@@ -30,7 +30,7 @@ describe("bun", () => {
         cwd: tempDir,
         stdout: "pipe",
       });
-      let out = await new Response(subprocess.stdout).text();
+      let out = await subprocess.stdout.text();
       expect(out).not.toContain(testString);
 
       // should not resolve not exported files
@@ -47,7 +47,7 @@ describe("bun", () => {
         cwd: tempDir,
         stdout: "pipe",
       });
-      out = await new Response(subprocess.stdout).text();
+      out = await subprocess.stdout.text();
       expect(out).not.toContain(testString);
 
       // should resolve exported files
@@ -61,7 +61,7 @@ describe("bun", () => {
         cwd: tempDir,
         stdout: "pipe",
       });
-      out = await new Response(subprocess.stdout).text();
+      out = await subprocess.stdout.text();
       expect(out).toContain(testString);
     }
   });

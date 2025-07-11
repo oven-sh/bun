@@ -39,8 +39,8 @@ describe("npmrc", async () => {
     });
     env.BUN_INSTALL_CACHE_DIR = originalCacheDir;
 
-    const out = await Bun.readableStreamToText(stdout);
-    const err = stderrForInstall(await Bun.readableStreamToText(stderr));
+    const out = await stdout.text();
+    const err = stderrForInstall(await stderr.text());
     console.log({ out, err });
     expect(err).toBeEmpty();
     expect(out.endsWith("hi!")).toBeTrue();

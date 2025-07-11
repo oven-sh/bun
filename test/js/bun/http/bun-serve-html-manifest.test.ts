@@ -266,7 +266,7 @@ describe("Bun.serve HTML manifest", () => {
       stdin: "ignore",
     });
 
-    const out = await new Response(proc.stdout).text();
+    const out = await proc.stdout.text();
     await proc.exited;
 
     expect(out).toContain("SUCCESS: Manifest validation failed as expected");
@@ -336,7 +336,7 @@ describe("Bun.serve HTML manifest", () => {
     });
 
     // Read stdout line by line to collect all output
-    const out = await new Response(proc.stdout).text();
+    const out = await proc.stdout.text();
     expect(await proc.exited).toBe(0);
 
     expect(

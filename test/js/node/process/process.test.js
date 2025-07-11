@@ -765,7 +765,7 @@ it("aborts when the uncaughtException handler throws", async () => {
     stderr: "pipe",
   });
   expect(await proc.exited).toBe(7);
-  expect(await new Response(proc.stderr).text()).toContain("bar");
+  expect(await proc.stderr.text()).toContain("bar");
 });
 
 it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
@@ -773,7 +773,7 @@ it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
     stderr: "pipe",
   });
   expect(await proc.exited).toBe(1);
-  expect(await new Response(proc.stderr).text()).toContain("bar");
+  expect(await proc.stderr.text()).toContain("bar");
 });
 
 it("process.hasUncaughtExceptionCaptureCallback", () => {
@@ -1143,7 +1143,7 @@ it.todoIf(isMacOS || isMusl)("should be the node version on the host that we exp
     env: bunEnv,
   });
 
-  let [out, exited] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
+  let [out, exited] = await Promise.all([subprocess.stdout.text(), subprocess.exited]);
   expect(out.trim()).toEqual(isWindows ? "v24.3.0" : "v24.4.0"); // TODO: this *should* be v24.3.0 but scripts/bootstrap.sh needs to be enhanced to do so
   expect(exited).toBe(0);
 });

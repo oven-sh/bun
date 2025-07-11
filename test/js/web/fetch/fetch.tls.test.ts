@@ -366,7 +366,7 @@ it("fetch should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
     });
 
     expect(await proc.exited).toBe(1);
-    expect(await Bun.readableStreamToText(proc.stderr)).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(await proc.stderr.text()).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
   }
 });
 
@@ -399,7 +399,7 @@ it("fetch should ignore NODE_EXTRA_CA_CERTS if it's contains invalid cert", asyn
     });
 
     expect(await proc.exited).toBe(1);
-    const stderr = await Bun.readableStreamToText(proc.stderr);
+    const stderr = await proc.stderr.text();
     expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
     expect(stderr).toContain("ignoring extra certs");
   }

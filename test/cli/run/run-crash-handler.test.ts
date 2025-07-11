@@ -74,7 +74,7 @@ describe("automatic crash reporter", () => {
         stdio: ["ignore", "pipe", "pipe"],
       });
       const exitCode = await proc.exited;
-      const stderr = await Bun.readableStreamToText(proc.stderr);
+      const stderr = await proc.stderr.text();
       console.log(stderr);
 
       await resolve_handler.promise;

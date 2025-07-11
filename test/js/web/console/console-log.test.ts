@@ -12,8 +12,8 @@ it("should log to console correctly", async () => {
     env: bunEnv,
   });
   const exitCode = await exited;
-  const err = (await new Response(stderr).text()).replaceAll("\r\n", "\n");
-  const out = (await new Response(stdout).text()).replaceAll("\r\n", "\n");
+  const err = (await stderr.text()).replaceAll("\r\n", "\n");
+  const out = (await stdout.text()).replaceAll("\r\n", "\n");
   const expected = (await new Response(file(join(import.meta.dir, "console-log.expected.txt"))).text()).replaceAll(
     "\r\n",
     "\n",

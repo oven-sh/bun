@@ -259,7 +259,7 @@ test("confirm (yes) unix newline", async () => {
 
   await proc.exited;
 
-  expect(await new Response(proc.stderr).text()).toBe("Yes\n");
+  expect(await proc.stderr.text()).toBe("Yes\n");
 });
 
 test("confirm (yes) windows newline", async () => {
@@ -277,7 +277,7 @@ test("confirm (yes) windows newline", async () => {
 
   await proc.exited;
 
-  expect(await new Response(proc.stderr).text()).toBe("Yes\n");
+  expect(await proc.stderr.text()).toBe("Yes\n");
 });
 
 test("confirm (no) unix newline", async () => {
@@ -291,7 +291,7 @@ test("confirm (no) unix newline", async () => {
   await proc.stdin.flush();
   await proc.exited;
 
-  expect(await new Response(proc.stderr).text()).toBe("No\n");
+  expect(await proc.stderr.text()).toBe("No\n");
 });
 
 test("confirm (no) windows newline", async () => {
@@ -305,7 +305,7 @@ test("confirm (no) windows newline", async () => {
   await proc.stdin.flush();
   await proc.exited;
 
-  expect(await new Response(proc.stderr).text()).toBe("No\n");
+  expect(await proc.stderr.text()).toBe("No\n");
 });
 
 test("globalThis.self = 123 works", () => {

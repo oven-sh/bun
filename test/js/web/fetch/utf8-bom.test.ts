@@ -121,6 +121,26 @@ describe("UTF-8 BOM should be ignored", () => {
       expect(await Bun.readableStreamToJSON(stream)).toEqual({ "hello": "World" } as any);
     });
 
+    it("in ReadableStream.prototype.text()", async () => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(Buffer.from("\uFEFFHello, World!"));
+          controller.close();
+        },
+      });
+      expect(await stream.text()).toBe("Hello, World!");
+    });
+
+    it("in ReadableStream.prototype.json()", async () => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(Buffer.from('\uFEFF{"hello":"World"}'));
+          controller.close();
+        },
+      });
+      expect(await stream.json()).toEqual({ "hello": "World" } as any);
+    });
+
     it("in Bun.readableStreamToFormData()", async () => {
       const stream = new ReadableStream({
         start(controller) {
@@ -140,6 +160,17 @@ describe("UTF-8 BOM should be ignored", () => {
         },
       });
       const blob = await Bun.readableStreamToBlob(stream);
+      expect(await blob.text()).toBe("Hello, World!");
+    });
+
+    it("in ReadableStream.prototype.blob()", async () => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(Buffer.from("\uFEFFHello, World!"));
+          controller.close();
+        },
+      });
+      const blob = await stream.blob();
       expect(await blob.text()).toBe("Hello, World!");
     });
   });

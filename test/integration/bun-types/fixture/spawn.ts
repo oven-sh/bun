@@ -59,7 +59,7 @@ function depromise<T>(_promise: Promise<T>): T {
     stdin: depromise(fetch("https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js")),
   });
 
-  const text = depromise(new Response(proc.stdout).text());
+  const text = depromise(proc.stdout.text());
   console.log(text); // "const input = "hello world".repeat(400); ..."
 }
 
@@ -104,7 +104,7 @@ function depromise<T>(_promise: Promise<T>): T {
 
 {
   const proc = Bun.spawn(["echo", "hello"]);
-  const text = depromise(new Response(proc.stdout).text());
+  const text = depromise(proc.stdout.text());
   console.log(text); // => "hello"
 }
 

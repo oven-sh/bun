@@ -40,7 +40,7 @@ describe("Bun.spawn", () => {
       stdin: "ignore",
     });
     await process.exited;
-    await Bun.readableStreamToBlob(process.stdout);
+    await process.stdout.blob();
   }
 
   async function dontRead() {
@@ -60,7 +60,7 @@ describe("Bun.spawn", () => {
       stderr: "ignore",
       stdin: "ignore",
     });
-    await Bun.readableStreamToBlob(process.stdout);
+    await process.stdout.blob();
     await process.exited;
   }
 

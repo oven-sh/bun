@@ -315,11 +315,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
     env: bunEnv,
     stdio: ["inherit", "pipe", "pipe"],
   });
-  const [exitCode, out, err] = await Promise.all([
-    proc.exited,
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
+  const [exitCode, out, err] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
   const crashMsg = `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`;
   if (exitCode !== 0) {
     throw new Error(`${crashMsg}: ${err}\n${out}`.trim());

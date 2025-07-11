@@ -280,9 +280,9 @@ it("should send cipher events in the right order", async () => {
     stderr: "pipe",
     env: bunEnv,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).toBeEmpty();
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   // TODO: prefinish and readable (on both cipher and decipher) should be flipped
   // This seems like a bug in our crypto code, which
   expect(out.split("\n")).toEqual([

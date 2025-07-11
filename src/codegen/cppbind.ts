@@ -1,7 +1,7 @@
+import { SyntaxNode } from "@lezer/common";
+import { parser as cppParser } from "@lezer/cpp";
 import { mkdir } from "fs/promises";
 import { join, relative } from "path";
-import { parser as cppParser } from "@lezer/cpp";
-import { SyntaxNode } from "@lezer/common";
 import { sharedTypes, typeDeclarations } from "./shared-types";
 
 type Point = {

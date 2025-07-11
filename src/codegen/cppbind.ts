@@ -1,14 +1,13 @@
 import { mkdir } from "fs/promises";
 import { join, relative } from "path";
-// @ts-ignore
-import CppPath from "tree-sitter-cpp/tree-sitter-cpp.wasm";
-import { Language, Node, Parser, Query } from "web-tree-sitter";
+import { parser as cppParser } from "@lezer/cpp";
+import { SyntaxNode as LezerSyntaxNode } from "@lezer/common";
 import { sharedTypes, typeDeclarations } from "./shared-types";
 
-// https://tree-sitter.github.io/tree-sitter/7-playground.html
+// Lezer Migration: Replaced web-tree-sitter with @lezer/cpp and @lezer/common.
+// The core logic is updated to use the Lezer tree traversal API instead of tree-sitter queries.
 
-// NOTE: Added this alias to match existing code, as SyntaxNode is used but not defined/imported.
-type SyntaxNode = Node;
+type SyntaxNode = LezerSyntaxNode;
 
 type Point = {
   line: number;
@@ -56,7 +55,8 @@ function appendError(position: Srcloc, message: string): PositionedError {
 }
 function appendErrorFromCatch(error: unknown, position: Srcloc): PositionedError {
   if (error instanceof PositionedErrorClass) {
-    return appendError(error.position, error.message);
+    errors.push(error);
+    return error;
   }
   if (error instanceof Error) {
     return appendError(position, error.message);
@@ -66,17 +66,8 @@ function appendErrorFromCatch(error: unknown, position: Srcloc): PositionedError
 function throwError(position: Srcloc, message: string): never {
   throw new PositionedErrorClass(position, message);
 }
-function nodePosition(file: string, node: SyntaxNode): Srcloc {
-  return {
-    file,
-    start: { line: node.startPosition.row + 1, column: node.startPosition.column + 1 },
-    end: { line: node.endPosition.row + 1, column: node.endPosition.column + 1 },
-  };
-}
-function assertNever(value: never): never {
-  throw new Error("assertNever");
-}
 class PositionedErrorClass extends Error {
+  notes: { position: Srcloc; message: string }[] = [];
   constructor(
     public position: Srcloc,
     message: string,
@@ -85,90 +76,141 @@ class PositionedErrorClass extends Error {
   }
 }
 
-const allowedTypes = new Set(["primitive_type", "qualified_identifier", "type_identifier", "sized_type_specifier"]);
-function processRootmostType(file: string, node: SyntaxNode): CppType {
-  const type = node.childrenForFieldName("type")[0];
-  if (!type) throwError(nodePosition(file, node), "no type found");
-  if (!allowedTypes.has(type.type)) throwError(nodePosition(file, type), "not supported: " + type.type);
-  return { type: "named", name: type.text, position: nodePosition(file, type) };
+// Lezer works with offsets, but our errors need line/column. This utility handles the conversion.
+class LineInfo {
+  private lineStarts: number[];
+  constructor(private source: string) {
+    this.lineStarts = [0];
+    for (let i = 0; i < source.length; i++) {
+      if (source[i] === "\n") {
+        this.lineStarts.push(i + 1);
+      }
+    }
+  }
+
+  get(offset: number): Point {
+    // A binary search would be faster, but this is fine for files of this size.
+    let line = 1;
+    let lineStart = 0;
+    for (let i = this.lineStarts.length - 1; i >= 0; i--) {
+      if (this.lineStarts[i] <= offset) {
+        line = i + 1;
+        lineStart = this.lineStarts[i];
+        break;
+      }
+    }
+    const column = offset - lineStart + 1;
+    return { line, column };
+  }
+}
+
+// A context object to pass around file-specific parsing information.
+type ParseContext = {
+  file: string;
+  sourceCode: string;
+  lineInfo: LineInfo;
+};
+
+function nodePosition(node: SyntaxNode, ctx: ParseContext): Srcloc {
+  return {
+    file: ctx.file,
+    start: ctx.lineInfo.get(node.from),
+    end: ctx.lineInfo.get(node.to),
+  };
+}
+const text = (node: SyntaxNode, ctx: ParseContext) => ctx.sourceCode.slice(node.from, node.to);
+
+function assertNever(value: never): never {
+  throw new Error("assertNever");
+}
+
+const allowedLezerTypes = new Set(["primitiveType", "ScopedTypeIdentifier", "TypeIdentifier", "SizedTypeSpecifier"]);
+function processRootmostType(ctx: ParseContext, node: SyntaxNode): CppType {
+  const specifiers = node.getChild("declarationSpecifiers");
+  if (!specifiers) throwError(nodePosition(node, ctx), "no declarationSpecifiers found");
+
+  const typeSpecifier = specifiers.getChild("TypeSpecifier");
+  if (!typeSpecifier) throwError(nodePosition(specifiers, ctx), "no typeSpecifier found");
+
+  const type = typeSpecifier.firstChild; // The actual type node is the first child of TypeSpecifier
+  if (!type) throwError(nodePosition(typeSpecifier, ctx), "no type child found in typeSpecifier");
+
+  if (!allowedLezerTypes.has(type.name)) throwError(nodePosition(type, ctx), "not supported type: " + type.name);
+  return { type: "named", name: text(type, ctx), position: nodePosition(type, ctx) };
 }
 
 function processDeclarator(
-  file: string,
-  node: SyntaxNode,
+  ctx: ParseContext,
+  node: SyntaxNode, // Initially a FunctionDefinition/ParameterDeclaration, then recursively a Declarator variant
   rootmostType?: CppType,
 ): { type: CppType; final: SyntaxNode } {
-  // example: int* spiral() is:
-  // type: primitive_type[int], declarator: pointer_declarator[ declarator: function_declarator[ declarator: identifier[spiral], parameters: parame
+  // Initial entry point with a definition/declaration, find the top-level declarator
+  if (node.name === "FunctionDefinition" || node.name === "ParameterDeclaration") {
+    rootmostType ??= processRootmostType(ctx, node);
+    const declarator = node.getChild("declarator");
+    if (!declarator) throwError(nodePosition(node, ctx), "no declarator found");
+    return processDeclarator(ctx, declarator, rootmostType);
+  }
 
-  const declarators = node.childrenForFieldName("declarator");
-  const declarator = declarators[0];
-  if (!declarator) throwError(nodePosition(file, node), "no declarator found");
+  // Recursively peel off pointers
+  if (node.name === "PointerDeclarator") {
+    if (!rootmostType) throwError(nodePosition(node, ctx), "no rootmost type provided to PointerDeclarator");
+    const isConst = node.getChildren("typeQualifier").some(q => text(q, ctx) === "const");
+    const innerDeclarator = node.getChild("declarator");
+    if (!innerDeclarator) throwError(nodePosition(node, ctx), "no inner declarator found in PointerDeclarator");
 
-  rootmostType ??= processRootmostType(file, node);
-  if (!rootmostType) throwError(nodePosition(file, node), "no rootmost type found");
-
-  const isConst = node.children.some(child => child && child.type === "type_qualifier" && child.text === "const");
-  if (declarator.type === "pointer_declarator") {
-    return processDeclarator(file, declarator, {
+    return processDeclarator(ctx, innerDeclarator, {
       type: "pointer",
       child: rootmostType,
-      position: nodePosition(file, declarator),
+      position: nodePosition(node, ctx),
       isConst,
     });
   }
-  return { type: rootmostType, final: declarator };
+
+  // Base case: Not a pointer, so this is the final part of the declarator chain.
+  if (!rootmostType) throwError(nodePosition(node, ctx), "no rootmost type at end of declarator chain");
+  return { type: rootmostType, final: node };
 }
 
-function processFunction(file: string, node: SyntaxNode, tag: ExportTag): CppFn {
-  // void* spiral()
-
-  const declarator = processDeclarator(file, node);
-  if (!declarator) throwError(nodePosition(file, node), "no declarator found");
+function processFunction(ctx: ParseContext, node: SyntaxNode, tag: ExportTag): CppFn {
+  // `node` is a FunctionDefinition
+  const declarator = processDeclarator(ctx, node);
   const final = declarator.final;
-  if (final.type !== "function_declarator") {
-    throwError(nodePosition(file, final), "not a function_declarator: " + final.type);
+
+  if (final.name !== "FunctionDeclarator") {
+    throwError(nodePosition(final, ctx), "not a function_declarator: " + final.name);
   }
-  const name = final.childrenForFieldName("declarator")[0];
-  if (!name) throwError(nodePosition(file, final), "no name found");
-  const parameterList = final.childrenForFieldName("parameters")[0];
-  if (!parameterList || parameterList.type !== "parameter_list")
-    throwError(nodePosition(file, final), "no parameter list found");
+  const nameNode = final.getChild("declarator");
+  if (!nameNode) throwError(nodePosition(final, ctx), "no name found");
+
+  const parameterList = final.getChild("ParameterList");
+  if (!parameterList) throwError(nodePosition(final, ctx), "no parameter list found");
 
   const parameters: CppParameter[] = [];
-  for (const parameter of parameterList.children) {
-    if (!parameter || parameter.type !== "parameter_declaration") continue;
+  for (const parameter of parameterList.getChildren("ParameterDeclaration")) {
+    const paramDeclarator = processDeclarator(ctx, parameter);
+    const name = paramDeclarator.final;
 
-    const declarator = processDeclarator(file, parameter);
-    if (!declarator) throwError(nodePosition(file, parameter), "no declarator found for parameter");
-    const name = declarator.final;
-    if (name.type !== "identifier") {
-      if (name.type === "reference_declarator") {
-        throwError(nodePosition(file, name), "references are not allowed");
-      }
-      throwError(nodePosition(file, name), "not an identifier: " + name.type);
+    if (name.name === "ReferenceDeclarator") {
+      throwError(nodePosition(name, ctx), "references are not allowed");
     }
-    if (!name) throwError(nodePosition(file, parameter), "no name found for parameter");
+    if (name.name !== "Identifier") {
+      throwError(nodePosition(name, ctx), "parameter name is not an identifier: " + name.name);
+    }
 
-    parameters.push({ type: declarator.type, name: name.text });
+    parameters.push({ type: paramDeclarator.type, name: text(name, ctx) });
   }
 
   return {
     returnType: declarator.type,
-    name: name.text,
+    name: text(nameNode, ctx),
     parameters,
-    position: nodePosition(file, name),
+    position: nodePosition(nameNode, ctx),
     tag,
   };
 }
 
 type ExportTag = "check_slow" | "zero_is_throw" | "nothrow";
-type ShouldExport = {
-  value?: {
-    tag: ExportTag;
-    position: Srcloc;
-  };
-};
 
 const sharedTypesText = await Bun.file("src/codegen/shared-types.ts").text();
 const sharedTypesLines = sharedTypesText.split("\n");
@@ -234,32 +276,34 @@ function generateZigSourceComment(dstDir: string, resultSourceLinks: string[], f
   return `    /// Source: ${fn.name}`;
 }
 
-function closest(node: Node | null, type: string): Node | null {
+function closest(node: SyntaxNode | null, type: string): SyntaxNode | null {
   while (node) {
-    if (node.type === type) return node;
+    if (node.name === type) return node;
     node = node.parent;
   }
   return null;
 }
 
-async function processFile(parserAndQueries: ParserAndQueries, file: string, allFunctions: CppFn[]) {
+type CppParser = typeof cppParser;
+
+async function processFile(parser: CppParser, file: string, allFunctions: CppFn[]) {
   const sourceCode = await Bun.file(file).text();
   if (!sourceCode.includes("[[ZIG_EXPORT(")) return;
 
-  // Find all line numbers with "ZIG_EXPORT" using a simple text search.
-  // This will be our ground truth.
   const sourceCodeLines = sourceCode.split("\n");
   const manualFindLines = new Set<number>();
   for (let i = 0; i < sourceCodeLines.length; i++) {
     if (sourceCodeLines[i].includes("[[ZIG_EXPORT(")) {
-      manualFindLines.add(i + 1); // Line numbers are 1-based
+      manualFindLines.add(i + 1);
     }
   }
 
-  const tree = parserAndQueries.parser.parse(sourceCode);
+  const tree = parser.parse(sourceCode);
+  const lineInfo = new LineInfo(sourceCode);
+  const ctx: ParseContext = { file, sourceCode, lineInfo };
+
   if (!tree) {
     appendError({ file, start: { line: 0, column: 0 }, end: { line: 0, column: 0 } }, "no tree found");
-    // If the tree fails to parse, all manual finds are errors.
     for (const lineNumber of manualFindLines) {
       const lineContent = sourceCodeLines[lineNumber - 1];
       const column = lineContent.indexOf("[[ZIG_EXPORT(") + 3;
@@ -269,54 +313,68 @@ async function processFile(parserAndQueries: ParserAndQueries, file: string, all
           start: { line: lineNumber, column },
           end: { line: lineNumber, column: column + "ZIG_EXPORT(".length },
         },
-        "ZIG_EXPORT found, but tree-sitter failed to parse the file.",
+        "ZIG_EXPORT found, but Lezer failed to parse the file.",
       );
     }
     return;
   }
 
-  const matches = parserAndQueries.query.matches(tree.rootNode);
   const queryFoundLines = new Set<number>();
 
-  for (const match of matches) {
-    // The `attribute.name` capture will point to the "ZIG_EXPORT" identifier.
-    // Record the line number so we can compare against our manual search later.
-    const attributeNameCapture = match.captures.find(c => c.name === "attribute.name");
-    if (attributeNameCapture) {
-      // node.startPosition.row is 0-based.
-      queryFoundLines.add(attributeNameCapture.node.startPosition.row + 1);
-    }
+  tree.iterate({
+    enter: nodeRef => {
+      if (nodeRef.name !== "FunctionDefinition") {
+        return true; // Continue traversal
+      }
 
-    const identifierCapture = match.captures.find(c => c.name === "attribute.identifier");
-    const fnCapture = match.captures.find(c => c.name === "fn");
-    if (!identifierCapture || !fnCapture) continue;
+      const fnNode = nodeRef.node;
+      let zigExportAttr: SyntaxNode | null = null;
+      let tagIdentifier: SyntaxNode | null = null;
 
-    const linkage = closest(fnCapture.node, "linkage_specification");
-    const value = linkage?.childrenForFieldName("value")[0];
-    if (!linkage || value?.type !== "string_literal" || value.text !== '"C"') {
-      appendError(nodePosition(file, fnCapture.node), 'exported function must be extern "C"');
-    }
+      for (const attr of fnNode.getChildren("Attribute")) {
+        const attrNameNode = attr.getChild("AttributeName");
+        if (attrNameNode && text(attrNameNode, ctx) === "ZIG_EXPORT") {
+          zigExportAttr = attr;
+          const args = attr.getChild("AttributeArgs");
+          if (args) {
+            tagIdentifier = args.getChild("Identifier");
+          }
+          break;
+        }
+      }
 
-    const tagStr = identifierCapture.node.text;
-    let tag: ExportTag | undefined;
+      if (!zigExportAttr || !tagIdentifier) {
+        return false; // Not an exported function, prune search
+      }
 
-    if (tagStr === "nothrow" || tagStr === "zero_is_throw" || tagStr === "check_slow") {
-      tag = tagStr;
-    } else {
-      appendError(nodePosition(file, identifierCapture.node), "tag must be nothrow, zero_is_throw, or check_slow");
-      tag = "nothrow";
-    }
+      queryFoundLines.add(lineInfo.get(zigExportAttr.from).line);
 
-    try {
-      const result = processFunction(file, fnCapture.node, tag);
-      allFunctions.push(result);
-    } catch (e) {
-      appendErrorFromCatch(e, nodePosition(file, fnCapture.node));
-    }
-  }
+      const linkage = closest(fnNode, "LinkageSpecification");
+      const linkageString = linkage?.getChild("String");
+      if (!linkage || !linkageString || text(linkageString, ctx) !== '"C"') {
+        appendError(nodePosition(fnNode, ctx), 'exported function must be extern "C"');
+      }
 
-  // Compare the manually found lines with the lines found by the query.
-  // Any line that has ZIG_EXPORT but was not found by the query is an error.
+      const tagStr = text(tagIdentifier, ctx);
+      let tag: ExportTag | undefined;
+      if (tagStr === "nothrow" || tagStr === "zero_is_throw" || tagStr === "check_slow") {
+        tag = tagStr;
+      } else {
+        appendError(nodePosition(tagIdentifier, ctx), "tag must be nothrow, zero_is_throw, or check_slow");
+        tag = "nothrow";
+      }
+
+      try {
+        const result = processFunction(ctx, fnNode, tag);
+        allFunctions.push(result);
+      } catch (e) {
+        appendErrorFromCatch(e, nodePosition(fnNode, ctx));
+      }
+
+      return false; // Don't descend into function body
+    },
+  });
+
   for (const lineNumber of manualFindLines) {
     if (!queryFoundLines.has(lineNumber)) {
       const lineContent = sourceCodeLines[lineNumber - 1];
@@ -328,7 +386,7 @@ async function processFile(parserAndQueries: ParserAndQueries, file: string, all
       };
       appendError(
         position,
-        "ZIG_EXPORT was found on this line, but the tree-sitter query did not match it. Ensure it's in the form `[[ZIG_EXPORT(tag)]]` before a function definition.",
+        "ZIG_EXPORT was found on this line, but the Lezer parser did not find a valid C++ attribute on a function definition. Ensure it's in the form `[[ZIG_EXPORT(tag)]]` before a function definition.",
       );
     }
   }
@@ -338,11 +396,12 @@ async function renderError(position: Srcloc, message: string, label: string, col
   const fileContent = await Bun.file(position.file).text();
   const lines = fileContent.split("\n");
   const line = lines[position.start.line - 1];
+  if (line === undefined) return;
 
   console.error(
     `\x1b[m${position.file}:${position.start.line}:${position.start.column}: ${color}\x1b[1m${label}:\x1b[m ${message}`,
   );
-  const before = `${position.start.column} |   ${line.substring(0, position.start.column - 1)}`;
+  const before = `${position.start.line} |   ${line.substring(0, position.start.column - 1)}`;
   const after = line.substring(position.start.column - 1);
   console.error(`\x1b[90m${before}${after}\x1b[m`);
   let length = position.start.line === position.end.line ? position.end.column - position.start.column : 1;
@@ -415,11 +474,6 @@ async function readFileOrEmpty(file: string): Promise<string> {
   }
 }
 
-type ParserAndQueries = {
-  parser: Parser;
-  query: Query;
-};
-
 async function main() {
   const args = process.argv.slice(2);
   const rootDir = args[0];
@@ -430,26 +484,7 @@ async function main() {
   }
   await mkdir(dstDir, { recursive: true });
 
-  await Parser.init();
-  const Cpp = await Language.load(CppPath);
-
-  const parser = new Parser();
-  parser.setLanguage(Cpp as unknown as Language);
-  const query = new Query(
-    Cpp as unknown as Language,
-    `(
-      (function_definition
-        (attribute_declaration
-          (attribute
-            name: (identifier) @attribute.name
-            (#eq? @attribute.name "ZIG_EXPORT")
-            (argument_list (identifier) @attribute.identifier)
-          )
-        )
-      )
-      @fn
-    )`,
-  );
+  const parser = cppParser;
 
   const allCppFiles = (await Bun.file("cmake/sources/CxxSources.txt").text())
     .trim()
@@ -460,14 +495,7 @@ async function main() {
 
   const allFunctions: CppFn[] = [];
   for (const file of allCppFiles) {
-    await processFile(
-      {
-        parser,
-        query,
-      },
-      file,
-      allFunctions,
-    );
+    await processFile(parser, file, allFunctions);
   }
 
   const resultRaw: string[] = [];

@@ -316,14 +316,14 @@ set(BUN_CPP_OUTPUTS
   ${CODEGEN_PATH}/cpp.zig
 )
 
-set(TREE_SITTER_INSTALLED ${CWD}/node_modules/web-tree-sitter)
+set(LEZER_CPP_INSTALLED ${CWD}/node_modules/@lezer/cpp)
 register_command(
   COMMAND
     ${BUN_EXECUTABLE}
       install
       --frozen-lockfile
   OUTPUTS
-    ${TREE_SITTER_INSTALLED}
+    ${LEZER_CPP_INSTALLED}
 )
 
 register_command(
@@ -339,7 +339,7 @@ register_command(
   SOURCES
     ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
     ${BUN_CXX_SOURCES}
-    ${TREE_SITTER_INSTALLED}
+    ${LEZER_CPP_INSTALLED}
   OUTPUTS
     ${BUN_CPP_OUTPUTS}
 )

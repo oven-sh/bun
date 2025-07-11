@@ -28,6 +28,7 @@ export class BunTestController implements vscode.Disposable {
 
   private setupTestController(): void {
     this.testController.resolveHandler = async testItem => {
+      if (!testItem) return;
       await this.staticDiscoverTests(testItem);
     };
 
@@ -207,11 +208,6 @@ export class BunTestController implements vscode.Disposable {
     if (!targetPath && testItem) {
       targetPath = testItem?.uri?.fsPath || this.workspaceFolder.uri.fsPath;
     }
-
-    if (!testItem && !targetPath) {
-      return;
-    }
-
     if (!targetPath) {
       return;
     }
@@ -221,7 +217,7 @@ export class BunTestController implements vscode.Disposable {
       const testNodes = this.parseTestBlocks(fileContent);
 
       const fileUri = vscode.Uri.file(windowsVscodeUri(targetPath));
-      let fileTestItem = this.testController.items.get(windowsVscodeUri(targetPath));
+      let fileTestItem = testItem || this.testController.items.get(windowsVscodeUri(targetPath));
       if (!fileTestItem) {
         fileTestItem = this.testController.createTestItem(
           fileUri.toString(),

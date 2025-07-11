@@ -12,7 +12,7 @@ declare module "bun" {
     | ReadableStream;
 
   /**
-   * The [Bun shell](https://bun.sh/docs/runtime/shell) is a powerful tool for running shell commands.
+   * The [Bun shell](https://bun.com/docs/runtime/shell) is a powerful tool for running shell commands.
    *
    * @example
    * ```ts
@@ -206,7 +206,7 @@ declare module "bun" {
     }
 
     /**
-     * ShellError represents an error that occurred while executing a shell command with [the Bun Shell](https://bun.sh/docs/runtime/shell).
+     * ShellError represents an error that occurred while executing a shell command with [the Bun Shell](https://bun.com/docs/runtime/shell).
      *
      * @example
      * ```ts

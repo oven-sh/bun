@@ -1,6 +1,6 @@
 Configuring a development environment for Bun can take 10-30 minutes depending on your internet connection and computer speed. You will need ~10GB of free disk space for the repository and build artifacts.
 
-If you are using Windows, please refer to [this guide](https://bun.sh/docs/project/building-windows)
+If you are using Windows, please refer to [this guide](https://bun.com/docs/project/building-windows)
 
 ## Install Dependencies
 
@@ -37,7 +37,7 @@ Before starting, you will need to already have a release build of Bun installed,
 {% codetabs %}
 
 ```bash#Native
-$ curl -fsSL https://bun.sh/install | bash
+$ curl -fsSL https://bun.com/install | bash
 ```
 
 ```bash#npm

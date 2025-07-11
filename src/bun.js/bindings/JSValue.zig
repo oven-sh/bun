@@ -1488,11 +1488,10 @@ pub const JSValue = enum(i64) {
     ///
     /// If you know that the property name is not an integer index, use `get` instead.
     ///
-    pub inline fn getPropertyValue(target: JSValue, global: *JSGlobalObject, property_name: []const u8) bun.JSError!?JSValue {
+    pub fn getPropertyValue(target: JSValue, global: *JSGlobalObject, property_name: []const u8) bun.JSError!?JSValue {
         if (bun.Environment.isDebug) bun.assert(target.isObject());
 
-        return switch (JSC__JSValue__getPropertyValue(target, global, property_name.ptr, @intCast(property_name.len))) {
-            .zero => error.JSError,
+        return switch (try bun.jsc.fromJSHostCall(global, @src(), JSC__JSValue__getPropertyValue, .{ target, global, property_name.ptr, @intCast(property_name.len) })) {
             .property_does_not_exist_on_object => null,
             .js_undefined => null,
             else => |val| val,

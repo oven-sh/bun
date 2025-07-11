@@ -104,16 +104,6 @@ export async function createMcpServer(): Promise<McpServer> {
       inputSchema: {
         url: z.string().url().describe("URL of the inspector to use"),
       },
-      outputSchema: {
-        data: z
-          .array(
-            z.object({
-              date: z.string().describe("ISO string of the date the message was logged"),
-              message: z.string().describe("The console message"),
-            }),
-          )
-          .describe("Array of console messages"),
-      },
     },
     async ({ url }) => {
       const messages = consoleMessagesMap.get(new URL(url)) ?? [];

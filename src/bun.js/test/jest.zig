@@ -1315,19 +1315,27 @@ pub const TestRunnerTask = struct {
             deduped = true;
         } else {
             if (is_unhandled and Jest.runner != null) {
-                Output.prettyErrorln(
-                    \\<r>
-                    \\<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>
-                    \\<d>-------------------------------<r>
-                    \\
-                , .{});
+                // Check if we're in quiet mode before printing unhandled error headers
+                const should_print = if (Jest.runner) |runner| !runner.test_options.quiet else true;
+                if (should_print) {
+                    Output.prettyErrorln(
+                        \\<r>
+                        \\<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>
+                        \\<d>-------------------------------<r>
+                        \\
+                    , .{});
 
-                Output.flush();
+                    Output.flush();
+                }
             }
             jsc_vm.runErrorHandlerWithDedupe(rejection, jsc_vm.onUnhandledRejectionExceptionList);
             if (is_unhandled and Jest.runner != null) {
-                Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});
-                Output.flush();
+                // Check if we're in quiet mode before printing unhandled error footers
+                const should_print = if (Jest.runner) |runner| !runner.test_options.quiet else true;
+                if (should_print) {
+                    Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});
+                    Output.flush();
+                }
             }
         }
 
@@ -1597,7 +1605,9 @@ pub const TestRunnerTask = struct {
                 describe,
             ),
             .fail_because_failing_test_passed => |count| {
-                Output.prettyErrorln("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works", .{});
+                if (!Jest.runner.?.test_options.quiet) {
+                    Output.prettyErrorln("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works", .{});
+                }
                 Jest.runner.?.reportFailure(
                     test_id,
                     this.source_file_path,
@@ -1608,8 +1618,10 @@ pub const TestRunnerTask = struct {
                 );
             },
             .fail_because_expected_has_assertions => {
-                Output.err(error.AssertionError, "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n", .{});
-                Output.flush();
+                if (!Jest.runner.?.test_options.quiet) {
+                    Output.err(error.AssertionError, "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n", .{});
+                    Output.flush();
+                }
                 Jest.runner.?.reportFailure(
                     test_id,
                     this.source_file_path,
@@ -1620,11 +1632,13 @@ pub const TestRunnerTask = struct {
                 );
             },
             .fail_because_expected_assertion_count => |counter| {
-                Output.err(error.AssertionError, "expected <green>{d} assertions<r>, but test ended with <red>{d} assertions<r>\n", .{
-                    counter.expected,
-                    counter.actual,
-                });
-                Output.flush();
+                if (!Jest.runner.?.test_options.quiet) {
+                    Output.err(error.AssertionError, "expected <green>{d} assertions<r>, but test ended with <red>{d} assertions<r>\n", .{
+                        counter.expected,
+                        counter.actual,
+                    });
+                    Output.flush();
+                }
                 Jest.runner.?.reportFailure(
                     test_id,
                     this.source_file_path,
@@ -1638,7 +1652,9 @@ pub const TestRunnerTask = struct {
             .skipped_because_label => Jest.runner.?.reportFilteredOut(test_id, this.source_file_path, test_.label, describe),
             .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe),
             .fail_because_todo_passed => |count| {
-                Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
+                if (!Jest.runner.?.test_options.quiet) {
+                    Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
+                }
                 Jest.runner.?.reportFailure(
                     test_id,
                     this.source_file_path,

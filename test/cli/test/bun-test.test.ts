@@ -974,6 +974,172 @@ describe("bun test", () => {
     expect(stderr).not.toContain("test #1");
     expect(stderr).toContain("index.ts");
   });
+
+  describe("--quiet", () => {
+    test("should print dots instead of verbose output", () => {
+      const stderr = runTest({
+        args: ["--quiet"],
+        input: `
+          import { test, expect } from "bun:test";
+          test("pass", () => {
+            expect(true).toBe(true);
+          });
+          test("fail", () => {
+            expect(true).toBe(false);
+          });
+          test.skip("skip", () => {
+            expect(true).toBe(true);
+          });
+          test.todo("todo");
+        `,
+        expectExitCode: 1,
+      });
+      
+      // Should not contain verbose test names
+      expect(stderr).not.toContain("pass");
+      expect(stderr).not.toContain("skip");
+      expect(stderr).not.toContain("todo");
+      
+      // Should contain dots (we can't easily test colors in tests, but we can test the structure)
+      expect(stderr).toMatch(/\./); // Should contain dots
+      
+      // Should still contain summary
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("1 fail");
+      expect(stderr).toContain("1 skip");
+      expect(stderr).toContain("1 todo");
+    });
+
+    test("should show failure details in summary", () => {
+      const stderr = runTest({
+        args: ["--quiet"],
+        input: `
+          import { test, expect } from "bun:test";
+          test("failing test", () => {
+            expect(true).toBe(false);
+          });
+        `,
+        expectExitCode: 1,
+      });
+      
+      // Should not show test name immediately
+      expect(stderr).not.toMatch(/^.*failing test/m);
+      
+      // Should show failure details in summary
+      expect(stderr).toContain("expect(received).toBe(expected)");
+      expect(stderr).toContain("Expected: false");
+      expect(stderr).toContain("Received: true");
+    });
+
+    test("should work with multiple test files", () => {
+      const stderr = runTest({
+        args: ["--quiet"],
+        input: [
+          `
+            import { test, expect } from "bun:test";
+            test("test1", () => {
+              expect(true).toBe(true);
+            });
+          `,
+          `
+            import { test, expect } from "bun:test";
+            test("test2", () => {
+              expect(true).toBe(false);
+            });
+          `,
+        ],
+        expectExitCode: 1,
+      });
+      
+      // Should not contain verbose test names
+      expect(stderr).not.toContain("test1");
+      expect(stderr).not.toContain("test2");
+      
+      // Should contain dots
+      expect(stderr).toMatch(/\./);
+      
+      // Should contain summary
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("1 fail");
+    });
+
+    test("should work with passing tests only", () => {
+      const stderr = runTest({
+        args: ["--quiet"],
+        input: `
+          import { test, expect } from "bun:test";
+          test("test1", () => {
+            expect(true).toBe(true);
+          });
+          test("test2", () => {
+            expect(1 + 1).toBe(2);
+          });
+        `,
+      });
+      
+      // Should not contain verbose test names
+      expect(stderr).not.toContain("test1");
+      expect(stderr).not.toContain("test2");
+      
+      // Should contain dots
+      expect(stderr).toMatch(/\./);
+      
+      // Should contain summary
+      expect(stderr).toContain("2 pass");
+    });
+
+    test("should work with filtered tests", () => {
+      const stderr = runTest({
+        args: ["--quiet", "-t", "match"],
+        input: `
+          import { test, expect } from "bun:test";
+          test("match this", () => {
+            expect(true).toBe(true);
+          });
+          test("not this", () => {
+            expect(true).toBe(true);
+          });
+        `,
+      });
+      
+      // Should not contain verbose test names
+      expect(stderr).not.toContain("match this");
+      expect(stderr).not.toContain("not this");
+      
+      // Should contain dots
+      expect(stderr).toMatch(/\./);
+      
+      // Should contain summary for only matched tests
+      expect(stderr).toContain("1 pass");
+      expect(stderr).not.toContain("2 pass");
+    });
+
+    test("should work with --bail", () => {
+      const stderr = runTest({
+        args: ["--quiet", "--bail"],
+        input: `
+          import { test, expect } from "bun:test";
+          test("test1", () => {
+            expect(true).toBe(false);
+          });
+          test("test2", () => {
+            expect(true).toBe(true);
+          });
+        `,
+        expectExitCode: 1,
+      });
+      
+      // Should not contain verbose test names
+      expect(stderr).not.toContain("test1");
+      expect(stderr).not.toContain("test2");
+      
+      // Should contain dots
+      expect(stderr).toMatch(/\./);
+      
+      // Should bail after first failure
+      expect(stderr).toContain("Bailed out after 1 failure");
+    });
+  });
 });
 
 function createTest(input?: string | (string | { filename: string; contents: string })[], filename?: string): string {

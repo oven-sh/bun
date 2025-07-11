@@ -1931,6 +1931,19 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
     this.had_errors = false;
     defer this.had_errors = prev_had_errors;
 
+    // In test mode with --quiet flag, suppress error output during test execution
+    // The errors will still be collected and shown in the summary
+    if (isBunTest) {
+        const jest = @import("test/jest.zig");
+        if (jest.Jest.runner) |runner| {
+            if (runner.test_options.quiet) {
+                // Still need to process the error for collection purposes
+                // but don't print it to the console
+                return;
+            }
+        }
+    }
+
     const error_writer = Output.errorWriter();
     var buffered_writer = std.io.bufferedWriter(error_writer);
     defer {

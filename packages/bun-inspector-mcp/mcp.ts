@@ -11,6 +11,9 @@ import {
   heapSnapshotsMap,
   gcEventsMap,
   cpuProfilesMap,
+  getHeapSnapshots,
+  getGCEvents,
+  getCPUProfiles,
 } from "./inspector";
 import { Hono } from "hono";
 
@@ -30,7 +33,7 @@ export function createMcpServer(): McpServer {
       },
     },
     async ({ url }) => {
-      const inspectorUrl = new URL(url);
+      const inspectorUrl = new URL(url.trim());
 
       const inspector = getInspector({ url: inspectorUrl });
       return {
@@ -56,8 +59,10 @@ export function createMcpServer(): McpServer {
     },
     async ({ expression, url }) => {
       const inspector = getInspector({ url: new URL(url) });
+      console.log(`Evaluating expression on ${inspector.url}: ${expression}`);
       const result = await inspector.send("Runtime.evaluate", {
         expression,
+        returnByValue: true,
       });
       const resultString = remoteObjectToString(result.result, true);
       return {
@@ -107,7 +112,7 @@ export function createMcpServer(): McpServer {
       },
     },
     async ({ url }) => {
-      const messages = consoleMessagesMap.get(new URL(url)) ?? [];
+      const messages = await consoleMessagesMap.get(new URL(url));
       const data = {
         data: messages.map(msg => ({
           date: msg.date.toISOString(),
@@ -714,13 +719,7 @@ export function createMcpServer(): McpServer {
       try {
         const result = await inspector.send("Heap.snapshot");
 
-        // Store the snapshot
-        const urlObj = new URL(url as string);
-        const snapshots = heapSnapshotsMap.get(urlObj) ?? [];
-        heapSnapshotsMap.set(urlObj, [
-          ...snapshots,
-          { timestamp: result.timestamp, snapshotData: result.snapshotData },
-        ]);
+        // Snapshot is automatically stored in the worker
 
         return {
           content: [
@@ -862,7 +861,7 @@ export function createMcpServer(): McpServer {
       },
     },
     async ({ url }) => {
-      const snapshots = heapSnapshotsMap.get(new URL(url as string)) ?? [];
+      const snapshots = await getHeapSnapshots(new URL(url as string));
       return {
         content: [
           {
@@ -890,7 +889,7 @@ export function createMcpServer(): McpServer {
       },
     },
     async ({ url }) => {
-      const gcEvents = gcEventsMap.get(new URL(url as string)) ?? [];
+      const gcEvents = await getGCEvents(new URL(url as string));
       return {
         content: [
           {
@@ -1078,7 +1077,7 @@ export function createMcpServer(): McpServer {
       },
     },
     async ({ url }) => {
-      const profiles = cpuProfilesMap.get(new URL(url as string)) ?? [];
+      const profiles = await getCPUProfiles(new URL(url as string));
       return {
         content: [
           {

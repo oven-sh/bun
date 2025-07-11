@@ -107,7 +107,7 @@ pub const JestPrettyFormat = struct {
                 .globalThis = global,
                 .quote_strings = options.quote_strings,
             };
-            const tag = JestPrettyFormat.Formatter.Tag.get(vals[0], global);
+            const tag = try JestPrettyFormat.Formatter.Tag.get(vals[0], global);
 
             var unbuffered_writer = if (comptime Writer != RawWriter)
                 writer.context.unbuffered_writer.context.writer()
@@ -197,7 +197,7 @@ pub const JestPrettyFormat = struct {
                 }
                 any = true;
 
-                tag = JestPrettyFormat.Formatter.Tag.get(this_value, global);
+                tag = try JestPrettyFormat.Formatter.Tag.get(this_value, global);
                 if (tag.tag == .String and fmt.remaining_values.len > 0) {
                     tag.tag = .StringPossiblyFormatted;
                 }
@@ -219,7 +219,7 @@ pub const JestPrettyFormat = struct {
                     _ = writer.write(" ") catch 0;
                 }
                 any = true;
-                tag = JestPrettyFormat.Formatter.Tag.get(this_value, global);
+                tag = try JestPrettyFormat.Formatter.Tag.get(this_value, global);
                 if (tag.tag == .String and fmt.remaining_values.len > 0) {
                     tag.tag = .StringPossiblyFormatted;
                 }
@@ -358,12 +358,12 @@ pub const JestPrettyFormat = struct {
                 cell: JSValue.JSType = .Cell,
             };
 
-            pub fn get(value: JSValue, globalThis: *JSGlobalObject) Result {
-                switch (@intFromEnum(value)) {
-                    0, 0xa => return Result{
+            pub fn get(value: JSValue, globalThis: *JSGlobalObject) bun.JSError!Result {
+                switch (value) {
+                    .zero, .js_undefined => return Result{
                         .tag = .Undefined,
                     },
-                    0x2 => return Result{
+                    .null => return Result{
                         .tag = .Null,
                     },
                     else => {},
@@ -439,11 +439,11 @@ pub const JestPrettyFormat = struct {
 
                 // Is this a react element?
                 if (js_type.isObject() and js_type != .ProxyObject) {
-                    if (value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
+                    if (try value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
                         var reactElement = ZigString.init("react.element");
                         var react_fragment = ZigString.init("react.fragment");
 
-                        if (JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &reactElement), globalThis) or JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis)) {
+                        if (try typeof_symbol.isSameValue(.symbolFor(globalThis, &reactElement), globalThis) or try typeof_symbol.isSameValue(.symbolFor(globalThis, &react_fragment), globalThis)) {
                             return .{ .tag = .JSX, .cell = js_type };
                         }
                     }
@@ -576,7 +576,7 @@ pub const JestPrettyFormat = struct {
                             Tag.Integer => this.printAs(Tag.Integer, Writer, writer_, next_value, next_value.jsType(), enable_ansi_colors) catch return,
 
                             // undefined is overloaded to mean the '%o" field
-                            Tag.Undefined => this.format(Tag.get(next_value, globalThis), Writer, writer_, next_value, globalThis, enable_ansi_colors) catch return,
+                            Tag.Undefined => this.format(Tag.get(next_value, globalThis) catch return, Writer, writer_, next_value, globalThis, enable_ansi_colors) catch return,
 
                             else => unreachable,
                         }
@@ -677,10 +677,10 @@ pub const JestPrettyFormat = struct {
                 pub fn forEach(_: *JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     if (this.formatter.failed) return;
-                    const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
-                    const value = JSC.JSObject.getIndex(nextValue, globalObject, 1);
+                    const key = JSC.JSObject.getIndex(nextValue, globalObject, 0) catch return;
+                    const value = JSC.JSObject.getIndex(nextValue, globalObject, 1) catch return;
                     this.formatter.writeIndent(Writer, this.writer) catch return;
-                    const key_tag = Tag.get(key, globalObject);
+                    const key_tag = Tag.get(key, globalObject) catch return;
 
                     this.formatter.format(
                         key_tag,
@@ -691,7 +691,7 @@ pub const JestPrettyFormat = struct {
                         enable_ansi_colors,
                     ) catch return;
                     this.writer.writeAll(" => ") catch return;
-                    const value_tag = Tag.get(value, globalObject);
+                    const value_tag = Tag.get(value, globalObject) catch return;
                     this.formatter.format(
                         value_tag,
                         Writer,
@@ -714,7 +714,7 @@ pub const JestPrettyFormat = struct {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     if (this.formatter.failed) return;
                     this.formatter.writeIndent(Writer, this.writer) catch return;
-                    const key_tag = Tag.get(nextValue, globalObject);
+                    const key_tag = Tag.get(nextValue, globalObject) catch return;
                     this.formatter.format(
                         key_tag,
                         Writer,
@@ -794,7 +794,7 @@ pub const JestPrettyFormat = struct {
                         .failed = false,
                     };
 
-                    const tag = Tag.get(value, globalThis);
+                    const tag = Tag.get(value, globalThis) catch return;
 
                     if (tag.cell.isHidden()) return;
                     if (ctx.i == 0) {
@@ -1137,7 +1137,7 @@ pub const JestPrettyFormat = struct {
                     }
                 },
                 .Array => {
-                    const len = @as(u32, @truncate(value.getLength(this.globalThis)));
+                    const len: u32 = @truncate(try value.getLength(this.globalThis));
                     if (len == 0) {
                         writer.writeAll("[]");
                         this.addForNewLine(2);
@@ -1163,7 +1163,7 @@ pub const JestPrettyFormat = struct {
 
                         {
                             const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(this.globalThis, ref, 0, null));
-                            const tag = Tag.get(element, this.globalThis);
+                            const tag = try Tag.get(element, this.globalThis);
 
                             was_good_time = was_good_time or !tag.tag.isPrimitive() or this.goodTimeForANewLine();
 
@@ -1194,7 +1194,7 @@ pub const JestPrettyFormat = struct {
                             this.writeIndent(Writer, writer_) catch unreachable;
 
                             const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(this.globalThis, ref, i, null));
-                            const tag = Tag.get(element, this.globalThis);
+                            const tag = try Tag.get(element, this.globalThis);
 
                             try this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
 
@@ -1260,7 +1260,7 @@ pub const JestPrettyFormat = struct {
                         };
                         return;
                     } else if (value.as(JSC.DOMFormData) != null) {
-                        const toJSONFunction = value.get_unsafe(this.globalThis, "toJSON").?;
+                        const toJSONFunction = (try value.get(this.globalThis, "toJSON")).?;
 
                         this.addForNewLine("FormData (entries) ".len);
                         writer.writeAll(comptime Output.prettyFmt("<r><blue>FormData<r> <d>(entries)<r> ", enable_ansi_colors));
@@ -1341,7 +1341,7 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
                 },
                 .Map => {
-                    const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
+                    const length_value = try value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
                     const length = length_value.toInt32();
 
                     const prev_quote_strings = this.quote_strings;
@@ -1369,7 +1369,7 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll("\n");
                 },
                 .Set => {
-                    const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
+                    const length_value = try value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
                     const length = length_value.toInt32();
 
                     const prev_quote_strings = this.quote_strings;
@@ -1402,7 +1402,7 @@ pub const JestPrettyFormat = struct {
                     var str = bun.String.empty;
                     defer str.deref();
 
-                    value.jsonStringify(this.globalThis, this.indent, &str);
+                    try value.jsonStringify(this.globalThis, this.indent, &str);
                     this.addForNewLine(str.length());
                     if (jsType == .JSDate) {
                         // in the code for printing dates, it never exceeds this amount
@@ -1420,13 +1420,13 @@ pub const JestPrettyFormat = struct {
                     writer.print("{}", .{str});
                 },
                 .Event => {
-                    const event_type_value = brk: {
-                        const value_ = value.get_unsafe(this.globalThis, "type") orelse break :brk JSValue.undefined;
+                    const event_type_value: JSValue = brk: {
+                        const value_: JSValue = try value.get(this.globalThis, "type") orelse break :brk .js_undefined;
                         if (value_.isString()) {
                             break :brk value_;
                         }
 
-                        break :brk JSValue.undefined;
+                        break :brk .js_undefined;
                     };
 
                     const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
@@ -1465,7 +1465,7 @@ pub const JestPrettyFormat = struct {
                                     .{},
                                 );
 
-                                const tag = Tag.get(message_value, this.globalThis);
+                                const tag = try Tag.get(message_value, this.globalThis);
                                 try this.format(tag, Writer, writer_, message_value, this.globalThis, enable_ansi_colors);
                                 writer.writeAll(", \n");
                             }
@@ -1478,8 +1478,8 @@ pub const JestPrettyFormat = struct {
                                     comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
                                     .{},
                                 );
-                                const data = (try value.fastGet(this.globalThis, .data)) orelse JSValue.undefined;
-                                const tag = Tag.get(data, this.globalThis);
+                                const data: JSValue = (try value.fastGet(this.globalThis, .data)) orelse .js_undefined;
+                                const tag = try Tag.get(data, this.globalThis);
 
                                 if (tag.cell.isStringLike()) {
                                     try this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
@@ -1496,7 +1496,7 @@ pub const JestPrettyFormat = struct {
                                         .{},
                                     );
 
-                                    const tag = Tag.get(data, this.globalThis);
+                                    const tag = try Tag.get(data, this.globalThis);
                                     try this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
                                     writer.writeAll("\n");
                                 }
@@ -1521,8 +1521,8 @@ pub const JestPrettyFormat = struct {
 
                     defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();
 
-                    if (value.get_unsafe(this.globalThis, "type")) |type_value| {
-                        const _tag = Tag.get(type_value, this.globalThis);
+                    if (try value.get(this.globalThis, "type")) |type_value| {
+                        const _tag = try Tag.get(type_value, this.globalThis);
 
                         if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
                             try type_value.toZigString(&tag_name_str, this.globalThis);
@@ -1551,7 +1551,7 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll(tag_name_slice.slice());
                     if (enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
 
-                    if (value.get_unsafe(this.globalThis, "key")) |key_value| {
+                    if (try value.get(this.globalThis, "key")) |key_value| {
                         if (!key_value.isUndefinedOrNull()) {
                             if (needs_space)
                                 writer.writeAll(" key=")
@@ -1562,13 +1562,13 @@ pub const JestPrettyFormat = struct {
                             this.quote_strings = true;
                             defer this.quote_strings = old_quote_strings;
 
-                            try this.format(Tag.get(key_value, this.globalThis), Writer, writer_, key_value, this.globalThis, enable_ansi_colors);
+                            try this.format(try Tag.get(key_value, this.globalThis), Writer, writer_, key_value, this.globalThis, enable_ansi_colors);
 
                             needs_space = true;
                         }
                     }
 
-                    if (value.get_unsafe(this.globalThis, "props")) |props| {
+                    if (try value.get(this.globalThis, "props")) |props| {
                         const prev_quote_strings = this.quote_strings;
                         defer this.quote_strings = prev_quote_strings;
                         this.quote_strings = true;
@@ -1581,7 +1581,7 @@ pub const JestPrettyFormat = struct {
                         }).init(this.globalThis, props_obj);
                         defer props_iter.deinit();
 
-                        const children_prop = props.get_unsafe(this.globalThis, "children");
+                        const children_prop = try props.get(this.globalThis, "children");
                         if (props_iter.len > 0) {
                             {
                                 this.indent += 1;
@@ -1593,7 +1593,7 @@ pub const JestPrettyFormat = struct {
                                         continue;
 
                                     const property_value = props_iter.value;
-                                    const tag = Tag.get(property_value, this.globalThis);
+                                    const tag = try Tag.get(property_value, this.globalThis);
 
                                     if (tag.cell.isHidden()) continue;
 
@@ -1639,7 +1639,7 @@ pub const JestPrettyFormat = struct {
                             }
 
                             if (children_prop) |children| {
-                                const tag = Tag.get(children, this.globalThis);
+                                const tag = try Tag.get(children, this.globalThis);
 
                                 const print_children = switch (tag.tag) {
                                     .String, .JSX, .Array => true,
@@ -1674,14 +1674,14 @@ pub const JestPrettyFormat = struct {
                                                     this.indent += 1;
                                                     this.writeIndent(Writer, writer_) catch unreachable;
                                                     defer this.indent -|= 1;
-                                                    try this.format(Tag.get(children, this.globalThis), Writer, writer_, children, this.globalThis, enable_ansi_colors);
+                                                    try this.format(try Tag.get(children, this.globalThis), Writer, writer_, children, this.globalThis, enable_ansi_colors);
                                                 }
 
                                                 writer.writeAll("\n");
                                                 this.writeIndent(Writer, writer_) catch unreachable;
                                             },
                                             .Array => {
-                                                const length = children.getLength(this.globalThis);
+                                                const length = try children.getLength(this.globalThis);
                                                 if (length == 0) break :print_children;
                                                 writer.writeAll(">\n");
 
@@ -1696,8 +1696,8 @@ pub const JestPrettyFormat = struct {
 
                                                     var j: usize = 0;
                                                     while (j < length) : (j += 1) {
-                                                        const child = JSC.JSObject.getIndex(children, this.globalThis, @as(u32, @intCast(j)));
-                                                        try this.format(Tag.get(child, this.globalThis), Writer, writer_, child, this.globalThis, enable_ansi_colors);
+                                                        const child = try JSC.JSObject.getIndex(children, this.globalThis, @as(u32, @intCast(j)));
+                                                        try this.format(try Tag.get(child, this.globalThis), Writer, writer_, child, this.globalThis, enable_ansi_colors);
                                                         if (j + 1 < length) {
                                                             writer.writeAll("\n");
                                                             this.writeIndent(Writer, writer_) catch unreachable;
@@ -1764,7 +1764,7 @@ pub const JestPrettyFormat = struct {
                         .parent = value,
                     };
 
-                    value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
+                    try value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
 
                     if (iter.i == 0) {
                         var object_name = ZigString.Empty;

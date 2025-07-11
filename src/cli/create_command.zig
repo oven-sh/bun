@@ -484,7 +484,7 @@ pub const CreateCommand = struct {
 
                 const destination_dir = destination_dir__;
                 const Walker = @import("../walker_skippable.zig");
-                var walker_ = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
+                var walker_ = try Walker.walk(.fromStdDir(template_dir), ctx.allocator, skip_files, skip_dirs);
                 defer walker_.deinit();
 
                 const FileCopier = struct {
@@ -498,7 +498,7 @@ pub const CreateCommand = struct {
                         src_base_len: if (Environment.isWindows) usize else void,
                         src_buf: if (Environment.isWindows) *bun.WPathBuffer else void,
                     ) !void {
-                        while (try walker.next()) |entry| {
+                        while (try walker.next().unwrap()) |entry| {
                             if (comptime Environment.isWindows) {
                                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -561,7 +561,7 @@ pub const CreateCommand = struct {
                             defer outfile.close();
                             defer node_.completeOne();
 
-                            const infile = bun.FD.fromStdFile(try entry.dir.openFile(entry.basename, .{ .mode = .read_only }));
+                            const infile = try entry.dir.openat(entry.basename, bun.O.RDONLY, 0).unwrap();
                             defer infile.close();
 
                             // Assumption: you only really care about making sure something that was executable is still executable
@@ -688,9 +688,9 @@ pub const CreateCommand = struct {
             if (package_json_file != null) {
                 initializeStore();
 
-                var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
+                const source = &logger.Source.initPathString("package.json", package_json_contents.list.items);
 
-                var package_json_expr = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch {
+                var package_json_expr = JSON.parseUTF8(source, ctx.log, ctx.allocator) catch {
                     package_json_file = null;
                     break :process_package_json;
                 };
@@ -1429,7 +1429,7 @@ pub const CreateCommand = struct {
                     @TypeOf(&package_json_writer),
                     &package_json_writer,
                     package_json_expr,
-                    &source,
+                    source,
                     .{ .mangled_props = null },
                 ) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
@@ -1541,7 +1541,7 @@ pub const CreateCommand = struct {
 
         Output.pretty(
             \\
-            \\<d>Come hang out in bun's Discord: https://bun.sh/discord<r>
+            \\<d>Come hang out in bun's Discord: https://bun.com/discord<r>
             \\
         , .{});
 
@@ -2134,8 +2134,8 @@ pub const Example = struct {
         progress.name = "Parsing package.json";
         refresher.refresh();
         initializeStore();
-        var source = logger.Source.initPathString("package.json", mutable.list.items);
-        var expr = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
+        const source = &logger.Source.initPathString("package.json", mutable.list.items);
+        var expr = JSON.parseUTF8(source, ctx.log, ctx.allocator) catch |err| {
             progress.end();
             refresher.refresh();
 
@@ -2265,8 +2265,8 @@ pub const Example = struct {
         }
 
         initializeStore();
-        var source = logger.Source.initPathString("examples.json", mutable.list.items);
-        const examples_object = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
+        const source = &logger.Source.initPathString("examples.json", mutable.list.items);
+        const examples_object = JSON.parseUTF8(source, ctx.log, ctx.allocator) catch |err| {
             if (ctx.log.errors > 0) {
                 try ctx.log.print(Output.errorWriter());
                 Global.exit(1);

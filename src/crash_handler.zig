@@ -907,6 +907,9 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows
 
 extern "c" fn gnu_get_libc_version() ?[*:0]const u8;
 
+// Only populated after JSC::VM::tryCreate
+export var Bun__reported_memory_size: usize = 0;
+
 pub fn printMetadata(writer: anytype) !void {
     if (Output.enable_ansi_colors) {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
@@ -981,12 +984,19 @@ pub fn printMetadata(writer: anytype) !void {
             user_msecs,
             system_msecs,
         });
-        try writer.print("RSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}\n", .{
+
+        try writer.print("RSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}", .{
             std.fmt.fmtIntSizeDec(current_rss),
             std.fmt.fmtIntSizeDec(peak_rss),
             std.fmt.fmtIntSizeDec(current_commit),
             page_faults,
         });
+
+        if (Bun__reported_memory_size > 0) {
+            try writer.print(" | Machine: {:<3.2}", .{std.fmt.fmtIntSizeDec(Bun__reported_memory_size)});
+        }
+
+        try writer.writeAll("\n");
     }
 
     if (Output.enable_ansi_colors) {
@@ -1491,9 +1501,9 @@ fn report(url: []const u8) void {
 fn crash() noreturn {
     switch (bun.Environment.os) {
         .windows => {
-            // This exit code is what Node.js uses when it calls
-            // abort. This is relied on by their Node-API tests.
-            bun.c.quick_exit(134);
+            // Node.js exits with code 134 (128 + SIGABRT) instead. We use abort() as it includes a
+            // breakpoint which makes crashes easier to debug.
+            std.posix.abort();
         },
         else => {
             // Install default handler so that the tkill below will terminate.
@@ -1779,9 +1789,9 @@ pub const js_bindings = struct {
     }
 
     pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) bun.JSError!JSValue {
-        if (!bun.Environment.isMac) return .undefined;
+        if (!bun.Environment.isMac) return .js_undefined;
 
-        const header = std.c._dyld_get_image_header(0) orelse return .undefined;
+        const header = std.c._dyld_get_image_header(0) orelse return .js_undefined;
         const base_address = @intFromPtr(header);
         const vmaddr_slide = std.c._dyld_get_image_vmaddr_slide(0);
 
@@ -1793,7 +1803,7 @@ pub const js_bindings = struct {
         const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
         ptr[0] = 0xDEADBEEF;
         std.mem.doNotOptimizeAway(&ptr);
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1826,9 +1836,9 @@ pub const js_bindings = struct {
     pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const obj = JSValue.createEmptyObject(global, 5);
         const list = bun.Analytics.packed_features_list;
-        const array = JSValue.createEmptyArray(global, list.len);
+        const array = try JSValue.createEmptyArray(global, list.len);
         for (list, 0..) |feature, i| {
-            array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
+            try array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
         }
         obj.put(global, JSC.ZigString.static("features"), array);
         obj.put(global, JSC.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));

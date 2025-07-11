@@ -18,6 +18,7 @@ comptime {
     @export(&specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
     @export(&string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
     @export(&allowAddons, .{ .name = "Bun__VM__allowAddons" });
+    @export(&allowRejectionHandledWarning, .{ .name = "Bun__VM__allowRejectionHandledWarning" });
 }
 
 global: *JSGlobalObject,
@@ -196,6 +197,15 @@ pub const OnException = fn (*ZigException) void;
 pub fn allowAddons(this: *VirtualMachine) callconv(.c) bool {
     return if (this.transpiler.options.transform_options.allow_addons) |allow_addons| allow_addons else true;
 }
+pub fn allowRejectionHandledWarning(this: *VirtualMachine) callconv(.C) bool {
+    return this.unhandledRejectionsMode() != .bun;
+}
+pub fn unhandledRejectionsMode(this: *VirtualMachine) Api.UnhandledRejections {
+    return this.transpiler.options.transform_options.unhandled_rejections orelse switch (bun.FeatureFlags.breaking_changes_1_3) {
+        false => .bun,
+        true => .throw,
+    };
+}
 
 pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*Body.Value.HiveRef {
     return .init(body, &this.body_value_hive_allocator);
@@ -349,7 +359,7 @@ const SourceMapHandlerGetter = struct {
     /// When the inspector is enabled, we want to generate an inline sourcemap.
     /// And, for now, we also store it in source_mappings like normal
     /// This is hideously expensive memory-wise...
-    pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+    pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
         var temp_json_buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer temp_json_buffer.deinit();
         temp_json_buffer = try chunk.printSourceMapContentsAtOffset(source, temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
@@ -496,30 +506,124 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
 
 extern fn Bun__handleUncaughtException(*JSGlobalObject, err: JSValue, is_rejection: c_int) c_int;
 extern fn Bun__handleUnhandledRejection(*JSGlobalObject, reason: JSValue, promise: JSValue) c_int;
+extern fn Bun__wrapUnhandledRejectionErrorForUncaughtException(*JSGlobalObject, reason: JSValue) JSValue;
+extern fn Bun__emitHandledPromiseEvent(*JSGlobalObject, promise: JSValue) bool;
+extern fn Bun__promises__isErrorLike(*JSGlobalObject, reason: JSValue) bool;
+extern fn Bun__promises__emitUnhandledRejectionWarning(*JSGlobalObject, reason: JSValue, promise: JSValue) void;
+extern fn Bun__noSideEffectsToString(vm: *JSC.VM, globalObject: *JSGlobalObject, reason: JSValue) JSValue;
 
-pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) bool {
+fn isErrorLike(globalObject: *JSGlobalObject, reason: JSValue) bun.JSError!bool {
+    return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__isErrorLike, .{ globalObject, reason });
+}
+
+fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject, reason: JSValue) JSValue {
+    if (isErrorLike(globalObject, reason) catch blk: {
+        globalObject.clearException();
+        break :blk false;
+    }) return reason;
+    const reasonStr = blk: {
+        var scope: bun.jsc.CatchScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
+        defer if (scope.exception()) |_| scope.clearException();
+        break :blk Bun__noSideEffectsToString(globalObject.vm(), globalObject, reason);
+    };
+    const msg = "This error originated either by throwing inside of an async function without a catch block, " ++
+        "or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \"" ++
+        "{s}" ++
+        "\".";
+    if (reasonStr.isString()) {
+        return globalObject.ERR(.UNHANDLED_REJECTION, msg, .{reasonStr.asString().view(globalObject)}).toJS();
+    }
+    return globalObject.ERR(.UNHANDLED_REJECTION, msg, .{"undefined"}).toJS();
+}
+
+pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) void {
     if (this.isShuttingDown()) {
         Output.debugWarn("unhandledRejection during shutdown.", .{});
-        return true;
+        return;
     }
 
     if (isBunTest) {
         this.unhandled_error_counter += 1;
         this.onUnhandledRejection(this, globalObject, reason);
+        return;
+    }
+
+    switch (this.unhandledRejectionsMode()) {
+        .bun => {
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
+            // continue to default handler
+        },
+        .none => {
+            defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => {}, // we are returning anyway
+            };
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
+            return; // ignore the unhandled rejection
+        },
+        .warn => {
+            defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => {}, // we are returning anyway
+            };
+            _ = Bun__handleUnhandledRejection(globalObject, reason, promise);
+            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            return;
+        },
+        .warn_with_error_code => {
+            defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => {}, // we are returning anyway
+            };
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
+            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            this.exit_handler.exit_code = 1;
+            return;
+        },
+        .strict => {
+            defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => {}, // we are returning anyway
+            };
+            const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
+            _ = this.uncaughtException(globalObject, wrapped_reason, true);
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
+            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            return;
+        },
+        .throw => {
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) {
+                this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                    error.JSExecutionTerminated => {}, // we are returning anyway
+                };
+                return;
+            }
+            const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
+            if (this.uncaughtException(globalObject, wrapped_reason, true)) {
+                this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                    error.JSExecutionTerminated => {}, // we are returning anyway
+                };
+                return;
+            }
+            // continue to default handler
+            this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => return,
+            };
+        },
+    }
+    this.unhandled_error_counter += 1;
+    this.onUnhandledRejection(this, globalObject, reason);
+    return;
+}
+
+pub fn handledPromise(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, promise: JSValue) bool {
+    if (this.isShuttingDown()) {
         return true;
     }
 
-    const handled = Bun__handleUnhandledRejection(globalObject, reason, promise) > 0;
-    if (!handled) {
-        this.unhandled_error_counter += 1;
-        this.onUnhandledRejection(this, globalObject, reason);
-    }
-    return handled;
+    return Bun__emitHandledPromiseEvent(globalObject, promise);
 }
 
 pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, err: JSValue, is_rejection: bool) bool {
     if (this.isShuttingDown()) {
-        Output.debugWarn("uncaughtException during shutdown.", .{});
         return true;
     }
 
@@ -554,7 +658,7 @@ pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSGlobalObjec
 pub fn handlePendingInternalPromiseRejection(this: *JSC.VirtualMachine) void {
     var promise = this.pending_internal_promise.?;
     if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
-        _ = this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
+        this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
         promise.setHandled(this.global.vm());
     }
 }
@@ -767,7 +871,13 @@ pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
 }
 
 pub fn waitForTasks(this: *VirtualMachine) void {
-    this.eventLoop().waitForTasks();
+    while (this.isEventLoopAlive()) {
+        this.eventLoop().tick();
+
+        if (this.isEventLoopAlive()) {
+            this.eventLoop().autoTick();
+        }
+    }
 }
 
 pub const MacroMap = std.AutoArrayHashMap(i32, JSC.C.JSObjectRef);
@@ -1578,7 +1688,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
                 printed,
             ),
         };
-        res.* = ErrorableString.err(error.NameTooLong, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())).asVoid());
+        res.* = ErrorableString.err(error.NameTooLong, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())));
         return;
     }
 
@@ -1668,7 +1778,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
         };
 
         {
-            res.* = ErrorableString.err(err, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())).asVoid());
+            res.* = ErrorableString.err(err, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())));
         }
 
         return;
@@ -1686,11 +1796,12 @@ pub const main_file_name: string = "bun:main";
 pub export fn Bun__drainMicrotasksFromJS(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     _ = callframe; // autofix
     globalObject.bunVM().drainMicrotasks();
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn drainMicrotasks(this: *VirtualMachine) void {
-    this.eventLoop().drainMicrotasks();
+    // TODO: properly propagate exception upwards
+    this.eventLoop().drainMicrotasks() catch {};
 }
 
 pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
@@ -1712,7 +1823,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             };
             {
-                ret.* = ErrorableResolvedSource.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)).asVoid());
+                ret.* = ErrorableResolvedSource.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)));
             }
             return;
         },
@@ -1720,13 +1831,13 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
         1 => {
             const msg = log.msgs.items[0];
             ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
-                .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)).asVoid(),
+                .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)),
                 .resolve => (bun.api.ResolveMessage.create(
                     globalThis,
                     globalThis.allocator(),
                     msg,
                     referrer.toUTF8(bun.default_allocator).slice(),
-                ) catch |e| globalThis.takeException(e)).asVoid(),
+                ) catch |e| globalThis.takeException(e)),
             });
             return;
         },
@@ -1759,7 +1870,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                             specifier,
                         }) catch unreachable,
                     ),
-                ).asVoid(),
+                ),
             );
         },
     }
@@ -1828,8 +1939,7 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
 
     const writer = buffered_writer.writer();
 
-    if (result.isException(this.global.vm())) {
-        const exception = @as(*Exception, @ptrCast(result.asVoid()));
+    if (result.asException(this.jsc)) |exception| {
         this.printException(
             exception,
             exception_list,
@@ -1905,7 +2015,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
                 return error.ModuleNotFound;
             },
         };
-        var promise = JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
+        var promise = try JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
 
         this.pending_internal_promise = promise;
         JSValue.fromCell(promise).protect();
@@ -1985,7 +2095,7 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
             if (this.has_patched_run_main) {
                 @branchHint(.cold);
                 this.pending_internal_promise = null;
-                const ret = NodeModuleModule__callOverriddenRunMain(this.global, bun.String.createUTF8ForJS(this.global, main_file_name));
+                const ret = try bun.jsc.fromJSHostCall(this.global, @src(), NodeModuleModule__callOverriddenRunMain, .{ this.global, try bun.String.createUTF8ForJS(this.global, main_file_name) });
                 if (this.pending_internal_promise == prev or this.pending_internal_promise == null) {
                     this.pending_internal_promise = JSInternalPromise.resolvedPromise(this.global, ret);
                     return this.pending_internal_promise.?;
@@ -2345,7 +2455,7 @@ fn printErrorFromMaybePrivateData(
 pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *Exception) JSValue {
     var jsc_vm = globalObject.bunVM();
     _ = jsc_vm.uncaughtException(globalObject, exception.value(), false);
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {
@@ -3009,7 +3119,7 @@ fn printErrorInstance(
                 }
 
                 formatter.format(
-                    JSC.Formatter.Tag.getAdvanced(
+                    try JSC.Formatter.Tag.getAdvanced(
                         value,
                         this.global,
                         .{ .disable_inspect_custom = true, .hide_global = true },
@@ -3050,7 +3160,7 @@ fn printErrorInstance(
 
         // "cause" is not enumerable, so the above loop won't see it.
         if (!saw_cause) {
-            if (error_instance.getOwn(this.global, "cause")) |cause| {
+            if (try error_instance.getOwn(this.global, "cause")) |cause| {
                 if (cause.jsType() == .ErrorInstance) {
                     cause.protect();
                     try errors_to_append.append(cause);
@@ -3059,7 +3169,7 @@ fn printErrorInstance(
         }
     } else if (mode == .js and error_instance != .zero) {
         // If you do reportError([1,2,3]] we should still show something at least.
-        const tag = JSC.Formatter.Tag.getAdvanced(
+        const tag = try JSC.Formatter.Tag.getAdvanced(
             error_instance,
             this.global,
             .{ .disable_inspect_custom = true, .hide_global = true },
@@ -3300,7 +3410,7 @@ pub fn resolveSourceMapping(
             this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch
                 bun.outOfMemory();
 
-            const mapping = SourceMap.Mapping.find(map.mappings, line, column) orelse
+            const mapping = map.mappings.find(line, column) orelse
                 return null;
 
             return .{
@@ -3382,7 +3492,7 @@ pub const IPCInstance = struct {
         Process__emitDisconnectEvent(vm.global);
         event_loop.exit();
         if (Environment.isPosix) {
-            uws.us_socket_context_free(0, this.context);
+            this.context.deinit(false);
         }
         vm.channel_ref.disable();
     }
@@ -3412,7 +3522,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
     const instance = switch (Environment.os) {
         else => instance: {
-            const context = uws.us_create_bun_nossl_socket_context(this.event_loop_handle.?, @sizeOf(usize)).?;
+            const context = uws.SocketContext.createNoSSLContext(this.event_loop_handle.?, @sizeOf(usize)).?;
             IPC.Socket.configure(context, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
 
             var instance = IPCInstance.new(.{
@@ -3500,7 +3610,7 @@ pub const ExitHandler = struct {
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
-        Process__dispatchOnBeforeExit(vm.global, this.exit_code);
+        bun.jsc.fromJSHostCallGeneric(vm.global, @src(), Process__dispatchOnBeforeExit, .{ vm.global, this.exit_code }) catch return;
     }
 };
 

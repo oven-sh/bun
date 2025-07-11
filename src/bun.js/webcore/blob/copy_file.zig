@@ -63,7 +63,7 @@ pub const CopyFile = struct {
 
     pub fn reject(this: *CopyFile, promise: *JSC.JSPromise) void {
         const globalThis = this.globalThis;
-        var system_error: SystemError = this.system_error orelse SystemError{};
+        var system_error: SystemError = this.system_error orelse SystemError{ .message = .empty };
         if (this.source_file_store.pathlike == .path and system_error.path.isEmpty()) {
             system_error.path = bun.String.createUTF8(this.source_file_store.pathlike.path.slice());
         }
@@ -997,7 +997,8 @@ pub const CopyFileWindows = struct {
     pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
         const globalThis = this.event_loop.global;
         const promise = this.promise.swap();
-        const err_instance = err.toJSC(globalThis);
+        const err_instance = err.toJS(globalThis);
+
         var event_loop = this.event_loop;
         event_loop.enter();
         defer event_loop.exit();
@@ -1109,9 +1110,10 @@ pub const CopyFileWindows = struct {
     fn onMkdirpComplete(this: *CopyFileWindows) void {
         this.event_loop.unrefConcurrently();
 
-        if (this.err) |err| {
+        if (bun.take(&this.err)) |err| {
             this.throw(err);
-            bun.default_allocator.free(err.path);
+            var err2 = err;
+            err2.deinit();
             return;
         }
 

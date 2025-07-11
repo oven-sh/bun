@@ -514,18 +514,22 @@ pub const String = extern struct {
     }
 
     pub fn fromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
+        var scope: JSC.ExceptionValidationScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
         var out: String = String.dead;
-        if (BunString__fromJS(globalObject, value, &out)) {
-            if (comptime bun.Environment.isDebug) {
-                bun.assert(out.tag != .Dead);
-            }
-            return out;
+        const ok = BunString__fromJS(globalObject, value, &out);
+
+        // If there is a pending exception, but stringifying succeeds, we don't return JSError.
+        // We do need to always call hasException() to satisfy the need for an exception check.
+        const has_exception = scope.hasExceptionOrFalseWhenAssertionsAreDisabled();
+        if (ok) {
+            bun.debugAssert(out.tag != .Dead);
+        } else {
+            bun.debugAssert(has_exception);
         }
 
-        if (comptime bun.Environment.isDebug) {
-            bun.assert(globalObject.hasException());
-        }
-        return error.JSError;
+        return if (ok) out else error.JSError;
     }
 
     pub fn toJS(this: *const String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
@@ -547,10 +551,9 @@ pub const String = extern struct {
     ) JSC.JSValue;
 
     /// calls toJS on all elements of `array`.
-    pub fn toJSArray(globalObject: *bun.JSC.JSGlobalObject, array: []const bun.String) JSC.JSValue {
+    pub fn toJSArray(globalObject: *bun.JSC.JSGlobalObject, array: []const bun.String) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-
-        return BunString__createArray(globalObject, array.ptr, array.len);
+        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createArray, .{ globalObject, array.ptr, array.len });
     }
 
     pub fn toZigString(this: String) ZigString {
@@ -663,16 +666,10 @@ pub const String = extern struct {
         return false;
     }
 
-    extern fn BunString__toJSON(
-        globalObject: *bun.JSC.JSGlobalObject,
-        this: *String,
-    ) JSC.JSValue;
+    extern fn BunString__toJSON(globalObject: *bun.JSC.JSGlobalObject, this: *String) JSC.JSValue;
 
     pub fn toJSByParseJSON(self: *String, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-        JSC.markBinding(@src());
-        const result = BunString__toJSON(globalObject, self);
-        if (result == .zero) return error.JSError;
-        return result;
+        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__toJSON, .{ globalObject, self });
     }
 
     pub fn encodeInto(self: String, out: []u8, comptime enc: JSC.Node.Encoding) !usize {
@@ -844,17 +841,17 @@ pub const String = extern struct {
     extern fn BunString__toWTFString(this: *String) void;
     extern fn BunString__createUTF8ForJS(globalObject: *JSC.JSGlobalObject, ptr: [*]const u8, len: usize) JSC.JSValue;
 
-    pub fn createUTF8ForJS(globalObject: *JSC.JSGlobalObject, utf8_slice: []const u8) JSC.JSValue {
+    pub fn createUTF8ForJS(globalObject: *JSC.JSGlobalObject, utf8_slice: []const u8) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        return BunString__createUTF8ForJS(globalObject, utf8_slice.ptr, utf8_slice.len);
+        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createUTF8ForJS, .{ globalObject, utf8_slice.ptr, utf8_slice.len });
     }
 
-    pub fn createFormatForJS(globalObject: *JSC.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSC.JSValue {
+    pub fn createFormatForJS(globalObject: *JSC.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         var builder = std.ArrayList(u8).init(bun.default_allocator);
         defer builder.deinit();
         builder.writer().print(fmt, args) catch bun.outOfMemory();
-        return BunString__createUTF8ForJS(globalObject, builder.items.ptr, builder.items.len);
+        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createUTF8ForJS, .{ globalObject, builder.items.ptr, builder.items.len });
     }
 
     pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {
@@ -1220,15 +1217,15 @@ pub const SliceWithUnderlyingString = struct {
         try writer.writeAll(self.utf8.slice());
     }
 
-    pub fn toJS(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return this.toJSWithOptions(globalObject, false);
     }
 
-    pub fn transferToJS(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn transferToJS(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return this.toJSWithOptions(globalObject, true);
     }
 
-    fn toJSWithOptions(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject, transfer: bool) JSC.JSValue {
+    fn toJSWithOptions(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject, transfer: bool) bun.JSError!JSC.JSValue {
         if ((this.underlying.tag == .Dead or this.underlying.tag == .Empty) and this.utf8.length() > 0) {
             if (comptime bun.Environment.allow_assert) {
                 if (this.utf8.allocator.get()) |allocator| {

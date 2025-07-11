@@ -209,9 +209,9 @@ pub const UpgradeCommand = struct {
 
         var log = logger.Log.init(allocator);
         defer if (comptime silent) log.deinit();
-        var source = logger.Source.initPathString("releases.json", metadata_body.list.items);
+        const source = &logger.Source.initPathString("releases.json", metadata_body.list.items);
         initializeStore();
-        var expr = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+        var expr = JSON.parseUTF8(source, &log, allocator) catch |err| {
             if (!silent) {
                 progress.?.end();
                 refresher.?.refresh();
@@ -338,8 +338,8 @@ pub const UpgradeCommand = struct {
     const profile_exe_subpath = Version.profile_folder_name ++ std.fs.path.sep_str ++ "bun-profile" ++ exe_suffix;
 
     const manual_upgrade_command = switch (Environment.os) {
-        .linux, .mac => "curl -fsSL https://bun.sh/install | bash",
-        .windows => "powershell -c 'irm bun.sh/install.ps1|iex'",
+        .linux, .mac => "curl -fsSL https://bun.com/install | bash",
+        .windows => "powershell -c 'irm bun.com/install.ps1|iex'",
         else => "(TODO: Install script for " ++ Environment.os.displayString() ++ ")",
     };
 
@@ -889,7 +889,7 @@ pub const UpgradeCommand = struct {
                     \\
                     \\What's new in Bun v{s}:
                     \\
-                    \\    <cyan>https://bun.sh/blog/release-notes/{s}<r>
+                    \\    <cyan>https://bun.com/blog/release-notes/{s}<r>
                     \\
                     \\Report any bugs:
                     \\
@@ -939,13 +939,13 @@ pub const upgrade_js_bindings = struct {
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
     pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!bun.JSC.JSValue {
-        if (comptime !Environment.isWindows) return .undefined;
+        if (comptime !Environment.isWindows) return .js_undefined;
         const w = std.os.windows;
 
         var buf: bun.WPathBuffer = undefined;
         const tmpdir_path = fs.FileSystem.RealFS.getDefaultTempDir();
         const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf, .{})) {
-            .err => return .undefined,
+            .err => return .js_undefined,
             .result => |norm| norm,
         };
 
@@ -989,17 +989,17 @@ pub const upgrade_js_bindings = struct {
             else => {},
         }
 
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-        if (comptime !Environment.isWindows) return .undefined;
+        if (comptime !Environment.isWindows) return .js_undefined;
 
         if (tempdir_fd) |fd| {
             fd.close();
         }
 
-        return .undefined;
+        return .js_undefined;
     }
 };
 

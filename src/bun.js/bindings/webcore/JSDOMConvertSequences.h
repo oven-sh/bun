@@ -53,8 +53,7 @@ struct GenericSequenceConverter {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
             auto convertedValue = Converter<IDLType>::convert(*lexicalGlobalObject, nextValue);
-            if (scope.exception()) [[unlikely]]
-                return;
+            RETURN_IF_EXCEPTION(scope, );
             result.append(WTFMove(convertedValue));
         });
         return WTFMove(result);
@@ -68,8 +67,7 @@ struct GenericSequenceConverter {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
             auto convertedValue = Converter<IDLType>::convert(*lexicalGlobalObject, nextValue, std::forward<ExceptionThrower>(exceptionThrower));
-            if (scope.exception()) [[unlikely]]
-                return;
+            RETURN_IF_EXCEPTION(scope, );
             result.append(WTFMove(convertedValue));
         });
         return WTFMove(result);
@@ -86,8 +84,7 @@ struct GenericSequenceConverter {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
             auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, nextValue);
-            if (scope.exception()) [[unlikely]]
-                return;
+            RETURN_IF_EXCEPTION(scope, );
             result.append(WTFMove(convertedValue));
         });
         return WTFMove(result);
@@ -484,7 +481,9 @@ template<typename T> struct JSConverter<IDLSequence<T>> {
             throwOutOfMemoryError(&lexicalGlobalObject, scope);
             return {};
         }
-        RELEASE_AND_RETURN(scope, JSC::constructArray(&globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list));
+        auto* array = JSC::constructArray(&globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, array);
     }
 };
 

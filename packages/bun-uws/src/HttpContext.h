@@ -90,7 +90,7 @@ private:
         MACRO("UNLINK") \
         MACRO("UNLOCK") \
         MACRO("UNSUBSCRIBE") \
-    
+
 
 #ifndef _WIN32
     static constexpr std::array<const std::string, 35> HTTP_METHODS = {
@@ -108,12 +108,12 @@ private:
         FOR_EACH_HTTP_METHOD(MACRO)
         #undef MACRO
     };
-    
+
     static std::span<const std::string> getAllHttpMethods() {
         static std::once_flag flag;
         static std::array<std::string, 35> methods;
         std::call_once(flag, []() {
-            methods = { 
+            methods = {
                 #define MACRO(name) std::string {name},
                 FOR_EACH_HTTP_METHOD(MACRO)
                 #undef MACRO
@@ -201,7 +201,7 @@ private:
             /* Call filter */
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
 
-            
+
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, -1);
             }
@@ -276,7 +276,7 @@ private:
 
                 /* Mark pending request and emit it */
                 httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
-                
+
 
                 /* Mark this response as connectionClose if ancient or connection: close */
                 if (httpRequest->isAncient() || httpRequest->getHeader("connection").length() == 5) {
@@ -336,7 +336,7 @@ private:
             }, [httpResponseData](void *user, std::string_view data, bool fin) -> void * {
                 /* We always get an empty chunk even if there is no data */
                 if (httpResponseData->inStream) {
-                    
+
                     /* Todo: can this handle timeout for non-post as well? */
                     if (fin) {
                         /* If we just got the last chunk (or empty chunk), disable timeout */
@@ -374,7 +374,7 @@ private:
             });
 
             auto httpErrorStatusCode = result.httpErrorStatusCode();
-            
+
             /* Mark that we are no longer parsing Http */
             httpContextData->flags.isParsingHttp = false;
             /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
@@ -383,12 +383,12 @@ private:
                     httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 }
                 /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
-                us_socket_write(SSL, s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length(), false);
+                us_socket_write(SSL, s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());
                 us_socket_shutdown(SSL, s);
                 /* Close any socket on HTTP errors */
                 us_socket_close(SSL, s, 0, nullptr);
             }
-        
+
             auto returnedData = result.returnedData;
             /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
             if (returnedData != nullptr) {
@@ -456,10 +456,9 @@ private:
             size_t bufferedAmount = asyncSocket->getBufferedAmount();
             if (bufferedAmount > 0) {
                 /* Try to flush pending data from the socket's buffer to the network */
-                bufferedAmount -= asyncSocket->flush();
-                
+                asyncSocket->flush();
                 /* Check if there's still data waiting to be sent after flush attempt */
-                if (bufferedAmount > 0) {
+                if (asyncSocket->getBufferedAmount() > 0) {
                     /* Socket buffer is not completely empty yet
                     * - Reset the timeout to prevent premature connection closure
                     * - This allows time for another writable event or new request
@@ -472,12 +471,12 @@ private:
                 * and will fall through to the next section of code
                 */
             }
-            
+
             /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
             if (httpResponseData->onWritable) {
                 /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */
                 us_socket_timeout(SSL, s, 0);
-                
+
                 /* We expect the developer to return whether or not write was successful (true).
                  * If write was never called, the developer should still return true so that we may drain. */
                 bool success = httpResponseData->callOnWritable(reinterpret_cast<HttpResponse<SSL> *>(asyncSocket), httpResponseData->offset);
@@ -498,6 +497,7 @@ private:
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                     if (asyncSocket->getBufferedAmount() == 0) {
+
                         asyncSocket->shutdown();
                         /* We need to force close after sending FIN since we want to hinder
                          * clients from keeping to send their huge data */
@@ -588,7 +588,7 @@ public:
             methods = getAllHttpMethods();
         } else {
             methods_buffer[0] = std::string(method);
-            methods = {methods_buffer.data(), 1};   
+            methods = {methods_buffer.data(), 1};
         }
 
         uint32_t priority = method == "*" ? httpContextData->currentRouter->LOW_PRIORITY : (upgrade ? httpContextData->currentRouter->HIGH_PRIORITY : httpContextData->currentRouter->MEDIUM_PRIORITY);
@@ -616,7 +616,7 @@ public:
             }
         }
 
-        
+
 
         httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), parameterOffsets = std::move(parameterOffsets), httpContextData](auto *r) mutable {
             auto user = r->getUserData();
@@ -667,5 +667,3 @@ public:
 };
 
 }
-
-

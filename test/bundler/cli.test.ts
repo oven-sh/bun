@@ -63,7 +63,7 @@ describe("bun build", () => {
     const tmpdir = tmpdirSync();
     const baseDir = `${tmpdir}/bun-build-dirname-filename-${Date.now()}`;
     fs.mkdirSync(baseDir, { recursive: true });
-    fs.mkdirSync(path.join(baseDir, "我")), { recursive: true };
+    (fs.mkdirSync(path.join(baseDir, "我")), { recursive: true });
     fs.writeFileSync(path.join(baseDir, "我", "我.ts"), "console.log(__dirname); console.log(__filename);");
     const { exitCode } = Bun.spawnSync({
       cmd: [bunExe(), "build", path.join(baseDir, "我/我.ts"), "--compile", "--outfile", path.join(baseDir, "exe.exe")],
@@ -201,7 +201,14 @@ test("you can use --outfile=... and --sourcemap", () => {
   const outputContent = fs.readFileSync(outFile, "utf8");
   expect(outputContent).toContain("//# sourceMappingURL=out.js.map");
 
-  expect(stdout.toString()).toMatchInlineSnapshot();
+  expect(stdout.toString().replace(/\d{1,}ms/, "0.000000001ms")).toMatchInlineSnapshot(`
+    "Bundled 1 module in 0.000000001ms
+
+      out.js      120 bytes  (entry point)
+      out.js.map  213 bytes  (source map)
+
+    "
+  `);
 });
 
 test("some log cases", () => {

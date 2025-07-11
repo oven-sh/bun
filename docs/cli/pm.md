@@ -151,3 +151,45 @@ $ bun pm default-trusted
 ```
 
 see the current list on GitHub [here](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt)
+
+## version
+
+To display current package version and help:
+
+```bash
+$ bun pm version
+bun pm version v$BUN_LATEST_VERSION (ca7428e9)
+Current package version: v1.0.0
+
+Increment:
+  patch      1.0.0 → 1.0.1
+  minor      1.0.0 → 1.1.0
+  major      1.0.0 → 2.0.0
+  prerelease 1.0.0 → 1.0.1-0
+  prepatch   1.0.0 → 1.0.1-0
+  preminor   1.0.0 → 1.1.0-0
+  premajor   1.0.0 → 2.0.0-0
+  from-git   Use version from latest git tag
+  1.2.3      Set specific version
+
+Options:
+  --no-git-tag-version Skip git operations
+  --allow-same-version Prevents throwing error if version is the same
+  --message=<val>, -m  Custom commit message, use %s for version substitution
+  --preid=<val>        Prerelease identifier (i.e beta → 1.0.1-beta.0)
+  --force, -f          Bypass dirty git history check
+
+Examples:
+  $ bun pm version patch
+  $ bun pm version 1.2.3 --no-git-tag-version
+  $ bun pm version prerelease --preid beta --message "Release beta: %s"
+```
+
+To bump the version in `package.json`:
+
+```bash
+$ bun pm version patch
+v1.0.1
+```
+
+Supports `patch`, `minor`, `major`, `premajor`, `preminor`, `prepatch`, `prerelease`, `from-git`, or specific versions like `1.2.3`. By default creates git commit and tag unless `--no-git-tag-version` was used to skip.

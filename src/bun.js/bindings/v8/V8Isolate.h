@@ -50,7 +50,7 @@ public:
     shim::GlobalInternals* m_globalInternals;
     Zig::GlobalObject* m_globalObject;
 
-    uintptr_t m_padding[72];
+    uintptr_t m_padding[78];
 
     std::array<TaggedPointer, 9> m_roots;
 };

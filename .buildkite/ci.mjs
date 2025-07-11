@@ -128,11 +128,8 @@ const testPlatforms = [
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: "latest" },
-  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04", tier: "oldest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04", tier: "latest" },
-  { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04", tier: "oldest" },
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04", tier: "oldest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.21", tier: "latest" },
@@ -450,7 +447,7 @@ function getBuildCppStep(platform, options) {
       BUN_CPP_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    // We used to build the C++ dependencies and bun in seperate steps.
+    // We used to build the C++ dependencies and bun in separate steps.
     // However, as long as the zig build takes longer than both sequentially,
     // it's cheaper to run them in the same step. Can be revisited in the future.
     command: [`${command} --target bun`, `${command} --target dependencies`],
@@ -922,7 +919,7 @@ function getOptionsStep() {
       {
         key: "unified-builds",
         select: "Do you want to build each platform in a single step?",
-        hint: "If true, builds will not be split into seperate steps (this will likely slow down the build)",
+        hint: "If true, builds will not be split into separate steps (this will likely slow down the build)",
         required: false,
         default: "false",
         options: booleanOptions,
@@ -930,7 +927,7 @@ function getOptionsStep() {
       {
         key: "unified-tests",
         select: "Do you want to run tests in a single step?",
-        hint: "If true, tests will not be split into seperate steps (this will be very slow)",
+        hint: "If true, tests will not be split into separate steps (this will be very slow)",
         required: false,
         default: "false",
         options: booleanOptions,

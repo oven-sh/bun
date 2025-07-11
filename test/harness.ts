@@ -47,7 +47,7 @@ export const isBroken = isCI;
 export const isASAN = basename(process.execPath).includes("bun-asan");
 
 export const bunEnv: NodeJS.Dict<string> = {
-  ...(process.env as NodeJS.Dict<string>),
+  ...process.env,
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",
@@ -64,7 +64,7 @@ export const bunEnv: NodeJS.Dict<string> = {
 const ciEnv = { ...bunEnv };
 
 if (isASAN) {
-  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1";
+  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";
 }
 
 if (isWindows) {
@@ -258,6 +258,12 @@ export function tempDirWithFiles(
   filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
 ): string {
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
+  makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
+  return base;
+}
+
+export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
+  const base = tmpdirSync();
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
 }
@@ -1119,7 +1125,7 @@ export function tmpdirSync(pattern: string = "bun.test."): string {
 }
 
 export async function runBunInstall(
-  env: NodeJS.ProcessEnv,
+  env: NodeJS.Dict<string>,
   cwd: string,
   options?: {
     allowWarnings?: boolean;
@@ -1207,7 +1213,7 @@ export async function runBunUpdate(
   return { out: out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/), err, exitCode };
 }
 
-export async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
+export async function pack(cwd: string, env: NodeJS.Dict<string>, ...args: string[]) {
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: [bunExe(), "pm", "pack", ...args],
     cwd,
@@ -1641,7 +1647,7 @@ export class VerdaccioRegistry {
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
     let bunfig = `
     [install]
-    cache = "${join(dir, ".bun-cache")}"
+    cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
     `;
     if ("saveTextLockfile" in opts) {
       bunfig += `saveTextLockfile = ${opts.saveTextLockfile}

@@ -64,8 +64,8 @@ pub const JSGlobalObject = opaque {
         return this.ERR(.INVALID_ARG_TYPE, comptime std.fmt.comptimePrint("Expected {s} to be a {s} for '{s}'.", .{ field, typename, name_ }), .{}).toJS();
     }
 
-    pub fn toJS(this: *JSC.JSGlobalObject, value: anytype, comptime lifetime: JSC.JSValue.FromAnyLifetime) JSC.JSValue {
-        return .fromAny(this, @TypeOf(value), value, lifetime);
+    pub fn toJS(this: *JSC.JSGlobalObject, value: anytype) bun.JSError!JSC.JSValue {
+        return .fromAny(this, @TypeOf(value), value);
     }
 
     /// "Expected {field} to be a {typename} for '{name}'."
@@ -373,7 +373,7 @@ pub const JSGlobalObject = opaque {
         const err = createErrorInstance(this, message, args);
         err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
         if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
-        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), JSC.toJS(this, i32, errno, .temporary));
+        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), try JSC.toJS(this, i32, errno));
         return this.throwValue(err);
     }
 
@@ -419,8 +419,7 @@ pub const JSGlobalObject = opaque {
 
     extern fn Bun__Process__emitWarning(globalObject: *JSGlobalObject, warning: JSValue, @"type": JSValue, code: JSValue, ctor: JSValue) void;
     pub fn emitWarning(globalObject: *JSGlobalObject, warning: JSValue, @"type": JSValue, code: JSValue, ctor: JSValue) JSError!void {
-        Bun__Process__emitWarning(globalObject, warning, @"type", code, ctor);
-        if (globalObject.hasException()) return error.JSError;
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__Process__emitWarning, .{ globalObject, warning, @"type", code, ctor });
     }
 
     extern fn JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject__ptr: *JSGlobalObject, JSValue, JSValue, JSValue) void;
@@ -429,8 +428,7 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn throwValue(this: *JSGlobalObject, value: JSC.JSValue) JSError {
-        this.vm().throwError(this, value);
-        return error.JSError;
+        return this.vm().throwError(this, value);
     }
 
     pub fn throwTypeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
@@ -460,8 +458,7 @@ pub const JSGlobalObject = opaque {
         defer allocator_.free(buffer);
         const str = ZigString.initUTF8(buffer);
         const err_value = str.toErrorInstance(this);
-        this.vm().throwError(this, err_value);
-        return error.JSError;
+        return this.vm().throwError(this, err_value);
     }
 
     // TODO: delete these two fns
@@ -481,9 +478,8 @@ pub const JSGlobalObject = opaque {
         message: bun.String,
         error_array: JSValue,
     ) JSValue {
-        if (bun.Environment.allow_assert)
-            bun.assert(error_array.isArray());
-        return JSC__JSGlobalObject__createAggregateErrorWithArray(globalObject, error_array, message, .undefined);
+        if (bun.Environment.allow_assert) bun.assert(error_array.isArray());
+        return JSC__JSGlobalObject__createAggregateErrorWithArray(globalObject, error_array, message, .js_undefined);
     }
 
     extern fn JSC__JSGlobalObject__generateHeapSnapshot(*JSGlobalObject) JSValue;
@@ -491,6 +487,7 @@ pub const JSGlobalObject = opaque {
         return JSC__JSGlobalObject__generateHeapSnapshot(this);
     }
 
+    // DEPRECATED - use CatchScope to check for exceptions and signal exceptions by returning JSError
     pub fn hasException(this: *JSGlobalObject) bool {
         return JSGlobalObject__hasException(this);
     }
@@ -553,7 +550,7 @@ pub const JSGlobalObject = opaque {
     ///
     pub fn reportActiveExceptionAsUnhandled(this: *JSGlobalObject, err: bun.JSError) void {
         const exception = this.takeException(err);
-        if (!exception.isTerminationException(this.vm())) {
+        if (!exception.isTerminationException()) {
             _ = this.bunVM().uncaughtException(this, exception, false);
         }
     }
@@ -686,7 +683,7 @@ pub const JSGlobalObject = opaque {
     };
 
     pub fn validateIntegerRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) bun.JSError!T {
-        if (value == .undefined or value == .zero) {
+        if (value.isUndefined() or value == .zero) {
             return default;
         }
 

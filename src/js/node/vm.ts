@@ -24,6 +24,10 @@ const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const SymbolToStringTag = Symbol.toStringTag;
+const ArrayIsArray = Array.isArray;
+const ArrayPrototypeSome = Array.prototype.some;
+const ArrayPrototypeForEach = Array.prototype.forEach;
+const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 
 const kPerContextModuleId = Symbol("kPerContextModuleId");
 const kNative = Symbol("kNative");
@@ -39,14 +43,14 @@ const {
   Module: ModuleNative,
   createContext,
   isContext,
-  // runInNewContext: moduleRunInNewContext,
-  // runInThisContext: moduleRunInThisContext,
   compileFunction,
   isModuleNamespaceObject,
   kUnlinked,
   kLinked,
   kEvaluated,
   kErrored,
+  DONT_CONTEXTIFY,
+  USE_MAIN_CONTEXT_DEFAULT_LOADER,
 } = vm;
 
 function runInContext(code, context, options) {
@@ -64,12 +68,15 @@ function runInThisContext(code, options) {
   return new Script(code, options).runInThisContext(options);
 }
 
-function runInNewContext(code, contextObject, options) {
+function runInNewContext(code, context, options) {
+  if (context !== undefined && (typeof context !== "object" || context === null)) {
+    validateContext(context);
+  }
   if (typeof options === "string") {
     options = { filename: options };
   }
-  contextObject = createContext(contextObject, options);
-  return createScript(code, options).runInNewContext(contextObject, options);
+  context = createContext(context, options);
+  return createScript(code, options).runInNewContext(context, options);
 }
 
 function createScript(code, options) {
@@ -81,7 +88,7 @@ function measureMemory() {
 }
 
 function validateContext(contextifiedObject) {
-  if (!isContext(contextifiedObject)) {
+  if (contextifiedObject !== constants.DONT_CONTEXTIFY && !isContext(contextifiedObject)) {
     const error = new Error('The "contextifiedObject" argument must be an vm.Context');
     error.code = "ERR_INVALID_ARG_TYPE";
     error.name = "TypeError";
@@ -136,7 +143,6 @@ class Module {
       });
     }
 
-    let registry = { __proto__: null };
     if (sourceText !== undefined) {
       this[kNative] = new ModuleNative(
         identifier,
@@ -145,22 +151,13 @@ class Module {
         options.lineOffset,
         options.columnOffset,
         options.cachedData,
+        options.initializeImportMeta,
+        this,
+        options.importModuleDynamically ? importModuleDynamicallyWrap(options.importModuleDynamically) : undefined,
       );
-      registry = {
-        __proto__: null,
-        initializeImportMeta: options.initializeImportMeta,
-        importModuleDynamically: options.importModuleDynamically
-          ? importModuleDynamicallyWrap(options.importModuleDynamically)
-          : undefined,
-      };
-      // This will take precedence over the referrer as the object being
-      // passed into the callbacks.
-      registry.callbackReferrer = this;
-      // const { registerModule } = require("internal/modules/esm/utils");
-      // registerModule(this[kNative], registry);
     } else {
       $assert(syntheticEvaluationSteps);
-      this[kNative] = new ModuleNative(identifier, context, syntheticExportNames, syntheticEvaluationSteps);
+      this[kNative] = new ModuleNative(identifier, context, syntheticExportNames, syntheticEvaluationSteps, this);
     }
 
     this[kContext] = context;
@@ -239,7 +236,7 @@ class Module {
     if (typeof depth === "number" && depth < 0) return this;
 
     const constructor = getConstructorOf(this) || Module;
-    const o = { __proto__: { constructor } };
+    const o: any = { __proto__: { constructor } };
     o.status = this.status;
     o.identifier = this.identifier;
     o.context = this.context;
@@ -392,16 +389,49 @@ class SourceTextModule extends Module {
   }
 }
 
-class SyntheticModule {
-  constructor() {
-    throwNotImplemented("node:vm.SyntheticModule");
+class SyntheticModule extends Module {
+  constructor(exportNames, evaluateCallback, options = kEmptyObject) {
+    if (!ArrayIsArray(exportNames) || ArrayPrototypeSome.$call(exportNames, e => typeof e !== "string")) {
+      throw $ERR_INVALID_ARG_TYPE("exportNames", "Array of unique strings", exportNames);
+    } else {
+      ArrayPrototypeForEach.$call(exportNames, (name, i) => {
+        if (ArrayPrototypeIndexOf.$call(exportNames, name, i + 1) !== -1) {
+          throw $ERR_INVALID_ARG_VALUE(`exportNames.${name}`, name, "is duplicated");
+        }
+      });
+    }
+    validateFunction(evaluateCallback, "evaluateCallback");
+
+    validateObject(options, "options");
+
+    const { context, identifier } = options;
+
+    super({
+      syntheticExportNames: exportNames,
+      syntheticEvaluationSteps: evaluateCallback,
+      context,
+      identifier,
+    });
+  }
+
+  [kLink]() {
+    /** nothing to do for synthetic modules */
+  }
+
+  setExport(name, value) {
+    validateModule(this, "SyntheticModule");
+    validateString(name, "name");
+    if (this[kNative].getStatusCode() < kLinked) {
+      throw $ERR_VM_MODULE_STATUS("must be linked");
+    }
+    this[kNative].setExport(name, value);
   }
 }
 
 const constants = {
   __proto__: null,
-  USE_MAIN_CONTEXT_DEFAULT_LOADER: Symbol("vm_dynamic_import_main_context_default"),
-  DONT_CONTEXTIFY: Symbol("vm_context_no_contextify"),
+  USE_MAIN_CONTEXT_DEFAULT_LOADER,
+  DONT_CONTEXTIFY,
 };
 
 function isModule(object) {
@@ -410,7 +440,7 @@ function isModule(object) {
 
 function importModuleDynamicallyWrap(importModuleDynamically) {
   const importModuleDynamicallyWrapper = async (...args) => {
-    const m: any = importModuleDynamically.$apply(this, args);
+    const m: any = await importModuleDynamically.$apply(this, args);
     if (isModuleNamespaceObject(m)) {
       return m;
     }

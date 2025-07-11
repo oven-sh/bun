@@ -42,6 +42,29 @@ else()
   set(CONFIGURE_DEPENDS "")
 endif()
 
+# --- Dependencies ---
+
+set(BUN_DEPENDENCIES
+  BoringSSL
+  Brotli
+  Cares
+  Highway
+  LibDeflate
+  LolHtml
+  Lshpack
+  Mimalloc
+  TinyCC
+  Zlib
+  LibArchive # must be loaded after zlib
+  HdrHistogram # must be loaded after zlib
+  Zstd
+)
+
+include(CloneZstd)
+# foreach(dependency ${BUN_DEPENDENCIES})
+#   include(Clone${dependency})
+# endforeach()
+
 # --- Codegen ---
 
 set(BUN_ERROR_SOURCE ${CWD}/packages/bun-error)
@@ -408,6 +431,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingFs.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
+  ${CWD}/src/bun.js/bindings/ProcessBindingHTTPParser.cpp
   ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
 )
@@ -421,6 +445,7 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/ProcessBindingConstants.lut.h
   ${CODEGEN_PATH}/ProcessBindingFs.lut.h
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
+  ${CODEGEN_PATH}/ProcessBindingHTTPParser.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.h
 )
@@ -580,6 +605,7 @@ register_command(
     ${BUN_ZIG_OUTPUT}
   TARGETS
     clone-zig
+    clone-zstd
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}
@@ -624,8 +650,13 @@ register_command(
       -DDOWNLOAD_PATH=${NODEJS_HEADERS_PATH}
       -DDOWNLOAD_URL=https://nodejs.org/dist/v${NODEJS_VERSION}/node-v${NODEJS_VERSION}-headers.tar.gz
       -P ${CWD}/cmake/scripts/DownloadUrl.cmake
+  COMMAND
+    ${CMAKE_COMMAND}
+      -DNODE_INCLUDE_DIR=${NODEJS_HEADERS_PATH}/include
+      -P ${CWD}/cmake/scripts/PrepareNodeHeaders.cmake
   OUTPUTS
     ${NODEJS_HEADERS_PATH}/include/node/node_version.h
+    ${NODEJS_HEADERS_PATH}/include/.node-headers-prepared
 )
 
 list(APPEND BUN_CPP_SOURCES
@@ -647,20 +678,14 @@ if(WIN32)
   else()
     set(Bun_VERSION_WITH_TAG ${VERSION})
   endif()
-  set(BUN_ICO_PATH ${CWD}/src/bun.ico)
   configure_file(${CWD}/src/bun.ico ${CODEGEN_PATH}/bun.ico COPYONLY)
+  set(BUN_ICO_PATH ${CODEGEN_PATH}/bun.ico)
   configure_file(
     ${CWD}/src/windows-app-info.rc
     ${CODEGEN_PATH}/windows-app-info.rc
     @ONLY
   )
-  add_custom_command(
-    OUTPUT ${CODEGEN_PATH}/windows-app-info.res
-    COMMAND rc.exe /fo ${CODEGEN_PATH}/windows-app-info.res ${CODEGEN_PATH}/windows-app-info.rc
-    DEPENDS ${CODEGEN_PATH}/windows-app-info.rc ${CODEGEN_PATH}/bun.ico
-    COMMENT "Adding Windows resource file ${CODEGEN_PATH}/windows-app-info.res with ico in ${CODEGEN_PATH}/bun.ico"
-  )
-  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.res)
+  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.rc)
 endif()
 
 # --- Executable ---
@@ -732,6 +757,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/bun.js/bindings/webcore
   ${CWD}/src/bun.js/bindings/webcrypto
   ${CWD}/src/bun.js/bindings/node/crypto
+  ${CWD}/src/bun.js/bindings/node/http
   ${CWD}/src/bun.js/bindings/sqlite
   ${CWD}/src/bun.js/bindings/v8
   ${CWD}/src/bun.js/modules
@@ -742,6 +768,7 @@ target_include_directories(${bun} PRIVATE
   ${VENDOR_PATH}
   ${VENDOR_PATH}/picohttpparser
   ${NODEJS_HEADERS_PATH}/include
+  ${NODEJS_HEADERS_PATH}/include/node
 )
 
 if(NOT WIN32)
@@ -890,6 +917,9 @@ if(NOT WIN32)
 else()
   target_compile_options(${bun} PUBLIC
     -Wno-nullability-completeness
+    -Wno-inconsistent-dllimport
+    -Wno-incompatible-pointer-types
+    -Wno-deprecated-declarations
   )
 endif()
 
@@ -1045,22 +1075,6 @@ if(NOT WEBKIT_LOCAL AND NOT APPLE)
 endif()
 
 # --- Dependencies ---
-
-set(BUN_DEPENDENCIES
-  BoringSSL
-  Brotli
-  Cares
-  Highway
-  LibDeflate
-  LolHtml
-  Lshpack
-  Mimalloc
-  TinyCC
-  Zlib
-  LibArchive # must be loaded after zlib
-  HdrHistogram # must be loaded after zlib
-  Zstd
-)
 
 if(WIN32)
   list(APPEND BUN_DEPENDENCIES Libuv)

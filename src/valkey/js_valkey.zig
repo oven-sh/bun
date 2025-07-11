@@ -165,7 +165,7 @@ pub const JSValkeyClient = struct {
 
         // If already connected, resolve immediately
         if (this.client.status == .connected) {
-            return JSC.JSPromise.resolvedPromiseValue(globalObject, js.helloGetCached(this_value) orelse .undefined);
+            return JSC.JSPromise.resolvedPromiseValue(globalObject, js.helloGetCached(this_value) orelse .js_undefined);
         }
 
         if (js.connectionPromiseGetCached(this_value)) |promise| {
@@ -219,17 +219,17 @@ pub const JSValkeyClient = struct {
 
     pub fn jsDisconnect(this: *JSValkeyClient, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         if (this.client.status == .disconnected) {
-            return .undefined;
+            return .js_undefined;
         }
         this.client.disconnect();
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn getOnConnect(_: *JSValkeyClient, thisValue: JSValue, _: *JSC.JSGlobalObject) JSValue {
         if (js.onconnectGetCached(thisValue)) |value| {
             return value;
         }
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn setOnConnect(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
@@ -240,7 +240,7 @@ pub const JSValkeyClient = struct {
         if (js.oncloseGetCached(thisValue)) |value| {
             return value;
         }
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn setOnClose(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
@@ -406,7 +406,7 @@ pub const JSValkeyClient = struct {
         defer event_loop.exit();
 
         if (this.this_value.tryGet()) |this_value| {
-            const hello_value = value.toJS(globalObject) catch .undefined;
+            const hello_value: JSValue = value.toJS(globalObject) catch .js_undefined;
             js.helloSetCached(this_value, globalObject, hello_value);
             // Call onConnect callback if defined by the user
             if (js.onconnectGetCached(this_value)) |on_connect| {
@@ -456,7 +456,7 @@ pub const JSValkeyClient = struct {
         loop.enter();
         defer loop.exit();
 
-        if (this_jsvalue != .undefined) {
+        if (!this_jsvalue.isUndefined()) {
             if (js.connectionPromiseGetCached(this_jsvalue)) |promise| {
                 js.connectionPromiseSetCached(this_jsvalue, globalObject, .zero);
                 promise.asPromise().?.reject(globalObject, error_value);
@@ -532,7 +532,7 @@ pub const JSValkeyClient = struct {
                 .none => .{
                     vm.rareData().valkey_context.tcp orelse brk_ctx: {
                         // TCP socket
-                        const ctx_ = uws.us_create_bun_nossl_socket_context(vm.uwsLoop(), @sizeOf(*JSValkeyClient)).?;
+                        const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient)).?;
                         uws.NewSocketHandler(false).configure(ctx_, true, *JSValkeyClient, SocketHandler(false));
                         vm.rareData().valkey_context.tcp = ctx_;
                         break :brk_ctx ctx_;
@@ -543,7 +543,7 @@ pub const JSValkeyClient = struct {
                     vm.rareData().valkey_context.tls orelse brk_ctx: {
                         // TLS socket, default config
                         var err: uws.create_bun_socket_error_t = .none;
-                        const ctx_ = uws.us_create_bun_ssl_socket_context(vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.us_bun_socket_context_options_t{}, &err).?;
+                        const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.SocketContext.BunSocketContextOptions{}, &err).?;
                         uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
                         vm.rareData().valkey_context.tls = ctx_;
                         break :brk_ctx ctx_;
@@ -554,7 +554,7 @@ pub const JSValkeyClient = struct {
                     // TLS socket, custom config
                     var err: uws.create_bun_socket_error_t = .none;
                     const options = custom.asUSockets();
-                    const ctx_ = uws.us_create_bun_ssl_socket_context(vm.uwsLoop(), @sizeOf(*JSValkeyClient), options, &err).?;
+                    const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), options, &err).?;
                     uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
                     break :brk_ctx .{ ctx_, true };
                 },

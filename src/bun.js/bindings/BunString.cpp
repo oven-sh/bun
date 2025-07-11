@@ -44,16 +44,16 @@ extern "C" void mi_free(void* ptr);
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
 
-extern "C" bool Bun__WTFStringImpl__hasPrefix(const WTF::StringImpl* impl, const char* bytes, size_t length)
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__WTFStringImpl__hasPrefix(const WTF::StringImpl* impl, const char* bytes, size_t length)
 {
     return impl->startsWith({ bytes, length });
 }
 
-extern "C" void Bun__WTFStringImpl__deref(WTF::StringImpl* impl)
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__deref(WTF::StringImpl* impl)
 {
     impl->deref();
 }
-extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl)
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ref(WTF::StringImpl* impl)
 {
     impl->ref();
 }
@@ -729,7 +729,7 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
-extern "C" bool WTFStringImpl__isThreadSafe(
+extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadSafe(
     const WTF::StringImpl* wtf)
 {
     if (wtf->bufferOwnership() != StringImpl::BufferOwnership::BufferInternal)
@@ -738,7 +738,7 @@ extern "C" bool WTFStringImpl__isThreadSafe(
     return !(wtf->isSymbol() || wtf->isAtom());
 }
 
-extern "C" void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)
 {
     str->hash();
 }

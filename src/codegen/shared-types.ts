@@ -45,6 +45,7 @@ export const sharedTypes: Record<string, string> = {
   "Route": "HTTPServerAgent.Route",
   "Zig::GlobalObject": "jsc.JSGlobalObject",
   "JSC::VM": "jsc.VM",
+  "WTF::StringImpl": "bun.WTF._StringImplStruct",
 };
 
 export const bannedTypes: Record<string, string> = {

@@ -1945,6 +1945,7 @@ pub const MutableString = _string.MutableString;
 pub const WTF = struct {
     /// The String type from WebKit's WTF library.
     pub const StringImpl = _string.WTFStringImpl;
+    pub const _StringImplStruct = _string.WTFStringImplStruct;
 };
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
@@ -3411,9 +3412,8 @@ pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
         if (@intFromEnum(value) == f.value) break f.name;
     } else null;
 }
-extern "c" fn Bun__ramSize() usize;
 pub fn getTotalMemorySize() usize {
-    return Bun__ramSize();
+    return cpp.Bun__ramSize();
 }
 
 pub const DebugThreadLock = if (Environment.isDebug)
@@ -3701,14 +3701,12 @@ pub const Maybe = bun.JSC.Node.Maybe;
 pub const StackCheck = struct {
     cached_stack_end: usize = 0,
 
-    extern fn Bun__StackCheck__initialize() void;
     pub fn configureThread() void {
-        Bun__StackCheck__initialize();
+        cpp.Bun__StackCheck__initialize();
     }
 
-    extern "c" fn Bun__StackCheck__getMaxStack() usize;
     fn getStackEnd() usize {
-        return Bun__StackCheck__getMaxStack();
+        return @intFromPtr(cpp.Bun__StackCheck__getMaxStack());
     }
 
     pub fn init() StackCheck {

@@ -127,65 +127,62 @@ async function diagnose(fixtureDir: string, tsconfig: Partial<ts.CompilerOptions
       code: diagnostic.code,
     }));
 
-  const emptyInterfaceDiagnostics = checkForEmptyInterfaces(program, fixtureDir);
-
-  return diagnostics.concat(emptyInterfaceDiagnostics);
+  return {
+    diagnostics,
+    emptyInterfaces: checkForEmptyInterfaces(program, fixtureDir),
+  };
 }
 
 function checkForEmptyInterfaces(program: ts.Program, fixtureDir: string) {
-  const diagnostics: Array<{
-    category: string;
-    file: string | null;
-    message: string;
-    code: number;
-  }> = [];
+  const empties = new Set<string>();
 
   const checker = program.getTypeChecker();
 
-  const globalSourceFile = program
-    .getSourceFiles()
-    .find(sf => sf.fileName.includes("bun-types") && sf.fileName.endsWith("globals.d.ts"));
-
-  if (!globalSourceFile) {
-    return diagnostics;
+  const anySourceFile = program.getSourceFiles()[0];
+  if (!anySourceFile) {
+    return empties;
   }
 
-  const globalInterfaceNames = new Set<string>();
+  const globalSymbols = checker.getSymbolsInScope(anySourceFile, ts.SymbolFlags.Interface);
 
-  ts.forEachChild(globalSourceFile, function visit(node) {
-    if (ts.isInterfaceDeclaration(node)) {
-      globalInterfaceNames.add(node.name.text);
-    }
-    ts.forEachChild(node, visit);
-  });
+  for (const symbol of globalSymbols) {
+    // find only globals
+    const declarations = symbol.declarations || [];
+    const isGlobal = declarations.some(decl => {
+      const sourceFile = decl.getSourceFile();
+      let parent = decl.parent;
 
-  for (const interfaceName of globalInterfaceNames) {
-    const globalSymbol = checker.resolveName(interfaceName, undefined, ts.SymbolFlags.Interface, false);
-
-    if (globalSymbol) {
-      const globalType = checker.getDeclaredTypeOfSymbol(globalSymbol);
-      const properties = checker.getPropertiesOfType(globalType);
-      const callSignatures = checker.getSignaturesOfType(globalType, ts.SignatureKind.Call);
-      const constructSignatures = checker.getSignaturesOfType(globalType, ts.SignatureKind.Construct);
-      const indexInfos = checker.getIndexInfosOfType(globalType);
-
-      if (
-        properties.length === 0 &&
-        callSignatures.length === 0 &&
-        constructSignatures.length === 0 &&
-        indexInfos.length === 0
-      ) {
-        diagnostics.push({
-          category: "Error",
-          file: null,
-          message: `Global interface '${interfaceName}' has no properties, call signatures, construct signatures, or index signatures after type resolution. This interface needs to either have members defined or extend a conditional type that provides fallback implementations.`,
-          code: 9999,
-        });
+      while (parent && parent !== sourceFile) {
+        if (ts.isModuleDeclaration(parent) || ts.isModuleBlock(parent)) {
+          return false;
+        }
+        parent = parent.parent;
       }
+
+      return true;
+    });
+
+    if (!isGlobal) {
+      continue;
+    }
+
+    const symbolType = checker.getDeclaredTypeOfSymbol(symbol);
+    const properties = checker.getPropertiesOfType(symbolType);
+    const callSignatures = checker.getSignaturesOfType(symbolType, ts.SignatureKind.Call);
+    const constructSignatures = checker.getSignaturesOfType(symbolType, ts.SignatureKind.Construct);
+    const indexInfos = checker.getIndexInfosOfType(symbolType);
+
+    if (
+      properties.length === 0 &&
+      callSignatures.length === 0 &&
+      constructSignatures.length === 0 &&
+      indexInfos.length === 0
+    ) {
+      empties.add(symbol.name);
     }
   }
 
-  return diagnostics;
+  return empties;
 }
 
 afterAll(async () => {
@@ -202,15 +199,18 @@ afterAll(async () => {
 
 describe("@types/bun integration test", () => {
   test("checks without lib.dom.d.ts", async () => {
-    const diagnostics = await diagnose(FIXTURE_DIR, {});
+    const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {});
 
     expect(diagnostics).toEqual([]);
+    expect(emptyInterfaces).toEqual(new Set());
   });
 
   test("checks with lib.dom.d.ts", async () => {
-    const diagnostics = await diagnose(FIXTURE_DIR, {
+    const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
       lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"].map(name => `lib.${name.toLowerCase()}.d.ts`),
     });
+
+    expect(emptyInterfaces).toEqual(new Set());
 
     expect(diagnostics).toEqual([
       {

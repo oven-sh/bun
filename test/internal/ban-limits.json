@@ -7,7 +7,7 @@
   ": [a-zA-Z0-9_\\.\\*\\?\\[\\]\\(\\)]+ = undefined,": 242,
   "allocator.ptr !=": 1,
   "global.hasException": 28,
-  "globalObject.hasException": 47,
+  "globalObject.hasException": 42,
   "globalThis.hasException": 140,
   "std.StringArrayHashMap(": 1,
   "std.StringArrayHashMapUnmanaged(": 12,

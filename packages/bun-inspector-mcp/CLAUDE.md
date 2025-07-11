@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+For general Bun development guidance and API reference, see: https://bun.sh/llms.txt
+
 ## Project Overview
 
 `bun-inspector-mcp` is a Model Context Protocol (MCP) server that provides a bridge between AI models and Bun's JavaScript debugging capabilities. It allows AI tools to connect to and interact with Bun's debugger through the WebKit Inspector Protocol.

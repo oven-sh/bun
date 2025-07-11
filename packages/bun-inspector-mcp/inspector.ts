@@ -30,6 +30,11 @@ function getWorkerRpc() {
 class InspectorProxy {
   constructor(public url: URL) {}
 
+  async start(): Promise<void> {
+    const rpc = getWorkerRpc();
+    await rpc.startInspector(this.url.toString());
+  }
+
   async send(command: string, params?: any): Promise<any> {
     const rpc = getWorkerRpc();
     return await rpc.sendCommand(this.url.toString(), command, params);

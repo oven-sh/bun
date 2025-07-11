@@ -14,6 +14,7 @@ const cpuProfilesMap = new Map<string, { timestamp: number; samples?: JSC.Script
 // Worker-side functions that can be called from main thread
 export interface WorkerFunctions {
   registerInspector(url: string): Promise<{ connected: boolean; url: string }>;
+  startInspector(url: string): Promise<void>;
   sendCommand(url: string, command: string, params?: any): Promise<any>;
   getCallFrames(url: string): Promise<JSC.Debugger.CallFrame[]>;
   getConsoleMessages(url: string): Promise<{ date: Date; message: string }[]>;
@@ -30,7 +31,9 @@ export interface MainThreadFunctions {
 
 // Helper to get or create inspector
 function getOrCreateInspector(urlString: string): WebSocketInspector {
+  console.warn(`Getting or creating inspector for ${urlString}`);
   if (inspectorMap.has(urlString)) {
+    console.warn(`Reusing existing inspector for ${urlString}`);
     return inspectorMap.get(urlString)!;
   }
 
@@ -63,14 +66,13 @@ function getOrCreateInspector(urlString: string): WebSocketInspector {
     callFramesMap.set(urlString, [...existing, ...params.callFrames]);
   });
 
-  // Note: Console API listening is commented out for now due to type issues
-  // We'll need to update this when the proper event types are available
-  // inspector.on("Runtime.consoleAPICalled", (params) => {
-  //   const existing = consoleMessagesMap.get(urlString) ?? [];
-  //   const messages = params.args.map(arg => remoteObjectToString(arg, true)).join(" ");
-  //   const date = new Date();
-  //   consoleMessagesMap.set(urlString, [...existing, { date, message: messages }]);
-  // });
+  inspector.on("Runtime.consoleAPICalled", params => {
+    const existing = consoleMessagesMap.get(urlString) ?? [];
+    const messages = params.args.map(arg => remoteObjectToString(arg, true)).join(" ");
+    console.warn(`Console message from ${urlString}:`, messages);
+    const date = new Date();
+    consoleMessagesMap.set(urlString, [...existing, { date, message: messages }]);
+  });
 
   // Memory profiling event handlers
   inspector.on("Heap.garbageCollected", params => {
@@ -80,18 +82,12 @@ function getOrCreateInspector(urlString: string): WebSocketInspector {
 
   inspector.on("Heap.trackingStart", params => {
     const existing = heapSnapshotsMap.get(urlString) ?? [];
-    heapSnapshotsMap.set(urlString, [
-      ...existing,
-      { timestamp: params.timestamp, snapshotData: params.snapshotData },
-    ]);
+    heapSnapshotsMap.set(urlString, [...existing, { timestamp: params.timestamp, snapshotData: params.snapshotData }]);
   });
 
   inspector.on("Heap.trackingComplete", params => {
     const existing = heapSnapshotsMap.get(urlString) ?? [];
-    heapSnapshotsMap.set(urlString, [
-      ...existing,
-      { timestamp: params.timestamp, snapshotData: params.snapshotData },
-    ]);
+    heapSnapshotsMap.set(urlString, [...existing, { timestamp: params.timestamp, snapshotData: params.snapshotData }]);
   });
 
   // CPU profiling event handlers
@@ -114,6 +110,11 @@ const workerFunctions: WorkerFunctions = {
   async registerInspector(urlString: string) {
     getOrCreateInspector(urlString);
     return { connected: true, url: urlString };
+  },
+
+  async startInspector(urlString: string) {
+    const inspector = getOrCreateInspector(urlString);
+    await inspector.start();
   },
 
   async sendCommand(urlString: string, command: string, params?: any) {
@@ -153,17 +154,14 @@ const workerFunctions: WorkerFunctions = {
     heapSnapshotsMap.delete(urlString);
     gcEventsMap.delete(urlString);
     cpuProfilesMap.delete(urlString);
-  }
+  },
 };
 
 // Create birpc instance for worker
-const rpc = createBirpc<MainThreadFunctions, WorkerFunctions>(
-  workerFunctions,
-  {
-    post: (data) => postMessage(data),
-    on: (fn) => addEventListener("message", (e: MessageEvent) => fn(e.data)),
-  }
-);
+const rpc = createBirpc<MainThreadFunctions, WorkerFunctions>(workerFunctions, {
+  post: data => postMessage(data),
+  on: fn => addEventListener("message", (e: MessageEvent) => fn(e.data)),
+});
 
 // Export the rpc instance for potential future use
 export { rpc };

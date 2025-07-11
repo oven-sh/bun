@@ -1096,6 +1096,157 @@ export async function createMcpServer(): Promise<McpServer> {
     },
   );
 
+  // Runtime object inspection tools
+  server.registerTool(
+    "Runtime.getProperties",
+    {
+      title: "get object properties",
+      description: "Get properties of a remote object",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+        objectId: z.string().describe("Remote object ID to get properties for"),
+        ownProperties: z.boolean().optional().describe("Return only own properties (default: true)"),
+        accessorPropertiesOnly: z.boolean().optional().describe("Return only accessor properties (default: false)"),
+        generatePreview: z.boolean().optional().describe("Generate preview for property values (default: false)"),
+      },
+    },
+    async ({ url, objectId, ownProperties, accessorPropertiesOnly, generatePreview }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+      
+      try {
+        const result = await inspector.send("Runtime.getProperties", {
+          objectId: objectId as string,
+          ownProperties: ownProperties as boolean | undefined,
+          accessorPropertiesOnly: accessorPropertiesOnly as boolean | undefined,
+          generatePreview: generatePreview as boolean | undefined,
+        });
+        
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                properties: result.result,
+                internalProperties: result.internalProperties,
+              }),
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to get object properties: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "Runtime.callFunctionOn",
+    {
+      title: "call function on object",
+      description: "Call a function on a remote object",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+        functionDeclaration: z.string().describe("Function declaration to call"),
+        objectId: z.string().optional().describe("Object to call function on"),
+        arguments: z.array(z.any()).optional().describe("Arguments to pass to function"),
+        returnByValue: z.boolean().optional().describe("Return result by value (default: false)"),
+        generatePreview: z.boolean().optional().describe("Generate preview for result (default: false)"),
+      },
+    },
+    async ({ url, functionDeclaration, objectId, arguments: args, returnByValue, generatePreview }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+      
+      try {
+        const result = await inspector.send("Runtime.callFunctionOn", {
+          functionDeclaration: functionDeclaration as string,
+          objectId: objectId as string | undefined,
+          arguments: args as any[] | undefined,
+          returnByValue: returnByValue as boolean | undefined,
+          generatePreview: generatePreview as boolean | undefined,
+        });
+        
+        const resultString = remoteObjectToString(result.result, true);
+        
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                result: resultString,
+                wasThrown: result.wasThrown,
+                exceptionDetails: result.exceptionDetails,
+              }),
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to call function: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "Runtime.awaitPromise",
+    {
+      title: "await promise",
+      description: "Wait for a promise to resolve and return the result",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+        promiseObjectId: z.string().describe("Remote object ID of the promise"),
+        returnByValue: z.boolean().optional().describe("Return result by value (default: false)"),
+        generatePreview: z.boolean().optional().describe("Generate preview for result (default: false)"),
+      },
+    },
+    async ({ url, promiseObjectId, returnByValue, generatePreview }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+      
+      try {
+        const result = await inspector.send("Runtime.awaitPromise", {
+          promiseObjectId: promiseObjectId as string,
+          returnByValue: returnByValue as boolean | undefined,
+          generatePreview: generatePreview as boolean | undefined,
+        });
+        
+        const resultString = remoteObjectToString(result.result, true);
+        
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                result: resultString,
+                wasThrown: result.wasThrown,
+                exceptionDetails: result.exceptionDetails,
+              }),
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to await promise: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
   return server;
 }
 

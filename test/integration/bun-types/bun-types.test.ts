@@ -148,6 +148,14 @@ function checkForEmptyInterfaces(program: ts.Program, fixtureDir: string) {
   for (const symbol of globalSymbols) {
     // find only globals
     const declarations = symbol.declarations || [];
+
+    const concernsBun = declarations.some(decl => decl.getSourceFile().fileName.includes("node_modules/@types/bun"));
+
+    if (!concernsBun) {
+      // the lion is not concerned by symbols outside of bun
+      continue;
+    }
+
     const isGlobal = declarations.some(decl => {
       const sourceFile = decl.getSourceFile();
       let parent = decl.parent;

@@ -32,6 +32,10 @@ export class BunTestController implements vscode.Disposable {
       await this.staticDiscoverTests(testItem);
     };
 
+    this.testController.refreshHandler = async () => {
+      await this.discoverInitialTests();
+    };
+
     this.testController.createRunProfile(
       "Run Test",
       vscode.TestRunProfileKind.Run,

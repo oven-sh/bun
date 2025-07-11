@@ -213,6 +213,19 @@ describe("@types/bun integration test", () => {
     expect(diagnostics).toEqual([]);
   });
 
+  // This is not a super great way to be testing that test-globals is safe, but it does work for now.
+  // Ideally we should have a way to include custom test files in the fixture. This could
+  // be a change to the `diagnose` function to accept a DirectoryTree kind of structure (we do
+  // this in harness.ts and a few other places, so it would follow convention).
+  test("checks without lib.dom.d.ts and test-globals references", async () => {
+    const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
+      types: ["bun", "node", "bun/test-globals"],
+    });
+
+    expect(emptyInterfaces).toEqual(new Set());
+    expect(diagnostics).toEqual([]);
+  });
+
   test("checks with lib.dom.d.ts", async () => {
     const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
       lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"].map(name => `lib.${name.toLowerCase()}.d.ts`),

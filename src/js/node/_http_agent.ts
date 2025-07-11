@@ -26,6 +26,7 @@ interface Agent extends InstanceType<typeof EventEmitter> {
   scheduling: string;
   maxTotalSockets: any;
   totalSocketCount: number;
+  timeout?: number;
   [kfakeSocket]?: any;
 
   createConnection(): any;
@@ -65,6 +66,7 @@ function Agent(options = kEmptyObject) {
 
   this.keepAliveMsecs = options.keepAliveMsecs || 1000;
   this.keepAlive = options.keepAlive || false;
+  if (options.timeout !== undefined) this.timeout = options.timeout;
   this.maxSockets = options.maxSockets || Agent.defaultMaxSockets;
   this.maxFreeSockets = options.maxFreeSockets || 256;
   this.scheduling = options.scheduling || "lifo";

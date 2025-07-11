@@ -1,83 +1,108 @@
-import { WebSocketInspector, type JSC } from "bun-inspector-protocol";
-import { remoteObjectToString } from "bun-inspector-protocol";
+import type { JSC } from "bun-inspector-protocol";
+import { createBirpc } from "birpc";
+import type { WorkerFunctions, MainThreadFunctions } from "./inspector-worker";
 
-const inspectorMap = new Map<URL, WebSocketInspector>();
+// Create a singleton worker instance
+let worker: Worker | null = null;
+let rpc: ReturnType<typeof createBirpc<WorkerFunctions, MainThreadFunctions>> | null = null;
 
-export const callFramesMap = new Map<URL, JSC.Debugger.CallFrame[]>();
+// Initialize worker and birpc lazily
+function getWorkerRpc() {
+  if (!worker || !rpc) {
+    worker = new Worker(new URL("./inspector-worker.ts", import.meta.url).href);
+    
+    // Main thread functions that worker can call (empty for now)
+    const mainThreadFunctions: MainThreadFunctions = {};
+    
+    // Create birpc instance
+    rpc = createBirpc<WorkerFunctions, MainThreadFunctions>(
+      mainThreadFunctions,
+      {
+        post: (data) => worker!.postMessage(data),
+        on: (fn) => worker!.addEventListener("message", (e) => fn(e.data)),
+      }
+    );
+  }
+  return rpc;
+}
 
-export const consoleMessagesMap = new Map<URL, { date: Date; message: string }[]>();
+// Proxy object that mimics WebSocketInspector interface
+class InspectorProxy {
+  constructor(public url: URL) {}
 
-// Memory profiling state
-export const heapSnapshotsMap = new Map<URL, { timestamp: number; snapshotData: string }[]>();
-export const gcEventsMap = new Map<URL, JSC.Heap.GarbageCollection[]>();
-export const cpuProfilesMap = new Map<URL, { timestamp: number; samples?: JSC.ScriptProfiler.Samples }[]>();
+  async send(command: string, params?: any): Promise<any> {
+    const rpc = getWorkerRpc();
+    return await rpc.sendCommand(this.url.toString(), command, params);
+  }
+
+  async close(): Promise<void> {
+    const rpc = getWorkerRpc();
+    await rpc.closeInspector(this.url.toString());
+  }
+}
 
 interface InspectorOptions {
   url: URL;
 }
 
-export function getInspector({ url }: InspectorOptions): WebSocketInspector {
-  if (inspectorMap.has(url)) {
-    return inspectorMap.get(url)!;
-  }
-  const inspector = new WebSocketInspector(url);
-
-  inspector.on("Inspector.connected", async () => {
-    console.warn("Connected to debugger!");
-    
-    // Enable the debugger
-    try {
-      await inspector.send("Debugger.enable");
-      console.warn("Debugger enabled");
-    } catch (error) {
-      console.error("Failed to enable debugger:", error);
-    }
+export function getInspector({ url }: InspectorOptions): InspectorProxy {
+  // Register the inspector with the worker
+  const rpc = getWorkerRpc();
+  rpc.registerInspector(url.toString()).catch(error => {
+    console.error("Failed to register inspector:", error);
   });
 
-  inspector.on("Inspector.error", error => {
-    console.error("Inspector error:", error);
-  });
-
-  inspectorMap.set(url, inspector);
-
-  inspector.on("Debugger.paused", params => {
-    const callFramesFromMap = callFramesMap.get(url) ?? [];
-    callFramesMap.set(url, [...callFramesFromMap, ...params.callFrames]);
-  });
-
-  inspector.on("Console.messageAdded", params => {
-    const consoleMessagesFromMap = consoleMessagesMap.get(url) ?? [];
-    const message = params.message.text;
-    const date = new Date();
-    consoleMessagesMap.set(url, [...consoleMessagesFromMap, { date, message }]);
-  });
-
-  // Memory profiling event handlers
-  inspector.on("Heap.garbageCollected", params => {
-    const gcEventsFromMap = gcEventsMap.get(url) ?? [];
-    gcEventsMap.set(url, [...gcEventsFromMap, params.collection]);
-  });
-
-  inspector.on("Heap.trackingStart", params => {
-    const heapSnapshotsFromMap = heapSnapshotsMap.get(url) ?? [];
-    heapSnapshotsMap.set(url, [...heapSnapshotsFromMap, { timestamp: params.timestamp, snapshotData: params.snapshotData }]);
-  });
-
-  inspector.on("Heap.trackingComplete", params => {
-    const heapSnapshotsFromMap = heapSnapshotsMap.get(url) ?? [];
-    heapSnapshotsMap.set(url, [...heapSnapshotsFromMap, { timestamp: params.timestamp, snapshotData: params.snapshotData }]);
-  });
-
-  // CPU profiling event handlers
-  inspector.on("ScriptProfiler.trackingStart", params => {
-    const cpuProfilesFromMap = cpuProfilesMap.get(url) ?? [];
-    cpuProfilesMap.set(url, [...cpuProfilesFromMap, { timestamp: params.timestamp }]);
-  });
-
-  inspector.on("ScriptProfiler.trackingComplete", params => {
-    const cpuProfilesFromMap = cpuProfilesMap.get(url) ?? [];
-    cpuProfilesMap.set(url, [...cpuProfilesFromMap, { timestamp: params.timestamp, samples: params.samples }]);
-  });
-
-  return inspector;
+  return new InspectorProxy(url);
 }
+
+// Export functions that delegate to worker via birpc
+export async function getCallFrames(url: URL): Promise<JSC.Debugger.CallFrame[]> {
+  const rpc = getWorkerRpc();
+  return await rpc.getCallFrames(url.toString());
+}
+
+export async function getConsoleMessages(url: URL): Promise<{ date: Date; message: string }[]> {
+  const rpc = getWorkerRpc();
+  const messages = await rpc.getConsoleMessages(url.toString());
+  // Convert date strings back to Date objects if needed
+  return messages.map(msg => ({
+    ...msg,
+    date: msg.date instanceof Date ? msg.date : new Date(msg.date),
+  }));
+}
+
+export async function getHeapSnapshots(url: URL): Promise<{ timestamp: number; snapshotData: string }[]> {
+  const rpc = getWorkerRpc();
+  return await rpc.getHeapSnapshots(url.toString());
+}
+
+export async function getGCEvents(url: URL): Promise<JSC.Heap.GarbageCollection[]> {
+  const rpc = getWorkerRpc();
+  return await rpc.getGCEvents(url.toString());
+}
+
+export async function getCPUProfiles(url: URL): Promise<{ timestamp: number; samples?: JSC.ScriptProfiler.Samples }[]> {
+  const rpc = getWorkerRpc();
+  return await rpc.getCPUProfiles(url.toString());
+}
+
+// Export these for backward compatibility with the Map-like interface
+export const callFramesMap = {
+  get: getCallFrames,
+};
+
+export const consoleMessagesMap = {
+  get: getConsoleMessages,
+};
+
+export const heapSnapshotsMap = {
+  get: getHeapSnapshots,
+};
+
+export const gcEventsMap = {
+  get: getGCEvents,
+};
+
+export const cpuProfilesMap = {
+  get: getCPUProfiles,
+};

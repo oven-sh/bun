@@ -45,3 +45,7 @@ export const sharedTypes: Record<string, string> = {
   "Zig::GlobalObject": "jsc.JSGlobalObject",
   "JSC::VM": "jsc.VM",
 };
+
+export const bannedTypes: Record<string, string> = {
+  "JSC::JSValue": "Not allowed, use JSC::EncodedJSValue instead",
+};

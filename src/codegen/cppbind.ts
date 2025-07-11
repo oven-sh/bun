@@ -2,7 +2,7 @@ import { SyntaxNode } from "@lezer/common";
 import { parser as cppParser } from "@lezer/cpp";
 import { mkdir } from "fs/promises";
 import { join, relative } from "path";
-import { sharedTypes, typeDeclarations } from "./shared-types";
+import { bannedTypes, sharedTypes, typeDeclarations } from "./shared-types";
 
 type Point = {
   line: number;
@@ -304,6 +304,11 @@ function generateZigType(type: CppType, subLevel?: boolean) {
     return "void";
   }
   if (type.type === "named") {
+    const bannedType = bannedTypes[type.name];
+    if (bannedType) {
+      appendError(type.position, bannedType);
+      return "anyopaque";
+    }
     const sharedType = sharedTypes[type.name];
     if (sharedType) return sharedType;
     const error = errorsForTypes.has(type.name)

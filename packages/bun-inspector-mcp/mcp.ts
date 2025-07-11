@@ -27,7 +27,7 @@ export function createMcpServer(): McpServer {
     "registerInspector",
     {
       title: "register inspector",
-      description: "Register a new inspector URL",
+      description: "Register a new inspector URL (does not connect automatically)",
       inputSchema: {
         url: z.string().url().describe("URL of the inspector to register"),
       },
@@ -40,10 +40,80 @@ export function createMcpServer(): McpServer {
         content: [
           {
             type: "text" as const,
-            text: `Inspector registered at ${inspector.url}`,
+            text: `Inspector registered at ${inspector.url}. Use Inspector.start to connect.`,
           },
         ],
       };
+    },
+  );
+
+  server.registerTool(
+    "Inspector.start",
+    {
+      title: "start inspector connection",
+      description: "Start/connect to a registered inspector",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to start"),
+      },
+    },
+    async ({ url }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+      
+      try {
+        await inspector.start();
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Inspector connected successfully at ${url}`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to start inspector: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "Inspector.close",
+    {
+      title: "close inspector connection",
+      description: "Close/disconnect from a registered inspector",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to close"),
+      },
+    },
+    async ({ url }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+      
+      try {
+        await inspector.close();
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Inspector closed successfully at ${url}`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to close inspector: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
     },
   );
 
@@ -112,6 +182,7 @@ export function createMcpServer(): McpServer {
       },
     },
     async ({ url }) => {
+      // @ts-expect-error - zod parsed input type inference issue
       const messages = await consoleMessagesMap.get(new URL(url));
       const data = {
         data: messages.map(msg => ({

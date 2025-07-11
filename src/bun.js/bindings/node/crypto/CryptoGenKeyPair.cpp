@@ -148,21 +148,21 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPair, (JSC::JSGlobalObject * globalObject,
 
     if (typeView == "rsa"_s || typeView == "rsa-pss"_s) {
         std::optional<RsaKeyPairJobCtx> ctx = RsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
         RsaKeyPairJob::createAndSchedule(globalObject, WTFMove(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
     if (typeView == "dsa"_s) {
         std::optional<DsaKeyPairJobCtx> ctx = DsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
         DsaKeyPairJob::createAndSchedule(globalObject, WTFMove(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
     if (typeView == "ec"_s) {
         std::optional<EcKeyPairJobCtx> ctx = EcKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
         EcKeyPairJob::createAndSchedule(globalObject, WTFMove(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
@@ -170,14 +170,14 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPair, (JSC::JSGlobalObject * globalObject,
     // TODO: should just get `id` here
     if (typeView == "ed25519"_s || typeView == "ed448"_s || typeView == "x25519"_s || typeView == "x448"_s) {
         std::optional<NidKeyPairJobCtx> ctx = NidKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
         NidKeyPairJob::createAndSchedule(globalObject, WTFMove(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
     if (typeView == "dh"_s) {
         std::optional<DhKeyPairJobCtx> ctx = DhKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
         DhKeyPairJob::createAndSchedule(globalObject, WTFMove(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
@@ -216,7 +216,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
 
     if (typeView == "rsa"_s || typeView == "rsa-pss"_s) {
         std::optional<RsaKeyPairJobCtx> ctx = RsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
@@ -234,7 +234,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         RETURN_IF_EXCEPTION(scope, {});
     } else if (typeView == "dsa"_s) {
         auto ctx = DsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
@@ -252,7 +252,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         RETURN_IF_EXCEPTION(scope, {});
     } else if (typeView == "ec"_s) {
         auto ctx = EcKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
@@ -270,7 +270,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         RETURN_IF_EXCEPTION(scope, {});
     } else if (typeView == "ed25519"_s || typeView == "ed448"_s || typeView == "x25519"_s || typeView == "x448"_s) {
         auto ctx = NidKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
@@ -288,7 +288,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         RETURN_IF_EXCEPTION(scope, {});
     } else if (typeView == "dh"_s) {
         auto ctx = DhKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {

@@ -38,6 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Available MCP Tools
 
+#### Debugging Tools
 1. **registerInspector** - Connect to a Bun debugger instance via WebSocket URL
 2. **Runtime.evaluate** - Execute JavaScript in the runtime context
 3. **Debugger.getScriptSource** - Retrieve source code for a specific script
@@ -46,6 +47,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 6. **Debugger.setBreakpoint** - Set a breakpoint by script ID and line number
 7. **Debugger.removeBreakpoint** - Remove a breakpoint by its ID
 8. **Debugger.setBreakpointsActive** - Activate or deactivate all breakpoints
+
+#### Memory Profiling Tools
+9. **Heap.enable** - Enable heap profiling events including garbage collection tracking
+10. **Heap.disable** - Disable heap profiling events
+11. **Heap.snapshot** - Take a heap memory snapshot
+12. **Heap.gc** - Trigger a full garbage collection
+13. **Heap.startTracking** - Start tracking heap memory changes
+14. **Heap.stopTracking** - Stop tracking heap memory changes
+15. **Heap.getPreview** - Get preview of a heap object by ID
+16. **Heap.getRemoteObject** - Get remote object reference for heap object
+17. **getHeapSnapshots** - Get all heap snapshots that have been taken
+18. **getGCEvents** - Get all garbage collection events that have occurred
+
+#### CPU Profiling Tools
+19. **ScriptProfiler.startTracking** - Start CPU profiling with optional sampling
+20. **ScriptProfiler.stopTracking** - Stop CPU profiling and get results
+21. **getCPUProfiles** - Get all CPU profiling data that has been collected
 
 ### Protocol Integration
 
@@ -64,14 +82,20 @@ This package depends on `../bun-inspector-protocol/` which provides:
    - `Inspector.connected/error` - Connection status
    - `Debugger.paused` - Breakpoint hits with call frames
    - `Runtime.consoleAPICalled` - Console messages
+   - `Heap.garbageCollected` - Garbage collection events
+   - `Heap.trackingStart/trackingComplete` - Heap memory tracking events
+   - `ScriptProfiler.trackingStart/trackingComplete` - CPU profiling events
 5. Tools can then interact with the connected debugger
 
 ### State Storage
 
-The inspector maintains three key maps:
+The inspector maintains several key maps:
 - `inspectors: Map<string, BunInspector>` - Active inspector instances
 - `callFrames: Map<string, JSC.Debugger.CallFrame[]>` - Current call stack per URL
 - `consoleMessages: Map<string, ConsoleMessage[]>` - Buffered console output per URL
+- `heapSnapshotsMap: Map<string, HeapSnapshot[]>` - Heap memory snapshots per URL
+- `gcEventsMap: Map<string, GarbageCollection[]>` - Garbage collection events per URL
+- `cpuProfilesMap: Map<string, CPUProfile[]>` - CPU profiling data per URL
 
 ## Working with the Codebase
 
@@ -105,3 +129,6 @@ To add a new debugging tool:
 - When registering MCP tools, always use `server.registerTool()` method instead of `server.tool()` for compatibility
 - Type assertions may be needed when working with zod-parsed inputs in tool handlers
 - The debugger is automatically enabled when connecting to an inspector
+- Heap snapshots can be large - be mindful of memory usage when storing multiple snapshots
+- Memory profiling requires explicit enablement via `Heap.enable` before events will be captured
+- CPU profiling with sampling provides stack traces but may impact performance

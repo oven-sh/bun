@@ -29,12 +29,10 @@ export class BunTestController implements vscode.Disposable {
   private setupTestController(): void {
     this.testController.resolveHandler = async testItem => {
       if (!testItem) return;
-      await this.staticDiscoverTests(testItem);
+      return this.staticDiscoverTests(testItem);
     };
 
-    this.testController.refreshHandler = async () => {
-      await this.discoverInitialTests();
-    };
+    this.testController.refreshHandler = token => this.discoverInitialTests(token);
 
     this.testController.createRunProfile(
       "Run Test",
@@ -76,26 +74,28 @@ export class BunTestController implements vscode.Disposable {
     return document?.uri?.scheme === "file" && /\.(test|spec)\.(js|jsx|ts|tsx|cjs|mts)$/.test(document.uri.fsPath);
   }
 
-  private async discoverInitialTests(): Promise<void> {
+  private async discoverInitialTests(cancellationToken?: vscode.CancellationToken): Promise<void> {
     try {
-      const tests = await this.findTestFiles();
+      const tests = await this.findTestFiles(cancellationToken);
+      output.appendLine(`Discovered ${tests.length} test files.`);
       this.createFileTestItems(tests);
     } catch (error) {
       output.appendLine(`Error discovering initial tests: ${error}`);
     }
   }
 
-  private async findTestFiles(): Promise<vscode.Uri[]> {
-    return await this.findTestFilesWithGitignore();
-  }
-
   private customFilePattern(): string {
     return vscode.workspace.getConfiguration("bun.test").get("filePattern", DEFAULT_TEST_PATTERN);
   }
 
-  private async findTestFilesWithGitignore(): Promise<vscode.Uri[]> {
-    const ignoreGlobs = await this.buildIgnoreGlobs();
-    const tests = await vscode.workspace.findFiles(this.customFilePattern(), "node_modules");
+  private async findTestFiles(cancellationToken?: vscode.CancellationToken): Promise<vscode.Uri[]> {
+    const ignoreGlobs = await this.buildIgnoreGlobs(cancellationToken);
+    const tests = await vscode.workspace.findFiles(
+      this.customFilePattern(),
+      "node_modules",
+      undefined,
+      cancellationToken,
+    );
 
     return tests.filter(test => {
       const normalizedTestPath = test.fsPath.replace(/\\/g, "/");
@@ -106,13 +106,18 @@ export class BunTestController implements vscode.Disposable {
     });
   }
 
-  private async buildIgnoreGlobs(): Promise<string[]> {
-    const ignores = await vscode.workspace.findFiles("**/.gitignore", "**/node_modules/**");
-    const ignoreGlobs = ["**/node_modules/**"];
+  private async buildIgnoreGlobs(cancellationToken?: vscode.CancellationToken): Promise<string[]> {
+    const ignores = await vscode.workspace.findFiles(
+      "**/.gitignore",
+      "**/node_modules/**",
+      undefined,
+      cancellationToken,
+    );
+    const ignoreGlobs = new Set(["**/node_modules/**"]);
 
     for (const ignore of ignores) {
       try {
-        const content = await fs.readFile(ignore.fsPath, "utf8");
+        const content = await fs.readFile(ignore.fsPath, { encoding: "utf8" });
         const lines = content
           .split("\n")
           .map(line => line.trim())
@@ -122,9 +127,9 @@ export class BunTestController implements vscode.Disposable {
 
         for (const line of lines) {
           if (!cwd || cwd === "" || cwd === ".") {
-            ignoreGlobs.push(line.trim());
+            ignoreGlobs.add(line.trim());
           } else {
-            ignoreGlobs.push(path.join(cwd.trim(), line.trim()));
+            ignoreGlobs.add(path.join(cwd.trim(), line.trim()));
           }
         }
       } catch (err) {
@@ -132,7 +137,7 @@ export class BunTestController implements vscode.Disposable {
       }
     }
 
-    return ignoreGlobs;
+    return [...ignoreGlobs.values()];
   }
 
   private createFileTestItems(files: vscode.Uri[]): void {

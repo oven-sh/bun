@@ -263,7 +263,7 @@ pub const JSPromise = opaque {
             }
         }
 
-        bun.cpp.JSC__JSPromise__resolve(this, globalThis, value);
+        bun.cpp.JSC__JSPromise__resolve(this, globalThis, value) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
     pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) void {
@@ -277,11 +277,11 @@ pub const JSPromise = opaque {
 
         const err = value catch |err| globalThis.takeException(err);
 
-        bun.cpp.JSC__JSPromise__reject(this, globalThis, err);
+        bun.cpp.JSC__JSPromise__reject(this, globalThis, err) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
     pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
-        bun.cpp.JSC__JSPromise__rejectAsHandled(this, globalThis, value);
+        bun.cpp.JSC__JSPromise__rejectAsHandled(this, globalThis, value) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
     pub fn create(globalThis: *JSGlobalObject) *JSPromise {

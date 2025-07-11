@@ -3343,7 +3343,7 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result)));
 }
 
-[[ZIG_EXPORT(nothrow)]] void JSC__JSPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* globalObject,
+[[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue JSValue2)
 {
     JSValue value = JSC::JSValue::decode(JSValue2);
@@ -3361,7 +3361,7 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
 
     arg0->reject(globalObject, exception);
 }
-[[ZIG_EXPORT(nothrow)]] void JSC__JSPromise__rejectAsHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1,
+[[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__rejectAsHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1,
     JSC::EncodedJSValue JSValue2)
 {
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
@@ -3375,7 +3375,7 @@ JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::
     return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
 }
 
-[[ZIG_EXPORT(nothrow)]] void JSC__JSPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1,
+[[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1,
     JSC::EncodedJSValue JSValue2)
 {
     JSValue target = JSValue::decode(JSValue2);

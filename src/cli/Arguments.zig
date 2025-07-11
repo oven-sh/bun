@@ -191,6 +191,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
     clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit is the only supported format.") catch unreachable,
     clap.parseParam("--reporter-outfile <STR>         The output file used for the format from --reporter.") catch unreachable,
+    clap.parseParam("--quiet                          Print each test as a single dot") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -480,6 +481,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");
         ctx.test_options.only = args.flag("--only");
+        ctx.test_options.quiet = args.flag("--quiet");
     }
 
     ctx.args.absolute_working_dir = cwd;

@@ -609,9 +609,17 @@ pub const CommandLineReporter = struct {
 
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
-        writeTestStatusLine(.pass, &writer);
-
-        printTestLine(.pass, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter);
+        if (this.jest.test_options.quiet) {
+            // In quiet mode, print a green dot for passed tests
+            if (Output.enable_ansi_colors_stderr) {
+                writer.writeAll(Output.prettyFmt("<green>.<r>", true)) catch unreachable;
+            } else {
+                writer.writeAll(".") catch unreachable;
+            }
+        } else {
+            writeTestStatusLine(.pass, &writer);
+            printTestLine(.pass, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter);
+        }
 
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.pass;
         this.summary().pass += 1;
@@ -622,20 +630,42 @@ pub const CommandLineReporter = struct {
         var writer_ = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
+        if (this.jest.test_options.quiet) {
+            // In quiet mode, print a red dot and then a newline to separate from error output
+            if (Output.enable_ansi_colors_stderr) {
+                writer_.writeAll(Output.prettyFmt("<red>.<r>\n", true)) catch unreachable;
+            } else {
+                writer_.writeAll(".\n") catch unreachable;
+            }
+        }
+
         // when the tests fail, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
         const initial_length = this.failures_to_repeat_buf.items.len;
         var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
 
-        writeTestStatusLine(.fail, &writer);
-        printTestLine(.fail, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter);
+        if (!this.jest.test_options.quiet) {
+            writeTestStatusLine(.fail, &writer);
+            printTestLine(.fail, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter);
 
-        // We must always reset the colors because (skip) will have set them to <d>
-        if (Output.enable_ansi_colors_stderr) {
-            writer.writeAll(Output.prettyFmt("<r>", true)) catch unreachable;
+            // We must always reset the colors because (skip) will have set them to <d>
+            if (Output.enable_ansi_colors_stderr) {
+                writer.writeAll(Output.prettyFmt("<r>", true)) catch unreachable;
+            }
+        } else {
+            // In quiet mode, still add failure info to the repeat buffer for the summary
+            writeTestStatusLine(.fail, &writer);
+            printTestLine(.fail, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter);
+
+            // We must always reset the colors because (skip) will have set them to <d>
+            if (Output.enable_ansi_colors_stderr) {
+                writer.writeAll(Output.prettyFmt("<r>", true)) catch unreachable;
+            }
         }
 
-        writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch unreachable;
+        if (!this.jest.test_options.quiet) {
+            writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch unreachable;
+        }
 
         Output.flush();
 
@@ -655,6 +685,15 @@ pub const CommandLineReporter = struct {
         var writer_ = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
+        if (this.jest.test_options.quiet) {
+            // In quiet mode, print a yellow dot for skipped tests
+            if (Output.enable_ansi_colors_stderr) {
+                writer_.writeAll(Output.prettyFmt("<yellow>.<r>", true)) catch unreachable;
+            } else {
+                writer_.writeAll(".") catch unreachable;
+            }
+        }
+
         // If you do it.only, don't report the skipped tests because its pretty noisy
         if (jest.Jest.runner != null and !jest.Jest.runner.?.only) {
             // when the tests skip, we want to repeat the failures at the end
@@ -665,8 +704,10 @@ pub const CommandLineReporter = struct {
             writeTestStatusLine(.skip, &writer);
             printTestLine(.skip, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter);
 
-            writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
-            Output.flush();
+            if (!this.jest.test_options.quiet) {
+                writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
+                Output.flush();
+            }
         }
 
         // this.updateDots();
@@ -677,6 +718,16 @@ pub const CommandLineReporter = struct {
 
     pub fn handleTestFilteredOut(cb: *TestRunner.Callback, id: Test.ID, _: string, _: string, expectations: u32, _: u64, _: ?*jest.DescribeScope) void {
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
+
+        if (this.jest.test_options.quiet) {
+            // In quiet mode, print a dim dot for filtered out tests
+            const writer_ = Output.errorWriter();
+            if (Output.enable_ansi_colors_stderr) {
+                writer_.writeAll(Output.prettyFmt("<d>.<r>", true)) catch unreachable;
+            } else {
+                writer_.writeAll(".") catch unreachable;
+            }
+        }
 
         // this.updateDots();
         this.summary().skipped_because_label += 1;
@@ -690,6 +741,15 @@ pub const CommandLineReporter = struct {
 
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
+        if (this.jest.test_options.quiet) {
+            // In quiet mode, print a magenta dot for todo tests
+            if (Output.enable_ansi_colors_stderr) {
+                writer_.writeAll(Output.prettyFmt("<magenta>.<r>", true)) catch unreachable;
+            } else {
+                writer_.writeAll(".") catch unreachable;
+            }
+        }
+
         // when the tests skip, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
         const initial_length = this.todos_to_repeat_buf.items.len;
@@ -698,8 +758,10 @@ pub const CommandLineReporter = struct {
         writeTestStatusLine(.todo, &writer);
         printTestLine(.todo, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter);
 
-        writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch unreachable;
-        Output.flush();
+        if (!this.jest.test_options.quiet) {
+            writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch unreachable;
+            Output.flush();
+        }
 
         // this.updateDots();
         this.summary().todo += 1;
@@ -711,6 +773,11 @@ pub const CommandLineReporter = struct {
         const summary_ = this.summary();
         const tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo;
         const files = summary_.files;
+
+        // In quiet mode, add a newline after the dots to separate from the summary
+        if (this.jest.test_options.quiet and tests > 0) {
+            Output.prettyError("\n", .{});
+        }
 
         Output.prettyError("Ran {d} test{s} across {d} file{s}. ", .{
             tests,

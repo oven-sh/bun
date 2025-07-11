@@ -476,7 +476,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
                 ASSERT(scriptExecutionContext());
                 auto* globalObject = context.jsGlobalObject();
 
-                auto eventInit = createErrorEventInit(protectedThis, emptyString(), globalObject);
+                auto eventInit = createErrorEventInit(protectedThis, "Failed to connect"_s, globalObject);
                 auto message = eventInit.message;
                 protectedThis->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTFMove(eventInit), EventIsTrusted::Yes));
                 protectedThis->dispatchEvent(CloseEvent::create(false, 1006, WTFMove(message)));

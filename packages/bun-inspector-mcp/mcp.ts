@@ -4,7 +4,7 @@ import { remoteObjectToString } from "bun-inspector-protocol";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as Pkg from "./package.json";
-import { getInspector } from "./inspector";
+import { getInspector, consoleMessagesMap, callFramesMap } from "./inspector";
 
 export async function createMcpServer(): Promise<McpServer> {
   const server = new McpServer({
@@ -28,7 +28,7 @@ export async function createMcpServer(): Promise<McpServer> {
       return {
         content: [
           {
-            type: "text",
+            type: "text" as const,
             text: `Inspector registered at ${inspectorUrl}`,
           },
         ],
@@ -55,7 +55,7 @@ export async function createMcpServer(): Promise<McpServer> {
       return {
         content: [
           {
-            type: "text",
+            type: "text" as const,
             text: resultString,
           },
         ],

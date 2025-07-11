@@ -63,6 +63,32 @@ export async function createMcpServer(): Promise<McpServer> {
     },
   );
 
+  server.registerTool(
+    "Debugger.getScriptSource",
+    {
+      title: "get script source",
+      description: "Get the source code of a script by its ID",
+      inputSchema: {
+        scriptId: z.string().min(1).describe("ID of the script to get the source for"),
+        url: z.string().url().describe("URL of the inspector to use"),
+      },
+    },
+    async ({ scriptId, url }) => {
+      const inspector = getInspector({ url: new URL(url) });
+      const result = await inspector.send("Debugger.getScriptSource", {
+        scriptId,
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: result.scriptSource,
+          },
+        ],
+      };
+    },
+  );
+
   return server;
 }
 

@@ -93,7 +93,7 @@ async function diagnose(
   const files = (await Array.fromAsync(glob)).filter(file => !file.includes("node_modules"));
 
   if (extraFiles) {
-    for (const [relativePath] of Object.entries(extraFiles)) {
+    for (const relativePath of Object.keys(extraFiles)) {
       const absolutePath = join(fixtureDir, relativePath);
       if (!files.includes(absolutePath)) {
         files.push(absolutePath);

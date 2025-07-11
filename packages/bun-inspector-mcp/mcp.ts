@@ -127,6 +127,198 @@ export async function createMcpServer(): Promise<McpServer> {
     },
   );
 
+  server.registerTool(
+    "Debugger.setBreakpointByUrl",
+    {
+      title: "set breakpoint by URL",
+      description: "Set a JavaScript breakpoint at a given line in a file specified by URL",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+        fileUrl: z.string().url().describe("URL of the file to set the breakpoint in"),
+        lineNumber: z.number().int().min(0).describe("Line number to set breakpoint at (0-based)"),
+        columnNumber: z.number().int().min(0).optional().describe("Column number to set breakpoint at (0-based)"),
+        condition: z.string().optional().describe("Condition for the breakpoint to trigger"),
+        autoContinue: z
+          .boolean()
+          .optional()
+          .describe("Whether to automatically continue execution after hitting the breakpoint"),
+      },
+    },
+    async ({ url, fileUrl, lineNumber, columnNumber, condition, autoContinue }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+
+      try {
+        const result = await inspector.send("Debugger.setBreakpointByUrl", {
+          url: fileUrl,
+          lineNumber,
+          columnNumber,
+          options: {
+            condition,
+            autoContinue,
+          },
+        });
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                breakpointId: result.breakpointId,
+                locations: result.locations,
+                message: `Breakpoint ${result.breakpointId} set at ${fileUrl}:${lineNumber}${columnNumber !== undefined ? `:${columnNumber}` : ""}`,
+              }),
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to set breakpoint: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "Debugger.setBreakpoint",
+    {
+      title: "set breakpoint",
+      description: "Set a JavaScript breakpoint at a given location using script ID",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+        scriptId: z.string().describe("Script ID where to set the breakpoint"),
+        lineNumber: z.number().int().min(0).describe("Line number to set breakpoint at (0-based)"),
+        columnNumber: z.number().int().min(0).optional().describe("Column number to set breakpoint at (0-based)"),
+        condition: z.string().optional().describe("Condition for the breakpoint to trigger"),
+        autoContinue: z
+          .boolean()
+          .optional()
+          .describe("Whether to automatically continue execution after hitting the breakpoint"),
+      },
+    },
+    async ({ url, scriptId, lineNumber, columnNumber, condition, autoContinue }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+
+      try {
+        const result = await inspector.send("Debugger.setBreakpoint", {
+          location: {
+            scriptId: scriptId as string,
+            lineNumber: lineNumber as number,
+            columnNumber: columnNumber as number | undefined,
+          },
+          options: {
+            condition,
+            autoContinue,
+          },
+        });
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                breakpointId: result.breakpointId,
+                actualLocation: result.actualLocation,
+                message: `Breakpoint ${result.breakpointId} set at script ${scriptId}:${lineNumber}${columnNumber !== undefined ? `:${columnNumber}` : ""}`,
+              }),
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to set breakpoint: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "Debugger.removeBreakpoint",
+    {
+      title: "remove breakpoint",
+      description: "Remove a JavaScript breakpoint by its ID",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+        breakpointId: z.string().describe("ID of the breakpoint to remove"),
+      },
+    },
+    async ({ url, breakpointId }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+
+      try {
+        await inspector.send("Debugger.removeBreakpoint", {
+          breakpointId: breakpointId as string,
+        });
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Breakpoint ${breakpointId} removed successfully`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to remove breakpoint: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "Debugger.setBreakpointsActive",
+    {
+      title: "toggle breakpoints active",
+      description: "Activate or deactivate all breakpoints",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+        active: z.boolean().describe("Whether breakpoints should be active"),
+      },
+    },
+    async ({ url, active }) => {
+      const inspector = getInspector({ url: new URL(url as string) });
+
+      try {
+        await inspector.send("Debugger.setBreakpointsActive", {
+          active: active as boolean,
+        });
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Breakpoints ${active ? "activated" : "deactivated"} successfully`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Failed to ${active ? "activate" : "deactivate"} breakpoints: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
   return server;
 }
 

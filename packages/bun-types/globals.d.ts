@@ -47,11 +47,11 @@ declare module "bun" {
       ? {}
       : import("node:stream/web").ReadableByteStreamController;
 
-    type ReadableStreamBYOBReader = LibDomIsLoaded extends true
+    type LibEmptyOrReadableStreamBYOBReader = LibDomIsLoaded extends true
       ? {}
       : import("node:stream/web").ReadableStreamBYOBReader;
 
-    type ReadableStreamBYOBRequest = LibDomIsLoaded extends true
+    type LibEmptyOrReadableStreamBYOBRequest = LibDomIsLoaded extends true
       ? {}
       : import("node:stream/web").ReadableStreamBYOBRequest;
   }
@@ -1671,13 +1671,13 @@ declare var ReadableByteStreamController: Bun.__internal.UseLibDomIfAvailable<
   { prototype: ReadableByteStreamController; new (): ReadableByteStreamController }
 >;
 
-interface ReadableStreamBYOBReader extends Bun.__internal.LibEmptyOrReadableByteStreamController {}
+interface ReadableStreamBYOBReader extends Bun.__internal.LibEmptyOrReadableStreamBYOBReader {}
 declare var ReadableStreamBYOBReader: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStreamBYOBReader",
   { prototype: ReadableStreamBYOBReader; new (): ReadableStreamBYOBReader }
 >;
 
-interface ReadableStreamBYOBRequest extends Bun.__internal.LibEmptyOrReadableByteStreamController {}
+interface ReadableStreamBYOBRequest extends Bun.__internal.LibEmptyOrReadableStreamBYOBRequest {}
 declare var ReadableStreamBYOBRequest: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStreamBYOBRequest",
   { prototype: ReadableStreamBYOBRequest; new (): ReadableStreamBYOBRequest }

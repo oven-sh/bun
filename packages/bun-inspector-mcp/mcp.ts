@@ -89,6 +89,44 @@ export async function createMcpServer(): Promise<McpServer> {
     },
   );
 
+  server.registerTool(
+    "getConsoleMessages",
+    {
+      title: "get console messages",
+      description: "Get console messages from the inspector",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to use"),
+      },
+      outputSchema: {
+        data: z
+          .array(
+            z.object({
+              date: z.string().describe("ISO string of the date the message was logged"),
+              message: z.string().describe("The console message"),
+            }),
+          )
+          .describe("Array of console messages"),
+      },
+    },
+    async ({ url }) => {
+      const messages = consoleMessagesMap.get(new URL(url)) ?? [];
+      const data = {
+        data: messages.map(msg => ({
+          date: msg.date.toISOString(),
+          message: msg.message,
+        })),
+      };
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(data),
+          },
+        ],
+      };
+    },
+  );
+
   return server;
 }
 

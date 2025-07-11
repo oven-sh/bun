@@ -742,7 +742,9 @@ pub const UpdateInteractiveCommand = struct {
                     // Package names start at: "    " (4 spaces) + "□ " (2 chars) = 6 chars from left
                     // Headers start at: "  " (2 spaces) + dep_type_text
                     // So we need to pad: 4 (cursor/space) + 2 (checkbox+space) + max_name_len - dep_type_text_len
-                    const padding_to_current = 4 + 2 + state.max_name_len - dep_type_text_len;
+                    // Use safe subtraction to prevent underflow when dep_type_text_len is longer than available space
+                    const base_padding = 4 + 2 + state.max_name_len;
+                    const padding_to_current = if (dep_type_text_len >= base_padding) 0 else base_padding - dep_type_text_len;
                     while (j < padding_to_current) : (j += 1) {
                         Output.print(" ", .{});
                     }

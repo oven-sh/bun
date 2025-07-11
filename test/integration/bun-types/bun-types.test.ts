@@ -43,7 +43,7 @@ beforeAll(async () => {
 
       # temp package.json with @types/bun name and version
       cp package.json package.json.backup
-    `.quiet();
+    `;
 
     const pkg = await Bun.file(BUN_TYPES_PACKAGE_JSON_PATH).json();
 
@@ -63,7 +63,7 @@ beforeAll(async () => {
       bun uninstall @types/bun || true
       bun add @types/bun@${BUN_TYPES_TARBALL_NAME}
       rm ${BUN_TYPES_TARBALL_NAME}
-    `.quiet();
+    `;
   } catch (e) {
     if (e instanceof Bun.$.ShellError) {
       console.log(e.stderr.toString());
@@ -73,13 +73,33 @@ beforeAll(async () => {
   }
 });
 
-async function diagnose(fixtureDir: string, tsconfig: Partial<ts.CompilerOptions>) {
+async function diagnose(
+  fixtureDir: string,
+  config: {
+    /** Extra tsconfig compiler options */
+    options?: Partial<ts.CompilerOptions>;
+    /** Specify extra files to include in the build */
+    files?: Record<string, string>;
+  } = {},
+) {
+  const tsconfig = config.options ?? {};
+  const extraFiles = config.files;
+
   const glob = new Bun.Glob("**/*.{ts,tsx}").scan({
     cwd: fixtureDir,
     absolute: true,
   });
 
   const files = (await Array.fromAsync(glob)).filter(file => !file.includes("node_modules"));
+
+  if (extraFiles) {
+    for (const [relativePath] of Object.entries(extraFiles)) {
+      const absolutePath = join(fixtureDir, relativePath);
+      if (!files.includes(absolutePath)) {
+        files.push(absolutePath);
+      }
+    }
+  }
 
   const options: ts.CompilerOptions = {
     ...DEFAULT_COMPILER_OPTIONS,
@@ -94,6 +114,13 @@ async function diagnose(fixtureDir: string, tsconfig: Partial<ts.CompilerOptions
     getScriptFileNames: () => files,
     getScriptVersion: () => "0",
     getScriptSnapshot: fileName => {
+      if (extraFiles) {
+        const relativePath = relative(fixtureDir, fileName);
+        if (relativePath in extraFiles) {
+          return ts.ScriptSnapshot.fromString(extraFiles[relativePath]);
+        }
+      }
+
       if (!existsSync(fileName)) {
         return undefined;
       }
@@ -207,28 +234,70 @@ afterAll(async () => {
 
 describe("@types/bun integration test", () => {
   test("checks without lib.dom.d.ts", async () => {
-    const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {});
+    const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR);
 
     expect(emptyInterfaces).toEqual(new Set());
     expect(diagnostics).toEqual([]);
   });
 
-  // This is not a super great way to be testing that test-globals is safe, but it does work for now.
-  // Ideally we should have a way to include custom test files in the fixture. This could
-  // be a change to the `diagnose` function to accept a DirectoryTree kind of structure (we do
-  // this in harness.ts and a few other places, so it would follow convention).
-  test("checks without lib.dom.d.ts and test-globals references", async () => {
-    const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
-      types: ["bun", "node", "bun/test-globals"],
+  describe("test-globals reference", () => {
+    test("checks without lib.dom.d.ts and test-globals references", async () => {
+      const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
+        files: {
+          "reference-the-globals.ts": `/// <reference types="bun/test-globals" />`,
+          "my-test.test.ts": `
+             const test_shouldBeAFunction: Function = test;
+             const it_shouldBeAFunction: Function = it;
+             const describe_shouldBeAFunction: Function = describe;
+             const expect_shouldBeAFunction: Function = expect;
+             const beforeAll_shouldBeAFunction: Function = beforeAll;
+             const beforeEach_shouldBeAFunction: Function = beforeEach;
+             const afterEach_shouldBeAFunction: Function = afterEach;
+             const afterAll_shouldBeAFunction: Function = afterAll;
+             const setDefaultTimeout_shouldBeAFunction: Function = setDefaultTimeout;
+             const mock_shouldBeAFunction: Function = mock;
+             const spyOn_shouldBeAFunction: Function = spyOn;
+             const jest_shouldBeDefined: object = jest;
+           `,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(new Set());
+      expect(diagnostics).toEqual([]);
     });
 
-    expect(emptyInterfaces).toEqual(new Set());
-    expect(diagnostics).toEqual([]);
+    test("test-globals FAILS when the test-globals.d.ts is not references", async () => {
+      const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
+        files: {
+          // Intentionally left out to demonstrate that this should fail
+          // "reference-the-globals.ts": `/// <reference types="bun/test-globals" />`,
+          "my-test.test.ts": `
+             const test_shouldBeAFunction: Function = test;
+             const it_shouldBeAFunction: Function = it;
+             const describe_shouldBeAFunction: Function = describe;
+             const expect_shouldBeAFunction: Function = expect;
+             const beforeAll_shouldBeAFunction: Function = beforeAll;
+             const beforeEach_shouldBeAFunction: Function = beforeEach;
+             const afterEach_shouldBeAFunction: Function = afterEach;
+             const afterAll_shouldBeAFunction: Function = afterAll;
+             const setDefaultTimeout_shouldBeAFunction: Function = setDefaultTimeout;
+             const mock_shouldBeAFunction: Function = mock;
+             const spyOn_shouldBeAFunction: Function = spyOn;
+             const jest_shouldBeDefined: object = jest;
+           `,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(new Set()); // should still have no empty interfaces
+      expect(diagnostics).not.toEqual([]);
+    });
   });
 
   test("checks with lib.dom.d.ts", async () => {
     const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
-      lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"].map(name => `lib.${name.toLowerCase()}.d.ts`),
+      options: {
+        lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"].map(name => `lib.${name.toLowerCase()}.d.ts`),
+      },
     });
 
     expect(emptyInterfaces).toEqual(new Set());

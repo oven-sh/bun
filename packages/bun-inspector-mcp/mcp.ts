@@ -1229,7 +1229,7 @@ export async function createMcpServer(): Promise<McpServer> {
               text: JSON.stringify({
                 result: resultString,
                 wasThrown: result.wasThrown,
-                exceptionDetails: result.exceptionDetails,
+                savedResultIndex: result.savedResultIndex,
               }),
             },
           ],

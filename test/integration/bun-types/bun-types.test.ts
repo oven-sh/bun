@@ -268,7 +268,7 @@ describe("@types/bun integration test", () => {
       expect(diagnostics).toEqual([]);
     });
 
-    test("test-globals FAILS when the test-globals.d.ts is not references", async () => {
+    test("test-globals FAILS when the test-globals.d.ts is not referenced", async () => {
       const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
         files: { "my-test.test.ts": code }, // no reference to bun/test-globals
       });

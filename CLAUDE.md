@@ -1,3 +1,139 @@
+# TASK
+
+Your task is to convert zig 'extern fn's into using the new cpp bindings generator. Convert a few functions, then build bun to make sure there are no errors (`bun bd`), then commit your changes. Repeat.
+
+Here is an example of converting nothrow functions:
+
+```
+commit 1c7344abad77307629010bea8501046b432544c7
+Author: pfg <pfg@pfg.pw>
+Date:   Thu Jul 10 18:43:15 2025 -0700
+
+    example conversion: nothrow
+
+diff --git a/src/ast/Expr.zig b/src/ast/Expr.zig
+index d3939cd938..bb52dbdbf8 100644
+--- a/src/ast/Expr.zig
++++ b/src/ast/Expr.zig
+@@ -3188,14 +3188,12 @@ pub fn StoredData(tag: Tag) type {
+     };
+ }
+
+-extern fn JSC__jsToNumber(latin1_ptr: [*]const u8, len: usize) f64;
+-
+ fn stringToEquivalentNumberValue(str: []const u8) f64 {
+     // +"" -> 0
+     if (str.len == 0) return 0;
+     if (!bun.strings.isAllASCII(str))
+         return std.math.nan(f64);
+-    return JSC__jsToNumber(str.ptr, str.len);
++    return bun.cpp.JSC__jsToNumber(&str.ptr[0], str.len);
+ }
+
+ // @sortImports
+diff --git a/src/bun.js/bindings/DoubleFormatter.cpp b/src/bun.js/bindings/DoubleFormatter.cpp
+index 82266076a2..a0e096d859 100644
+--- a/src/bun.js/bindings/DoubleFormatter.cpp
++++ b/src/bun.js/bindings/DoubleFormatter.cpp
+@@ -8,7 +8,7 @@ using namespace WTF;
+
+ /// Must be called with a buffer of exactly 124
+ /// Find the length by scanning for the 0
+-extern "C" size_t WTF__dtoa(char* buf_124_bytes, double number)
++extern "C" [[ZIG_EXPORT(nothrow)]] size_t WTF__dtoa(char* buf_124_bytes, double number)
+ {
+     NumberToStringBuffer& buf = *reinterpret_cast<NumberToStringBuffer*>(buf_124_bytes);
+     return WTF::numberToStringAndSize(number, buf).size();
+@@ -17,7 +17,7 @@ extern "C" size_t WTF__dtoa(char* buf_124_bytes, double number)
+ /// This is the equivalent of the unary '+' operator on a JS string
+ /// See https://262.ecma-international.org/14.0/#sec-stringtonumber
+ /// Grammar: https://262.ecma-international.org/14.0/#prod-StringNumericLiteral
+-extern "C" double JSC__jsToNumber(char* latin1_ptr, size_t len)
++extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__jsToNumber(const char* latin1_ptr, size_t len)
+ {
+     return JSC::jsToNumber(WTF::StringView(latin1_ptr, len, true));
+ }
+diff --git a/src/fmt.zig b/src/fmt.zig
+index 2ecd2ce4d0..270bf3f2e4 100644
+--- a/src/fmt.zig
++++ b/src/fmt.zig
+@@ -1692,10 +1692,8 @@ pub fn double(number: f64) FormatDouble {
+ pub const FormatDouble = struct {
+     number: f64,
+
+-    extern fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) usize;
+-
+     pub fn dtoa(buf: *[124]u8, number: f64) []const u8 {
+-        const len = WTF__dtoa(buf, number);
++        const len = bun.cpp.WTF__dtoa(&buf.ptr[0], number);
+         return buf[0..len];
+     }
+
+@@ -1704,7 +1702,7 @@ pub const FormatDouble = struct {
+             return "-0";
+         }
+
+-        const len = WTF__dtoa(buf, number);
++        const len = bun.cpp.WTF__dtoa(&buf.ptr[0], number);
+         return buf[0..len];
+     }
+
+```
+
+Here is an example of converting a zero_is_throw function:
+
+```
+commit 9cc95f9fef1839f6c947c4c5944a964c12a2d8db
+Author: pfg <pfg@pfg.pw>
+Date:   Thu Jul 10 18:42:09 2025 -0700
+
+    example conversion: fromJSHostCall
+
+diff --git a/src/bun.js/bindings/BunString.cpp b/src/bun.js/bindings/BunString.cpp
+index 06dd56be67..16a45bc5fd 100644
+--- a/src/bun.js/bindings/BunString.cpp
++++ b/src/bun.js/bindings/BunString.cpp
+@@ -84,7 +84,7 @@ extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
+     return { BunStringTag::Dead, {} };
+ }
+
+-extern "C" JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* globalObject, const char* ptr, size_t length)
++extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* globalObject, const char* ptr, size_t length)
+ {
+     auto& vm = JSC::getVM(globalObject);
+     auto scope = DECLARE_THROW_SCOPE(vm);
+diff --git a/src/string.zig b/src/string.zig
+index 8fcd3d3cfb..71eedfb97d 100644
+--- a/src/string.zig
++++ b/src/string.zig
+@@ -837,11 +837,10 @@ pub const String = extern struct {
+     extern fn BunString__toJSDOMURL(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
+     extern fn Bun__parseDate(*JSC.JSGlobalObject, *String) f64;
+     extern fn BunString__toWTFString(this: *String) void;
+-    extern fn BunString__createUTF8ForJS(globalObject: *JSC.JSGlobalObject, ptr: [*]const u8, len: usize) JSC.JSValue;
+
+     pub fn createUTF8ForJS(globalObject: *JSC.JSGlobalObject, utf8_slice: []const u8) bun.JSError!JSC.JSValue {
+         JSC.markBinding(@src());
+-        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createUTF8ForJS, .{ globalObject, utf8_slice.ptr, utf8_slice.len });
++        return bun.cpp.BunString__createUTF8ForJS(globalObject, &utf8_slice.ptr[0], utf8_slice.len);
+     }
+
+     pub fn createFormatForJS(globalObject: *JSC.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError!JSC.JSValue {
+@@ -849,7 +848,7 @@ pub const String = extern struct {
+         var builder = std.ArrayList(u8).init(bun.default_allocator);
+         defer builder.deinit();
+         builder.writer().print(fmt, args) catch bun.outOfMemory();
+-        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createUTF8ForJS, .{ globalObject, builder.items.ptr, builder.items.len });
++        return bun.cpp.BunString__createUTF8ForJS(globalObject, &builder.items.ptr[0], builder.items.len);
+     }
+
+     pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {
+```
+
+To convert fromJSHostCallGeneric, use [[ZIG_EXPORT(check_slow)]]
+
+# About Bun
+
 This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed for speed, with a bundler, test runner, and Node.js-compatible package manager. It's written primarily in Zig with C++ for JavaScriptCore integration, powered by WebKit's JavaScriptCore engine.
 
 ## Building and Running Bun

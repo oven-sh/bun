@@ -118,7 +118,9 @@ pub inline fn initIdentifier(ref: Ref, loc: logger.Loc) Expr {
     return Expr{
         .loc = loc,
         .data = .{
-            .e_identifier = E.Identifier.init(ref),
+            .e_identifier = E.Identifier.init(.{
+                .ref = ref,
+            }),
         },
     };
 }
@@ -849,33 +851,36 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
             return Expr{
                 .loc = loc,
                 .data = Data{
-                    .e_identifier = E.Identifier{
+                    .e_identifier = .{
                         .ref = st.ref,
-                        .must_keep_due_to_with_stmt = st.must_keep_due_to_with_stmt,
-                        .can_be_removed_if_unused = st.can_be_removed_if_unused,
-                        .call_can_be_unwrapped_if_unused = st.call_can_be_unwrapped_if_unused,
                     },
                 },
             };
         },
-        E.ImportIdentifier => {
+        E.Identifier.Options => {
             return Expr{
                 .loc = loc,
                 .data = Data{
-                    .e_import_identifier = .{
+                    .e_identifier = E.Identifier.init(st),
+                },
+            };
+        },
+        E.ImportIdentifier.Options => {
+            return Expr{
+                .loc = loc,
+                .data = Data{
+                    .e_import_identifier = E.ImportIdentifier.init(.{
                         .ref = st.ref,
                         .was_originally_identifier = st.was_originally_identifier,
-                    },
+                    }),
                 },
             };
         },
-        E.CommonJSExportIdentifier => {
+        E.CommonJSExportIdentifier.Options => {
             return Expr{
                 .loc = loc,
                 .data = Data{
-                    .e_commonjs_export_identifier = .{
-                        .ref = st.ref,
-                    },
+                    .e_commonjs_export_identifier = E.CommonJSExportIdentifier.init(st),
                 },
             };
         },
@@ -1224,16 +1229,37 @@ pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
                 },
             };
         },
+        E.Identifier.Options => {
+            return Expr{
+                .loc = loc,
+                .data = Data{
+                    .e_identifier = E.Identifier.init(.{
+                        .ref = st.ref,
+                        .must_keep_due_to_with_stmt = st.must_keep_due_to_with_stmt,
+                        .can_be_removed_if_unused = st.can_be_removed_if_unused,
+                        .call_can_be_unwrapped_if_unused = st.call_can_be_unwrapped_if_unused,
+                    }),
+                },
+            };
+        },
         E.Identifier => {
             return Expr{
                 .loc = loc,
                 .data = Data{
                     .e_identifier = E.Identifier{
                         .ref = st.ref,
-                        .must_keep_due_to_with_stmt = st.must_keep_due_to_with_stmt,
-                        .can_be_removed_if_unused = st.can_be_removed_if_unused,
-                        .call_can_be_unwrapped_if_unused = st.call_can_be_unwrapped_if_unused,
                     },
+                },
+            };
+        },
+        E.ImportIdentifier.Options => {
+            return Expr{
+                .loc = loc,
+                .data = Data{
+                    .e_import_identifier = E.ImportIdentifier.init(.{
+                        .ref = st.ref,
+                        .was_originally_identifier = st.was_originally_identifier,
+                    }),
                 },
             };
         },
@@ -1241,9 +1267,8 @@ pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
             return Expr{
                 .loc = loc,
                 .data = Data{
-                    .e_import_identifier = .{
+                    .e_import_identifier = E.ImportIdentifier{
                         .ref = st.ref,
-                        .was_originally_identifier = st.was_originally_identifier,
                     },
                 },
             };
@@ -1252,10 +1277,17 @@ pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
             return Expr{
                 .loc = loc,
                 .data = Data{
-                    .e_commonjs_export_identifier = .{
+                    .e_commonjs_export_identifier = E.CommonJSExportIdentifier{
                         .ref = st.ref,
-                        .base = st.base,
                     },
+                },
+            };
+        },
+        E.CommonJSExportIdentifier.Options => {
+            return Expr{
+                .loc = loc,
+                .data = Data{
+                    .e_commonjs_export_identifier = E.CommonJSExportIdentifier.init(st),
                 },
             };
         },
@@ -2153,7 +2185,7 @@ pub const Data = union(Tag) {
     e_name_of_symbol: *E.NameOfSymbol,
 
     comptime {
-        bun.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
+        bun.assert_eql(@sizeOf(Data), 16); // Do not increase the size of Expr
     }
 
     pub fn as(data: Data, comptime tag: Tag) ?@FieldType(Data, @tagName(tag)) {
@@ -3179,6 +3211,10 @@ pub const Data = union(Tag) {
         return @as(Expr.Tag, self) == .e_string;
     }
 };
+
+comptime {
+    bun.assert_eql(@sizeOf(Expr), 24); // do not make Expr bigger.
+}
 
 pub fn StoredData(tag: Tag) type {
     const T = @FieldType(Data, tag);

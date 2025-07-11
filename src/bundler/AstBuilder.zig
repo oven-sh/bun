@@ -7,7 +7,7 @@
 pub const AstBuilder = struct {
     allocator: std.mem.Allocator,
     source: *const Logger.Source,
-    source_index: u31,
+    source_index: Ref.SourceIndex,
     stmts: std.ArrayListUnmanaged(Stmt),
     scopes: std.ArrayListUnmanaged(*Scope),
     symbols: std.ArrayListUnmanaged(Symbol),
@@ -98,7 +98,7 @@ pub const AstBuilder = struct {
         });
         const ref: Ref = .{
             .inner_index = inner_index,
-            .source_index = p.source_index,
+            .source_index = @intCast(p.source_index),
             .tag = .symbol,
         };
         try p.current_scope.generated.push(p.allocator, ref);

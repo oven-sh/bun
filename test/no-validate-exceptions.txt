@@ -371,7 +371,6 @@ test/js/node/util/custom-inspect.test.js
 test/js/node/util/mime-api.test.ts
 test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js
 test/js/node/util/parse_args/default-args.test.mjs
-test/js/node/util/test-util-types.test.js
 test/js/node/util/util-callbackify.test.js
 test/js/node/util/util-promisify.test.js
 test/js/node/util/util.test.js

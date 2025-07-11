@@ -918,6 +918,8 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
     }
 }
 
+extern "C" size_t Bun__reported_memory_size;
+
 // executionContextId: -1 for main thread
 // executionContextId: maxInt32 for macros
 // executionContextId: >-1 for workers
@@ -953,6 +955,12 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         if (shouldDisableStopIfNecessaryTimer) {
             vm.heap.disableStopIfNecessaryTimer();
         }
+
+        // This is used to tell us in the crash reporter how much RSS the system has.
+        //
+        // JSC already calls this inside JSC::VM::tryCreate and it's cached
+        // internally, so there's little cost to calling this multiple times.
+        Bun__reported_memory_size = WTF::ramSize();
     }
 
     // Every JS VM's RunLoop should use Bun's RunLoop implementation

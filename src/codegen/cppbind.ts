@@ -437,6 +437,10 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
       let tag: ExportTag | undefined;
       if (tagStr === "nothrow" || tagStr === "zero_is_throw" || tagStr === "check_slow") {
         tag = tagStr;
+      } else if (tagStr === "print") {
+        console.log(prettyPrintLezerNode(fnNode, ctx.sourceCode));
+        appendError(nodePosition(tagIdentifier, ctx), "'print' tags are only for debugging cppbind");
+        tag = "nothrow";
       } else {
         appendError(nodePosition(tagIdentifier, ctx), "tag must be nothrow, zero_is_throw, or check_slow");
         tag = "nothrow";

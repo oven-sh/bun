@@ -12,12 +12,14 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/inspector": "^0.16.1",
-    "@modelcontextprotocol/sdk": "^1.15.1",
     "@types/bun": "latest",
     "@typescript/native-preview": "^7.0.0-dev.20250711.1",
     "bun-inspector-protocol": "../bun-inspector-protocol/"
   },
   "dependencies": {
+    "@hono/mcp": "^0.1.0",
+    "@modelcontextprotocol/sdk": "^1.15.1",
+    "hono": "^4.8.4",
     "zod": "^3.23.8"
   }
 }

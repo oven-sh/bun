@@ -126,7 +126,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
         // util.isError is deprecated and removed in node 23
         PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
         bool has = object->getPropertySlot(globalObject, vm.propertyNames->toStringTagSymbol, slot);
-        ASSERT(!scope.exception());
+        EXCEPTION_ASSERT(!scope.exception());
         if (has) {
             if (slot.isValue()) {
                 JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);

@@ -74,7 +74,10 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto* structure = createJSBunRequestStructure(vm, defaultGlobalObject(globalObject));
-    auto* clone = this->create(vm, structure, Request__clone(this->wrapped(), globalObject), nullptr);
+    auto* raw = Request__clone(this->wrapped(), globalObject);
+    if (!raw) ASSERT_PENDING_EXCEPTION(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+    auto* clone = this->create(vm, structure, raw, nullptr);
 
     // Cookies and params are deep copied as they can be changed between the clone and original
     if (auto* params = this->params()) {

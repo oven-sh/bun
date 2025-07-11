@@ -44,7 +44,7 @@ static inline ExceptionOr<JSObject*> invokeConstructor(JSC::JSGlobalObject& lexi
     auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject);
 
     auto constructorValue = globalObject.get(&lexicalGlobalObject, identifier);
-    ASSERT(!scope.exception() || vm.hasPendingTerminationException());
+    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     auto constructor = JSC::asObject(constructorValue);
 
@@ -210,7 +210,7 @@ static inline bool checkReadableStream(JSDOMGlobalObject& globalObject, JSReadab
     ASSERT(callData.type != JSC::CallData::Type::None);
 
     auto result = call(&lexicalGlobalObject, function, callData, JSC::jsUndefined(), arguments);
-    ASSERT(!scope.exception() || vm.hasPendingTerminationException());
+    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
 
     return result.isTrue() || scope.exception();
 }

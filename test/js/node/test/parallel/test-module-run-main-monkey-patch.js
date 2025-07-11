@@ -14,6 +14,5 @@ const child = spawnSync(process.execPath, [
   path('semicolon.js'),
 ]);
 
-if (child.stderr.length > 0) console.error(child.stderr.toString("utf8"));
 assert.strictEqual(child.status, 0);
 assert(child.stdout.toString().includes('runMain is monkey patched!'));

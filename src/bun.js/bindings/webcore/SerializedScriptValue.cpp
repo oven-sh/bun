@@ -1677,7 +1677,7 @@ private:
                 String message;
                 PropertyDescriptor messageDescriptor;
                 if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, messageDescriptor) && messageDescriptor.isDataDescriptor()) {
-                    ASSERT(!scope.exception());
+                    EXCEPTION_ASSERT(!scope.exception());
                     message = messageDescriptor.value().toWTFString(m_lexicalGlobalObject);
                 }
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1685,7 +1685,7 @@ private:
                 unsigned line = 0;
                 PropertyDescriptor lineDescriptor;
                 if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, lineDescriptor) && lineDescriptor.isDataDescriptor()) {
-                    ASSERT(!scope.exception());
+                    EXCEPTION_ASSERT(!scope.exception());
                     line = lineDescriptor.value().toNumber(m_lexicalGlobalObject);
                 }
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1693,7 +1693,7 @@ private:
                 unsigned column = 0;
                 PropertyDescriptor columnDescriptor;
                 if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, columnDescriptor) && columnDescriptor.isDataDescriptor()) {
-                    ASSERT(!scope.exception());
+                    EXCEPTION_ASSERT(!scope.exception());
                     column = columnDescriptor.value().toNumber(m_lexicalGlobalObject);
                 }
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1701,7 +1701,7 @@ private:
                 String sourceURL;
                 PropertyDescriptor sourceURLDescriptor;
                 if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, sourceURLDescriptor) && sourceURLDescriptor.isDataDescriptor()) {
-                    ASSERT(!scope.exception());
+                    EXCEPTION_ASSERT(!scope.exception());
                     sourceURL = sourceURLDescriptor.value().toWTFString(m_lexicalGlobalObject);
                 }
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1709,7 +1709,7 @@ private:
                 String stack;
                 PropertyDescriptor stackDescriptor;
                 if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->stack, stackDescriptor) && stackDescriptor.isDataDescriptor()) {
-                    ASSERT(!scope.exception());
+                    EXCEPTION_ASSERT(!scope.exception());
                     stack = stackDescriptor.value().toWTFString(m_lexicalGlobalObject);
                 }
                 RETURN_IF_EXCEPTION(scope, false);

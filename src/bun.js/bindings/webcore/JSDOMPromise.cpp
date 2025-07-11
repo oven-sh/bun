@@ -70,7 +70,7 @@ auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSOb
     ASSERT(callData.type != JSC::CallData::Type::None);
     call(&lexicalGlobalObject, thenFunction, callData, promise, arguments);
 
-    ASSERT(!scope.exception() || vm.hasPendingTerminationException());
+    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
     return scope.exception() ? IsCallbackRegistered::No : IsCallbackRegistered::Yes;
 }
 

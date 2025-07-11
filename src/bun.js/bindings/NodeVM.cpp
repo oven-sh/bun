@@ -143,7 +143,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     // wrap the arguments in an anonymous function expression
     int startOffset = 0;
     String code = stringifyAnonymousFunction(globalObject, args, throwScope, &startOffset);
-    ASSERT(!!throwScope.exception() == code.isNull());
+    EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
 
     SourceCode sourceCode(
         JSC::StringSourceProvider::create(code, sourceOrigin, WTFMove(options.filename), sourceTaintOrigin, position, SourceProviderSourceType::Program),
@@ -947,7 +947,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
             PropertySlot target_slot(receiver, PropertySlot::InternalMethodType::Get);
             JSObject* target = proxyObject->target();
             bool hasProperty = target->getPropertySlot(globalObject, propertyName, target_slot);
-            ASSERT(!scope.exception() || !hasProperty);
+            EXCEPTION_ASSERT(!scope.exception() || !hasProperty);
             if (hasProperty) {
                 unsigned ignoredAttributes = 0;
                 JSValue result = target_slot.getValue(globalObject, propertyName);

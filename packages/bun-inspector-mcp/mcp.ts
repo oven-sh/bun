@@ -1,6 +1,6 @@
 import type { WebSocketInspector } from "bun-inspector-protocol";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { remoteObjectToString } from "bun-inspector-protocol";
+import { StreamableHTTPTransport } from "@hono/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as Pkg from "./package.json";
@@ -14,7 +14,7 @@ import {
 } from "./inspector";
 import { Hono } from "hono";
 
-export async function createMcpServer(): Promise<McpServer> {
+export function createMcpServer(): McpServer {
   const server = new McpServer({
     name: `mcp server for bun inspector`,
     version: Pkg.version,
@@ -37,7 +37,7 @@ export async function createMcpServer(): Promise<McpServer> {
         content: [
           {
             type: "text" as const,
-            text: `Inspector registered at ${inspectorUrl}`,
+            text: `Inspector registered at ${inspector.url}`,
           },
         ],
       };
@@ -610,7 +610,7 @@ export async function createMcpServer(): Promise<McpServer> {
               text: JSON.stringify({
                 result: resultString,
                 wasThrown: result.wasThrown,
-                exceptionDetails: result.exceptionDetails,
+                savedResultIndex: result.savedResultIndex,
               }),
             },
           ],
@@ -1118,7 +1118,6 @@ export async function createMcpServer(): Promise<McpServer> {
         const result = await inspector.send("Runtime.getProperties", {
           objectId: objectId as string,
           ownProperties: ownProperties as boolean | undefined,
-          accessorPropertiesOnly: accessorPropertiesOnly as boolean | undefined,
           generatePreview: generatePreview as boolean | undefined,
         });
 
@@ -1127,7 +1126,7 @@ export async function createMcpServer(): Promise<McpServer> {
             {
               type: "text" as const,
               text: JSON.stringify({
-                properties: result.result,
+                properties: result.properties,
                 internalProperties: result.internalProperties,
               }),
             },
@@ -1154,7 +1153,7 @@ export async function createMcpServer(): Promise<McpServer> {
       inputSchema: {
         url: z.string().url().describe("URL of the inspector to use"),
         functionDeclaration: z.string().describe("Function declaration to call"),
-        objectId: z.string().optional().describe("Object to call function on"),
+        objectId: z.string().describe("Object to call function on"),
         arguments: z.array(z.any()).optional().describe("Arguments to pass to function"),
         returnByValue: z.boolean().optional().describe("Return result by value (default: false)"),
         generatePreview: z.boolean().optional().describe("Generate preview for result (default: false)"),
@@ -1165,11 +1164,11 @@ export async function createMcpServer(): Promise<McpServer> {
 
       try {
         const result = await inspector.send("Runtime.callFunctionOn", {
-          functionDeclaration: functionDeclaration as string,
-          objectId: objectId as string | undefined,
+          functionDeclaration,
+          objectId,
+          returnByValue,
+          generatePreview,
           arguments: args as any[] | undefined,
-          returnByValue: returnByValue as boolean | undefined,
-          generatePreview: generatePreview as boolean | undefined,
         });
 
         const resultString = remoteObjectToString(result.result, true);
@@ -1181,7 +1180,6 @@ export async function createMcpServer(): Promise<McpServer> {
               text: JSON.stringify({
                 result: resultString,
                 wasThrown: result.wasThrown,
-                exceptionDetails: result.exceptionDetails,
               }),
             },
           ],
@@ -1251,9 +1249,13 @@ export async function createMcpServer(): Promise<McpServer> {
   return server;
 }
 
-export async function startMcpServer(): Promise<void> {
-  const server = await createMcpServer();
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.warn("MCP Server running on stdio");
+export function createMcpHonoHttpStreamServer(): Hono {
+  const app = new Hono();
+  app.all("/mcp", async c => {
+    const transport = new StreamableHTTPTransport();
+    const mcpServer = createMcpServer();
+    await mcpServer.connect(transport);
+    return transport.handleRequest(c);
+  });
+  return app;
 }

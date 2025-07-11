@@ -179,7 +179,9 @@ pub const HTMLRewriter = struct {
             if (response.body.value == .Used) {
                 return global.throwInvalidArguments("Response body already used", .{});
             }
-            return this.beginTransform(global, response);
+            const out = try this.beginTransform(global, response);
+            if (out.toError()) |err| return global.throwValue(err);
+            return out;
         }
 
         const ResponseKind = enum { string, array_buffer, other };

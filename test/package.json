@@ -87,7 +87,7 @@
     "tsyringe": "4.8.0",
     "type-graphql": "2.0.0-rc.2",
     "typeorm": "0.3.20",
-    "typescript": "^5.8.3",
+    "typescript": "5.8.3",
     "undici": "5.20.0",
     "uuid": "11.1.0",
     "unzipper": "0.12.3",

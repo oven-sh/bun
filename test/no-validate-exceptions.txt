@@ -264,3 +264,5 @@ test/js/node/test/parallel/test-crypto-psychic-signatures.js
 test/js/node/test/parallel/test-crypto-subtle-zero-length.js
 test/js/node/test/parallel/test-crypto-worker-thread.js
 test/js/node/test/parallel/test-crypto-webcrypto-aes-decrypt-tag-too-small.js
+test/js/web/crypto/web-crypto.test.ts
+test/js/node/crypto/node-crypto.test.js

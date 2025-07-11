@@ -4,16 +4,37 @@ import { remoteObjectToString } from "bun-inspector-protocol";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as Pkg from "./package.json";
-import { createInspector } from "./inspector";
+import { getInspector } from "./inspector";
 
-interface McpServerOptions {
-  inspector: WebSocketInspector;
-}
-export async function createMcpServer({ inspector }: McpServerOptions): Promise<McpServer> {
+export async function createMcpServer(): Promise<McpServer> {
   const server = new McpServer({
-    name: `mcp server for ${inspector.url}`,
+    name: `mcp server for bun inspector`,
     version: Pkg.version,
   });
+
+  server.registerTool(
+    "registerInspector",
+    {
+      title: "register inspector",
+      description: "Register a new inspector URL",
+      inputSchema: {
+        url: z.string().url().describe("URL of the inspector to register"),
+      },
+    },
+    async ({ url }) => {
+      const inspectorUrl = new URL(url);
+
+      const inspector = getInspector({ url: inspectorUrl });
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Inspector registered at ${inspectorUrl}`,
+          },
+        ],
+      };
+    },
+  );
 
   server.registerTool(
     "Runtime.evaluate",
@@ -22,9 +43,11 @@ export async function createMcpServer({ inspector }: McpServerOptions): Promise<
       description: "Evaluate JavaScript code in the runtime",
       inputSchema: {
         expression: z.string().min(1).describe("JavaScript code to evaluate"),
+        url: z.string().url().describe("URL of the inspector to use"),
       },
     },
-    async ({ expression }) => {
+    async ({ expression, url }) => {
+      const inspector = getInspector({ url: new URL(url) });
       const result = await inspector.send("Runtime.evaluate", {
         expression,
       });
@@ -43,12 +66,8 @@ export async function createMcpServer({ inspector }: McpServerOptions): Promise<
   return server;
 }
 
-interface StartMcpServerOptions {
-  url: URL;
-}
-export async function startMcpServer({ url }: StartMcpServerOptions): Promise<void> {
-  const inspector = createInspector({ url });
-  const server = await createMcpServer({ inspector });
+export async function startMcpServer(): Promise<void> {
+  const server = await createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.info("MCP Server running on stdio");

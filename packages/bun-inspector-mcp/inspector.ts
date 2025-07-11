@@ -1,9 +1,15 @@
 import { WebSocketInspector } from "bun-inspector-protocol";
 
+const inspectorMap = new Map<URL, WebSocketInspector>();
+
 interface InspectorOptions {
   url: URL;
 }
-export function createInspector({ url }: InspectorOptions): WebSocketInspector {
+
+export function getInspector({ url }: InspectorOptions): WebSocketInspector {
+  if (inspectorMap.has(url)) {
+    return inspectorMap.get(url)!;
+  }
   const inspector = new WebSocketInspector(url);
 
   inspector.on("Inspector.connected", () => {
@@ -14,5 +20,6 @@ export function createInspector({ url }: InspectorOptions): WebSocketInspector {
     console.error("Inspector error:", error);
   });
 
+  inspectorMap.set(url, inspector);
   return inspector;
 }

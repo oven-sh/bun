@@ -38,7 +38,9 @@ node_fs: ?*bun.api.node.fs.NodeFS = null,
 timer: bun.api.Timer.All,
 event_loop_handle: ?*JSC.PlatformEventLoop = null,
 pending_unref_counter: i32 = 0,
-preload: []const []const u8 = &.{},
+    preload: []const []const u8 = &.{},
+    snapshot_serializers: []const []const u8 = &.{},
+    loaded_snapshot_serializers: []JSC.Strong.Optional = &.{},
 unhandled_pending_rejection_to_capture: ?*JSValue = null,
 standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
@@ -2053,6 +2055,120 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
     return null;
 }
 
+fn loadSnapshotSerializers(this: *VirtualMachine) !void {
+    if (this.snapshot_serializers.len == 0) {
+        return;
+    }
+
+    // Allocate array for strong references
+    var serializers = try this.allocator.alloc(JSC.Strong.Optional, this.snapshot_serializers.len);
+    var loaded_count: usize = 0;
+
+    for (this.snapshot_serializers) |serializer_path| {
+        var result = switch (this.transpiler.resolver.resolveAndAutoInstall(
+            this.transpiler.fs.top_level_dir,
+            normalizeSource(serializer_path),
+            .stmt,
+            if (this.standalone_module_graph == null) .read_only else .disable,
+        )) {
+            .success => |r| r,
+            .failure => |e| {
+                this.log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    this.allocator,
+                    "{s} resolving snapshot serializer {}",
+                    .{
+                        @errorName(e),
+                        bun.fmt.formatJSONStringLatin1(serializer_path),
+                    },
+                ) catch unreachable;
+                return e;
+            },
+            .pending, .not_found => {
+                this.log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    this.allocator,
+                    "snapshot serializer not found {}",
+                    .{
+                        bun.fmt.formatJSONStringLatin1(serializer_path),
+                    },
+                ) catch unreachable;
+                return error.ModuleNotFound;
+            },
+        };
+
+        var promise = try JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
+
+        this.pending_internal_promise = promise;
+        JSValue.fromCell(promise).protect();
+        defer JSValue.fromCell(promise).unprotect();
+
+        if (this.isWatcherEnabled()) {
+            this.eventLoop().performGC();
+            switch (this.pending_internal_promise.?.status(this.global.vm())) {
+                .pending => {
+                    while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                        this.eventLoop().tick();
+
+                        if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                            this.eventLoop().autoTick();
+                        }
+                    }
+                },
+                else => {},
+            }
+        } else {
+            this.eventLoop().performGC();
+            this.waitForPromise(JSC.AnyPromise{
+                .internal = promise,
+            });
+        }
+
+        if (promise.status(this.global.vm()) == .rejected) {
+            this.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.allocator,
+                "snapshot serializer failed to load {}",
+                .{
+                    bun.fmt.formatJSONStringLatin1(serializer_path),
+                },
+            ) catch unreachable;
+            continue;
+        }
+
+        // Get the module's exports
+        const module_result = promise.result(this.global.vm());
+        var default_export = module_result.fastGet(this.global, .default) orelse module_result;
+        
+        // Check if it's a valid serializer (has test and serialize methods)
+        if (default_export.isObject()) {
+            const has_test = default_export.fastGet(this.global, .test) != null;
+            const has_serialize = default_export.fastGet(this.global, .serialize) != null;
+            
+            if (has_test and has_serialize) {
+                serializers[loaded_count] = JSC.Strong.Optional.create(default_export, this.global);
+                loaded_count += 1;
+            } else {
+                this.log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    this.allocator,
+                    "snapshot serializer must export test and serialize methods {}",
+                    .{
+                        bun.fmt.formatJSONStringLatin1(serializer_path),
+                    },
+                ) catch unreachable;
+            }
+        }
+    }
+
+    // Store only the successfully loaded serializers
+    this.loaded_snapshot_serializers = serializers[0..loaded_count];
+}
+
 pub fn ensureDebugger(this: *VirtualMachine, block_until_connected: bool) !void {
     if (this.debugger != null) {
         try JSC.Debugger.create(this, this.global);
@@ -2150,6 +2266,9 @@ pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const 
 
             return promise;
         }
+
+        // Load snapshot serializers after preloads
+        try this.loadSnapshotSerializers();
     }
 
     const promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main)) orelse return error.JSError;

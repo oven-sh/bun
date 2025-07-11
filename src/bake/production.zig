@@ -44,6 +44,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     vm.event_loop.ensureWaker();
     const b = &vm.transpiler;
     vm.preload = ctx.preloads;
+    vm.snapshot_serializers = ctx.snapshot_serializers;
     vm.argv = ctx.passthrough;
     vm.arena = &arena;
     vm.allocator = arena.allocator();

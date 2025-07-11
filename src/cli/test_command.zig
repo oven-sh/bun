@@ -1109,6 +1109,7 @@ pub const TestCommand = struct {
         );
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;
+    vm.snapshot_serializers = ctx.snapshot_serializers;
         vm.transpiler.options.rewrite_jest_for_tests = true;
         vm.transpiler.options.env.behavior = .load_all_without_inlining;
 

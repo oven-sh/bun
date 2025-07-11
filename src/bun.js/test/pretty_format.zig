@@ -1982,10 +1982,112 @@ pub const JestPrettyFormat = struct {
             }
         }
 
+        pub fn trySnapshotSerializers(this: *JestPrettyFormat.Formatter, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) bun.JSError!bool {
+            const vm = globalThis.bunVM();
+            for (vm.loaded_snapshot_serializers) |serializer_strong| {
+                if (serializer_strong.get()) |serializer| {
+                    // Call the test function to check if this serializer should handle this value
+                    const test_function = serializer.fastGet(globalThis, .test) orelse continue;
+                    const test_result = test_function.call(globalThis, serializer, &[_]JSValue{value}) catch continue;
+                    
+                    if (test_result.toBoolean()) {
+                        // This serializer should handle this value, call the serialize function
+                        const serialize_function = serializer.fastGet(globalThis, .serialize) orelse continue;
+                        
+                        // Create printer context
+                        const printer_context = PrinterContext(Writer){
+                            .formatter = this,
+                            .writer = writer,
+                            .globalThis = globalThis,
+                            .enable_ansi_colors = enable_ansi_colors,
+                        };
+                        
+                        // Use threadlocal storage to pass the context
+                        printer_context_storage = @ptrCast(&printer_context);
+                        defer printer_context_storage = null;
+                        
+                        // Create a printer function that this serializer can use
+                        const printer = JSC.JSFunction.create(globalThis, "printer", 1, printerCallback, false, false);
+                        
+                        // Call serialize(val, config, indentation, depth, refs, printer)
+                        const config = JSC.JSValue.createEmptyObject(globalThis, 0);
+                        const indentation = JSC.JSValue.jsNumberFromInt32(@as(i32, @intCast(this.indent)));
+                        const depth = JSC.JSValue.jsNumberFromInt32(0); // TODO: track depth
+                        const refs = JSC.JSValue.createEmptyObject(globalThis, 0); // TODO: track refs
+                        
+                        const result = serialize_function.call(globalThis, serializer, &[_]JSValue{
+                            value,
+                            config,
+                            indentation,
+                            depth,
+                            refs,
+                            printer,
+                        }) catch continue;
+                        
+                        if (result.isString()) {
+                            const str = result.toSlice(globalThis, globalThis.allocator());
+                            defer str.deinit();
+                            writer.writeAll(str.slice()) catch {};
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        // Context for the printer callback
+        fn PrinterContext(comptime Writer: type) type {
+            return struct {
+                formatter: *JestPrettyFormat.Formatter,
+                writer: Writer,
+                globalThis: *JSGlobalObject,
+                enable_ansi_colors: bool,
+            };
+        }
+
+        // Threadlocal storage for printer context
+        threadlocal var printer_context_storage: ?*anyopaque = null;
+
+        // Printer callback function that serializers can use
+        fn printerCallback(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+            const args = callFrame.arguments(1);
+            if (args.len < 1) return JSValue.jsUndefined();
+            
+            const value = args.ptr[0];
+            
+            // Get the context from threadlocal storage
+            const context_ptr = printer_context_storage orelse return JSValue.jsUndefined();
+            
+            // We need to handle this generically since we don't know the Writer type at compile time
+            // For now, just format the value as a string and return it
+            var temp_formatter = JestPrettyFormat.Formatter{
+                .remaining_values = &[_]JSValue{},
+                .globalThis = globalThis,
+                .quote_strings = true,
+                .indent = 0,
+            };
+            
+            const tag = Tag.get(value, globalThis) catch return JSValue.jsUndefined();
+            
+            // Create a string buffer to capture the formatted output
+            var buffer = std.ArrayList(u8).init(globalThis.allocator());
+            defer buffer.deinit();
+            
+            temp_formatter.format(tag, @TypeOf(buffer.writer()), buffer.writer(), value, globalThis, false) catch {};
+            
+            return JSC.ZigString.fromUTF8(buffer.items).toValueGC(globalThis);
+        }
+
         pub fn format(this: *JestPrettyFormat.Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) bun.JSError!void {
             const prevGlobalThis = this.globalThis;
             defer this.globalThis = prevGlobalThis;
             this.globalThis = globalThis;
+
+            // Try snapshot serializers first
+            if (try this.trySnapshotSerializers(Writer, writer, value, globalThis, enable_ansi_colors)) {
+                return;
+            }
 
             // This looks incredibly redundant. We make the JestPrettyFormat.Formatter.Tag a
             // comptime var so we have to repeat it here. The rationale there is

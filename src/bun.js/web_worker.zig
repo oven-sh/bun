@@ -441,7 +441,8 @@ fn spin(this: *WebWorker) void {
     var vm = this.vm.?;
     assert(this.status.load(.acquire) == .start);
     this.setStatus(.starting);
-    vm.preload = this.preloads;
+            vm.preload = this.preloads;
+        vm.snapshot_serializers = &.{};
     // resolve entrypoint
     var resolve_error = bun.String.empty;
     defer resolve_error.deref();

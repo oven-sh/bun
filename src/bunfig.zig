@@ -165,6 +165,32 @@ pub const Bunfig = struct {
             }
         }
 
+        fn loadSnapshotSerializers(
+            this: *Parser,
+            allocator: std.mem.Allocator,
+            expr: js_ast.Expr,
+        ) !void {
+            if (expr.asArray()) |array_| {
+                var array = array_;
+                var serializers = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
+                errdefer serializers.deinit();
+                while (array.next()) |item| {
+                    try this.expectString(item);
+                    if (item.data.e_string.len() > 0)
+                        serializers.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                }
+                this.ctx.snapshot_serializers = serializers.items;
+            } else if (expr.data == .e_string) {
+                if (expr.data.e_string.len() > 0) {
+                    var serializers = try allocator.alloc(string, 1);
+                    serializers[0] = try expr.data.e_string.string(allocator);
+                    this.ctx.snapshot_serializers = serializers;
+                }
+            } else if (expr.data != .e_null) {
+                try this.addError(expr.loc, "Expected snapshotSerializers to be an array");
+            }
+        }
+
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
             bun.analytics.Features.bunfig += 1;
 
@@ -244,6 +270,10 @@ pub const Bunfig = struct {
 
                     if (test_.get("preload")) |expr| {
                         try this.loadPreload(allocator, expr);
+                    }
+
+                    if (test_.get("snapshotSerializers")) |expr| {
+                        try this.loadSnapshotSerializers(allocator, expr);
                     }
 
                     if (test_.get("smol")) |expr| {

@@ -412,6 +412,7 @@ pub const Command = struct {
         filters: []const []const u8 = &.{},
 
         preloads: []const string = &.{},
+    snapshot_serializers: []const string = &.{},
         has_loaded_global_config: bool = false,
 
         pub const BundlerOptions = struct {

@@ -127,6 +127,64 @@ async function diagnose(fixtureDir: string, tsconfig: Partial<ts.CompilerOptions
       code: diagnostic.code,
     }));
 
+  const emptyInterfaceDiagnostics = checkForEmptyInterfaces(program, fixtureDir);
+
+  return diagnostics.concat(emptyInterfaceDiagnostics);
+}
+
+function checkForEmptyInterfaces(program: ts.Program, fixtureDir: string) {
+  const diagnostics: Array<{
+    category: string;
+    file: string | null;
+    message: string;
+    code: number;
+  }> = [];
+
+  const checker = program.getTypeChecker();
+
+  const globalSourceFile = program
+    .getSourceFiles()
+    .find(sf => sf.fileName.includes("bun-types") && sf.fileName.endsWith("globals.d.ts"));
+
+  if (!globalSourceFile) {
+    return diagnostics;
+  }
+
+  const globalInterfaceNames = new Set<string>();
+
+  ts.forEachChild(globalSourceFile, function visit(node) {
+    if (ts.isInterfaceDeclaration(node) && !ts.isNodeDescendantOf(node, ts.isModuleDeclaration)) {
+      globalInterfaceNames.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  });
+
+  for (const interfaceName of globalInterfaceNames) {
+    const globalSymbol = checker.resolveName(interfaceName, undefined, ts.SymbolFlags.Interface, false);
+
+    if (globalSymbol) {
+      const globalType = checker.getDeclaredTypeOfSymbol(globalSymbol);
+      const properties = checker.getPropertiesOfType(globalType);
+      const callSignatures = checker.getSignaturesOfType(globalType, ts.SignatureKind.Call);
+      const constructSignatures = checker.getSignaturesOfType(globalType, ts.SignatureKind.Construct);
+      const indexInfos = checker.getIndexInfosOfType(globalType);
+
+      if (
+        properties.length === 0 &&
+        callSignatures.length === 0 &&
+        constructSignatures.length === 0 &&
+        indexInfos.length === 0
+      ) {
+        diagnostics.push({
+          category: "Error",
+          file: null,
+          message: `Global interface '${interfaceName}' has no properties, call signatures, construct signatures, or index signatures after type resolution. This interface needs to either have members defined or extend a conditional type that provides fallback implementations.`,
+          code: 9999,
+        });
+      }
+    }
+  }
+
   return diagnostics;
 }
 
@@ -145,6 +203,7 @@ afterAll(async () => {
 describe("@types/bun integration test", () => {
   test("checks without lib.dom.d.ts", async () => {
     const diagnostics = await diagnose(FIXTURE_DIR, {});
+
     expect(diagnostics).toEqual([]);
   });
 

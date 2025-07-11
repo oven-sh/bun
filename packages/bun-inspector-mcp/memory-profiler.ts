@@ -3,7 +3,7 @@ import { remoteObjectToString } from "bun-inspector-protocol";
 
 const memoryInspectorMap = new Map<URL, WebSocketInspector>();
 
-export const heapSnapshotsMap = new Map<URL, JSC.Heap.HeapSnapshotData[]>();
+export const heapSnapshotsMap = new Map<URL, JSC.Heap.SnapshotResponse[]>();
 export const gcEventsMap = new Map<URL, JSC.Heap.GarbageCollection[]>();
 export const cpuSamplesMap = new Map<URL, JSC.ScriptProfiler.Samples[]>();
 
@@ -44,17 +44,19 @@ export function getMemoryInspector({ url }: MemoryInspectorOptions): WebSocketIn
   // Handle heap tracking start
   inspector.on("Heap.trackingStart", params => {
     const snapshots = heapSnapshotsMap.get(url) ?? [];
-    if (params.snapshot) {
-      heapSnapshotsMap.set(url, [...snapshots, params.snapshot]);
-    }
+    heapSnapshotsMap.set(url, [...snapshots, {
+      timestamp: params.timestamp,
+      snapshotData: params.snapshotData
+    }]);
   });
 
   // Handle heap tracking complete
   inspector.on("Heap.trackingComplete", params => {
     const snapshots = heapSnapshotsMap.get(url) ?? [];
-    if (params.snapshot) {
-      heapSnapshotsMap.set(url, [...snapshots, params.snapshot]);
-    }
+    heapSnapshotsMap.set(url, [...snapshots, {
+      timestamp: params.timestamp,
+      snapshotData: params.snapshotData
+    }]);
   });
 
   // Handle CPU profiling start

@@ -509,7 +509,6 @@ function generateZigFn(
       `    pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
     );
   } else if (fn.tag === "check_slow" || fn.tag === "zero_is_throw") {
-    if (resultRaw.length) resultRaw.push("");
     if (resultBindings.length) resultBindings.push("");
     resultRaw.push(
       `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,

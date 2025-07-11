@@ -15,7 +15,6 @@ pub const JSPromise = opaque {
     };
 
     extern fn JSC__JSPromise__create(arg0: *JSGlobalObject) *JSPromise;
-    extern fn JSC__JSPromise__isHandled(arg0: *const JSPromise, arg1: *VM) bool;
     extern fn JSC__JSPromise__reject(arg0: *JSPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
     extern fn JSC__JSPromise__rejectAsHandled(arg0: *JSPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
     extern fn JSC__JSPromise__rejectedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSPromise;
@@ -26,8 +25,6 @@ pub const JSPromise = opaque {
     extern fn JSC__JSPromise__resolvedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSPromise;
     extern fn JSC__JSPromise__resolvedPromiseValue(arg0: *JSGlobalObject, JSValue1: JSValue) JSValue;
     extern fn JSC__JSPromise__result(arg0: *JSPromise, arg1: *VM) JSValue;
-    extern fn JSC__JSPromise__setHandled(arg0: *JSPromise, arg1: *VM) void;
-    extern fn JSC__JSPromise__status(arg0: *const JSPromise, arg1: *VM) JSPromise.Status;
     extern fn JSC__JSPromise__wrap(*JSC.JSGlobalObject, *anyopaque, *const fn (*anyopaque, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue) JSC.JSValue;
 
     pub fn Weak(comptime T: type) type {
@@ -221,7 +218,7 @@ pub const JSPromise = opaque {
     }
 
     pub fn status(this: *const JSPromise, vm: *VM) Status {
-        return JSC__JSPromise__status(this, vm);
+        return @enumFromInt(bun.cpp.JSC__JSPromise__status(this, vm));
     }
 
     pub fn result(this: *JSPromise, vm: *VM) JSValue {
@@ -229,11 +226,11 @@ pub const JSPromise = opaque {
     }
 
     pub fn isHandled(this: *const JSPromise, vm: *VM) bool {
-        return JSC__JSPromise__isHandled(this, vm);
+        return bun.cpp.JSC__JSPromise__isHandled(this, vm);
     }
 
     pub fn setHandled(this: *JSPromise, vm: *VM) void {
-        JSC__JSPromise__setHandled(this, vm);
+        bun.cpp.JSC__JSPromise__setHandled(this, vm);
     }
 
     pub fn resolvedPromise(globalThis: *JSGlobalObject, value: JSValue) *JSPromise {

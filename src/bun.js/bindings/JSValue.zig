@@ -825,7 +825,6 @@ pub const JSValue = enum(i64) {
         return coerceJSValueDoubleTruncatingT(i64, this.asNumber());
     }
 
-    extern fn JSC__JSValue__toInt64(this: JSValue) i64;
 
     /// Decimal values are truncated without rounding.
     /// `-Infinity` and `NaN` coerce to -minInt(64)
@@ -839,7 +838,7 @@ pub const JSValue = enum(i64) {
             return this.coerceDoubleTruncatingIntoInt64();
         }
 
-        return JSC__JSValue__toInt64(this);
+        return bun.cpp.JSC__JSValue__toInt64(this);
     }
 
     pub const ComparisonResult = enum(u8) {
@@ -879,13 +878,11 @@ pub const JSValue = enum(i64) {
     pub fn isBoolean(this: JSValue) bool {
         return this == .true or this == .false;
     }
-    extern fn JSC__JSValue__isAnyInt(this: JSValue) bool;
     pub fn isAnyInt(this: JSValue) bool {
-        return JSC__JSValue__isAnyInt(this);
+        return bun.cpp.JSC__JSValue__isAnyInt(this);
     }
-    extern fn JSC__JSValue__isUInt32AsAnyInt(this: JSValue) bool;
     pub fn isUInt32AsAnyInt(this: JSValue) bool {
-        return JSC__JSValue__isUInt32AsAnyInt(this);
+        return bun.cpp.JSC__JSValue__isUInt32AsAnyInt(this);
     }
 
     pub fn asEncoded(this: JSValue) FFI.EncodedJSValue {
@@ -900,9 +897,8 @@ pub const JSValue = enum(i64) {
         return FFI.JSVALUE_IS_INT32(.{ .asJSValue = this });
     }
 
-    extern fn JSC__JSValue__isInt32AsAnyInt(this: JSValue) bool;
     pub fn isInt32AsAnyInt(this: JSValue) bool {
-        return JSC__JSValue__isInt32AsAnyInt(this);
+        return bun.cpp.JSC__JSValue__isInt32AsAnyInt(this);
     }
 
     pub fn isNumber(this: JSValue) bool {
@@ -980,33 +976,26 @@ pub const JSValue = enum(i64) {
         return jsType(this).isStringObjectLike();
     }
 
-    extern fn JSC__JSValue__isBigInt(this: JSValue) bool;
     pub fn isBigInt(this: JSValue) bool {
-        return JSC__JSValue__isBigInt(this);
+        return bun.cpp.JSC__JSValue__isBigInt(this);
     }
-    extern fn JSC__JSValue__isHeapBigInt(this: JSValue) bool;
     pub fn isHeapBigInt(this: JSValue) bool {
-        return JSC__JSValue__isHeapBigInt(this);
+        return bun.cpp.JSC__JSValue__isHeapBigInt(this);
     }
-    extern fn JSC__JSValue__isBigInt32(this: JSValue) bool;
     pub fn isBigInt32(this: JSValue) bool {
-        return JSC__JSValue__isBigInt32(this);
+        return bun.cpp.JSC__JSValue__isBigInt32(this);
     }
-    extern fn JSC__JSValue__isSymbol(this: JSValue) bool;
     pub fn isSymbol(this: JSValue) bool {
-        return JSC__JSValue__isSymbol(this);
+        return bun.cpp.JSC__JSValue__isSymbol(this);
     }
-    extern fn JSC__JSValue__isPrimitive(this: JSValue) bool;
     pub fn isPrimitive(this: JSValue) bool {
-        return JSC__JSValue__isPrimitive(this);
+        return bun.cpp.JSC__JSValue__isPrimitive(this);
     }
-    extern fn JSC__JSValue__isGetterSetter(this: JSValue) bool;
     pub fn isGetterSetter(this: JSValue) bool {
-        return JSC__JSValue__isGetterSetter(this);
+        return bun.cpp.JSC__JSValue__isGetterSetter(this);
     }
-    extern fn JSC__JSValue__isCustomGetterSetter(this: JSValue) bool;
     pub fn isCustomGetterSetter(this: JSValue) bool {
-        return JSC__JSValue__isCustomGetterSetter(this);
+        return bun.cpp.JSC__JSValue__isCustomGetterSetter(this);
     }
     pub inline fn isObject(this: JSValue) bool {
         return this.isCell() and this.jsType().isObject();
@@ -1033,10 +1022,9 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__isClass(this, global);
     }
 
-    extern fn JSC__JSValue__isConstructor(this: JSValue) bool;
     pub fn isConstructor(this: JSValue) bool {
         if (!this.isCell()) return false;
-        return JSC__JSValue__isConstructor(this);
+        return bun.cpp.JSC__JSValue__isConstructor(this);
     }
 
     extern fn JSC__JSValue__getNameProperty(this: JSValue, global: *JSGlobalObject, ret: *ZigString) void;
@@ -1076,9 +1064,8 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__asCell(this);
     }
 
-    extern fn JSC__JSValue__isCallable(this: JSValue) bool;
     pub fn isCallable(this: JSValue) bool {
-        return JSC__JSValue__isCallable(this);
+        return bun.cpp.JSC__JSValue__isCallable(this);
     }
 
     /// Statically cast a value to a cell. Returns `null` for non-cells.
@@ -2372,7 +2359,7 @@ pub const JSValue = enum(i64) {
     };
 
     pub const exposed_to_ffi = struct {
-        pub const JSVALUE_TO_INT64 = JSValue.JSC__JSValue__toInt64;
+        pub const JSVALUE_TO_INT64 = bun.cpp.JSC__JSValue__toInt64;
         pub const JSVALUE_TO_UINT64 = JSValue.JSC__JSValue__toUInt64NoTruncate;
         pub const INT64_TO_JSVALUE = JSValue.JSC__JSValue__fromInt64NoTruncate;
         pub const UINT64_TO_JSVALUE = JSValue.JSC__JSValue__fromUInt64NoTruncate;

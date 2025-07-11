@@ -46,6 +46,12 @@ export const sharedTypes: Record<string, string> = {
   "Zig::GlobalObject": "jsc.JSGlobalObject",
   "JSC::VM": "jsc.VM",
   "WTF::StringImpl": "bun.WTF._StringImplStruct",
+  "WebCore::DOMURL": "bun.DOMURL",
+  "ZigString": "bun.JSC.ZigString",
+  "JSC::JSPromise": "bun.JSC.JSPromise",
+  "JSC::JSMap": "bun.JSC.JSMap",
+  "JSC::CustomGetterSetter": "bun.JSC.CustomGetterSetter",
+  "JSC::SourceProvider": "bun.JSC.SourceProvider",
 };
 
 export const bannedTypes: Record<string, string> = {

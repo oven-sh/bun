@@ -346,25 +346,6 @@ pub const UpdateInteractiveCommand = struct {
         }
     }
 
-    // TODO: use in `bun pack, publish, run, ...`
-    const FilterType = union(enum) {
-        all,
-        name: []const u8,
-        path: []const u8,
-
-        pub fn init(pattern: []const u8, is_path: bool) @This() {
-            return if (is_path) .{
-                .path = pattern,
-            } else .{
-                .name = pattern,
-            };
-        }
-
-        /// *NOTE*: Currently this does nothing since name and path are not
-        /// allocated.
-        pub fn deinit(_: @This(), _: std.mem.Allocator) void {}
-    };
-
     fn findMatchingWorkspaces(
         allocator: std.mem.Allocator,
         original_cwd: string,
@@ -752,11 +733,10 @@ pub const UpdateInteractiveCommand = struct {
                     // Calculate padding to align column headers with values
                     var j: usize = 0;
                     // Calculate actual displayed text length including count if present
-                    const dep_type_text_len: usize = if (selected_count > 0) blk: {
-                        var buf: [32]u8 = undefined;
-                        const count_str = std.fmt.bufPrint(&buf, "{d}", .{selected_count}) catch "0";
-                        break :blk pkg.dependency_type.len + 1 + count_str.len; // +1 for space
-                    } else pkg.dependency_type.len;
+                    const dep_type_text_len: usize = if (selected_count > 0)
+                        pkg.dependency_type.len + 1 + std.fmt.count("{d}", .{selected_count}) // +1 for space
+                    else
+                        pkg.dependency_type.len;
 
                     // The padding should align with the first character of package names
                     // Package names start at: "    " (4 spaces) + "□ " (2 chars) = 6 chars from left

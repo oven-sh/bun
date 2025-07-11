@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative } from "node:path";
 
 import ts from "typescript";
 
@@ -81,15 +81,16 @@ async function diagnose(fixtureDir: string, tsconfig: Partial<ts.CompilerOptions
 
   const files = (await Array.fromAsync(glob)).filter(file => !file.includes("node_modules"));
 
-  const root = dirname(resolve(...files));
-
   const options: ts.CompilerOptions = {
     ...DEFAULT_COMPILER_OPTIONS,
     ...tsconfig,
-    skipLibCheck: false, // always check lib files for this integration test (prevent https://github.com/oven-sh/bun/issues/8761 ever happening again)
+
+    // always check lib files for this integration test
+    // (prevent https://github.com/oven-sh/bun/issues/8761 ever happening again)
+    skipLibCheck: false,
   };
 
-  const language: ts.LanguageServiceHost = {
+  const host: ts.LanguageServiceHost = {
     getScriptFileNames: () => files,
     getScriptVersion: () => "0",
     getScriptSnapshot: fileName => {
@@ -107,19 +108,22 @@ async function diagnose(fixtureDir: string, tsconfig: Partial<ts.CompilerOptions
     readDirectory: ts.sys.readDirectory,
   };
 
-  const service = ts.createLanguageService(language, ts.createDocumentRegistry(true, fixtureDir));
+  const service = ts.createLanguageService(host, ts.createDocumentRegistry(true, fixtureDir));
 
   const program = service.getProgram();
   if (!program) throw new Error("Failed to create program");
 
-  const emit = program.emit();
-
   const diagnostics = ts
     .getPreEmitDiagnostics(program)
-    .concat(emit.diagnostics)
+    .concat(program.getOptionsDiagnostics())
+    .concat(program.getSyntacticDiagnostics())
+    .concat(program.getConfigFileParsingDiagnostics())
+    .concat(program.getDeclarationDiagnostics())
+    .concat(program.emit().diagnostics)
     .map(diagnostic => ({
+      category: ts.DiagnosticCategory[diagnostic.category],
       file: diagnostic.file?.fileName ? relative(fixtureDir, diagnostic.file?.fileName) : null,
-      message: diagnostic.messageText,
+      message: typeof diagnostic.messageText === "string" ? diagnostic.messageText : diagnostic.messageText.messageText,
       code: diagnostic.code,
     }));
 
@@ -141,7 +145,7 @@ afterAll(async () => {
 describe("@types/bun integration test", () => {
   test("checks without lib.dom.d.ts", async () => {
     const diagnostics = await diagnose(FIXTURE_DIR, {});
-    expect(diagnostics).toBeEmpty();
+    expect(diagnostics).toEqual([]);
   });
 
   test("checks with lib.dom.d.ts", async () => {
@@ -149,215 +153,197 @@ describe("@types/bun integration test", () => {
       lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"].map(name => `lib.${name.toLowerCase()}.d.ts`),
     });
 
-    expect(diagnostics).toMatchInlineSnapshot(`
-      [
-        {
-          "code": 2353,
-          "file": "globals.ts",
-          "message": "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
-        },
-        {
-          "code": 2345,
-          "file": "http.ts",
-          "message": "Argument of type '() => AsyncGenerator<Uint8Array<ArrayBuffer> | "hey", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
-        },
-        {
-          "code": 2345,
-          "file": "http.ts",
-          "message": {
-            "category": 1,
-            "code": 2345,
-            "messageText": "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer> | "it works!", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
-            "next": [
-              {
-                "canonicalHead": {
-                  "code": 2322,
-                  "messageText": "Type 'AsyncGenerator<Uint8Array<ArrayBuffer> | "it works!", void, unknown>' is not assignable to type 'ReadableStream<any>'.",
-                },
-                "category": 1,
-                "code": 2740,
-                "messageText": "Type 'AsyncGenerator<Uint8Array<ArrayBuffer> | "it works!", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
-                "next": undefined,
-              },
-            ],
-          },
-        },
-        {
-          "code": 2345,
-          "file": "index.ts",
-          "message": {
-            "category": 1,
-            "code": 2345,
-            "messageText": "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
-            "next": [
-              {
-                "canonicalHead": {
-                  "code": 2322,
-                  "messageText": "Type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to type 'ReadableStream<any>'.",
-                },
-                "category": 1,
-                "code": 2740,
-                "messageText": "Type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
-                "next": undefined,
-              },
-            ],
-          },
-        },
-        {
-          "code": 2345,
-          "file": "index.ts",
-          "message": "Argument of type '{ headers: { "x-bun": string; }; }' is not assignable to parameter of type 'number'.",
-        },
-        {
-          "code": 2769,
-          "file": "streams.ts",
-          "message": {
-            "category": 1,
-            "code": 2769,
-            "messageText": "No overload matches this call.",
-            "next": [
-              {
-                "category": 1,
-                "code": 2772,
-                "messageText": "Overload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number | undefined; } | undefined): ReadableStream<Uint8Array<ArrayBufferLike>>', gave the following error.",
-                "next": [
-                  {
-                    "category": 1,
-                    "code": 2322,
-                    "messageText": "Type '"direct"' is not assignable to type '"bytes"'.",
-                    "next": undefined,
-                  },
-                ],
-              },
-            ],
-          },
-        },
-        {
-          "code": 2339,
-          "file": "streams.ts",
-          "message": "Property 'write' does not exist on type 'ReadableByteStreamController'.",
-        },
-        {
-          "code": 2339,
-          "file": "streams.ts",
-          "message": "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-        },
-        {
-          "code": 2339,
-          "file": "streams.ts",
-          "message": "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-        },
-        {
-          "code": 2339,
-          "file": "streams.ts",
-          "message": "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-        },
-        {
-          "code": 2339,
-          "file": "streams.ts",
-          "message": "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-        },
-        {
-          "code": 2353,
-          "file": "websocket.ts",
-          "message": "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
-        },
-        {
-          "code": 2353,
-          "file": "websocket.ts",
-          "message": "Object literal may only specify known properties, and 'protocol' does not exist in type 'string[]'.",
-        },
-        {
-          "code": 2353,
-          "file": "websocket.ts",
-          "message": "Object literal may only specify known properties, and 'protocol' does not exist in type 'string[]'.",
-        },
-        {
-          "code": 2353,
-          "file": "websocket.ts",
-          "message": "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
-        },
-        {
-          "code": 2353,
-          "file": "websocket.ts",
-          "message": "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
-        },
-        {
-          "code": 2554,
-          "file": "websocket.ts",
-          "message": "Expected 2 arguments, but got 0.",
-        },
-        {
-          "code": 2551,
-          "file": "websocket.ts",
-          "message": "Property 'URL' does not exist on type 'WebSocket'. Did you mean 'url'?",
-        },
-        {
-          "code": 2322,
-          "file": "websocket.ts",
-          "message": "Type '"nodebuffer"' is not assignable to type 'BinaryType'.",
-        },
-        {
-          "code": 2339,
-          "file": "websocket.ts",
-          "message": "Property 'ping' does not exist on type 'WebSocket'.",
-        },
-        {
-          "code": 2339,
-          "file": "websocket.ts",
-          "message": "Property 'ping' does not exist on type 'WebSocket'.",
-        },
-        {
-          "code": 2339,
-          "file": "websocket.ts",
-          "message": "Property 'ping' does not exist on type 'WebSocket'.",
-        },
-        {
-          "code": 2339,
-          "file": "websocket.ts",
-          "message": "Property 'ping' does not exist on type 'WebSocket'.",
-        },
-        {
-          "code": 2339,
-          "file": "websocket.ts",
-          "message": "Property 'pong' does not exist on type 'WebSocket'.",
-        },
-        {
-          "code": 2339,
-          "file": "websocket.ts",
-          "message": "Property 'pong' does not exist on type 'WebSocket'.",
-        },
-        {
-          "code": 2339,
-          "file": "websocket.ts",
-          "message": "Property 'pong' does not exist on type 'WebSocket'.",
-        },
-        {
-          "code": 2339,
-          "file": "websocket.ts",
-          "message": "Property 'pong' does not exist on type 'WebSocket'.",
-        },
-        {
-          "code": 2339,
-          "file": "websocket.ts",
-          "message": "Property 'terminate' does not exist on type 'WebSocket'.",
-        },
-        {
-          "code": 2339,
-          "file": "worker.ts",
-          "message": "Property 'ref' does not exist on type 'Worker'.",
-        },
-        {
-          "code": 2339,
-          "file": "worker.ts",
-          "message": "Property 'unref' does not exist on type 'Worker'.",
-        },
-        {
-          "code": 2339,
-          "file": "worker.ts",
-          "message": "Property 'threadId' does not exist on type 'Worker'.",
-        },
-      ]
-    `);
+    expect(diagnostics).toEqual([
+      {
+        category: "Error",
+        file: "globals.ts",
+        message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
+        code: 2353,
+      },
+      {
+        category: "Error",
+        file: "http.ts",
+        message:
+          "Argument of type '() => AsyncGenerator<Uint8Array<ArrayBuffer> | \"hey\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
+        code: 2345,
+      },
+      {
+        category: "Error",
+        file: "http.ts",
+        message:
+          "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer> | \"it works!\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
+        code: 2345,
+      },
+      {
+        category: "Error",
+        file: "index.ts",
+        message:
+          "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
+        code: 2345,
+      },
+      {
+        category: "Error",
+        file: "index.ts",
+        message:
+          "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
+        code: 2345,
+      },
+      {
+        category: "Error",
+        file: "streams.ts",
+        message: "No overload matches this call.",
+        code: 2769,
+      },
+      {
+        category: "Error",
+        file: "streams.ts",
+        message: "Property 'write' does not exist on type 'ReadableByteStreamController'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "streams.ts",
+        message: "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "streams.ts",
+        message: "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "streams.ts",
+        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "streams.ts",
+        message: "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
+        code: 2353,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Object literal may only specify known properties, and 'protocol' does not exist in type 'string[]'.",
+        code: 2353,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Object literal may only specify known properties, and 'protocol' does not exist in type 'string[]'.",
+        code: 2353,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
+        code: 2353,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
+        code: 2353,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Expected 2 arguments, but got 0.",
+        code: 2554,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Property 'URL' does not exist on type 'WebSocket'. Did you mean 'url'?",
+        code: 2551,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Type '\"nodebuffer\"' is not assignable to type 'BinaryType'.",
+        code: 2322,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Property 'ping' does not exist on type 'WebSocket'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Property 'ping' does not exist on type 'WebSocket'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Property 'ping' does not exist on type 'WebSocket'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Property 'ping' does not exist on type 'WebSocket'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Property 'pong' does not exist on type 'WebSocket'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Property 'pong' does not exist on type 'WebSocket'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Property 'pong' does not exist on type 'WebSocket'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Property 'pong' does not exist on type 'WebSocket'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "websocket.ts",
+        message: "Property 'terminate' does not exist on type 'WebSocket'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "worker.ts",
+        message: "Property 'ref' does not exist on type 'Worker'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "worker.ts",
+        message: "Property 'unref' does not exist on type 'Worker'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "worker.ts",
+        message: "Property 'threadId' does not exist on type 'Worker'.",
+        code: 2339,
+      },
+    ]);
   });
 });

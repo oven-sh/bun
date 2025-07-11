@@ -19,6 +19,7 @@
   "dependencies": {
     "@hono/mcp": "^0.1.0",
     "@modelcontextprotocol/sdk": "^1.15.1",
+    "birpc": "^2.4.0",
     "hono": "^4.8.4",
     "zod": "^3.23.8"
   }

@@ -24,33 +24,8 @@ pub fn enqueueDependencyList(
     const lockfile = this.lockfile;
 
     // Step 1. Go through main dependencies
-    var begin = dependencies_list.off;
+    const begin = dependencies_list.off;
     const end = dependencies_list.off +| dependencies_list.len;
-
-    // if dependency is peer and is going to be installed
-    // through "dependencies", skip it
-    if (end - begin > 1 and lockfile.buffers.dependencies.items[0].behavior.isPeer()) {
-        var peer_i: usize = 0;
-        var peer = &lockfile.buffers.dependencies.items[peer_i];
-        while (peer.behavior.isPeer()) {
-            var dep_i: usize = end - 1;
-            var dep = lockfile.buffers.dependencies.items[dep_i];
-            while (!dep.behavior.isPeer()) {
-                if (!dep.behavior.isDev()) {
-                    if (peer.name_hash == dep.name_hash) {
-                        peer.* = lockfile.buffers.dependencies.items[begin];
-                        begin += 1;
-                        break;
-                    }
-                }
-                dep_i -= 1;
-                dep = lockfile.buffers.dependencies.items[dep_i];
-            }
-            peer_i += 1;
-            if (peer_i == end) break;
-            peer = &lockfile.buffers.dependencies.items[peer_i];
-        }
-    }
 
     var i = begin;
 

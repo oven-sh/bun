@@ -764,7 +764,7 @@ install_nodejs() {
 
 	case "$abi" in
 	musl)
-		nodejs_mirror="https://unofficial-builds.nodejs.org/download/release"
+		nodejs_mirror="https://bun-nodejs-release.s3.us-west-1.amazonaws.com"
 		nodejs_foldername="node-v$nodejs_version-$nodejs_platform-$nodejs_arch-musl"
 		;;
 	*)

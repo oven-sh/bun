@@ -20,6 +20,7 @@ test/bundler/bundler_html.test.ts
 test/bundler/bundler_html_server.test.ts
 test/bundler/bundler_jsx.test.ts
 test/bundler/bundler_minify.test.ts
+test/bundler/bundler_minify_symbol_for.test.ts
 test/bundler/bundler_naming.test.ts
 test/bundler/bundler_plugin.test.ts
 test/bundler/bundler_regressions.test.ts
@@ -371,7 +372,6 @@ test/js/node/util/custom-inspect.test.js
 test/js/node/util/mime-api.test.ts
 test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js
 test/js/node/util/parse_args/default-args.test.mjs
-test/js/node/util/test-util-types.test.js
 test/js/node/util/util-callbackify.test.js
 test/js/node/util/util-promisify.test.js
 test/js/node/util/util.test.js

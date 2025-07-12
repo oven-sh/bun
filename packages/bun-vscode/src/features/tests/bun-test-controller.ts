@@ -648,7 +648,10 @@ export class BunTestController implements vscode.Disposable {
                   const fileTestItem = this.testController.items.get(
                     vscode.Uri.file(windowsVscodeUri(filePath)).toString(),
                   );
-                  if (fileTestItem) this.resetTestItemChildren(fileTestItem);
+                  if (fileTestItem) {
+                    this.resetTestItemChildren(fileTestItem);
+                    fileTestItem.canResolveChildren = false;
+                  }
                   this.createTestItemsFromParsedOutput(parsedOutput);
 
                   const fileResult = parsedOutput.find((result: BunFileResult) => result.name === filePath);
@@ -699,6 +702,13 @@ export class BunTestController implements vscode.Disposable {
                     for (const test of tests) {
                       run.skipped(test);
                     }
+                  }
+
+                  const fileTestItem = this.testController.items.get(
+                    vscode.Uri.file(windowsVscodeUri(filePath)).toString(),
+                  );
+                  if (fileTestItem) {
+                    fileTestItem.canResolveChildren = false;
                   }
                 }
               } else {

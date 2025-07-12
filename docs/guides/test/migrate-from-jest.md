@@ -57,12 +57,6 @@ describe("my test suite", () => {
 });
 ```
 
-This provides autocompletion and type checking for:
-
-- Autocompletion for `test`, `it`, `describe`, `expect`
-- Type checking for test lifecycle hooks (`beforeAll`, `beforeEach`, `afterEach`, `afterAll`)
-- Support for mocking functions (`mock`, `spyOn`, `jest`)
-
 ---
 
 Bun implements the vast majority of Jest's matchers, but compatibility isn't 100% yet. Refer to the full compatibility table at [Docs > Test runner > Writing tests](https://bun.sh/docs/test/writing#matchers).

@@ -127,6 +127,7 @@
 #include "JSTransformStream.h"
 #include "JSTransformStreamDefaultController.h"
 #include "JSURLSearchParams.h"
+#include "JSWasmStreamingCompiler.h"
 #include "JSWebSocket.h"
 #include "JSWorker.h"
 #include "JSWritableStream.h"
@@ -1241,8 +1242,8 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         &scriptExecutionStatus,
         nullptr, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
-        nullptr, // compileStreaming
-        nullptr, // instantiateStreaming
+        &compileStreaming,
+        &instantiateStreaming,
         &Zig::deriveShadowRealmGlobalObject,
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
@@ -1271,8 +1272,8 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &scriptExecutionStatus,
         nullptr, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
-        nullptr, // compileStreaming
-        nullptr, // instantiateStreaming
+        &compileStreaming,
+        &instantiateStreaming,
         &Zig::deriveShadowRealmGlobalObject,
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
@@ -3070,6 +3071,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSC::JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
         });
 
+    m_wasmStreamingConsumeStreamFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSC::JSFunction::create(init.vm, init.owner, wasmStreamingConsumeStreamCodeGenerator(init.vm), init.owner));
+        });
+
     m_nativeMicrotaskTrampoline.initLater(
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Public));
@@ -4434,6 +4440,58 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     }
 
     return result;
+}
+
+extern "C" JSC::EncodedJSValue Zig__GlobalObject__validateResponseForWasmStreaming(JSGlobalObject*, EncodedJSValue response);
+extern "C" JSC::EncodedJSValue Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(JSGlobalObject*, EncodedJSValue response, JSC::Wasm::StreamingCompiler* compiler);
+
+extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompiler* compiler, const uint8_t* spanPtr, size_t spanSize)
+{
+    compiler->addBytes(std::span(spanPtr, spanSize));
+}
+
+static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject, JSC::JSValue source, JSC::Wasm::CompilerMode mode, JSC::JSObject* importObject)
+{
+    auto globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    JSC::JSLockHolder locker(vm);
+
+    // validateResponseForWasmStreaming throws the proper exception. Since this is being
+    // executed in a .then(...) callback, throwing is perfectly fine.
+    auto valid = Zig__GlobalObject__validateResponseForWasmStreaming(globalObject, JSC::JSValue::encode(source));
+    if (!valid) return nullptr;
+
+    auto promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject);
+
+    auto readableStreamMaybe = JSC::JSValue::decode(Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
+        globalObject, JSC::JSValue::encode(source), compiler.ptr()));
+
+    // We were able to get the slice synchronously.
+    if (readableStreamMaybe.isNull()) {
+        compiler->finalize(globalObject);
+        return promise;
+    }
+
+    auto wrapper = WebCore::toJSNewlyCreated(globalObject, globalObject, WTFMove(compiler));
+    auto builtin = globalObject->wasmStreamingConsumeStreamFunction();
+    auto callData = JSC::getCallData(builtin);
+    MarkedArgumentBuffer arguments;
+
+    arguments.append(readableStreamMaybe);
+    JSC::call(globalObject, builtin, callData, wrapper, arguments);
+    return promise;
+}
+
+JSC::JSPromise* GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC::JSValue source)
+{
+    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::Validation, nullptr);
+}
+
+JSC::JSPromise* GlobalObject::instantiateStreaming(JSGlobalObject* globalObject, JSC::JSValue source, JSC::JSObject* importObject)
+{
+
+    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::FullCompile, importObject);
 }
 
 GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction handler)

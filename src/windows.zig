@@ -3664,6 +3664,9 @@ pub const rescle = struct {
         const status = rescle__setIcon(exe_path, icon);
         return switch (status) {
             0 => {},
+            -1 => error.ExecutableLoadFailed,
+            -2 => error.IconSetFailed,
+            -3 => error.ExecutableCommitFailed,
             else => error.IconEditError,
         };
     }
@@ -3677,6 +3680,7 @@ pub extern "kernel32" fn GetCurrentThread() callconv(.winapi) HANDLE;
 pub extern "kernel32" fn GetCommandLineW() callconv(.winapi) LPWSTR;
 pub extern "kernel32" fn CreateDirectoryW(lpPathName: [*:0]const u16, lpSecurityAttributes: ?*windows.SECURITY_ATTRIBUTES) callconv(.winapi) BOOL;
 pub extern "kernel32" fn SetEndOfFile(hFile: HANDLE) callconv(.winapi) BOOL;
+pub extern "kernel32" fn SetFilePointerEx(hFile: HANDLE, liDistanceToMove: LARGE_INTEGER, lpNewFilePointer: ?*LARGE_INTEGER, dwMoveMethod: DWORD) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GetProcessTimes(in_hProcess: HANDLE, out_lpCreationTime: *FILETIME, out_lpExitTime: *FILETIME, out_lpKernelTime: *FILETIME, out_lpUserTime: *FILETIME) callconv(.winapi) BOOL;
 
 /// Returns the original mode, or null on failure

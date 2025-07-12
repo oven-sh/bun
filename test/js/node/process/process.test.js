@@ -1134,7 +1134,7 @@ it("process.versions", () => {
   expect(process.versions.modules).toEqual("137");
 });
 
-it.todoIf(isMacOS || isMusl)("should be the node version on the host that we expect", async () => {
+it.todoIf(isMacOS)("should be the node version on the host that we expect", async () => {
   const subprocess = Bun.spawn({
     cmd: ["node", "--version"],
     stdout: "pipe",
@@ -1144,6 +1144,6 @@ it.todoIf(isMacOS || isMusl)("should be the node version on the host that we exp
   });
 
   let [out, exited] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
-  expect(out.trim()).toEqual(isWindows ? "v24.3.0" : "v24.4.0"); // TODO: this *should* be v24.3.0 but scripts/bootstrap.sh needs to be enhanced to do so
+  expect(out.trim()).toEqual("v24.3.0");
   expect(exited).toBe(0);
 });

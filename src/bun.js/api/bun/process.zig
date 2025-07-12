@@ -1475,7 +1475,7 @@ pub fn spawnProcessPosix(
     }
 
     const argv0 = options.argv0 orelse argv[0].?;
-    
+
     // On macOS, if uid/gid are specified, we need to use a custom spawn implementation
     // because posix_spawn doesn't support uid/gid changes
     if (comptime Environment.isMac) {
@@ -1483,11 +1483,11 @@ pub fn spawnProcessPosix(
             // We need to use our custom fork+exec implementation
             var chdir_buf: ?[:0]u8 = null;
             defer if (chdir_buf) |buf| bun.default_allocator.free(buf);
-            
+
             if (options.cwd.len > 0) {
                 chdir_buf = try bun.default_allocator.dupeZ(u8, options.cwd);
             }
-            
+
             const spawn_request = PosixSpawn.BunSpawnRequest{
                 .chdir_buf = if (chdir_buf) |buf| buf.ptr else null,
                 .detached = options.detached,
@@ -1500,14 +1500,14 @@ pub fn spawnProcessPosix(
                 .has_uid = options.uid != null,
                 .has_gid = options.gid != null,
             };
-            
+
             const spawn_result = PosixSpawn.BunSpawnRequest.spawn(
                 argv0,
                 spawn_request,
                 argv,
                 envp,
             );
-            
+
             // Continue with the rest of the function
             var failed_after_spawn = false;
             defer {
@@ -1518,7 +1518,7 @@ pub fn spawnProcessPosix(
                     to_close_on_error.clearAndFree();
                 }
             }
-            
+
             switch (spawn_result) {
                 .err => {
                     failed_after_spawn = true;
@@ -1528,13 +1528,13 @@ pub fn spawnProcessPosix(
                     spawned.pid = pid;
                     spawned.extra_pipes = extra_fds;
                     extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
-                    
+
                     return .{ .result = spawned };
                 },
             }
         }
     }
-    
+
     const spawn_result = PosixSpawn.spawnZ(
         argv0,
         actions,

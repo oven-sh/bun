@@ -359,7 +359,6 @@ pub const PosixSpawn = struct {
                 envp,
             );
         }
-        
 
         var pid: pid_t = undefined;
         const rc = system.posix_spawn(

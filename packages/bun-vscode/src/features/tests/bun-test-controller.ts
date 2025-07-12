@@ -192,6 +192,7 @@ export class BunTestController implements vscode.Disposable {
     fileWatcher.onDidDelete(uri => {
       const existing = this.testController.items.get(windowsVscodeUri(uri.fsPath));
       if (existing) {
+        existing.children.replace([]);
         this.testController.items.delete(existing.id);
       }
     });

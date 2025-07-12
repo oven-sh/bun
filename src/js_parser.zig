@@ -9017,7 +9017,7 @@ fn NewParser_(
                     }) catch unreachable;
                 }
 
-                // No need to add this to `item_refs` because `.scanForImportsAndExports` special cases `s
+                // No need to add this to `item_refs` because `.scanImportsAndExports` special cases this
             }
             var end: usize = 0;
 

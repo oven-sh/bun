@@ -1032,6 +1032,10 @@ fn advance(this: *PostgresSQLConnection) !void {
                             continue;
                         },
                         .pending => {
+                            if (this.pipelined_requests > 0) {
+                                // need to wait to finish the pipeline before starting a new query preparation
+                                return;
+                            }
                             // statement is pending, lets write/parse it
                             var query_str = req.query.toUTF8(bun.default_allocator);
                             defer query_str.deinit();
@@ -1056,24 +1060,14 @@ fn advance(this: *PostgresSQLConnection) !void {
 
                                     continue;
                                 };
+                                this.flags.waiting_to_prepare = true;
                                 this.flags.is_ready_for_query = false;
                                 req.status = .binding;
                                 stmt.status = .parsing;
-                                req.flags.pipelined = true;
-                                this.pipelined_requests += 1;
 
-                                if (!this.canPipeline()) {
-                                    // cannot pipeline more
-                                    return;
-                                }
-                                // we can pipeline it
-                                offset += 1;
-                                continue;
-                            }
-                            if (this.pipelined_requests > 0) {
-                                // need to wait to finish the pipeline before starting a new query preparation
                                 return;
                             }
+
                             const connection_writer = this.writer();
                             // write query and wait for it to be prepared
                             PostgresRequest.writeQuery(query_str.slice(), stmt.signature.prepared_statement_name, stmt.signature.fields, PostgresSQLConnection.Writer, connection_writer) catch |err| {
@@ -1264,6 +1258,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 // if we have params wait for parameter description
                 if (statement.status == .parsing and statement.signature.fields.len == 0) {
                     statement.status = .prepared;
+                    this.flags.waiting_to_prepare = false;
                 }
             }
         },

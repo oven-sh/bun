@@ -396,9 +396,8 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callfra
             }
         }
         const can_execute = !connection.hasQueryRunning();
-        const can_pipeline = connection.canPipeline();
 
-        if (can_execute or can_pipeline) {
+        if (can_execute) {
             // If it does not have params, we can write and execute immediately in one go
             if (!has_params) {
                 debug("prepareAndQueryWithSignature", .{});
@@ -411,10 +410,9 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callfra
                 };
                 connection.flags.is_ready_for_query = false;
                 this.status = .binding;
-                this.flags.pipelined = true;
                 did_write = true;
-                connection.pipelined_requests += 1;
-            } else if (can_execute) {
+                connection.flags.waiting_to_prepare = true;
+            } else {
                 debug("writeQuery", .{});
 
                 PostgresRequest.writeQuery(query_str.slice(), signature.prepared_statement_name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {

@@ -1640,6 +1640,8 @@ for (const [key, blob] of build.outputs) {
       }
     }
 
+    rmdirSync(root, { recursive: true });
+
     return testRef(id, opts);
   })();
 }

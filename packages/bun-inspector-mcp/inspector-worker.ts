@@ -66,6 +66,7 @@ function getOrCreateInspector(urlString: string): WebSocketInspector {
     callFramesMap.set(urlString, [...existing, ...params.callFrames]);
   });
 
+  // @ts-expect-error - This is a custom event handler
   inspector.on("Runtime.consoleAPICalled", params => {
     const existing = consoleMessagesMap.get(urlString) ?? [];
     const messages = params.args.map(arg => remoteObjectToString(arg, true)).join(" ");

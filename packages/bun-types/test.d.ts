@@ -147,7 +147,7 @@ declare module "bun:test" {
     type SpiedSetter<T> = JestMock.SpiedSetter<T>;
   }
 
-  export function spyOn<T extends object, K extends keyof T>(
+  export function spyOn<T extends object, K extends keyof T | string | symbol>(
     obj: T,
     methodOrPropertyValue: K,
   ): Mock<Extract<T[K], (...args: any[]) => any>>;

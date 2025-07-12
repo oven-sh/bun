@@ -708,7 +708,6 @@ export class BunTestController implements vscode.Disposable {
             } catch (e) {
               for (const test of tests) {
                 run.errored(test, new vscode.TestMessage(`Error processing test results: ${e}`));
-                this.removeTestItemAndChildren(test);
               }
               output.appendLine(`Error processing test results for file ${filePath}: ${e}`);
             } finally {
@@ -726,11 +725,6 @@ export class BunTestController implements vscode.Disposable {
               if (test.uri) {
                 const location = new vscode.Location(test.uri, new vscode.Position(0, 0));
                 run.appendOutput(`Error running test: ${err}\n`, location);
-              }
-              if (test.parent) {
-                test.parent.children.delete(test.id);
-              } else {
-                this.testController.items.delete(test.id);
               }
             }
             run.end();
@@ -991,19 +985,6 @@ export class BunTestController implements vscode.Disposable {
     }
 
     return foundItem;
-  }
-
-  private removeTestItemAndChildren(testItem: vscode.TestItem) {
-    if (testItem.children && testItem.children.size > 0) {
-      for (const [, child] of testItem.children) {
-        this.removeTestItemAndChildren(child);
-      }
-    }
-    if (testItem.parent) {
-      testItem.parent.children.delete(testItem.id);
-    } else {
-      this.testController.items.delete(testItem.id);
-    }
   }
 
   private resetTestItemChildren(testItem: vscode.TestItem, removeSelfFromParent = false): void {

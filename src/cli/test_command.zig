@@ -910,7 +910,7 @@ pub const CommandLineReporter = struct {
         // this.updateDots();
         this.summary().skipped_because_label += 1;
         this.summary().expectations += expectations;
-        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skip;
+        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skipped_because_label;
     }
 
     pub fn handleTestTodo(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {

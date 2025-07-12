@@ -1869,10 +1869,6 @@ inline fn createScope(
                     is_skip = !regex.matches(str);
                     if (is_skip) {
                         tag_to_use = .skipped_because_label;
-                        if (comptime is_test) {
-                            // These won't get counted for describe scopes, which means the process will not exit with 1.
-                            runner.summary.skipped_because_label += 1;
-                        }
                     }
                 }
             }
@@ -2202,9 +2198,6 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     is_skip = !regex.matches(str);
                     if (is_skip) {
                         tag_to_use = .skipped_because_label;
-                        if (each_data.is_test) {
-                            Jest.runner.?.summary.skipped_because_label += 1;
-                        }
                     }
                 }
             }

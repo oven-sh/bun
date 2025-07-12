@@ -3,7 +3,8 @@ import { S3Client, s3 as defaultS3, file, randomUUIDv7, which } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { randomUUID } from "crypto";
-import { bunRun, getSecret, tempDirWithFiles } from "harness";
+import { bunRun, getSecret, isCI, tempDirWithFiles } from "harness";
+import { R } from "node_modules/msw/lib/core/HttpResponse-B07UKAkU";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
@@ -85,15 +86,18 @@ if (isDockerEnabled()) {
   };
   allCredentials.push(minioCredentials);
 }
-
-describe("Virtual Hosted-Style", () => {
-  const r2Url = new URL(getSecret("S3_R2_ENDPOINT") as string);
+const r2Credentials = allCredentials[0];
+describe.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Style", () => {
+  if (!r2Credentials.endpoint) {
+    return;
+  }
+  const r2Url = new URL(r2Credentials.endpoint);
   // R2 do support virtual hosted style lets use it
-  r2Url.hostname = `${getSecret("S3_R2_BUCKET")}.${r2Url.hostname}`;
+  r2Url.hostname = `${r2Credentials.bucket}.${r2Url.hostname}`;
 
   const credentials: S3Options = {
-    accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
-    secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
+    accessKeyId: r2Credentials.accessKeyId,
+    secretAccessKey: r2Credentials.secretAccessKey,
     endpoint: r2Url.toString(),
     virtualHostedStyle: true,
   };
@@ -1336,7 +1340,7 @@ for (let credentials of allCredentials) {
     });
   });
 }
-describe.skipIf(!minioCredentials)("http endpoint should work when using env variables", () => {
+describe.skipIf(!minioCredentials)("minio", () => {
   const testDir = tempDirWithFiles("minio-credential-test", {
     "index.mjs": `
       import { s3, randomUUIDv7 } from "bun";
@@ -1353,17 +1357,46 @@ describe.skipIf(!minioCredentials)("http endpoint should work when using env var
       }
     `,
   });
-  for (const endpoint of ["S3_ENDPOINT", "AWS_ENDPOINT"]) {
-    it(endpoint, async () => {
-      const { stdout, stderr } = await bunRun(path.join(testDir, "index.mjs"), {
-        // @ts-ignore
-        [endpoint]: minioCredentials!.endpoint as string,
-        "S3_BUCKET": minioCredentials!.bucket as string,
-        "S3_ACCESS_KEY_ID": minioCredentials!.accessKeyId as string,
-        "S3_SECRET_ACCESS_KEY": minioCredentials!.secretAccessKey as string,
+  describe("http endpoint should work when using env variables", () => {
+    for (const endpoint of ["S3_ENDPOINT", "AWS_ENDPOINT"]) {
+      it(endpoint, async () => {
+        const { stdout, stderr } = await bunRun(path.join(testDir, "index.mjs"), {
+          // @ts-ignore
+          [endpoint]: minioCredentials!.endpoint as string,
+          "S3_BUCKET": minioCredentials!.bucket as string,
+          "S3_ACCESS_KEY_ID": minioCredentials!.accessKeyId as string,
+          "S3_SECRET_ACCESS_KEY": minioCredentials!.secretAccessKey as string,
+        });
+        expect(stderr).toBe("");
+        expect(stdout).toBe("Hello Bun!");
       });
-      expect(stderr).toBe("");
-      expect(stdout).toBe("Hello Bun!");
-    });
-  }
+    }
+  });
+
+  describe("should accept / or \\ in start and end of bucket name", () => {
+    for (let start of ["/", "\\", ""]) {
+      for (let end of ["/", "\\", ""]) {
+        let bucket = minioCredentials!.bucket;
+        if (start) {
+          bucket = start + bucket;
+        }
+        if (end) {
+          bucket += end;
+        }
+        it(`should work with ${start}${bucket}${end}`, async () => {
+          const s3 = S3({
+            ...minioCredentials,
+            bucket,
+          });
+          const file = s3.file("test.txt");
+          await file.write("Hello Bun!");
+          const text = await file.text();
+          expect(text).toBe("Hello Bun!");
+          expect(await file.exists()).toBe(true);
+          await file.unlink();
+          expect(await file.exists()).toBe(false);
+        });
+      }
+    }
+  });
 });

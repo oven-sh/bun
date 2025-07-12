@@ -765,16 +765,16 @@ install_nodejs() {
 	case "$abi" in
 	musl)
 		nodejs_mirror="https://unofficial-builds.nodejs.org/download/release"
-		nodejs_filename="node-v$nodejs_version-$nodejs_platform-$nodejs_arch-musl.tar.gz"
+		nodejs_foldername="node-v$nodejs_version-$nodejs_platform-$nodejs_arch-musl"
 		;;
 	*)
 		nodejs_mirror="https://nodejs.org/dist"
-		nodejs_filename="node-v$nodejs_version-$nodejs_platform-$nodejs_arch.tar.gz"
+		nodejs_foldername="node-v$nodejs_version-$nodejs_platform-$nodejs_arch"
 		;;
 	esac
 
 	# Download Node.js binary archive
-	nodejs_url="$nodejs_mirror/v$nodejs_version/$nodejs_filename"
+	nodejs_url="$nodejs_mirror/v$nodejs_version/$nodejs_foldername.tar.gz"
 	nodejs_tar="$(download_file "$nodejs_url")"
 	nodejs_extract_dir="$(dirname "$nodejs_tar")"
 
@@ -782,7 +782,7 @@ install_nodejs() {
 	execute tar -xzf "$nodejs_tar" -C "$nodejs_extract_dir"
 
 	# Install Node.js binaries to system
-	nodejs_dir="$nodejs_extract_dir/node-v$nodejs_version-$nodejs_platform-$nodejs_arch"
+	nodejs_dir="$nodejs_extract_dir/$nodejs_foldername"
 
 	# Copy bin files preserving symlinks
 	for file in "$nodejs_dir/bin/"*; do

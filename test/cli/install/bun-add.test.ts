@@ -601,7 +601,7 @@ it("should add to devDependencies with --dev", async () => {
   );
   await access(join(package_dir, "bun.lockb"));
 });
-it.only("should add to optionalDependencies with --optional", async () => {
+it("should add to optionalDependencies with --optional", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
   await writeFile(
@@ -818,6 +818,7 @@ it("should add exact version with -E", async () => {
 });
 
 it("should add dependency with package.json in it and http tarball", async () => {
+  const old_check_npm_auth_type = check_npm_auth_type.check;
   check_npm_auth_type.check = false;
   using server = Bun.serve({
     port: 0,
@@ -902,6 +903,8 @@ it("should add dependency with package.json in it and http tarball", async () =>
     },
   });
   await access(join(package_dir, "bun.lockb"));
+  // Reset to old value for other tests
+  check_npm_auth_type.check = old_check_npm_auth_type;
 });
 
 it("should add dependency with specified semver", async () => {
@@ -2268,4 +2271,52 @@ it("should add local tarball dependency", async () => {
   expect(package_json.version).toBe("0.0.3");
   (expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
     await access(join(package_dir, "bun.lockb")));
+});
+
+it("should add multiple dependencies specified on command line", async () => {
+  expect(check_npm_auth_type.check).toBe(true);
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response(Bun.file(join(__dirname, "baz-0.0.3.tgz")));
+    },
+  });
+  const server_url = server.url.href.replace(/\/+$/, "");
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", `${server_url}/baz-0.0.3.tgz`, "bar"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+  });
+  await writeFile(
+    join(add_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringMatching(/^bun add v1./),
+    "",
+    expect.stringMatching(/^installed baz@http:\/\/.* with binaries:$/),
+    " - baz-run",
+    "installed bar@0.0.2",
+    "",
+    "2 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
+    dependencies: {
+      bar: "^0.0.2",
+      baz: `${server_url}/baz-0.0.3.tgz`,
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
 });

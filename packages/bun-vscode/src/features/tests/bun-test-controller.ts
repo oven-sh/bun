@@ -629,6 +629,21 @@ export class BunTestController implements vscode.Disposable {
                     return;
                   }
 
+                  const counts = { failed: 0, skipped: 0, passed: 0 };
+                  function countStatuses(tests: BunTestResult[]): void {
+                    for (const t of tests) {
+                      if (t.status && counts.hasOwnProperty(t.status)) counts[t.status]++;
+                      if (t.children) countStatuses(t.children);
+                    }
+                  }
+                  countStatuses(parsedOutput.flatMap(r => r.tests));
+                  for (const test of tests) {
+                    if (counts.failed > 0)
+                      run.failed(test, new vscode.TestMessage(`Found ${counts.failed} errors in test results.`));
+                    else if (counts.passed > 0) run.passed(test);
+                    else if (counts.skipped > 0) run.skipped(test);
+                  }
+
                   const fileTestItem = this.testController.items.get(
                     vscode.Uri.file(windowsVscodeUri(filePath)).toString(),
                   );

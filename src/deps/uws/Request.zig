@@ -25,12 +25,12 @@ pub const Request = opaque {
         if (len == 0) return null;
         return ptr[0..len];
     }
-    pub fn dateForHeader(req: *Request, name: []const u8) ?u64 {
+    pub fn dateForHeader(req: *Request, name: []const u8) bun.JSError!?u64 {
         const value = header(req, name);
         if (value == null) return null;
         var string = bun.String.init(value.?);
         defer string.deref();
-        const date_f64 = bun.String.parseDate(&string, bun.JSC.VirtualMachine.get().global);
+        const date_f64 = try bun.String.parseDate(&string, bun.JSC.VirtualMachine.get().global);
         if (!std.math.isNan(date_f64) and std.math.isFinite(date_f64)) {
             return @intFromFloat(date_f64);
         }

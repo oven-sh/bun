@@ -190,12 +190,6 @@ enum class AsymmetricMatcherConstructorType : int8_t {
     InstanceOf = 9,
 };
 
-#if ASSERT_ENABLED
-#define ASSERT_NO_PENDING_EXCEPTION(globalObject) DECLARE_CATCH_SCOPE(globalObject->vm()).assertNoExceptionExceptTermination()
-#else
-#define ASSERT_NO_PENDING_EXCEPTION(globalObject) void()
-#endif
-
 // Ensure we instantiate the true and false variants of this function
 template bool Bun__deepMatch<true>(
     JSValue objValue,
@@ -1697,9 +1691,9 @@ bool Bun__deepMatch(
                 }
             }
         } else {
-            if (!sameValue(globalObject, prop, subsetProp)) {
-                return false;
-            }
+            auto same = JSC::sameValue(globalObject, prop, subsetProp);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (!same) return false;
         }
     }
 
@@ -2033,8 +2027,7 @@ extern "C" void WebCore__FetchHeaders__put(WebCore::FetchHeaders* headers, HTTPH
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
     throwScope.assertNoException(); // can't throw an exception when there's already one.
-    WebCore::propagateException(*global, throwScope,
-        headers->set(name, Zig::toStringCopy(*arg2)));
+    WebCore::propagateException(*global, throwScope, headers->set(name, Zig::toStringCopy(*arg2)));
 }
 void WebCore__FetchHeaders__remove(WebCore::FetchHeaders* headers, const ZigString* arg1, JSC::JSGlobalObject* global)
 {
@@ -2560,13 +2553,11 @@ JSC::EncodedJSValue JSC__JSGlobalObject__putCachedObject(JSC::JSGlobalObject* gl
 
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, ZigString* arg1)
 {
-    JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(
-        global->moduleLoader()->getDirect(global->vm(), JSC::Identifier::fromString(global->vm(), "registry"_s)));
-    if (!map)
-        return;
+    auto& vm = global->vm();
+    JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(global->moduleLoader()->getDirect(vm, JSC::Identifier::fromString(vm, "registry"_s)));
+    if (!map) return;
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
-    JSC::JSValue val = JSC::identifierToJSValue(global->vm(), identifier);
-
+    JSC::JSValue val = JSC::identifierToJSValue(vm, identifier);
     map->remove(global, val);
 }
 
@@ -3249,9 +3240,8 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
     auto name = makeAtomString(arg1->toWTFString());
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
-    if (!promise) {
-        return nullptr;
-    }
+    EXCEPTION_ASSERT(!!promise == !scope.exception());
+    if (!promise) return nullptr;
 
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
         vm, globalObject, 1, String(), resolverFunctionCallback);
@@ -3724,7 +3714,6 @@ bool JSC__JSValue__isIterable(JSC::EncodedJSValue JSValue, JSC::JSGlobalObject* 
 
 void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* ctx, void (*ArgFn3)(JSC::VM* arg0, JSC::JSGlobalObject* arg1, void* arg2, JSC::EncodedJSValue JSValue3))
 {
-
     JSC::forEachInIterable(
         arg1, JSC::JSValue::decode(JSValue0),
         [ArgFn3, ctx](JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSValue value) -> void {
@@ -3887,14 +3876,22 @@ JSC::EncodedJSValue JSC__JSValue__fromInt64NoTruncate(JSC::JSGlobalObject* globa
 
 JSC::EncodedJSValue JSC__JSValue__fromTimevalNoTruncate(JSC::JSGlobalObject* globalObject, int64_t nsec, int64_t sec)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto big_nsec = JSC::JSBigInt::createFrom(globalObject, nsec);
+    RETURN_IF_EXCEPTION(scope, {});
     auto big_sec = JSC::JSBigInt::createFrom(globalObject, sec);
+    RETURN_IF_EXCEPTION(scope, {});
     auto big_1e6 = JSC::JSBigInt::createFrom(globalObject, 1e6);
+    RETURN_IF_EXCEPTION(scope, {});
     auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject, big_1e6, big_sec);
+    RETURN_IF_EXCEPTION(scope, {});
     ASSERT(sec_as_nsec.isHeapBigInt());
     auto* big_sec_as_nsec = sec_as_nsec.asHeapBigInt();
     ASSERT(big_sec_as_nsec);
-    return JSC::JSValue::encode(JSC::JSBigInt::add(globalObject, big_sec_as_nsec, big_nsec));
+    auto result = JSC::JSBigInt::add(globalObject, big_sec_as_nsec, big_nsec);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(result);
 }
 
 JSC::EncodedJSValue JSC__JSValue__bigIntSum(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue a, JSC::EncodedJSValue b)
@@ -4736,8 +4733,9 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
 
     } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-
         except->message = Bun::toStringRef(global, message);
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+            return;
     } else {
 
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
@@ -4763,6 +4761,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         if (syscall) {
             if (syscall.isString()) {
                 except->syscall = Bun::toStringRef(global, syscall);
+                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                    return;
             }
         }
 
@@ -4772,6 +4772,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         if (code) {
             if (code.isString() || code.isNumber()) {
                 except->system_code = Bun::toStringRef(global, code);
+                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                    return;
             }
         }
 
@@ -4781,6 +4783,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         if (path) {
             if (path.isString()) {
                 except->path = Bun::toStringRef(global, path);
+                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                    return;
             }
         }
 
@@ -4868,6 +4872,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         if (sourceURL) {
             if (sourceURL.isString()) {
                 except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
+                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                    return;
 
                 // Take care not to make these getter calls observable.
 
@@ -4964,8 +4970,7 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
         }
         if (message) {
             if (message.isString()) {
-                except->message = Bun::toStringRef(
-                    message.toWTFString(global));
+                except->message = Bun::toStringRef(message.toWTFString(global));
             }
         }
 

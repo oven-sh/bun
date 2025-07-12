@@ -1186,7 +1186,7 @@ pub export fn napi_create_buffer_copy(env_: napi_env, length: usize, data: [*]u8
     const result = result_ orelse {
         return env.invalidArg();
     };
-    var buffer = JSC.JSValue.createBufferFromLength(env.toJS(), length);
+    var buffer = JSC.JSValue.createBufferFromLength(env.toJS(), length) catch return env.setLastError(.pending_exception);
     if (buffer.asArrayBuffer(env.toJS())) |array_buf| {
         if (length > 0) {
             @memcpy(array_buf.slice()[0..length], data[0..length]);

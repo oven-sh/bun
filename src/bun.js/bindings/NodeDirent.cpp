@@ -177,9 +177,8 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
 
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject, newTarget.getObject(), functionGlobalObject->m_JSDirentClassStructure.get(functionGlobalObject));
-        scope.release();
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSDirentClassStructure.get(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto* object = JSC::JSFinalObject::create(vm, structure);

@@ -90,15 +90,12 @@ pub const ResourceUsage = struct {
 
     rusage: Rusage,
 
-    pub fn getCPUTime(
-        this: *ResourceUsage,
-        globalObject: *JSGlobalObject,
-    ) JSValue {
+    pub fn getCPUTime(this: *ResourceUsage, globalObject: *JSGlobalObject) bun.JSError!JSValue {
         var cpu = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         const rusage = this.rusage;
 
-        const usrTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.utime.usec, rusage.utime.sec);
-        const sysTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.stime.usec, rusage.stime.sec);
+        const usrTime = try JSValue.fromTimevalNoTruncate(globalObject, rusage.utime.usec, rusage.utime.sec);
+        const sysTime = try JSValue.fromTimevalNoTruncate(globalObject, rusage.stime.usec, rusage.stime.sec);
 
         cpu.put(globalObject, JSC.ZigString.static("user"), usrTime);
         cpu.put(globalObject, JSC.ZigString.static("system"), sysTime);
@@ -107,58 +104,37 @@ pub const ResourceUsage = struct {
         return cpu;
     }
 
-    pub fn getMaxRSS(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) JSValue {
+    pub fn getMaxRSS(this: *ResourceUsage, _: *JSGlobalObject) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.maxrss);
     }
 
-    pub fn getSharedMemorySize(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) JSValue {
+    pub fn getSharedMemorySize(this: *ResourceUsage, _: *JSGlobalObject) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.ixrss);
     }
 
-    pub fn getSwapCount(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) JSValue {
+    pub fn getSwapCount(this: *ResourceUsage, _: *JSGlobalObject) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.nswap);
     }
 
-    pub fn getOps(
-        this: *ResourceUsage,
-        globalObject: *JSGlobalObject,
-    ) JSValue {
+    pub fn getOps(this: *ResourceUsage, globalObject: *JSGlobalObject) JSValue {
         var ops = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         ops.put(globalObject, JSC.ZigString.static("in"), JSC.JSValue.jsNumber(this.rusage.inblock));
         ops.put(globalObject, JSC.ZigString.static("out"), JSC.JSValue.jsNumber(this.rusage.oublock));
         return ops;
     }
 
-    pub fn getMessages(
-        this: *ResourceUsage,
-        globalObject: *JSGlobalObject,
-    ) JSValue {
+    pub fn getMessages(this: *ResourceUsage, globalObject: *JSGlobalObject) JSValue {
         var msgs = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         msgs.put(globalObject, JSC.ZigString.static("sent"), JSC.JSValue.jsNumber(this.rusage.msgsnd));
         msgs.put(globalObject, JSC.ZigString.static("received"), JSC.JSValue.jsNumber(this.rusage.msgrcv));
         return msgs;
     }
 
-    pub fn getSignalCount(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) JSValue {
+    pub fn getSignalCount(this: *ResourceUsage, _: *JSGlobalObject) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.nsignals);
     }
 
-    pub fn getContextSwitches(
-        this: *ResourceUsage,
-        globalObject: *JSGlobalObject,
-    ) JSValue {
+    pub fn getContextSwitches(this: *ResourceUsage, globalObject: *JSGlobalObject) JSValue {
         var ctx = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         ctx.put(globalObject, JSC.ZigString.static("voluntary"), JSC.JSValue.jsNumber(this.rusage.nvcsw));
         ctx.put(globalObject, JSC.ZigString.static("involuntary"), JSC.JSValue.jsNumber(this.rusage.nivcsw));
@@ -495,11 +471,11 @@ const Readable = union(enum) {
         }
     }
 
-    pub fn toJS(this: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) JSValue {
+    pub fn toJS(this: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) bun.JSError!JSValue {
         _ = exited; // autofix
         switch (this.*) {
             // should only be reachable when the entire output is buffered.
-            .memfd => return this.toBufferedValue(globalThis) catch .zero,
+            .memfd => return this.toBufferedValue(globalThis),
 
             .fd => |fd| {
                 return fd.toJS(globalThis);
@@ -516,9 +492,7 @@ const Readable = union(enum) {
                     return JSC.WebCore.ReadableStream.empty(globalThis);
                 }
 
-                const own = buffer.takeSlice(bun.default_allocator) catch {
-                    globalThis.throwOutOfMemory() catch return .zero;
-                };
+                const own = try buffer.takeSlice(bun.default_allocator);
                 return JSC.WebCore.ReadableStream.fromOwnedSlice(globalThis, own, 0);
             },
             else => {
@@ -559,26 +533,17 @@ const Readable = union(enum) {
     }
 };
 
-pub fn getStderr(
-    this: *Subprocess,
-    globalThis: *JSGlobalObject,
-) JSValue {
+pub fn getStderr(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     this.observable_getters.insert(.stderr);
     return this.stderr.toJS(globalThis, this.hasExited());
 }
 
-pub fn getStdin(
-    this: *Subprocess,
-    globalThis: *JSGlobalObject,
-) JSValue {
+pub fn getStdin(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     this.observable_getters.insert(.stdin);
     return this.stdin.toJS(globalThis, this);
 }
 
-pub fn getStdout(
-    this: *Subprocess,
-    globalThis: *JSGlobalObject,
-) JSValue {
+pub fn getStdout(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     this.observable_getters.insert(.stdout);
     // NOTE: ownership of internal buffers is transferred to the JSValue, which
     // gets cached on JSSubprocess (created via bindgen). This makes it
@@ -586,11 +551,7 @@ pub fn getStdout(
     return this.stdout.toJS(globalThis, this.hasExited());
 }
 
-pub fn asyncDispose(
-    this: *Subprocess,
-    global: *JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSValue {
+pub fn asyncDispose(this: *Subprocess, global: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     if (this.process.hasExited()) {
         // rely on GC to clean everything up in this case
         return .js_undefined;
@@ -1110,7 +1071,7 @@ pub const PipeReader = struct {
             this.reader.watch();
     }
 
-    pub fn toReadableStream(this: *PipeReader, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toReadableStream(this: *PipeReader, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         defer this.detach();
 
         switch (this.state) {
@@ -1124,9 +1085,9 @@ pub const PipeReader = struct {
                 return JSC.WebCore.ReadableStream.fromOwnedSlice(globalObject, bytes, 0);
             },
             .err => |err| {
-                _ = err; // autofix
-                const empty = JSC.WebCore.ReadableStream.empty(globalObject);
-                JSC.WebCore.ReadableStream.cancel(&JSC.WebCore.ReadableStream.fromJS(empty, globalObject).?, globalObject);
+                _ = err;
+                const empty = try JSC.WebCore.ReadableStream.empty(globalObject);
+                JSC.WebCore.ReadableStream.cancel(&(try JSC.WebCore.ReadableStream.fromJS(empty, globalObject)).?, globalObject);
                 return empty;
             },
         }

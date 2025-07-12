@@ -854,9 +854,9 @@ pub const String = extern struct {
         return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createUTF8ForJS, .{ globalObject, builder.items.ptr, builder.items.len });
     }
 
-    pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {
+    pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) bun.JSError!f64 {
         JSC.markBinding(@src());
-        return Bun__parseDate(globalObject, this);
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__parseDate, .{ globalObject, this });
     }
 
     pub fn ref(this: String) void {

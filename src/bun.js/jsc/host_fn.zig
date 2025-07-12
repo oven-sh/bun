@@ -120,6 +120,7 @@ pub fn fromJSHostCall(
     defer scope.deinit();
 
     const value = @call(.auto, function, args);
+    if (@TypeOf(value) != JSValue) @compileError("fromJSHostCall only supports JSValue");
     scope.assertExceptionPresenceMatches(value == .zero);
     return if (value == .zero) error.JSError else value;
 }

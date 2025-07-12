@@ -1298,7 +1298,7 @@ pub const PipeReader = struct {
             },
             .err => |err| {
                 _ = err; // autofix
-                const empty = JSC.WebCore.ReadableStream.empty(globalObject);
+                const empty = try JSC.WebCore.ReadableStream.empty(globalObject);
                 JSC.WebCore.ReadableStream.cancel(&JSC.WebCore.ReadableStream.fromJS(empty, globalObject).?, globalObject);
                 return empty;
             },

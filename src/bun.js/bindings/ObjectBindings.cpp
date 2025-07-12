@@ -84,12 +84,8 @@ JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::VM& vm, JSC::J
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto propertySlot = PropertySlot(object, PropertySlot::InternalMethodType::Get);
     auto isDefined = getNonIndexPropertySlotPrototypePollutionMitigation(vm, object, globalObject, name, propertySlot);
-
-    if (!isDefined) {
-        return JSC::jsUndefined();
-    }
-
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isDefined) return JSC::jsUndefined();
     JSValue value = propertySlot.getValue(globalObject, name);
     RETURN_IF_EXCEPTION(scope, {});
     return value;

@@ -101,6 +101,7 @@ extern "C" JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* g
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }
+    ASSERT(!scope.exception());
     return JSValue::encode(jsString(vm, WTFMove(str)));
 }
 

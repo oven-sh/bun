@@ -186,32 +186,32 @@ fi
 echo
 
 case $(basename "$SHELL") in
-fish)
+nu)
     # Install completions, but we don't care if it fails
-    IS_BUN_AUTO_UPDATE=true SHELL=fish $exe completions &>/dev/null || :
+    IS_BUN_AUTO_UPDATE=true SHELL=nu $exe completions &>/dev/null || :
 
     commands=(
-        "set --export $install_env $quoted_install_dir"
-        "set --export PATH $bin_env \$PATH"
+        "\$env.BUN_INSTALL = $quoted_install_dir"
+        "\$env.PATH = (\$env.PATH | split row (char esep) | prepend $bin_env)"
     )
 
-    fish_config=$HOME/.config/fish/config.fish
-    tilde_fish_config=$(tildify "$fish_config")
+    nu_config=$HOME/.config/nushell/env.nu
+    tilde_nu_config=$(tildify "$nu_config")
 
-    if [[ -w $fish_config ]]; then
+    if [[ -w $nu_config ]]; then
         {
             echo -e '\n# bun'
 
             for command in "${commands[@]}"; do
                 echo "$command"
             done
-        } >>"$fish_config"
+        } >>"$nu_config"
 
-        info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_fish_config\""
+        info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_nu_config\""
 
-        refresh_command="source $tilde_fish_config"
+        refresh_command="exec nu"
     else
-        echo "Manually add the directory to $tilde_fish_config (or similar):"
+        echo "Manually add the following to $tilde_nu_config:"
 
         for command in "${commands[@]}"; do
             info_bold "  $command"

@@ -37,7 +37,6 @@ src/baby_list.zig
 src/bake/bake.zig
 src/bake/DevServer.zig
 src/bake/FrameworkRouter.zig
-src/bake/OutputFileExtra.zig
 src/bake/production.zig
 src/base64/base64.zig
 src/bit_set.zig

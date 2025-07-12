@@ -66,3 +66,10 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "`bun run clang-format`"
+      - name: Ban Words
+        run: |
+          bun ./test/internal/ban-words.test.ts
+      - name: Commit
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "`bun test ban-words.test.ts`"

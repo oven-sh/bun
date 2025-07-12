@@ -64,6 +64,11 @@ pub const CatchScope = struct {
         return CatchScope__pureException(&self.bytes);
     }
 
+    pub fn clearException(self: *CatchScope) void {
+        if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
+        return CatchScope__clearException(&self.bytes);
+    }
+
     /// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
     pub fn exceptionIncludingTraps(self: *CatchScope) ?*jsc.Exception {
         if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
@@ -190,6 +195,7 @@ extern fn CatchScope__construct(
 ) void;
 /// only returns exceptions that have already been thrown. does not check traps
 extern fn CatchScope__pureException(ptr: *align(alignment) [size]u8) ?*jsc.Exception;
+extern fn CatchScope__clearException(ptr: *align(alignment) [size]u8) void;
 /// returns if an exception was already thrown, or if a trap (like another thread requesting
 /// termination) causes an exception to be thrown
 extern fn CatchScope__exceptionIncludingTraps(ptr: *align(alignment) [size]u8) ?*jsc.Exception;

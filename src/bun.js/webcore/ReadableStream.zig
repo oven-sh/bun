@@ -766,7 +766,7 @@ pub fn NewSource(
                 this.this_jsvalue = callFrame.this();
                 var list = this.drain();
                 if (list.len > 0) {
-                    return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
+                    return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
                 }
                 return .js_undefined;
             }

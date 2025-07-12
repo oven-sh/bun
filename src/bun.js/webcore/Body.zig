@@ -3,7 +3,7 @@ const Body = @This();
 
 value: Value, // = Value.empty,
 
-pub inline fn len(this: *const Body) Blob.SizeType {
+pub fn len(this: *Body) Blob.SizeType {
     return this.value.size();
 }
 
@@ -366,9 +366,9 @@ pub const Value = union(Tag) {
         }
     }
 
-    pub fn size(this: *const Value) Blob.SizeType {
+    pub fn size(this: *Value) Blob.SizeType {
         return switch (this.*) {
-            .Blob => this.Blob.size,
+            .Blob => @truncate(this.Blob.getSizeForBindings()),
             .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
             .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
             .Locked => this.Locked.sizeHint(),

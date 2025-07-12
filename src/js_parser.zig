@@ -1962,19 +1962,29 @@ pub const SideEffects = enum(u1) {
         }
     }
 
-    // If this is in a dead branch, then we want to trim as much dead code as we
-    // can. Everything can be trimmed except for hoisted declarations ("var" and
-    // "function"), which affect the parent scope. For example:
-    //
-    //   function foo() {
-    //     if (false) { var x; }
-    //     x = 1;
-    //   }
-    //
-    // We can't trim the entire branch as dead or calling foo() will incorrectly
-    // assign to a global variable instead.
-    pub fn shouldKeepStmtInDeadControlFlow(p: anytype, stmt: Stmt, allocator: Allocator) bool {
-        if (!p.options.features.dead_code_elimination) return true;
+    fn shouldKeepStmtsInDeadControlFlow(stmts: []Stmt, allocator: Allocator) bool {
+        for (stmts) |child| {
+            if (shouldKeepStmtInDeadControlFlow(child, allocator)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// If this is in a dead branch, then we want to trim as much dead code as we
+    /// can. Everything can be trimmed except for hoisted declarations ("var" and
+    /// "function"), which affect the parent scope. For example:
+    ///
+    ///   function foo() {
+    ///     if (false) { var x; }
+    ///     x = 1;
+    ///   }
+    ///
+    /// We can't trim the entire branch as dead or calling foo() will incorrectly
+    /// assign to a global variable instead.
+    ///
+    /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
+    pub fn shouldKeepStmtInDeadControlFlow(stmt: Stmt, allocator: Allocator) bool {
         switch (stmt.data) {
             // Omit these statements entirely
             .s_empty, .s_expr, .s_throw, .s_return, .s_break, .s_continue, .s_class, .s_debugger => return false,
@@ -2004,8 +2014,22 @@ pub const SideEffects = enum(u1) {
             },
 
             .s_block => |block| {
-                for (block.stmts) |child| {
-                    if (shouldKeepStmtInDeadControlFlow(p, child, allocator)) {
+                return shouldKeepStmtsInDeadControlFlow(block.stmts, allocator);
+            },
+
+            .s_try => |try_stmt| {
+                if (shouldKeepStmtsInDeadControlFlow(try_stmt.body, allocator)) {
+                    return true;
+                }
+
+                if (try_stmt.catch_) |*catch_stmt| {
+                    if (shouldKeepStmtsInDeadControlFlow(catch_stmt.body, allocator)) {
+                        return true;
+                    }
+                }
+
+                if (try_stmt.finally) |*finally_stmt| {
+                    if (shouldKeepStmtsInDeadControlFlow(finally_stmt.stmts, allocator)) {
                         return true;
                     }
                 }
@@ -2014,43 +2038,43 @@ pub const SideEffects = enum(u1) {
             },
 
             .s_if => |_if_| {
-                if (shouldKeepStmtInDeadControlFlow(p, _if_.yes, allocator)) {
+                if (shouldKeepStmtInDeadControlFlow(_if_.yes, allocator)) {
                     return true;
                 }
 
                 const no = _if_.no orelse return false;
 
-                return shouldKeepStmtInDeadControlFlow(p, no, allocator);
+                return shouldKeepStmtInDeadControlFlow(no, allocator);
             },
 
             .s_while => {
-                return shouldKeepStmtInDeadControlFlow(p, stmt.data.s_while.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(stmt.data.s_while.body, allocator);
             },
 
             .s_do_while => {
-                return shouldKeepStmtInDeadControlFlow(p, stmt.data.s_do_while.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(stmt.data.s_do_while.body, allocator);
             },
 
             .s_for => |__for__| {
                 if (__for__.init) |init_| {
-                    if (shouldKeepStmtInDeadControlFlow(p, init_, allocator)) {
+                    if (shouldKeepStmtInDeadControlFlow(init_, allocator)) {
                         return true;
                     }
                 }
 
-                return shouldKeepStmtInDeadControlFlow(p, __for__.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
             },
 
             .s_for_in => |__for__| {
-                return shouldKeepStmtInDeadControlFlow(p, __for__.init, allocator) or shouldKeepStmtInDeadControlFlow(p, __for__.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(__for__.init, allocator) or shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
             },
 
             .s_for_of => |__for__| {
-                return shouldKeepStmtInDeadControlFlow(p, __for__.init, allocator) or shouldKeepStmtInDeadControlFlow(p, __for__.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(__for__.init, allocator) or shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
             },
 
             .s_label => |label| {
-                return shouldKeepStmtInDeadControlFlow(p, label.stmt, allocator);
+                return shouldKeepStmtInDeadControlFlow(label.stmt, allocator);
             },
 
             else => return true,
@@ -20043,7 +20067,7 @@ fn NewParser_(
                 if (p.options.features.minify_syntax) {
                     if (effects.ok) {
                         if (effects.value) {
-                            if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(p, data.no.?, p.allocator)) {
+                            if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(data.no.?, p.allocator)) {
                                 if (effects.side_effects == .could_have_side_effects) {
                                     // Keep the condition if it could have side effects (but is still known to be truthy)
                                     if (SideEffects.simplifyUnusedExpr(p, data.test_)) |test_| {
@@ -20057,7 +20081,7 @@ fn NewParser_(
                             }
                         } else {
                             // The test is falsy
-                            if (!SideEffects.shouldKeepStmtInDeadControlFlow(p, data.yes, p.allocator)) {
+                            if (!SideEffects.shouldKeepStmtInDeadControlFlow(data.yes, p.allocator)) {
                                 if (effects.side_effects == .could_have_side_effects) {
                                     // Keep the condition if it could have side effects (but is still known to be truthy)
                                     if (SideEffects.simplifyUnusedExpr(p, data.test_)) |test_| {
@@ -22378,10 +22402,10 @@ fn NewParser_(
                 }
 
                 var visited_count = visited.items.len;
-                if (p.is_control_flow_dead) {
+                if (p.is_control_flow_dead and p.options.features.dead_code_elimination) {
                     var end: usize = 0;
                     for (visited.items) |item| {
-                        if (!SideEffects.shouldKeepStmtInDeadControlFlow(p, item, p.allocator)) {
+                        if (!SideEffects.shouldKeepStmtInDeadControlFlow(item, p.allocator)) {
                             continue;
                         }
 
@@ -22483,9 +22507,10 @@ fn NewParser_(
 
             var output = ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len) catch unreachable;
 
+            const dead_code_elimination = p.options.features.dead_code_elimination;
             for (stmts.items) |stmt| {
-                if (is_control_flow_dead and p.options.features.dead_code_elimination and
-                    !SideEffects.shouldKeepStmtInDeadControlFlow(p, stmt, p.allocator))
+                if (is_control_flow_dead and dead_code_elimination and
+                    !SideEffects.shouldKeepStmtInDeadControlFlow(stmt, p.allocator))
                 {
                     // Strip unnecessary statements if the control flow is dead here
                     continue;

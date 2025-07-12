@@ -118,7 +118,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                     \\
                     \\The default location for this is `bun.app.ts`
                     \\
-                    \\TODO: insert a link to `bun.sh/docs`
+                    \\TODO: insert a link to `bun.com/docs`
                 , .{});
                 bun.Global.crash();
             }
@@ -525,7 +525,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         if (params_buf.items.len > 0) {
             const param_info_array = try JSValue.createEmptyArray(global, params_buf.items.len);
             for (params_buf.items, 0..) |param, i| {
-                try param_info_array.putIndex(global, @intCast(params_buf.items.len - i - 1), bun.String.createUTF8ForJS(global, param));
+                try param_info_array.putIndex(global, @intCast(params_buf.items.len - i - 1), try bun.String.createUTF8ForJS(global, param));
             }
             try route_param_info.putIndex(global, @intCast(nav_index), param_info_array);
         } else {

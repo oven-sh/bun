@@ -1692,10 +1692,8 @@ pub fn double(number: f64) FormatDouble {
 pub const FormatDouble = struct {
     number: f64,
 
-    extern fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) usize;
-
     pub fn dtoa(buf: *[124]u8, number: f64) []const u8 {
-        const len = WTF__dtoa(buf, number);
+        const len = bun.cpp.WTF__dtoa(&buf.ptr[0], number);
         return buf[0..len];
     }
 
@@ -1704,7 +1702,7 @@ pub const FormatDouble = struct {
             return "-0";
         }
 
-        const len = WTF__dtoa(buf, number);
+        const len = bun.cpp.WTF__dtoa(&buf.ptr[0], number);
         return buf[0..len];
     }
 

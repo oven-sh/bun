@@ -24,9 +24,8 @@ pub const VM = opaque {
         return JSC__VM__setControlFlowProfiler(vm, enabled);
     }
 
-    extern fn JSC__VM__isJITEnabled() bool;
     pub fn isJITEnabled() bool {
-        return JSC__VM__isJITEnabled();
+        return bun.cpp.JSC__VM__isJITEnabled();
     }
 
     extern fn JSC__VM__hasExecutionTimeLimit(vm: *VM) bool;

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
@@ -566,13 +566,6 @@ export class BunTestController implements vscode.Disposable {
             run.appendOutput(filtered);
           });
 
-          proc.stdin?.on("data", data => {
-            const chunk = data.toString();
-            if (chunk.trim().toLowerCase() === "exit") {
-              proc.kill();
-            }
-          });
-
           proc.on("close", code => {
             this.activeProcesses.delete(proc);
 
@@ -583,25 +576,57 @@ export class BunTestController implements vscode.Disposable {
 
                 if (!parsedOutput) {
                   for (const test of tests) {
-                    run.errored(test, new vscode.TestMessage("Failed to parse test output"));
-                    if (test.uri) {
-                      const location = new vscode.Location(test.uri, new vscode.Position(0, 0));
-                      run.appendOutput(`Error: Failed to parse test output for ${test.id}\n`, location);
-                    }
-                    this.removeTestItemAndChildren(test);
+                    const err = new vscode.TestMessage(
+                      `Failed to parse test output. Make sure there are tests and no errors:\n\n${_stderr}`,
+                    );
+                    err.location = new vscode.Location(
+                      test.uri || vscode.Uri.file(filePath),
+                      new vscode.Position(0, 0),
+                    );
+                    run.errored(test, err);
                   }
+                  this.verifyBunVersion();
                   resolve();
                   return;
                 }
 
+                function hasSourceLine(test: BunTestResult): boolean {
+                  if ("location" in test && test.location?.line) {
+                    return true;
+                  }
+                  if (test.children) {
+                    return test.children.every(hasSourceLine);
+                  }
+                  return false;
+                }
+                if (!parsedOutput.every(e => e.tests.every(hasSourceLine))) {
+                  output.appendLine(
+                    `Warning: Some test results do not have source line information. This may be due to an older version of Bun.`,
+                  );
+                  this.verifyBunVersion();
+                }
+
                 if (isFileOnly) {
+                  if (parsedOutput.length === 0) {
+                    for (const test of tests) {
+                      const err = new vscode.TestMessage("No tests found");
+                      err.location = new vscode.Location(
+                        test.uri || vscode.Uri.file(filePath),
+                        new vscode.Position(0, 0),
+                      );
+                      run.errored(test, err);
+                    }
+                    resolve();
+                    return;
+                  }
+
                   const fileTestItem = this.testController.items.get(
                     vscode.Uri.file(windowsVscodeUri(filePath)).toString(),
                   );
+
                   if (fileTestItem) {
                     this.removeTestItemAndChildren(fileTestItem);
                   }
-
                   this.createTestItemsFromParsedOutput(parsedOutput);
 
                   const fileResult = parsedOutput.find((result: BunFileResult) => result.name === filePath);
@@ -645,19 +670,11 @@ export class BunTestController implements vscode.Disposable {
               } else {
                 for (const test of tests) {
                   run.errored(test, new vscode.TestMessage(`Bun process exited with code ${code}:\n${_stderr}`));
-                  if (test.uri) {
-                    const location = new vscode.Location(test.uri, new vscode.Position(0, 0));
-                    run.appendOutput(`Error running test: ${_stderr}\n`, location);
-                  }
                 }
               }
             } catch (e) {
               for (const test of tests) {
                 run.errored(test, new vscode.TestMessage(`Error processing test results: ${e}`));
-                if (test.uri) {
-                  const location = new vscode.Location(test.uri, new vscode.Position(0, 0));
-                  run.appendOutput(`Error processing test results: ${e}\n`, location);
-                }
                 this.removeTestItemAndChildren(test);
               }
               output.appendLine(`Error processing test results for file ${filePath}: ${e}`);
@@ -1017,6 +1034,46 @@ export class BunTestController implements vscode.Disposable {
     }
   }
 
+  private verifyBunVersion(target = "1.2.19"): void {
+    // a simple check because we needed to update how the xml generater works
+    // so keep this while the older versions are still recent
+    const { bunCommand } = this.getBunExecutionConfig();
+
+    const targetNum = Number.parseInt(target.replaceAll(".", ""));
+    let version = "unknown";
+
+    try {
+      const v = execSync([bunCommand, "--version"].join(" "), { encoding: "utf8" }).trim();
+      if (targetNum > Number.parseInt(v.replaceAll(".", ""))) {
+        version = v;
+      } else {
+        return;
+      }
+    } catch (error) {
+      output.appendLine(`Error getting Bun version: ${error}`);
+      version = "unknown";
+    }
+
+    const selection = vscode.window.showErrorMessage(
+      `Your Bun version (${version}) is too old to use the test explorer in this editor. Please update to 1.2.19 or later.`,
+      "Update Bun",
+      // { modal: true },
+    );
+
+    if (selection) {
+      selection.then(async e => {
+        if (e !== "Update Bun") return;
+        const terminal = vscode.window.createTerminal({
+          name: "Bun Upgrade",
+          cwd: this.workspaceFolder.uri.fsPath,
+          message: "\x1b[34mRunning\x1b[0m \x1b[1m`bun upgrade`\x1b[0m \x1b[32mto update Bun\x1b[0m",
+        });
+        terminal.sendText(`${bunCommand} upgrade`, true);
+        terminal.show();
+      });
+    }
+  }
+
   public dispose(): void {
     this.closeAllActiveProcesses();
     for (const disposable of this.disposables) {
@@ -1055,7 +1112,7 @@ function getFileLocationFromError(
   return first;
 }
 
-function parseBunTestOutput(output: string, workspacePath: string, reporterOutfile?: string): BunFileResult[] {
+function parseBunTestOutput(output: string, workspacePath: string, reporterOutfile?: string): BunFileResult[] | null {
   const lines = output.trim().split("\n");
   const testResults: BunFileResult[] = [];
 
@@ -1066,6 +1123,7 @@ function parseBunTestOutput(output: string, workspacePath: string, reporterOutfi
       if (!err) xmlResult = result;
     });
   }
+  if (!xmlResult) return null;
 
   const outputWithoutAnsi = output;
   const errorRegex = /::error file=(.*?),line=(\d+),col=(\d+),title=(.*?)::(.*?)(?=\n|$)/g;

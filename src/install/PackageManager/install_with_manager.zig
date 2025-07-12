@@ -880,6 +880,8 @@ fn printInstallSummary(
 
         {
             Output.flush();
+            // Ensure at this point buffering is enabled.
+            // We deliberately do not disable it after this.
             Output.enableBuffering();
             const writer = Output.writerBuffered();
             switch (Output.enable_ansi_colors) {

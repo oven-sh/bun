@@ -642,6 +642,7 @@ pub const Loader = enum(u8) {
     sqlite,
     sqlite_embedded,
     html,
+    bytes,
 
     pub const Optional = enum(u8) {
         none = 254,
@@ -693,7 +694,7 @@ pub const Loader = enum(u8) {
 
     pub fn handlesEmptyFile(this: Loader) bool {
         return switch (this) {
-            .wasm, .file, .text => true,
+            .wasm, .file, .text, .bytes => true,
             else => false,
         };
     }
@@ -803,6 +804,7 @@ pub const Loader = enum(u8) {
         .{ "sqlite", .sqlite },
         .{ "sqlite_embedded", .sqlite_embedded },
         .{ "html", .html },
+        .{ "bytes", .bytes },
     });
 
     pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
@@ -864,6 +866,7 @@ pub const Loader = enum(u8) {
             .dataurl => .dataurl,
             .text => .text,
             .sqlite_embedded, .sqlite => .sqlite,
+            .bytes => .bytes,
         };
     }
 
@@ -885,6 +888,7 @@ pub const Loader = enum(u8) {
             .text => .text,
             .html => .html,
             .sqlite => .sqlite,
+            .bytes => .bytes,
             _ => .file,
         };
     }

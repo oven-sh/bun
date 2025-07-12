@@ -316,6 +316,7 @@ pub const Runtime = struct {
         __using: ?Ref = null,
         __callDispose: ?Ref = null,
         __jsonParse: ?Ref = null,
+        __base64ToUint8Array: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -332,6 +333,7 @@ pub const Runtime = struct {
             "__using",
             "__callDispose",
             "__jsonParse",
+            "__base64ToUint8Array",
         };
         const all_sorted: [all.len]string = brk: {
             @setEvalBranchQuota(1000000);

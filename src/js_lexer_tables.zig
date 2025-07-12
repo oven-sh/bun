@@ -194,6 +194,18 @@ pub const Keywords = ComptimeStringMap(T, .{
     .{ "with", .t_with },
 });
 
+export fn Bun__decodeEntity(input: *bun.String, out: *bun.String) bool {
+    const utf8 = input.toUTF8(bun.default_allocator);
+    defer utf8.deinit();
+    if (jsxEntity.get(utf8.slice())) |cp| {
+        var buf: [4]u8 = undefined;
+        const len = std.unicode.utf8Encode(@as(u21, @intCast(cp)), &buf) catch unreachable;
+        out.* = bun.String.createUTF8(buf[0..len]);
+        return true;
+    }
+    return false;
+}
+
 pub const StrictModeReservedWords = ComptimeStringMap(void, .{
     .{ "implements", {} },
     .{ "interface", {} },

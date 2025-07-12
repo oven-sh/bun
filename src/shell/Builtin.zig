@@ -392,6 +392,13 @@ pub fn init(
                 },
             };
         },
+        .yes => {
+            cmd.exec.bltn.impl = .{
+                .yes = Yes{
+                    .alloc_scope = shell.AllocScope.beginScope(bun.default_allocator),
+                },
+            };
+        },
         inline else => |tag| {
             cmd.exec.bltn.impl = @unionInit(Impl, @tagName(tag), .{});
         },

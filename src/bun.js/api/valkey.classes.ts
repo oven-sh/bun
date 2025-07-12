@@ -226,6 +226,18 @@ export default [
       unsubscribe: { fn: "unsubscribe" },
       punsubscribe: { fn: "punsubscribe" },
       pubsub: { fn: "pubsub" },
+      incrby: {
+        fn: "incrby",
+        length: 2,
+      },
+      decrby: {
+        fn: "decrby",
+        length: 2,
+      },
+      incrbyfloat: {
+        fn: "incrbyfloat",
+        length: 2,
+      },
     },
     values: ["onconnect", "onclose", "connectionPromise", "hello"],
   }),

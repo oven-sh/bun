@@ -1064,11 +1064,11 @@ pub const Package = extern struct {
             else => external_alias.hash,
         };
 
-        var workspace_path: ?String = null;
-        var workspace_version = workspace_ver;
+        var has_workspace_path: ?String = null;
+        var has_workspace_version = workspace_ver;
         if (comptime tag == null) {
-            workspace_path = lockfile.workspace_paths.get(name_hash);
-            workspace_version = lockfile.workspace_versions.get(name_hash);
+            has_workspace_path = lockfile.workspace_paths.get(name_hash);
+            has_workspace_version = lockfile.workspace_versions.get(name_hash);
         }
 
         if (comptime tag != null) {
@@ -1093,9 +1093,9 @@ pub const Package = extern struct {
             },
             .npm => {
                 const npm = dependency_version.value.npm;
-                if (workspace_version != null) {
-                    if (pm.options.link_workspace_packages and npm.version.satisfies(workspace_version.?, buf, buf)) {
-                        const path = workspace_path.?.sliced(buf);
+                if (has_workspace_version) |workspace_version| {
+                    if (pm.options.link_workspace_packages and npm.version.satisfies(workspace_version, buf, buf)) {
+                        const path = has_workspace_path.?.sliced(buf);
                         if (Dependency.parseWithTag(
                             allocator,
                             external_alias.value,
@@ -1112,7 +1112,7 @@ pub const Package = extern struct {
                     } else {
                         // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
                         for (package_dependencies[0..dependencies_count]) |*dep| {
-                            if (dep.name_hash == name_hash and dep.version.tag == .workspace) {
+                            if (dep.name_hash == name_hash and dep.behavior.isWorkspaceOnly()) {
                                 dep.* = .{
                                     .behavior = if (in_workspace) group.behavior.add(.workspace) else group.behavior,
                                     .name = external_alias.value,
@@ -1126,11 +1126,11 @@ pub const Package = extern struct {
                 }
             },
             .workspace => workspace: {
-                if (workspace_path) |path| {
+                if (has_workspace_path) |workspace_path| {
                     if (workspace_range) |range| {
-                        if (workspace_version) |ver| {
-                            if (range.satisfies(ver, buf, buf)) {
-                                dependency_version.value.workspace = path;
+                        if (has_workspace_version) |workspace_version| {
+                            if (range.satisfies(workspace_version, buf, buf)) {
+                                dependency_version.value.workspace = workspace_path;
                                 break :workspace;
                             }
                         }
@@ -1138,7 +1138,7 @@ pub const Package = extern struct {
                         // important to trim before len == 0 check. `workspace:foo@      ` should install successfully
                         const version_literal = strings.trim(range.input, &strings.whitespace_chars);
                         if (version_literal.len == 0 or range.@"is *"() or Semver.Version.isTaggedVersionOnly(version_literal)) {
-                            dependency_version.value.workspace = path;
+                            dependency_version.value.workspace = workspace_path;
                             break :workspace;
                         }
 
@@ -1157,7 +1157,7 @@ pub const Package = extern struct {
                         return error.InstallFailed;
                     }
 
-                    dependency_version.value.workspace = path;
+                    dependency_version.value.workspace = workspace_path;
                 } else {
                     const workspace = dependency_version.value.workspace.slice(buf);
                     const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
@@ -1190,13 +1190,13 @@ pub const Package = extern struct {
                     const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
                     const found_matching_workspace = workspace_entry.found_existing;
 
-                    if (workspace_version) |ver| {
-                        try lockfile.workspace_versions.put(allocator, name_hash, ver);
+                    if (has_workspace_version) |workspace_version| {
+                        try lockfile.workspace_versions.put(allocator, name_hash, workspace_version);
                         for (package_dependencies[0..dependencies_count]) |*package_dep| {
                             if (switch (package_dep.version.tag) {
                                 // `dependencies` & `workspaces` defined within the same `package.json`
                                 .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
-                                    package_dep.version.value.npm.version.satisfies(ver, buf, buf),
+                                    package_dep.version.value.npm.version.satisfies(workspace_version, buf, buf),
                                 // `workspace:*`
                                 .workspace => found_matching_workspace and
                                     String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
@@ -1234,19 +1234,25 @@ pub const Package = extern struct {
 
         // `peerDependencies` may be specified on existing dependencies. Packages in `workspaces` are deduplicated when
         // the array is processed
-        if (comptime features.check_for_duplicate_dependencies and !group.behavior.isPeer() and !group.behavior.isWorkspace()) {
-            const entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_alias.hash);
-            if (entry.found_existing) {
-                // duplicate dependencies are allowed in optionalDependencies
-                if (comptime group.behavior.isOptional()) {
+        if (comptime features.check_for_duplicate_dependencies) {
+            if (!this_dep.behavior.isWorkspaceOnly()) {
+                const entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_alias.hash);
+                if (entry.found_existing) {
+                    // duplicate dependencies are allowed in optionalDependencies and devDependencies. choose dev over others
                     for (package_dependencies[0..dependencies_count]) |*package_dep| {
                         if (package_dep.name_hash == this_dep.name_hash) {
-                            package_dep.* = this_dep;
-                            break;
+                            if (comptime group.behavior.isOptional() or group.behavior.isDev()) {
+                                package_dep.* = this_dep;
+                                return null;
+                            }
+
+                            if (package_dep.behavior.isDev()) {
+                                // choose the existing one.
+                                return null;
+                            }
                         }
                     }
-                    return null;
-                } else {
+
                     var notes = try allocator.alloc(logger.Data, 1);
 
                     notes[0] = .{
@@ -1263,9 +1269,9 @@ pub const Package = extern struct {
                         .{external_alias.slice(buf)},
                     );
                 }
-            }
 
-            entry.value_ptr.* = value_loc;
+                entry.value_ptr.* = value_loc;
+            }
         }
 
         return this_dep;

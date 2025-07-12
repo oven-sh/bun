@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "child_process";
-import { bunEnv, bunExe, isLinux, isMacOS } from "harness";
+import { bunExe, isLinux, isMacOS } from "harness";
 
 describe.if(isMacOS || isLinux)("uid/gid", () => {
   test("cannot spawn root process", async () => {

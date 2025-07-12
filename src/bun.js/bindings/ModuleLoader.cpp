@@ -245,7 +245,13 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
             // If a loader is passed, we must validate it
             loader = BunLoaderTypeNone;
 
-            if (JSC::JSString* loaderJSString = loaderValue.toStringOrNull(globalObject)) {
+            JSC::JSString* loaderJSString = loaderValue.toStringOrNull(globalObject);
+            if (auto ex = scope.exception()) [[unlikely]] {
+                result.value.error = ex;
+                scope.clearException();
+                return result;
+            }
+            if (loaderJSString) {
                 WTF::String loaderString = loaderJSString->value(globalObject);
                 if (loaderString == "js"_s) {
                     loader = BunLoaderTypeJS;
@@ -1146,13 +1152,12 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
     bool wasModuleMock = pendingModule->wasModuleMock;
 
     JSC::JSValue result = handleVirtualModuleResult<false>(reinterpret_cast<Zig::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer, wasModuleMock);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]] {
+        auto retValue = JSValue::encode(promise->rejectWithCaughtException(globalObject, scope));
+        pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
+        return retValue;
+    }
     if (res.success) {
-        if (scope.exception()) [[unlikely]] {
-            auto retValue = JSValue::encode(promise->rejectWithCaughtException(globalObject, scope));
-            pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
-            return retValue;
-        }
         scope.release();
         promise->resolve(globalObject, result);
         pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());

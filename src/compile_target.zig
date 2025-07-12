@@ -393,7 +393,7 @@ pub fn from(input_: []const u8) CompileTarget {
             Output.errGeneric(
                 \\Unsupported target {} in "bun{s}"
                 \\To see the supported targets:
-                \\  https://bun.sh/docs/bundler/executables
+                \\  https://bun.com/docs/bundler/executables
             ,
                 .{
                     bun.fmt.quote(token),

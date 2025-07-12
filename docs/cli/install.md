@@ -68,7 +68,7 @@ $ bun install --concurrent-scripts 5
 
 ## Workspaces
 
-Bun supports `"workspaces"` in package.json. For complete documentation refer to [Package manager > Workspaces](https://bun.sh/docs/install/workspaces).
+Bun supports `"workspaces"` in package.json. For complete documentation refer to [Package manager > Workspaces](https://bun.com/docs/install/workspaces).
 
 ```json#package.json
 {
@@ -93,11 +93,11 @@ $ bun install --filter '!pkg-c'
 $ bun install --filter './packages/pkg-a'
 ```
 
-For more information on filtering with `bun install`, refer to [Package Manager > Filtering](https://bun.sh/docs/cli/filter#bun-install-and-bun-outdated)
+For more information on filtering with `bun install`, refer to [Package Manager > Filtering](https://bun.com/docs/cli/filter#bun-install-and-bun-outdated)
 
 ## Overrides and resolutions
 
-Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. These are mechanisms for specifying a version range for _metadependencies_—the dependencies of your dependencies. Refer to [Package manager > Overrides and resolutions](https://bun.sh/docs/install/overrides) for complete documentation.
+Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. These are mechanisms for specifying a version range for _metadependencies_—the dependencies of your dependencies. Refer to [Package manager > Overrides and resolutions](https://bun.com/docs/install/overrides) for complete documentation.
 
 ```json-diff#package.json
   {
@@ -142,7 +142,7 @@ For reproducible installs, use `--frozen-lockfile`. This will install the exact 
 $ bun install --frozen-lockfile
 ```
 
-For more information on Bun's lockfile `bun.lock`, refer to [Package manager > Lockfile](https://bun.sh/docs/install/lockfile).
+For more information on Bun's lockfile `bun.lock`, refer to [Package manager > Lockfile](https://bun.com/docs/install/lockfile).
 
 ## Omitting dependencies
 
@@ -168,7 +168,7 @@ $ bun install --dry-run
 
 ## Non-npm dependencies
 
-Bun supports installing dependencies from Git, GitHub, and local or remotely-hosted tarballs. For complete documentation refer to [Package manager > Git, GitHub, and tarball dependencies](https://bun.sh/docs/cli/add).
+Bun supports installing dependencies from Git, GitHub, and local or remotely-hosted tarballs. For complete documentation refer to [Package manager > Git, GitHub, and tarball dependencies](https://bun.com/docs/cli/add).
 
 ```json#package.json
 {

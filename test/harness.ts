@@ -47,7 +47,7 @@ export const isBroken = isCI;
 export const isASAN = basename(process.execPath).includes("bun-asan");
 
 export const bunEnv: NodeJS.Dict<string> = {
-  ...(process.env as NodeJS.Dict<string>),
+  ...process.env,
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",
@@ -64,7 +64,7 @@ export const bunEnv: NodeJS.Dict<string> = {
 const ciEnv = { ...bunEnv };
 
 if (isASAN) {
-  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1";
+  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";
 }
 
 if (isWindows) {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 13
+# Version: 14
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -193,6 +193,17 @@ download_file() {
 	grant_to_user "$file_tmp_path"
 
 	print "$file_tmp_path"
+}
+
+# path=$(download_and_verify_file URL sha256)
+download_and_verify_file() {
+	file_url="$1"
+	hash="$2"
+
+	path=$(download_file "$file_url")
+	execute sh -c 'echo "'"$hash  $path"'" | sha256sum -c' >/dev/null 2>&1
+
+	print "$path"
 }
 
 append_to_profile() {
@@ -400,7 +411,7 @@ check_package_manager() {
 		pm="brew"
 		;;
 	linux)
-		if [ -f "$(which apt)" ]; then
+		if [ -f "$(which apt-get)" ]; then
 			pm="apt"
 		elif [ -f "$(which dnf)" ]; then
 			pm="dnf"
@@ -470,10 +481,8 @@ check_ulimit() {
 
 	print "Checking ulimits..."
 	systemd_conf="/etc/systemd/system.conf"
-	if [ -f "$systemd_conf" ]; then
-		limits_conf="/etc/security/limits.d/99-unlimited.conf"
-		create_file "$limits_conf"
-	fi
+	limits_conf="/etc/security/limits.d/99-unlimited.conf"
+	create_file "$limits_conf"
 
 	limits="core data fsize memlock nofile rss stack cpu nproc as locks sigpending msgqueue"
 	for limit in $limits; do
@@ -495,6 +504,10 @@ check_ulimit() {
 		fi
 
 		if [ -f "$systemd_conf" ]; then
+			# in systemd's configuration you need to say "infinity" when you mean "unlimited"
+			if [ "$limit_value" = "unlimited" ]; then
+				limit_value="infinity"
+			fi
 			append_file "$systemd_conf" "DefaultLimit$limit_upper=$limit_value"
 		fi
 	done
@@ -549,7 +562,7 @@ check_ulimit() {
 package_manager() {
 	case "$pm" in
 	apt)
-		execute_sudo apt "$@"
+		execute_sudo apt-get "$@"
 		;;
 	dnf)
 		case "$distro" in
@@ -598,6 +611,7 @@ install_packages() {
 		package_manager install \
 			--yes \
 			--no-install-recommends \
+			--fix-missing \
 			"$@"
 		;;
 	dnf)
@@ -673,7 +687,7 @@ install_common_software() {
 	esac
 
 	case "$distro" in
-	amzn)
+	amzn | alpine)
 		install_packages \
 			tar
 		;;
@@ -1362,6 +1376,58 @@ install_chromium() {
 	esac
 }
 
+install_age() {
+	# we only use this to encrypt core dumps, which we only have on Linux
+	case "$os" in
+	linux)
+		age_tarball=""
+		case "$arch" in
+		x64)
+			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz 7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50)"
+			;;
+		aarch64)
+			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-arm64.tar.gz 57fd79a7ece5fe501f351b9dd51a82fbee1ea8db65a8839db17f5c080245e99f)"
+			;;
+		esac
+
+		age_extract_dir="$(create_tmp_directory)"
+		execute tar -C "$age_extract_dir" -zxf "$age_tarball" age/age
+		move_to_bin "$age_extract_dir/age/age"
+		;;
+	esac
+}
+
+configure_core_dumps() {
+	# we only have core dumps on Linux
+	case "$os" in
+	linux)
+		# set up a directory that the test runner will look in after running tests
+		cores_dir="/var/bun-cores-$distro-$release-$arch"
+		sysctl_file="/etc/sysctl.d/local.conf"
+		create_directory "$cores_dir"
+		# ensure core_pattern will point there
+		# %e = executable filename
+		# %p = pid
+		append_file "$sysctl_file" "kernel.core_pattern = $cores_dir/%e-%p.core"
+
+		# disable apport.service if it exists since it will override the core_pattern
+		if which systemctl >/dev/null; then
+			if systemctl list-unit-files apport.service >/dev/null; then
+				execute_sudo "$systemctl" disable --now apport.service || true
+			fi
+		fi
+
+		# load the new configuration (ignore permission errors)
+		execute_sudo sysctl -p "$sysctl_file" || true
+
+		# ensure that a regular user will be able to run sysctl
+		if [ -d /sbin ]; then
+			append_to_path /sbin
+		fi
+		;;
+	esac
+}
+
 clean_system() {
 	if ! [ "$ci" = "1" ]; then
 		return
@@ -1387,6 +1453,8 @@ main() {
 	install_build_essentials
 	install_chromium
 	install_fuse_python
+	install_age
+	configure_core_dumps
 	clean_system
 }
 

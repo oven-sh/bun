@@ -993,24 +993,29 @@ if(LINUX)
     --ld-path=${LLD_PROGRAM}
     -fno-pic
     -Wl,-no-pie
-    -Wl,-icf=safe
     -Wl,--as-needed
     -Wl,--gc-sections
     -Wl,-z,stack-size=12800000
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro
-    # enable string tail merging
-    -Wl,-O2
-    # make debug info faster to load
-    -Wl,--gdb-index
-    -Wl,-z,combreloc
     -Wl,--no-eh-frame-hdr
     -Wl,--sort-section=name
     -Wl,--hash-style=both
     -Wl,--build-id=sha1  # Better for debugging than default
+    # make debug info faster to load
+    -Wl,--gdb-index
     -Wl,-Map=${bun}.linker-map
   )
+
+  if(RELEASE)
+    target_link_options(${bun} PUBLIC
+      -Wl,-icf=safe
+      # enable string tail merging
+      -Wl,-O2
+      -Wl,-z,combreloc
+    )
+  endif()
 endif()
 
 # --- Symbols list ---

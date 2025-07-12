@@ -46,11 +46,11 @@ void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePo
 
 void MessagePortChannelProviderImpl::entangleLocalPortInThisProcessToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
-    // m_registry.didEntangleLocalToRemote(local, remote, Process::identifier());
-    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local, remote] {
-      if (CheckedPtr registry = weakRegistry.get())
-          registry->didEntangleLocalToRemote(local, remote, Process::identifier());
-    });
+    m_registry.didEntangleLocalToRemote(local, remote, Process::identifier());
+    // ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local, remote] {
+    //   if (CheckedPtr registry = weakRegistry.get())
+    //       registry->didEntangleLocalToRemote(local, remote, Process::identifier());
+    // });
 }
 
 void MessagePortChannelProviderImpl::messagePortDisentangled(const MessagePortIdentifier& local)

@@ -45,6 +45,10 @@ typedef struct bun_spawn_request_t {
     const char* chdir;
     bool detached;
     bun_spawn_file_action_list_t actions;
+    uint32_t uid;
+    uint32_t gid;
+    bool has_uid;
+    bool has_gid;
 } bun_spawn_request_t;
 
 extern "C" ssize_t posix_spawn_bun(
@@ -164,6 +168,19 @@ extern "C" ssize_t posix_spawn_bun(
         sigprocmask(SIG_SETMASK, &childmask, 0);
         if (!envp)
             envp = environ;
+
+        // Set group id before user id (required order)
+        if (request->has_gid) {
+            if (setgid(request->gid) != 0) {
+                return childFailed();
+            }
+        }
+
+        if (request->has_uid) {
+            if (setuid(request->uid) != 0) {
+                return childFailed();
+            }
+        }
 
         if (bun_close_range(current_max_fd + 1, ~0U, CLOSE_RANGE_CLOEXEC) != 0) {
             bun_close_range(current_max_fd + 1, ~0U, 0);

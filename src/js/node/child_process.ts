@@ -1321,6 +1321,8 @@ class ChildProcess extends EventEmitter {
         argv0: spawnargs[0],
         windowsHide: !!options.windowsHide,
         windowsVerbatimArguments: !!options.windowsVerbatimArguments,
+        uid: options.uid,
+        gid: options.gid,
       });
       this.pid = this.#handle.pid;
 

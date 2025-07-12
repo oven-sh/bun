@@ -986,6 +986,8 @@ pub const PosixSpawnOptions = struct {
     /// for stdout. This is used to preserve
     /// consistent shell semantics.
     no_sigpipe: bool = true,
+    uid: ?u32 = null,
+    gid: ?u32 = null,
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -1054,6 +1056,8 @@ pub const WindowsSpawnOptions = struct {
     stream: bool = true,
     use_execve_on_macos: bool = false,
     can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool = false,
+    uid: ?u32 = null,
+    gid: ?u32 = null,
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
@@ -1230,6 +1234,15 @@ pub fn spawnProcessPosix(
 
     var attr = try PosixSpawn.Attr.init();
     defer attr.deinit();
+    if (comptime Environment.isLinux) {
+        attr.uid = options.uid;
+        attr.gid = options.gid;
+    } else {
+        // On non-Linux platforms, throw an error if uid/gid are specified
+        if (options.uid != null or options.gid != null) {
+            return .{ .err = bun.sys.Error.fromCode(.PERM, .posix_spawn) };
+        }
+    }
 
     var flags: i32 = bun.c.POSIX_SPAWN_SETSIGDEF | bun.c.POSIX_SPAWN_SETSIGMASK;
 
@@ -1527,6 +1540,11 @@ pub fn spawnProcessWindows(
 ) !JSC.Maybe(WindowsSpawnResult) {
     bun.markWindowsOnly();
     bun.Analytics.Features.spawn += 1;
+
+    // Windows doesn't support uid/gid
+    if (options.uid != null or options.gid != null) {
+        return .{ .err = bun.sys.Error.fromCode(.NOTSUP, .posix_spawn) };
+    }
 
     var uv_process_options = std.mem.zeroes(uv.uv_process_options_t);
 

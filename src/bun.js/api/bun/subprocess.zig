@@ -1964,6 +1964,8 @@ pub fn spawnMaybeSync(
     var timeout: ?i32 = null;
     var killSignal: SignalCode = SignalCode.default;
     var maxBuffer: ?i64 = null;
+    var uid: ?u32 = null;
+    var gid: ?u32 = null;
 
     var windows_hide: bool = false;
     var windows_verbatim_arguments: bool = false;
@@ -2179,6 +2181,18 @@ pub fn spawnMaybeSync(
                     }
                 }
             }
+
+            if (try args.get(globalThis, "uid")) |val| {
+                if (!val.isUndefinedOrNull()) {
+                    uid = try globalThis.validateIntegerRange(val, u32, 0, .{ .min = 0, .field_name = "uid" });
+                }
+            }
+
+            if (try args.get(globalThis, "gid")) |val| {
+                if (!val.isUndefinedOrNull()) {
+                    gid = try globalThis.validateIntegerRange(val, u32, 0, .{ .min = 0, .field_name = "gid" });
+                }
+            }
         } else {
             try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
         }
@@ -2311,6 +2325,8 @@ pub fn spawnMaybeSync(
         .extra_fds = extra_fds.items,
         .argv0 = argv0,
         .can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
+        .uid = uid,
+        .gid = gid,
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,

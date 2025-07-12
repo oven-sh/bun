@@ -108,6 +108,8 @@ pub const BunSpawn = struct {
 
     pub const Attr = struct {
         detached: bool = false,
+        uid: ?u32 = null,
+        gid: ?u32 = null,
 
         pub fn init() !Attr {
             return Attr{};
@@ -282,6 +284,10 @@ pub const PosixSpawn = struct {
         chdir_buf: ?[*:0]u8 = null,
         detached: bool = false,
         actions: ActionsList = .{},
+        uid: u32 = 0,
+        gid: u32 = 0,
+        has_uid: bool = false,
+        has_gid: bool = false,
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -347,6 +353,10 @@ pub const PosixSpawn = struct {
                     },
                     .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = if (attr) |a| a.detached else false,
+                    .uid = if (attr) |a| a.uid orelse 0 else 0,
+                    .gid = if (attr) |a| a.gid orelse 0 else 0,
+                    .has_uid = if (attr) |a| a.uid != null else false,
+                    .has_gid = if (attr) |a| a.gid != null else false,
                 },
                 argv,
                 envp,

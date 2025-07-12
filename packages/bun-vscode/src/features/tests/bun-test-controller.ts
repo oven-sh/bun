@@ -1,17 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { tmpdir } from "node:os";
-import * as net from "node:net";
 import * as vscode from "vscode";
-import {
-  getAvailablePort,
-  WebSocketDebugAdapter,
-  UnixSignal,
-  TCPSocketSignal,
-} from "../../../../bun-debug-adapter-protocol";
-import type { BunFileResult, BunTestResult, TestNode } from "./types";
+import { getAvailablePort, TCPSocketSignal, UnixSignal } from "../../../../bun-debug-adapter-protocol";
+import type { TestNode } from "./types";
 
 const DEFAULT_TEST_PATTERN = "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}";
 
@@ -677,13 +669,13 @@ export class BunTestController implements vscode.Disposable {
       // Look for the inspector URL in stderr
       if (dataStr.includes("ws://")) {
         const match = dataStr.match(/ws:\/\/[^\s]+/);
-                 if (match && match[0]) {
-           inspectorUrl = match[0];
-           output.appendLine(`Found inspector URL: ${inspectorUrl}`);
-           
-           // Connect to the inspector immediately
-           this.connectToInspector(match[0], run);
-         }
+        if (match && match[0]) {
+          inspectorUrl = match[0];
+          output.appendLine(`Found inspector URL: ${inspectorUrl}`);
+
+          // Connect to the inspector immediately
+          this.connectToInspector(match[0], run);
+        }
       }
     });
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { createServer } from "node:net";
-import WebSocket from "ws";
 import http from "node:http";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import WebSocket from "ws";
 
 class UnixSignal {
   constructor() {

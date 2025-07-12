@@ -330,8 +330,8 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         if (file.bake_extra.bake_is_runtime) {
             if (comptime bun.Environment.allow_assert) {
                 bun.assertf(maybe_runtime_file_index == null, "Runtime file should only be in one chunk.", .{});
-                maybe_runtime_file_index = @intCast(i);
             }
+            maybe_runtime_file_index = @intCast(i);
         }
 
         // TODO: Maybe not do all the disk-writing in 1 thread?

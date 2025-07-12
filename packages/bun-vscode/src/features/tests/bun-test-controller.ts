@@ -32,7 +32,16 @@ export class BunTestController implements vscode.Disposable {
       return this.staticDiscoverTests(testItem);
     };
 
-    this.testController.refreshHandler = token => this.discoverInitialTests(token);
+    this.testController.refreshHandler = async token => {
+      const files = await this.discoverInitialTests(token);
+      if (!files) return;
+
+      for (const [, testItem] of this.testController.items) {
+        if (!files.some(file => file.fsPath === testItem.uri?.fsPath)) {
+          this.testController.items.delete(testItem.id);
+        }
+      }
+    };
 
     this.testController.createRunProfile(
       "Run Test",
@@ -74,11 +83,12 @@ export class BunTestController implements vscode.Disposable {
     return document?.uri?.scheme === "file" && /\.(test|spec)\.(js|jsx|ts|tsx|cjs|mts)$/.test(document.uri.fsPath);
   }
 
-  private async discoverInitialTests(cancellationToken?: vscode.CancellationToken): Promise<void> {
+  private async discoverInitialTests(cancellationToken?: vscode.CancellationToken): Promise<vscode.Uri[] | undefined> {
     try {
       const tests = await this.findTestFiles(cancellationToken);
       output.appendLine(`Discovered ${tests.length} test files.`);
       this.createFileTestItems(tests);
+      return tests;
     } catch (error) {
       output.appendLine(`Error discovering initial tests: ${error}`);
     }
@@ -586,8 +596,7 @@ export class BunTestController implements vscode.Disposable {
                     run.errored(test, err);
                   }
                   this.verifyBunVersion();
-                  resolve();
-                  return;
+                  return resolve();
                 }
 
                 function hasSourceLine(test: BunTestResult): boolean {
@@ -623,10 +632,8 @@ export class BunTestController implements vscode.Disposable {
                   const fileTestItem = this.testController.items.get(
                     vscode.Uri.file(windowsVscodeUri(filePath)).toString(),
                   );
+                  if (fileTestItem) fileTestItem.children.replace([]);
 
-                  if (fileTestItem) {
-                    this.removeTestItemAndChildren(fileTestItem);
-                  }
                   this.createTestItemsFromParsedOutput(parsedOutput);
 
                   const fileResult = parsedOutput.find((result: BunFileResult) => result.name === filePath);
@@ -1055,7 +1062,7 @@ export class BunTestController implements vscode.Disposable {
     }
 
     const selection = vscode.window.showErrorMessage(
-      `Your Bun version (${version}) is too old to use the test explorer in this editor. Please update to 1.2.19 or later.`,
+      `Your Bun version (${version}) is too old to use the test explorer in this editor. Please update to ${target} or later.`,
       "Update Bun",
       // { modal: true },
     );
@@ -1112,12 +1119,12 @@ function getFileLocationFromError(
   return first;
 }
 
-function parseBunTestOutput(output: string, workspacePath: string, reporterOutfile?: string): BunFileResult[] | null {
+function parseBunTestOutput(output: string, workspacePath: string, reporterOutfile: string): BunFileResult[] | null {
   const lines = output.trim().split("\n");
   const testResults: BunFileResult[] = [];
 
   let xmlResult: unknown | null = null;
-  if (reporterOutfile && fsSync.existsSync(reporterOutfile)) {
+  if (fsSync.existsSync(reporterOutfile)) {
     const xml = fsSync.readFileSync(reporterOutfile, "utf8");
     xmlParseString(xml, { explicitArray: false, mergeAttrs: true }, (err: unknown, result: unknown) => {
       if (!err) xmlResult = result;

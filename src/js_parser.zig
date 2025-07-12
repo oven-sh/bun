@@ -7421,9 +7421,15 @@ fn NewParser_(
                         }
                     },
                     .bin_mul => {
-                        if (p.should_fold_typescript_constant_expressions) {
-                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                return p.newExpr(E.Number{ .value = vals[0] * vals[1] }, v.loc);
+                        // Allow multiplication of small-ish integers to be folded
+                        // "1 * 2" => "2" 
+                        if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                            const left = vals[0];
+                            const right = vals[1];
+                            // Check if both are integers and small enough (abs <= 0xFF)
+                            if (@trunc(left) == left and @abs(left) <= 0xFF and
+                                @trunc(right) == right and @abs(right) <= 0xFF) {
+                                return p.newExpr(E.Number{ .value = left * right }, v.loc);
                             }
                         }
                     },

@@ -626,4 +626,13 @@ describe("bundler", () => {
       "456",
     ],
   });
+  itBundled("minify/BinaryConstantFolding", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(3 * 6);
+      `,
+    },
+    capture: ["18"],
+    minifySyntax: true,
+  });
 });

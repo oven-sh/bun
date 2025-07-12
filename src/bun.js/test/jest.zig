@@ -67,7 +67,7 @@ pub const TestRunner = struct {
     default_timeout_override: u32 = std.math.maxInt(u32),
 
     event_loop_timer: bun.api.Timer.EventLoopTimer = .{
-        .next = .{},
+        .next = .epoch,
         .tag = .TestRunner,
     },
     active_test_for_timeout: ?TestRunner.Test.ID = null,

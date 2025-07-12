@@ -693,7 +693,7 @@ pub const TestScope = struct {
         debug("test({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
         var initial_value = JSValue.zero;
-        task.started_at = bun.timespec.now();
+        task.started_at = .now();
 
         if (this.timeout_millis == std.math.maxInt(u32)) {
             if (Jest.runner.?.default_timeout_override != std.math.maxInt(u32)) {
@@ -1168,6 +1168,7 @@ pub const DescribeScope = struct {
                     .globalThis = globalObject,
                     .source_file_path = source.path.text,
                     .test_id_for_debugger = 0,
+                    .started_at = .epoch,
                 };
                 runner.ref.ref(globalObject.bunVM());
 
@@ -1186,6 +1187,7 @@ pub const DescribeScope = struct {
                 .globalThis = globalObject,
                 .source_file_path = source.path.text,
                 .test_id_for_debugger = if (maybe_report_debugger) tests[i].test_id_for_debugger else 0,
+                .started_at = .epoch,
             };
             runner.ref.ref(globalObject.bunVM());
 
@@ -1290,7 +1292,7 @@ pub const TestRunnerTask = struct {
     promise_state: AsyncState = .none,
     sync_state: AsyncState = .none,
     reported: bool = false,
-    started_at: bun.timespec = .{},
+    started_at: bun.timespec,
 
     pub const AsyncState = enum {
         none,
@@ -1370,6 +1372,7 @@ pub const TestRunnerTask = struct {
         expect.is_expecting_assertions = false;
         expect.is_expecting_assertions_count = false;
         jsc_vm.last_reported_error_for_dedupe = .zero;
+        this.started_at = .now();
 
         const test_id = this.test_id;
         if (test_id == TestRunner.Test.null_id) {

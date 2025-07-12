@@ -2292,6 +2292,7 @@ it("should add multiple dependencies specified on command line", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
+    env,
   });
   await writeFile(
     join(add_dir, "package.json"),

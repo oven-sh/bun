@@ -24,6 +24,45 @@ But if you'd rather switch to the `bun:test` imports, you can do that too.
 + import {test, expect} from "bun:test";
 ```
 
+### TypeScript support for global test functions
+
+Since Bun v1.2.19, you can enable TypeScript support for global test functions with a single triple-slash directive. This makes migrating from Jest even easier since you only need to add the directive once in your entire project:
+
+```ts
+/// <reference types="bun/test-globals" />
+```
+
+Add this directive to **just one file** in your project, such as:
+
+- A `global.d.ts` file in your project root
+- Your test `preload.ts` setup file (if using `preload` in bunfig.toml)
+- Any single `.ts` file that TypeScript includes in your compilation
+
+Once added, all test files in your project automatically get TypeScript support for Jest globals:
+
+```ts
+// my-test.test.ts - no imports or directives needed!
+describe("my test suite", () => {
+  test("should work", () => {
+    expect(1 + 1).toBe(2);
+  });
+
+  beforeAll(() => {
+    // setup code
+  });
+
+  afterEach(() => {
+    // cleanup code
+  });
+});
+```
+
+This provides autocompletion and type checking for:
+
+- Autocompletion for `test`, `it`, `describe`, `expect`
+- Type checking for test lifecycle hooks (`beforeAll`, `beforeEach`, `afterEach`, `afterAll`)
+- Support for mocking functions (`mock`, `spyOn`, `jest`)
+
 ---
 
 Bun implements the vast majority of Jest's matchers, but compatibility isn't 100% yet. Refer to the full compatibility table at [Docs > Test runner > Writing tests](https://bun.sh/docs/test/writing#matchers).

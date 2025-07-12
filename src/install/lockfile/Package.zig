@@ -1112,7 +1112,7 @@ pub const Package = extern struct {
                     } else {
                         // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
                         for (package_dependencies[0..dependencies_count]) |*dep| {
-                            if (dep.name_hash == name_hash and dep.version.tag == .workspace) {
+                            if (dep.name_hash == name_hash and dep.behavior.isWorkspaceOnly()) {
                                 dep.* = .{
                                     .behavior = if (in_workspace) group.behavior.add(.workspace) else group.behavior,
                                     .name = external_alias.value,
@@ -2141,49 +2141,58 @@ pub const Package = extern struct {
     };
 };
 
-const TrustedDependenciesSet = Lockfile.TrustedDependenciesSet;
-const Aligner = install.Aligner;
+const string = []const u8;
+
+// @sortImports
+
+const std = @import("std");
 const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
 const ArrayIdentityContext = bun.ArrayIdentityContext;
-const Behavior = Dependency.Behavior;
-const Bin = install.Bin;
-const Cloner = Lockfile.Cloner;
-const Dependency = bun.install.Dependency;
-const DependencySlice = Lockfile.DependencySlice;
 const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.JSON;
+const Output = bun.Output;
+const PackageJSON = bun.PackageJSON;
+const Path = bun.path;
+const assert = bun.assert;
+const logger = bun.logger;
+const strings = bun.strings;
+const FileSystem = bun.fs.FileSystem;
+
+const JSAst = bun.JSAst;
 const Expr = bun.JSAst.Expr;
+
+const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
+const String = Semver.String;
+
+const install = bun.install;
+const Aligner = install.Aligner;
+const Bin = install.Bin;
 const ExternalStringList = install.ExternalStringList;
 const ExternalStringMap = install.ExternalStringMap;
 const Features = install.Features;
-const FileSystem = bun.fs.FileSystem;
-const Global = bun.Global;
-const JSAst = bun.JSAst;
-const JSON = bun.JSON;
-const Lockfile = install.Lockfile;
 const Npm = install.Npm;
-const Output = bun.Output;
 const PackageID = bun.install.PackageID;
-const PackageIDSlice = Lockfile.PackageIDSlice;
-const PackageJSON = bun.PackageJSON;
 const PackageManager = install.PackageManager;
 const PackageNameHash = install.PackageNameHash;
-const Path = bun.path;
 const Repository = install.Repository;
 const Resolution = bun.install.Resolution;
-const Semver = bun.Semver;
-const Stream = Lockfile.Stream;
-const String = Semver.String;
-const StringBuilder = Lockfile.StringBuilder;
 const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
-const assert = bun.assert;
-const assertNoUninitializedPadding = Lockfile.assertNoUninitializedPadding;
-const bun = @import("bun");
-const default_trusted_dependencies = Lockfile.default_trusted_dependencies;
 const initializeStore = install.initializeStore;
-const install = bun.install;
 const invalid_package_id = install.invalid_package_id;
-const logger = bun.logger;
-const std = @import("std");
-const string = []const u8;
-const strings = bun.strings;
+
+const Dependency = bun.install.Dependency;
+const Behavior = Dependency.Behavior;
+
+const Lockfile = install.Lockfile;
+const Cloner = Lockfile.Cloner;
+const DependencySlice = Lockfile.DependencySlice;
+const PackageIDSlice = Lockfile.PackageIDSlice;
+const Stream = Lockfile.Stream;
+const StringBuilder = Lockfile.StringBuilder;
+const TrustedDependenciesSet = Lockfile.TrustedDependenciesSet;
+const assertNoUninitializedPadding = Lockfile.assertNoUninitializedPadding;
+const default_trusted_dependencies = Lockfile.default_trusted_dependencies;

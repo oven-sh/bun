@@ -1119,6 +1119,70 @@ fn PkgMap(comptime T: type) type {
     };
 }
 
+pub const TextLockfileDepSorter = struct {
+    fn cmpBehavior(l: Dependency.Behavior, r: Dependency.Behavior) std.math.Order {
+        if (l.eq(r)) {
+            return .eq;
+        }
+
+        if (l.isWorkspaceOnly() != r.isWorkspaceOnly()) {
+            // ensure isWorkspaceOnly deps are placed at the beginning
+            return if (l.isWorkspaceOnly())
+                .lt
+            else
+                .gt;
+        }
+
+        if (l.isPeer() != r.isPeer()) {
+            return if (l.isPeer())
+                .gt
+            else
+                .lt;
+        }
+
+        if (l.isProd() != r.isProd()) {
+            return if (l.isProd())
+                .gt
+            else
+                .lt;
+        }
+
+        if (l.isOptional() != r.isOptional()) {
+            return if (l.isOptional())
+                .gt
+            else
+                .lt;
+        }
+
+        if (l.isDev() != r.isDev()) {
+            return if (l.isDev())
+                .gt
+            else
+                .lt;
+        }
+
+        if (l.isWorkspace() != r.isWorkspace()) {
+            return if (l.isWorkspace())
+                .gt
+            else
+                .lt;
+        }
+
+        return .eq;
+    }
+
+    pub fn isLessThan(string_buf: []const u8, l: Dependency, r: Dependency) bool {
+        switch (cmpBehavior(l.behavior, r.behavior)) {
+            .eq => {},
+            else => |order| return order == .lt,
+        }
+
+        const l_name = l.name.slice(string_buf);
+        const r_name = r.name.slice(string_buf);
+        return strings.cmpStringsAsc({}, l_name, r_name);
+    }
+};
+
 // const PkgMap = struct {};
 
 pub fn parseIntoBinaryLockfile(
@@ -1904,6 +1968,9 @@ pub fn parseIntoBinaryLockfile(
         lockfile.buffers.resolutions.expandToCapacity();
         @memset(lockfile.buffers.resolutions.items, invalid_package_id);
 
+        var seen_deps: bun.StringHashMap(void) = .init(allocator);
+        defer seen_deps.deinit();
+
         const pkgs = lockfile.packages.slice();
         const pkg_deps = pkgs.items(.dependencies);
         const pkg_names = pkgs.items(.name);
@@ -1919,6 +1986,8 @@ pub fn parseIntoBinaryLockfile(
                 const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = &lockfile.buffers.dependencies.items[dep_id];
 
+                const is_duplicate_dep = (try seen_deps.getOrPut(dep.name.slice(lockfile.buffers.string_bytes.items))).found_existing;
+
                 const res_id = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items)) orelse {
                     if (dep.behavior.optional) {
                         continue;
@@ -1927,7 +1996,9 @@ pub fn parseIntoBinaryLockfile(
                     return error.InvalidPackageInfo;
                 };
 
-                mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
+                if (!is_duplicate_dep) {
+                    mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions, is_duplicate_dep);
+                }
             }
         }
 
@@ -1939,11 +2010,15 @@ pub fn parseIntoBinaryLockfile(
                 const pkg_id: PackageID = @intCast(_pkg_id);
                 const workspace_name = pkg_names[pkg_id].slice(lockfile.buffers.string_bytes.items);
 
+                seen_deps.clearRetainingCapacity();
+
                 const deps = pkg_deps[pkg_id];
                 for (deps.begin()..deps.end()) |_dep_id| {
                     const dep_id: DependencyID = @intCast(_dep_id);
                     const dep = &lockfile.buffers.dependencies.items[dep_id];
                     const dep_name = dep.name.slice(lockfile.buffers.string_bytes.items);
+
+                    const is_duplicate_dep = (try seen_deps.getOrPut(dep_name)).found_existing;
 
                     const workspace_node_modules = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ workspace_name, dep_name }) catch {
                         try log.addErrorFmt(source, root_pkg_exr.loc, allocator, "Workspace and dependency name too long: '{s}/{s}'", .{ workspace_name, dep_name });
@@ -1958,7 +2033,9 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     };
 
-                    mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
+                    if (!is_duplicate_dep) {
+                        mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions, is_duplicate_dep);
+                    }
                 }
             }
         }
@@ -1973,11 +2050,15 @@ pub fn parseIntoBinaryLockfile(
                 return error.InvalidPackagesObject;
             };
 
+            seen_deps.clearRetainingCapacity();
+
             // find resolutions. iterate up to root through the pkg path.
             const deps = pkg_deps[pkg_id];
             deps: for (deps.begin()..deps.end()) |_dep_id| {
                 const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = &lockfile.buffers.dependencies.items[dep_id];
+
+                const is_duplicate_dep = (try seen_deps.getOrPut(dep.name.slice(lockfile.buffers.string_bytes.items))).found_existing;
 
                 const res_id = pkg_map.findResolution(pkg_path, dep, lockfile.buffers.string_bytes.items, &path_buf) catch |err| switch (err) {
                     error.InvalidPackageKey => {
@@ -1993,7 +2074,53 @@ pub fn parseIntoBinaryLockfile(
                     },
                 };
 
-                mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
+                if (!is_duplicate_dep) {
+                    mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions, is_duplicate_dep);
+                }
+            }
+        }
+
+        {
+            const SortCtx = struct {
+                dependencies: []Dependency,
+                resolutions: []PackageID,
+                string_buf: []const u8,
+
+                deps_slice: DependencySlice = .{},
+                resolutions_slice: PackageIDSlice = .{},
+
+                pub fn lessThan(ctx: @This(), l: usize, r: usize) bool {
+                    const dependencies = ctx.dependencies;
+
+                    const l_dep = dependencies[l];
+                    const r_dep = dependencies[r];
+
+                    return Dependency.isLessThan(ctx.string_buf, l_dep, r_dep);
+                }
+
+                pub fn swap(ctx: @This(), a: usize, b: usize) void {
+                    std.mem.swap(Dependency, &ctx.dependencies[a], &ctx.dependencies[b]);
+                    std.mem.swap(PackageID, &ctx.resolutions[a], &ctx.resolutions[b]);
+                }
+            };
+
+            var sort_ctx: SortCtx = .{
+                .dependencies = lockfile.buffers.dependencies.items,
+                .resolutions = lockfile.buffers.resolutions.items,
+                .string_buf = lockfile.buffers.string_bytes.items,
+            };
+
+            for (0..lockfile.packages.len) |_pkg_id| {
+                const pkg_id: PackageID = @intCast(_pkg_id);
+
+                sort_ctx.deps_slice = pkgs.items(.dependencies)[pkg_id];
+                sort_ctx.resolutions_slice = pkgs.items(.resolutions)[pkg_id];
+
+                std.sort.pdqContext(
+                    0,
+                    sort_ctx.dependencies.len,
+                    &sort_ctx,
+                );
             }
         }
 
@@ -2008,12 +2135,15 @@ pub fn parseIntoBinaryLockfile(
     }
 }
 
-fn mapDepToPkg(dep: *Dependency, dep_id: DependencyID, pkg_id: PackageID, lockfile: *BinaryLockfile, pkg_resolutions: []const Resolution) void {
+fn mapDepToPkg(dep: *Dependency, dep_id: DependencyID, pkg_id: PackageID, lockfile: *BinaryLockfile, pkg_resolutions: []const Resolution, is_duplicate_dep: bool) void {
     lockfile.buffers.resolutions.items[dep_id] = pkg_id;
 
     if (lockfile.text_lockfile_version != .v0) {
         const res = &pkg_resolutions[pkg_id];
-        if (res.tag == .workspace) {
+
+        // when a package has duplicate dependencies and one is a workspace
+        // we don't want to override the other because it might not be a workspace.
+        if (res.tag == .workspace and !is_duplicate_dep) {
             dep.version.tag = .workspace;
             dep.version.value = .{ .workspace = res.value.workspace };
 
@@ -2153,7 +2283,7 @@ fn parseAppendDependencies(
         Dependency,
         lockfile.buffers.dependencies.items[off..],
         buf.bytes.items,
-        Dependency.isLessThan,
+        TextLockfileDepSorter.isLessThan,
     );
 
     return .{ @intCast(off), @intCast(end - off) };
@@ -2190,3 +2320,4 @@ const Negatable = Npm.Negatable;
 const DependencyID = Install.DependencyID;
 const Bin = Install.Bin;
 const ExternalString = Semver.ExternalString;
+const PackageIDSlice = BinaryLockfile.PackageIDSlice;

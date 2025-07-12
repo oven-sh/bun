@@ -238,9 +238,13 @@ pub fn flushDataAndResetTimeout(this: *PostgresSQLConnection) void {
 }
 
 pub fn flushData(this: *PostgresSQLConnection) void {
+    // we know we still have backpressure so just return we will flush later
+    if (this.flags.has_backpressure) return;
+
     const chunk = this.write_buffer.remaining();
     if (chunk.len == 0) return;
     const wrote = this.socket.write(chunk);
+    this.flags.has_backpressure = wrote < chunk.len;
     if (wrote > 0) {
         SocketMonitor.write(chunk[0..@intCast(wrote)]);
         this.write_buffer.consume(@intCast(wrote));
@@ -387,7 +391,7 @@ pub fn onTimeout(this: *PostgresSQLConnection) void {
 }
 
 pub fn onDrain(this: *PostgresSQLConnection) void {
-
+    this.flags.has_backpressure = false;
     // Don't send any other messages while we're waiting for TLS.
     if (this.tls_status == .message_sent) {
         if (this.tls_status.message_sent < 8) {
@@ -400,7 +404,13 @@ pub fn onDrain(this: *PostgresSQLConnection) void {
     const event_loop = this.globalObject.bunVM().eventLoop();
     event_loop.enter();
     defer event_loop.exit();
+
     this.flushData();
+
+    if (this.flags.is_ready_for_query) {
+        this.advance();
+        this.flushData();
+    }
 }
 
 pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
@@ -866,7 +876,7 @@ pub fn hasQueryRunning(this: *PostgresSQLConnection) bool {
 }
 
 pub fn canPipeline(this: *PostgresSQLConnection) bool {
-    return this.nonpipelinable_requests == 0 and !this.flags.use_unnamed_prepared_statements and !this.flags.waiting_to_prepare;
+    return this.nonpipelinable_requests == 0 and !this.flags.use_unnamed_prepared_statements and !this.flags.waiting_to_prepare and !this.flags.has_backpressure;
 }
 
 pub const Writer = struct {
@@ -875,7 +885,7 @@ pub const Writer = struct {
     pub fn write(this: Writer, data: []const u8) AnyPostgresError!void {
         var buffer = &this.connection.write_buffer;
         try buffer.write(bun.default_allocator, data);
-        if (buffer.len() > 1024 * 1024 * 64) {
+        if (buffer.len() > 1024 * 64) {
             // too much data, flush it
             this.connection.flushData();
         }
@@ -947,15 +957,15 @@ pub fn bufferedReader(this: *PostgresSQLConnection) protocol.NewReader(Reader) {
     };
 }
 
-fn advance(this: *PostgresSQLConnection) !void {
+fn advance(this: *PostgresSQLConnection) void {
     var offset: usize = 0;
-    while (this.requests.readableLength() > offset) {
+    while (this.requests.readableLength() > offset and !this.flags.has_backpressure) {
         var req: *PostgresSQLQuery = this.requests.peekItem(offset);
         switch (req.status) {
             .pending => {
                 if (req.flags.simple) {
                     debug("executeQuery", .{});
-                    if (this.pipelined_requests > 0) {
+                    if (this.pipelined_requests > 0 or !this.flags.is_ready_for_query) {
                         // need to wait for the previous request to finish before starting simple queries
                         return;
                     }
@@ -978,7 +988,17 @@ fn advance(this: *PostgresSQLConnection) !void {
                     req.status = .running;
                     return;
                 } else {
-                    const stmt = req.statement orelse return error.ExpectedStatement;
+                    const stmt = req.statement orelse {
+                        req.onWriteFail(AnyPostgresError.ExpectedStatement, this.globalObject, this.getQueriesArray());
+                        if (offset == 0) {
+                            req.deref();
+                            this.requests.discard(1);
+                        } else {
+                            // deinit later
+                            req.status = .fail;
+                        }
+                        continue;
+                    };
 
                     switch (stmt.status) {
                         .failed => {
@@ -1022,7 +1042,7 @@ fn advance(this: *PostgresSQLConnection) !void {
 
                             this.flags.is_ready_for_query = false;
                             req.status = .binding;
-                            if (this.flags.use_unnamed_prepared_statements) {
+                            if (this.flags.use_unnamed_prepared_statements or !this.canPipeline()) {
                                 return;
                             }
                             // we can pipeline it
@@ -1032,7 +1052,7 @@ fn advance(this: *PostgresSQLConnection) !void {
                             continue;
                         },
                         .pending => {
-                            if (this.pipelined_requests > 0) {
+                            if (this.pipelined_requests > 0 or !this.flags.is_ready_for_query) {
                                 // need to wait to finish the pipeline before starting a new query preparation
                                 return;
                             }
@@ -1222,7 +1242,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     request.onResult("", this.globalObject, this.js_value, true);
                 }
             }
-            try this.advance();
+            this.advance();
 
             this.flushData();
         },

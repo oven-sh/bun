@@ -840,8 +840,8 @@ pub fn init(
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
     manager.* = PackageManager{
-        .preallocated_network_tasks = .init(bun.default_allocator),
-        .preallocated_resolve_tasks = .init(bun.default_allocator),
+        .preallocated_network_tasks = undefined,
+        .preallocated_resolve_tasks = undefined,
         .options = options,
         .active_lifecycle_scripts = .{
             .context = manager,
@@ -869,6 +869,8 @@ pub fn init(
         .subcommand = subcommand,
         .root_package_json_name_at_time_of_init = root_package_json_name_at_time_of_init,
     };
+    manager.preallocated_network_tasks.zero(bun.default_allocator);
+    manager.preallocated_resolve_tasks.zero(bun.default_allocator);
     manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(&manager.event_loop));
     manager.lockfile = try ctx.allocator.create(Lockfile);
     JSC.MiniEventLoop.global = &manager.event_loop.mini;
@@ -1010,8 +1012,8 @@ pub fn initWithRuntimeOnce(
     @memcpy(original_package_json_path[top_level_dir_no_trailing_slash.len..][0.."/package.json".len], "/package.json");
 
     manager.* = PackageManager{
-        .preallocated_network_tasks = .init(bun.default_allocator),
-        .preallocated_resolve_tasks = .init(bun.default_allocator),
+        .preallocated_network_tasks = undefined,
+        .preallocated_resolve_tasks = undefined,
         .options = .{
             .max_concurrent_lifecycle_scripts = cli.concurrent_scripts orelse cpu_count * 2,
         },
@@ -1035,6 +1037,8 @@ pub fn initWithRuntimeOnce(
         .original_package_json_path = original_package_json_path[0..original_package_json_path.len :0],
         .subcommand = .install,
     };
+    manager.preallocated_network_tasks.zero(bun.default_allocator);
+    manager.preallocated_resolve_tasks.zero(bun.default_allocator);
     manager.lockfile = allocator.create(Lockfile) catch bun.outOfMemory();
 
     if (Output.enable_ansi_colors_stderr) {

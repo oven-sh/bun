@@ -44,8 +44,8 @@ pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
 }
 
 fn createExecArgv(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-    var sfb = std.heap.stackFallback(4096, globalObject.allocator());
-    const temp_alloc = sfb.get();
+    var stack_fallback: std.heap.StackFallbackAllocator(4096) = undefined;
+    const temp_alloc = bun.getStackFallback(&stack_fallback, globalObject.allocator());
     const vm = globalObject.bunVM();
 
     if (vm.worker) |worker| {
@@ -122,11 +122,10 @@ fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     const vm = globalObject.bunVM();
 
     // Allocate up to 32 strings in stack
-    var stack_fallback_allocator = std.heap.stackFallback(
+    var stack_fallback: std.heap.StackFallbackAllocator(
         32 * @sizeOf(JSC.ZigString) + (bun.MAX_PATH_BYTES + 1) + 32,
-        bun.default_allocator,
-    );
-    const allocator = stack_fallback_allocator.get();
+    ) = undefined;
+    const allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator);
 
     var args_count: usize = vm.argv.len;
     if (vm.worker) |worker| {
@@ -276,8 +275,8 @@ pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C
     comptime bun.assert(bun.Environment.isWindows);
     if (k.tag == .Empty) return;
     const wtf1 = k.value.WTFStringImpl;
-    var fixed_stack_allocator = std.heap.stackFallback(1025, bun.default_allocator);
-    const allocator = fixed_stack_allocator.get();
+    var stack_fallback: std.heap.StackFallbackAllocator(1025) = undefined;
+    const allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator);
     var buf1 = allocator.alloc(u16, k.utf16ByteLength() + 1) catch bun.outOfMemory();
     defer allocator.free(buf1);
     var buf2 = allocator.alloc(u16, v.utf16ByteLength() + 1) catch bun.outOfMemory();

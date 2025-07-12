@@ -231,8 +231,8 @@ pub fn next(this: *Expansion) Yield {
                 comptime {
                     assert(@sizeOf([]std.ArrayList(u8)) * stack_max <= 256);
                 }
-                var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.ArrayList(u8)) * stack_max, arena_allocator);
-                const stack_alloc = maybe_stack_alloc.get();
+                var stack_fallback: std.heap.StackFallbackAllocator(@sizeOf([]std.ArrayList(u8)) * stack_max) = undefined;
+                const stack_alloc = bun.getStackFallback(&stack_fallback, arena_allocator);
                 const expanded_strings = stack_alloc.alloc(std.ArrayList(u8), expansion_count) catch bun.outOfMemory();
 
                 for (0..expansion_count) |i| {

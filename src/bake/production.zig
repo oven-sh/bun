@@ -628,8 +628,8 @@ fn BakeRegisterProductionChunk(global: *JSC.JSGlobalObject, key: bun.String, sou
 }
 
 pub export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
-    var sfa = std.heap.stackFallback(@sizeOf(bun.PathBuffer) * 2, bun.default_allocator);
-    const alloc = sfa.get();
+    var sfa: std.heap.StackFallbackAllocator(@sizeOf(bun.PathBuffer) * 2) = undefined;
+    const alloc = bun.getStackFallback(&sfa, bun.default_allocator);
 
     const specifier = specifier_str.toUTF8(alloc);
     defer specifier.deinit();
@@ -838,8 +838,8 @@ pub const PerThread = struct {
 
 /// Given a key, returns the source code to load.
 pub export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
-    var sfa = std.heap.stackFallback(4096, bun.default_allocator);
-    const allocator = sfa.get();
+    var sfa: std.heap.StackFallbackAllocator(4096) = undefined;
+    const allocator = bun.getStackFallback(&sfa, bun.default_allocator);
     const utf8 = key.toUTF8(allocator);
     defer utf8.deinit();
     if (pt.module_map.get(utf8.slice())) |value| {

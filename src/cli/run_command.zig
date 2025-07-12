@@ -1407,8 +1407,8 @@ pub const RunCommand = struct {
             log("Executing from stdin", .{});
 
             // read from stdin
-            var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
-            var list = std.ArrayList(u8).init(stack_fallback.get());
+            var stack_fallback: std.heap.StackFallbackAllocator(2048) = undefined;
+            var list = std.ArrayList(u8).init(bun.getStackFallback(&stack_fallback, bun.default_allocator));
             errdefer list.deinit();
 
             std.io.getStdIn().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;

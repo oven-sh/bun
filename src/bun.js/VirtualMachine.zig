@@ -955,7 +955,7 @@ pub fn initWithModuleGraph(
 
     vm.* = VirtualMachine{
         .global = undefined,
-        .transpiler_store = RuntimeTranspilerStore.init(),
+        .transpiler_store = undefined,
         .allocator = allocator,
         .entry_point = ServerEntryPoint{},
         .transpiler = transpiler,
@@ -976,6 +976,7 @@ pub fn initWithModuleGraph(
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
+    vm.transpiler_store.zero();
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
         default_allocator,
     );
@@ -1016,7 +1017,7 @@ pub fn initWithModuleGraph(
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
 
     vm.configureDebugger(opts.debugger);
-    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+    vm.body_value_hive_allocator.zero(bun.typedAllocator(JSC.WebCore.Body.Value));
 
     return vm;
 }
@@ -1074,7 +1075,7 @@ pub fn init(opts: Options) !*VirtualMachine {
     }
     vm.* = VirtualMachine{
         .global = undefined,
-        .transpiler_store = RuntimeTranspilerStore.init(),
+        .transpiler_store = undefined,
         .allocator = allocator,
         .entry_point = ServerEntryPoint{},
         .transpiler = transpiler,
@@ -1096,6 +1097,7 @@ pub fn init(opts: Options) !*VirtualMachine {
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
     };
+    vm.transpiler_store.zero();
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
         default_allocator,
@@ -1139,7 +1141,7 @@ pub fn init(opts: Options) !*VirtualMachine {
         is_smol_mode = opts.smol;
 
     vm.configureDebugger(opts.debugger);
-    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+    vm.body_value_hive_allocator.zero(bun.typedAllocator(JSC.WebCore.Body.Value));
 
     return vm;
 }
@@ -1232,7 +1234,7 @@ pub fn initWorker(
     vm.* = VirtualMachine{
         .global = undefined,
         .allocator = allocator,
-        .transpiler_store = RuntimeTranspilerStore.init(),
+        .transpiler_store = undefined,
         .entry_point = ServerEntryPoint{},
         .transpiler = transpiler,
         .console = console,
@@ -1255,6 +1257,7 @@ pub fn initWorker(
         // This option is irrelevant for Workers
         .destruct_main_thread_on_exit = false,
     };
+    vm.transpiler_store.zero();
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
         default_allocator,
@@ -1296,7 +1299,7 @@ pub fn initWorker(
     vm.jsc = vm.global.vm();
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
     vm.transpiler.setAllocator(allocator);
-    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+    vm.body_value_hive_allocator.zero(bun.typedAllocator(JSC.WebCore.Body.Value));
 
     return vm;
 }
@@ -1325,7 +1328,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
 
     vm.* = VirtualMachine{
         .global = undefined,
-        .transpiler_store = RuntimeTranspilerStore.init(),
+        .transpiler_store = undefined,
         .allocator = allocator,
         .entry_point = ServerEntryPoint{},
         .transpiler = transpiler,
@@ -1344,6 +1347,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
     };
+    vm.transpiler_store.zero();
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
         default_allocator,
@@ -1375,7 +1379,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         is_smol_mode = opts.smol;
 
     vm.configureDebugger(opts.debugger);
-    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+    vm.body_value_hive_allocator.zero(bun.typedAllocator(JSC.WebCore.Body.Value));
 
     return vm;
 }
@@ -1932,7 +1936,11 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
     defer this.had_errors = prev_had_errors;
 
     const error_writer = Output.errorWriter();
-    var buffered_writer = std.io.bufferedWriter(error_writer);
+    const BufferedErrorWriter = std.io.BufferedWriter(4096, @TypeOf(error_writer));
+    var buffered_writer: BufferedErrorWriter = undefined;
+    // https://github.com/ziglang/zig/issues/24313
+    buffered_writer.unbuffered_writer = error_writer;
+    buffered_writer.end = 0;
     defer {
         buffered_writer.flush() catch {};
     }

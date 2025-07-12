@@ -287,8 +287,8 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !AST.Group {
-        var group_alloc_ = std.heap.stackFallback(@sizeOf(AST.Atom), self.alloc);
-        const group_alloc = group_alloc_.get();
+        var stack_fallback: std.heap.StackFallbackAllocator(@sizeOf(AST.Atom)) = undefined;
+        const group_alloc = bun.getStackFallback(&stack_fallback, self.alloc);
         var nodes = std.ArrayList(AST.Atom).init(group_alloc);
         while (!self.match(.eof)) {
             try nodes.append(try self.parseAtom() orelse break);
@@ -317,8 +317,8 @@ pub const Parser = struct {
         var variants = std.ArrayList(AST.Group).init(self.alloc);
         while (!self.match_any(&.{ .close, .eof })) {
             if (self.match(.eof)) break;
-            var group_alloc_ = std.heap.stackFallback(@sizeOf(AST.Atom), self.alloc);
-            const group_alloc = group_alloc_.get();
+            var stack_fallback: std.heap.StackFallbackAllocator(@sizeOf(AST.Atom)) = undefined;
+            const group_alloc = bun.getStackFallback(&stack_fallback, self.alloc);
             var group = std.ArrayList(AST.Atom).init(group_alloc);
             var close = false;
             while (!self.match(.eof)) {

@@ -508,8 +508,8 @@ pub const TablePrinter = struct {
     ) !void {
         const globalObject = this.globalObject;
 
-        var stack_fallback = std.heap.stackFallback(@sizeOf(Column) * 16, this.globalObject.allocator());
-        var columns = try std.ArrayList(Column).initCapacity(stack_fallback.get(), 16);
+        var stack_fallback: std.heap.StackFallbackAllocator(@sizeOf(Column) * 16) = undefined;
+        var columns = try std.ArrayList(Column).initCapacity(bun.getStackFallback(&stack_fallback, this.globalObject.allocator()), 16);
         defer {
             for (columns.items) |*col| {
                 col.name.deref();

@@ -936,12 +936,13 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return this.writeOrEnd(globalObject, &values, true, is_end);
             }
 
-            var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+            var stack_fallback: std.heap.StackFallbackAllocator(16 * 1024) = undefined;
+            const allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator);
             const allow_string_object = true;
             const buffer: JSC.Node.StringOrBuffer = if (data_value.isUndefined())
                 JSC.Node.StringOrBuffer.empty
             else
-                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false, allow_string_object) catch {
+                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, allocator, data_value, encoding_value, false, allow_string_object) catch {
                     return .fail;
                 } orelse {
                     if (!globalObject.hasException()) {
@@ -1075,11 +1076,12 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return globalObject.throwTODO("Support encoding with offset and length altogether. Only either encoding or offset, length is supported, but not both combinations yet.") catch .fail;
             }
 
-            var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+            var stack_fallback: std.heap.StackFallbackAllocator(16 * 1024) = undefined;
+            const allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator);
             const buffer: JSC.Node.BlobOrStringOrBuffer = if (args[0].isUndefined())
                 JSC.Node.BlobOrStringOrBuffer{ .string_or_buffer = JSC.Node.StringOrBuffer.empty }
             else
-                JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(globalObject, stack_fallback.get(), args[0], encoding_value, false, true) catch {
+                JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(globalObject, allocator, args[0], encoding_value, false, true) catch {
                     return .fail;
                 } orelse {
                     if (!globalObject.hasException()) {

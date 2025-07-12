@@ -360,8 +360,8 @@ pub const BundleV2 = struct {
 
         // Create a quick index for server-component boundaries.
         // We need to mark the generated files as reachable, or else many files will appear missing.
-        var sfa = std.heap.stackFallback(4096, this.graph.allocator);
-        const stack_alloc = sfa.get();
+        var stack_fallback: std.heap.StackFallbackAllocator(4096) = undefined;
+        const stack_alloc = bun.getStackFallback(&stack_fallback, this.graph.allocator);
         var scb_bitset = if (this.graph.server_component_boundaries.list.len > 0)
             try this.graph.server_component_boundaries.slice().bitSet(stack_alloc, this.graph.input_files.len)
         else

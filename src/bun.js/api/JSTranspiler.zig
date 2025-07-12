@@ -1031,8 +1031,8 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
         return JSValue.createEmptyArray(global, 0);
 
     var named_exports_iter = named_exports.iterator();
-    var stack_fallback = std.heap.stackFallback(@sizeOf(bun.String) * 32, bun.default_allocator);
-    var allocator = stack_fallback.get();
+    var stack_fallback: std.heap.StackFallbackAllocator(@sizeOf(bun.String) * 32) = undefined;
+    var allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator);
     var names = allocator.alloc(
         bun.String,
         named_exports.count(),

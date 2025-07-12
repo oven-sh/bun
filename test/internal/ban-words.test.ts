@@ -32,7 +32,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
 
-  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 242, regex: true },
+  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 234, regex: true },
   "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
   "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1865 },
 
@@ -47,6 +47,8 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 28 },
   "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 42 },
   "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 140 },
+
+  "std.heap.stackFallback": { reason: "std.heap.stackFallback pages in the entire stack buffer. Use std.heap.StackFallbackAllocator(size) and bun.getStackFallback instead" },
 };
 const words_keys = [...Object.keys(words)];
 

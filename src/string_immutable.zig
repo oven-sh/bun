@@ -2049,8 +2049,8 @@ pub fn concatIfNeeded(
     }
 
     if (total_length < 1024) {
-        var stack = std.heap.stackFallback(1024, allocator);
-        const stack_copy = concatWithLength(stack.get(), args, total_length) catch unreachable;
+        var stack: std.heap.StackFallbackAllocator(1024) = undefined;
+        const stack_copy = concatWithLength(bun.getStackFallback(&stack, allocator), args, total_length) catch unreachable;
         for (interned_strings_to_check) |interned| {
             if (eqlLong(stack_copy, interned, true)) {
                 dest.* = interned;

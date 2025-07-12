@@ -689,9 +689,9 @@ pub const DataCell = extern struct {
             .numeric => {
                 if (binary) {
                     // this is probrably good enough for most cases
-                    var stack_buffer = std.heap.stackFallback(1024, bun.default_allocator);
-                    const allocator = stack_buffer.get();
-                    var numeric_buffer = std.ArrayList(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
+                    var stack_fallback: std.heap.StackFallbackAllocator(1024) = undefined;
+                    const allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator);
+                    var numeric_buffer = std.ArrayList(u8).fromOwnedSlice(allocator, &stack_fallback.buffer);
                     numeric_buffer.items.len = 0;
                     defer numeric_buffer.deinit();
 

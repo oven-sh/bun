@@ -1058,6 +1058,8 @@ pub const AsyncReaddirRecursiveTask = struct {
     }
 
     pub fn performWork(this: *AsyncReaddirRecursiveTask, basename: [:0]const u8, buf: *bun.PathBuffer, comptime is_root: bool) void {
+        var stack_fallback: std.heap.StackFallbackAllocator(8192) = undefined;
+
         switch (this.args.tag()) {
             inline else => |tag| {
                 const ResultType = comptime switch (tag) {
@@ -1065,10 +1067,9 @@ pub const AsyncReaddirRecursiveTask = struct {
                     .with_file_types => bun.JSC.Node.Dirent,
                     .buffers => Buffer,
                 };
-                var stack = std.heap.stackFallback(8192, bun.default_allocator);
 
                 // This is a stack-local copy to avoid resizing heap-allocated arrays in the common case of a small directory
-                var entries = std.ArrayList(ResultType).init(stack.get());
+                var entries = std.ArrayList(ResultType).init(bun.getStackFallback(&stack_fallback, bun.default_allocator));
 
                 defer entries.deinit();
 
@@ -4662,10 +4663,10 @@ pub const NodeFS = struct {
         comptime ExpectedType: type,
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
-        var iterator_stack = std.heap.stackFallback(128, bun.default_allocator);
-        var stack = std.fifo.LinearFifo([:0]const u8, .{ .Dynamic = {} }).init(iterator_stack.get());
-        var basename_stack = std.heap.stackFallback(8192 * 2, bun.default_allocator);
-        const basename_allocator = basename_stack.get();
+        var stack_fallback: std.heap.StackFallbackAllocator(128) = undefined;
+        var stack = std.fifo.LinearFifo([:0]const u8, .{ .Dynamic = {} }).init(bun.getStackFallback(&stack_fallback, bun.default_allocator));
+        var basename_stack_fallback: std.heap.StackFallbackAllocator(8192 * 2) = undefined;
+        const basename_allocator = bun.getStackFallback(&basename_stack_fallback, bun.default_allocator);
         defer {
             while (stack.readItem()) |name| {
                 basename_allocator.free(name);

@@ -401,8 +401,8 @@ pub const CssModuleReference = union(enum) {
 // TODO: replace with bun's hash
 pub fn hash(allocator: Allocator, comptime fmt: []const u8, args: anytype, at_start: bool) []const u8 {
     const count = std.fmt.count(fmt, args);
-    var stack_fallback = std.heap.stackFallback(128, allocator);
-    const fmt_alloc = if (count <= 128) stack_fallback.get() else allocator;
+    var stack_fallback: std.heap.StackFallbackAllocator(128) = undefined;
+    const fmt_alloc = if (count <= 128) bun.getStackFallback(&stack_fallback, allocator) else allocator;
     var hasher = bun.Wyhash11.init(0);
     var fmt_str = std.fmt.allocPrint(fmt_alloc, fmt, args) catch bun.outOfMemory();
     hasher.update(fmt_str);

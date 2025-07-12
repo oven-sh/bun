@@ -1287,8 +1287,8 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     }
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
-    var stack = std.heap.stackFallback(1024, arena.allocator());
-    const allocator = stack.get();
+    var stack_fallback: std.heap.StackFallbackAllocator(1024) = undefined;
+    const allocator = bun.getStackFallback(&stack_fallback, arena.allocator());
 
     const alias_value: JSC.JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
 

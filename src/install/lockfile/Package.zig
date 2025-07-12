@@ -1654,8 +1654,8 @@ pub const Package = extern struct {
                 const key = prop.key.?;
                 const value = prop.value.?;
                 if (key.isString() and value.isString()) {
-                    var sfb = std.heap.stackFallback(1024, allocator);
-                    const keyhash = try key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
+                    var stack_fallback: std.heap.StackFallbackAllocator(1024) = undefined;
+                    const keyhash = try key.asStringHash(bun.getStackFallback(&stack_fallback, allocator), String.Builder.stringHash) orelse unreachable;
                     const patch_path = string_builder.append(String, value.asString(allocator).?);
                     lockfile.patched_dependencies.put(allocator, keyhash, .{ .path = patch_path }) catch unreachable;
                 }

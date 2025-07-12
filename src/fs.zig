@@ -169,8 +169,8 @@ pub const FileSystem = struct {
 
             const stored = try brk: {
                 if (prev_map) |map| {
-                    var stack_fallback = std.heap.stackFallback(512, allocator);
-                    const stack = stack_fallback.get();
+                    var stack_fallback: std.heap.StackFallbackAllocator(512) = undefined;
+                    const stack = bun.getStackFallback(&stack_fallback, allocator);
                     const prehashed = bun.StringHashMapContext.PrehashedCaseInsensitive.init(stack, name_slice);
                     defer prehashed.deinit(stack);
                     if (map.getAdapted(name_slice, prehashed)) |existing| {

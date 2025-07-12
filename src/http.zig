@@ -1193,9 +1193,9 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             log("send proxy headers", .{});
             if (this.proxy_tunnel) |proxy| {
                 this.setTimeout(socket, 5);
-                var stack_buffer = std.heap.stackFallback(1024 * 16, bun.default_allocator);
-                const allocator = stack_buffer.get();
-                var temporary_send_buffer = std.ArrayList(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
+                var stack_fallback: std.heap.StackFallbackAllocator(1024 * 16) = undefined;
+                const allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator);
+                var temporary_send_buffer = std.ArrayList(u8).fromOwnedSlice(allocator, &stack_fallback.buffer);
                 temporary_send_buffer.items.len = 0;
                 defer temporary_send_buffer.deinit();
                 const writer = &temporary_send_buffer.writer();
@@ -2179,8 +2179,8 @@ pub fn handleResponseMetadata(
                     {
                         var url_arena = std.heap.ArenaAllocator.init(bun.default_allocator);
                         defer url_arena.deinit();
-                        var fba = std.heap.stackFallback(4096, url_arena.allocator());
-                        const url_allocator = fba.get();
+                        var stack_fallback: std.heap.StackFallbackAllocator(4096) = undefined;
+                        const url_allocator = bun.getStackFallback(&stack_fallback, url_arena.allocator());
                         if (strings.indexOf(location, "://")) |i| {
                             var string_builder = bun.StringBuilder{};
 

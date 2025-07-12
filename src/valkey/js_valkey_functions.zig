@@ -82,8 +82,10 @@ pub fn getBuffer(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callf
 
 pub fn set(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const args_view = callframe.arguments();
-    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    var stack_fallback: std.heap.StackFallbackAllocator(512) = undefined;
+    const allocator = bun.getStackFallback(&stack_fallback, bun.default_allocator);
+
+    var args = try std.ArrayList(JSArgument).initCapacity(allocator, args_view.len);
     defer {
         for (args.items) |*item| {
             item.deinit();

@@ -156,8 +156,8 @@ pub const TOML = struct {
         var root = p.e(E.Object{}, p.lexer.loc());
         var head = root.data.e_object;
 
-        var stack = std.heap.stackFallback(@sizeOf(Rope) * 6, p.allocator);
-        const key_allocator = stack.get();
+        var stack: std.heap.StackFallbackAllocator(@sizeOf(Rope) * 6) = undefined;
+        const key_allocator = bun.getStackFallback(&stack, p.allocator);
 
         while (true) {
             const loc = p.lexer.loc();
@@ -301,8 +301,8 @@ pub const TOML = struct {
             .t_open_brace => {
                 try p.lexer.next();
                 var is_single_line = !p.lexer.has_newline_before;
-                var stack = std.heap.stackFallback(@sizeOf(Rope) * 6, p.allocator);
-                const key_allocator = stack.get();
+                var stack_fallback: std.heap.StackFallbackAllocator(@sizeOf(Rope) * 6) = undefined;
+                const key_allocator = bun.getStackFallback(&stack_fallback, p.allocator);
                 const expr = p.e(E.Object{}, loc);
                 const obj = expr.data.e_object;
 
@@ -320,7 +320,7 @@ pub const TOML = struct {
                     }
                     try p.parseAssignment(obj, key_allocator);
                     p.lexer.allow_double_bracket = false;
-                    stack.fixed_buffer_allocator.reset();
+                    stack_fallback.fixed_buffer_allocator.reset();
                 }
 
                 if (p.lexer.has_newline_before) {

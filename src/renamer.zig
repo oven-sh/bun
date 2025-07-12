@@ -544,7 +544,7 @@ pub const NumberRenamer = struct {
             .fixed_buffer_allocator = undefined,
         };
         renamer.name_temp_allocator = renamer.name_stack_fallback.get();
-        renamer.number_scope_pool = .init(renamer.arena.allocator());
+        renamer.number_scope_pool.zero(renamer.arena.allocator());
         renamer.root.name_counts = root_names;
         if (comptime Environment.allow_assert and !Environment.isWindows) {
             if (std.posix.getenv("BUN_DUMP_SYMBOLS") != null)

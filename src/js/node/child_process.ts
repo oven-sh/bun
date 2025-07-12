@@ -543,6 +543,8 @@ function spawnSync(file, args, options) {
       timeout: options.timeout,
       killSignal: options.killSignal,
       maxBuffer: options.maxBuffer,
+      uid: options.uid,
+      gid: options.gid,
     });
   } catch (err) {
     error = err;

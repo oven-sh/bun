@@ -98,7 +98,7 @@ pub fn NewReaderWrap(
         pub fn String(this: @This()) !bun.String {
             var result = try this.readZ();
             defer result.deinit();
-            return bun.String.fromUTF8(result.slice());
+            return bun.String.borrowUTF8(result.slice());
         }
     };
 }

@@ -2559,7 +2559,7 @@ pub const bindings = struct {
         sha512.final(&sha512_digest);
         var base64_buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
         const encode_count = bun.simdutf.base64.encode(&sha512_digest, &base64_buf, false);
-        const integrity_str = String.createUTF8(base64_buf[0..encode_count]);
+        const integrity_str = String.cloneUTF8(base64_buf[0..encode_count]);
 
         const EntryInfo = struct {
             pathname: String,
@@ -2625,7 +2625,7 @@ pub const bindings = struct {
                     const perm = archive_entry.perm();
 
                     var entry_info: EntryInfo = .{
-                        .pathname = String.createUTF8(pathname),
+                        .pathname = String.cloneUTF8(pathname),
                         .kind = String.static(@tagName(kind)),
                         .perm = perm,
                     };
@@ -2643,7 +2643,7 @@ pub const bindings = struct {
                             });
                         }
                         read_buf.items.len = @intCast(read);
-                        entry_info.contents = String.createUTF8(read_buf.items);
+                        entry_info.contents = String.cloneUTF8(read_buf.items);
                     }
 
                     entries_info.append(entry_info) catch bun.outOfMemory();

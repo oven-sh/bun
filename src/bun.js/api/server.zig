@@ -1246,7 +1246,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
 
                 existing_request = Request.init(
-                    bun.String.createUTF8(url.href),
+                    bun.String.cloneUTF8(url.href),
                     headers,
                     this.vm.initRequestBodyValue(body) catch bun.outOfMemory(),
                     method,
@@ -1347,7 +1347,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
             switch (this.config.address) {
                 .unix => |unix| {
-                    var value = bun.String.createUTF8(unix);
+                    var value = bun.String.cloneUTF8(unix);
                     defer value.deref();
                     return value.toJS(globalThis);
                 },
@@ -1402,7 +1402,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const buf = try std.fmt.allocPrint(default_allocator, "{any}", .{fmt});
             defer default_allocator.free(buf);
 
-            return bun.String.createUTF8(buf);
+            return bun.String.cloneUTF8(buf);
         }
 
         pub fn getURL(this: *ThisServer, globalThis: *JSGlobalObject) bun.OOM!JSC.JSValue {
@@ -1424,7 +1424,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                     if (listener.socket().remoteAddress(buf[0..1024])) |addr| {
                         if (addr.len > 0) {
-                            this.cached_hostname = bun.String.createUTF8(addr);
+                            this.cached_hostname = bun.String.cloneUTF8(addr);
                         }
                     }
                 }
@@ -1433,7 +1433,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     switch (this.config.address) {
                         .tcp => |tcp| {
                             if (tcp.hostname) |hostname| {
-                                this.cached_hostname = bun.String.createUTF8(bun.sliceTo(hostname, 0));
+                                this.cached_hostname = bun.String.cloneUTF8(bun.sliceTo(hostname, 0));
                             } else {
                                 this.cached_hostname = bun.String.createAtomASCII("localhost");
                             }

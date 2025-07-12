@@ -37,6 +37,7 @@ src/baby_list.zig
 src/bake/bake.zig
 src/bake/DevServer.zig
 src/bake/FrameworkRouter.zig
+src/bake/OutputFileExtra.zig
 src/bake/production.zig
 src/base64/base64.zig
 src/bit_set.zig
@@ -314,6 +315,7 @@ src/bundler/linker_context/postProcessJSChunk.zig
 src/bundler/linker_context/prepareCssAstsForChunk.zig
 src/bundler/linker_context/renameSymbolsInChunk.zig
 src/bundler/linker_context/scanImportsAndExports.zig
+src/bundler/linker_context/StaticRouteVisitor.zig
 src/bundler/linker_context/writeOutputFilesToDisk.zig
 src/bundler/LinkerContext.zig
 src/bundler/LinkerGraph.zig

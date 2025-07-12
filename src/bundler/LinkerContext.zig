@@ -3,6 +3,7 @@ pub const LinkerContext = struct {
     pub const CompileResult = bundler.CompileResult;
 
     pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.zig");
+    pub const StaticRouteVisitor = @import("./linker_context/StaticRouteVisitor.zig");
 
     parse_graph: *Graph = undefined,
     graph: LinkerGraph = undefined,

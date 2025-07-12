@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { devTest, minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
+import { existsSync } from "fs";
 
 /**
  * Production build tests
@@ -303,14 +304,12 @@ export default function GettingStarted() {
     });
 
     // Run the build command - should not crash even with no pages
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
-      .cwd(dir)
-      .throws(false);
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`.cwd(dir).throws(false);
 
     // The build should complete successfully (or fail gracefully, not crash)
     // We're testing that it doesn't crash with the StringBuilder assertion
     expect(exitCode).toBeDefined();
-    
+
     // If it fails, it should be a graceful failure, not a crash
     if (exitCode !== 0) {
       expect(stderr.toString()).not.toContain("reached unreachable code");
@@ -348,12 +347,118 @@ export function Client() {
     });
 
     // Run the build command
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
-      .cwd(dir)
-      .throws(false);
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
 
     // The build should succeed - client components should support default imports
     expect(stderr.toString()).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  test("importing from react", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-react-import", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import { useState } from 'react';
+
+export default function IndexPage() {
+  const [count, setCount] = useState(0);
+
+  return (
+    <div>
+      <title>LMAO</title>Hello World
+      <button onClick={() => setCount(count + 1)}>Click me</button>
+    </div>
+  );
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    // Run the build command
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
+
+    // The build should succeed - client components should support default imports
+    expect(stderr.toString()).toBe("");
+    expect(exitCode).toBe(0);
+
+    // Verify that the build output exists
+    const buildDir = path.join(dir, ".bun");
+    expect(existsSync(buildDir)).toBe(true);
+
+    // Verify the server bundle was created
+    const serverBundle = path.join(buildDir, "server", "pages_index.ssr.js");
+    expect(existsSync(serverBundle)).toBe(true);
+
+    // Verify the client bundle was created
+    const clientBundle = path.join(buildDir, "client", "_bun", "pages_index.bundle.js");
+    expect(existsSync(clientBundle)).toBe(true);
+
+    // Verify the client bundle contains React imports
+    const clientBundleContent = await Bun.file(clientBundle).text();
+    expect(clientBundleContent).toContain("useState");
+
+    // Verify the generated HTML page exists
+    const htmlPage = path.join(dir, "dist", "index.html");
+    expect(existsSync(htmlPage)).toBe(true);
+
+    // Verify the HTML contains the expected content
+    const htmlContent = await Bun.file(htmlPage).text();
+    expect(htmlContent).toContain("Hello World");
+    expect(htmlContent).toContain("<title>LMAO</title>");
+  });
+
+  test("don't include client code if fully static route", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-no-client-js", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `
+export default function IndexPage() {
+  return (
+    <div>
+      Hello World
+    </div>
+  );
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    // Run the build command
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
+
+    // The build should succeed
+    // expect(stderr.toString()).toBe("");
+    expect(exitCode).toBe(0);
+
+    // Check the generated HTML file
+    const htmlPage = path.join(dir, "dist", "index.html");
+    expect(existsSync(htmlPage)).toBe(true);
+
+    const htmlContent = await Bun.file(htmlPage).text();
+
+    // Verify the content is rendered
+    expect(htmlContent).toContain("Hello World");
+
+    // Verify NO JavaScript imports are included in the HTML
+    expect(htmlContent).not.toContain("<script");
+    expect(htmlContent).not.toContain('type="module"');
+    expect(htmlContent).not.toContain("/_bun/");
+    expect(htmlContent).not.toContain(".bundle.js");
+    expect(htmlContent).not.toContain("import ");
+
+    // Verify the HTML is truly static with no client-side hydration
+    expect(htmlContent).not.toContain("__reactRoot");
+    expect(htmlContent).not.toContain("hydrate");
+    expect(htmlContent).not.toContain("createRoot");
   });
 });

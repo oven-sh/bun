@@ -40,12 +40,11 @@ export function renderRoutesForProdStatic(
   });
   const { join: pathJoin } = require("node:path");
 
-  const regex = /:(\w+)/g;
-
   let loadedModules = new Array(allServerFiles.length);
 
   async function doGenerateRoute(
     type: number,
+    noClient: boolean,
     i: number,
     layouts: any[],
     pageModule: any,
@@ -56,7 +55,7 @@ export function renderRoutesForProdStatic(
     $assert(callback != null && $isCallable(callback));
     let client = clientEntryUrl[type];
     const results = await callback({
-      modules: client ? [client] : [],
+      modules: client && !noClient ? [client] : [],
       modulepreload: [],
       styles: styles[i],
       layouts,
@@ -92,6 +91,7 @@ export function renderRoutesForProdStatic(
 
   function callRouteGenerator(
     type: number,
+    noClient: boolean,
     i: number,
     layouts: any[],
     pageModule: any,
@@ -102,13 +102,14 @@ export function renderRoutesForProdStatic(
         throw new Error(`Missing param ${param} for route ${JSON.stringify(sourceRouteFiles[i])}`);
       }
     }
-    return doGenerateRoute(type, i, layouts, pageModule, params);
+    return doGenerateRoute(type, noClient, i, layouts, pageModule, params);
   }
 
   return Promise.all(
     files.map(async (fileList, i) => {
       const typeAndFlag = typeAndFlags[i];
       const type = typeAndFlag & 0xff;
+      const noClient = (typeAndFlag & 0b100000000) !== 0;
 
       var pageModule: any, layouts: any[];
       $assert(fileList.length > 0);
@@ -134,14 +135,14 @@ export function renderRoutesForProdStatic(
         let result;
         if (paramGetter[Symbol.asyncIterator] != undefined) {
           for await (const params of paramGetter) {
-            result = callRouteGenerator(type, i, layouts, pageModule, params);
+            result = callRouteGenerator(type, noClient, i, layouts, pageModule, params);
             if ($isPromise(result) && $isPromisePending(result)) {
               await result;
             }
           }
         } else if (paramGetter[Symbol.iterator] != undefined) {
           for (const params of paramGetter) {
-            result = callRouteGenerator(type, i, layouts, pageModule, params);
+            result = callRouteGenerator(type, noClient, i, layouts, pageModule, params);
             if ($isPromise(result) && $isPromisePending(result)) {
               await result;
             }
@@ -149,12 +150,12 @@ export function renderRoutesForProdStatic(
         } else {
           await Promise.all(
             paramGetter.pages.map(params => {
-              callRouteGenerator(type, i, layouts, pageModule, params);
+              callRouteGenerator(type, noClient, i, layouts, pageModule, params);
             }),
           );
         }
       } else {
-        await doGenerateRoute(type, i, layouts, pageModule, null);
+        await doGenerateRoute(type, noClient, i, layouts, pageModule, null);
       }
     }),
   );

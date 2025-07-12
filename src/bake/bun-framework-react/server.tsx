@@ -117,6 +117,8 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
 // function returns no files, the route is always dynamic. When building an app
 // to static files, all routes get pre-rendered (build failure if not possible).
 export async function prerender(meta: Bake.RouteMetadata) {
+  // meta.modules = [];
+  console.log("Meta", meta, "Server manifest", serverManifest);
   const page = getPage(meta, meta.styles);
 
   const rscPayload = renderToPipeableStream(page, serverManifest)

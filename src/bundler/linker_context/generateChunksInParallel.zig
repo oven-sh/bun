@@ -1,4 +1,8 @@
-pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_dev_server: bool) !if (is_dev_server) void else std.ArrayList(options.OutputFile) {
+pub fn generateChunksInParallel(
+    c: *LinkerContext,
+    chunks: []Chunk,
+    comptime is_dev_server: bool,
+) !if (is_dev_server) void else std.ArrayList(options.OutputFile) {
     const trace = bun.perf.trace("Bundler.generateChunksInParallel");
     defer trace.end();
 
@@ -337,6 +341,8 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
     }
 
     const bundler = @as(*bun.bundle_v2.BundleV2, @fieldParentPtr("linker", c));
+    var static_route_visitor = StaticRouteVisitor{ .c = c };
+    defer static_route_visitor.deinit();
 
     if (root_path.len > 0) {
         try c.writeOutputFilesToDisk(root_path, chunks, &output_files);
@@ -507,6 +513,12 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
             else
                 .chunk;
 
+            const side: bun.bake.Side = if (chunk.content == .css or chunk.is_browser_chunk_from_server_build)
+                .client
+            else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
+                .browser => .client,
+                else => .server,
+            };
             const chunk_index = output_files.insertForChunk(options.OutputFile.init(.{
                 .data = .{
                     .buffer = .{
@@ -524,12 +536,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                 .is_executable = chunk.is_executable,
                 .source_map_index = source_map_index,
                 .bytecode_index = bytecode_index,
-                .side = if (chunk.content == .css or chunk.is_browser_chunk_from_server_build)
-                    .client
-                else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
-                    .browser => .client,
-                    else => .server,
-                },
+                .side = side,
                 .entry_point_index = if (output_kind == .@"entry-point")
                     chunk.entry_point.source_index - @as(u32, (if (c.framework) |fw| if (fw.server_components != null) 3 else 1 else 1))
                 else
@@ -539,9 +546,19 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                     .css => &.{},
                     .html => &.{},
                 },
-                .bake_is_runtime = if (c.framework != null) brk: {
-                    break :brk chunk.files_with_parts_in_chunk.contains(Index.runtime.get());
-                } else false,
+                .bake_extra = brk: {
+                    if (c.framework == null or is_dev_server) break :brk .{};
+                    if (!c.framework.?.is_built_in_react) break :brk .{};
+
+                    var extra: OutputFile.BakeExtra = .{};
+                    extra.bake_is_runtime = chunk.files_with_parts_in_chunk.contains(Index.runtime.get());
+                    if (output_kind == .@"entry-point" and side == .server) {
+                        extra.is_route = true;
+                        extra.fully_static = static_route_visitor.isFullyStatic(chunk.entry_point.source_index);
+                    }
+
+                    break :brk extra;
+                },
             }));
 
             // We want the chunk index to remain the same in `output_files` so the indices in `OutputFile.referenced_css_chunks` work
@@ -577,6 +594,7 @@ const CompileResult = LinkerContext.CompileResult;
 const PendingPartRange = LinkerContext.PendingPartRange;
 
 const Output = bun.Output;
+const OutputFile = bun.options.OutputFile;
 const debugPartRanges = Output.scoped(.PartRanges, true);
 
 const generateCompileResultForJSChunk = LinkerContext.generateCompileResultForJSChunk;
@@ -598,3 +616,4 @@ const JSC = bun.JSC;
 
 pub const ThreadPoolLib = bun.ThreadPool;
 const OutputFileListBuilder = bun.bundle_v2.LinkerContext.OutputFileListBuilder;
+const StaticRouteVisitor = bun.bundle_v2.LinkerContext.StaticRouteVisitor;

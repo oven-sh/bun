@@ -327,16 +327,16 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         // The output file which contains the runtime (Index.runtime, contains
         // wrapper functions like `__esm`) is marked as server side, but it is
         // also used by client
-        if (file.bake_is_runtime) {
+        if (file.bake_extra.bake_is_runtime) {
             if (comptime bun.Environment.allow_assert) {
                 bun.assertf(maybe_runtime_file_index == null, "Runtime file should only be in one chunk.", .{});
                 maybe_runtime_file_index = @intCast(i);
             }
         }
 
+        // TODO: Maybe not do all the disk-writing in 1 thread?
         switch (file.side orelse continue) {
             .client => {
-                // TODO: Maybe not do this all in 1 thread?
                 // Client-side resources will be written to disk for usage in on the client side
                 _ = file.writeToDisk(root_dir, ".") catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -645,6 +645,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         try route_nested_files.putIndex(global, @intCast(nav_index), file_list);
         try route_type_and_flags.putIndex(global, @intCast(nav_index), JSValue.jsNumberFromInt32(@bitCast(TypeAndFlags{
             .type = route.type.get(),
+            .no_client = main_file.bake_extra.fully_static,
         })));
 
         if (params_buf.items.len > 0) {
@@ -1001,7 +1002,12 @@ pub export fn BakeProdSourceMap(pt: *PerThread, key: bun.String) bun.String {
 
 const TypeAndFlags = packed struct(i32) {
     type: u8,
-    unused: u24 = 0,
+    /// Don't inclue the runtime client code (e.g.
+    /// bun-framework-react/client.tsx). This is used if we know a server
+    /// component does not include any downstream usages of "use client" and so
+    /// we can omit the client code entirely.
+    no_client: bool = false,
+    unused: u23 = 0,
 };
 
 const std = @import("std");

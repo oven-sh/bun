@@ -632,8 +632,7 @@ export class BunTestController implements vscode.Disposable {
                   const fileTestItem = this.testController.items.get(
                     vscode.Uri.file(windowsVscodeUri(filePath)).toString(),
                   );
-                  if (fileTestItem) fileTestItem.children.replace([]);
-
+                  if (fileTestItem) this.resetTestItemChildren(fileTestItem);
                   this.createTestItemsFromParsedOutput(parsedOutput);
 
                   const fileResult = parsedOutput.find((result: BunFileResult) => result.name === filePath);
@@ -642,30 +641,42 @@ export class BunTestController implements vscode.Disposable {
                       vscode.Uri.file(windowsVscodeUri(filePath)).toString(),
                     );
                     if (newFileTestItem) {
-                      this.processTestResults(fileResult.tests, run, newFileTestItem, "", 0, true);
+                      this.processTestResults(fileResult.tests, run, newFileTestItem);
                     }
                   }
                 } else {
+                  this.createTestItemsFromParsedOutput(parsedOutput);
                   const fileResult = parsedOutput.find((result: BunFileResult) => result.name === filePath);
                   if (fileResult) {
-                    this.createTestItemsFromParsedOutput(parsedOutput);
-
                     for (const test of tests) {
-                      const findResult = (results: BunTestResult[], label: string): BunTestResult | undefined => {
+                      const findResult = (
+                        results: BunTestResult[],
+                        label: string[],
+                        parentLabels: string[] = [],
+                      ): BunTestResult | undefined => {
                         for (const r of results) {
-                          if (r.name === label) return r;
+                          const currentLabels = [...parentLabels, r.name];
+                          if (arrayEquals(currentLabels, label)) return r;
                           if (r.children) {
-                            const found = findResult(r.children, label);
+                            const found = findResult(r.children, label, currentLabels);
                             if (found) return found;
                           }
                         }
                         return undefined;
                       };
-                      const result = findResult(fileResult.tests, test.label);
+
+                      function getFullTestName(test: vscode.TestItem, parentLabels: string[] = []): string[] {
+                        if (test.parent && test.parent.parent) {
+                          return getFullTestName(test.parent, [test.label, ...parentLabels]);
+                        }
+                        return [...parentLabels, test.label];
+                      }
+
+                      const result = findResult(fileResult.tests, getFullTestName(test).reverse());
                       if (result) {
-                        this.processTestResults([result], run, test, "", 0, true);
+                        this.processTestResults([result], run, test);
                       } else {
-                        this.removeTestItemAndChildren(test);
+                        this.resetTestItemChildren(test, true);
                       }
                     }
                   } else {
@@ -776,21 +787,13 @@ export class BunTestController implements vscode.Disposable {
     return false;
   }
 
-  private processTestResults(
-    tests: BunTestResult[],
-    run: vscode.TestRun,
-    parent: vscode.TestItem,
-    parentPath = "",
-    indentLevel = 0,
-    isLastBatch = true,
-  ): void {
+  private processTestResults(tests: BunTestResult[], run: vscode.TestRun, parent: vscode.TestItem): void {
     if (!parent.uri) {
       return;
     }
 
     for (let i = 0; i < tests.length; i++) {
       const testResult = tests[i];
-      const isLastTest = i === tests.length - 1;
 
       let testItem = parent;
 
@@ -826,7 +829,7 @@ export class BunTestController implements vscode.Disposable {
           run.skipped(testItem);
         }
         if (isParent && testItem && testResult.children) {
-          this.processTestResults(testResult.children, run, testItem, "", indentLevel + 1, false);
+          this.processTestResults(testResult.children, run, testItem);
         }
         continue;
       }
@@ -843,11 +846,7 @@ export class BunTestController implements vscode.Disposable {
       }
 
       if (isParent && testItem && testResult.children) {
-        this.processTestResults(testResult.children, run, testItem, "", indentLevel + 1, false);
-      }
-
-      if (isLastTest && isLastBatch && indentLevel === 0 && location) {
-        run.appendOutput("\r\n", location);
+        this.processTestResults(testResult.children, run, testItem);
       }
     }
   }
@@ -989,6 +988,18 @@ export class BunTestController implements vscode.Disposable {
       testItem.parent.children.delete(testItem.id);
     } else {
       this.testController.items.delete(testItem.id);
+    }
+  }
+
+  private resetTestItemChildren(testItem: vscode.TestItem, removeSelfFromParent = false): void {
+    if (testItem.children && testItem.children.size > 0) {
+      for (const [, child] of testItem.children) {
+        this.resetTestItemChildren(child);
+      }
+    }
+    testItem.children.replace([]);
+    if (removeSelfFromParent && testItem.parent) {
+      testItem.parent.children.delete(testItem.id);
     }
   }
 
@@ -1503,3 +1514,11 @@ function processErrorData({
 function windowsVscodeUri(uri: string): string {
   return process.platform === "win32" ? uri.replace("c:\\", "C:\\") : uri;
 }
+
+const arrayEquals = <T extends any>(a: T[], b: T[]): boolean => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+};

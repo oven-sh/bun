@@ -712,6 +712,8 @@ pub const CommandLineReporter = struct {
                         junit.beginTestSuite(filename) catch bun.outOfMemory();
                     }
 
+                    // To make the juint reporter generate nested suites, we need to find the needed suites and create/print them.
+                    // This assumes that the scopes are in the correct order.
                     var needed_suites = std.ArrayList(*jest.DescribeScope).init(bun.default_allocator);
                     defer needed_suites.deinit();
 

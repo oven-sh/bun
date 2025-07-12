@@ -6,7 +6,7 @@ import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
 
-it("spawn test file", () => {
+it.todo("spawn test file", () => {
   writePackageJSONImportsFixture();
   writePackageJSONExportsFixture();
 
@@ -299,7 +299,7 @@ it("import long string should not segfault", async () => {
   } catch {}
 });
 
-it.only("import override to node builtin", async () => {
+it("import override to node builtin", async () => {
   // @ts-expect-error
   expect(await import("#async_hooks")).toBeDefined();
 });

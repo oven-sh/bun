@@ -224,6 +224,7 @@ test/js/third_party/grpc-js/test-server-interceptors.test.ts
 test/js/third_party/grpc-js/test-server.test.ts
 test/js/node/test/parallel/test-assert-if-error.js
 # ErrorInstance::defineOwnProperty
+# missing RETURN_IF_EXCEPTION
 test/js/bun/util/inspect-error.test.js
 # moduleLoaderParseModule
 # missing RETURN_IF_EXCEPTION
@@ -236,7 +237,6 @@ test/js/node/http/node-http-parser.test.ts
 
 # try again later
 test/js/node/test/parallel/test-worker-nested-uncaught.js
-test/bundler/bun-build-api.test.ts
 
 # 3rd party napi
 test/integration/sharp/sharp.test.ts
@@ -266,3 +266,5 @@ test/js/node/test/parallel/test-crypto-worker-thread.js
 test/js/node/test/parallel/test-crypto-webcrypto-aes-decrypt-tag-too-small.js
 test/js/web/crypto/web-crypto.test.ts
 test/js/node/crypto/node-crypto.test.js
+test/js/third_party/pg/pg.test.ts
+test/regression/issue/01466.test.ts

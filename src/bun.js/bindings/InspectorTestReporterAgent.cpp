@@ -13,6 +13,9 @@
 #include "ModuleLoader.h"
 #include <wtf/TZoneMallocInlines.h>
 
+using namespace JSC;
+using namespace Inspector;
+
 namespace Inspector {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorTestReporterAgent);
@@ -23,10 +26,11 @@ extern "C" {
 void Bun__TestReporterAgentEnable(Inspector::InspectorTestReporterAgent* agent);
 void Bun__TestReporterAgentDisable(Inspector::InspectorTestReporterAgent* agent);
 
-void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, JSC::CallFrame* callFrame, int testId, BunString* name)
+void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, JSC::CallFrame* callFrame, int testId, BunString* name, const char* item_type, int parentId)
 {
     auto str = name->toWTFString(BunString::ZeroCopy);
-    agent->reportTestFound(callFrame, testId, str);
+    String typeStr = String::fromLatin1(item_type);
+    agent->reportTestFound(callFrame, testId, str, typeStr, parentId);
 }
 
 void Bun__TestReporterAgentReportTestStart(Inspector::InspectorTestReporterAgent* agent, int testId)
@@ -40,6 +44,7 @@ enum class BunTestStatus : uint8_t {
     Timeout,
     Skip,
     Todo,
+    SkippedBecauseLabel,
 };
 
 void Bun__TestReporterAgentReportTestEnd(Inspector::InspectorTestReporterAgent* agent, int testId, BunTestStatus bunTestStatus, double elapsed)
@@ -61,9 +66,13 @@ void Bun__TestReporterAgentReportTestEnd(Inspector::InspectorTestReporterAgent* 
     case BunTestStatus::Todo:
         status = Protocol::TestReporter::TestStatus::Todo;
         break;
+    case BunTestStatus::SkippedBecauseLabel:
+        status = Protocol::TestReporter::TestStatus::Skipped_because_label;
+        break;
     default:
         ASSERT_NOT_REACHED();
     }
+
     agent->reportTestEnd(testId, status, elapsed);
 }
 }
@@ -112,7 +121,7 @@ Protocol::ErrorStringOr<void> InspectorTestReporterAgent::disable()
     return {};
 }
 
-void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, const String& name)
+void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, const String& name, const String& type, int parentId)
 {
     if (!m_enabled)
         return;
@@ -179,7 +188,9 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
         sourceID > 0 ? String::number(sourceID) : String(),
         sourceURL,
         lineColumn.line,
-        name);
+        name,
+        type,
+        parentId);
 }
 
 void InspectorTestReporterAgent::reportTestStart(int testId)

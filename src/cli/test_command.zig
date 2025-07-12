@@ -909,7 +909,6 @@ pub const CommandLineReporter = struct {
 
         // this.updateDots();
         this.summary().skipped_because_label += 1;
-        this.summary().skip += 1;
         this.summary().expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skip;
     }

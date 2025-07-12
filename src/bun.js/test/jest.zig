@@ -840,6 +840,7 @@ pub const DescribeScope = struct {
     skip_count: u32 = 0,
     tag: Tag = .pass,
     line_number: u32 = 0,
+    test_id_for_debugger: u32 = 0,
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1402,9 +1403,7 @@ pub const TestRunnerTask = struct {
                     this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, test_id_for_debugger, describe);
                 },
                 .skipped_because_label => {
-                    if (Jest.runner.?.test_options.file_reporter == .junit) {
-                        this.processTestResult(globalThis, .{ .skipped_because_label = {} }, test_, test_id, test_id_for_debugger, describe);
-                    }
+                    this.processTestResult(globalThis, .{ .skipped_because_label = {} }, test_, test_id, test_id_for_debugger, describe);
                 },
                 else => {},
             }
@@ -1677,6 +1676,7 @@ pub const TestRunnerTask = struct {
                         .pass => .pass,
                         .skip => .skip,
                         .todo => .todo,
+                        .skipped_because_label => .skipped_because_label,
                         else => .fail,
                     }, @floatFromInt(elapsed));
                 }
@@ -1904,15 +1904,14 @@ inline fn createScope(
             .timeout_millis = timeout_ms,
             .line_number = captureTestLineNumber(callframe, globalThis),
             .test_id_for_debugger = brk: {
-                if (!is_skip) {
-                    const vm = globalThis.bunVM();
-                    if (vm.debugger) |*debugger| {
-                        if (debugger.test_reporter_agent.isEnabled()) {
-                            max_test_id_for_debugger += 1;
-                            var name = bun.String.init(label);
-                            debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name);
-                            break :brk max_test_id_for_debugger;
-                        }
+                const vm = globalThis.bunVM();
+                if (vm.debugger) |*debugger| {
+                    if (debugger.test_reporter_agent.isEnabled()) {
+                        max_test_id_for_debugger += 1;
+                        var name = bun.String.init(label);
+                        const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
+                        debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, "test", parent_id);
+                        break :brk max_test_id_for_debugger;
                     }
                 }
 
@@ -1927,6 +1926,19 @@ inline fn createScope(
             .file_id = parent.file_id,
             .tag = tag_to_use,
             .line_number = captureTestLineNumber(callframe, globalThis),
+            .test_id_for_debugger = brk: {
+                const vm = globalThis.bunVM();
+                if (vm.debugger) |*debugger| {
+                    if (debugger.test_reporter_agent.isEnabled()) {
+                        max_test_id_for_debugger += 1;
+                        var name = bun.String.init(label);
+                        const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
+                        debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, "describe", parent_id);
+                        break :brk max_test_id_for_debugger;
+                    }
+                }
+                break :brk 0;
+            },
         };
 
         return scope.run(globalThis, function, &.{});
@@ -2227,6 +2239,19 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                         .func_has_callback = has_callback_function,
                         .timeout_millis = timeout_ms,
                         .line_number = each_data.line_number,
+                        .test_id_for_debugger = brk: {
+                            const vm = globalThis.bunVM();
+                            if (vm.debugger) |*debugger| {
+                                if (debugger.test_reporter_agent.isEnabled()) {
+                                    max_test_id_for_debugger += 1;
+                                    var name = bun.String.init(formattedLabel);
+                                    const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
+                                    debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, "test", parent_id);
+                                    break :brk max_test_id_for_debugger;
+                                }
+                            }
+                            break :brk 0;
+                        },
                     }) catch unreachable;
                 }
             } else {
@@ -2236,6 +2261,19 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     .parent = parent,
                     .file_id = parent.file_id,
                     .tag = tag,
+                    .test_id_for_debugger = brk: {
+                        const vm = globalThis.bunVM();
+                        if (vm.debugger) |*debugger| {
+                            if (debugger.test_reporter_agent.isEnabled()) {
+                                max_test_id_for_debugger += 1;
+                                var name = bun.String.init(formattedLabel);
+                                const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
+                                debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, "describe", parent_id);
+                                break :brk max_test_id_for_debugger;
+                            }
+                        }
+                        break :brk 0;
+                    },
                 };
 
                 const ret = scope.run(globalThis, function, function_args);

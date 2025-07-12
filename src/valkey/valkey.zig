@@ -429,9 +429,9 @@ pub const ValkeyClient = struct {
         this.unregisterAutoFlusher();
         this.write_buffer.deinit(this.allocator);
 
-        // If manually closing, don't attempt to reconnect
+        // If manually closing, don't attempt timer-based reconnection (immediate reconnection will handle it)
         if (this.flags.is_manually_closed) {
-            debug("skip reconnecting since the connection is manually closed", .{});
+            debug("skip timer reconnection since connection was manually closed", .{});
             this.fail("Connection closed", protocol.RedisError.ConnectionClosed);
             this.onValkeyClose();
             return;
@@ -891,12 +891,38 @@ pub const ValkeyClient = struct {
                 // Only queue if offline queue is enabled
                 if (this.flags.enable_offline_queue) {
                     try this.enqueue(command, &promise);
+                    
+                    // If the connection was manually closed but auto-reconnect is enabled,
+                    // clear the manual close flag and trigger reconnection
+                    if (this.flags.is_manually_closed and this.flags.enable_auto_reconnect) {
+                        debug("SEND: resetting manual close flag and triggering reconnection", .{});
+                        this.flags.is_manually_closed = false;
+                        this.flags.is_reconnecting = true;
+                        this.flags.needs_to_open_socket = true;
+                        this.flags.is_authenticated = false; // Reset auth state for HELLO handling
+                        this.retry_attempts = 0;
+                        this.parent().reconnect();
+                    }
                 } else {
                     promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection is closed and offline queue is disabled", .{}).toJS());
                 }
             },
             .failed => {
-                promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection has failed", .{}).toJS());
+                // If the connection failed due to manual close but auto-reconnect is enabled,
+                // reset the flags and attempt to reconnect
+                if (this.flags.is_manually_closed and this.flags.enable_auto_reconnect and this.flags.enable_offline_queue) {
+                    debug("SEND: failed connection was manually closed, queuing and triggering reconnection", .{});
+                    try this.enqueue(command, &promise);
+                    this.flags.is_manually_closed = false;
+                    this.flags.is_reconnecting = true;
+                    this.flags.needs_to_open_socket = true;
+                    this.flags.is_authenticated = false; // Reset auth state for HELLO handling
+                    this.retry_attempts = 0;
+                    this.status = .disconnected;
+                    this.parent().reconnect();
+                } else {
+                    promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection has failed", .{}).toJS());
+                }
             },
         }
 

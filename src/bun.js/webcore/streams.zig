@@ -41,7 +41,7 @@ pub const Start = union(Tag) {
                 return globalThis.throwValue(err.toJS(globalThis));
             },
             .owned_and_done => |list| {
-                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
+                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
             },
             .done => |list| {
                 return JSC.ArrayBuffer.create(globalThis, list.slice(), .Uint8Array);
@@ -565,10 +565,10 @@ pub const Result = union(Tag) {
 
         switch (this.*) {
             .owned => |list| {
-                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
+                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
             },
             .owned_and_done => |list| {
-                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
+                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
             },
             .temporary => |temp| {
                 var array = try JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);

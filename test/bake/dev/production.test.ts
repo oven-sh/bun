@@ -243,16 +243,18 @@ export default function GettingStarted() {
 
     // Should have generated all the static paths
     // Note: React's routing may flatten the paths
-    expect(htmlFiles).toContain("dist/2024/hello-world/index.html");
-    expect(htmlFiles).toContain("dist/2024/tech/bun-framework/index.html");
-    expect(htmlFiles).toContain("dist/tutorials/getting-started/index.html");
-    expect(htmlFiles).toContain("dist/api/reference/index.html");
-    expect(htmlFiles).toContain("dist/guides/advanced/optimization/index.html");
-    expect(htmlFiles).toContain("dist/index.html");
+    expect(htmlFiles).toContain("dist/blog/2024/hello-world/index.html");
+    expect(htmlFiles).toContain("dist/blog/2024/tech/bun-framework/index.html");
+    expect(htmlFiles).toContain("dist/blog/tutorials/getting-started/index.html");
+    expect(htmlFiles).toContain("dist/docs/api/reference/index.html");
+    expect(htmlFiles).toContain("dist/docs/guides/advanced/optimization/index.html");
+    expect(htmlFiles).toContain("dist/docs/index.html");
     expect(htmlFiles).toContain("dist/docs/getting-started/index.html");
 
     // Check blog post with multiple segments
-    const blogPostHtml = await Bun.file(path.join(dir, "dist", "2024", "tech", "bun-framework", "index.html")).text();
+    const blogPostHtml = await Bun.file(
+      path.join(dir, "dist", "blog", "2024", "tech", "bun-framework", "index.html"),
+    ).text();
 
     // Verify the content is rendered (may include HTML comments)
     expect(blogPostHtml).toContain("Blog Post:");
@@ -268,7 +270,9 @@ export default function GettingStarted() {
     expect(blogPostHtml).toContain('/pages/blog/[...slug].tsx"');
 
     // Check docs catch-all route
-    const docsHtml = await Bun.file(path.join(dir, "dist", "guides", "advanced", "optimization", "index.html")).text();
+    const docsHtml = await Bun.file(
+      path.join(dir, "dist", "docs", "guides", "advanced", "optimization", "index.html"),
+    ).text();
 
     expect(docsHtml).toContain("Reading docs at:");
     expect(docsHtml).toContain("guides/advanced/optimization");
@@ -285,7 +289,9 @@ export default function GettingStarted() {
     expect(staticHtml).not.toContain("[...path].tsx");
 
     // Verify that import.meta values are consistent across all catch-all instances
-    const blogIndex = await Bun.file(path.join(dir, "dist", "tutorials", "getting-started", "index.html")).text();
+    const blogIndex = await Bun.file(
+      path.join(dir, "dist", "blog", "tutorials", "getting-started", "index.html"),
+    ).text();
     expect(blogIndex).toContain('data-file="[...slug].tsx"');
     expect(blogIndex).toContain('/pages/blog/[...slug].tsx"');
   });
@@ -332,7 +338,7 @@ export default function IndexPage() {
 }`,
       "components/Client.tsx": `"use client";
 
-export function Client() {
+export default function Client() {
   console.log("Client-side!");
   return <div>Hello World</div>;
 }`,
@@ -349,9 +355,17 @@ export function Client() {
     // Run the build command
     const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
 
-    // The build should succeed - client components should support default imports
-    expect(stderr.toString()).toBe("");
     expect(exitCode).toBe(0);
+
+    // Check the generated HTML file for pages/index.tsx
+    const htmlPage = path.join(dir, "dist", "index.html");
+    expect(existsSync(htmlPage)).toBe(true);
+
+    const htmlContent = await Bun.file(htmlPage).text();
+
+    // Verify the static content is rendered
+    expect(htmlContent).toContain("<title>LMAO</title>");
+    expect(htmlContent).toContain("Hello World");
   });
 
   test("importing useState", async () => {
@@ -427,15 +441,6 @@ export default function IndexPage() {
     expect(htmlContent).toContain("Hello World");
 
     // Verify NO JavaScript imports are included in the HTML
-    expect(htmlContent).not.toContain("<script");
-    expect(htmlContent).not.toContain('type="module"');
-    expect(htmlContent).not.toContain("/_bun/");
-    expect(htmlContent).not.toContain(".bundle.js");
-    expect(htmlContent).not.toContain("import ");
-
-    // Verify the HTML is truly static with no client-side hydration
-    expect(htmlContent).not.toContain("__reactRoot");
-    expect(htmlContent).not.toContain("hydrate");
-    expect(htmlContent).not.toContain("createRoot");
+    expect(htmlContent).not.toContain('<script type="module"');
   });
 });

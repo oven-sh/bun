@@ -81,9 +81,16 @@ coverageIgnoreSourcemaps = true   # default false
 
 By default, coverage reports:
 
-1. Exclude `node_modules` directories
+1. Exclude `node_modules` directories (set `coverageIncludeNodeModules = true` to include them)
 2. Exclude files loaded via non-JS/TS loaders (e.g., .css, .txt) unless a custom JS loader is specified
 3. Include test files themselves (can be disabled with `coverageSkipTestFiles = true` as shown above)
+
+To include files from `node_modules` in your coverage report, add this to your `bunfig.toml`:
+
+```toml
+[test]
+coverageIncludeNodeModules = true
+```
 
 ### Coverage reporters
 

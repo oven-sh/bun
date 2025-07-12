@@ -765,14 +765,15 @@ install_nodejs() {
 	case "$abi" in
 	musl)
 		nodejs_mirror="https://unofficial-builds.nodejs.org/download/release"
+		nodejs_filename="node-v$nodejs_version-$nodejs_platform-$nodejs_arch-musl.tar.gz"
 		;;
 	*)
 		nodejs_mirror="https://nodejs.org/dist"
+		nodejs_filename="node-v$nodejs_version-$nodejs_platform-$nodejs_arch.tar.gz"
 		;;
 	esac
 
 	# Download Node.js binary archive
-	nodejs_filename="node-v$nodejs_version-$nodejs_platform-$nodejs_arch.tar.gz"
 	nodejs_url="$nodejs_mirror/v$nodejs_version/$nodejs_filename"
 	nodejs_tar="$(download_file "$nodejs_url")"
 	nodejs_extract_dir="$(dirname "$nodejs_tar")"

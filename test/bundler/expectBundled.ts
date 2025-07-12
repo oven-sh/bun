@@ -5,7 +5,17 @@ import { BuildConfig, BuildOutput, BunPlugin, fileURLToPath, PluginBuilder, Load
 import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -1639,6 +1649,8 @@ for (const [key, blob] of build.outputs) {
         }
       }
     }
+
+    rmdirSync(root, { recursive: true });
 
     return testRef(id, opts);
   })();

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 14
+# Version: 15
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -762,9 +762,18 @@ install_nodejs() {
 		;;
 	esac
 
+	case "$abi" in
+	musl)
+		nodejs_mirror="https://unofficial-builds.nodejs.org/download/release"
+		;;
+	*)
+		nodejs_mirror="https://nodejs.org/dist"
+		;;
+	esac
+
 	# Download Node.js binary archive
 	nodejs_filename="node-v$nodejs_version-$nodejs_platform-$nodejs_arch.tar.gz"
-	nodejs_url="https://nodejs.org/dist/v$nodejs_version/$nodejs_filename"
+	nodejs_url="$nodejs_mirror/v$nodejs_version/$nodejs_filename"
 	nodejs_tar="$(download_file "$nodejs_url")"
 	nodejs_extract_dir="$(dirname "$nodejs_tar")"
 

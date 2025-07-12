@@ -1281,7 +1281,6 @@ pub const TestCommand = struct {
                     },
                 }
             }
-            ctx.allocator.destroy(reporter);
         }
         reporter.* = CommandLineReporter{
             .jest = TestRunner{

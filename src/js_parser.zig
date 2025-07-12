@@ -17484,7 +17484,7 @@ fn NewParser_(
                     //
                     // When we see a hook call, we need to hash it, and then mark a flag so that if
                     // it is assigned to a variable, that variable also get's hashed.
-                    if (p.options.features.react_fast_refresh) try_record_hook: {
+                    if (p.options.features.react_fast_refresh or p.options.features.server_components.isServerSide()) try_record_hook: {
                         const original_name = switch (e_.target.data) {
                             inline .e_identifier,
                             .e_import_identifier,
@@ -17494,7 +17494,26 @@ fn NewParser_(
                             else => break :try_record_hook,
                         };
                         if (!ReactRefresh.isHookName(original_name)) break :try_record_hook;
-                        p.handleReactRefreshHookCall(e_, original_name);
+                        if (p.options.features.react_fast_refresh) {
+                            p.handleReactRefreshHookCall(e_, original_name);
+                        } else {
+                            // if we're in this branch then it is a server
+                            // component, error if they try to use `useState`
+                            if (bun.strings.eqlComptime(original_name, "useState") and
+                                // this feels dumb, what's a better way to detect that it's not React?
+                                !bun.strings.includes(p.source.path.text, "node_modules/react"))
+                            {
+                                p.log.addError(
+                                    p.source,
+                                    expr.loc,
+                                    std.fmt.allocPrint(
+                                        p.allocator,
+                                        "\"useState\" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component.",
+                                        .{},
+                                    ) catch bun.outOfMemory(),
+                                ) catch bun.outOfMemory();
+                            }
+                        }
                     }
 
                     // Implement constant folding for 'string'.charCodeAt(n)

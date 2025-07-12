@@ -354,7 +354,7 @@ export function Client() {
     expect(exitCode).toBe(0);
   });
 
-  test("importing from react", async () => {
+  test("importing useState", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-react-import", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
       "pages/index.tsx": `import { useState } from 'react';
@@ -383,33 +383,10 @@ export default function IndexPage() {
     const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
 
     // The build should succeed - client components should support default imports
-    expect(stderr.toString()).toBe("");
-    expect(exitCode).toBe(0);
-
-    // Verify that the build output exists
-    const buildDir = path.join(dir, ".bun");
-    expect(existsSync(buildDir)).toBe(true);
-
-    // Verify the server bundle was created
-    const serverBundle = path.join(buildDir, "server", "pages_index.ssr.js");
-    expect(existsSync(serverBundle)).toBe(true);
-
-    // Verify the client bundle was created
-    const clientBundle = path.join(buildDir, "client", "_bun", "pages_index.bundle.js");
-    expect(existsSync(clientBundle)).toBe(true);
-
-    // Verify the client bundle contains React imports
-    const clientBundleContent = await Bun.file(clientBundle).text();
-    expect(clientBundleContent).toContain("useState");
-
-    // Verify the generated HTML page exists
-    const htmlPage = path.join(dir, "dist", "index.html");
-    expect(existsSync(htmlPage)).toBe(true);
-
-    // Verify the HTML contains the expected content
-    const htmlContent = await Bun.file(htmlPage).text();
-    expect(htmlContent).toContain("Hello World");
-    expect(htmlContent).toContain("<title>LMAO</title>");
+    expect(stderr.toString()).toContain(
+      '"useState" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component.',
+    );
+    expect(exitCode).toBe(1);
   });
 
   test("don't include client code if fully static route", async () => {

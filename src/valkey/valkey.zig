@@ -891,7 +891,7 @@ pub const ValkeyClient = struct {
                 // Only queue if offline queue is enabled
                 if (this.flags.enable_offline_queue) {
                     try this.enqueue(command, &promise);
-                    
+
                     // If the connection was manually closed but auto-reconnect is enabled,
                     // clear the manual close flag and trigger reconnection
                     if (this.flags.is_manually_closed and this.flags.enable_auto_reconnect) {

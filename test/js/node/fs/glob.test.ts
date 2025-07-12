@@ -16,7 +16,9 @@ beforeAll(() => {
     },
     "folder.test": {
       "file.txt": "content",
-      "another-folder": {},
+      "another-folder": {
+        "some-file.txt": "content",
+      },
     },
   });
 });
@@ -57,6 +59,19 @@ describe("fs.glob", () => {
     });
   });
 
+  it("can filter out files (2)", done => {
+    const exclude = ["**/*.js"];
+    fs.glob("a/*", { cwd: tmp, exclude }, (err, paths) => {
+      if (err) done(err);
+      if (isWindows) {
+        expect(paths).toStrictEqual(["a\\bar.txt"]);
+      } else {
+        expect(paths).toStrictEqual(["a/bar.txt"]);
+      }
+      done();
+    });
+  });
+
   describe("invalid arguments", () => {
     it("throws if no callback is provided", () => {
       expect(() => fs.glob("*.txt")).toThrow(TypeError);
@@ -69,6 +84,11 @@ describe("fs.glob", () => {
   it("matches directories", () => {
     const paths = fs.globSync("*.test", { cwd: tmp });
     expect(paths).toContain("folder.test");
+  });
+
+  it("supports arrays of patterns", () => {
+    const expected = isWindows ? ["a\\bar.txt", "a\\baz.js"] : ["a/bar.txt", "a/baz.js"];
+    expect(fs.globSync(["a/bar.txt", "a/baz.js"], { cwd: tmp })).toStrictEqual(expected);
   });
 }); // </fs.glob>
 
@@ -110,6 +130,11 @@ describe("fs.globSync", () => {
     const expected = isWindows ? ["a\\bar.txt"] : ["a/bar.txt"];
     expect(fs.globSync("a/*", { cwd: tmp, exclude })).toStrictEqual(expected);
   });
+  it("can filter out files (2)", () => {
+    const exclude = ["**/*.js"];
+    const expected = isWindows ? ["a\\bar.txt"] : ["a/bar.txt"];
+    expect(fs.globSync("a/*", { cwd: tmp, exclude })).toStrictEqual(expected);
+  });
 
   it("works without providing options", () => {
     const oldProcessCwd = process.cwd;
@@ -123,16 +148,14 @@ describe("fs.globSync", () => {
     }
   });
 
-  describe("invalid arguments", () => {
-    // TODO: GlobSet
-    it("does not support arrays of patterns yet", () => {
-      expect(() => fs.globSync(["*.txt"])).toThrow(TypeError);
-    });
-  });
-
   it("matches directories", () => {
     const paths = fs.globSync("*.test", { cwd: tmp });
     expect(paths).toContain("folder.test");
+  });
+
+  it("supports arrays of patterns", () => {
+    const expected = isWindows ? ["a\\bar.txt", "a\\baz.js"] : ["a/bar.txt", "a/baz.js"];
+    expect(fs.globSync(["a/bar.txt", "a/baz.js"], { cwd: tmp })).toStrictEqual(expected);
   });
 }); // </fs.globSync>
 
@@ -184,5 +207,28 @@ describe("fs.promises.glob", () => {
       count++;
     }
     expect(count).toBe(1);
+  });
+
+  it("can filter out files", async () => {
+    const exclude = (path: string) => path.endsWith(".js");
+    const expected = isWindows ? ["a\\bar.txt"] : ["a/bar.txt"];
+    expect(Array.fromAsync(fs.promises.glob("a/*", { cwd: tmp, exclude }))).resolves.toStrictEqual(expected);
+  });
+
+  it("can filter out files (2)", async () => {
+    const exclude = ["**/*.js"];
+    const expected = isWindows ? ["a\\bar.txt"] : ["a/bar.txt"];
+    expect(Array.fromAsync(fs.promises.glob("a/*", { cwd: tmp, exclude }))).resolves.toStrictEqual(expected);
+
+    const exclude2 = ["folder.test/another-folder"];
+    const expected2 = isWindows ? ["folder.test\\file.txt"] : ["folder.test/file.txt"];
+    expect(
+      Array.fromAsync(fs.promises.glob("folder.test/**/*", { cwd: tmp, exclude: exclude2 })),
+    ).resolves.toStrictEqual(expected2);
+  });
+
+  it("supports arrays of patterns", async () => {
+    const expected = isWindows ? ["a\\bar.txt", "a\\baz.js"] : ["a/bar.txt", "a/baz.js"];
+    expect(Array.fromAsync(fs.promises.glob(["a/bar.txt", "a/baz.js"], { cwd: tmp }))).resolves.toStrictEqual(expected);
   });
 }); // </fs.promises.glob>

@@ -1057,7 +1057,10 @@ export class BunTestController implements vscode.Disposable {
     let version = "unknown";
 
     try {
-      const v = execSync([bunCommand, "--version"].join(" "), { encoding: "utf8" }).trim();
+      const v = execSync([process.platform === "win32" ? `"${bunCommand}"` : bunCommand, "--version"].join(" "), {
+        encoding: "utf8",
+        cwd: this.workspaceFolder.uri.fsPath,
+      }).trim();
       if (targetNum > Number.parseInt(v.replaceAll(".", ""))) {
         version = v;
       } else {
@@ -1066,6 +1069,11 @@ export class BunTestController implements vscode.Disposable {
     } catch (error) {
       output.appendLine(`Error getting Bun version: ${error}`);
       version = "unknown";
+    }
+
+    if (!version || version === "unknown") {
+      output.appendLine("Could not determine Bun version. Please ensure Bun is installed and accessible.");
+      return;
     }
 
     const selection = vscode.window.showErrorMessage(

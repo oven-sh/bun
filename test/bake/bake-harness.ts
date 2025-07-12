@@ -10,7 +10,7 @@
  * export BUN_DEV_SERVER_TEST_TEMP="/Users/clo/scratch/dev"
  */
 import { Bake, BunFile, Subprocess } from "bun";
-import fs, { readFileSync, realpathSync } from "node:fs";
+import fs, { readFileSync, realpathSync, rmdirSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import assert from "node:assert";
@@ -1810,6 +1810,8 @@ function testImpl<T extends DevServerTest>(
     }
 
     await dev.gracefulExit();
+
+    rmdirSync(root, { recursive: true });
   }
 
   try {

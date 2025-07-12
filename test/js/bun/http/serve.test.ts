@@ -1360,7 +1360,7 @@ it("does propagate type for Blob", async () => {
     port: 0,
     development: false,
     async fetch(req) {
-      expect(req.headers.get("Content-Type")).toBeNull();
+      expect(req.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
       return new Response(new Blob(["hey"], { type: "text/plain;charset=utf-8" }));
     },
   });
@@ -1389,7 +1389,7 @@ it("unix socket connection in Bun.serve", async () => {
   const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`;
   const received: Buffer[] = [];
   const { resolve, promise } = Promise.withResolvers();
-  const connection = await Bun.connect({
+  await using connection = await Bun.connect({
     unix,
     socket: {
       data(socket, data) {

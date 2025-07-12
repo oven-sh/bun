@@ -243,7 +243,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         &package_json_writer,
         current_package_json.root,
         &current_package_json.source,
-        .{
+        &.{
             .indent = current_package_json_indent,
             .mangled_props = null,
         },
@@ -320,7 +320,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 &package_json_writer2,
                 root_package_json.root,
                 &root_package_json.source,
-                .{
+                &.{
                     .indent = root_package_json.indentation,
                     .mangled_props = null,
                 },
@@ -384,7 +384,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             &package_json_writer_two,
             new_package_json,
             source,
-            .{
+            &.{
                 .indent = current_package_json_indent,
                 .mangled_props = null,
             },

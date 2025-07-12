@@ -23958,6 +23958,9 @@ fn NewParser_(
                 .ts_enums = try p.computeTsEnumsMap(allocator),
 
                 .import_meta_ref = p.import_meta_ref,
+
+                .sourceURL = p.lexer.sourceURL,
+                .sourceMappingURL = p.lexer.sourceMappingURL,
             };
         }
 

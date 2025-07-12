@@ -743,7 +743,7 @@ pub const AsyncModule = struct {
             var mapper = jsc_vm.sourceMapHandler(&printer);
             defer VirtualMachine.source_code_printer.?.* = printer;
             _ = try jsc_vm.transpiler.printWithSourceMap(
-                parse_result,
+                &parse_result,
                 @TypeOf(&printer),
                 &printer,
                 .esm_ascii,
@@ -981,6 +981,7 @@ pub fn transpileSourceCode(
                     setBreakPointOnFirstLine(),
                 .runtime_transpiler_cache = if (!disable_transpilying and !JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
                 .remove_cjs_module_wrapper = is_main and jsc_vm.module_loader.eval_source != null,
+                .parse_source_map = virtual_source != null or jsc_vm.enable_user_source_maps,
             };
             defer {
                 if (should_close_input_file_fd and input_file_fd != bun.invalid_fd) {
@@ -1029,6 +1030,12 @@ pub fn transpileSourceCode(
                     };
                 },
             };
+
+            defer {
+                if (parse_result.source_map) |source_map| {
+                    source_map.deref();
+                }
+            }
 
             const source = &parse_result.source;
 
@@ -1247,7 +1254,7 @@ pub fn transpileSourceCode(
                 var mapper = jsc_vm.sourceMapHandler(&printer);
 
                 break :brk try jsc_vm.transpiler.printWithSourceMap(
-                    parse_result,
+                    &parse_result,
                     @TypeOf(&printer),
                     &printer,
                     .esm_ascii,
@@ -2423,6 +2430,7 @@ pub const RuntimeTranspilerStore = struct {
                 .remove_cjs_module_wrapper = is_main and vm.module_loader.eval_source != null,
                 .module_type = module_type,
                 .allow_bytecode_cache = true,
+                .parse_source_map = vm.enable_user_source_maps,
             };
 
             defer {
@@ -2467,6 +2475,12 @@ pub const RuntimeTranspilerStore = struct {
 
                 return;
             };
+
+            defer {
+                if (parse_result.source_map) |source_map| {
+                    source_map.deref();
+                }
+            }
 
             if (vm.isWatcherEnabled()) {
                 if (input_file_fd.isValid()) {
@@ -2581,7 +2595,7 @@ pub const RuntimeTranspilerStore = struct {
                 var mapper = vm.sourceMapHandler(&printer);
                 defer source_code_printer.?.* = printer;
                 _ = transpiler.printWithSourceMap(
-                    parse_result,
+                    &parse_result,
                     @TypeOf(&printer),
                     &printer,
                     .esm_ascii,

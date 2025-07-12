@@ -70,6 +70,16 @@ ts_enums: TsEnumsMap = .{},
 has_commonjs_export_names: bool = false,
 import_meta_ref: Ref = Ref.None,
 
+/// `#sourceURL="foo"`
+///
+/// This is a slice into the source.contents.
+sourceURL: js_ast.Span = .{},
+
+/// `#sourceMappingURL=bar.map`
+///
+/// This is a slice into the source.contents.
+sourceMappingURL: js_ast.Span = .{},
+
 pub const CommonJSNamedExport = struct {
     loc_ref: LocRef,
     needs_decl: bool = true,

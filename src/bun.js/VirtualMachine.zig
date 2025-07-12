@@ -44,6 +44,7 @@ standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
 counters: Counters = .{},
+enable_user_source_maps: bool = false,
 
 hot_reload: bun.CLI.Command.HotReload = .none,
 jsc: *VM = undefined,
@@ -974,6 +975,7 @@ pub fn initWithModuleGraph(
         .standalone_module_graph = opts.graph.?,
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+        .enable_user_source_maps = opts.enable_user_source_maps,
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1044,6 +1046,7 @@ pub const Options = struct {
     /// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
     /// true may expose bugs that would otherwise only occur using Workers.
     destruct_main_thread_on_exit: bool = false,
+    enable_user_source_maps: bool = false,
 };
 
 pub var is_smol_mode = false;
@@ -1095,6 +1098,7 @@ pub fn init(opts: Options) !*VirtualMachine {
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+        .enable_user_source_maps = opts.enable_user_source_maps,
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1254,6 +1258,7 @@ pub fn initWorker(
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         // This option is irrelevant for Workers
         .destruct_main_thread_on_exit = false,
+        .enable_user_source_maps = opts.enable_user_source_maps,
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1343,6 +1348,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+        .enable_user_source_maps = opts.enable_user_source_maps,
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(

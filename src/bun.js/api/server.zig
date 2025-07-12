@@ -1871,7 +1871,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 &writer,
                 bun.Global.BunInfo.generate(*Transpiler, &JSC.VirtualMachine.get().transpiler, allocator) catch unreachable,
                 source,
-                .{ .mangled_props = null },
+                &.{ .mangled_props = null },
             ) catch unreachable;
 
             resp.writeStatus("200 OK");

@@ -67,7 +67,7 @@ pub const ParseUrl = struct {
 /// The mappings are owned by the `alloc` allocator.
 /// Temporary allocations are made to the `arena` allocator, which
 /// should be an arena allocator (caller is assumed to call `deinit`).
-pub fn parseUrl(
+pub fn parseInlineSourceMap(
     alloc: std.mem.Allocator,
     arena: std.mem.Allocator,
     source: []const u8,
@@ -103,6 +103,85 @@ pub fn parseUrl(
     return parseJSON(alloc, arena, json_bytes, hint);
 }
 
+pub fn parseDataURL(
+    alloc: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    source: []const u8,
+    hint: ParseUrlResultHint,
+) !ParseUrl {
+    const json_bytes = json_bytes: {
+        const data_prefix = "data:application/json";
+
+        try_data_url: {
+            debug("parse (data url, {d} bytes)", .{source.len});
+            switch (source[data_prefix.len]) {
+                ';' => {
+                    const encoding = bun.sliceTo(source[data_prefix.len + 1 ..], ',');
+                    if (!bun.strings.eqlComptime(encoding, "base64")) break :try_data_url;
+                    const base64_data = source[data_prefix.len + ";base64,".len ..];
+
+                    const len = bun.base64.decodeLen(base64_data);
+                    const bytes = arena.alloc(u8, len) catch bun.outOfMemory();
+                    const decoded = bun.base64.decode(bytes, base64_data);
+                    if (!decoded.isSuccessful()) {
+                        return error.InvalidBase64;
+                    }
+                    break :json_bytes bytes[0..decoded.count];
+                },
+                ',' => break :json_bytes source[data_prefix.len + 1 ..],
+                else => break :try_data_url,
+            }
+        }
+
+        return error.UnsupportedFormat;
+    };
+
+    return parseJSON(alloc, arena, json_bytes, hint);
+}
+
+/// Parse a sourceMappingURL comment from either a data: URI, a local file path
+/// or an absolute file path.
+pub fn parseSourceMappingURL(
+    alloc: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    relative_to_source: *const bun.logger.Source,
+    path_or_data_url: []const u8,
+    hint: ParseUrlResultHint,
+) !ParseUrl {
+    const data_prefix = "data:application/json";
+
+    if (bun.strings.hasPrefixComptime(path_or_data_url, data_prefix) and path_or_data_url.len > (data_prefix.len + 1)) {
+        return try parseDataURL(alloc, arena, path_or_data_url, hint);
+    }
+
+    if (!relative_to_source.path.isFile()) {
+        return error.UnsupportedFormat;
+    }
+
+    const path_buffer = bun.PathBufferPool.get();
+    defer bun.PathBufferPool.put(path_buffer);
+
+    const path = bun.path.joinAbsStringBufZ(
+        bun.fs.FileSystem.instance.top_level_dir,
+        path_buffer,
+        &[_][]const u8{ relative_to_source.path.sourceDir(), path_or_data_url },
+        .loose,
+    );
+
+    const json_source = try bun.sys.File.toSourceAt(
+        bun.FD.cwd(),
+        path,
+        arena,
+        .{ .convert_bom = true },
+    ).unwrap();
+    defer arena.free(json_source.contents);
+
+    var log = bun.logger.Log.init(arena);
+    defer log.deinit();
+
+    return try parseJSONFromSource(alloc, arena, &json_source, &log, hint);
+}
+
 /// Parses a JSON source-map
 ///
 /// `source` must be in UTF-8 and can be freed after this call.
@@ -115,10 +194,20 @@ pub fn parseJSON(
     source: []const u8,
     hint: ParseUrlResultHint,
 ) !ParseUrl {
-    const json_src = bun.logger.Source.initPathString("sourcemap.json", source);
     var log = bun.logger.Log.init(arena);
     defer log.deinit();
 
+    const json_src = &bun.logger.Source.initPathString("sourcemap.json", source);
+    return parseJSONFromSource(alloc, arena, json_src, &log, hint);
+}
+
+pub fn parseJSONFromSource(
+    alloc: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    json_source: *const bun.logger.Source,
+    log: *bun.logger.Log,
+    hint: ParseUrlResultHint,
+) !ParseUrl {
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store
     bun.JSAst.Expr.Data.Store.reset();
@@ -129,8 +218,8 @@ pub fn parseJSON(
         bun.JSAst.Expr.Data.Store.reset();
         bun.JSAst.Stmt.Data.Store.reset();
     }
-    debug("parse (JSON, {d} bytes)", .{source.len});
-    var json = bun.JSON.parse(&json_src, &log, arena, false) catch {
+    debug("parse (JSON, {d} bytes)", .{json_source.contents.len});
+    var json = bun.JSON.parse(json_source, log, arena, false) catch {
         return error.InvalidJSON;
     };
 
@@ -1086,7 +1175,7 @@ pub fn getSourceMapImpl(
 
             break :parsed .{
                 .is_inline_map,
-                parseUrl(
+                parseInlineSourceMap(
                     bun.default_allocator,
                     allocator,
                     found_url.slice(),
@@ -1719,7 +1808,7 @@ pub const Chunk = struct {
     pub fn NewBuilder(comptime SourceMapFormatType: type) type {
         return struct {
             const ThisBuilder = @This();
-            input_source_map: ?*SourceMap = null,
+            input_source_map: ?*ParsedSourceMap = null,
             source_map: SourceMapper,
             line_offset_tables: LineOffsetTable.List = .{},
             prev_state: SourceMapState = SourceMapState{},
@@ -1836,7 +1925,7 @@ pub const Chunk = struct {
                 var current_state = current_state_;
                 // If the input file had a source map, map all the way back to the original
                 if (b.input_source_map) |input| {
-                    if (input.find(current_state.original_line, current_state.original_column)) |mapping| {
+                    if (Mapping.find(input.mappings, current_state.original_line, current_state.original_column)) |mapping| {
                         current_state.source_index = mapping.sourceIndex();
                         current_state.original_line = mapping.originalLine();
                         current_state.original_column = mapping.originalColumn();

@@ -1430,7 +1430,7 @@ pub const CreateCommand = struct {
                     &package_json_writer,
                     package_json_expr,
                     source,
-                    .{ .mangled_props = null },
+                    &.{ .mangled_props = null },
                 ) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                     package_json_file = null;

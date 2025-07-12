@@ -2183,7 +2183,7 @@ pub const PackCommand = struct {
 
             // shouldn't be used
             &json.source,
-            .{
+            &.{
                 .indent = json.indentation,
                 .mangled_props = null,
             },

@@ -149,7 +149,7 @@ fn NewLexer_(
         code_point: CodePoint = -1,
         identifier: []const u8 = "",
         jsx_pragma: JSXPragma = .{},
-        source_mapping_url: ?js_ast.Span = null,
+
         number: f64 = 0.0,
         rescan_close_brace_as_template_token: bool = false,
         prev_error_loc: logger.Loc = logger.Loc.Empty,
@@ -168,6 +168,9 @@ fn NewLexer_(
         is_ascii_only: JSONBool = JSONBoolDefault,
         track_comments: bool = false,
         all_comments: std.ArrayList(logger.Range),
+
+        sourceMappingURL: js_ast.Span = .{},
+        sourceURL: js_ast.Span = .{},
 
         indent_info: if (json_options.guess_indentation)
             struct {
@@ -2031,7 +2034,13 @@ fn NewLexer_(
                         if (span.range.len > 0) @as(usize, @intCast(span.range.len)) else 0;
                 }
             } else if (chunk.len >= " sourceMappingURL=".len + 1 and strings.hasPrefixComptime(chunk, " sourceMappingURL=")) { // Check includes space for prefix
-                return PragmaArg.scanSourceMappingURLValue(lexer.start, offset_for_errors, chunk, &lexer.source_mapping_url);
+                return PragmaArg.scanSourceMappingURLValue(lexer.start, offset_for_errors, chunk, &lexer.sourceMappingURL);
+            } else if (chunk.len >= " sourceURL=".len + 1 and strings.hasPrefixComptime(chunk, " sourceURL=")) { // Check includes space for prefix
+                if (PragmaArg.scan(.skip_space_first, lexer.start + offset_for_errors, "sourceURL", chunk, allow_newline)) |span| {
+                    lexer.sourceURL = span;
+                    return "sourceURL".len +
+                        if (span.range.len > 0) @as(usize, @intCast(span.range.len)) else 0;
+                }
             }
 
             return 0;
@@ -3258,7 +3267,7 @@ pub const PragmaArg = enum {
     // These can be extremely long, so we use SIMD.
     /// "//# sourceMappingURL=data:/adspaoksdpkz"
     ///                       ^^^^^^^^^^^^^^^^^^
-    pub fn scanSourceMappingURLValue(start: usize, offset_for_errors: usize, chunk: string, result: *?js_ast.Span) usize {
+    pub fn scanSourceMappingURLValue(start: usize, offset_for_errors: usize, chunk: string, result: *js_ast.Span) usize {
         const prefix: u32 = " sourceMappingURL=".len;
         const url_and_rest_of_code = chunk[prefix..]; // Slice containing only the potential argument
 

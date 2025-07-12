@@ -1179,7 +1179,7 @@ pub const LinkerContext = struct {
             .{ .stmts = out_stmts },
         };
 
-        const print_options = js_printer.Options{
+        const print_options = &js_printer.Options{
             .bundling = true,
             // TODO: IIFE
             .indent = .{},

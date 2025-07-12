@@ -1404,7 +1404,8 @@ pub const TestRunnerTask = struct {
 
         if (this.needs_before_each) {
             this.needs_before_each = false;
-            const label = test_.label;
+            const label = bun.default_allocator.dupe(u8, test_.label) catch bun.outOfMemory();
+            defer bun.default_allocator.free(label);
 
             if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
                 _ = jsc_vm.uncaughtException(globalThis, err, true);

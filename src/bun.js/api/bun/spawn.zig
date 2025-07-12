@@ -280,7 +280,7 @@ pub const PosixSpawn = struct {
     pub const Actions = if (Environment.isLinux) BunSpawn.Actions else PosixSpawnActions;
     pub const Attr = if (Environment.isLinux) BunSpawn.Attr else PosixSpawnAttr;
 
-    const BunSpawnRequest = extern struct {
+    pub const BunSpawnRequest = extern struct {
         chdir_buf: ?[*:0]u8 = null,
         detached: bool = false,
         actions: ActionsList = .{},
@@ -295,9 +295,8 @@ pub const PosixSpawn = struct {
         };
 
         extern fn posix_spawn_bun(
-            pid: *c_int,
-            path: [*:0]const u8,
             request: *const BunSpawnRequest,
+            path: [*:0]const u8,
             argv: [*:null]?[*:0]const u8,
             envp: [*:null]?[*:0]const u8,
         ) isize;
@@ -309,23 +308,21 @@ pub const PosixSpawn = struct {
             envp: [*:null]?[*:0]const u8,
         ) Maybe(pid_t) {
             var req = req_;
-            var pid: c_int = 0;
 
-            const rc = posix_spawn_bun(&pid, path, &req, argv, envp);
+            const rc = posix_spawn_bun(&req, path, argv, envp);
             if (comptime bun.Environment.allow_assert)
-                bun.sys.syslog("posix_spawn_bun({s}) = {d} ({d})", .{
+                bun.sys.syslog("posix_spawn_bun({s}) = {d}", .{
                     bun.span(argv[0] orelse ""),
                     rc,
-                    pid,
                 });
 
-            if (rc == 0) {
-                return Maybe(pid_t){ .result = @intCast(pid) };
+            if (rc > 0) {
+                return Maybe(pid_t){ .result = @intCast(rc) };
             }
 
             return Maybe(pid_t){
                 .err = .{
-                    .errno = @as(bun.sys.Error.Int, @truncate(@intFromEnum(@as(std.c.E, @enumFromInt(rc))))),
+                    .errno = @as(bun.sys.Error.Int, @truncate(@intFromEnum(@as(std.c.E, @enumFromInt(-rc))))),
                     .syscall = .posix_spawn,
                     .path = bun.span(argv[0] orelse ""),
                 },
@@ -362,6 +359,7 @@ pub const PosixSpawn = struct {
                 envp,
             );
         }
+        
 
         var pid: pid_t = undefined;
         const rc = system.posix_spawn(

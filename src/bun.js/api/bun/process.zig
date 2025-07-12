@@ -1237,8 +1237,11 @@ pub fn spawnProcessPosix(
     if (comptime Environment.isLinux) {
         attr.uid = options.uid;
         attr.gid = options.gid;
+    } else if (comptime Environment.isMac) {
+        // On macOS, uid/gid are handled separately in the custom spawn implementation
+        // We don't set them on the attr here
     } else {
-        // On non-Linux platforms, throw an error if uid/gid are specified
+        // On other platforms, throw an error if uid/gid are specified
         if (options.uid != null or options.gid != null) {
             return .{ .err = bun.sys.Error.fromCode(.PERM, .posix_spawn) };
         }
@@ -1472,6 +1475,66 @@ pub fn spawnProcessPosix(
     }
 
     const argv0 = options.argv0 orelse argv[0].?;
+    
+    // On macOS, if uid/gid are specified, we need to use a custom spawn implementation
+    // because posix_spawn doesn't support uid/gid changes
+    if (comptime Environment.isMac) {
+        if (options.uid != null or options.gid != null) {
+            // We need to use our custom fork+exec implementation
+            var chdir_buf: ?[:0]u8 = null;
+            defer if (chdir_buf) |buf| bun.default_allocator.free(buf);
+            
+            if (options.cwd.len > 0) {
+                chdir_buf = try bun.default_allocator.dupeZ(u8, options.cwd);
+            }
+            
+            const spawn_request = PosixSpawn.BunSpawnRequest{
+                .chdir_buf = if (chdir_buf) |buf| buf.ptr else null,
+                .detached = options.detached,
+                .actions = .{
+                    .ptr = null,
+                    .len = 0,
+                },
+                .uid = options.uid orelse 0,
+                .gid = options.gid orelse 0,
+                .has_uid = options.uid != null,
+                .has_gid = options.gid != null,
+            };
+            
+            const spawn_result = PosixSpawn.BunSpawnRequest.spawn(
+                argv0,
+                spawn_request,
+                argv,
+                envp,
+            );
+            
+            // Continue with the rest of the function
+            var failed_after_spawn = false;
+            defer {
+                if (failed_after_spawn) {
+                    for (to_close_on_error.items) |fd| {
+                        fd.close();
+                    }
+                    to_close_on_error.clearAndFree();
+                }
+            }
+            
+            switch (spawn_result) {
+                .err => {
+                    failed_after_spawn = true;
+                    return .{ .err = spawn_result.err };
+                },
+                .result => |pid| {
+                    spawned.pid = pid;
+                    spawned.extra_pipes = extra_fds;
+                    extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
+                    
+                    return .{ .result = spawned };
+                },
+            }
+        }
+    }
+    
     const spawn_result = PosixSpawn.spawnZ(
         argv0,
         actions,

@@ -6,6 +6,10 @@ write_buffer: bun.OffsetByteList = .{},
 read_buffer: bun.OffsetByteList = .{},
 last_message_start: u32 = 0,
 requests: PostgresRequest.Queue,
+// number of pipelined requests (Bind/Execute/Prepared statements)
+pipelined_requests: u32 = 0,
+// number of non-pipelined requests (Simple/Copy)
+nonpipelinable_requests: u32 = 0,
 
 poll_ref: bun.Async.KeepAlive = .{},
 globalObject: *JSC.JSGlobalObject,
@@ -861,12 +865,20 @@ pub fn hasQueryRunning(this: *PostgresSQLConnection) bool {
     return !this.flags.is_ready_for_query or this.current() != null;
 }
 
+pub fn canPipeline(this: *PostgresSQLConnection) bool {
+    return this.nonpipelinable_requests == 0 and !this.flags.use_unnamed_prepared_statements and !this.flags.waiting_to_prepare;
+}
+
 pub const Writer = struct {
     connection: *PostgresSQLConnection,
 
     pub fn write(this: Writer, data: []const u8) AnyPostgresError!void {
         var buffer = &this.connection.write_buffer;
         try buffer.write(bun.default_allocator, data);
+        if (buffer.len() > 1024 * 1024 * 64) {
+            // too much data, flush it
+            this.connection.flushData();
+        }
     }
 
     pub fn pwrite(this: Writer, data: []const u8, index: usize) AnyPostgresError!void {
@@ -936,21 +948,32 @@ pub fn bufferedReader(this: *PostgresSQLConnection) protocol.NewReader(Reader) {
 }
 
 fn advance(this: *PostgresSQLConnection) !void {
-    while (this.requests.readableLength() > 0) {
-        var req: *PostgresSQLQuery = this.requests.peekItem(0);
+    var offset: usize = 0;
+    while (this.requests.readableLength() > offset) {
+        var req: *PostgresSQLQuery = this.requests.peekItem(offset);
         switch (req.status) {
             .pending => {
                 if (req.flags.simple) {
                     debug("executeQuery", .{});
+                    if (this.pipelined_requests > 0) {
+                        // need to wait for the previous request to finish before starting simple queries
+                        return;
+                    }
                     var query_str = req.query.toUTF8(bun.default_allocator);
                     defer query_str.deinit();
                     PostgresRequest.executeQuery(query_str.slice(), PostgresSQLConnection.Writer, this.writer()) catch |err| {
                         req.onWriteFail(err, this.globalObject, this.getQueriesArray());
-                        req.deref();
-                        this.requests.discard(1);
+                        if (offset == 0) {
+                            req.deref();
+                            this.requests.discard(1);
+                        } else {
+                            // deinit later
+                            req.status = .fail;
+                        }
 
                         continue;
                     };
+                    this.nonpipelinable_requests += 1;
                     this.flags.is_ready_for_query = false;
                     req.status = .running;
                     return;
@@ -960,10 +983,21 @@ fn advance(this: *PostgresSQLConnection) !void {
                     switch (stmt.status) {
                         .failed => {
                             bun.assert(stmt.error_response != null);
+                            if (req.flags.simple) {
+                                this.nonpipelinable_requests -= 1;
+                            } else if (req.flags.pipelined) {
+                                this.pipelined_requests -= 1;
+                            } else if (this.flags.waiting_to_prepare) {
+                                this.flags.waiting_to_prepare = false;
+                            }
                             req.onError(stmt.error_response.?, this.globalObject);
-                            req.deref();
-                            this.requests.discard(1);
-
+                            if (offset == 0) {
+                                req.deref();
+                                this.requests.discard(1);
+                            } else {
+                                // deinit later
+                                req.status = .fail;
+                            }
                             continue;
                         },
                         .prepared => {
@@ -975,14 +1009,27 @@ fn advance(this: *PostgresSQLConnection) !void {
 
                             PostgresRequest.bindAndExecute(this.globalObject, stmt, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
                                 req.onWriteFail(err, this.globalObject, this.getQueriesArray());
-                                req.deref();
-                                this.requests.discard(1);
+                                if (offset == 0) {
+                                    req.deref();
+                                    this.requests.discard(1);
+                                } else {
+                                    // deinit later
+                                    req.status = .fail;
+                                }
 
                                 continue;
                             };
+
                             this.flags.is_ready_for_query = false;
                             req.status = .binding;
-                            return;
+                            if (this.flags.use_unnamed_prepared_statements) {
+                                return;
+                            }
+                            // we can pipeline it
+                            this.pipelined_requests += 1;
+                            req.flags.pipelined = true;
+                            offset += 1;
+                            continue;
                         },
                         .pending => {
                             // statement is pending, lets write/parse it
@@ -999,15 +1046,32 @@ fn advance(this: *PostgresSQLConnection) !void {
                                     stmt.status = .failed;
                                     stmt.error_response = .{ .postgres_error = err };
                                     req.onWriteFail(err, this.globalObject, this.getQueriesArray());
-                                    req.deref();
-                                    this.requests.discard(1);
+                                    if (offset == 0) {
+                                        req.deref();
+                                        this.requests.discard(1);
+                                    } else {
+                                        // deinit later
+                                        req.status = .fail;
+                                    }
 
                                     continue;
                                 };
                                 this.flags.is_ready_for_query = false;
                                 req.status = .binding;
                                 stmt.status = .parsing;
+                                req.flags.pipelined = true;
+                                this.pipelined_requests += 1;
 
+                                if (!this.canPipeline()) {
+                                    // cannot pipeline more
+                                    return;
+                                }
+                                // we can pipeline it
+                                offset += 1;
+                                continue;
+                            }
+                            if (this.pipelined_requests > 0) {
+                                // need to wait to finish the pipeline before starting a new query preparation
                                 return;
                             }
                             const connection_writer = this.writer();
@@ -1017,6 +1081,7 @@ fn advance(this: *PostgresSQLConnection) !void {
                                 stmt.status = .failed;
 
                                 req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                bun.assert(offset == 0);
                                 req.deref();
                                 this.requests.discard(1);
 
@@ -1027,6 +1092,7 @@ fn advance(this: *PostgresSQLConnection) !void {
                                 stmt.status = .failed;
 
                                 req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                bun.assert(offset == 0);
                                 req.deref();
                                 this.requests.discard(1);
 
@@ -1034,6 +1100,7 @@ fn advance(this: *PostgresSQLConnection) !void {
                             };
                             this.flags.is_ready_for_query = false;
                             stmt.status = .parsing;
+                            this.flags.waiting_to_prepare = true;
                             return;
                         },
                         .parsing => {
@@ -1208,6 +1275,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             statement.parameters = description.parameters;
             if (statement.status == .parsing) {
                 statement.status = .prepared;
+                this.flags.waiting_to_prepare = false;
             }
         },
         .RowDescription => {

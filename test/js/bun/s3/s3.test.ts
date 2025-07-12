@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { randomUUID } from "crypto";
 import { bunRun, getSecret, isCI, tempDirWithFiles } from "harness";
-import { R } from "node_modules/msw/lib/core/HttpResponse-B07UKAkU";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);

@@ -181,7 +181,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
     GET_FIRST_VALUE
 
     auto* function = jsDynamicCast<JSFunction*>(value);
-    if (!function)
+    if (!function || function->isHostFunction())
         return JSValue::encode(jsBoolean(false));
 
     auto* executable = function->jsExecutable();
@@ -207,7 +207,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorFunction,
 {
     GET_FIRST_VALUE
     auto* function = jsDynamicCast<JSFunction*>(value);
-    if (!function)
+    if (!function || function->isHostFunction())
         return JSValue::encode(jsBoolean(false));
 
     auto* executable = function->jsExecutable();

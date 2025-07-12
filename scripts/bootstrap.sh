@@ -1413,12 +1413,12 @@ configure_core_dumps() {
 		# disable apport.service if it exists since it will override the core_pattern
 		if which systemctl >/dev/null; then
 			if systemctl list-unit-files apport.service >/dev/null; then
-				execute_sudo "$systemctl" disable --now apport.service
+				execute_sudo "$systemctl" disable --now apport.service || true
 			fi
 		fi
 
-		# load the new configuration
-		execute_sudo sysctl -p "$sysctl_file"
+		# load the new configuration (ignore permission errors)
+		execute_sudo sysctl -p "$sysctl_file" || true
 
 		# ensure that a regular user will be able to run sysctl
 		if [ -d /sbin ]; then

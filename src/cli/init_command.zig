@@ -619,7 +619,7 @@ pub const InitCommand = struct {
                     .blank => template = .blank,
                 }
 
-                try Output.writer().writeAll("\n");
+                Output.print("\n", .{});
                 Output.flush();
             } else {
                 Output.note("package.json already exists, configuring existing project", .{});

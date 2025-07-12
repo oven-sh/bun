@@ -346,7 +346,7 @@ pub const BuildCommand = struct {
         var had_err = false;
         dump: {
             defer Output.flush();
-            var writer = Output.writer();
+            var writer = Output.writerBuffered();
             var output_dir = this_transpiler.options.output_dir;
 
             const will_be_one_file =

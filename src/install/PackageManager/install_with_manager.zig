@@ -867,6 +867,8 @@ fn printInstallSummary(
     did_meta_hash_change: bool,
     log_level: Options.LogLevel,
 ) !void {
+    defer Output.flush();
+
     var printed_timestamp = false;
     if (this.options.do.summary) {
         var printer = Lockfile.Printer{
@@ -876,10 +878,17 @@ fn printInstallSummary(
             .successfully_installed = install_summary.successfully_installed,
         };
 
-        switch (Output.enable_ansi_colors) {
-            inline else => |enable_ansi_colors| {
-                try Lockfile.Printer.Tree.print(&printer, this, Output.WriterType, Output.writer(), enable_ansi_colors, log_level);
-            },
+        {
+            Output.flush();
+            // Ensure at this point buffering is enabled.
+            // We deliberately do not disable it after this.
+            Output.enableBuffering();
+            const writer = Output.writerBuffered();
+            switch (Output.enable_ansi_colors) {
+                inline else => |enable_ansi_colors| {
+                    try Lockfile.Printer.Tree.print(&printer, this, @TypeOf(writer), writer, enable_ansi_colors, log_level);
+                },
+            }
         }
 
         if (!did_meta_hash_change) {

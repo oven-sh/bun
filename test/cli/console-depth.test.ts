@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles, isLinux, isMacOS, isWindows } from "harness";
-import { join } from "path";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 describe("console depth", () => {
   const deepObject = {
@@ -13,26 +12,23 @@ describe("console depth", () => {
                 level7: {
                   level8: {
                     level9: {
-                      level10: "deep value"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
+                      level10: "deep value",
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   };
 
   const testScript = `console.log(${JSON.stringify(deepObject)});`;
 
   function normalizeOutput(output: string): string {
     // Normalize line endings and remove timestamps/file paths that might be flaky
-    return output
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "\n")
-      .trim();
+    return output.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
   }
 
   test("default console depth should be 8", async () => {
@@ -54,7 +50,7 @@ describe("console depth", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    
+
     const output = normalizeOutput(stdout);
     // Should go to level 8 and show [Object ...] for level 9
     expect(output).toContain("level8");
@@ -81,7 +77,7 @@ describe("console depth", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    
+
     const output = normalizeOutput(stdout);
     // Should go to level 3 and show [Object ...] for level 4
     expect(output).toContain("level3");
@@ -109,7 +105,7 @@ describe("console depth", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    
+
     const output = normalizeOutput(stdout);
     // Should show the full object including level 10
     expect(output).toContain("level10");
@@ -137,7 +133,7 @@ describe("console depth", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    
+
     const output = normalizeOutput(stdout);
     // Should go to level 4 and show [Object ...] for level 5
     expect(output).toContain("level4");
@@ -165,7 +161,7 @@ describe("console depth", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    
+
     const output = normalizeOutput(stdout);
     // CLI should override bunfig: depth 2 instead of 6
     expect(output).toContain("level2");
@@ -219,7 +215,7 @@ describe("console depth", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    
+
     const output = normalizeOutput(stdout);
     // With depth 0, should show property names but not expand them
     expect(output).toContain("level1: [Object ...]");
@@ -253,7 +249,7 @@ describe("console depth", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    
+
     const allOutput = normalizeOutput(stdout + stderr);
     // All console methods should respect the depth setting
     expect(allOutput).toContain("LOG:");

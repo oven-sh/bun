@@ -270,21 +270,27 @@ export function generateCompactStringTable(
   const entryPositions = new Map<string, { groupIndex: number; positionInGroup: number }>();
 
   for (const group of lengthGroups) {
-    const seen = new Map<string, number>();
-    let position = 0;
-
-    // Process in sorted order to match packing
-    const sorted = [...group.strings].sort((a, b) => a.value.localeCompare(b.value));
-
-    for (const str of sorted) {
-      if (!seen.has(str.value)) {
-        seen.set(str.value, position++);
+    // Get unique values in this length group (must match packing logic exactly)
+    const uniqueInGroup = new Map<string, string[]>();
+    for (const { name, value } of group.strings) {
+      if (!uniqueInGroup.has(value)) {
+        uniqueInGroup.set(value, []);
       }
-      entryPositions.set(str.name, {
-        groupIndex: lengthGroupMap.get(group.length)!.index,
-        positionInGroup: seen.get(str.value)!,
-      });
+      uniqueInGroup.get(value)!.push(name);
     }
+
+    // Sort values for consistent ordering (must match packing logic exactly)
+    const sortedValues = Array.from(uniqueInGroup.keys()).sort();
+
+    // Assign positions
+    sortedValues.forEach((value, position) => {
+      for (const name of uniqueInGroup.get(value)!) {
+        entryPositions.set(name, {
+          groupIndex: lengthGroupMap.get(group.length)!.index,
+          positionInGroup: position,
+        });
+      }
+    });
   }
 
   // Calculate bits needed

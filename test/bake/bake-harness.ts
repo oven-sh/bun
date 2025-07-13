@@ -1143,7 +1143,7 @@ export class Client extends EventEmitter {
   }
 
   /**
-   * Looks through loaded stylesheets to find a rule with this EXACT selector,
+   * Looks through all loaded stylesheets to find a rule with this EXACT selector,
    * then it returns the values in it.
    */
   style(selector: string): LazyStyle {

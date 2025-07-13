@@ -352,7 +352,7 @@ pub const Bunfig = struct {
                             },
                             .e_array => |arr| {
                                 if (arr.items.len == 0) break :brk;
-                                
+
                                 const patterns = try allocator.alloc(string, arr.items.len);
                                 for (arr.items.slice(), 0..) |item, i| {
                                     if (item.data != .e_string) {

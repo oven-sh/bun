@@ -27,7 +27,7 @@ describe("console depth", () => {
   const testScript = `console.log(${JSON.stringify(deepObject)});`;
 
   function normalizeOutput(output: string): string {
-    // Normalize line endings and remove timestamps/file paths that might be flaky
+    // Normalize line endings and trim whitespace
     return output.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
   }
 
@@ -50,12 +50,27 @@ describe("console depth", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-
-    const output = normalizeOutput(stdout);
-    // Should go to level 8 and show [Object ...] for level 9
-    expect(output).toContain("level8");
-    expect(output).toContain("level9: [Object ...]");
-    expect(output).not.toContain("level10");
+    expect(normalizeOutput(stdout)).toMatchInlineSnapshot(`
+"{
+  level1: {
+    level2: {
+      level3: {
+        level4: {
+          level5: {
+            level6: {
+              level7: {
+                level8: {
+                  level9: [Object ...],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}"
+`);
   });
 
   test("--console-depth flag sets custom depth", async () => {
@@ -77,13 +92,17 @@ describe("console depth", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-
-    const output = normalizeOutput(stdout);
-    // Should go to level 3 and show [Object ...] for level 4
-    expect(output).toContain("level3");
-    expect(output).toContain("level4: [Object ...]");
-    expect(output).not.toContain("level5");
-    expect(output).not.toContain("level8");
+    expect(normalizeOutput(stdout)).toMatchInlineSnapshot(`
+"{
+  level1: {
+    level2: {
+      level3: {
+        level4: [Object ...],
+      },
+    },
+  },
+}"
+`);
   });
 
   test("--console-depth with higher value shows deeper nesting", async () => {
@@ -105,12 +124,29 @@ describe("console depth", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-
-    const output = normalizeOutput(stdout);
-    // Should show the full object including level 10
-    expect(output).toContain("level10");
-    expect(output).toContain("deep value");
-    expect(output).not.toContain("[Object ...]");
+    expect(normalizeOutput(stdout)).toMatchInlineSnapshot(`
+"{
+  level1: {
+    level2: {
+      level3: {
+        level4: {
+          level5: {
+            level6: {
+              level7: {
+                level8: {
+                  level9: {
+                    level10: \"deep value\",
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}"
+`);
   });
 
   test("bunfig.toml console.depth configuration", async () => {
@@ -133,12 +169,19 @@ describe("console depth", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-
-    const output = normalizeOutput(stdout);
-    // Should go to level 4 and show [Object ...] for level 5
-    expect(output).toContain("level4");
-    expect(output).toContain("level5: [Object ...]");
-    expect(output).not.toContain("level6");
+    expect(normalizeOutput(stdout)).toMatchInlineSnapshot(`
+"{
+  level1: {
+    level2: {
+      level3: {
+        level4: {
+          level5: [Object ...],
+        },
+      },
+    },
+  },
+}"
+`);
   });
 
   test("CLI flag overrides bunfig.toml", async () => {
@@ -161,13 +204,15 @@ describe("console depth", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-
-    const output = normalizeOutput(stdout);
-    // CLI should override bunfig: depth 2 instead of 6
-    expect(output).toContain("level2");
-    expect(output).toContain("level3: [Object ...]");
-    expect(output).not.toContain("level4");
-    expect(output).not.toContain("level6");
+    expect(normalizeOutput(stdout)).toMatchInlineSnapshot(`
+"{
+  level1: {
+    level2: {
+      level3: [Object ...],
+    },
+  },
+}"
+`);
   });
 
   test("invalid --console-depth value shows error", async () => {
@@ -190,10 +235,8 @@ describe("console depth", () => {
     ]);
 
     expect(exitCode).toBe(1);
-    // The error message should be somewhere in the output
-    const allOutput = stdout + stderr;
-    expect(allOutput).toContain("Invalid value for --console-depth");
-    expect(allOutput).toContain("Must be a positive integer");
+    const allOutput = normalizeOutput(stdout + stderr);
+    expect(allOutput).toMatchInlineSnapshot(`"error: Invalid value for --console-depth: \"invalid\". Must be a positive integer"`); 
   });
 
   test("edge case: depth 0 should show only top level structure", async () => {
@@ -215,11 +258,11 @@ describe("console depth", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-
-    const output = normalizeOutput(stdout);
-    // With depth 0, should show property names but not expand them
-    expect(output).toContain("level1: [Object ...]");
-    expect(output).not.toContain("level2");
+    expect(normalizeOutput(stdout)).toMatchInlineSnapshot(`
+"{
+  level1: [Object ...],
+}"
+`);
   });
 
   test("console depth affects console.log, console.error, and console.warn", async () => {
@@ -249,14 +292,28 @@ describe("console depth", () => {
     ]);
 
     expect(exitCode).toBe(0);
-
-    const allOutput = normalizeOutput(stdout + stderr);
-    // All console methods should respect the depth setting
-    expect(allOutput).toContain("LOG:");
-    expect(allOutput).toContain("ERROR:");
-    expect(allOutput).toContain("WARN:");
-    expect(allOutput).toContain("level2");
-    expect(allOutput).toContain("level3: [Object ...]");
-    expect(allOutput).not.toContain("level4");
+    expect(normalizeOutput(stdout + stderr)).toMatchInlineSnapshot(`
+"LOG: {
+  level1: {
+    level2: {
+      level3: [Object ...],
+    },
+  },
+}
+ERROR: {
+  level1: {
+    level2: {
+      level3: [Object ...],
+    },
+  },
+}
+WARN: {
+  level1: {
+    level2: {
+      level3: [Object ...],
+    },
+  },
+}"
+`);
   });
 });

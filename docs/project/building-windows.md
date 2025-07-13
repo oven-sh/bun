@@ -136,7 +136,9 @@ You should add this to `$Env:PATH`. The simplest way to do so is to open the sta
 
 ## Tests
 
-You can run the test suite either using `bun test <path>` or by using the wrapper script `bun node:test <path>`. The internal test package is a wrapper cli to run every test file in a separate instance of bun.exe, to prevent a crash in the test runner from stopping the entire suite.
+
+You can run the test suite either using `bun test <path>` or by using the wrapper script `bun node:test <path>`. The `bun node:test` command runs every test file in a separate instance of bun.exe, to prevent a crash in the test runner from stopping the entire suite.
+
 
 ```ps1
 # Setup

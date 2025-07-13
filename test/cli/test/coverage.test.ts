@@ -146,6 +146,67 @@ Ran 1 test across 1 file. [XXXms]
   expect(result.exitCode).toBe(0);
 });
 
+test("coveragePathIgnorePatterns - partial coverage without nan", () => {
+  const dir = tempDirWithFiles("cov", {
+    "bunfig.toml": `
+[test]
+coveragePathIgnorePatterns = "ignore-me.ts"
+`,
+    "include-me.ts": `
+export function includeMe() {
+  return "included";
+}
+
+export function neverCalled() {
+  return "never called";
+}
+`,
+    "ignore-me.ts": `
+export function ignoreMe() {
+  return "ignored";
+}
+`,
+    "test.test.ts": `
+import { test, expect } from "bun:test";
+import { includeMe } from "./include-me";
+import { ignoreMe } from "./ignore-me";
+
+test("should call only some functions", () => {
+  expect(includeMe()).toBe("included");
+  expect(ignoreMe()).toBe("ignored");
+  // Note: neverCalled() is not called, so coverage should be partial
+});
+`,
+  });
+  
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+  
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output and check for nan values
+  stderr = stderr
+    .replace(/v\d+\.\d+\.\d+/g, "vX.X.X")
+    .replace(/\\\\/g, "/")
+    .replace(/\\\w:/g, "/")
+    .replace(/\d+(\.\d+)?ms/g, "XXXms")
+    .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
+    .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]")
+    .replace(/\d+ expect\(\) calls?/g, "X expect() calls");
+    
+  // Verify no nan values appear in coverage percentages
+  expect(stderr).not.toContain("nan");
+  expect(stderr).not.toContain("NaN");
+  expect(stderr).not.toContain("Infinity");
+  expect(stderr).toContain("include-me.ts");
+  expect(stderr).not.toContain("ignore-me.ts");
+  expect(result.exitCode).toBe(0);
+});
+
 test("coveragePathIgnorePatterns - array of patterns", () => {
   const dir = tempDirWithFiles("cov", {
     "bunfig.toml": `
@@ -394,13 +455,14 @@ test("should pass", () => {
   stderr = stderr
     .replace(/\\\\/g, "/")
     .replace(/\\\w:/g, "/")
-    .replace(/\/tmp\/cov_[^\/]+\//g, "/tmp/cov_XXXXXX/");
+    .replace(/[^:\s]+[\/\\]cov_[^\/\\]+[\/\\]/g, "TEMP_DIR/")
+    .replace(/at [^:\s]+[\/\\]cov_[^\/\\]+[\/\\]/g, "at TEMP_DIR/");
     
   expect(stderr).toMatchInlineSnapshot(`
 "3 | coveragePathIgnorePatterns = 123
                                  ^
 error: coveragePathIgnorePatterns must be a string or array of strings
-    at /tmp/cov_XXXXXX/bunfig.toml:3:30
+    at TEMP_DIR/bunfig.toml:3:30
 
 Invalid Bunfig: failed to load bunfig
 "
@@ -436,13 +498,14 @@ test("should pass", () => {
   stderr = stderr
     .replace(/\\\\/g, "/")
     .replace(/\\\w:/g, "/")
-    .replace(/\/tmp\/cov_[^\/]+\//g, "/tmp/cov_XXXXXX/");
+    .replace(/[^:\s]+[\/\\]cov_[^\/\\]+[\/\\]/g, "TEMP_DIR/")
+    .replace(/at [^:\s]+[\/\\]cov_[^\/\\]+[\/\\]/g, "at TEMP_DIR/");
     
   expect(stderr).toMatchInlineSnapshot(`
 "3 | coveragePathIgnorePatterns = ["valid-pattern", 123]
                                                    ^
 error: coveragePathIgnorePatterns array must contain only strings
-    at /tmp/cov_XXXXXX/bunfig.toml:3:48
+    at TEMP_DIR/bunfig.toml:3:48
 
 Invalid Bunfig: failed to load bunfig
 "

@@ -93,8 +93,8 @@ pub const us_bun_verify_error_t = extern struct {
         const reason = if (this.reason == null) "" else this.reason[0..bun.len(this.reason)];
 
         const fallback = JSC.SystemError{
-            .code = bun.String.createUTF8(code),
-            .message = bun.String.createUTF8(reason),
+            .code = bun.String.cloneUTF8(code),
+            .message = bun.String.cloneUTF8(reason),
         };
 
         return fallback.toErrorInstance(globalObject);

@@ -463,9 +463,9 @@ fn appendDirectoryAssumeCapacity(
             null,
         );
     } else if (Environment.isLinux) {
-        const buf = bun.PathBufferPool.get();
+        const buf = bun.path_buffer_pool.get();
         defer {
-            bun.PathBufferPool.put(buf);
+            bun.path_buffer_pool.put(buf);
         }
         const path: [:0]const u8 = if (clone_file_path and file_path_.len > 0 and file_path_[file_path_.len - 1] == 0)
             file_path_[0 .. file_path_.len - 1 :0]

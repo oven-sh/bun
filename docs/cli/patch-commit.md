@@ -1,6 +1,6 @@
 An alias for `bun patch --commit` to maintain compatibility with pnpm.
 
-To get started with patch, first prepare the package for patching with [`bun patch <pkg>`](https://bun.sh/docs/install/patch).
+To get started with patch, first prepare the package for patching with [`bun patch <pkg>`](https://bun.com/docs/install/patch).
 
 ### `--patches-dir`
 

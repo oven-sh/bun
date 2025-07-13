@@ -491,12 +491,12 @@ pub const Mapping = struct {
             const name = source_map.external_source_names[@intCast(lookup.mapping.source_index)];
 
             if (source_map.is_standalone_module_graph) {
-                return bun.String.createUTF8(name);
+                return bun.String.cloneUTF8(name);
             }
 
             if (std.fs.path.isAbsolute(base_filename)) {
                 const dir = bun.path.dirname(base_filename, .auto);
-                return bun.String.createUTF8(bun.path.joinAbs(dir, .auto, name));
+                return bun.String.cloneUTF8(bun.path.joinAbs(dir, .auto, name));
             }
 
             return bun.String.init(name);
@@ -1100,8 +1100,8 @@ pub fn getSourceMapImpl(
 
         // try to load a .map file
         if (load_hint != .is_inline_map) try_external: {
-            var load_path_buf: *bun.PathBuffer = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(load_path_buf);
+            var load_path_buf: *bun.PathBuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(load_path_buf);
             if (source_filename.len + 4 > load_path_buf.len)
                 break :try_external;
             @memcpy(load_path_buf[0..source_filename.len], source_filename);

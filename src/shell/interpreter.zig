@@ -820,8 +820,8 @@ pub const Interpreter = struct {
         };
 
         // Avoid the large stack allocation on Windows.
-        const pathbuf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(pathbuf);
+        const pathbuf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(pathbuf);
         const cwd: [:0]const u8 = switch (Syscall.getcwdZ(pathbuf)) {
             .result => |cwd| cwd,
             .err => |err| {
@@ -1701,15 +1701,15 @@ pub const ShellSyscall = struct {
 
     pub fn statat(dir: bun.FileDescriptor, path_: [:0]const u8) Maybe(bun.Stat) {
         if (bun.Environment.isWindows) {
-            const buf: *bun.PathBuffer = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf: *bun.PathBuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
             const path = switch (getPath(dir, path_, buf)) {
                 .err => |e| return .{ .err = e },
                 .result => |p| p,
             };
 
             return switch (Syscall.stat(path)) {
-                .err => |e| .{ .err = e.clone(bun.default_allocator) catch bun.outOfMemory() },
+                .err => |e| .{ .err = e.clone(bun.default_allocator) },
                 .result => |s| .{ .result = s },
             };
         }
@@ -1723,8 +1723,8 @@ pub const ShellSyscall = struct {
         if (bun.Environment.isWindows) {
             if (flags & bun.O.DIRECTORY != 0) {
                 if (ResolvePath.Platform.posix.isAbsolute(path[0..path.len])) {
-                    const buf: *bun.PathBuffer = bun.PathBufferPool.get();
-                    defer bun.PathBufferPool.put(buf);
+                    const buf: *bun.PathBuffer = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(buf);
                     const p = switch (getPath(dir, path, buf)) {
                         .result => |p| p,
                         .err => |e| return .{ .err = e },
@@ -1740,8 +1740,8 @@ pub const ShellSyscall = struct {
                 };
             }
 
-            const buf: *bun.PathBuffer = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf: *bun.PathBuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
             const p = switch (getPath(dir, path, buf)) {
                 .result => |p| p,
                 .err => |e| return .{ .err = e },

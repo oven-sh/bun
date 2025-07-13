@@ -16,6 +16,31 @@ pub fn buntaghashbuf_make(buf: *BuntagHashBuf, patch_hash: u64) [:0]u8 {
     return bunhashtag;
 }
 
+pub const StorePathFormatter = struct {
+    str: string,
+
+    pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        // if (!this.opts.replace_slashes) {
+        //     try writer.writeAll(this.str);
+        //     return;
+        // }
+
+        for (this.str) |c| {
+            switch (c) {
+                '/' => try writer.writeByte('+'),
+                '\\' => try writer.writeByte('+'),
+                else => try writer.writeByte(c),
+            }
+        }
+    }
+};
+
+pub fn fmtStorePath(str: string) StorePathFormatter {
+    return .{
+        .str = str,
+    };
+}
+
 // these bytes are skipped
 // so we just make it repeat bun bun bun bun bun bun bun bun bun
 // because why not
@@ -192,6 +217,7 @@ pub const DependencyInstallContext = struct {
 pub const TaskCallbackContext = union(enum) {
     dependency: DependencyID,
     dependency_install_context: DependencyInstallContext,
+    isolated_package_install_context: Store.Entry.Id,
     root_dependency: DependencyID,
     root_request_id: PackageID,
 };
@@ -227,6 +253,7 @@ pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.zig").L
 pub const PackageInstall = @import("./PackageInstall.zig").PackageInstall;
 pub const Repository = @import("./repository.zig").Repository;
 pub const Resolution = @import("./resolution.zig").Resolution;
+pub const Store = @import("./isolated_install/Store.zig").Store;
 
 pub const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 pub const IdentityContext = @import("../identity_context.zig").IdentityContext;

@@ -167,7 +167,7 @@ pub const FSWatcher = struct {
         pub fn dupe(event: Event) !Event {
             return switch (event) {
                 inline .rename, .change => |path, t| @unionInit(Event, @tagName(t), try bun.default_allocator.dupe(u8, path)),
-                .@"error" => |err| .{ .@"error" = try err.clone(bun.default_allocator) },
+                .@"error" => |err| .{ .@"error" = err.clone(bun.default_allocator) },
                 inline else => |value, t| @unionInit(Event, @tagName(t), value),
             };
         }
@@ -643,11 +643,11 @@ pub const FSWatcher = struct {
     }
 
     pub fn init(args: Arguments) bun.JSC.Maybe(*FSWatcher) {
-        const joined_buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(joined_buf);
+        const joined_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(joined_buf);
         const file_path: [:0]const u8 = brk: {
-            const buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
             var slice = args.path.slice();
             if (bun.strings.startsWith(slice, "file://")) {
                 slice = slice[6..];

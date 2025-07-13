@@ -779,7 +779,24 @@ pub const CommandLineReporter = struct {
             var len = "All files".len;
             for (byte_ranges) |*entry| {
                 const utf8 = entry.source_url.slice();
-                len = @max(bun.path.relative(relative_dir, utf8).len, len);
+                const relative_path = bun.path.relative(relative_dir, utf8);
+                
+                // Check if this file should be ignored based on coveragePathIgnorePatterns
+                if (opts.ignore_patterns.len > 0) {
+                    var should_ignore = false;
+                    for (opts.ignore_patterns) |pattern| {
+                        if (bun.glob.match(bun.default_allocator, pattern, relative_path).matches()) {
+                            should_ignore = true;
+                            break;
+                        }
+                    }
+                    
+                    if (should_ignore) {
+                        continue;
+                    }
+                }
+                
+                len = @max(relative_path.len, len);
             }
 
             break :brk len;
@@ -881,6 +898,24 @@ pub const CommandLineReporter = struct {
         // --- LCOV ---
 
         for (byte_ranges) |*entry| {
+            // Check if this file should be ignored based on coveragePathIgnorePatterns
+            if (opts.ignore_patterns.len > 0) {
+                const utf8 = entry.source_url.slice();
+                const relative_path = bun.path.relative(relative_dir, utf8);
+                
+                var should_ignore = false;
+                for (opts.ignore_patterns) |pattern| {
+                    if (bun.glob.match(bun.default_allocator, pattern, relative_path).matches()) {
+                        should_ignore = true;
+                        break;
+                    }
+                }
+                
+                if (should_ignore) {
+                    continue;
+                }
+            }
+
             var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
             defer report.deinit(bun.default_allocator);
 
@@ -1006,6 +1041,7 @@ pub const TestCommand = struct {
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
+        ignore_patterns: []const string = &.{},
     };
     pub const Reporter = enum {
         text,

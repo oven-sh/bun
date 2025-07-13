@@ -226,7 +226,15 @@ export default [
       unsubscribe: { fn: "unsubscribe" },
       punsubscribe: { fn: "punsubscribe" },
       pubsub: { fn: "pubsub" },
+      on: {
+        fn: "on",
+        length: 2,
+      },
+      off: {
+        fn: "off",
+        length: 2,
+      },
     },
-    values: ["onconnect", "onclose", "connectionPromise", "hello"],
+    values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptions"],
   }),
 ];

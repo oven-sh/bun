@@ -170,6 +170,9 @@ pub const ValkeyClient = struct {
     auto_flusher: AutoFlusher = .{},
 
     vm: *JSC.VirtualMachine,
+    
+    // PubSub callback for handling subscription messages
+    pubsub_callback: ?*const fn (*ValkeyClient, channel: []const u8, message: []const u8) void = null,
 
     /// Clean up resources used by the Valkey client
     pub fn deinit(this: *@This(), globalObjectOrFinalizing: ?*JSC.JSGlobalObject) void {
@@ -662,9 +665,122 @@ pub const ValkeyClient = struct {
         }
     }
 
+    /// Handle Push messages for PubSub
+    fn handlePushMessage(this: *ValkeyClient, push: *protocol.Push) !void {
+        debug("handlePushMessage: kind={s}, data_len={d}", .{ push.kind, push.data.len });
+
+        // Handle different push message types
+        if (std.mem.eql(u8, push.kind, "message") or 
+            std.mem.eql(u8, push.kind, "pmessage") or
+            std.mem.eql(u8, push.kind, "smessage")) {
+            
+            // Pubsub message format: [kind, channel, message] or [kind, pattern, channel, message]
+            if (push.data.len >= 2) {
+                var channel: []const u8 = "";
+                var message: []const u8 = "";
+                var pattern: []const u8 = "";
+
+                if (std.mem.eql(u8, push.kind, "pmessage") and push.data.len >= 3) {
+                    // Pattern message: [pattern, channel, message]
+                    switch (push.data[0]) {
+                        .SimpleString => |str| {
+                            pattern = str;
+                        },
+                        .BulkString => |maybe_str| {
+                            if (maybe_str) |str| {
+                                pattern = str;
+                            }
+                        },
+                        else => return,
+                    }
+                    switch (push.data[1]) {
+                        .SimpleString => |str| {
+                            channel = str;
+                        },
+                        .BulkString => |maybe_str| {
+                            if (maybe_str) |str| {
+                                channel = str;
+                            }
+                        },
+                        else => return,
+                    }
+                    switch (push.data[2]) {
+                        .SimpleString => |str| {
+                            message = str;
+                        },
+                        .BulkString => |maybe_str| {
+                            if (maybe_str) |str| {
+                                message = str;
+                            }
+                        },
+                        else => return,
+                    }
+                } else {
+                    // Regular message: [channel, message]
+                    switch (push.data[0]) {
+                        .SimpleString => |str| {
+                            channel = str;
+                        },
+                        .BulkString => |maybe_str| {
+                            if (maybe_str) |str| {
+                                channel = str;
+                            }
+                        },
+                        else => return,
+                    }
+                    switch (push.data[1]) {
+                        .SimpleString => |str| {
+                            message = str;
+                        },
+                        .BulkString => |maybe_str| {
+                            if (maybe_str) |str| {
+                                message = str;
+                            }
+                        },
+                        else => return,
+                    }
+                }
+
+                // Call the JavaScript callback
+                this.parent().onPubSubMessage(push.kind, pattern, channel, message);
+            }
+        } else if (std.mem.eql(u8, push.kind, "subscribe") or
+                   std.mem.eql(u8, push.kind, "psubscribe") or 
+                   std.mem.eql(u8, push.kind, "ssubscribe") or
+                   std.mem.eql(u8, push.kind, "unsubscribe") or
+                   std.mem.eql(u8, push.kind, "punsubscribe") or
+                   std.mem.eql(u8, push.kind, "sunsubscribe")) {
+            // Subscription acknowledgment: [channel, subscription_count]
+            debug("Subscription acknowledgment: {s}", .{push.kind});
+            
+            // Resolve the pending subscription command
+            var pair = this.in_flight.readItem() orelse {
+                debug("Received subscription acknowledgment but no promise in queue", .{});
+                return;
+            };
+
+            const globalThis = this.globalObject();
+            const loop = this.vm.eventLoop();
+
+            loop.enter();
+            defer loop.exit();
+
+            // Create a RESP value from the push data for the promise resolution
+            var resp_value = protocol.RESPValue{ .Array = push.data };
+            pair.promise.resolve(globalThis, &resp_value);
+        }
+    }
+
     /// Handle Valkey protocol response
     fn handleResponse(this: *ValkeyClient, value: *protocol.RESPValue) !void {
         debug("onData() {any}", .{value.*});
+        
+        // Handle Push messages for PubSub
+        if (value.* == .Push) {
+            try this.handlePushMessage(&value.Push);
+            return;
+        }
+        
         // Special handling for the initial HELLO response
         if (!this.flags.is_authenticated) {
             this.handleHelloResponse(value);

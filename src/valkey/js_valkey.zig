@@ -477,6 +477,63 @@ pub const JSValkeyClient = struct {
     pub fn onValkeyTimeout(this: *JSValkeyClient) void {
         this.clientFail("Connection timeout", protocol.RedisError.ConnectionClosed);
     }
+    
+    /// Handle PubSub messages from Valkey
+    pub fn onPubSubMessage(this: *JSValkeyClient, kind: []const u8, pattern: []const u8, channel: []const u8, message: []const u8) void {
+        const this_value = this.this_value.tryGet() orelse return;
+        const globalObject = this.globalObject;
+        const loop = this.client.vm.eventLoop();
+        
+        loop.enter();
+        defer loop.exit();
+        
+        // Get the subscriptions object
+        if (js.subscriptionsGetCached(this_value)) |subscriptions| {
+            // For pattern messages, use the pattern as the key, otherwise use the channel
+            const callback_key = if (pattern.len > 0) pattern else channel;
+            
+            // Get callbacks for this channel/pattern
+            if (subscriptions.get(globalObject, callback_key) catch .js_undefined) |callbacks_value| {
+                if (callbacks_value.isArray()) {
+                    const callbacks_array = callbacks_value;
+                    const length = callbacks_array.getLength(globalObject) catch return;
+                    
+                    // Create event data
+                    var event_obj = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+                    
+                    // Add event type
+                    const kind_str = bun.String.createUTF8ForJS(globalObject, kind);
+                    event_obj.put(globalObject, "type", kind_str);
+                    
+                    // Add channel
+                    const channel_str = bun.String.createUTF8ForJS(globalObject, channel);
+                    event_obj.put(globalObject, "channel", channel_str);
+                    
+                    // Add message
+                    const message_str = bun.String.createUTF8ForJS(globalObject, message);
+                    event_obj.put(globalObject, "message", message_str);
+                    
+                    // Add pattern if it's a pattern message
+                    if (pattern.len > 0) {
+                        const pattern_str = bun.String.createUTF8ForJS(globalObject, pattern);
+                        event_obj.put(globalObject, "pattern", pattern_str);
+                    }
+                    
+                    // Call all callbacks for this channel
+                    for (0..@intCast(length)) |i| {
+                        const callback = callbacks_array.getIndex(globalObject, @intCast(i)) catch continue;
+                        if (!callback.isEmptyOrUndefinedOrNull()) {
+                            if (callback.isCallable()) {
+                                _ = callback.call(globalObject, this_value, &[_]JSValue{event_obj}) catch |e| {
+                                    globalObject.reportActiveExceptionAsUnhandled(e);
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     pub fn clientFail(this: *JSValkeyClient, message: []const u8, err: protocol.RedisError) void {
         this.client.fail(message, err);
@@ -705,6 +762,113 @@ pub const JSValkeyClient = struct {
     pub const zrank = fns.zrank;
     pub const zrevrank = fns.zrevrank;
     pub const zscore = fns.zscore;
+
+    /// Add event listener for PubSub channels
+    pub fn on(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const arguments = callframe.arguments();
+        if (arguments.len < 2) {
+            return globalObject.throwInvalidArguments("Expected channel and callback arguments", .{});
+        }
+        
+        const channel_arg = arguments[0];
+        const callback_arg = arguments[1];
+        
+        if (!callback_arg.isCallable()) {
+            return globalObject.throwInvalidArguments("Expected callback to be a function", .{});
+        }
+        
+        const channel_str = try channel_arg.toBunString(globalObject);
+        defer channel_str.deref();
+        
+        const this_value = callframe.this();
+        
+        // Get or create subscriptions object
+        var subscriptions = if (js.subscriptionsGetCached(this_value)) |existing|
+            existing
+        else blk: {
+            const new_subscriptions = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+            js.subscriptionsSetCached(this_value, globalObject, new_subscriptions);
+            break :blk new_subscriptions;
+        };
+        
+        // Get or create callbacks array for this channel  
+        const channel_slice = channel_str.toUTF8WithoutRef(bun.default_allocator);
+        defer channel_slice.deinit();
+        var callbacks_array = if (subscriptions.get(globalObject, channel_slice.slice()) catch .js_undefined) |existing| existing else blk: {
+            const new_array = try JSC.JSValue.createEmptyArray(globalObject, 0);
+            subscriptions.put(globalObject, channel_slice.slice(), new_array);
+            break :blk new_array;
+        };
+        
+        // Add callback to array if it's not already there
+        if (callbacks_array.isArray()) {
+            const length = try callbacks_array.getLength(globalObject);
+            callbacks_array.putIndex(globalObject, @intCast(length), callback_arg) catch {
+                return globalObject.throwOutOfMemory();
+            };
+        }
+        
+        // Disable pipelining when pubsub is first used
+        this.client.flags.auto_pipelining = false;
+        
+        return .js_undefined;
+    }
+    
+    /// Remove event listener for PubSub channels
+    pub fn off(_: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const arguments = callframe.arguments();
+        if (arguments.len < 1) {
+            return globalObject.throwInvalidArguments("Expected channel argument", .{});
+        }
+        
+        const channel_arg = arguments[0];
+        const channel_str = try channel_arg.toBunString(globalObject);
+        defer channel_str.deref();
+        
+        const this_value = callframe.this();
+        
+        // Get subscriptions object
+        if (js.subscriptionsGetCached(this_value)) |subscriptions| {
+            const channel_slice = channel_str.toUTF8WithoutRef(bun.default_allocator);
+            defer channel_slice.deinit();
+            
+            if (arguments.len >= 2 and arguments[1].isCallable()) {
+                // Remove specific callback
+                const callback_to_remove = arguments[1];
+                if (subscriptions.get(globalObject, channel_slice.slice()) catch .js_undefined) |callbacks_value| {
+                    if (callbacks_value.isArray()) {
+                        const callbacks_array = callbacks_value;
+                        const length = try callbacks_array.getLength(globalObject);
+                        
+                        // Find and remove the specific callback
+                        var new_callbacks = std.ArrayList(JSValue).init(bun.default_allocator);
+                        defer new_callbacks.deinit();
+                        
+                        for (0..@intCast(length)) |i| {
+                            const callback = callbacks_array.getIndex(globalObject, @intCast(i)) catch continue;
+                            if (!callback.isEmptyOrUndefinedOrNull()) {
+                                if (!(callback.isSameValue(callback_to_remove, globalObject) catch false)) {
+                                    new_callbacks.append(callback) catch return globalObject.throwOutOfMemory();
+                                }
+                            }
+                        }
+                        
+                        // Create new array with remaining callbacks
+                        const new_array = try JSC.JSValue.createEmptyArray(globalObject, new_callbacks.items.len);
+                        for (new_callbacks.items, 0..) |callback, i| {
+                            new_array.putIndex(globalObject, @intCast(i), callback) catch return globalObject.throwOutOfMemory();
+                        }
+                        subscriptions.put(globalObject, channel_slice.slice(), new_array);
+                    }
+                }
+            } else {
+                // Remove all callbacks for the channel
+                subscriptions.put(globalObject, channel_slice.slice(), .js_undefined);
+            }
+        }
+        
+        return .js_undefined;
+    }
 
     const fns = @import("./js_valkey_functions.zig");
 };

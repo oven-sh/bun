@@ -21,6 +21,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         @setEvalBranchQuota(99999);
 
         var sorted_kvs: [kvs_list.len]KV = undefined;
+
         const lenAsc = (struct {
             fn lenAsc(context: void, a: KV, b: KV) bool {
                 _ = context;
@@ -46,9 +47,12 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         std.sort.pdq(KV, &sorted_kvs, {}, lenAsc);
         const min_len = sorted_kvs[0].key.len;
         const max_len = sorted_kvs[sorted_kvs.len - 1].key.len;
+
         var len_indexes: [max_len + 1]usize = undefined;
         var len: usize = 0;
         var i: usize = 0;
+
+        var max_len_index: usize = 0;
 
         while (len <= max_len) : (len += 1) {
             @setEvalBranchQuota(99999);
@@ -58,13 +62,61 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                 i += 1;
             }
             len_indexes[len] = i;
+            max_len_index = @max(max_len_index, i);
         }
-        break :blk .{
-            .min_len = min_len,
-            .max_len = max_len,
-            .sorted_kvs = sorted_kvs,
-            .len_indexes = len_indexes,
-        };
+
+        switch (max_len_index) {
+            0...std.math.maxInt(u8) => {
+                break :blk .{
+                    .min_len = min_len,
+                    .max_len = max_len,
+                    .sorted_kvs = sorted_kvs,
+                    .len_indexes = brk: {
+                        var b: [len_indexes.len]u8 = undefined;
+                        for (len_indexes, &b) |v, *ptr| {
+                            ptr.* = @intCast(v);
+                        }
+                        break :brk b;
+                    },
+                };
+            },
+            std.math.maxInt(u8) + 1...std.math.maxInt(u16) => {
+                break :blk .{
+                    .min_len = min_len,
+                    .max_len = max_len,
+                    .sorted_kvs = sorted_kvs,
+                    .len_indexes = brk: {
+                        var b: [len_indexes.len]u16 = undefined;
+                        for (len_indexes, &b) |v, *ptr| {
+                            ptr.* = @intCast(v);
+                        }
+                        break :brk b;
+                    },
+                };
+            },
+            std.math.maxInt(u16) + 1...std.math.maxInt(u32) => {
+                break :blk .{
+                    .min_len = min_len,
+                    .max_len = max_len,
+                    .sorted_kvs = sorted_kvs,
+                    .len_indexes = brk: {
+                        var b: [len_indexes.len]u32 = undefined;
+                        for (len_indexes, &b) |v, *ptr| {
+                            ptr.* = @intCast(v);
+                        }
+                        break :brk b;
+                    },
+                };
+            },
+            std.math.maxInt(u32) + 1...std.math.maxInt(u64) => {
+                break :blk .{
+                    .min_len = min_len,
+                    .max_len = max_len,
+                    .sorted_kvs = sorted_kvs,
+                    .len_indexes = len_indexes,
+                };
+            },
+        }
     };
 
     return struct {
@@ -322,10 +374,6 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
 
 pub fn ComptimeStringMap(comptime V: type, comptime kvs_list: anytype) type {
     return ComptimeStringMapWithKeyType(u8, V, kvs_list);
-}
-
-pub fn ComptimeStringMap16(comptime V: type, comptime kvs_list: anytype) type {
-    return ComptimeStringMapWithKeyType(u16, V, kvs_list);
 }
 
 const TestEnum = enum {

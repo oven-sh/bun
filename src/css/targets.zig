@@ -157,6 +157,30 @@ pub const Browsers = struct {
     safari: ?u32 = null,
     samsung: ?u32 = null,
 
+    const Browser = enum {
+        chrome,
+        edge,
+        firefox,
+        ie,
+        ios_saf,
+        opera,
+        safari,
+        no_mapping,
+    };
+    // Hoisting this reduces the number of instantiations
+    const Map = bun.ComptimeStringMap(Browser, .{
+        .{ "chrome", Browser.chrome },
+        .{ "edge", Browser.edge },
+        .{ "firefox", Browser.firefox },
+        .{ "hermes", Browser.no_mapping },
+        .{ "ie", Browser.ie },
+        .{ "ios", Browser.ios_saf },
+        .{ "node", Browser.no_mapping },
+        .{ "opera", Browser.opera },
+        .{ "rhino", Browser.no_mapping },
+        .{ "safari", Browser.safari },
+    });
+
     pub const browserDefault = convertFromString(&.{
         "es2020", // support import.meta.url
         "edge88",
@@ -245,28 +269,6 @@ pub const Browsers = struct {
                 };
 
                 if (maybe_idx) |idx| {
-                    const Browser = enum {
-                        chrome,
-                        edge,
-                        firefox,
-                        ie,
-                        ios_saf,
-                        opera,
-                        safari,
-                        no_mapping,
-                    };
-                    const Map = bun.ComptimeStringMap(Browser, .{
-                        .{ "chrome", Browser.chrome },
-                        .{ "edge", Browser.edge },
-                        .{ "firefox", Browser.firefox },
-                        .{ "hermes", Browser.no_mapping },
-                        .{ "ie", Browser.ie },
-                        .{ "ios", Browser.ios_saf },
-                        .{ "node", Browser.no_mapping },
-                        .{ "opera", Browser.opera },
-                        .{ "rhino", Browser.no_mapping },
-                        .{ "safari", Browser.safari },
-                    });
                     const browser = Map.get(entry[0..idx]);
                     if (browser == null or browser.? == .no_mapping) continue; // No mapping available
 

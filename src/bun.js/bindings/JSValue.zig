@@ -1326,12 +1326,14 @@ pub const JSValue = enum(i64) {
         cmd,
 
         pub fn has(property: []const u8) bool {
-            return bun.ComptimeEnumMap(BuiltinName).has(property);
+            return map.has(property);
         }
 
         pub fn get(property: []const u8) ?BuiltinName {
-            return bun.ComptimeEnumMap(BuiltinName).get(property);
+            return map.get(property);
         }
+
+        pub const map = bun.ComptimeEnumMap(BuiltinName);
     };
 
     pub fn fastGetOrElse(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName, alternate: ?JSC.JSValue) ?JSValue {
@@ -1542,7 +1544,7 @@ pub const JSValue = enum(i64) {
 
     // TODO: replace calls to this function with `getOptional`
     pub fn getOwnTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
-        if (comptime bun.ComptimeEnumMap(BuiltinName).has(property)) {
+        if (comptime BuiltinName.map.has(property)) {
             return fastGetOwn(this, global, @field(BuiltinName, property));
         }
 

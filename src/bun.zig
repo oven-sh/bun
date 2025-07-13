@@ -183,8 +183,6 @@ pub const Progress = @import("./Progress.zig");
 /// Modified version of Zig's ComptimeStringMap
 pub const comptime_string_map = @import("./comptime_string_map.zig");
 pub const ComptimeStringMap = comptime_string_map.ComptimeStringMap;
-pub const ComptimeStringMap16 = comptime_string_map.ComptimeStringMap16;
-pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWithKeyType;
 
 pub const glob = @import("./glob.zig");
 pub const patch = @import("./patch.zig");
@@ -1235,14 +1233,24 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) [:0]const u8) {
     return Map.get;
 }
 
-pub fn ComptimeEnumMap(comptime T: type) type {
-    var entries: [std.enums.values(T).len]struct { [:0]const u8, T } = undefined;
-    for (std.enums.values(T), &entries) |value, *entry| {
-        entry.* = .{ .@"0" = @tagName(value), .@"1" = value };
-    }
-    return ComptimeStringMap(T, entries);
+fn ComptimeEnumValueMapList(comptime T: type) *const [std.enums.values(T).len]struct { []const u8, T } {
+    const Memoized = struct {
+        pub const result_buffer = brk: {
+            var entries: [std.enums.values(T).len]struct { []const u8, T } = undefined;
+            for (std.enums.values(T), &entries) |value, *entry| {
+                entry.* = .{ .@"0" = @tagName(value), .@"1" = value };
+            }
+            break :brk entries;
+        };
+
+        pub const result = &result_buffer;
+    };
+    return Memoized.result;
 }
 
+pub fn ComptimeEnumMap(comptime T: type) type {
+    return ComptimeStringMap(T, comptime ComptimeEnumValueMapList(T));
+}
 /// Write 0's for every byte in Type
 /// Ignores default struct values.
 pub fn zero(comptime Type: type) Type {

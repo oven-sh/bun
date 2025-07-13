@@ -6582,8 +6582,7 @@ CPP_DECL unsigned int Bun__CallFrame__getLineNumber(JSC::CallFrame* callFrame, J
         if (visitor->hasLineAndColumnInfo()) {
             String currentSourceURL = Zig::sourceURL(visitor);
 
-            if (!currentSourceURL.startsWith("builtin://"_s) && !currentSourceURL.startsWith("node:"_s) && !currentSourceURL.endsWith("jest.zig"_s) && !currentSourceURL.contains("node_modules"_s) && currentSourceURL.length() > 0) {
-
+            if (!currentSourceURL.startsWith("builtin://"_s) && !currentSourceURL.startsWith("node:"_s)) {
                 lineColumn = visitor->computeLineAndColumn();
                 sourceURL = currentSourceURL;
                 return WTF::IterationStatus::Done;

@@ -539,6 +539,16 @@ pub const JunitReporter = struct {
                 try this.contents.appendSlice(bun.default_allocator, indent);
                 try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
             },
+            .timeout => {
+                if (this.suite_stack.items.len > 0) {
+                    this.suite_stack.items[this.suite_stack.items.len - 1].metrics.failures += 1;
+                }
+                try this.contents.appendSlice(bun.default_allocator, ">\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "  <failure type=\"TimeoutError\" />\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
+            },
             .pending => unreachable,
         }
     }

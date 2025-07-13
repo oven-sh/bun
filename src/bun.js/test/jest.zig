@@ -278,6 +278,7 @@ pub const TestRunner = struct {
             fail,
             skip,
             todo,
+            timeout,
             skipped_because_label,
             /// A test marked as `.failing()` actually passed
             fail_because_failing_test_passed,
@@ -1462,7 +1463,7 @@ pub const TestRunnerTask = struct {
         const elapsed = now.duration(&this.started_at).ms();
         this.ref.unref(this.globalThis.bunVM());
         this.globalThis.requestTermination();
-        this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .{ .timeout = @intCast(@max(elapsed, 0)) });
+        this.handleResult(.{ .timeout = {} }, .{ .timeout = @intCast(@max(elapsed, 0)) });
     }
 
     const ResultType = union(enum) {
@@ -1654,6 +1655,15 @@ pub const TestRunnerTask = struct {
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe, test_.line_number),
             .skipped_because_label => Jest.runner.?.reportFilteredOut(test_id, this.source_file_path, test_.label, describe, test_.line_number),
             .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe, test_.line_number),
+            .timeout => Jest.runner.?.reportFailure(
+                test_id,
+                this.source_file_path,
+                test_.label,
+                0,
+                elapsed,
+                describe,
+                test_.line_number,
+            ),
             .fail_because_todo_passed => |count| {
                 Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
                 Jest.runner.?.reportFailure(
@@ -1676,6 +1686,7 @@ pub const TestRunnerTask = struct {
                         .pass => .pass,
                         .skip => .skip,
                         .todo => .todo,
+                        .timeout => .timeout,
                         .skipped_because_label => .skipped_because_label,
                         else => .fail,
                     }, @floatFromInt(elapsed));
@@ -1716,6 +1727,7 @@ pub const Result = union(TestRunner.Test.Status) {
     fail: u32,
     skip: void,
     todo: void,
+    timeout: void,
     skipped_because_label: void,
     fail_because_failing_test_passed: u32,
     fail_because_todo_passed: u32,
@@ -1723,14 +1735,14 @@ pub const Result = union(TestRunner.Test.Status) {
     fail_because_expected_assertion_count: Counter,
 
     pub fn isFailure(this: *const Result) bool {
-        return this.* == .fail or this.* == .fail_because_expected_has_assertions or this.* == .fail_because_expected_assertion_count;
+        return this.* == .fail or this.* == .timeout or this.* == .fail_because_expected_has_assertions or this.* == .fail_because_expected_assertion_count;
     }
 
     pub fn forceTODO(this: Result, is_todo: bool) Result {
         if (is_todo and this == .pass)
             return .{ .fail_because_todo_passed = this.pass };
 
-        if (is_todo and this == .fail) {
+        if (is_todo and (this == .fail or this == .timeout)) {
             return .{ .todo = {} };
         }
         return this;

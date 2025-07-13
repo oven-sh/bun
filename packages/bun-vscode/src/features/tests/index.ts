@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { BunTestController } from "./bun-test-controller";
+import { BunTestController, debug } from "./bun-test-controller";
 
 export async function registerTests(context: vscode.ExtensionContext) {
   const workspaceFolder = (vscode.workspace.workspaceFolders || [])[0];
@@ -15,6 +15,7 @@ export async function registerTests(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(bunTestController);
   } catch (error) {
+    debug.appendLine(`Error initializing Bun Test Controller: ${error}`);
     vscode.window.showErrorMessage(
       "Failed to initialize Bun Test Explorer. You may need to update VS Code to version 1.59 or later.",
     );

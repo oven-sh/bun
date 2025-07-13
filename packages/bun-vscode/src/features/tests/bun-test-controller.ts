@@ -1,20 +1,117 @@
-import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import * as fsSync from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import * as net from "node:net";
 import * as vscode from "vscode";
-import { parseString as xmlParseString } from "xml2js";
-import type { BunFileResult, BunTestResult, TestNode } from "./types";
+import type {
+  TestNode,
+  InspectorMessage,
+  TestFoundEvent,
+  TestStartEvent,
+  TestEndEvent,
+  LifecycleErrorEvent,
+  TestError,
+} from "./types";
+import { FramerState } from "./types";
 
 const DEFAULT_TEST_PATTERN = "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}";
 
-const output = vscode.window.createOutputChannel("Bun - Test Runner");
+export const debug = vscode.window.createOutputChannel("Bun - Test Runner");
+
+class SocketFramer {
+  private state: FramerState = FramerState.WaitingForLength;
+  private pendingLength: number = 0;
+  private sizeBuffer: Uint8Array = new Uint8Array(4);
+  private sizeBufferIndex: number = 0;
+  private bufferedData: Uint8Array = new Uint8Array(0);
+  private static messageLengthBuffer: Uint8Array = new Uint8Array(4);
+
+  constructor(private onMessage: (message: string) => void) {
+    this.reset();
+  }
+
+  reset(): void {
+    this.state = FramerState.WaitingForLength;
+    this.bufferedData = new Uint8Array(0);
+    this.sizeBufferIndex = 0;
+    this.sizeBuffer = new Uint8Array(4);
+  }
+
+  send(socket: net.Socket, data: string): void {
+    const bytes = Buffer.from(data);
+    const view = new DataView(SocketFramer.messageLengthBuffer.buffer);
+    view.setUint32(0, bytes.length, false);
+    socket.write(SocketFramer.messageLengthBuffer);
+    socket.write(data);
+  }
+
+  onData(data: Buffer): void {
+    const dataArray = new Uint8Array(data);
+    const combined = new Uint8Array(this.bufferedData.length + dataArray.length);
+    combined.set(this.bufferedData);
+    combined.set(dataArray, this.bufferedData.length);
+    this.bufferedData = combined;
+
+    const messagesToDeliver: string[] = [];
+
+    while (this.bufferedData.length > 0) {
+      if (this.state === FramerState.WaitingForLength) {
+        if (this.sizeBufferIndex + this.bufferedData.length < 4) {
+          const remainingBytes = Math.min(4 - this.sizeBufferIndex, this.bufferedData.length);
+          this.sizeBuffer.set(this.bufferedData.slice(0, remainingBytes), this.sizeBufferIndex);
+          this.sizeBufferIndex += remainingBytes;
+          this.bufferedData = this.bufferedData.slice(remainingBytes);
+          break;
+        }
+
+        const remainingBytes = 4 - this.sizeBufferIndex;
+        this.sizeBuffer.set(this.bufferedData.slice(0, remainingBytes), this.sizeBufferIndex);
+        const view = new DataView(this.sizeBuffer.buffer);
+        this.pendingLength = view.getUint32(0, false);
+
+        this.state = FramerState.WaitingForMessage;
+        this.sizeBufferIndex = 0;
+        this.bufferedData = this.bufferedData.slice(remainingBytes);
+      }
+
+      if (this.bufferedData.length < this.pendingLength) {
+        break;
+      }
+
+      const messageData = this.bufferedData.slice(0, this.pendingLength);
+      const message = new TextDecoder().decode(messageData);
+      this.bufferedData = this.bufferedData.slice(this.pendingLength);
+      this.state = FramerState.WaitingForLength;
+      this.pendingLength = 0;
+      this.sizeBufferIndex = 0;
+      messagesToDeliver.push(message);
+    }
+
+    for (const message of messagesToDeliver) {
+      this.onMessage(message);
+    }
+  }
+}
 
 export class BunTestController implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
   private activeProcesses: Set<ChildProcess> = new Set();
+  private inspectorConnection: InspectorConnection | null = null;
+
+  private inspectorToVSCode = new Map<number, vscode.TestItem>();
+  private vscodeToInspector = new Map<string, number>();
+
+  private testErrors = new Map<number, TestError>();
+  private lastStartedTestId: number | null = null;
+
+  private testResultHistory = new Map<
+    string,
+    { status: "passed" | "failed" | "skipped"; message?: vscode.TestMessage; duration?: number }
+  >();
+  private currentRunType: "file" | "individual" = "file";
+  private requestedTestIds: Set<string> = new Set();
+  private discoveredTestIds: Set<string> = new Set();
 
   constructor(
     private readonly testController: vscode.TestController,
@@ -29,15 +126,16 @@ export class BunTestController implements vscode.Disposable {
   private setupTestController(): void {
     this.testController.resolveHandler = async testItem => {
       if (!testItem) return;
-      return this.staticDiscoverTests(testItem);
+      return this.discoverTests(testItem);
     };
 
     this.testController.refreshHandler = async token => {
       const files = await this.discoverInitialTests(token);
-      if (!files) return;
+      if (!files?.length) return;
 
+      const filePaths = new Set(files.map(f => f.fsPath));
       for (const [, testItem] of this.testController.items) {
-        if (!files.some(file => file.fsPath === testItem.uri?.fsPath)) {
+        if (testItem.uri && !filePaths.has(testItem.uri.fsPath)) {
           this.testController.items.delete(testItem.id);
         }
       }
@@ -59,23 +157,20 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private setupOpenDocumentListener(): void {
-    const openEditors = vscode.window.visibleTextEditors;
-    for (const editor of openEditors) {
+    vscode.window.visibleTextEditors.forEach(editor => {
       this.handleOpenDocument(editor.document);
-    }
+    });
 
-    vscode.workspace.onDidOpenTextDocument(
-      document => {
-        this.handleOpenDocument(document);
-      },
-      null,
-      this.disposables,
-    );
+    vscode.workspace.textDocuments.forEach(doc => {
+      this.handleOpenDocument(doc);
+    });
+
+    vscode.workspace.onDidOpenTextDocument(this.handleOpenDocument.bind(this), null, this.disposables);
   }
 
   private handleOpenDocument(document: vscode.TextDocument): void {
     if (this.isTestFile(document) && !this.testController.items.get(windowsVscodeUri(document.uri.fsPath))) {
-      this.staticDiscoverTests(false, windowsVscodeUri(document.uri.fsPath));
+      this.discoverTests(false, windowsVscodeUri(document.uri.fsPath));
     }
   }
 
@@ -86,11 +181,10 @@ export class BunTestController implements vscode.Disposable {
   private async discoverInitialTests(cancellationToken?: vscode.CancellationToken): Promise<vscode.Uri[] | undefined> {
     try {
       const tests = await this.findTestFiles(cancellationToken);
-      output.appendLine(`Discovered ${tests.length} test files.`);
       this.createFileTestItems(tests);
       return tests;
-    } catch (error) {
-      output.appendLine(`Error discovering initial tests: ${error}`);
+    } catch {
+      return undefined;
     }
   }
 
@@ -142,9 +236,7 @@ export class BunTestController implements vscode.Disposable {
             ignoreGlobs.add(path.join(cwd.trim(), line.trim()));
           }
         }
-      } catch (err) {
-        output.appendLine(`Error reading .gitignore file at ${ignore.fsPath}: ${err}`);
-      }
+      } catch {}
     }
 
     return [...ignoreGlobs.values()];
@@ -181,9 +273,9 @@ export class BunTestController implements vscode.Disposable {
       const existing = this.testController.items.get(windowsVscodeUri(uri.fsPath));
       if (existing) {
         existing.children.replace([]);
-        this.staticDiscoverTests(existing);
+        this.discoverTests(existing);
       } else {
-        this.staticDiscoverTests(false, uri.fsPath);
+        this.discoverTests(false, uri.fsPath);
       }
     };
 
@@ -223,7 +315,7 @@ export class BunTestController implements vscode.Disposable {
     return { bunCommand, testArgs };
   }
 
-  private async staticDiscoverTests(testItem?: vscode.TestItem | false, filePath?: string): Promise<void> {
+  private async discoverTests(testItem?: vscode.TestItem | false, filePath?: string): Promise<void> {
     let targetPath = filePath;
     if (!targetPath && testItem) {
       targetPath = testItem?.uri?.fsPath || this.workspaceFolder.uri.fsPath;
@@ -247,11 +339,10 @@ export class BunTestController implements vscode.Disposable {
         this.testController.items.add(fileTestItem);
       }
       fileTestItem.children.replace([]);
+      fileTestItem.canResolveChildren = false;
 
       this.addTestNodes(testNodes, fileTestItem, targetPath);
-    } catch (err) {
-      output.appendLine(`Error reading test file at ${targetPath}: ${err}`);
-    }
+    } catch {}
   }
 
   private parseTestBlocks(fileContent: string): TestNode[] {
@@ -260,7 +351,7 @@ export class BunTestController implements vscode.Disposable {
       .replace(/\/\/.*$/gm, match => " ".repeat(match.length));
 
     const testRegex =
-      /\b(describe|test|it)(?:\.(?:skip|todo|failing|only))?(?:\.(?:if|todoIf|skipIf)\s*\([^)]*\))?(?:\.each\s*\([^)]*\))?\s*\(\s*(['"`])((?:\\\2|.)*?)\2\s*,/g;
+      /\b(describe|test|it)(?:\.(?:skip|todo|failing|only))?(?:\.(?:if|todoIf|skipIf)\s*\([^)]*\))?(?:\.each\s*\([^)]*\))?\s*\(\s*(['"`])((?:\\\2|.)*?)\2\s*(?:,|\))/g;
 
     const stack: TestNode[] = [];
     const root: TestNode[] = [];
@@ -300,9 +391,46 @@ export class BunTestController implements vscode.Disposable {
 
   private getBraceDepth(content: string, start: number, end: number): number {
     const section = content.slice(start, end);
-    const openBraces = (section.match(/\{/g) || []).length;
-    const closeBraces = (section.match(/\}/g) || []).length;
-    return openBraces - closeBraces;
+    let depth = 0;
+    let inString = false;
+    let inTemplate = false;
+    let stringChar = "";
+    let escaped = false;
+
+    for (let i = 0; i < section.length; i++) {
+      const char = section[i];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+
+      if (!inTemplate && (char === '"' || char === "'")) {
+        if (!inString) {
+          inString = true;
+          stringChar = char;
+        } else if (char === stringChar) {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === "`") {
+        inTemplate = !inTemplate;
+        continue;
+      }
+
+      if (!inString && !inTemplate) {
+        if (char === "{") depth++;
+        else if (char === "}") depth--;
+      }
+    }
+
+    return depth;
   }
 
   private expandEachTests(
@@ -368,8 +496,7 @@ export class BunTestController implements vscode.Disposable {
           startIdx: index,
         };
       });
-    } catch (error) {
-      output.appendLine(`Error parsing .each test values at index ${index}: ${error}`);
+    } catch {
       return [
         {
           name: name.replace(/\\/g, ""),
@@ -389,7 +516,7 @@ export class BunTestController implements vscode.Disposable {
         : this.escapeTestName(node.name);
       const testId = `${filePath}#${nodePath}`;
 
-      const testItem = this.testController.createTestItem(testId, node.name, vscode.Uri.file(filePath));
+      const testItem = this.testController.createTestItem(testId, this.stripAnsi(node.name), vscode.Uri.file(filePath));
 
       testItem.tags = [new vscode.TestTag(node.type === "describe" ? "describe" : "test")];
 
@@ -405,7 +532,12 @@ export class BunTestController implements vscode.Disposable {
       if (node.children.length > 0) {
         this.addTestNodes(node.children, testItem, filePath, nodePath);
       }
+      testItem.canResolveChildren = false;
     }
+  }
+
+  private stripAnsi(source: string): string {
+    return source.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-PRZcf-nqry=><]/g, "");
   }
 
   private escapeTestName(source: string): string {
@@ -422,6 +554,7 @@ export class BunTestController implements vscode.Disposable {
     token.onCancellationRequested(() => {
       run.end();
       this.closeAllActiveProcesses();
+      this.disconnectInspector();
     });
 
     const queue: vscode.TestItem[] = [];
@@ -442,457 +575,682 @@ export class BunTestController implements vscode.Disposable {
       return;
     }
 
-    const testsByFile = new Map<string, vscode.TestItem[]>();
-
-    for (const test of queue) {
-      if (!test.uri) {
-        continue;
+    try {
+      await this.runTestsWithInspector(queue, run, token);
+    } catch (error) {
+      for (const test of queue) {
+        run.errored(test, new vscode.TestMessage(`Error: ${error}`));
       }
+    } finally {
+      run.end();
+    }
+  }
 
+  private async runTestsWithInspector(
+    tests: vscode.TestItem[],
+    run: vscode.TestRun,
+    _token: vscode.CancellationToken,
+  ): Promise<void> {
+    this.disconnectInspector();
+
+    const allFiles = new Set<string>();
+    for (const test of tests) {
+      if (!test.uri) continue;
       const filePath = windowsVscodeUri(test.uri.fsPath);
-      if (!testsByFile.has(filePath)) {
-        testsByFile.set(filePath, []);
-      }
-      testsByFile.get(filePath)?.push(test);
-      run.enqueued(test);
+      allFiles.add(filePath);
     }
 
-    let i = 0;
-
-    for (const [_filePath, tests] of testsByFile.entries()) {
-      if (token.isCancellationRequested) break;
-      const filePath = process.platform === "win32" ? _filePath.replace("c:\\", "C:\\") : _filePath;
-
-      try {
-        for (const test of tests) {
-          run.started(test);
-          this.markTestsAsRunning(test, run);
-        }
-
-        const { bunCommand, testArgs } = this.getBunExecutionConfig();
-        const args = testArgs.concat([process.platform === "win32" ? `"${filePath}"` : filePath]);
-
-        const testUriString = tests[0].uri?.toString();
-        const testIdEndsWithFileName = tests[0].uri && tests[0].label === tests[0].uri.fsPath.split("/").pop();
-
-        const isFileOnly =
-          tests.length === 1 &&
-          tests[0].uri &&
-          (testIdEndsWithFileName || !tests[0].id.includes("#") || tests[0].id === testUriString);
-
-        function hasManyTests() {
-          let current = tests[0];
-          while (current.parent) {
-            if (current.parent.children.size > 1) {
-              return true;
-            }
-            current = current.parent;
-          }
-          return false;
-        }
-
-        if (!isFileOnly && hasManyTests()) {
-          const testNames = [];
-          for (const test of tests) {
-            let t = test.id
-              .slice(test.id.indexOf("#") + 1)
-              .split(" > ")
-              .join(" ");
-            t = t.replaceAll(/\$\{[^}]+\}/g, ".*?");
-            t = t.replaceAll(/\\\$\\\{[^}]+\\\}/g, ".*?");
-            t = t.replaceAll(/\\%[isfd]/g, ".*?");
-
-            if (test.tags.some(tag => tag.id === "test" || tag.id === "it")) {
-              testNames.push(`^ ${t}$`);
-            } else {
-              testNames.push(`^ ${t} `);
-            }
-          }
-
-          if (testNames.length > 0) {
-            const testNamesRegex = testNames.map(pattern => `(${pattern})`).join("|");
-            args.push("--test-name-pattern", process.platform === "win32" ? `"${testNamesRegex}"` : testNamesRegex);
-          }
-        }
-
-        const command = process.platform === "win32" ? `"${bunCommand}"` : bunCommand;
-        const commandArgs = args;
-
-        const printArgs = args
-          .map(e => (e === "test" || e.startsWith('"') || e.startsWith("--") || e.startsWith("\'") ? e : `"${e}"`))
-          .join(" ");
-
-        const buncmd = bunCommand.split("/").pop() || bunCommand;
-        run.appendOutput(`\r\n\x1b[34m>\x1b[0m \x1b[2m${buncmd} ${printArgs}\x1b[0m\r\n\r\n`);
-
-        const tempfile = `${tmpdir()}/bun-test-${randomUUID()}.xml`;
-        commandArgs.push("--reporter-outfile", tempfile, "--reporter=junit");
-
-        output.appendLine(`Running command: "${command} ${commandArgs.join(" ")}"`);
-
-        await new Promise<void>((resolve, reject) => {
-          const proc = spawn(command, commandArgs, {
-            cwd: this.workspaceFolder.uri.fsPath,
-            shell: process.platform === "win32",
-            env: {
-              FORCE_COLOR: "1",
-              NO_COLOR: "0",
-              BUN_DEBUG_QUIET_LOGS: "1",
-              GITHUB_ACTIONS: "true",
-              ...globalThis.process.env,
-            },
-          });
-
-          let _stdout = "";
-          let _stderr = "";
-          let _output = "";
-
-          this.activeProcesses.add(proc);
-
-          proc.stdout?.on("data", data => {
-            const chunk = data.toString();
-            _stdout += chunk;
-            _output += chunk;
-            const filtered = chunk
-              .split(/\r?\n/)
-              .filter(
-                (line: string) =>
-                  !line.startsWith("::group::") && !line.startsWith("::error ") && !line.startsWith("::endgroup::"),
-              )
-              .join("\r\n");
-            run.appendOutput(filtered);
-          });
-
-          proc.stderr?.on("data", data => {
-            const chunk = data.toString();
-            _stderr += chunk;
-            _output += chunk;
-            const filtered = chunk
-              .split(/\r?\n/)
-              .filter(
-                (line: string) =>
-                  !line.startsWith("::group::") && !line.startsWith("::error ") && !line.startsWith("::endgroup::"),
-              )
-              .join("\r\n");
-            run.appendOutput(filtered);
-          });
-
-          proc.on("close", code => {
-            this.activeProcesses.delete(proc);
-
-            try {
-              if (code === 0 || code === 1) {
-                const parsedOutput = parseBunTestOutput(_output, this.workspaceFolder.uri.fsPath, tempfile);
-                fs.rm(tempfile).catch(() => {});
-
-                if (!parsedOutput) {
-                  for (const test of tests) {
-                    const err = new vscode.TestMessage(
-                      `Failed to parse test output. Make sure there are tests and no errors:\n\n${_stderr}`,
-                    );
-                    err.location = new vscode.Location(
-                      test.uri || vscode.Uri.file(filePath),
-                      new vscode.Position(0, 0),
-                    );
-                    run.errored(test, err);
-                  }
-                  this.verifyBunVersion();
-                  return resolve();
-                }
-
-                function hasSourceLine(test: BunTestResult): boolean {
-                  if ("location" in test && test.location?.line) {
-                    return true;
-                  }
-                  if (test.children) {
-                    return test.children.every(hasSourceLine);
-                  }
-                  return false;
-                }
-                if (!parsedOutput.every(e => e.tests.every(hasSourceLine))) {
-                  output.appendLine(
-                    `Warning: Some test results do not have source line information. This may be due to an older version of Bun.`,
-                  );
-                  this.verifyBunVersion();
-                }
-
-                if (isFileOnly) {
-                  if (parsedOutput.length === 0) {
-                    for (const test of tests) {
-                      const err = new vscode.TestMessage("No tests found");
-                      err.location = new vscode.Location(
-                        test.uri || vscode.Uri.file(filePath),
-                        new vscode.Position(0, 0),
-                      );
-                      run.errored(test, err);
-                    }
-                    resolve();
-                    return;
-                  }
-
-                  const counts = { failed: 0, skipped: 0, passed: 0 };
-                  function countStatuses(tests: BunTestResult[]): void {
-                    for (const t of tests) {
-                      if (t.status && counts.hasOwnProperty(t.status)) counts[t.status]++;
-                      if (t.children) countStatuses(t.children);
-                    }
-                  }
-                  countStatuses(parsedOutput.flatMap(r => r.tests));
-                  for (const test of tests) {
-                    if (counts.failed > 0)
-                      run.failed(test, new vscode.TestMessage(`Found ${counts.failed} errors in test results.`));
-                    else if (counts.passed > 0) run.passed(test);
-                    else if (counts.skipped > 0) run.skipped(test);
-                  }
-
-                  const fileTestItem = this.testController.items.get(
-                    vscode.Uri.file(windowsVscodeUri(filePath)).toString(),
-                  );
-                  if (fileTestItem) {
-                    this.resetTestItemChildren(fileTestItem);
-                    fileTestItem.canResolveChildren = false;
-                  }
-                  this.createTestItemsFromParsedOutput(parsedOutput);
-
-                  const fileResult = parsedOutput.find((result: BunFileResult) => result.name === filePath);
-                  if (fileResult) {
-                    const newFileTestItem = this.testController.items.get(
-                      vscode.Uri.file(windowsVscodeUri(filePath)).toString(),
-                    );
-                    if (newFileTestItem) {
-                      this.processTestResults(fileResult.tests, run, newFileTestItem);
-                    }
-                  }
-                } else {
-                  this.createTestItemsFromParsedOutput(parsedOutput);
-                  const fileResult = parsedOutput.find((result: BunFileResult) => result.name === filePath);
-                  if (fileResult) {
-                    for (const test of tests) {
-                      const findResult = (
-                        results: BunTestResult[],
-                        label: string[],
-                        parentLabels: string[] = [],
-                      ): BunTestResult | undefined => {
-                        for (const r of results) {
-                          const currentLabels = [...parentLabels, r.name];
-                          if (arrayEquals(currentLabels, label)) return r;
-                          if (r.children) {
-                            const found = findResult(r.children, label, currentLabels);
-                            if (found) return found;
-                          }
-                        }
-                        return undefined;
-                      };
-
-                      function getFullTestName(test: vscode.TestItem, parentLabels: string[] = []): string[] {
-                        if (test.parent && test.parent.parent) {
-                          return getFullTestName(test.parent, [test.label, ...parentLabels]);
-                        }
-                        return [...parentLabels, test.label];
-                      }
-
-                      const result = findResult(fileResult.tests, getFullTestName(test).reverse());
-                      if (result) {
-                        this.processTestResults([result], run, test);
-                      } else {
-                        this.resetTestItemChildren(test, true);
-                      }
-                    }
-                  } else {
-                    for (const test of tests) {
-                      run.skipped(test);
-                    }
-                  }
-
-                  const fileTestItem = this.testController.items.get(
-                    vscode.Uri.file(windowsVscodeUri(filePath)).toString(),
-                  );
-                  if (fileTestItem) {
-                    fileTestItem.canResolveChildren = false;
-                  }
-                }
-              } else {
-                for (const test of tests) {
-                  run.errored(test, new vscode.TestMessage(`Bun process exited with code ${code}:\n${_stderr}`));
-                }
-              }
-            } catch (e) {
-              for (const test of tests) {
-                run.errored(test, new vscode.TestMessage(`Error processing test results: ${e}`));
-              }
-              output.appendLine(`Error processing test results for file ${filePath}: ${e}`);
-            } finally {
-              if (i++ >= testsByFile.size - 1) {
-                run.end();
-              }
-              resolve();
-            }
-          });
-
-          proc.on("error", err => {
-            this.activeProcesses.delete(proc);
-            for (const test of tests) {
-              run.errored(test, new vscode.TestMessage(`Error: ${err}`));
-              if (test.uri) {
-                const location = new vscode.Location(test.uri, new vscode.Position(0, 0));
-                run.appendOutput(`Error running test: ${err}\n`, location);
-              }
-            }
-            run.end();
-            resolve();
-          });
-        });
-      } catch (error) {
-        for (const test of tests) {
-          run.errored(test, new vscode.TestMessage(`Error: ${error}`));
-          if (test.uri) {
-            const location = new vscode.Location(test.uri, new vscode.Position(0, 0));
-            run.appendOutput(`Error running test: ${error}\n`, location);
-          }
-          if (test.parent) {
-            test.parent.children.delete(test.id);
-          } else {
-            this.testController.items.delete(test.id);
-          }
-        }
-        output.appendLine(`Error running tests for file ${filePath}: ${error}`);
-        run.end();
-      }
-    }
-  }
-
-  private markTestsAsRunning(test: vscode.TestItem, run: vscode.TestRun): void {
-    if (!test) return;
-
-    run.started(test);
-
-    if (test.children) {
-      for (const [, child] of test.children) {
-        if (child) {
-          this.markTestsAsRunning(child, run);
-        }
-      }
-    }
-  }
-
-  private isRelatedTestResult(testItem: vscode.TestItem, testResult: BunTestResult): boolean {
-    if (testResult.name === testItem.label) {
-      return true;
-    }
-
-    if ("tests" in testResult && Array.isArray((testResult as Record<string, unknown>).tests)) {
-      for (const test of (testResult as Record<string, unknown>).tests as BunTestResult[]) {
-        if (this.isRelatedTestResult(testItem, test)) {
-          return true;
-        }
-      }
-    }
-
-    if (testResult.children && testResult.children.length > 0) {
-      for (const child of testResult.children) {
-        if (this.isRelatedTestResult(testItem, child)) {
-          return true;
-        }
-      }
-    }
-
-    if (testItem.children && testItem.children.size > 0) {
-      for (const [, child] of testItem.children) {
-        if (this.isRelatedTestResult(child, testResult)) {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
-  private processTestResults(tests: BunTestResult[], run: vscode.TestRun, parent: vscode.TestItem): void {
-    if (!parent.uri) {
+    if (allFiles.size === 0) {
+      run.appendOutput("No test files found to run.\n");
       return;
     }
 
-    for (let i = 0; i < tests.length; i++) {
-      const testResult = tests[i];
-
-      let testItem = parent;
-
-      if (testResult.name.trim() !== parent.label.trim() && parent.children.size > 0) {
-        const foundChild = this.findMatchingTestItem(parent, testResult);
-        if (foundChild) {
-          testItem = foundChild;
-        } else if (!this.isRelatedTestResult(parent, testResult)) {
-          continue;
-        }
-      } else if (!this.isRelatedTestResult(parent, testResult)) {
-        continue;
+    for (const test of tests) {
+      if (test.uri && test.canResolveChildren) {
+        await this.discoverTests(test);
       }
+    }
 
-      let location: vscode.Location | undefined;
-      if (testItem.uri) {
-        let line = 0;
-        let column = 0;
+    const isIndividualTestRun = this.shouldUseTestNamePattern(tests);
+    this.currentRunType = isIndividualTestRun ? "individual" : "file";
 
-        if (testResult.location) {
-          line = testResult.location.line > 0 ? testResult.location.line - 1 : 0;
-          column = Math.max(0, testResult.location.column);
-        }
+    this.requestedTestIds.clear();
+    this.discoveredTestIds.clear();
+    for (const test of tests) {
+      this.requestedTestIds.add(test.id);
+    }
 
-        const position = new vscode.Position(line, column);
-        location = new vscode.Location(testItem.uri, position);
+    const socketPath = path.join(
+      tmpdir(),
+      `bun-inspector-${Date.now()}-${Math.random().toString(36).substring(2, 11)}.sock`,
+    );
+
+    const { bunCommand, testArgs } = this.getBunExecutionConfig();
+    let args = [...testArgs, ...Array.from(allFiles)];
+
+    if (isIndividualTestRun) {
+      const pattern = this.buildTestNamePattern(tests);
+      if (pattern) {
+        args.push("--test-name-pattern", process.platform === "win32" ? `"${pattern}"` : pattern);
       }
+    }
 
-      const isParent = testResult.children && testResult.children.length > 0;
+    run.appendOutput(`\r\n\x1b[34m>\x1b[0m \x1b[2m${bunCommand} ${args.join(" ")}\x1b[0m\r\n\r\n`);
+    args.push(`--inspect-wait=unix://${socketPath}`);
 
-      if (testResult.status === "skipped") {
-        if (!testResult.status || testResult.status === "skipped") {
-          run.skipped(testItem);
-        }
-        if (isParent && testItem && testResult.children) {
-          this.processTestResults(testResult.children, run, testItem);
-        }
-        continue;
+    for (const test of tests) {
+      if (isIndividualTestRun || tests.length === 1) {
+        run.started(test);
+      } else {
+        run.enqueued(test);
       }
+    }
 
-      if (testResult.status === "passed") {
-        run.passed(testItem, testResult.duration);
-      } else if (testResult.status === "failed") {
-        const message = processErrorData({ testResult, testItem });
-        if (message) {
-          run.failed(testItem, message, testResult.duration);
+    let server: net.Server | null = null;
+    try {
+      server = await this.createInspectorServer(socketPath, run);
+    } catch (error) {
+      debug.appendLine(`Failed to create inspector server: ${error}`);
+      throw error;
+    }
+
+    const proc = spawn(bunCommand, args, {
+      cwd: this.workspaceFolder.uri.fsPath,
+      env: {
+        ...process.env,
+        BUN_DEBUG_QUIET_LOGS: "1",
+        FORCE_COLOR: "1",
+        NO_COLOR: "0",
+      },
+    });
+
+    this.activeProcesses.add(proc);
+
+    proc.stdout?.on("data", data => {
+      const dataStr = data.toString();
+      const formattedOutput = dataStr.replace(/\n/g, "\r\n");
+      run.appendOutput(formattedOutput);
+    });
+
+    proc.stderr?.on("data", data => {
+      const dataStr = data.toString();
+      const formattedOutput = dataStr.replace(/\n/g, "\r\n");
+      run.appendOutput(formattedOutput);
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      proc.on("close", code => {
+        this.activeProcesses.delete(proc);
+        if (code === 0 || code === 1) {
+          resolve();
         } else {
-          run.failed(testItem, [], testResult.duration);
+          reject(new Error(`Process exited with code ${code}`));
         }
+      });
+
+      proc.on("error", error => {
+        this.activeProcesses.delete(proc);
+        reject(error);
+      });
+    }).finally(() => {
+      if (isIndividualTestRun) {
+        this.applyPreviousResults(tests, run);
       }
 
-      if (isParent && testItem && testResult.children) {
-        this.processTestResults(testResult.children, run, testItem);
+      if (isIndividualTestRun) {
+        this.cleanupUndiscoveredTests(tests);
+      } else {
+        this.cleanupStaleTests(tests);
+      }
+
+      if (this.activeProcesses.has(proc)) {
+        proc.kill("SIGKILL");
+        this.activeProcesses.delete(proc);
+      }
+
+      this.disconnectInspector();
+      if (server) {
+        server.close(() => {});
+      }
+    });
+  }
+
+  private applyPreviousResults(requestedTests: vscode.TestItem[], run: vscode.TestRun): void {
+    for (const file of new Set(requestedTests.map(t => t.uri?.toString()).filter(Boolean))) {
+      const fileItem = this.testController.items.get(file!);
+      if (fileItem) {
+        this.applyPreviousResultsToItem(fileItem, run, this.requestedTestIds);
       }
     }
   }
 
-  private async debugTests(
-    tests: vscode.TestItem[],
-    request: vscode.TestRunRequest,
-    run: vscode.TestRun,
-  ): Promise<void> {
-    const testFiles = new Set<string>();
+  private applyPreviousResultsToItem(item: vscode.TestItem, run: vscode.TestRun, requestedTestIds: Set<string>): void {
+    if (!requestedTestIds.has(item.id)) {
+      const previousResult = this.testResultHistory.get(item.id);
+      if (previousResult) {
+        switch (previousResult.status) {
+          case "passed":
+            run.passed(item, previousResult.duration);
+            break;
+          case "failed":
+            run.failed(item, previousResult.message || new vscode.TestMessage("Test failed"), previousResult.duration);
+            break;
+          case "skipped":
+            run.skipped(item);
+            break;
+        }
+      }
+    }
 
-    const testUriString = tests[0].uri?.toString();
-    const testIdEndsWithFileName = tests[0].uri && tests[0].label === tests[0].uri.fsPath.split("/").pop();
+    for (const [, child] of item.children) {
+      this.applyPreviousResultsToItem(child, run, requestedTestIds);
+    }
+  }
+
+  private async createInspectorServer(socketPath: string, run: vscode.TestRun): Promise<net.Server> {
+    return new Promise((resolve, reject) => {
+      const server = net.createServer(socket => {
+        const framer = new SocketFramer((message: string) => {
+          try {
+            const parsedMessage = JSON.parse(message) as InspectorMessage;
+            this.handleInspectorMessage(parsedMessage, run);
+          } catch (error) {
+            debug.appendLine(`Failed to parse inspector message: ${error}`);
+          }
+        });
+
+        this.inspectorConnection = new InspectorConnection(() => {});
+        (this.inspectorConnection as any).socket = socket;
+        (this.inspectorConnection as any).framer = framer;
+
+        socket.on("data", (data: Buffer) => {
+          framer.onData(data);
+        });
+
+        socket.on("close", () => {
+          this.inspectorConnection = null;
+        });
+
+        socket.on("error", () => {});
+
+        framer.send(socket, JSON.stringify({ id: 1, method: "Inspector.initialized" }));
+        framer.send(socket, JSON.stringify({ id: 2, method: "Runtime.enable" }));
+        framer.send(socket, JSON.stringify({ id: 3, method: "TestReporter.enable" }));
+        framer.send(socket, JSON.stringify({ id: 4, method: "LifecycleReporter.enable" }));
+
+        socket.setKeepAlive(true, 1000);
+        socket.setNoDelay(true);
+      });
+
+      server.listen(socketPath, () => {
+        resolve(server);
+      });
+
+      server.on("error", reject);
+    });
+  }
+
+  private handleInspectorMessage(message: InspectorMessage, run: vscode.TestRun): void {
+    if (!message.method || !message.params) {
+      return;
+    }
+
+    switch (message.method) {
+      case "TestReporter.found":
+        this.handleTestFound(message.params as TestFoundEvent, run);
+        break;
+
+      case "TestReporter.start":
+        this.handleTestStart(message.params as TestStartEvent, run);
+        break;
+
+      case "TestReporter.end":
+        this.handleTestEnd(message.params as TestEndEvent, run);
+        break;
+
+      case "LifecycleReporter.error":
+        this.handleLifecycleError(message.params as LifecycleErrorEvent, run);
+        break;
+    }
+  }
+
+  private handleTestFound(params: TestFoundEvent, _run: vscode.TestRun): void {
+    const { id: inspectorTestId, url: sourceURL, name, type, parentId } = params;
+
+    const filePath = windowsVscodeUri(sourceURL);
+    let testItem = this.findTestByPath(name, filePath, parentId);
+
+    if (!testItem) {
+      testItem = this.createTestItem(name, filePath, type, parentId);
+    }
+
+    if (testItem) {
+      this.inspectorToVSCode.set(inspectorTestId, testItem);
+      this.vscodeToInspector.set(testItem.id, inspectorTestId);
+      this.discoveredTestIds.add(testItem.id);
+    } else {
+      debug.appendLine(`Could not find VS Code test item for: ${name} in ${path.basename(filePath)}`);
+    }
+  }
+
+  private findTestByPath(testName: string, filePath: string, parentId?: number): vscode.TestItem | undefined {
+    const fileUri = vscode.Uri.file(filePath);
+    const fileTestItem = this.testController.items.get(fileUri.toString());
+
+    if (!fileTestItem) {
+      return undefined;
+    }
+
+    let searchRoot = fileTestItem;
+    if (parentId !== undefined) {
+      const parentItem = this.inspectorToVSCode.get(parentId);
+      if (parentItem) {
+        searchRoot = parentItem;
+      }
+    }
+
+    return this.findTestByName(searchRoot, testName);
+  }
+
+  private findTestByName(parent: vscode.TestItem, name: string): vscode.TestItem | undefined {
+    const strippedName = this.stripAnsi(name);
+
+    for (const [, child] of parent.children) {
+      if (child.label === strippedName) {
+        return child;
+      }
+    }
+
+    const escapedName = this.escapeTestName(strippedName);
+    for (const [, child] of parent.children) {
+      if (child.label === escapedName || this.escapeTestName(child.label) === escapedName) {
+        return child;
+      }
+    }
+
+    for (const [, child] of parent.children) {
+      const found = this.findTestByName(child, name);
+      if (found) {
+        return found;
+      }
+    }
+
+    return undefined;
+  }
+
+  private createTestItem(
+    name: string,
+    filePath: string,
+    type: "test" | "describe",
+    parentId?: number,
+  ): vscode.TestItem | undefined {
+    const fileUri = vscode.Uri.file(filePath);
+
+    let fileTestItem = this.testController.items.get(fileUri.toString());
+    if (!fileTestItem) {
+      fileTestItem = this.testController.createTestItem(
+        fileUri.toString(),
+        path.relative(this.workspaceFolder.uri.fsPath, filePath) || filePath,
+        fileUri,
+      );
+      this.testController.items.add(fileTestItem);
+    }
+
+    let parentItem = fileTestItem;
+    if (parentId !== undefined) {
+      const parent = this.inspectorToVSCode.get(parentId);
+      if (parent) {
+        parentItem = parent;
+      }
+    }
+
+    const parentPath = parentItem === fileTestItem ? "" : parentItem.id.split("#")[1] || "";
+    const testPath = parentPath ? `${parentPath} > ${this.escapeTestName(name)}` : this.escapeTestName(name);
+    const testId = `${filePath}#${testPath}`;
+
+    const existing = this.findTestByName(parentItem, name);
+    if (existing) {
+      return existing;
+    }
+
+    const testItem = this.testController.createTestItem(testId, this.stripAnsi(name), fileUri);
+    testItem.tags = [new vscode.TestTag(type)];
+    testItem.canResolveChildren = false;
+    parentItem.children.add(testItem);
+
+    return testItem;
+  }
+
+  private handleTestStart(params: TestStartEvent, run: vscode.TestRun): void {
+    const { id: testId } = params;
+    const testItem = this.inspectorToVSCode.get(testId);
+
+    this.lastStartedTestId = testId;
+
+    if (testItem) {
+      run.started(testItem);
+    }
+  }
+
+  private handleTestEnd(params: TestEndEvent, run: vscode.TestRun): void {
+    const { id, status, elapsed } = params;
+    const testItem = this.inspectorToVSCode.get(id);
+
+    if (!testItem) return;
+
+    const duration = elapsed / 1000000;
+
+    if (
+      this.currentRunType === "individual" &&
+      status === "skipped_because_label" &&
+      !this.requestedTestIds.has(testItem.id)
+    ) {
+      return;
+    }
+
+    switch (status) {
+      case "pass":
+        run.passed(testItem, duration);
+        this.testResultHistory.set(testItem.id, { status: "passed", duration });
+        break;
+      case "fail":
+        const errorInfo = this.testErrors.get(id);
+        if (errorInfo) {
+          const errorMessage = this.createErrorMessage(errorInfo, testItem);
+          run.failed(testItem, errorMessage, duration);
+          this.testResultHistory.set(testItem.id, { status: "failed", message: errorMessage, duration });
+        } else {
+          const message = new vscode.TestMessage(`Test "${testItem.label}" failed - check output for details`);
+          run.failed(testItem, message, duration);
+          this.testResultHistory.set(testItem.id, { status: "failed", message, duration });
+        }
+        break;
+      case "skip":
+      case "todo":
+      case "skipped_because_label":
+        run.skipped(testItem);
+        this.testResultHistory.set(testItem.id, { status: "skipped" });
+        break;
+      case "timeout":
+        const timeoutMsg = new vscode.TestMessage(
+          duration > 0 ? `Test timed out after ${duration.toFixed(0)}ms` : "Test timed out",
+        );
+        run.failed(testItem, timeoutMsg, duration);
+        this.testResultHistory.set(testItem.id, { status: "failed", message: timeoutMsg, duration });
+        break;
+    }
+  }
+
+  private handleLifecycleError(params: LifecycleErrorEvent, _run: vscode.TestRun): void {
+    const { message, urls, lineColumns } = params;
+
+    if (!urls || urls.length === 0 || !urls[0]) {
+      return;
+    }
+
+    const filePath = windowsVscodeUri(urls[0]);
+    const line = lineColumns && lineColumns.length > 0 ? lineColumns[0] : 1;
+    const column = lineColumns && lineColumns.length > 1 ? lineColumns[1] : 1;
+
+    const errorInfo: TestError = {
+      message,
+      file: filePath,
+      line,
+      column,
+    };
+
+    if (this.lastStartedTestId !== null) {
+      this.testErrors.set(this.lastStartedTestId, errorInfo);
+    }
+  }
+
+  private cleanupUndiscoveredTests(requestedTests: vscode.TestItem[]): void {
+    if (this.currentRunType !== "individual" || this.discoveredTestIds.size === 0) {
+      return;
+    }
+
+    const filesToCheck = new Set<string>();
+    for (const test of requestedTests) {
+      if (test.uri) {
+        filesToCheck.add(test.uri.toString());
+      }
+    }
+
+    for (const fileUri of filesToCheck) {
+      const fileItem = this.testController.items.get(fileUri);
+      if (fileItem) {
+        this.cleanupTestItem(fileItem);
+      }
+    }
+  }
+
+  private cleanupTestItem(item: vscode.TestItem): void {
+    const childrenToRemove: vscode.TestItem[] = [];
+
+    for (const [, child] of item.children) {
+      if (!this.discoveredTestIds.has(child.id)) {
+        childrenToRemove.push(child);
+      } else {
+        this.cleanupTestItem(child);
+      }
+    }
+
+    for (const child of childrenToRemove) {
+      item.children.delete(child.id);
+    }
+  }
+
+  private cleanupStaleTests(requestedTests: vscode.TestItem[]): void {
+    if (this.discoveredTestIds.size === 0) {
+      return;
+    }
+
+    const filesToCheck = new Set<string>();
+    for (const test of requestedTests) {
+      if (test.uri) {
+        filesToCheck.add(test.uri.toString());
+      }
+    }
+
+    for (const fileUri of filesToCheck) {
+      const fileItem = this.testController.items.get(fileUri);
+      if (fileItem) {
+        const hasTestsInThisFile = Array.from(this.discoveredTestIds).some(id =>
+          id.startsWith(fileItem.uri?.fsPath || ""),
+        );
+        if (hasTestsInThisFile) {
+          this.cleanupTestItem(fileItem);
+        }
+      }
+    }
+  }
+
+  private createErrorMessage(errorInfo: TestError, _testItem: vscode.TestItem): vscode.TestMessage {
+    const cleanMessage = errorInfo.message.replace(
+      /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-PRFZcf-nqry=><]/g,
+      "",
+    );
+
+    const errorMessage = this.processErrorData(
+      cleanMessage,
+      new vscode.Location(
+        vscode.Uri.file(errorInfo.file),
+        new vscode.Position(errorInfo.line - 1, errorInfo.column - 1),
+      ),
+    );
+    return errorMessage;
+  }
+
+  private processErrorData(message: string, location: vscode.Location): vscode.TestMessage {
+    const messageLinesRaw = message.split("\n");
+    const lines = messageLinesRaw;
+
+    const errorLine = lines[0].trim();
+    const messageLines = lines.slice(1).join("\n");
+
+    const errorType = errorLine.replace(/^(E|e)rror: /, "").trim();
+
+    switch (errorType) {
+      case "expect(received).toMatchInlineSnapshot(expected)":
+      case "expect(received).toMatchSnapshot(expected)":
+      case "expect(received).toEqual(expected)":
+      case "expect(received).toBe(expected)": {
+        const regex = /^Expected:\s*([\s\S]*?)\nReceived:\s*([\s\S]*?)$/;
+        let testMessage = vscode.TestMessage.diff(
+          errorLine,
+          messageLines.match(regex)?.[1].trim() || "",
+          messageLines.match(regex)?.[2].trim() || "",
+        );
+        if (!messageLines.match(regex)) {
+          const code = messageLines
+            .replace(/(?:\r?\n)+(- Expected\s+- \d+|\+ Received\s+\+ \d+)\s*$/g, "")
+            .replace(/(?:\r?\n)+(- Expected\s+- \d+|\+ Received\s+\+ \d+)\s*$/g, "")
+            .trim();
+          testMessage = new vscode.TestMessage(
+            new vscode.MarkdownString("Values did not match:\n").appendCodeblock(code, "diff"),
+          );
+        }
+        testMessage.location = location;
+        return testMessage;
+      }
+
+      case "expect(received).toBeInstanceOf(expected)": {
+        const regex = /^Expected constructor:\s*([\s\S]*?)\nReceived value:\s*([\s\S]*?)$/;
+        let testMessage = vscode.TestMessage.diff(
+          errorLine,
+          messageLines.match(regex)?.[1].trim() || "",
+          messageLines.match(regex)?.[2].trim() || "",
+        );
+        if (!messageLines.match(regex)) {
+          testMessage = new vscode.TestMessage(messageLines);
+        }
+        testMessage.location = location;
+        return testMessage;
+      }
+
+      case "expect(received).not.toBe(expected)":
+      case "expect(received).not.toEqual(expected)": {
+        const testMessage = new vscode.TestMessage(messageLines);
+        testMessage.location = location;
+        return testMessage;
+      }
+
+      case "expect(received).toBeNull()": {
+        const actualValue = messageLines.replace("Received:", "").trim();
+        const testMessage = vscode.TestMessage.diff(errorLine, "null", actualValue);
+        testMessage.location = location;
+        return testMessage;
+      }
+
+      case "expect(received).toMatchObject(expected)": {
+        const line = messageLines
+          .replace(/(?:\r?\n)+(- Expected\s+- \d+|\+ Received\s+\+ \d+)\s*$/g, "")
+          .replace(/(?:\r?\n)+(- Expected\s+- \d+|\+ Received\s+\+ \d+)\s*$/g, "");
+
+        const formatted = new vscode.MarkdownString("Values did not match:");
+        formatted.appendCodeblock(line, "diff");
+        const testMessage = new vscode.TestMessage(formatted);
+        testMessage.location = location;
+        return testMessage;
+      }
+    }
+
+    let lastEffortMsg = messageLines.split("\n");
+    const lastLine = lastEffortMsg?.at(-1);
+    if (lastLine?.startsWith("Received ") || lastLine?.startsWith("Received: ")) {
+      lastEffortMsg = lastEffortMsg.reverse();
+    }
+
+    const msg = errorLine.startsWith("error: expect")
+      ? `${lastEffortMsg.join("\n")}\n${errorLine.trim()}`.trim()
+      : `${errorLine.trim()}\n${messageLines}`.trim();
+
+    const testMessage = new vscode.TestMessage(msg);
+    testMessage.location = location;
+    return testMessage;
+  }
+
+  private shouldUseTestNamePattern(tests: vscode.TestItem[]): boolean {
+    const testUriString = tests[0]?.uri?.toString();
+    const testIdEndsWithFileName = tests[0]?.uri && tests[0].label === tests[0].uri.fsPath.split("/").pop();
 
     const isFileOnly =
       tests.length === 1 &&
       tests[0].uri &&
       (testIdEndsWithFileName || !tests[0].id.includes("#") || tests[0].id === testUriString);
 
+    function hasManyTests() {
+      if (tests.length === 0) return false;
+      let current = tests[0];
+      while (current.parent) {
+        if (current.parent.children.size > 1) {
+          return true;
+        }
+        current = current.parent;
+      }
+      return false;
+    }
+
+    return !isFileOnly && hasManyTests();
+  }
+
+  private buildTestNamePattern(tests: vscode.TestItem[]): string | null {
+    const testNames: string[] = [];
+
+    for (const test of tests) {
+      if (!test.id.includes("#")) {
+        continue;
+      }
+
+      let t = test.id
+        .slice(test.id.indexOf("#") + 1)
+        .split(" > ")
+        .join(" ");
+
+      t = t.replaceAll(/\$\{[^}]+\}/g, ".*?");
+      t = t.replaceAll(/\\\$\\\{[^}]+\\\}/g, ".*?");
+      t = t.replaceAll(/\\%[isfd]/g, ".*?");
+
+      if (test.tags.some(tag => tag.id === "test" || tag.id === "it")) {
+        testNames.push(`^ ${t}$`);
+      } else {
+        testNames.push(`^ ${t} `);
+      }
+    }
+
+    if (testNames.length === 0) {
+      return null;
+    }
+
+    return testNames.map(e => `(${e})`).join("|");
+  }
+
+  private disconnectInspector(): void {
+    if (this.inspectorConnection) {
+      this.inspectorConnection.close();
+      this.inspectorConnection = null;
+    }
+    this.inspectorToVSCode.clear();
+    this.vscodeToInspector.clear();
+    this.requestedTestIds.clear();
+  }
+
+  private async debugTests(
+    tests: vscode.TestItem[],
+    _request: vscode.TestRunRequest,
+    run: vscode.TestRun,
+  ): Promise<void> {
+    const testFiles = new Set<string>();
     for (const test of tests) {
       if (test.uri) {
         testFiles.add(test.uri.fsPath);
       }
     }
 
+    const isIndividualTestRun = this.shouldUseTestNamePattern(tests);
+
     if (testFiles.size === 0) {
+      run.appendOutput("No test files found to debug.\n");
       run.end();
       return;
     }
@@ -900,29 +1258,11 @@ export class BunTestController implements vscode.Disposable {
     const { bunCommand, testArgs } = this.getBunExecutionConfig();
     const args = [...testArgs, ...testFiles];
 
-    if (isFileOnly) {
+    if (!isIndividualTestRun) {
       args.push("--inspect-brk");
     } else {
-      const testNames = [];
       const breakpoints: vscode.SourceBreakpoint[] = [];
       for (const test of tests) {
-        let t = test.id.includes("#")
-          ? test.id
-              .slice(test.id.indexOf("#") + 1)
-              .split(" > ")
-              .join(" ")
-          : test.label;
-
-        t = t.replaceAll(/\$\{[^}]+\}/g, ".*?");
-        t = t.replaceAll(/\\\$\\\{[^}]+\\\}/g, ".*?");
-        t = t.replaceAll(/\\%[isfd]/g, ".*?");
-
-        if (test.tags.some(tag => tag.id === "test" || tag.id === "it")) {
-          testNames.push(`^ ${t}$`);
-        } else {
-          testNames.push(`^ ${t} `);
-        }
-
         if (test.uri) {
           breakpoints.push(
             new vscode.SourceBreakpoint(
@@ -934,13 +1274,11 @@ export class BunTestController implements vscode.Disposable {
       }
       vscode.debug.addBreakpoints(breakpoints);
 
-      if (testNames.length > 0) {
-        const testNamesRegex = testNames.map(pattern => `(${pattern})`).join("|");
-        args.push("--test-name-pattern", process.platform === "win32" ? `""` : testNamesRegex);
+      const pattern = this.buildTestNamePattern(tests);
+      if (pattern) {
+        args.push("--test-name-pattern", process.platform === "win32" ? `"${pattern}"` : pattern);
       }
     }
-
-    output.appendLine(`Debugging command: "${bunCommand} ${args.join(" ")}"`);
 
     const debugConfiguration: vscode.DebugConfiguration = {
       args: args.slice(1),
@@ -961,7 +1299,6 @@ export class BunTestController implements vscode.Disposable {
       for (const test of tests) {
         run.errored(test, new vscode.TestMessage(`Error starting debugger: ${error}`));
       }
-      output.appendLine(`Error starting debugger: ${error}`);
     }
     run.end();
   }
@@ -973,140 +1310,6 @@ export class BunTestController implements vscode.Disposable {
     this.activeProcesses.clear();
   }
 
-  private findMatchingTestItem(parent: vscode.TestItem, testResult: BunTestResult): vscode.TestItem | undefined {
-    let foundItem: vscode.TestItem | undefined;
-
-    for (const [, child] of parent.children) {
-      if (child.label.trim() === testResult.name.trim()) {
-        foundItem = child;
-        break;
-      }
-    }
-
-    if (!foundItem) {
-      for (const [, child] of parent.children) {
-        if (!foundItem && child.children.size > 0) {
-          const found = this.findMatchingTestItem(child, testResult);
-          if (found) {
-            foundItem = found;
-            break;
-          }
-        }
-      }
-    }
-
-    return foundItem;
-  }
-
-  private resetTestItemChildren(testItem: vscode.TestItem, removeSelfFromParent = false): void {
-    if (testItem.children && testItem.children.size > 0) {
-      for (const [, child] of testItem.children) {
-        this.resetTestItemChildren(child);
-      }
-    }
-    testItem.children.replace([]);
-    if (removeSelfFromParent && testItem.parent) {
-      testItem.parent.children.delete(testItem.id);
-    }
-  }
-
-  private createTestItemsFromParsedOutput(parsedOutput: BunFileResult[]): void {
-    for (const fileResult of parsedOutput) {
-      const fileUri = vscode.Uri.file(windowsVscodeUri(fileResult.name));
-      let fileTestItem = this.testController.items.get(fileUri.toString());
-
-      if (!fileTestItem) {
-        fileTestItem = this.testController.createTestItem(
-          fileUri.toString(),
-          path.relative(this.workspaceFolder.uri.fsPath, fileResult.name),
-          fileUri,
-        );
-        this.testController.items.add(fileTestItem);
-      }
-
-      fileTestItem.children.replace([]);
-      this.addTestResultChildren(fileResult.tests, fileTestItem, fileResult.name);
-    }
-  }
-
-  private addTestResultChildren(
-    tests: BunTestResult[],
-    parent: vscode.TestItem,
-    fileName: string,
-    parentPath = "",
-  ): void {
-    for (const test of tests) {
-      const path = parentPath ? `${parentPath} > ${this.escapeTestName(test.name)}` : this.escapeTestName(test.name);
-      const testId = `${fileName}#${path}`;
-
-      const fileUri = parent.uri || vscode.Uri.file(fileName);
-      const testItem = this.testController.createTestItem(testId, test.name, fileUri);
-
-      testItem.tags = [new vscode.TestTag(test.children ? "describe" : "test")];
-
-      if (test.location && test.location.line > 0) {
-        const line = Math.max(0, test.location.line - 1);
-        const column = Math.max(0, test.location.column);
-        const location = new vscode.Location(fileUri, new vscode.Position(line, column));
-        testItem.range = new vscode.Range(location.range.start, location.range.start.translate(0, test.name.length));
-      }
-
-      parent.children.add(testItem);
-
-      if (test.children && test.children.length > 0) {
-        this.addTestResultChildren(test.children, testItem, fileName, path);
-      }
-    }
-  }
-
-  private verifyBunVersion(target = "1.2.19"): void {
-    // a simple check because we needed to update how the xml generater works
-    // so keep this while the older versions are still recent
-    const { bunCommand } = this.getBunExecutionConfig();
-
-    const targetNum = Number.parseInt(target.replaceAll(".", ""));
-    let version = "unknown";
-
-    try {
-      const v = execSync([process.platform === "win32" ? `"${bunCommand}"` : bunCommand, "--version"].join(" "), {
-        encoding: "utf8",
-        cwd: this.workspaceFolder.uri.fsPath,
-      }).trim();
-      if (targetNum > Number.parseInt(v.replaceAll(".", ""))) {
-        version = v;
-      } else {
-        return;
-      }
-    } catch (error) {
-      output.appendLine(`Error getting Bun version: ${error}`);
-      version = "unknown";
-    }
-
-    if (!version || version === "unknown") {
-      output.appendLine("Could not determine Bun version. Please ensure Bun is installed and accessible.");
-      return;
-    }
-
-    const selection = vscode.window.showErrorMessage(
-      `Your Bun version (${version}) is too old to use the test explorer in this editor. Please update to ${target} or later.`,
-      "Update Bun",
-      // { modal: true },
-    );
-
-    if (selection) {
-      selection.then(async e => {
-        if (e !== "Update Bun") return;
-        const terminal = vscode.window.createTerminal({
-          name: "Bun Upgrade",
-          cwd: this.workspaceFolder.uri.fsPath,
-          message: "\x1b[34mRunning\x1b[0m \x1b[1m`bun upgrade`\x1b[0m \x1b[32mto update Bun\x1b[0m",
-        });
-        terminal.sendText(`${bunCommand} upgrade`, true);
-        terminal.show();
-      });
-    }
-  }
-
   public dispose(): void {
     this.closeAllActiveProcesses();
     for (const disposable of this.disposables) {
@@ -1116,424 +1319,69 @@ export class BunTestController implements vscode.Disposable {
   }
 }
 
-function getFileLocationFromError(
-  error: string,
-  _expectedFile: string,
-): { file: string; line: number; column: number } | undefined {
-  const expectedFile = _expectedFile.replace(/\\/g, "/");
+class InspectorConnection {
+  private socket: net.Socket | null = null;
+  private framer: SocketFramer | null = null;
+  private requestId = 1;
+  private connected = false;
 
-  const regex = /at .*? \((.*):(\d+):(\d+)\)/g;
-  let match: RegExpExecArray | null;
-  let first: { file: string; line: number; column: number } | undefined = undefined;
+  constructor(private onMessage: (message: InspectorMessage) => void) {}
 
-  match = regex.exec(error);
-  while (match !== null) {
-    const file = match[1].replace(/\\/g, "/");
-    const line = Number.parseInt(match[2], 10);
-    const column = Number.parseInt(match[3], 10) - 1;
+  async connect(socketPath: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.socket = new net.Socket();
+      this.framer = new SocketFramer((message: string) => {
+        try {
+          const parsedMessage = JSON.parse(message) as InspectorMessage;
+          this.onMessage(parsedMessage);
+        } catch (error) {
+          debug.appendLine(`Failed to parse inspector message: ${message}`);
+        }
+      });
 
-    if (file === expectedFile) {
-      return { file, line, column };
-    }
+      this.socket.connect(socketPath, () => {
+        this.connected = true;
+        resolve();
+      });
 
-    if (!first) {
-      first = { file, line, column };
-    }
-    match = regex.exec(error);
-  }
+      this.socket.on("data", (data: Buffer) => {
+        this.framer?.onData(data);
+      });
 
-  return first;
-}
+      this.socket.on("error", (error: Error) => {
+        debug.appendLine(`Inspector connection error: ${error.message}`);
+        reject(error);
+      });
 
-function parseBunTestOutput(output: string, workspacePath: string, reporterOutfile: string): BunFileResult[] | null {
-  const lines = output.trim().split("\n");
-  const testResults: BunFileResult[] = [];
-
-  let xmlResult: unknown | null = null;
-  if (fsSync.existsSync(reporterOutfile)) {
-    const xml = fsSync.readFileSync(reporterOutfile, "utf8");
-    xmlParseString(xml, { explicitArray: false, mergeAttrs: true }, (err: unknown, result: unknown) => {
-      if (!err) xmlResult = result;
+      this.socket.on("close", () => {
+        this.connected = false;
+        debug.appendLine("Inspector connection closed");
+      });
     });
   }
-  if (!xmlResult) return null;
 
-  const outputWithoutAnsi = output;
-  const errorRegex = /::error file=(.*?),line=(\d+),col=(\d+),title=(.*?)::(.*?)(?=\n|$)/g;
-  const errors: Array<{
-    file: string;
-    line: number;
-    col: number;
-    title: string;
-    message: string;
-    testName?: string;
-    lineIdx?: number;
-  }> = [];
-
-  let match: RegExpExecArray | null;
-  let lastErrorIndex = -1;
-
-  match = errorRegex.exec(outputWithoutAnsi);
-  while (match !== null) {
-    const [full, file, line, col, title, msg] = match;
-    const errorLineIdx = lines.findIndex(
-      (l, idx) => idx > lastErrorIndex && l.includes(`::error file=${file},line=${line},col=${col},title=${title}::`),
-    );
-    lastErrorIndex = errorLineIdx === -1 ? lastErrorIndex : errorLineIdx;
-    let testName: string | undefined;
-    for (let i = errorLineIdx + 1; i < lines.length; ++i) {
-      const testLineMatch = lines[i].match(/^[✗✓»] (.+?) (\[.*\])?/);
-      if (testLineMatch) {
-        testName = testLineMatch[1];
-        break;
-      }
+  send(method: string, params?: any): void {
+    if (!this.connected || !this.socket || !this.framer) {
+      throw new Error("Inspector not connected");
     }
-    errors.push({
-      file,
-      line: Number(line),
-      col: Number(col),
-      title,
-      message: decodeURIComponent(msg.replace(/%0A/g, "\n")),
-      testName,
-      lineIdx: errorLineIdx,
-    });
-    match = errorRegex.exec(outputWithoutAnsi);
+
+    const id = this.requestId++;
+    const message = { id, method, params };
+
+    debug.appendLine(`Inspector sending: ${method}`);
+    this.framer.send(this.socket, JSON.stringify(message));
   }
 
-  const errorMsgMap: Map<string, string> = new Map();
-  if (lines && errors && errors.length > 0) {
-    const testLineInfos: { name: string; lineIdx: number; fullName: string[] }[] = [];
-    for (let i = 0; i < lines.length; ++i) {
-      const line = lines[i]
-        .replaceAll("\u001b[0m", "")
-        .replaceAll("\u001b[31m", "")
-        .replace("\u001b[0m\u001b[2m\[\u001b[1m", "[")
-        .replace("\u001b[2m\[", "[")
-        .replace("\u001b[0m\u001b[2m\]\u001b[0m", "]")
-        .replace("\u001b[2m\]", "]")
-        .replaceAll("\u001b[1m", "");
-
-      const m = line.match(/^[✗✓»] (.+?)( \[.*\])?$/m);
-      if (m) {
-        const fullName = m[1].split("\u001b[2m > ").map(s => s.trim());
-        testLineInfos.push({ name: m[1].trim(), lineIdx: i, fullName });
-      }
+  close(): void {
+    if (this.socket) {
+      this.socket.destroy();
+      this.socket = null;
     }
-
-    for (const testLine of testLineInfos) {
-      let bestError: (typeof errors)[0] | undefined;
-      for (const err of errors) {
-        if (typeof err.lineIdx === "number" && err.lineIdx < testLine.lineIdx) {
-          if (!bestError || err.lineIdx > (bestError.lineIdx ?? -1)) {
-            bestError = err;
-          }
-        }
-      }
-      if (bestError) {
-        errorMsgMap.set(
-          JSON.stringify(testLine.fullName),
-          `${bestError.title.trim()}\n${bestError.message.trim()}`.trim(),
-        );
-      }
-    }
+    this.connected = false;
+    this.framer = null;
   }
-
-  function parseXmlSuite(suite: Record<string, unknown>, parentChain: string[] = []): BunTestResult[] {
-    const results: BunTestResult[] = [];
-    if (suite.testsuite) {
-      const suites = Array.isArray(suite.testsuite) ? suite.testsuite : [suite.testsuite];
-      for (const childSuite of suites as Record<string, unknown>[]) {
-        const describeName = childSuite.name as string;
-        const line = childSuite.line !== undefined ? Number(childSuite.line) : 0;
-
-        const childFile = childSuite.file as string;
-        const suiteFile = suite.file as string;
-        const file = childSuite.file
-          ? path.isAbsolute(childFile as string)
-            ? (childFile as string)
-            : path.resolve(workspacePath, childFile as string)
-          : suiteFile
-            ? path.isAbsolute(suiteFile as string)
-              ? (suiteFile as string)
-              : path.resolve(workspacePath, suiteFile as string)
-            : undefined;
-
-        const children = parseXmlSuite(childSuite, [...parentChain, describeName]);
-
-        let status: BunTestResult["status"] = "failed";
-        if (children.some(c => c.status === "failed")) {
-          status = "failed";
-        } else if (children.every(c => c.status === "skipped")) {
-          status = "skipped";
-        } else {
-          status = "passed";
-        }
-
-        results.push({
-          name: describeName,
-          status,
-          location: {
-            file: file || (suite.name as string),
-            line,
-            column: 0,
-          },
-          duration: childSuite.time !== undefined ? Number(childSuite.time) * 1000 : undefined,
-          ...(parentChain.length > 0 ? { parent: parentChain.join(" > ") } : {}),
-          children,
-        });
-      }
-    }
-
-    if (suite.testcase) {
-      const testcases = Array.isArray(suite.testcase) ? suite.testcase : [suite.testcase];
-      for (const testcase of testcases as Record<string, unknown>[]) {
-        const name = testcase.name as string;
-        const classname = (testcase.classname as string) || "";
-        const fullParent = parentChain.length ? parentChain.join(" > ") : classname || undefined;
-        const line = testcase.line !== undefined ? Number(testcase.line) : 0;
-
-        const testcaseFile = testcase.file as string;
-        const file = testcase.file
-          ? path.isAbsolute(testcaseFile as string)
-            ? (testcaseFile as string)
-            : path.resolve(workspacePath, testcaseFile as string)
-          : testcaseFile
-            ? path.isAbsolute(testcaseFile as string)
-              ? (testcaseFile as string)
-              : path.resolve(workspacePath, testcaseFile as string)
-            : undefined;
-
-        const status =
-          testcase.skipped !== undefined ? "skipped" : testcase.failure !== undefined ? "failed" : "passed";
-        const duration = testcase.time !== undefined ? Number(testcase.time) * 1000 : undefined;
-
-        let errorMsg: string | undefined;
-        if (status === "failed") {
-          const fullName = JSON.stringify([...parentChain.map(e => e.trim()), name.trim()]);
-
-          if (errorMsgMap?.has(fullName)) {
-            errorMsg = errorMsgMap.get(fullName);
-          }
-
-          if (!errorMsg) {
-            const failure = testcase.failure as Record<string, unknown>;
-            if (failure && typeof failure === "object" && typeof failure._ === "string") {
-              errorMsg = failure._.trim();
-            } else if (typeof testcase.failure === "string") {
-              errorMsg = testcase.failure.trim();
-            }
-          }
-          if (!errorMsg) errorMsg = `Test "${name}" failed (check "test result" output console for details)`;
-        }
-
-        results.push({
-          name,
-          status,
-          ...(errorMsg !== undefined ? { message: errorMsg } : {}),
-          ...(duration !== undefined && duration > 0 ? { duration } : {}),
-          location: {
-            file: file || (suite.name as string),
-            line,
-            column: 0,
-          },
-          ...(fullParent ? { parent: fullParent } : {}),
-        });
-      }
-    }
-    return results;
-  }
-
-  if (xmlResult && typeof xmlResult === "object" && xmlResult !== null) {
-    const xmlObj = xmlResult as Record<string, unknown>;
-    if (xmlObj.testsuites && typeof xmlObj.testsuites === "object") {
-      const testsuites = xmlObj.testsuites as Record<string, unknown>;
-      if (testsuites.testsuite) {
-        const suites = Array.isArray(testsuites.testsuite) ? testsuites.testsuite : [testsuites.testsuite];
-        for (const suite of suites as Record<string, unknown>[]) {
-          const fileName = suite.name as string;
-          const filePath = path.isAbsolute(fileName) ? fileName : path.resolve(workspacePath, fileName);
-
-          const topLevel = parseXmlSuite(suite);
-          const idx = testResults.findIndex(r => r.name === filePath);
-          if (idx !== -1) testResults.splice(idx, 1);
-
-          testResults.push({
-            name: filePath,
-            tests: topLevel,
-            passed: topLevel.every(t => t.status === "passed"),
-          });
-        }
-      }
-    }
-  }
-
-  return testResults;
-}
-
-function processErrorData({
-  testResult,
-  testItem,
-}: {
-  testResult: BunTestResult;
-  testItem: vscode.TestItem;
-}): vscode.TestMessage | undefined {
-  if (!testResult.message) {
-    return undefined;
-  }
-
-  const messageLinesRaw = testResult.message.split("\n");
-  const stackTraceIndex = messageLinesRaw.findIndex(
-    line =>
-      line.trim().startsWith("at ") &&
-      line.includes("(") &&
-      line.includes(":") &&
-      line.includes(testItem.uri?.fsPath || ""),
-  );
-  let lines: string[];
-  if (stackTraceIndex !== -1) {
-    lines = messageLinesRaw.slice(0, stackTraceIndex + 1).map(line => line);
-  } else {
-    lines = messageLinesRaw.map(line => line);
-  }
-
-  const errorLine = lines[0].trim();
-  const messageLines = lines.slice(1, -1).join("\n");
-  const fileLine = lines.slice(-1)[0].trim();
-
-  const filepath = getFileLocationFromError(fileLine, testItem.uri?.fsPath || "");
-
-  if (!filepath) {
-    return new vscode.TestMessage(testResult.message);
-  }
-
-  const messageLocation = new vscode.Location(
-    vscode.Uri.file(filepath.file),
-    new vscode.Position(filepath.line - 1, filepath.column),
-  );
-
-  const errorType = errorLine.replace(/^(E|e)rror: /, "").trim();
-  switch (errorType) {
-    case "expect(received).toMatchInlineSnapshot(expected)":
-    case "expect(received).toMatchSnapshot(expected)":
-    case "expect(received).toEqual(expected)":
-    case "expect(received).toBe(expected)": {
-      const regex = /^Expected:\s*([\s\S]*?)\nReceived:\s*([\s\S]*?)$/;
-      let message = vscode.TestMessage.diff(
-        errorLine,
-        messageLines.match(regex)?.[1].trim() || "",
-        messageLines.match(regex)?.[2].trim() || "",
-      );
-      if (!messageLines.match(regex)) {
-        const code = messageLines
-          .replace(/(?:\r?\n)+(- Expected\s+- \d+|\+ Received\s+\+ \d+)\s*$/g, "")
-          .replace(/(?:\r?\n)+(- Expected\s+- \d+|\+ Received\s+\+ \d+)\s*$/g, "")
-          .trim();
-        message = new vscode.TestMessage(
-          new vscode.MarkdownString("Values did not match:\n").appendCodeblock(code, "diff"),
-        );
-      }
-      message.location = messageLocation;
-      return message;
-    }
-
-    case "expect(received).toBeInstanceOf(expected)": {
-      const regex = /^Expected constructor:\s*([\s\S]*?)\nReceived value:\s*([\s\S]*?)$/;
-      let message = vscode.TestMessage.diff(
-        errorLine,
-        messageLines.match(regex)?.[1].trim() || "",
-        messageLines.match(regex)?.[2].trim() || "",
-      );
-      if (!messageLines.match(regex)) {
-        message = new vscode.TestMessage(messageLines);
-      }
-      message.location = messageLocation;
-      return message;
-    }
-
-    case "expect(received).not.toBe(expected)":
-    case "expect(received).not.toEqual(expected)": {
-      const message = new vscode.TestMessage(messageLines);
-      message.location = messageLocation;
-      return message;
-    }
-
-    case "expect(received).toBeNull()": {
-      const actualValue = messageLines.replace("Received:", "").trim();
-      const message = vscode.TestMessage.diff(errorLine, "null", actualValue);
-      message.location = messageLocation;
-      return message;
-    }
-    case "expect(received).toBeTruthy()": {
-      const message = vscode.TestMessage.diff(errorLine, "true", messageLines.replace("Received: ", "").trim());
-      message.location = messageLocation;
-      return message;
-    }
-    case "expect(received).toBeFalsy()": {
-      const message = vscode.TestMessage.diff(errorLine, "false", messageLines.replace("Received: ", "").trim());
-      message.location = messageLocation;
-      return message;
-    }
-    case "expect(received).toBeUndefined()": {
-      const message = vscode.TestMessage.diff(errorLine, "undefined", messageLines.replace("Received: ", "").trim());
-      message.location = messageLocation;
-      return message;
-    }
-    case "expect(received).toBeNaN()": {
-      const message = vscode.TestMessage.diff(errorLine, "NaN", messageLines.replace("Received: ", "").trim());
-      message.location = messageLocation;
-      return message;
-    }
-
-    case "expect(received).toBeLessThanOrEqual(expected)":
-    case "expect(received).toBeLessThan(expected)":
-    case "expect(received).toBeGreaterThanOrEqual(expected)":
-    case "expect(received).toBeGreaterThan(expected)": {
-      const regex = /^Expected: (.*?)\nReceived: (.*?)$/;
-      const message = new vscode.TestMessage(
-        `${messageLines.trim().match(regex)?.[2]?.trim()} isn't ${messageLines.trim().match(regex)?.[1]?.trim()}\n\n${messageLines}`,
-      );
-      message.location = messageLocation;
-      return message;
-    }
-
-    case "expect(received).toStrictEqual(expected)":
-    case "expect(received).toMatchObject(expected)": {
-      const line = messageLines
-        .replace(/(?:\r?\n)+(- Expected\s+- \d+|\+ Received\s+\+ \d+)\s*$/g, "")
-        .replace(/(?:\r?\n)+(- Expected\s+- \d+|\+ Received\s+\+ \d+)\s*$/g, "");
-
-      const formatted = new vscode.MarkdownString("Values did not match:");
-      formatted.appendCodeblock(line, "diff");
-      const message = new vscode.TestMessage(formatted);
-      message.location = messageLocation;
-
-      return message;
-    }
-  }
-
-  let lastEffortMsg = messageLines.split("\n");
-  const lastLine = lastEffortMsg?.at(-1);
-  if (lastLine?.startsWith("Received ") || lastLine?.startsWith("Received: ")) {
-    lastEffortMsg = lastEffortMsg.reverse();
-  }
-
-  const msg = errorLine.startsWith("error: expect")
-    ? `${lastEffortMsg.join("\n")}\n${errorLine.trim()}`.trim()
-    : `${errorLine.trim()}\n${messageLines}`.trim();
-
-  const message = new vscode.TestMessage(msg);
-  message.location = messageLocation;
-  return message;
 }
 
 function windowsVscodeUri(uri: string): string {
   return process.platform === "win32" ? uri.replace("c:\\", "C:\\") : uri;
 }
-
-const arrayEquals = <T extends any>(a: T[], b: T[]): boolean => {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-};

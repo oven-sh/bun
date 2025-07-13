@@ -6592,6 +6592,8 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                             error.BadPathName,
                             error.NetworkNotFound,
                             error.DeviceBusy,
+                            error.ProcessNotFound,
+                            error.PermissionDenied,
                             => |e| return e,
                         };
                         stack.appendAssumeCapacity(.{
@@ -6627,6 +6629,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                         error.BadPathName,
                         error.NetworkNotFound,
                         error.Unexpected,
+                        error.PermissionDenied,
                         => |e| return e,
                     }
                 }
@@ -6684,6 +6687,8 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                             error.BadPathName,
                             error.NetworkNotFound,
                             error.DeviceBusy,
+                            error.PermissionDenied,
+                            error.ProcessNotFound,
                             => |e| return e,
                         };
                     } else {
@@ -6708,6 +6713,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                             error.FileBusy,
                             error.BadPathName,
                             error.NetworkNotFound,
+                            error.PermissionDenied,
                             error.Unexpected,
                             => |e| return e,
                         }
@@ -6740,6 +6746,7 @@ fn zigDeleteTreeOpenInitialSubpath(self: std.fs.Dir, sub_path: []const u8, kind_
                     error.NotDir,
                     error.FileNotFound,
                     error.AccessDenied,
+                    error.PermissionDenied,
                     error.SymLinkLoop,
                     error.ProcessFdQuotaExceeded,
                     error.NameTooLong,
@@ -6752,6 +6759,7 @@ fn zigDeleteTreeOpenInitialSubpath(self: std.fs.Dir, sub_path: []const u8, kind_
                     error.BadPathName,
                     error.DeviceBusy,
                     error.NetworkNotFound,
+                    error.ProcessNotFound,
                     => |e| return e,
                 };
             } else {
@@ -6765,6 +6773,7 @@ fn zigDeleteTreeOpenInitialSubpath(self: std.fs.Dir, sub_path: []const u8, kind_
 
                     error.FileNotFound,
                     error.AccessDenied,
+                    error.PermissionDenied,
                     error.InvalidUtf8,
                     error.InvalidWtf8,
                     error.SymLinkLoop,
@@ -6835,6 +6844,8 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
                             error.BadPathName,
                             error.NetworkNotFound,
                             error.DeviceBusy,
+                            error.ProcessNotFound,
+                            error.PermissionDenied,
                             => |e| return e,
                         };
                         if (cleanup_dir_parent) |*d| d.close();
@@ -6867,6 +6878,7 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
                             error.FileBusy,
                             error.BadPathName,
                             error.NetworkNotFound,
+                            error.PermissionDenied,
                             error.Unexpected,
                             => |e| return e,
                         }

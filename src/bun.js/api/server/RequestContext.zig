@@ -2408,12 +2408,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         comptime {
             const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
-            if (bun.Environment.export_cpp_apis) {
-                @export(&JSC.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" });
-                @export(&JSC.toJSHostFn(onReject), .{ .name = export_prefix ++ "__onReject" });
-                @export(&JSC.toJSHostFn(onResolveStream), .{ .name = export_prefix ++ "__onResolveStream" });
-                @export(&JSC.toJSHostFn(onRejectStream), .{ .name = export_prefix ++ "__onRejectStream" });
-            }
+            @export(&JSC.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" });
+            @export(&JSC.toJSHostFn(onReject), .{ .name = export_prefix ++ "__onReject" });
+            @export(&JSC.toJSHostFn(onResolveStream), .{ .name = export_prefix ++ "__onResolveStream" });
+            @export(&JSC.toJSHostFn(onRejectStream), .{ .name = export_prefix ++ "__onRejectStream" });
         }
     };
 }

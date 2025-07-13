@@ -439,7 +439,7 @@ pub const PathWatcherManager = struct {
                 return .{
                     .err = .{
                         .errno = @truncate(@intFromEnum(switch (err) {
-                            error.AccessDenied => bun.sys.E.ACCES,
+                            error.AccessDenied, error.PermissionDenied => bun.sys.E.ACCES,
                             error.SystemResources => bun.sys.E.NOMEM,
                             error.Unexpected,
                             error.InvalidUtf8,

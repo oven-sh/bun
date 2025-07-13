@@ -57,14 +57,6 @@ pub fn init(
     };
 }
 
-pub fn deinit(this: *Router) void {
-    if (comptime Environment.isWindows) {
-        for (this.routes.list.items(.filepath)) |abs_path| {
-            this.allocator.free(abs_path);
-        }
-    }
-}
-
 pub fn getEntryPoints(this: *const Router) []const string {
     return this.routes.list.items(.filepath);
 }

@@ -99,7 +99,7 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
 
     // TODO: convert to bun.sys.Error
     this.fd = .fromNative(try std.posix.inotify_init1(IN.CLOEXEC));
-    this.eventlist_bytes = &(try bun.default_allocator.alignedAlloc(EventListBytes, @alignOf(Event), 1))[0];
+    this.eventlist_bytes = &(try bun.default_allocator.alignedAlloc(EventListBytes, .fromByteUnits(@alignOf(Event)), 1))[0];
     log("{} init", .{this.fd});
 }
 

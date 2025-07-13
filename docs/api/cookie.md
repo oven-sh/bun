@@ -1,4 +1,4 @@
-Bun provides native APIs for working with HTTP cookies through `Bun.Cookie` and `Bun.CookieMap`. These APIs offer fast, easy-to-use methods for parsing, generating, and manipulating cookies in HTTP requests and responses.
+Bun provides native APIs for working with HTTP cookies through `Bun.Cookie` and `Bun.CookieMap`. These APIs offer fast methods for parsing, generating, and manipulating cookies in HTTP requests and responses.
 
 ## CookieMap class
 
@@ -138,7 +138,7 @@ const json = cookies.toJSON();
 
 Returns an array of values for Set-Cookie headers that can be used to apply all cookie changes.
 
-When using `Bun.serve()`, you don't need to call this method explicitly. Any changes made to the `req.cookies` map are automatically applied to the response headers. This method is primarily useful when working with other HTTP server implementations.
+When using `Bun.serve()`, you can skip calling this method explicitly. Any changes made to the `req.cookies` map are automatically applied to the response headers. This method is primarily useful when working with other HTTP server implementations.
 
 ```js
 import { createServer } from "node:http";

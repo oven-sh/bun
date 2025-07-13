@@ -52,7 +52,7 @@ The specifier passed to `Worker` is resolved relative to the project root (like 
 
 ### `preload` - load modules before the worker starts
 
-You can pass an array of module specifiers to the `preload` option to load modules before the worker starts. This is useful when you want to ensure some code is always loaded before the application starts, like loading OpenTelemetry, Sentry, DataDog, etc.
+You can pass an array of module specifiers to the `preload` option to load modules before the worker starts. This approach helps ensure some code is always loaded before the application starts. Examples include loading OpenTelemetry, Sentry, or DataDog.
 
 ```js
 const worker = new Worker("./worker.ts", {

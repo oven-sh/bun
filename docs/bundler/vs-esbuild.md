@@ -874,7 +874,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 Bun's plugin API is designed to be esbuild compatible. Bun doesn't support esbuild's entire plugin API surface, but the core functionality is implemented. Many third-party `esbuild` plugins will work out of the box with Bun.
 
 {% callout %}
-Long term, we aim for feature parity with esbuild's API, so if something doesn't work please file an issue to help us prioritize.
+Long term, Bun aims for feature parity with esbuild's API, so if something doesn't work please file an issue to help us prioritize.
 
 {% /callout %}
 

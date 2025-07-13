@@ -54,4 +54,4 @@ Now update Bun's bindings wherever there are compiler errors:
 make bindings -j10
 ```
 
-This is the hard part. It might involve digging through WebKit's commit history to figure out what changed and why. Fortunately, WebKit contributors write great commit messages.
+Updating the bindings is the challenging part. It might involve digging through WebKit's commit history to figure out what changed and why. Fortunately, WebKit contributors write great commit messages.

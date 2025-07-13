@@ -1,4 +1,4 @@
-Bun provides native bindings for working with PostgreSQL databases with a modern, Promise-based API. The interface is designed to be simple and performant, using tagged template literals for queries and offering features like connection pooling, transactions, and prepared statements.
+Bun provides native bindings for working with PostgreSQL databases with a modern, Promise-based API. The interface is designed for performance, using tagged template literals for queries and offering features like connection pooling, transactions, and prepared statements.
 
 ```ts
 import { sql } from "bun";

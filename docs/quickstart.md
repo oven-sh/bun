@@ -5,7 +5,7 @@ $ mkdir quickstart
 $ cd quickstart
 ```
 
-Run `bun init` to scaffold a new project. It's an interactive tool; for this tutorial, just press `enter` to accept the default answer for each prompt.
+Run `bun init` to scaffold a new project. It's an interactive tool; for this tutorial, press `enter` to accept the default answer for each prompt.
 
 ```bash
 $ bun init
@@ -29,7 +29,7 @@ Since our entry point is a `*.ts` file, Bun generates a `tsconfig.json` for you.
 
 ## Run a file
 
-Open `index.ts` and paste the following code snippet, which implements a simple HTTP server with [`Bun.serve`](https://bun.sh/docs/api/http).
+Open `index.ts` and paste the following code snippet, which implements an HTTP server with [`Bun.serve`](https://bun.sh/docs/api/http).
 
 ```ts
 const server = Bun.serve({

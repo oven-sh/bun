@@ -18,7 +18,7 @@ $ curl -fsSL https://bun.sh/install | bash -s "bun-v$BUN_LATEST_VERSION"
 ```
 
 ```bash#npm
-$ npm install -g bun # the last `npm` command you'll ever need
+$ npm install -g bun # the last `npm` command you will ever need
 ```
 
 ```bash#Homebrew
@@ -43,7 +43,7 @@ To install, paste this into a terminal:
 ```
 
 ```powershell#npm
-> npm install -g bun # the last `npm` command you'll ever need
+> npm install -g bun # the last `npm` command you will ever need
 ```
 
 ```powershell#Scoop
@@ -85,7 +85,7 @@ $ bun --version
 1.x.y
 ```
 
-To see the precise commit of [oven-sh/bun](https://github.com/oven-sh/bun) that you're using, run `bun --revision`.
+To see the precise commit of [oven-sh/bun](https://github.com/oven-sh/bun) that you are using, run `bun --revision`.
 
 ```sh
 $ bun --revision
@@ -97,7 +97,7 @@ If you've installed Bun but are seeing a `command not found` error, you may have
 ### How to add your `PATH`
 
 {% details summary="Linux / Mac" %}
-First, determine what shell you're using:
+First, determine what shell you are using:
 
 ```sh
 $ echo $SHELL
@@ -221,7 +221,7 @@ For convenience, here are download links for the latest version:
 - [`bun-linux-aarch64-musl.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-aarch64-musl.zip)
 - [`bun-darwin-x64.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-x64.zip)
 
-The `musl` binaries are built for distributions that do not ship with the glibc libraries by default, instead relying on musl. The two most popular distros are Void Linux and Alpine Linux, with the latter is used heavily in Docker containers. If you encounter an error like the following: `bun: /lib/x86_64-linux-gnu/libm.so.6: version GLIBC_2.29' not found (required by bun)`, try using the musl binary. Bun's install script automatically chooses the correct binary for your system.
+The `musl` binaries are built for distributions that do not ship with the glibc libraries by default, instead relying on musl. The two most popular distros are Void Linux and Alpine Linux, with Docker containers heavily using Alpine Linux. If you encounter an error like the following: `bun: /lib/x86_64-linux-gnu/libm.so.6: version GLIBC_2.29' not found (required by bun)`, try using the musl binary. Bun's install script automatically chooses the correct binary for your system.
 
 ### CPU requirements and `baseline` builds
 
@@ -285,7 +285,7 @@ this is some output
 
 Shell auto-completion should be configured automatically when Bun is installed!
 
-If not, run the following command. It uses `$SHELL` to determine which shell you're using and writes a completion file to the appropriate place on disk. It's automatically re-run on every `bun upgrade`.
+If not, run the following command. It uses `$SHELL` to determine which shell you are using and writes a completion file to the appropriate place on disk. It's automatically re-run on every `bun upgrade`.
 
 ```bash
 $ bun completions

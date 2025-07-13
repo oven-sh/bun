@@ -10,9 +10,9 @@ console.log(addrs);
 
 ## DNS caching in Bun
 
-In Bun v1.1.9, we added support for DNS caching. This cache makes repeated connections to the same hosts faster.
+In Bun v1.1.9, Bun added support for DNS caching. This cache makes repeated connections to the same hosts faster.
 
-At the time of writing, we cache up to 255 entries for a maximum of 30 seconds (each). If any connections to a host fail, we remove the entry from the cache. When multiple connections are made to the same host simultaneously, DNS lookups are deduplicated to avoid making multiple requests for the same host.
+At the time of writing, Bun caches up to 255 entries for a maximum of 30 seconds (each). If any connections to a host fail, Bun removes the entry from the cache. When multiple connections are made to the same host simultaneously, DNS lookups are deduplicated to avoid making multiple requests for the same host.
 
 This cache is automatically used by:
 
@@ -23,7 +23,7 @@ This cache is automatically used by:
 - `node:net`
 - `node:tls`
 
-### When should I prefetch a DNS entry?
+### When should you prefetch a DNS entry?
 
 Web browsers expose [`<link rel="dns-prefetch">`](https://developer.mozilla.org/en-US/docs/Web/Performance/dns-prefetch) to allow developers to prefetch DNS entries. This is useful when you know you'll need to connect to a host in the near future and want to avoid the initial DNS lookup.
 

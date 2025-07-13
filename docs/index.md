@@ -47,7 +47,9 @@ JavaScript was [initially designed](https://en.wikipedia.org/wiki/JavaScript) as
 
 ### Node.js
 
-Similarly, Node.js is a JavaScript runtime that can be used in non-browser environments, like servers. JavaScript programs executed by Node.js have access to a set of Node.js-specific [globals](https://nodejs.org/api/globals.html) like `Buffer`, `process`, and `__dirname` in addition to built-in modules for performing OS-level tasks like reading/writing files (`node:fs`) and networking (`node:net`, `node:http`). Node.js also implements a CommonJS-based module system and resolution algorithm that pre-dates JavaScript's native module system.
+Similarly, Node.js is a JavaScript runtime that can be used in non-browser environments, like servers. JavaScript programs executed by Node.js have access to a set of Node.js-specific [globals](https://nodejs.org/api/globals.html) like `Buffer`, `process`, and `__dirname`.
+
+Node.js also provides built-in modules for performing OS-level tasks like reading/writing files (`node:fs`) and networking (`node:net`, `node:http`). Node.js implements a CommonJS-based module system and resolution algorithm that pre-dates JavaScript's native module system.
 
 <!-- Bun.js prefers Web API compatibility instead of designing new APIs when possible. Bun.js also implements some Node.js APIs. -->
 

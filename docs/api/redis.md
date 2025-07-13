@@ -29,7 +29,7 @@ To use the Redis client, you first need to create a connection:
 import { redis, RedisClient } from "bun";
 
 // Using the default client (reads connection info from environment)
-// process.env.REDIS_URL is used by default
+// Bun uses process.env.REDIS_URL by default
 await redis.set("hello", "world");
 const result = await redis.get("hello");
 

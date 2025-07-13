@@ -627,15 +627,14 @@ pub fn Negatable(comptime T: type) type {
                 return;
             }
 
-            const kvs = T.NameMap.kvs;
             var removed: u8 = 0;
-            for (kvs) |kv| {
-                if (!field.has(kv.value)) {
+            for (T.NameMap.values()) |value| {
+                if (!field.has(value)) {
                     removed += 1;
                 }
             }
-            const included = kvs.len - removed;
-            const print_included = removed > kvs.len - removed;
+            const included = T.NameMap.keys().len - removed;
+            const print_included = removed > T.NameMap.keys().len - removed;
 
             const one = (print_included and included == 1) or (!print_included and removed == 1);
 
@@ -643,18 +642,18 @@ pub fn Negatable(comptime T: type) type {
                 try writer.writeAll("[ ");
             }
 
-            for (kvs) |kv| {
-                const has = field.has(kv.value);
+            for (T.NameMap.keys(), T.NameMap.values()) |key, value| {
+                const has = field.has(value);
                 if (has and print_included) {
                     try writer.print(
                         \\"{s}"
-                    , .{kv.key});
+                    , .{key});
                     if (one) return;
                     try writer.writeAll(", ");
                 } else if (!has and !print_included) {
                     try writer.print(
                         \\"!{s}"
-                    , .{kv.key});
+                    , .{key});
                     if (one) return;
                     try writer.writeAll(", ");
                 }

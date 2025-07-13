@@ -263,6 +263,7 @@ pub const BuildCommand = struct {
                     null,
                 null,
                 this_transpiler.options.define.drop_debugger,
+                this_transpiler.options.dead_code_elimination and this_transpiler.options.minify_syntax,
             );
 
             try bun.bake.addImportMetaDefines(allocator, this_transpiler.options.define, .development, .server);

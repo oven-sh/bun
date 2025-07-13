@@ -420,11 +420,11 @@ pub const Loader = struct {
 
                             _ = try to_string.getOrPutValue(
                                 key_str,
-                                .{
+                                .init(.{
                                     .can_be_removed_if_unused = true,
-                                    .call_can_be_unwrapped_if_unused = true,
+                                    .call_can_be_unwrapped_if_unused = .if_unused,
                                     .value = expr_data,
-                                },
+                                }),
                             );
                             e_strings = e_strings[1..];
                         } else {
@@ -444,11 +444,11 @@ pub const Loader = struct {
 
                                 _ = try to_string.getOrPutValue(
                                     framework_defaults.keys[key_i],
-                                    .{
+                                    .init(.{
                                         .can_be_removed_if_unused = true,
-                                        .call_can_be_unwrapped_if_unused = true,
+                                        .call_can_be_unwrapped_if_unused = .if_unused,
                                         .value = expr_data,
-                                    },
+                                    }),
                                 );
                                 e_strings = e_strings[1..];
                             }
@@ -470,11 +470,11 @@ pub const Loader = struct {
 
                         _ = try to_string.getOrPutValue(
                             key,
-                            .{
+                            .init(.{
                                 .can_be_removed_if_unused = true,
-                                .call_can_be_unwrapped_if_unused = true,
+                                .call_can_be_unwrapped_if_unused = .if_unused,
                                 .value = expr_data,
-                            },
+                            }),
                         );
                         e_strings = e_strings[1..];
                     }

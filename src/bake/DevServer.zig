@@ -1576,9 +1576,9 @@ fn onFrameworkRequestWithBundle(
         // Create a JavaScript object with params
         const obj = JSValue.createEmptyObject(global, params_array.len);
         for (params_array) |param| {
-            const key_str = bun.String.createUTF8(param.key);
+            const key_str = bun.String.cloneUTF8(param.key);
             defer key_str.deref();
-            const value_str = bun.String.createUTF8(param.value);
+            const value_str = bun.String.cloneUTF8(param.value);
             defer value_str.deref();
 
             obj.put(global, key_str, value_str.toJS(global));
@@ -1600,7 +1600,7 @@ fn onFrameworkRequestWithBundle(
             // routerTypeMain
             router_type.server_file_string.get() orelse str: {
                 const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, router_type.server_file).get()];
-                const str = bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(name));
+                const str = try bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(name));
                 dev.releaseRelativePathBuf();
                 router_type.server_file_string = .create(str, dev.vm.global);
                 break :str str;
@@ -1617,13 +1617,13 @@ fn onFrameworkRequestWithBundle(
                 }
                 const arr = try JSValue.createEmptyArray(global, n);
                 route = dev.router.routePtr(bundle.route_index);
-                var route_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
+                var route_name = bun.String.cloneUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
                 try arr.putIndex(global, 0, route_name.transferToJS(global));
                 dev.releaseRelativePathBuf();
                 n = 1;
                 while (true) {
                     if (route.file_layout.unwrap()) |layout| {
-                        var layout_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, layout).get()]));
+                        var layout_name = bun.String.cloneUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, layout).get()]));
                         defer dev.releaseRelativePathBuf();
                         try arr.putIndex(global, @intCast(n), layout_name.transferToJS(global));
                         n += 1;
@@ -1960,7 +1960,7 @@ fn startAsyncBundle(
             str.deref();
         };
         for (entry_points.set.keys()) |key| {
-            try trigger_files.append(bun.String.createUTF8(key));
+            try trigger_files.append(bun.String.cloneUTF8(key));
         }
 
         agent.notifyBundleStart(dev.inspector_server_id, trigger_files.items);
@@ -2207,7 +2207,7 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!J
         const path = std.fmt.bufPrint(&buf, asset_prefix ++ "/{s}.css", .{
             &std.fmt.bytesToHex(std.mem.asBytes(&item), .lower),
         }) catch unreachable;
-        const str = bun.String.createUTF8(path);
+        const str = bun.String.cloneUTF8(path);
         defer str.deref();
         try arr.putIndex(dev.vm.global, @intCast(i), str.toJS(dev.vm.global));
     }
@@ -2250,7 +2250,7 @@ fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *JSC.JSGlobalObjec
     const arr = try JSC.JSArray.createEmpty(global, items.len);
     const names = dev.server_graph.bundled_files.keys();
     for (items, 0..) |item, i| {
-        const str = bun.String.createUTF8(dev.relativePath(names[item.get()]));
+        const str = bun.String.cloneUTF8(dev.relativePath(names[item.get()]));
         defer dev.releaseRelativePathBuf();
         defer str.deref();
         try arr.putIndex(global, @intCast(i), str.toJS(global));
@@ -2589,7 +2589,7 @@ pub fn finalizeBundle(
         const server_bundle = try dev.server_graph.takeJSBundle(&.{ .kind = .hmr_chunk });
         defer dev.allocator.free(server_bundle);
 
-        const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.createLatin1(server_bundle)) catch |err| {
+        const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle)) catch |err| {
             // No user code has been evaluated yet, since everything is to
             // be wrapped in a function clousure. This means that the likely
             // error is going to be a syntax error, or other mistake in the

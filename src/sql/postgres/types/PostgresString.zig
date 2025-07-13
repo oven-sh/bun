@@ -8,7 +8,7 @@ pub fn toJSWithType(
 ) AnyPostgresError!JSValue {
     switch (comptime Type) {
         [:0]u8, []u8, []const u8, [:0]const u8 => {
-            var str = bun.String.fromUTF8(value);
+            var str = bun.String.borrowUTF8(value);
             defer str.deinit();
             return str.toJS(globalThis);
         },
@@ -18,7 +18,7 @@ pub fn toJSWithType(
         },
 
         *Data => {
-            var str = bun.String.fromUTF8(value.slice());
+            var str = bun.String.borrowUTF8(value.slice());
             defer str.deinit();
             defer value.deinit();
             return str.toJS(globalThis);

@@ -269,7 +269,7 @@ fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice
                 return globalThis.ERR(.ENCODING_INVALID_ENCODED_DATA, "The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
             }
 
-            var output = bun.String.fromUTF16(decoded.items);
+            var output = bun.String.borrowUTF16(decoded.items);
             return output.toJS(globalThis);
         },
     }

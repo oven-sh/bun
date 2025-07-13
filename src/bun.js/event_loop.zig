@@ -604,7 +604,7 @@ pub fn enqueueTaskConcurrentBatch(this: *EventLoop, batch: ConcurrentTask.Queue.
         log("enqueueTaskConcurrentBatch({d})", .{batch.count});
     }
 
-    this.concurrent_tasks.pushBatch(batch.front.?, batch.last.?, batch.count);
+    this.concurrent_tasks.pushBatch(batch.front.?, batch.last.?);
     this.wakeup();
 }
 

@@ -119,7 +119,7 @@ const OptionToken = struct {
             const raw = this.raw.asBunString(globalThis);
             var buf: [8]u8 = undefined;
             const str = std.fmt.bufPrint(&buf, "-{}", .{raw.substringWithLen(optgroup_idx, optgroup_idx + 1)}) catch unreachable;
-            return String.fromUTF8(str).toJS(globalThis);
+            return String.borrowUTF8(str).toJS(globalThis);
         } else {
             switch (this.parse_type) {
                 .lone_short_option, .lone_long_option => {

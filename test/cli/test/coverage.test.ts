@@ -105,7 +105,7 @@ test("should call both functions", () => {
 });
 `,
   });
-  
+
   const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
     cwd: dir,
     env: {
@@ -113,7 +113,7 @@ test("should call both functions", () => {
     },
     stdio: [null, null, "pipe"],
   });
-  
+
   let stderr = result.stderr.toString("utf-8");
   // Normalize output for cross-platform consistency
   stderr = stderr
@@ -124,7 +124,7 @@ test("should call both functions", () => {
     .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
     .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]")
     .replace(/\d+ expect\(\) calls?/g, "X expect() calls");
-    
+
   expect(stderr).toMatchInlineSnapshot(`
 "
 test.test.ts:
@@ -178,7 +178,7 @@ test("should call only some functions", () => {
 });
 `,
   });
-  
+
   const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
     cwd: dir,
     env: {
@@ -186,7 +186,7 @@ test("should call only some functions", () => {
     },
     stdio: [null, null, "pipe"],
   });
-  
+
   let stderr = result.stderr.toString("utf-8");
   // Normalize output for cross-platform consistency
   stderr = stderr
@@ -197,7 +197,7 @@ test("should call only some functions", () => {
     .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
     .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]")
     .replace(/\d+ expect\(\) calls?/g, "X expect() calls");
-    
+
   expect(stderr).toMatchInlineSnapshot(`
 "
 test.test.ts:
@@ -251,7 +251,7 @@ test("should call all functions", () => {
 });
 `,
   });
-  
+
   const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
     cwd: dir,
     env: {
@@ -259,7 +259,7 @@ test("should call all functions", () => {
     },
     stdio: [null, null, "pipe"],
   });
-  
+
   let stderr = result.stderr.toString("utf-8");
   // Normalize output for cross-platform consistency
   stderr = stderr
@@ -269,7 +269,7 @@ test("should call all functions", () => {
     .replace(/\d+(\.\d+)?ms/g, "XXXms")
     .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
     .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]");
-    
+
   expect(stderr).toMatchInlineSnapshot(`
 "
 test.test.ts:
@@ -325,7 +325,7 @@ test("should call all functions", () => {
 });
 `,
   });
-  
+
   const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
     cwd: dir,
     env: {
@@ -333,7 +333,7 @@ test("should call all functions", () => {
     },
     stdio: [null, null, "pipe"],
   });
-  
+
   let stderr = result.stderr.toString("utf-8");
   // Normalize output for cross-platform consistency
   stderr = stderr
@@ -343,7 +343,7 @@ test("should call all functions", () => {
     .replace(/\d+(\.\d+)?ms/g, "XXXms")
     .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
     .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]");
-    
+
   expect(stderr).toMatchInlineSnapshot(`
 "
 main.test.ts:
@@ -394,7 +394,7 @@ test("should call both functions", () => {
 });
 `,
   });
-  
+
   const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov"], {
     cwd: dir,
     env: {
@@ -402,14 +402,14 @@ test("should call both functions", () => {
     },
     stdio: [null, null, "pipe"],
   });
-  
+
   let lcovContent = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
   // Normalize LCOV content for cross-platform consistency
   lcovContent = lcovContent
     .replace(/\\\\/g, "/")
     .replace(/\\\w:/g, "/")
     .replace(/SF:[^\n]*[\\\/]/g, "SF:");
-    
+
   expect(lcovContent).toMatchInlineSnapshot(`
 "TN:
 SF:include-me.ts
@@ -453,7 +453,7 @@ test("should pass", () => {
 });
 `,
   });
-  
+
   const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
     cwd: dir,
     env: {
@@ -461,7 +461,7 @@ test("should pass", () => {
     },
     stdio: [null, null, "pipe"],
   });
-  
+
   let stderr = result.stderr.toString("utf-8");
   // Normalize error output for cross-platform consistency
   stderr = stderr
@@ -469,7 +469,7 @@ test("should pass", () => {
     .replace(/\\\w:/g, "/")
     .replace(/[^:\s]+[\/\\]cov_[^\/\\]+[\/\\]/g, "TEMP_DIR/")
     .replace(/at [^:\s]+[\/\\]cov_[^\/\\]+[\/\\]/g, "at TEMP_DIR/");
-    
+
   expect(stderr).toMatchInlineSnapshot(`
 "3 | coveragePathIgnorePatterns = 123
                                  ^
@@ -496,7 +496,7 @@ test("should pass", () => {
 });
 `,
   });
-  
+
   const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
     cwd: dir,
     env: {
@@ -504,7 +504,7 @@ test("should pass", () => {
     },
     stdio: [null, null, "pipe"],
   });
-  
+
   let stderr = result.stderr.toString("utf-8");
   // Normalize error output for cross-platform consistency
   stderr = stderr
@@ -512,7 +512,7 @@ test("should pass", () => {
     .replace(/\\\w:/g, "/")
     .replace(/[^:\s]+[\/\\]cov_[^\/\\]+[\/\\]/g, "TEMP_DIR/")
     .replace(/at [^:\s]+[\/\\]cov_[^\/\\]+[\/\\]/g, "at TEMP_DIR/");
-    
+
   expect(stderr).toMatchInlineSnapshot(`
 "3 | coveragePathIgnorePatterns = ["valid-pattern", 123]
                                                    ^
@@ -545,7 +545,7 @@ test("should call function", () => {
 });
 `,
   });
-  
+
   const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
     cwd: dir,
     env: {
@@ -553,7 +553,7 @@ test("should call function", () => {
     },
     stdio: [null, null, "pipe"],
   });
-  
+
   let stderr = result.stderr.toString("utf-8");
   // Normalize output for cross-platform consistency
   stderr = stderr
@@ -563,7 +563,7 @@ test("should call function", () => {
     .replace(/\d+(\.\d+)?ms/g, "XXXms")
     .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
     .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]");
-    
+
   expect(stderr).toMatchInlineSnapshot(`
 "
 test.test.ts:
@@ -605,7 +605,7 @@ test("should call function", () => {
 });
 `,
   });
-  
+
   const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
     cwd: dir,
     env: {
@@ -613,7 +613,7 @@ test("should call function", () => {
     },
     stdio: [null, null, "pipe"],
   });
-  
+
   let stderr = result.stderr.toString("utf-8");
   // Normalize output for cross-platform consistency
   stderr = stderr
@@ -623,7 +623,7 @@ test("should call function", () => {
     .replace(/\d+(\.\d+)?ms/g, "XXXms")
     .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
     .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]");
-    
+
   expect(stderr).toMatchInlineSnapshot(`
 "
 test.test.ts:

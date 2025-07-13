@@ -629,6 +629,17 @@ pub const Bunfig = struct {
                         }
                     }
                 }
+
+                if (json.get("console")) |console_expr| {
+                    if (console_expr.get("depth")) |depth| {
+                        if (depth.data == .e_number) {
+                            const depth_value = @as(u16, @intFromFloat(depth.data.e_number.value));
+                            this.ctx.runtime_options.console_depth = depth_value;
+                        } else {
+                            try this.addError(depth.loc, "Expected number");
+                        }
+                    }
+                }
             }
 
             if (json.getObject("serve")) |serve_obj2| {

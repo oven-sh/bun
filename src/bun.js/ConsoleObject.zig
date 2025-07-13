@@ -18,6 +18,7 @@ const Environment = bun.Environment;
 const default_allocator = bun.default_allocator;
 const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
 const JSPromise = JSC.JSPromise;
+const CLI = @import("../cli.zig").Command;
 const EventType = JSC.EventType;
 
 const Counter = std.AutoHashMapUnmanaged(u64, u32);
@@ -168,11 +169,16 @@ fn messageWithTypeAndLevel_(
     const Writer = @TypeOf(writer);
 
     var print_length = len;
+    // Get console depth from CLI options
+    const cli_context = CLI.get();
+    const console_depth = cli_context.runtime_options.console_depth orelse 8;
+
     var print_options: FormatOptions = .{
         .enable_colors = enable_colors,
         .add_newline = true,
         .flush = true,
         .default_indent = console.default_indent,
+        .max_depth = console_depth,
         .error_display_level = switch (level) {
             .Error => .full,
             else => .normal,
@@ -291,7 +297,10 @@ pub const TablePrinter = struct {
                 .ordered_properties = false,
                 .quote_strings = false,
                 .single_line = true,
-                .max_depth = 5,
+                .max_depth = blk: {
+                    const cli_context = CLI.get();
+                    break :blk cli_context.runtime_options.console_depth orelse 5;
+                },
                 .can_throw_stack_overflow = true,
                 .stack_check = bun.StackCheck.init(),
             },
@@ -912,6 +921,7 @@ pub fn format2(
         .globalThis = global,
         .ordered_properties = options.ordered_properties,
         .quote_strings = options.quote_strings,
+        .max_depth = options.max_depth,
         .single_line = options.single_line,
         .indent = options.default_indent,
         .stack_check = bun.StackCheck.init(),
@@ -3632,6 +3642,10 @@ pub fn timeLog(
         .globalThis = global,
         .ordered_properties = false,
         .quote_strings = false,
+        .max_depth = blk: {
+            const cli_context = CLI.get();
+            break :blk cli_context.runtime_options.console_depth orelse 8;
+        },
         .stack_check = bun.StackCheck.init(),
         .can_throw_stack_overflow = true,
     };

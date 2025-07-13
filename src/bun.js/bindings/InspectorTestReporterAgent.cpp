@@ -207,7 +207,7 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
         lineColumn.line,
         name,
         type,
-        parentId);
+        parentId > 0 ? parentId : std::optional<int>());
 }
 
 void InspectorTestReporterAgent::reportTestStart(int testId)

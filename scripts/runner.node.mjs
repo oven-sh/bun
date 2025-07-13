@@ -20,11 +20,11 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
   symlinkSync,
   unlink,
   unlinkSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";

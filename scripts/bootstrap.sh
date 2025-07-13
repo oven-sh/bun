@@ -1545,7 +1545,9 @@ main() {
 	install_chromium
 	install_fuse_python
 	install_age
-	configure_core_dumps
+	if [ "${BUN_NO_CORE_DUMP:-0}" != "1" ]; then
+		configure_core_dumps
+	fi
 	clean_system
 }
 

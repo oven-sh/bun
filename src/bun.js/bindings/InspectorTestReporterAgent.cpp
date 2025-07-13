@@ -34,19 +34,19 @@ enum class BunTestType : uint8_t {
 void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, JSC::CallFrame* callFrame, int testId, BunString* name, BunTestType item_type, int parentId)
 {
     auto str = name->toWTFString(BunString::ZeroCopy);
-    
+
     Protocol::TestReporter::TestType type;
     switch (item_type) {
-        case BunTestType::Test:
-            type = Protocol::TestReporter::TestType::Test;
-            break;
-        case BunTestType::Describe:
-            type = Protocol::TestReporter::TestType::Describe;
-            break;
-        default:
-            ASSERT_NOT_REACHED();
+    case BunTestType::Test:
+        type = Protocol::TestReporter::TestType::Test;
+        break;
+    case BunTestType::Describe:
+        type = Protocol::TestReporter::TestType::Describe;
+        break;
+    default:
+        ASSERT_NOT_REACHED();
     }
-    
+
     agent->reportTestFound(callFrame, testId, str, type, parentId);
 }
 

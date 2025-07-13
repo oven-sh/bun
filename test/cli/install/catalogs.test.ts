@@ -15,20 +15,24 @@ afterAll(() => {
 });
 
 describe("basic", () => {
-  async function createBasicCatalogMonorepo(packageDir: string, name: string) {
+  async function createBasicCatalogMonorepo(packageDir: string, name: string, inTopLevelKey = false) {
+    const catalogs = {
+      catalog: {
+        "no-deps": "2.0.0",
+      },
+      catalogs: {
+        a: {
+          "a-dep": "1.0.1",
+        },
+      },
+    };
     const packageJson = {
       name,
       workspaces: {
         packages: ["packages/*"],
-        catalog: {
-          "no-deps": "2.0.0",
-        },
-        catalogs: {
-          a: {
-            "a-dep": "1.0.1",
-          },
-        },
+        ...(inTopLevelKey ? catalogs : {}),
       },
+      ...(inTopLevelKey ? {} : catalogs),
     };
 
     await Promise.all([
@@ -47,26 +51,29 @@ describe("basic", () => {
 
     return packageJson;
   }
-  test("both catalog and catalogs", async () => {
-    const { packageDir } = await registry.createTestDir();
 
-    await createBasicCatalogMonorepo(packageDir, "catalog-basic-1");
+  for (const isTopLevel of [true, false]) {
+    test(`both catalog and catalogs ${isTopLevel ? "in top-level" : "in workspaces"}`, async () => {
+      const { packageDir } = await registry.createTestDir();
 
-    await runBunInstall(bunEnv, packageDir);
+      await createBasicCatalogMonorepo(packageDir, "catalog-basic-1", isTopLevel);
 
-    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
-      name: "no-deps",
-      version: "2.0.0",
+      await runBunInstall(bunEnv, packageDir);
+
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+        name: "no-deps",
+        version: "2.0.0",
+      });
+
+      expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toEqual({
+        name: "a-dep",
+        version: "1.0.1",
+      });
+
+      // another install does not save the lockfile
+      await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
     });
-
-    expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toEqual({
-      name: "a-dep",
-      version: "1.0.1",
-    });
-
-    // another install does not save the lockfile
-    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
-  });
+  }
 
   for (const binaryLockfile of [true, false]) {
     test(`detect changes (${binaryLockfile ? "bun.lockb" : "bun.lock"})`, async () => {

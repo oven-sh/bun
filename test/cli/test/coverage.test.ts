@@ -188,7 +188,7 @@ test("should call only some functions", () => {
   });
   
   let stderr = result.stderr.toString("utf-8");
-  // Normalize output and check for nan values
+  // Normalize output for cross-platform consistency
   stderr = stderr
     .replace(/v\d+\.\d+\.\d+/g, "vX.X.X")
     .replace(/\\\\/g, "/")
@@ -198,12 +198,24 @@ test("should call only some functions", () => {
     .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]")
     .replace(/\d+ expect\(\) calls?/g, "X expect() calls");
     
-  // Verify no nan values appear in coverage percentages
-  expect(stderr).not.toContain("nan");
-  expect(stderr).not.toContain("NaN");
-  expect(stderr).not.toContain("Infinity");
-  expect(stderr).toContain("include-me.ts");
-  expect(stderr).not.toContain("ignore-me.ts");
+  expect(stderr).toMatchInlineSnapshot(`
+"
+test.test.ts:
+(pass) should call only some functions [XXXms]
+---------------|---------|---------|-------------------
+File           | % Funcs | % Lines | Uncovered Line #s
+---------------|---------|---------|-------------------
+All files      |   75.00 |   83.33 |
+ include-me.ts |   50.00 |   66.67 | 
+ test.test.ts  |  100.00 |  100.00 | 
+---------------|---------|---------|-------------------
+
+ 1 pass
+ 0 fail
+ X expect() calls
+Ran 1 test across 1 file. [XXXms]
+"
+`);
   expect(result.exitCode).toBe(0);
 });
 

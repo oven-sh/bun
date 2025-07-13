@@ -498,18 +498,7 @@ pub const S3Credentials = struct {
 
     fn normalizeName(name: []const u8) []const u8 {
         if (name.len == 0) return name;
-        var normalized_name = name;
-        if (strings.endsWith(normalized_name, "/")) {
-            normalized_name = normalized_name[0 .. normalized_name.len - 1];
-        } else if (strings.endsWith(normalized_name, "\\")) {
-            normalized_name = normalized_name[0 .. normalized_name.len - 1];
-        }
-        if (strings.startsWith(normalized_name, "/")) {
-            normalized_name = normalized_name[1..];
-        } else if (strings.startsWith(normalized_name, "\\")) {
-            normalized_name = normalized_name[1..];
-        }
-        return normalized_name;
+        return std.mem.trim(u8, name, "/\\");
     }
 
     pub fn signRequest(this: *const @This(), signOptions: SignOptions, comptime allow_empty_path: bool, signQueryOption: ?SignQueryOptions) !SignResult {

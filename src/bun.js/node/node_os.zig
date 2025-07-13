@@ -320,7 +320,7 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
         if (libuv.uv_os_homedir(&out, &size).toError(.uv_os_homedir)) |err| {
             return global.throwValue(err.toJS(global));
         }
-        return bun.String.createUTF8(out[0..size]);
+        return bun.String.cloneUTF8(out[0..size]);
     } else {
 
         // The posix implementation of uv_os_homedir first checks the HOME
@@ -384,7 +384,7 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
         }
 
         return if (pw.pw_dir) |dir|
-            bun.String.createUTF8(bun.span(dir))
+            bun.String.cloneUTF8(bun.span(dir))
         else
             bun.String.empty;
     }
@@ -394,7 +394,7 @@ pub fn hostname(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     if (Environment.isWindows) {
         var name_buffer: [129:0]u16 = undefined;
         if (bun.windows.GetHostNameW(&name_buffer, name_buffer.len) == 0) {
-            const str = bun.String.createUTF16(bun.sliceTo(&name_buffer, 0));
+            const str = bun.String.cloneUTF16(bun.sliceTo(&name_buffer, 0));
             defer str.deref();
             return str.toJS(global);
         }
@@ -402,7 +402,7 @@ pub fn hostname(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         var result: std.os.windows.ws2_32.WSADATA = undefined;
         if (std.os.windows.ws2_32.WSAStartup(0x202, &result) == 0) {
             if (bun.windows.GetHostNameW(&name_buffer, name_buffer.len) == 0) {
-                var y = bun.String.createUTF16(bun.sliceTo(&name_buffer, 0));
+                var y = bun.String.cloneUTF16(bun.sliceTo(&name_buffer, 0));
                 defer y.deref();
                 return y.toJS(global);
             }
@@ -801,7 +801,7 @@ pub fn release() bun.String {
         else => @compileError("unsupported os"),
     };
 
-    return bun.String.createUTF8(value);
+    return bun.String.cloneUTF8(value);
 }
 
 pub extern fn set_process_priority(pid: i32, priority: i32) i32;
@@ -1004,7 +1004,7 @@ pub fn version() bun.JSError!bun.String {
         else => @compileError("unsupported os"),
     };
 
-    return bun.String.createUTF8(slice);
+    return bun.String.cloneUTF8(slice);
 }
 
 /// Given a netmask returns a CIDR suffix.  Returns null if the mask is not valid.

@@ -75,7 +75,7 @@ pub const URL = struct {
     }
 
     pub fn fromUTF8(allocator: std.mem.Allocator, input: []const u8) !URL {
-        return fromString(allocator, bun.String.fromUTF8(input));
+        return fromString(allocator, bun.String.borrowUTF8(input));
     }
 
     pub fn isLocalhost(this: *const URL) bool {

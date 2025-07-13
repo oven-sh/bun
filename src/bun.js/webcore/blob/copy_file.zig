@@ -65,7 +65,7 @@ pub const CopyFile = struct {
         const globalThis = this.globalThis;
         var system_error: SystemError = this.system_error orelse SystemError{ .message = .empty };
         if (this.source_file_store.pathlike == .path and system_error.path.isEmpty()) {
-            system_error.path = bun.String.createUTF8(this.source_file_store.pathlike.path.slice());
+            system_error.path = bun.String.cloneUTF8(this.source_file_store.pathlike.path.slice());
         }
 
         if (system_error.message.isEmpty()) {

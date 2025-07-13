@@ -592,7 +592,7 @@ pub const HTMLString = extern struct {
             return bun.String.createExternal([*]u8, bytes, true, @constCast(bytes.ptr), &deinit_external);
         }
         defer this.deinit();
-        return bun.String.createUTF8(bytes);
+        return bun.String.cloneUTF8(bytes);
     }
 
     pub fn toJS(this: HTMLString, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {

@@ -179,7 +179,7 @@ fn start(other_vm: *VirtualMachine) void {
     const loop = this.eventLoop();
 
     if (debugger.from_environment_variable.len > 0) {
-        var url = bun.String.createUTF8(debugger.from_environment_variable);
+        var url = bun.String.cloneUTF8(debugger.from_environment_variable);
 
         loop.enter();
         defer loop.exit();
@@ -187,7 +187,7 @@ fn start(other_vm: *VirtualMachine) void {
     }
 
     if (debugger.path_or_port) |path_or_port| {
-        var url = bun.String.createUTF8(path_or_port);
+        var url = bun.String.cloneUTF8(path_or_port);
 
         loop.enter();
         defer loop.exit();

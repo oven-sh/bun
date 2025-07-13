@@ -1375,7 +1375,7 @@ describe.skipIf(!minioCredentials)("minio", () => {
   describe("should accept / or \\ in start and end of bucket name", () => {
     for (let start of ["/", "\\", ""]) {
       for (let end of ["/", "\\", ""]) {
-        let bucket = `minio-${randomUUIDv7("hex")}`;
+        let bucket = "buntest";
         if (start) {
           bucket = start + bucket;
         }

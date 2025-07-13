@@ -2180,6 +2180,7 @@ application/vnd.oasis.opendocument.presentation
 application/vnd.oipf.contentaccessstreaming+xml
 application/vnd.oma.bcast.smartcard-trigger+xml
 application/vnd.software602.filler.form-xml-zip
+application/x-www-form-urlencoded;charset=UTF-8
 application/emergencycalldata.subscriberinfo+xml
 application/vnd.3gpp.mcvideo-mbms-usage-info+xml
 application/vnd.cluetrust.cartomobile-config-pkg

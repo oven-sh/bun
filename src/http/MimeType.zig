@@ -33,6 +33,7 @@ pub const Compact = struct {
             .@"application/webassembly" => return wasm,
             .@"application/javascript" => return javascript,
             .@"application/json" => return json,
+            .@"application/x-www-form-urlencoded" => return toMimeType(.from(.@"application/x-www-form-urlencoded;charset=UTF-8")),
             .@"image/vnd.microsoft.icon" => return ico,
             .@"text/css" => return css,
             .@"text/html" => return html,

@@ -1,109 +1,48 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as net from "node:net";
-import { tmpdir } from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import type {
-  InspectorMessage,
-  LifecycleErrorEvent,
-  TestEndEvent,
-  TestError,
-  TestFoundEvent,
-  TestNode,
-  TestStartEvent,
-} from "./types";
-import { FramerState } from "./types";
+import {
+  getAvailablePort,
+  NodeSocketDebugAdapter,
+  TCPSocketSignal,
+  UnixSignal,
+} from "../../../../bun-debug-adapter-protocol";
+import type { JSC } from "../../../../bun-inspector-protocol";
 
 const DEFAULT_TEST_PATTERN = "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}";
 
 export const debug = vscode.window.createOutputChannel("Bun - Test Runner");
 
-class SocketFramer {
-  private state: FramerState = FramerState.WaitingForLength;
-  private pendingLength: number = 0;
-  private sizeBuffer: Uint8Array = new Uint8Array(4);
-  private sizeBufferIndex: number = 0;
-  private bufferedData: Uint8Array = new Uint8Array(0);
-  private static messageLengthBuffer: Uint8Array = new Uint8Array(4);
+export type TestNode = {
+  name: string;
+  type: "describe" | "test" | "it";
+  line: number;
+  children: TestNode[];
+  parent?: TestNode;
+  startIdx: number;
+};
 
-  constructor(private onMessage: (message: string) => void) {
-    this.reset();
-  }
-
-  reset(): void {
-    this.state = FramerState.WaitingForLength;
-    this.bufferedData = new Uint8Array(0);
-    this.sizeBufferIndex = 0;
-    this.sizeBuffer = new Uint8Array(4);
-  }
-
-  send(socket: net.Socket, data: string): void {
-    const bytes = Buffer.from(data);
-    const view = new DataView(SocketFramer.messageLengthBuffer.buffer);
-    view.setUint32(0, bytes.length, false);
-    socket.write(SocketFramer.messageLengthBuffer);
-    socket.write(data);
-  }
-
-  onData(data: Buffer): void {
-    const dataArray = new Uint8Array(data);
-    const combined = new Uint8Array(this.bufferedData.length + dataArray.length);
-    combined.set(this.bufferedData);
-    combined.set(dataArray, this.bufferedData.length);
-    this.bufferedData = combined;
-
-    const messagesToDeliver: string[] = [];
-
-    while (this.bufferedData.length > 0) {
-      if (this.state === FramerState.WaitingForLength) {
-        if (this.sizeBufferIndex + this.bufferedData.length < 4) {
-          const remainingBytes = Math.min(4 - this.sizeBufferIndex, this.bufferedData.length);
-          this.sizeBuffer.set(this.bufferedData.slice(0, remainingBytes), this.sizeBufferIndex);
-          this.sizeBufferIndex += remainingBytes;
-          this.bufferedData = this.bufferedData.slice(remainingBytes);
-          break;
-        }
-
-        const remainingBytes = 4 - this.sizeBufferIndex;
-        this.sizeBuffer.set(this.bufferedData.slice(0, remainingBytes), this.sizeBufferIndex);
-        const view = new DataView(this.sizeBuffer.buffer);
-        this.pendingLength = view.getUint32(0, false);
-
-        this.state = FramerState.WaitingForMessage;
-        this.sizeBufferIndex = 0;
-        this.bufferedData = this.bufferedData.slice(remainingBytes);
-      }
-
-      if (this.bufferedData.length < this.pendingLength) {
-        break;
-      }
-
-      const messageData = this.bufferedData.slice(0, this.pendingLength);
-      const message = new TextDecoder().decode(messageData);
-      this.bufferedData = this.bufferedData.slice(this.pendingLength);
-      this.state = FramerState.WaitingForLength;
-      this.pendingLength = 0;
-      this.sizeBufferIndex = 0;
-      messagesToDeliver.push(message);
-    }
-
-    for (const message of messagesToDeliver) {
-      this.onMessage(message);
-    }
-  }
+export interface TestError {
+  message: string;
+  file: string;
+  line: number;
+  column: number;
 }
 
 export class BunTestController implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
   private activeProcesses: Set<ChildProcess> = new Set();
-  private inspectorConnection: InspectorConnection | null = null;
+  private debugAdapter: NodeSocketDebugAdapter | null = null;
+  private signal: UnixSignal | TCPSocketSignal | null = null;
 
   private inspectorToVSCode = new Map<number, vscode.TestItem>();
   private vscodeToInspector = new Map<string, number>();
 
   private testErrors = new Map<number, TestError>();
   private lastStartedTestId: number | null = null;
+  private currentRun: vscode.TestRun | null = null;
 
   private testResultHistory = new Map<
     string,
@@ -121,6 +60,26 @@ export class BunTestController implements vscode.Disposable {
     this.setupWatchers();
     this.setupOpenDocumentListener();
     this.discoverInitialTests();
+    this.initializeSignal();
+  }
+
+  private async initializeSignal(): Promise<void> {
+    try {
+      this.signal = await this.createSignal();
+      await this.signal.ready;
+      debug.appendLine(`Signal initialized at: ${this.signal.url}`);
+
+      this.signal.on("Signal.Socket.connect", (socket: net.Socket) => {
+        debug.appendLine("Bun connected to signal socket");
+        this.handleSocketConnection(socket, this.currentRun!);
+      });
+
+      this.signal.on("Signal.error", (error: Error) => {
+        debug.appendLine(`Signal error: ${error.message}`);
+      });
+    } catch (error) {
+      debug.appendLine(`Failed to initialize signal: ${error}`);
+    }
   }
 
   private setupTestController(): void {
@@ -544,6 +503,15 @@ export class BunTestController implements vscode.Disposable {
     return source.replace(/[^a-zA-Z0-9_\ ]/g, "\\$&");
   }
 
+  private async createSignal(): Promise<UnixSignal | TCPSocketSignal> {
+    if (process.platform === "win32") {
+      const port = await getAvailablePort();
+      return new TCPSocketSignal(port);
+    } else {
+      return new UnixSignal();
+    }
+  }
+
   private async runHandler(
     request: vscode.TestRunRequest,
     token: vscode.CancellationToken,
@@ -620,10 +588,27 @@ export class BunTestController implements vscode.Disposable {
       this.requestedTestIds.add(test.id);
     }
 
-    const socketPath = path.join(
-      tmpdir(),
-      `bun-inspector-${Date.now()}-${Math.random().toString(36).substring(2, 11)}.sock`,
-    );
+    if (!this.signal) {
+      await this.initializeSignal();
+      if (!this.signal) {
+        throw new Error("Failed to initialize signal");
+      }
+    }
+
+    this.currentRun = run;
+
+    const socketPromise = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Timeout waiting for Bun to connect"));
+      }, 10000);
+
+      const handleConnect = () => {
+        clearTimeout(timeout);
+        resolve();
+      };
+
+      this.signal!.once("Signal.Socket.connect", handleConnect);
+    });
 
     const { bunCommand, testArgs } = this.getBunExecutionConfig();
     let args = [...testArgs, ...Array.from(allFiles)];
@@ -636,7 +621,7 @@ export class BunTestController implements vscode.Disposable {
     }
 
     run.appendOutput(`\r\n\x1b[34m>\x1b[0m \x1b[2m${bunCommand} ${args.join(" ")}\x1b[0m\r\n\r\n`);
-    args.push(`--inspect-wait=unix://${socketPath}`);
+    args.push(`--inspect-wait=${this.signal!.url}`);
 
     for (const test of tests) {
       if (isIndividualTestRun || tests.length === 1) {
@@ -644,14 +629,6 @@ export class BunTestController implements vscode.Disposable {
       } else {
         run.enqueued(test);
       }
-    }
-
-    let server: net.Server | null = null;
-    try {
-      server = await this.createInspectorServer(socketPath, run);
-    } catch (error) {
-      debug.appendLine(`Failed to create inspector server: ${error}`);
-      throw error;
     }
 
     const proc = spawn(bunCommand, args, {
@@ -666,6 +643,14 @@ export class BunTestController implements vscode.Disposable {
 
     this.activeProcesses.add(proc);
 
+    proc.on("exit", (code, signal) => {
+      debug.appendLine(`Process exited with code ${code}, signal ${signal}`);
+    });
+
+    proc.on("error", error => {
+      debug.appendLine(`Process error: ${error.message}`);
+    });
+
     proc.stdout?.on("data", data => {
       const dataStr = data.toString();
       const formattedOutput = dataStr.replace(/\n/g, "\r\n");
@@ -677,6 +662,15 @@ export class BunTestController implements vscode.Disposable {
       const formattedOutput = dataStr.replace(/\n/g, "\r\n");
       run.appendOutput(formattedOutput);
     });
+
+    try {
+      await socketPromise;
+    } catch (error) {
+      debug.appendLine(`Failed to establish inspector connection: ${error}`);
+      debug.appendLine(`Signal URL was: ${this.signal!.url}`);
+      debug.appendLine(`Command was: ${bunCommand} ${args.join(" ")}`);
+      throw error;
+    }
 
     await new Promise<void>((resolve, reject) => {
       proc.on("close", code => {
@@ -709,9 +703,7 @@ export class BunTestController implements vscode.Disposable {
       }
 
       this.disconnectInspector();
-      if (server) {
-        server.close(() => {});
-      }
+      this.currentRun = null;
     });
   }
 
@@ -747,81 +739,75 @@ export class BunTestController implements vscode.Disposable {
     }
   }
 
-  private async createInspectorServer(socketPath: string, run: vscode.TestRun): Promise<net.Server> {
-    return new Promise((resolve, reject) => {
-      const server = net.createServer(socket => {
-        const framer = new SocketFramer((message: string) => {
-          try {
-            const parsedMessage = JSON.parse(message) as InspectorMessage;
-            this.handleInspectorMessage(parsedMessage, run);
-          } catch (error) {
-            debug.appendLine(`Failed to parse inspector message: ${error}`);
-          }
-        });
+  private async handleSocketConnection(socket: net.Socket, run: vscode.TestRun): Promise<void> {
+    if (this.debugAdapter) {
+      this.debugAdapter.close();
+      this.debugAdapter = null;
+    }
 
-        this.inspectorConnection = new InspectorConnection(() => {});
-        (this.inspectorConnection as any).socket = socket;
-        (this.inspectorConnection as any).framer = framer;
+    this.debugAdapter = new NodeSocketDebugAdapter(socket);
 
-        socket.on("data", (data: Buffer) => {
-          framer.onData(data);
-        });
+    this.debugAdapter.on("TestReporter.found", event => {
+      this.handleTestFound(event, run);
+    });
 
-        socket.on("close", () => {
-          this.inspectorConnection = null;
-        });
+    this.debugAdapter.on("TestReporter.start", event => {
+      this.handleTestStart(event, run);
+    });
 
-        socket.on("error", () => {});
+    this.debugAdapter.on("TestReporter.end", event => {
+      this.handleTestEnd(event, run);
+    });
 
-        framer.send(socket, JSON.stringify({ id: 1, method: "Inspector.initialized" }));
-        framer.send(socket, JSON.stringify({ id: 2, method: "Runtime.enable" }));
-        framer.send(socket, JSON.stringify({ id: 3, method: "TestReporter.enable" }));
-        framer.send(socket, JSON.stringify({ id: 4, method: "LifecycleReporter.enable" }));
+    this.debugAdapter.on("LifecycleReporter.error", event => {
+      this.handleLifecycleError(event, run);
+    });
 
-        socket.setKeepAlive(true, 1000);
-        socket.setNoDelay(true);
-      });
+    this.debugAdapter.on("Inspector.event", e => {
+      debug.appendLine(`Received inspector event: ${e.method}`);
+    });
 
-      server.listen(socketPath, () => {
-        resolve(server);
-      });
+    this.debugAdapter.on("Inspector.error", e => {
+      debug.appendLine(`Inspector error: ${e}`);
+    });
 
-      server.on("error", reject);
+    socket.on("close", () => {
+      debug.appendLine("Inspector connection closed");
+      this.debugAdapter = null;
+    });
+
+    const ok = await this.debugAdapter.start();
+    if (!ok) {
+      throw new Error("Failed to start debug adapter");
+    }
+
+    this.debugAdapter.initialize({
+      adapterID: "bun-vsc-test-runner",
+      pathFormat: "path",
+      linesStartAt1: true,
+      columnsStartAt1: true,
+      supportsConfigurationDoneRequest: false,
+      enableDebugger: false,
+      enableLifecycleAgentReporter: true,
+      enableTestReporter: true,
+      enableConsole: false,
+      sendImmediatePreventExit: false,
     });
   }
 
-  private handleInspectorMessage(message: InspectorMessage, run: vscode.TestRun): void {
-    if (!message.method || !message.params) {
+  private handleTestFound(params: JSC.TestReporter.FoundEvent, _run: vscode.TestRun): void {
+    const { id: inspectorTestId, url: sourceURL, name, type, parentId, line } = params;
+
+    if (!sourceURL) {
+      debug.appendLine(`Warning: Test found without URL: ${name}`);
       return;
     }
 
-    switch (message.method) {
-      case "TestReporter.found":
-        this.handleTestFound(message.params as TestFoundEvent, run);
-        break;
-
-      case "TestReporter.start":
-        this.handleTestStart(message.params as TestStartEvent, run);
-        break;
-
-      case "TestReporter.end":
-        this.handleTestEnd(message.params as TestEndEvent, run);
-        break;
-
-      case "LifecycleReporter.error":
-        this.handleLifecycleError(message.params as LifecycleErrorEvent, run);
-        break;
-    }
-  }
-
-  private handleTestFound(params: TestFoundEvent, _run: vscode.TestRun): void {
-    const { id: inspectorTestId, url: sourceURL, name, type, parentId } = params;
-
     const filePath = windowsVscodeUri(sourceURL);
-    let testItem = this.findTestByPath(name, filePath, parentId);
+    let testItem = this.findTestByPath(name!, filePath, parentId);
 
-    if (!testItem) {
-      testItem = this.createTestItem(name, filePath, type, parentId);
+    if (!testItem && type) {
+      testItem = this.createTestItem(name!, filePath, type, parentId, line);
     }
 
     if (testItem) {
@@ -883,6 +869,7 @@ export class BunTestController implements vscode.Disposable {
     filePath: string,
     type: "test" | "describe",
     parentId?: number,
+    line?: number,
   ): vscode.TestItem | undefined {
     const fileUri = vscode.Uri.file(filePath);
 
@@ -916,12 +903,17 @@ export class BunTestController implements vscode.Disposable {
     const testItem = this.testController.createTestItem(testId, this.stripAnsi(name), fileUri);
     testItem.tags = [new vscode.TestTag(type)];
     testItem.canResolveChildren = false;
+
+    if (typeof line === "number" && line > 0) {
+      testItem.range = new vscode.Range(new vscode.Position(line - 1, 0), new vscode.Position(line - 1, name.length));
+    }
+
     parentItem.children.add(testItem);
 
     return testItem;
   }
 
-  private handleTestStart(params: TestStartEvent, run: vscode.TestRun): void {
+  private handleTestStart(params: JSC.TestReporter.StartEvent, run: vscode.TestRun): void {
     const { id: testId } = params;
     const testItem = this.inspectorToVSCode.get(testId);
 
@@ -932,7 +924,7 @@ export class BunTestController implements vscode.Disposable {
     }
   }
 
-  private handleTestEnd(params: TestEndEvent, run: vscode.TestRun): void {
+  private handleTestEnd(params: JSC.TestReporter.EndEvent, run: vscode.TestRun): void {
     const { id, status, elapsed } = params;
     const testItem = this.inspectorToVSCode.get(id);
 
@@ -981,7 +973,7 @@ export class BunTestController implements vscode.Disposable {
     }
   }
 
-  private handleLifecycleError(params: LifecycleErrorEvent, _run: vscode.TestRun): void {
+  private handleLifecycleError(params: JSC.LifecycleReporter.ErrorEvent, _run: vscode.TestRun): void {
     const { message, urls, lineColumns } = params;
 
     if (!urls || urls.length === 0 || !urls[0]) {
@@ -1226,9 +1218,9 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private disconnectInspector(): void {
-    if (this.inspectorConnection) {
-      this.inspectorConnection.close();
-      this.inspectorConnection = null;
+    if (this.debugAdapter) {
+      this.debugAdapter.close();
+      this.debugAdapter = null;
     }
     this.inspectorToVSCode.clear();
     this.vscodeToInspector.clear();
@@ -1312,73 +1304,19 @@ export class BunTestController implements vscode.Disposable {
 
   public dispose(): void {
     this.closeAllActiveProcesses();
+    if (this.signal) {
+      this.signal.close();
+      this.signal.removeAllListeners();
+      this.signal = null;
+    }
+    if (this.debugAdapter) {
+      this.debugAdapter.close();
+      this.debugAdapter = null;
+    }
     for (const disposable of this.disposables) {
       disposable.dispose();
     }
     this.disposables = [];
-  }
-}
-
-class InspectorConnection {
-  private socket: net.Socket | null = null;
-  private framer: SocketFramer | null = null;
-  private requestId = 1;
-  private connected = false;
-
-  constructor(private onMessage: (message: InspectorMessage) => void) {}
-
-  async connect(socketPath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.socket = new net.Socket();
-      this.framer = new SocketFramer((message: string) => {
-        try {
-          const parsedMessage = JSON.parse(message) as InspectorMessage;
-          this.onMessage(parsedMessage);
-        } catch (error) {
-          debug.appendLine(`Failed to parse inspector message: ${message}`);
-        }
-      });
-
-      this.socket.connect(socketPath, () => {
-        this.connected = true;
-        resolve();
-      });
-
-      this.socket.on("data", (data: Buffer) => {
-        this.framer?.onData(data);
-      });
-
-      this.socket.on("error", (error: Error) => {
-        debug.appendLine(`Inspector connection error: ${error.message}`);
-        reject(error);
-      });
-
-      this.socket.on("close", () => {
-        this.connected = false;
-        debug.appendLine("Inspector connection closed");
-      });
-    });
-  }
-
-  send(method: string, params?: any): void {
-    if (!this.connected || !this.socket || !this.framer) {
-      throw new Error("Inspector not connected");
-    }
-
-    const id = this.requestId++;
-    const message = { id, method, params };
-
-    debug.appendLine(`Inspector sending: ${method}`);
-    this.framer.send(this.socket, JSON.stringify(message));
-  }
-
-  close(): void {
-    if (this.socket) {
-      this.socket.destroy();
-      this.socket = null;
-    }
-    this.connected = false;
-    this.framer = null;
   }
 }
 

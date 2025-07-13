@@ -954,7 +954,7 @@ pub const CommandLineReporter = struct {
                     avg.stmts /= avg_count;
                 }
 
-                const failed = if (avg_count > 0) base_fraction else bun.sourcemap.CoverageFraction{
+                const failed = if (avg_count > 0) base_fraction else bun.sourcemap.coverage.Fraction{
                     .functions = 0,
                     .lines = 0,
                     .stmts = 0,

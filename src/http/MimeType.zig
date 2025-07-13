@@ -23,6 +23,12 @@ pub const Compact = struct {
     }
 
     pub fn toMimeType(self: Compact) MimeType {
+        if (comptime bun.Environment.ci_assert) {
+            if (!bun.strings.eql(self.value.slice(), @tagName(self.value))) {
+                bun.Output.panic("{s} != {s}. Code generation is broken.", .{ self.value.slice(), @tagName(self.value) });
+            }
+        }
+
         switch (self.value) {
             .@"application/webassembly" => return wasm,
             .@"application/javascript" => return javascript,
@@ -51,6 +57,11 @@ pub fn createHashTable(allocator: std.mem.Allocator) !Map {
     try map.ensureTotalCapacity(@as(u32, @truncate(Table.all.len)));
     @setEvalBranchQuota(4000);
     for (Table.all) |entry| {
+        if (comptime bun.Environment.ci_assert) {
+            if (!bun.strings.eql(entry.slice(), @tagName(entry))) {
+                bun.Output.panic("{s} != {s}. Code generation is broken.", .{ entry.slice(), @tagName(entry) });
+            }
+        }
         map.putAssumeCapacityNoClobber(entry.slice(), entry);
     }
 

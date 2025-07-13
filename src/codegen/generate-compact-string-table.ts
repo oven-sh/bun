@@ -1,5 +1,40 @@
 #!/usr/bin/env bun
 
+/**
+ * Compact String Table Generator
+ *
+ * Generates a Zig enum that stores multiple strings in a contiguous buffer with
+ * reduced per-string overhead compared to individual string slices.
+ *
+ * Instead of storing each string as a separate slice (16 bytes each), this packs
+ * the string metadata into enum values using bit fields. The actual string data
+ * is stored in a single static array.
+ *
+ * ## How it works:
+ *
+ * 1. Groups strings by length for uniform spacing within each group
+ * 2. Stores position and length group in bit-packed enum values
+ * 3. Uses non-power-of-2 integers (u9, u12, etc.) to minimize enum size
+ *
+ * ## Usage:
+ *
+ * ```bash
+ * # Input: newline-delimited strings
+ * echo -e "application/json\\ntext/html\\ntext/plain" > strings.txt
+ *
+ * # Generate Zig code
+ * bun src/codegen/generate-compact-string-table.ts strings.txt output.zig MyStrings
+ * ```
+ *
+ * ## Trade-offs:
+ *
+ * - Reduces memory overhead from 16 bytes to 1-2 bytes per string
+ * - O(1) string access through length-based grouping
+ * - Uniform spacing within groups may include some padding
+ * - Requires build-time code generation
+ *
+ */
+
 import { writeFileSync } from "fs";
 import { basename } from "path";
 

@@ -88,20 +88,21 @@ coveragePathIgnorePatterns = "ignore-me.ts"
 export function includeMe() {
   return "included";
 }
-includeMe();
 `,
     "ignore-me.ts": `
 export function ignoreMe() {
   return "ignored";
 }
-ignoreMe();
 `,
     "test.test.ts": `
+import { test, expect } from "bun:test";
 import { includeMe } from "./include-me";
 import { ignoreMe } from "./ignore-me";
 
-console.log(includeMe());
-console.log(ignoreMe());
+test("should call both functions", () => {
+  expect(includeMe()).toBe("included");
+  expect(ignoreMe()).toBe("ignored");
+});
 `,
   });
   
@@ -113,9 +114,35 @@ console.log(ignoreMe());
     stdio: [null, null, "pipe"],
   });
   
-  const stderr = result.stderr.toString("utf-8");
-  expect(stderr).toContain("include-me.ts");
-  expect(stderr).not.toContain("ignore-me.ts");
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = stderr
+    .replace(/v\d+\.\d+\.\d+/g, "vX.X.X")
+    .replace(/\\\\/g, "/")
+    .replace(/\\\w:/g, "/")
+    .replace(/\d+(\.\d+)?ms/g, "XXXms")
+    .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
+    .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]")
+    .replace(/\d+ expect\(\) calls?/g, "X expect() calls");
+    
+  expect(stderr).toMatchInlineSnapshot(`
+"
+test.test.ts:
+(pass) should call both functions [XXXms]
+---------------|---------|---------|-------------------
+File           | % Funcs | % Lines | Uncovered Line #s
+---------------|---------|---------|-------------------
+All files      |  100.00 |  100.00 |
+ include-me.ts |  100.00 |  100.00 | 
+ test.test.ts  |  100.00 |  100.00 | 
+---------------|---------|---------|-------------------
+
+ 1 pass
+ 0 fail
+ X expect() calls
+Ran 1 test across 1 file. [XXXms]
+"
+`);
   expect(result.exitCode).toBe(0);
 });
 
@@ -129,25 +156,26 @@ coveragePathIgnorePatterns = ["utils/**", "*.config.ts"]
 export function main() {
   return "main";
 }
-main();
 `,
     "utils/helper.ts": `
 export function helper() {
   return "helper";
 }
-helper();
 `,
     "build.config.ts": `
 export const config = { build: true };
 `,
     "test.test.ts": `
+import { test, expect } from "bun:test";
 import { main } from "./src/main";
 import { helper } from "./utils/helper";
 import { config } from "./build.config";
 
-console.log(main());
-console.log(helper());
-console.log(config);
+test("should call all functions", () => {
+  expect(main()).toBe("main");
+  expect(helper()).toBe("helper");
+  expect(config.build).toBe(true);
+});
 `,
   });
   
@@ -159,10 +187,34 @@ console.log(config);
     stdio: [null, null, "pipe"],
   });
   
-  const stderr = result.stderr.toString("utf-8");
-  expect(stderr).toContain("src/main.ts");
-  expect(stderr).not.toContain("utils/helper.ts");
-  expect(stderr).not.toContain("build.config.ts");
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = stderr
+    .replace(/v\d+\.\d+\.\d+/g, "vX.X.X")
+    .replace(/\\\\/g, "/")
+    .replace(/\\\w:/g, "/")
+    .replace(/\d+(\.\d+)?ms/g, "XXXms")
+    .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
+    .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]");
+    
+  expect(stderr).toMatchInlineSnapshot(`
+"
+test.test.ts:
+(pass) should call all functions [XXXms]
+--------------|---------|---------|-------------------
+File          | % Funcs | % Lines | Uncovered Line #s
+--------------|---------|---------|-------------------
+All files     |  100.00 |  100.00 |
+ src/main.ts  |  100.00 |  100.00 | 
+ test.test.ts |  100.00 |  100.00 | 
+--------------|---------|---------|-------------------
+
+ 1 pass
+ 0 fail
+ 3 expect() calls
+Ran 1 test across 1 file. [XXXms]
+"
+`);
   expect(result.exitCode).toBe(0);
 });
 
@@ -176,28 +228,28 @@ coveragePathIgnorePatterns = ["**/*.spec.ts", "test-utils/**"]
 export function feature() {
   return "feature";
 }
-feature();
 `,
     "src/feature.spec.ts": `
 export function featureSpec() {
   return "spec";
 }
-featureSpec();
 `,
     "test-utils/index.ts": `
 export function testUtils() {
   return "utils";
 }
-testUtils();
 `,
     "main.test.ts": `
+import { test, expect } from "bun:test";
 import { feature } from "./src/feature";
 import { featureSpec } from "./src/feature.spec";
 import { testUtils } from "./test-utils";
 
-console.log(feature());
-console.log(featureSpec());
-console.log(testUtils());
+test("should call all functions", () => {
+  expect(feature()).toBe("feature");
+  expect(featureSpec()).toBe("spec");
+  expect(testUtils()).toBe("utils");
+});
 `,
   });
   
@@ -209,15 +261,36 @@ console.log(testUtils());
     stdio: [null, null, "pipe"],
   });
   
-  const stderr = result.stderr.toString("utf-8");
-  expect(stderr).toContain("src/feature.ts");
-  // Check that feature.spec.ts is not in the coverage table (after the header)
-  const lines = stderr.split('\n');
-  const tableStartIndex = lines.findIndex(line => line.includes('% Funcs'));
-  const tableLines = lines.slice(tableStartIndex);
-  const tableContent = tableLines.join('\n');
-  expect(tableContent).not.toContain("feature.spec.ts");
-  expect(tableContent).not.toContain("test-utils");
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = stderr
+    .replace(/v\d+\.\d+\.\d+/g, "vX.X.X")
+    .replace(/\\\\/g, "/")
+    .replace(/\\\w:/g, "/")
+    .replace(/\d+(\.\d+)?ms/g, "XXXms")
+    .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
+    .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]");
+    
+  expect(stderr).toMatchInlineSnapshot(`
+"
+main.test.ts:
+(pass) should call all functions [XXXms]
+
+src/feature.spec.ts:
+----------------|---------|---------|-------------------
+File            | % Funcs | % Lines | Uncovered Line #s
+----------------|---------|---------|-------------------
+All files       |  100.00 |  100.00 |
+ main.test.ts   |  100.00 |  100.00 | 
+ src/feature.ts |  100.00 |  100.00 | 
+----------------|---------|---------|-------------------
+
+ 1 pass
+ 0 fail
+ 3 expect() calls
+Ran 1 test across 2 files. [XXXms]
+"
+`);
   expect(result.exitCode).toBe(0);
 });
 
@@ -231,20 +304,21 @@ coveragePathIgnorePatterns = "ignore-me.ts"
 export function includeMe() {
   return "included";
 }
-includeMe();
 `,
     "ignore-me.ts": `
 export function ignoreMe() {
   return "ignored";
 }
-ignoreMe();
 `,
     "test.test.ts": `
+import { test, expect } from "bun:test";
 import { includeMe } from "./include-me";
 import { ignoreMe } from "./ignore-me";
 
-console.log(includeMe());
-console.log(ignoreMe());
+test("should call both functions", () => {
+  expect(includeMe()).toBe("included");
+  expect(ignoreMe()).toBe("ignored");
+});
 `,
   });
   
@@ -256,9 +330,39 @@ console.log(ignoreMe());
     stdio: [null, null, "pipe"],
   });
   
-  const lcovContent = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
-  expect(lcovContent).toContain("include-me.ts");
-  expect(lcovContent).not.toContain("ignore-me.ts");
+  let lcovContent = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
+  // Normalize LCOV content for cross-platform consistency
+  lcovContent = lcovContent
+    .replace(/\\\\/g, "/")
+    .replace(/\\\w:/g, "/")
+    .replace(/SF:[^\n]*[\\\/]/g, "SF:");
+    
+  expect(lcovContent).toMatchInlineSnapshot(`
+"TN:
+SF:include-me.ts
+FNF:1
+FNH:1
+DA:2,11
+DA:3,17
+LF:5
+LH:2
+end_of_record
+TN:
+SF:test.test.ts
+FNF:1
+FNH:1
+DA:2,60
+DA:3,41
+DA:4,39
+DA:6,42
+DA:7,39
+DA:8,36
+DA:9,2
+LF:10
+LH:7
+end_of_record
+"
+`);
   expect(result.exitCode).toBe(0);
 });
 
@@ -268,7 +372,13 @@ test("coveragePathIgnorePatterns - invalid config type", () => {
 [test]
 coveragePathIgnorePatterns = 123
 `,
-    "test.test.ts": `console.log("test");`,
+    "test.test.ts": `
+import { test, expect } from "bun:test";
+
+test("should pass", () => {
+  expect(true).toBe(true);
+});
+`,
   });
   
   const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
@@ -279,8 +389,22 @@ coveragePathIgnorePatterns = 123
     stdio: [null, null, "pipe"],
   });
   
-  const stderr = result.stderr.toString("utf-8");
-  expect(stderr).toContain("coveragePathIgnorePatterns must be a string or array of strings");
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize error output for cross-platform consistency
+  stderr = stderr
+    .replace(/\\\\/g, "/")
+    .replace(/\\\w:/g, "/")
+    .replace(/\/tmp\/cov_[^\/]+\//g, "/tmp/cov_XXXXXX/");
+    
+  expect(stderr).toMatchInlineSnapshot(`
+"3 | coveragePathIgnorePatterns = 123
+                                 ^
+error: coveragePathIgnorePatterns must be a string or array of strings
+    at /tmp/cov_XXXXXX/bunfig.toml:3:30
+
+Invalid Bunfig: failed to load bunfig
+"
+`);
   expect(result.exitCode).toBe(1);
 });
 
@@ -290,7 +414,13 @@ test("coveragePathIgnorePatterns - invalid array item", () => {
 [test]
 coveragePathIgnorePatterns = ["valid-pattern", 123]
 `,
-    "test.test.ts": `console.log("test");`,
+    "test.test.ts": `
+import { test, expect } from "bun:test";
+
+test("should pass", () => {
+  expect(true).toBe(true);
+});
+`,
   });
   
   const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
@@ -301,8 +431,22 @@ coveragePathIgnorePatterns = ["valid-pattern", 123]
     stdio: [null, null, "pipe"],
   });
   
-  const stderr = result.stderr.toString("utf-8");
-  expect(stderr).toContain("coveragePathIgnorePatterns array must contain only strings");
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize error output for cross-platform consistency
+  stderr = stderr
+    .replace(/\\\\/g, "/")
+    .replace(/\\\w:/g, "/")
+    .replace(/\/tmp\/cov_[^\/]+\//g, "/tmp/cov_XXXXXX/");
+    
+  expect(stderr).toMatchInlineSnapshot(`
+"3 | coveragePathIgnorePatterns = ["valid-pattern", 123]
+                                                   ^
+error: coveragePathIgnorePatterns array must contain only strings
+    at /tmp/cov_XXXXXX/bunfig.toml:3:48
+
+Invalid Bunfig: failed to load bunfig
+"
+`);
   expect(result.exitCode).toBe(1);
 });
 
@@ -316,11 +460,14 @@ coveragePathIgnorePatterns = []
 export function includeMe() {
   return "included";
 }
-includeMe();
 `,
     "test.test.ts": `
+import { test, expect } from "bun:test";
 import { includeMe } from "./include-me";
-console.log(includeMe());
+
+test("should call function", () => {
+  expect(includeMe()).toBe("included");
+});
 `,
   });
   
@@ -332,8 +479,34 @@ console.log(includeMe());
     stdio: [null, null, "pipe"],
   });
   
-  const stderr = result.stderr.toString("utf-8");
-  expect(stderr).toContain("include-me.ts");
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = stderr
+    .replace(/v\d+\.\d+\.\d+/g, "vX.X.X")
+    .replace(/\\\\/g, "/")
+    .replace(/\\\w:/g, "/")
+    .replace(/\d+(\.\d+)?ms/g, "XXXms")
+    .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
+    .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]");
+    
+  expect(stderr).toMatchInlineSnapshot(`
+"
+test.test.ts:
+(pass) should call function [XXXms]
+---------------|---------|---------|-------------------
+File           | % Funcs | % Lines | Uncovered Line #s
+---------------|---------|---------|-------------------
+All files      |  100.00 |  100.00 |
+ include-me.ts |  100.00 |  100.00 | 
+ test.test.ts  |  100.00 |  100.00 | 
+---------------|---------|---------|-------------------
+
+ 1 pass
+ 0 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [XXXms]
+"
+`);
   expect(result.exitCode).toBe(0);
 });
 
@@ -347,11 +520,14 @@ coveragePathIgnorePatterns = "**"
 export function includeMe() {
   return "included";
 }
-includeMe();
 `,
     "test.test.ts": `
+import { test, expect } from "bun:test";
 import { includeMe } from "./include-me";
-console.log(includeMe());
+
+test("should call function", () => {
+  expect(includeMe()).toBe("included");
+});
 `,
   });
   
@@ -363,7 +539,31 @@ console.log(includeMe());
     stdio: [null, null, "pipe"],
   });
   
-  const stderr = result.stderr.toString("utf-8");
-  expect(stderr).not.toContain("include-me.ts");
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = stderr
+    .replace(/v\d+\.\d+\.\d+/g, "vX.X.X")
+    .replace(/\\\\/g, "/")
+    .replace(/\\\w:/g, "/")
+    .replace(/\d+(\.\d+)?ms/g, "XXXms")
+    .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
+    .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]");
+    
+  expect(stderr).toMatchInlineSnapshot(`
+"
+test.test.ts:
+(pass) should call function [XXXms]
+-----------|---------|---------|-------------------
+File       | % Funcs | % Lines | Uncovered Line #s
+-----------|---------|---------|-------------------
+All files  |     nan |     nan |
+-----------|---------|---------|-------------------
+
+ 1 pass
+ 0 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [XXXms]
+"
+`);
   expect(result.exitCode).toBe(0);
 });

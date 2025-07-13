@@ -1,17 +1,17 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs/promises";
+import * as net from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import * as net from "node:net";
 import * as vscode from "vscode";
 import type {
-  TestNode,
   InspectorMessage,
-  TestFoundEvent,
-  TestStartEvent,
-  TestEndEvent,
   LifecycleErrorEvent,
+  TestEndEvent,
   TestError,
+  TestFoundEvent,
+  TestNode,
+  TestStartEvent,
 } from "./types";
 import { FramerState } from "./types";
 

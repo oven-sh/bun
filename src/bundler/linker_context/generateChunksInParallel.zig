@@ -341,7 +341,7 @@ pub fn generateChunksInParallel(
     }
 
     const bundler = @as(*bun.bundle_v2.BundleV2, @fieldParentPtr("linker", c));
-    var static_route_visitor = StaticRouteVisitor{ .c = c };
+    var static_route_visitor = StaticRouteVisitor{ .c = c, .visited = bun.bit_set.AutoBitSet.initEmpty(bun.default_allocator, c.graph.files.len) catch unreachable };
     defer static_route_visitor.deinit();
 
     if (root_path.len > 0) {

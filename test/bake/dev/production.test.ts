@@ -368,7 +368,7 @@ export default function Client() {
     expect(htmlContent).toContain("Hello World");
   });
 
-  test("importing useState", async () => {
+  test("importing useState server-side", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-react-import", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
       "pages/index.tsx": `import { useState } from 'react';
@@ -401,6 +401,88 @@ export default function IndexPage() {
       '"useState" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component.',
     );
     expect(exitCode).toBe(1);
+  });
+
+  test("importing useState from client component", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-client-useState", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import Counter from "../components/Counter";
+
+export default function IndexPage() {
+  return (
+    <div>
+      <h1>Counter Example</h1>
+      <Counter />
+    </div>
+  );
+}`,
+      "components/Counter.tsx": `"use client";
+import { useState } from 'react';
+
+export default function Counter() {
+  const [count, setCount] = useState(0);
+  
+  return (
+    <div>
+      <p>Count: {count}</p>
+      <button onClick={() => setCount(count + 1)}>Click me</button>
+    </div>
+  );
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    // Run the build command
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
+
+    // The build should succeed - client components CAN use useState
+    expect(stderr.toString()).not.toContain("useState");
+    expect(exitCode).toBe(0);
+
+    // Check the generated HTML file
+    const htmlPage = path.join(dir, "dist", "index.html");
+    expect(existsSync(htmlPage)).toBe(true);
+
+    const htmlContent = await Bun.file(htmlPage).text();
+
+    // Verify the static content is rendered
+    expect(htmlContent).toContain("<h1>Counter Example</h1>");
+
+    // Verify client component script tags exist
+    expect(htmlContent).toContain("<script");
+    expect(htmlContent).toContain("/_bun/");
+
+    // Extract the JS bundle filename from the HTML
+    const scriptMatch = htmlContent.match(/src="[/]_bun[/]([a-z0-9]+\.js)"/);
+    expect(scriptMatch).toBeTruthy();
+    const bundleFilename = scriptMatch![1];
+
+    // Check that the client bundle was created
+    const clientBundle = path.join(dir, "dist", "_bun", bundleFilename);
+    expect(existsSync(clientBundle)).toBe(true);
+
+    // Also check for component-specific bundle by looking for all JS files
+    const bundles = await Bun.$`ls ${path.join(dir, "dist", "_bun")}/*.js`.cwd(dir).text();
+    const bundleFiles = bundles.trim().split("\n").filter(Boolean);
+    
+    // Read all bundles to find the one with our component code
+    let foundCounterBundle = false;
+    for (const bundleFile of bundleFiles) {
+      const content = await Bun.file(bundleFile).text();
+      if (content.includes("useState") && content.includes("setCount") && content.includes("Click me")) {
+        foundCounterBundle = true;
+        break;
+      }
+    }
+    
+    expect(foundCounterBundle).toBe(true);
   });
 
   test("don't include client code if fully static route", async () => {

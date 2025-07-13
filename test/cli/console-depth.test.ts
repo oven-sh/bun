@@ -236,7 +236,9 @@ describe("console depth", () => {
 
     expect(exitCode).toBe(1);
     const allOutput = normalizeOutput(stdout + stderr);
-    expect(allOutput).toMatchInlineSnapshot(`"error: Invalid value for --console-depth: \"invalid\". Must be a positive integer"`); 
+    expect(allOutput).toMatchInlineSnapshot(
+      `"error: Invalid value for --console-depth: \"invalid\". Must be a positive integer"`,
+    );
   });
 
   test("edge case: depth 0 should show only top level structure", async () => {

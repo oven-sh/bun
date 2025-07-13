@@ -677,7 +677,7 @@ install_common_software() {
 	case "$pm" in
 	apt)
 		# software-properties-common is not available in Debian Trixie
-		if [ "$distro" = "debian" ] && [ "$release" = "trixie" ]; then
+		if [ "$distro" = "debian" ] && [ "$release" = "13" ]; then
 			install_packages \
 				apt-transport-https
 		else

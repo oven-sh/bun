@@ -676,9 +676,15 @@ install_brew() {
 install_common_software() {
 	case "$pm" in
 	apt)
-		install_packages \
-			apt-transport-https \
-			software-properties-common
+		# software-properties-common is not available in Debian Trixie
+		if [ "$distro" = "debian" ] && [ "$release" = "trixie" ]; then
+			install_packages \
+				apt-transport-https
+		else
+			install_packages \
+				apt-transport-https \
+				software-properties-common
+		fi
 		;;
 	dnf)
 		install_packages \

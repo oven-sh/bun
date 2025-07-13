@@ -518,7 +518,7 @@ pub fn fromURLSearchParams(
     };
     search_params.toString(URLSearchParamsConverter, &converter, URLSearchParamsConverter.convert);
     var store = Blob.Store.init(converter.buf, allocator);
-    store.mime_type = MimeType.all.@"application/x-www-form-urlencoded";
+    store.mime_type = MimeType.Compact.from(.@"application/x-www-form-urlencoded").toMimeType();
 
     var blob = Blob.initWithStore(store, globalThis);
     blob.content_type = store.mime_type.value;

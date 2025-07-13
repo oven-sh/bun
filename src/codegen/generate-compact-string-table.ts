@@ -36,7 +36,6 @@
  */
 
 import { writeFileSync } from "fs";
-import { basename } from "path";
 
 const args = process.argv.slice(2);
 

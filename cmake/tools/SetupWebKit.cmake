@@ -2,7 +2,7 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION 112b7cc13cd4a237bc2d3f75df4dac6c56cdfb94)
+  set(WEBKIT_VERSION 1098cc50652ab1eab171f58f7669e19ca6c276ae)
 endif()
 
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
@@ -80,8 +80,7 @@ endif()
 
 setx(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})
 set(WEBKIT_FILENAME ${WEBKIT_NAME}.tar.gz)
-# setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/${WEBKIT_FILENAME})
-setx(WEBKIT_DOWNLOAD_URL https://nightly.link/oven-sh/WebKit/actions/runs/16240396070/${WEBKIT_NAME}.zip)
+setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/${WEBKIT_FILENAME})
 
 if(EXISTS ${WEBKIT_PATH}/package.json)
   file(READ ${WEBKIT_PATH}/package.json WEBKIT_PACKAGE_JSON)
@@ -91,26 +90,11 @@ if(EXISTS ${WEBKIT_PATH}/package.json)
   endif()
 endif()
 
-if (false)
-# todo: put this back
 file(DOWNLOAD ${WEBKIT_DOWNLOAD_URL} ${CACHE_PATH}/${WEBKIT_FILENAME} SHOW_PROGRESS)
 file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/${WEBKIT_FILENAME} DESTINATION ${CACHE_PATH} TOUCH)
 file(REMOVE ${CACHE_PATH}/${WEBKIT_FILENAME})
 file(REMOVE_RECURSE ${WEBKIT_PATH})
 file(RENAME ${CACHE_PATH}/bun-webkit ${WEBKIT_PATH})
-
-# todo: delete this
-else()
-file(DOWNLOAD ${WEBKIT_DOWNLOAD_URL} ${CACHE_PATH}/${WEBKIT_NAME}.zip SHOW_PROGRESS)
-file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/${WEBKIT_NAME}.zip DESTINATION ${CACHE_PATH} TOUCH)
-file(REMOVE ${CACHE_PATH}/${WEBKIT_NAME}.zip)
-
-file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/bun-webkit.tar.gz DESTINATION ${CACHE_PATH} TOUCH)
-file(REMOVE ${CACHE_PATH}/bun-webkit.tar.gz)
-file(REMOVE_RECURSE ${WEBKIT_PATH})
-file(RENAME ${CACHE_PATH}/bun-webkit ${WEBKIT_PATH})
-endif()
-
 
 if(APPLE)
   file(REMOVE_RECURSE ${WEBKIT_INCLUDE_PATH}/unicode)

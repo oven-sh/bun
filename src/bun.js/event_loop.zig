@@ -243,16 +243,18 @@ fn updateCounts(this: *EventLoop) void {
     if (comptime Environment.isWindows) {
         if (delta > 0) {
             loop.active_handles += @intCast(delta);
-        } else {
-            loop.active_handles -= @intCast(-delta);
+        } else if (delta < 0) {
+            const abs_delta = @abs(delta);
+            loop.active_handles -= @intCast(abs_delta);
         }
     } else {
         if (delta > 0) {
             loop.num_polls += @intCast(delta);
             loop.active += @intCast(delta);
-        } else {
-            loop.num_polls -= @intCast(-delta);
-            loop.active -= @intCast(-delta);
+        } else if (delta < 0) {
+            const abs_delta = @abs(delta);
+            loop.num_polls -= @intCast(abs_delta);
+            loop.active -= @intCast(abs_delta);
         }
     }
 }

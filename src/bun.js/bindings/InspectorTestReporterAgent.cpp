@@ -26,11 +26,28 @@ extern "C" {
 void Bun__TestReporterAgentEnable(Inspector::InspectorTestReporterAgent* agent);
 void Bun__TestReporterAgentDisable(Inspector::InspectorTestReporterAgent* agent);
 
-void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, JSC::CallFrame* callFrame, int testId, BunString* name, const char* item_type, int parentId)
+enum class BunTestType : uint8_t {
+    Test,
+    Describe,
+};
+
+void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, JSC::CallFrame* callFrame, int testId, BunString* name, BunTestType item_type, int parentId)
 {
     auto str = name->toWTFString(BunString::ZeroCopy);
-    String typeStr = String::fromLatin1(item_type);
-    agent->reportTestFound(callFrame, testId, str, typeStr, parentId);
+    
+    Protocol::TestReporter::TestType type;
+    switch (item_type) {
+        case BunTestType::Test:
+            type = Protocol::TestReporter::TestType::Test;
+            break;
+        case BunTestType::Describe:
+            type = Protocol::TestReporter::TestType::Describe;
+            break;
+        default:
+            ASSERT_NOT_REACHED();
+    }
+    
+    agent->reportTestFound(callFrame, testId, str, type, parentId);
 }
 
 void Bun__TestReporterAgentReportTestStart(Inspector::InspectorTestReporterAgent* agent, int testId)
@@ -121,7 +138,7 @@ Protocol::ErrorStringOr<void> InspectorTestReporterAgent::disable()
     return {};
 }
 
-void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, const String& name, const String& type, int parentId)
+void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, const String& name, Protocol::TestReporter::TestType type, int parentId)
 {
     if (!m_enabled)
         return;

@@ -1906,7 +1906,7 @@ inline fn createScope(
                         max_test_id_for_debugger += 1;
                         var name = bun.String.init(label);
                         const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
-                        debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, "test", parent_id);
+                        debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, .@"test", parent_id);
                         break :brk max_test_id_for_debugger;
                     }
                 }
@@ -1929,7 +1929,7 @@ inline fn createScope(
                         max_test_id_for_debugger += 1;
                         var name = bun.String.init(label);
                         const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
-                        debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, "describe", parent_id);
+                        debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, .describe, parent_id);
                         break :brk max_test_id_for_debugger;
                     }
                 }
@@ -2239,7 +2239,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                                     max_test_id_for_debugger += 1;
                                     var name = bun.String.init(formattedLabel);
                                     const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
-                                    debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, "test", parent_id);
+                                    debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, .@"test", parent_id);
                                     break :brk max_test_id_for_debugger;
                                 }
                             }
@@ -2261,7 +2261,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                                 max_test_id_for_debugger += 1;
                                 var name = bun.String.init(formattedLabel);
                                 const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
-                                debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, "describe", parent_id);
+                                debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, .describe, parent_id);
                                 break :brk max_test_id_for_debugger;
                             }
                         }

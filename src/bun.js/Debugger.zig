@@ -299,12 +299,18 @@ pub const TestReporterAgent = struct {
         todo,
         skipped_because_label,
     };
+
+    pub const TestType = enum(u8) {
+        @"test" = 0,
+        describe = 1,
+    };
+
     pub const Handle = opaque {
-        extern "c" fn Bun__TestReporterAgentReportTestFound(agent: *Handle, callFrame: *jsc.CallFrame, testId: c_int, name: *bun.String, item_type: [*:0]const u8, parentId: c_int) void;
+        extern "c" fn Bun__TestReporterAgentReportTestFound(agent: *Handle, callFrame: *jsc.CallFrame, testId: c_int, name: *bun.String, item_type: TestType, parentId: c_int) void;
         extern "c" fn Bun__TestReporterAgentReportTestStart(agent: *Handle, testId: c_int) void;
         extern "c" fn Bun__TestReporterAgentReportTestEnd(agent: *Handle, testId: c_int, bunTestStatus: TestStatus, elapsed: f64) void;
 
-        pub fn reportTestFound(this: *Handle, callFrame: *jsc.CallFrame, testId: i32, name: *bun.String, item_type: [*:0]const u8, parentId: i32) void {
+        pub fn reportTestFound(this: *Handle, callFrame: *jsc.CallFrame, testId: i32, name: *bun.String, item_type: TestType, parentId: i32) void {
             Bun__TestReporterAgentReportTestFound(this, callFrame, testId, name, item_type, parentId);
         }
 
@@ -332,7 +338,7 @@ pub const TestReporterAgent = struct {
     /// Caller must ensure that it is enabled first.
     ///
     /// Since we may have to call .deinit on the name string.
-    pub fn reportTestFound(this: TestReporterAgent, callFrame: *jsc.CallFrame, test_id: i32, name: *bun.String, item_type: [*:0]const u8, parentId: i32) void {
+    pub fn reportTestFound(this: TestReporterAgent, callFrame: *jsc.CallFrame, test_id: i32, name: *bun.String, item_type: TestType, parentId: i32) void {
         debug("reportTestFound", .{});
 
         this.handle.?.reportTestFound(callFrame, test_id, name, item_type, parentId);

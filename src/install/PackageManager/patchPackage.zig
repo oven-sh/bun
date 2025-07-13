@@ -760,10 +760,9 @@ fn overwritePackageInNodeModulesFolder(
             var pathbuf2: bun.PathBuffer = undefined;
             // _ = pathbuf; // autofix
 
-            while (try walker.next()) |entry| {
+            while (try walker.next().unwrap()) |entry| {
                 if (entry.kind != .file) continue;
                 real_file_count += 1;
-                const openFile = std.fs.Dir.openFile;
                 const createFile = std.fs.Dir.createFile;
 
                 // 1. rename original file in node_modules to tmp_dir_in_node_modules
@@ -807,7 +806,7 @@ fn overwritePackageInNodeModulesFolder(
                         Global.crash();
                     };
                 } else if (comptime Environment.isPosix) {
-                    var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
+                    var in_file = try entry.dir.openat(entry.basename, bun.O.RDONLY, 0).unwrap();
                     defer in_file.close();
 
                     @memcpy(pathbuf[0..entry.path.len], entry.path);
@@ -824,10 +823,10 @@ fn overwritePackageInNodeModulesFolder(
                     var outfile = try createFile(destination_dir_, entry.path, .{});
                     defer outfile.close();
 
-                    const stat = in_file.stat() catch continue;
+                    const stat = in_file.stat().unwrap() catch continue;
                     _ = bun.c.fchmod(outfile.handle, @intCast(stat.mode));
 
-                    bun.copyFileWithState(.fromStdFile(in_file), .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
+                    bun.copyFileWithState(in_file, .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
                         Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                         Global.crash();
                     };
@@ -840,7 +839,7 @@ fn overwritePackageInNodeModulesFolder(
 
     var pkg_in_cache_dir = try cache_dir.openDir(cache_dir_subpath, .{ .iterate = true });
     defer pkg_in_cache_dir.close();
-    var walker = Walker.walk(pkg_in_cache_dir, manager.allocator, &.{}, IGNORED_PATHS) catch bun.outOfMemory();
+    var walker = Walker.walk(.fromStdDir(pkg_in_cache_dir), manager.allocator, &.{}, IGNORED_PATHS) catch bun.outOfMemory();
     defer walker.deinit();
 
     var buf1: if (bun.Environment.isWindows) bun.WPathBuffer else void = undefined;

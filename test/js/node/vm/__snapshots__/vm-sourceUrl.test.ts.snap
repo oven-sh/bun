@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`can get sourceURL from eval inside node:vm 1`] = `
 "evalmachine.<anonymous>:2

@@ -786,7 +786,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     Vector<JSC::Strong<JSC::JSObject>> transferList;
     Vector<RefPtr<MessagePort>> dummyPorts;
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts);
-
+    EXCEPTION_ASSERT(serialized.hasException() == !!throwScope.exception());
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
@@ -799,19 +799,15 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
         size_t byteLength = arrayBuffer->byteLength();
         auto* subclassStructure = globalObject->JSBufferSubclassStructure();
         JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, byteLength);
+        RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(uint8Array);
     }
 
     if (arrayBuffer->isShared()) {
-        return JSValue::encode(
-            JSArrayBuffer::create(vm,
-                globalObject->arrayBufferStructureWithSharingMode<
-                    ArrayBufferSharingMode::Shared>(),
-                WTFMove(arrayBuffer)));
+        return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructureWithSharingMode<ArrayBufferSharingMode::Shared>(), WTFMove(arrayBuffer)));
     }
 
-    return JSValue::encode(JSArrayBuffer::create(
-        vm, globalObject->arrayBufferStructure(), WTFMove(arrayBuffer)));
+    return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTFMove(arrayBuffer)));
 }
 JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -822,17 +818,12 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, Ca
     JSValue result;
 
     if (auto* jsArrayBuffer = jsDynamicCast<JSArrayBuffer*>(value)) {
-        result = SerializedScriptValue::fromArrayBuffer(
-            *globalObject, globalObject, jsArrayBuffer->impl(), 0,
-            jsArrayBuffer->impl()->byteLength());
+        result = SerializedScriptValue::fromArrayBuffer(*globalObject, globalObject, jsArrayBuffer->impl(), 0, jsArrayBuffer->impl()->byteLength());
     } else if (auto* view = jsDynamicCast<JSArrayBufferView*>(value)) {
         auto arrayBuffer = view->possiblySharedImpl()->possiblySharedBuffer();
-        result = SerializedScriptValue::fromArrayBuffer(
-            *globalObject, globalObject, arrayBuffer.get(), view->byteOffset(),
-            view->byteLength());
+        result = SerializedScriptValue::fromArrayBuffer(*globalObject, globalObject, arrayBuffer.get(), view->byteOffset(), view->byteLength());
     } else {
-        throwTypeError(globalObject, throwScope,
-            "First argument must be an ArrayBuffer"_s);
+        throwTypeError(globalObject, throwScope, "First argument must be an ArrayBuffer"_s);
         return {};
     }
 

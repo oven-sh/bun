@@ -14,7 +14,7 @@ console.log(<Component message="Hello world!" />);
 
 ## Configuration
 
-Bun reads your `tsconfig.json` or `jsconfig.json` configuration files to determines how to perform the JSX transform internally. To avoid using either of these, the following options can also be defined in [`bunfig.toml`](https://bun.sh/docs/runtime/bunfig).
+Bun reads your `tsconfig.json` or `jsconfig.json` configuration files to determines how to perform the JSX transform internally. To avoid using either of these, the following options can also be defined in [`bunfig.toml`](https://bun.com/docs/runtime/bunfig).
 
 The following compiler options are respected.
 

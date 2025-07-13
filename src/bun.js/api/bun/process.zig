@@ -132,7 +132,7 @@ pub const PidFDType = if (Environment.isLinux) fd_t else u0;
 
 pub const Process = struct {
     const Self = @This();
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 

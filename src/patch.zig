@@ -1151,7 +1151,7 @@ pub const TestingAPIs = struct {
         defer patchfile.deinit(bun.default_allocator);
 
         const str = try std.json.stringifyAlloc(bun.default_allocator, patchfile, .{});
-        const outstr = bun.String.fromUTF8(str);
+        const outstr = bun.String.borrowUTF8(str);
         return outstr.toJS(globalThis);
     }
 

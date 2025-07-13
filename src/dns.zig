@@ -337,7 +337,7 @@ pub const GetAddrInfo = struct {
                         var i: u32 = 0;
                         const items: []const Result = list.items;
                         for (items) |item| {
-                            array.putIndex(globalThis, i, item.toJS(globalThis));
+                            try array.putIndex(globalThis, i, item.toJS(globalThis));
                             i += 1;
                         }
                         break :brk array;
@@ -417,11 +417,11 @@ pub fn addressToString(address: *const std.net.Address) bun.OOM!bun.String {
             // TODO: this is a hack, fix it
             // This removes [.*]:port
             //              ^  ^^^^^^
-            return String.createLatin1(out[1 .. out.len - 1 - std.fmt.count("{d}", .{address.in6.getPort()}) - 1]);
+            return String.cloneLatin1(out[1 .. out.len - 1 - std.fmt.count("{d}", .{address.in6.getPort()}) - 1]);
         },
         std.posix.AF.UNIX => {
             if (comptime std.net.has_unix_sockets) {
-                return String.createLatin1(&address.un.path);
+                return String.cloneLatin1(&address.un.path);
             }
 
             return String.empty;
@@ -454,7 +454,7 @@ pub fn addrInfoToJSArray(addr_info: *std.c.addrinfo, globalThis: *JSC.JSGlobalOb
         var j: u32 = 0;
         var current: ?*std.c.addrinfo = addr_info;
         while (current) |this_node| : (current = current.?.next) {
-            array.putIndex(
+            try array.putIndex(
                 globalThis,
                 j,
                 GetAddrInfo.Result.toJS(

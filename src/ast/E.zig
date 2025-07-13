@@ -72,7 +72,7 @@ pub const Array = struct {
         array.protect();
         defer array.unprotect();
         for (items, 0..) |expr, j| {
-            array.putIndex(globalObject, @as(u32, @truncate(j)), try expr.data.toJS(allocator, globalObject));
+            try array.putIndex(globalObject, @as(u32, @truncate(j)), try expr.data.toJS(allocator, globalObject));
         }
 
         return array;
@@ -122,7 +122,7 @@ pub const New = struct {
 
     // True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
     // this call expression. See the comment inside ECall for more details.
-    can_be_unwrapped_if_unused: bool = false,
+    can_be_unwrapped_if_unused: CallUnwrap = .never,
 
     close_parens_loc: logger.Loc,
 };
@@ -171,7 +171,7 @@ pub const Call = struct {
     // Note that the arguments are not considered to be part of the call. If the
     // call itself is removed due to this annotation, the arguments must remain
     // if they have side effects.
-    can_be_unwrapped_if_unused: bool = false,
+    can_be_unwrapped_if_unused: CallUnwrap = .never,
 
     // Used when printing to generate the source prop on the fly
     was_jsx_element: bool = false,
@@ -181,6 +181,12 @@ pub const Call = struct {
             a.is_direct_eval == b.is_direct_eval and
             a.can_be_unwrapped_if_unused == b.can_be_unwrapped_if_unused);
     }
+};
+
+pub const CallUnwrap = enum(u2) {
+    never,
+    if_unused,
+    if_unused_and_toString_safe,
 };
 
 pub const Dot = struct {
@@ -197,7 +203,7 @@ pub const Dot = struct {
     // If true, this property access is a function that, when called, can be
     // unwrapped if the resulting value is unused. Unwrapping means discarding
     // the call target but keeping any arguments with side effects.
-    call_can_be_unwrapped_if_unused: bool = false,
+    call_can_be_unwrapped_if_unused: CallUnwrap = .never,
 
     pub fn hasSameFlagsAs(a: *Dot, b: *Dot) bool {
         return (a.optional_chain == b.optional_chain and

@@ -1329,6 +1329,9 @@ pub const H2FrameParser = struct {
 
     pub fn endStream(this: *H2FrameParser, stream: *Stream, rstCode: ErrorCode) void {
         log("HTTP_FRAME_RST_STREAM id: {} code: {}", .{ stream.id, @intFromEnum(rstCode) });
+        if (stream.state == .CLOSED) {
+            return;
+        }
         var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
         @memset(&buffer, 0);
         var writerStream = std.io.fixedBufferStream(&buffer);
@@ -1916,29 +1919,29 @@ pub const H2FrameParser = struct {
             }
 
             if (getHTTP2CommonString(globalObject, header.well_know)) |js_header_name| {
-                headers.push(globalObject, js_header_name);
-                headers.push(globalObject, bun.String.createUTF8ForJS(globalObject, header.value));
+                try headers.push(globalObject, js_header_name);
+                try headers.push(globalObject, try bun.String.createUTF8ForJS(globalObject, header.value));
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
                         sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
                         sensitiveHeaders.ensureStillAlive();
                     }
-                    sensitiveHeaders.push(globalObject, js_header_name);
+                    try sensitiveHeaders.push(globalObject, js_header_name);
                 }
             } else {
-                const js_header_name = bun.String.createUTF8ForJS(globalObject, header.name);
-                const js_header_value = bun.String.createUTF8ForJS(globalObject, header.value);
+                const js_header_name = try bun.String.createUTF8ForJS(globalObject, header.name);
+                const js_header_value = try bun.String.createUTF8ForJS(globalObject, header.value);
 
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
                         sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
                         sensitiveHeaders.ensureStillAlive();
                     }
-                    sensitiveHeaders.push(globalObject, js_header_name);
+                    try sensitiveHeaders.push(globalObject, js_header_name);
                 }
 
-                headers.push(globalObject, js_header_name);
-                headers.push(globalObject, js_header_value);
+                try headers.push(globalObject, js_header_name);
+                try headers.push(globalObject, js_header_value);
 
                 js_header_name.ensureStillAlive();
                 js_header_value.ensureStillAlive();
@@ -2058,7 +2061,7 @@ pub const H2FrameParser = struct {
         return data.len;
     }
 
-    fn stringOrEmptyToJS(this: *H2FrameParser, payload: []const u8) JSC.JSValue {
+    fn stringOrEmptyToJS(this: *H2FrameParser, payload: []const u8) bun.JSError!JSC.JSValue {
         if (payload.len == 0) {
             return bun.String.empty.toJS(this.handlers.globalObject);
         }
@@ -2096,18 +2099,18 @@ pub const H2FrameParser = struct {
                 }
                 origin_str = origin_str[0..origin_length];
                 if (count == 0) {
-                    originValue = this.stringOrEmptyToJS(origin_str);
+                    originValue = try this.stringOrEmptyToJS(origin_str);
                     originValue.ensureStillAlive();
                 } else if (count == 1) {
                     // need to create an array
                     const array = try JSC.JSValue.createEmptyArray(this.handlers.globalObject, 0);
                     array.ensureStillAlive();
-                    array.push(this.handlers.globalObject, originValue);
-                    array.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
+                    try array.push(this.handlers.globalObject, originValue);
+                    try array.push(this.handlers.globalObject, try this.stringOrEmptyToJS(origin_str));
                     originValue = array;
                 } else {
                     // we already have an array, just add the origin to it
-                    originValue.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
+                    try originValue.push(this.handlers.globalObject, try this.stringOrEmptyToJS(origin_str));
                 }
                 count += 1;
                 payload = payload[origin_length + 2 ..];
@@ -2118,7 +2121,7 @@ pub const H2FrameParser = struct {
         }
         return data.len;
     }
-    pub fn handleAltsvcFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
+    pub fn handleAltsvcFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) bun.JSError!usize {
         log("handleAltsvcFrame {s}", .{data});
         if (this.isServer) {
             // client should not send ALTSVC frame
@@ -2147,7 +2150,7 @@ pub const H2FrameParser = struct {
                 return content.end;
             }
 
-            this.dispatchWith2Extra(.onAltSvc, this.stringOrEmptyToJS(origin_and_value[0..origin_length]), this.stringOrEmptyToJS(origin_and_value[origin_length..]), JSC.JSValue.jsNumber(frame.streamIdentifier));
+            this.dispatchWith2Extra(.onAltSvc, try this.stringOrEmptyToJS(origin_and_value[0..origin_length]), try this.stringOrEmptyToJS(origin_and_value[origin_length..]), JSC.JSValue.jsNumber(frame.streamIdentifier));
             return content.end;
         }
         return data.len;
@@ -2546,7 +2549,7 @@ pub const H2FrameParser = struct {
                 @intFromEnum(FrameType.HTTP_FRAME_PING) => this.handlePingFrame(header, bytes[needed..], stream) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_GOAWAY) => this.handleGoAwayFrame(header, bytes[needed..], stream) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[needed..], stream) + needed,
-                @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => this.handleAltsvcFrame(header, bytes[needed..], stream) + needed,
+                @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => (try this.handleAltsvcFrame(header, bytes[needed..], stream)) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => (try this.handleOriginFrame(header, bytes[needed..], stream)) + needed,
                 else => {
                     this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
@@ -2579,7 +2582,7 @@ pub const H2FrameParser = struct {
             @intFromEnum(FrameType.HTTP_FRAME_PING) => this.handlePingFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_GOAWAY) => this.handleGoAwayFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
-            @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => this.handleAltsvcFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
+            @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => (try this.handleAltsvcFrame(header, bytes[FrameHeader.byteSize..], stream)) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => (try this.handleOriginFrame(header, bytes[FrameHeader.byteSize..], stream)) + FrameHeader.byteSize,
             else => {
                 this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);

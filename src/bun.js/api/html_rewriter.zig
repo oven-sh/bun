@@ -1064,7 +1064,7 @@ fn createLOLHTMLStringError() bun.String {
     // We must clone this string.
     const err = LOLHTML.HTMLString.lastError();
     defer err.deinit();
-    return bun.String.createUTF8(err.slice());
+    return bun.String.cloneUTF8(err.slice());
 }
 
 fn htmlStringValue(input: LOLHTML.HTMLString, globalObject: *JSGlobalObject) JSValue {

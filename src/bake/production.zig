@@ -128,7 +128,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         bun.Global.crash();
     };
 
-    const config_entry_point_string = bun.String.createUTF8(config_entry_point.pathConst().?.text);
+    const config_entry_point_string = bun.String.cloneUTF8(config_entry_point.pathConst().?.text);
     defer config_entry_point_string.deref();
 
     const config_promise = bun.JSC.JSModuleLoader.loadAndEvaluateModule(global, &config_entry_point_string) orelse {
@@ -510,11 +510,11 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         }
 
         // Init the items
-        var pattern_string = bun.String.createUTF8(pattern.slice());
+        var pattern_string = bun.String.cloneUTF8(pattern.slice());
         defer pattern_string.deref();
         try route_patterns.putIndex(global, @intCast(nav_index), pattern_string.toJS(global));
 
-        var src_path = bun.String.createUTF8(bun.path.relative(cwd, pt.inputFile(main_file_route_index).absPath()));
+        var src_path = bun.String.cloneUTF8(bun.path.relative(cwd, pt.inputFile(main_file_route_index).absPath()));
         try route_source_files.putIndex(global, @intCast(nav_index), src_path.transferToJS(global));
 
         try route_nested_files.putIndex(global, @intCast(nav_index), file_list);

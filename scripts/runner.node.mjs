@@ -24,6 +24,7 @@ import {
   symlinkSync,
   unlink,
   unlinkSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -978,11 +979,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       stderr,
     });
   } finally {
-    // try {
-    //   rmSync(tmpdirPath, { recursive: true, force: true });
-    // } catch (error) {
-    //   console.warn(error);
-    // }
+    try {
+      rmSync(tmpdirPath, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(error);
+    }
   }
 }
 

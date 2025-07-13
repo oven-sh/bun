@@ -1151,15 +1151,6 @@ pub const DescribeScope = struct {
         var i: TestRunner.Test.ID = 0;
 
         if (this.shouldEvaluateScope()) {
-            if (this.runCallback(globalObject, .beforeAll)) |err| {
-                _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
-                while (i < end) {
-                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
-                    i += 1;
-                }
-                this.deinit(globalObject);
-                return;
-            }
             if (end == 0) {
                 var runner = allocator.create(TestRunnerTask) catch unreachable;
                 runner.* = .{
@@ -1401,6 +1392,12 @@ pub const TestRunnerTask = struct {
 
         jsc_vm.onUnhandledRejectionCtx = this;
         jsc_vm.onUnhandledRejection = onUnhandledRejection;
+
+        if (this.describe.runCallback(globalThis, .beforeAll)) |err| {
+            _ = jsc_vm.uncaughtException(globalThis, err, true);
+            Jest.runner.?.reportFailure(test_id, this.source_file_path, test_.label, 0, 0, describe);
+            return false;
+        }
 
         if (this.needs_before_each) {
             this.needs_before_each = false;

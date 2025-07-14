@@ -2648,7 +2648,7 @@ fn throwCommandNotFound(globalThis: *JSC.JSGlobalObject, command: []const u8) bu
         .message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory(),
         .code = bun.String.static("ENOENT"),
         .errno = -bun.sys.UV_E.NOENT,
-        .path = bun.String.createUTF8(command),
+        .path = bun.String.cloneUTF8(command),
     };
     return globalThis.throwValue(err.toErrorInstance(globalThis));
 }

@@ -2890,7 +2890,7 @@ pub fn getNameString(this: *Blob) ?bun.String {
     if (this.name.tag != .Dead) return this.name;
 
     if (this.getFileName()) |path| {
-        this.name = bun.String.createUTF8(path);
+        this.name = bun.String.cloneUTF8(path);
         return this.name;
     }
 
@@ -3410,7 +3410,7 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
 
     if (bom == .utf16_le) {
         defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
-        var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+        var out = bun.String.cloneUTF16(bun.reinterpretSlice(u16, buf));
         defer out.deref();
         return out.toJS(global);
     }
@@ -3466,7 +3466,7 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
             // if there was a UTF-8 BOM, we need to clone the buffer because
             // external doesn't support this case here yet.
             if (buf.len != raw_bytes.len) {
-                var out = bun.String.createLatin1(buf);
+                var out = bun.String.cloneLatin1(buf);
                 defer {
                     bun.default_allocator.free(raw_bytes);
                     out.deref();
@@ -3519,7 +3519,7 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
     if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
 
     if (bom == .utf16_le) {
-        var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+        var out = bun.String.cloneUTF16(bun.reinterpretSlice(u16, buf));
         defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
         defer if (lifetime == .transfer) this.detach();
         defer out.deref();
@@ -4366,7 +4366,7 @@ pub const Internal = struct {
         // If there was a UTF8 BOM, we clone it
         (bytes_without_bom.len != this.bytes.items.len) {
             defer this.deinit();
-            var out = bun.String.createLatin1(this.bytes.items[3..]);
+            var out = bun.String.cloneLatin1(this.bytes.items[3..]);
             defer out.deref();
             return out.toJS(globalThis);
         } else {

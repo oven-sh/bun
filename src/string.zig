@@ -117,7 +117,7 @@ pub const String = extern struct {
             }
         }
 
-        return createUTF8(utf8_slice);
+        return cloneUTF8(utf8_slice);
     }
 
     fn createUninitializedLatin1(len: usize) struct { String, []u8 } {
@@ -172,7 +172,7 @@ pub const String = extern struct {
         };
     }
 
-    pub fn createLatin1(bytes: []const u8) String {
+    pub fn cloneLatin1(bytes: []const u8) String {
         JSC.markBinding(@src());
         if (bytes.len == 0) return String.empty;
         return validateRefCount(BunString__fromLatin1(bytes.ptr, bytes.len));
@@ -190,11 +190,11 @@ pub const String = extern struct {
         return this;
     }
 
-    pub fn createUTF8(bytes: []const u8) String {
+    pub fn cloneUTF8(bytes: []const u8) String {
         return JSC.WebCore.encoding.toBunStringComptime(bytes, .utf8);
     }
 
-    pub fn createUTF16(bytes: []const u16) String {
+    pub fn cloneUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
         if (bun.strings.firstNonASCII16([]const u16, bytes) == null) {
             return validateRefCount(BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len));
@@ -211,13 +211,13 @@ pub const String = extern struct {
         const alloc = sba.get();
         const buf = try std.fmt.allocPrint(alloc, fmt, args);
         defer alloc.free(buf);
-        return createUTF8(buf);
+        return cloneUTF8(buf);
     }
 
     pub fn createFromOSPath(os_path: bun.OSPathSlice) String {
         return switch (@TypeOf(os_path)) {
-            []const u8 => createUTF8(os_path),
-            []const u16 => createUTF16(os_path),
+            []const u8 => cloneUTF8(os_path),
+            []const u16 => cloneUTF16(os_path),
             else => @compileError("unreachable"),
         };
     }
@@ -248,7 +248,7 @@ pub const String = extern struct {
             return new;
         }
 
-        return createUTF8(this.byteSlice());
+        return cloneUTF8(this.byteSlice());
     }
 
     extern fn BunString__createAtom(bytes: [*]const u8, len: usize) String;
@@ -279,7 +279,7 @@ pub const String = extern struct {
             }
         }
 
-        return createUTF8(bytes);
+        return cloneUTF8(bytes);
     }
 
     pub fn utf8ByteLength(this: String) usize {
@@ -475,7 +475,7 @@ pub const String = extern struct {
     /// - `value` is borrowed.
     /// - Never allocates or copies any memory
     /// - Does not increment reference counts
-    pub fn fromUTF8(value: []const u8) String {
+    pub fn borrowUTF8(value: []const u8) String {
         return String.init(ZigString.initUTF8(value));
     }
 
@@ -488,7 +488,7 @@ pub const String = extern struct {
     /// - `value` is borrowed.
     /// - Never allocates or copies any memory
     /// - Does not increment reference counts
-    pub fn fromUTF16(value: []const u16) String {
+    pub fn borrowUTF16(value: []const u16) String {
         return String.init(ZigString.initUTF16(value));
     }
 

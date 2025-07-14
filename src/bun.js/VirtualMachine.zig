@@ -1707,7 +1707,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
             else
                 specifier_utf8.slice()[namespace.len + 1 .. specifier_utf8.len];
 
-            if (try plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.fromUTF8(after_namespace), source, .bun)) |resolved_path| {
+            if (try plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.borrowUTF8(after_namespace), source, .bun)) |resolved_path| {
                 res.* = resolved_path;
                 return;
             }
@@ -3316,7 +3316,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
         while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
             cursor = i + 1;
             if (msg[i] == '\n') {
-                const first_line = bun.String.fromUTF8(msg[0..i]);
+                const first_line = bun.String.borrowUTF8(msg[0..i]);
                 writer.print(": {s}::", .{first_line.githubAction()}) catch {};
                 break;
             }

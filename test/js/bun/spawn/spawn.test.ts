@@ -98,7 +98,7 @@ for (let [gcTick, label] of [
             stdin: "ignore",
           });
           gcTick();
-          const text = await new Response(stdout).text();
+          const text = await stdout.text();
           expect(text).toBe("hello\n");
         })();
         gcTick();
@@ -118,7 +118,7 @@ for (let [gcTick, label] of [
           stderr: null,
         });
         gcTick();
-        const text = await new Response(stdout).text();
+        const text = await stdout.text();
         expect(text).toBe("bar\n");
         gcTick();
       });
@@ -451,7 +451,7 @@ for (let [gcTick, label] of [
             describe("should should allow reading stdout", () => {
               it("before exit", async () => {
                 const process = callback();
-                const output = await readableStreamToText(process.stdout);
+                const output = await process.stdout.text();
                 await process.exited;
                 const expected = fixture + "\n";
 
@@ -496,7 +496,7 @@ for (let [gcTick, label] of [
               it.skipIf(isWindows && isBroken && callback === huge)("after exit", async () => {
                 const process = callback();
                 await process.exited;
-                const output = await readableStreamToText(process.stdout);
+                const output = await process.stdout.text();
                 const expected = fixture + "\n";
                 expect(output.length).toBe(expected.length);
                 expect(output).toBe(expected);
@@ -514,7 +514,7 @@ for (let [gcTick, label] of [
               stdin: "ignore",
             });
             await Bun.sleep(1);
-            const out = await Bun.readableStreamToText(proc.stdout);
+            const out = await proc.stdout.text();
             expect(out).not.toBe("");
           }
         });

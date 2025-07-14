@@ -96,6 +96,7 @@ vendor/elysia/test/ws/connection.test.ts
 vendor/elysia/test/ws/destructuring.test.ts
 vendor/elysia/test/ws/message.test.ts
 
+
 # List of tests that potentially throw inside of reifyStaticProperties
 test/js/node/test/parallel/test-stream-some-find-every.mjs
 test/js/node/test/parallel/test-stream-iterator-helpers-test262-tests.mjs

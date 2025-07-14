@@ -440,14 +440,14 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
                     var href = bun.JSC.URL.hrefFromString(bun.String.fromBytes(url));
                     if (!href.isEmpty()) {
                         if (href.byteSlice().ptr == url.ptr) {
-                            this.url = bun.String.createLatin1(url[0..href.length()]);
+                            this.url = bun.String.cloneLatin1(url[0..href.length()]);
                             href.deref();
                         } else {
                             this.url = href;
                         }
                     } else {
                         // TODO: what is the right thing to do for invalid URLS?
-                        this.url = bun.String.createUTF8(url);
+                        this.url = bun.String.cloneUTF8(url);
                     }
 
                     return;
@@ -470,7 +470,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
                         req_url,
                     });
                     defer bun.default_allocator.free(temp_url);
-                    this.url = bun.String.createUTF8(temp_url);
+                    this.url = bun.String.cloneUTF8(temp_url);
                 }
 
                 const href = bun.JSC.URL.hrefFromString(this.url);
@@ -487,7 +487,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
         if (comptime Environment.allow_assert) {
             bun.assert(this.sizeOfURL() == req_url.len);
         }
-        this.url = bun.String.createUTF8(req_url);
+        this.url = bun.String.cloneUTF8(req_url);
     }
 }
 

@@ -686,7 +686,7 @@ pub const FetchTasklet = struct {
                         this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                         return false;
                     };
-                    var hostname: bun.String = bun.String.createUTF8(certificate_info.hostname);
+                    var hostname: bun.String = bun.String.cloneUTF8(certificate_info.hostname);
                     defer hostname.deref();
                     const js_hostname = hostname.toJS(globalObject);
                     js_hostname.ensureStillAlive();
@@ -763,9 +763,9 @@ pub const FetchTasklet = struct {
 
         // some times we don't have metadata so we also check http.url
         const path = if (this.metadata) |metadata|
-            bun.String.createUTF8(metadata.url)
+            bun.String.cloneUTF8(metadata.url)
         else if (this.http) |http_|
-            bun.String.createUTF8(http_.url.href)
+            bun.String.cloneUTF8(http_.url.href)
         else
             bun.String.empty;
 
@@ -2287,7 +2287,7 @@ pub fn Bun__fetch_(
                 break :brk fullpath;
             };
 
-            url_string = JSC.URL.fileURLFromString(bun.String.fromUTF8(temp_file_path));
+            url_string = JSC.URL.fileURLFromString(bun.String.borrowUTF8(temp_file_path));
 
             var pathlike: JSC.Node.PathOrFileDescriptor = .{
                 .path = .{

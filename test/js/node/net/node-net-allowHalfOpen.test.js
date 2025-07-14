@@ -57,7 +57,7 @@ async function nodeRun(callback, clients = 1) {
 
   return {
     stdout,
-    stderr: (await Bun.readableStreamToText(process.stderr)).trim(),
+    stderr: (await process.stderr.text()).trim(),
     code: await process.exited,
   };
 }

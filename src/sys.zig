@@ -374,8 +374,8 @@ pub const Error = struct {
         var that = self.withoutPath().toShellSystemError();
         bun.debugAssert(that.path.tag != .WTFStringImpl);
         bun.debugAssert(that.dest.tag != .WTFStringImpl);
-        that.path = bun.String.fromUTF8(self.path);
-        that.dest = bun.String.fromUTF8(self.dest);
+        that.path = bun.String.borrowUTF8(self.path);
+        that.dest = bun.String.borrowUTF8(self.dest);
         bun.debugAssert(that.path.tag != .WTFStringImpl);
         bun.debugAssert(that.dest.tag != .WTFStringImpl);
 
@@ -555,11 +555,11 @@ pub const Error = struct {
         }
 
         if (this.path.len > 0) {
-            err.path = bun.String.createUTF8(this.path);
+            err.path = bun.String.cloneUTF8(this.path);
         }
 
         if (this.dest.len > 0) {
-            err.dest = bun.String.createUTF8(this.dest);
+            err.dest = bun.String.cloneUTF8(this.dest);
         }
 
         if (this.fd.unwrapValid()) |valid| {
@@ -618,14 +618,14 @@ pub const Error = struct {
             }
             break :message stream.getWritten();
         };
-        err.message = bun.String.createUTF8(message);
+        err.message = bun.String.cloneUTF8(message);
 
         if (this.path.len > 0) {
-            err.path = bun.String.createUTF8(this.path);
+            err.path = bun.String.cloneUTF8(this.path);
         }
 
         if (this.dest.len > 0) {
-            err.dest = bun.String.createUTF8(this.dest);
+            err.dest = bun.String.cloneUTF8(this.dest);
         }
 
         if (this.fd.unwrapValid()) |valid| {

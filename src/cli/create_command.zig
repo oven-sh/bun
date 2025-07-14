@@ -32,7 +32,7 @@ const clap = bun.clap;
 const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: bun.PathBuffer = undefined;
-const Futex = @import("../futex.zig");
+const Futex = @import("../Futex.zig");
 
 const target_nextjs_version = "12.2.3";
 pub var initialized_store = false;

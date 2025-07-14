@@ -4,7 +4,7 @@
 const std = @import("std");
 const bun = @import("bun");
 const ThreadPool = @This();
-const Futex = @import("./futex.zig");
+const Futex = @import("./Futex.zig");
 
 const Environment = bun.Environment;
 const assert = bun.assert;

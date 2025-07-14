@@ -2975,7 +2975,7 @@ pub fn SliceIterator(comptime T: type) type {
     };
 }
 
-pub const Futex = @import("./futex.zig");
+pub const Futex = @import("./Futex.zig");
 
 // TODO: migrate
 pub const ArenaAllocator = std.heap.ArenaAllocator;

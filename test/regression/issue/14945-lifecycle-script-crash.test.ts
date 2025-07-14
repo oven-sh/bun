@@ -1,6 +1,5 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { join } from "path";
 
 test("lifecycle script should handle directory deletion gracefully", async () => {
   const dir = tempDirWithFiles("lifecycle-crash-test", {
@@ -8,12 +7,10 @@ test("lifecycle script should handle directory deletion gracefully", async () =>
       name: "test-package",
       version: "1.0.0",
       scripts: {
-        preinstall: process.platform === "win32" 
-          ? "rmdir /s /q ." 
-          : "rm -rf .",
-        postinstall: "echo hello world"
-      }
-    })
+        preinstall: process.platform === "win32" ? "rmdir /s /q ." : "rm -rf .",
+        postinstall: "echo hello world",
+      },
+    }),
   });
 
   // Run bun install and expect it to handle the directory deletion gracefully
@@ -38,10 +35,12 @@ test("lifecycle script should handle directory deletion gracefully", async () =>
   expect(stderr).not.toContain("assertion");
   expect(stderr).not.toContain("atIndex");
   expect(stderr).not.toContain("panic");
-  
+
   // Should contain an error message about the script failure
-  expect(stderr.includes("script") && (stderr.includes("exited with") || stderr.includes("Failed to run script"))).toBe(true);
-  
+  expect(stderr.includes("script") && (stderr.includes("exited with") || stderr.includes("Failed to run script"))).toBe(
+    true,
+  );
+
   // The process should exit with a non-zero code due to the script failure
   expect(exitCode).not.toBe(0);
 });
@@ -52,22 +51,20 @@ test("lifecycle script with optional dependency should handle directory deletion
       name: "optional-dep",
       version: "1.0.0",
       scripts: {
-        preinstall: process.platform === "win32" 
-          ? "rmdir /s /q ." 
-          : "rm -rf .",
-        postinstall: "echo hello from optional dep"
-      }
-    })
+        preinstall: process.platform === "win32" ? "rmdir /s /q ." : "rm -rf .",
+        postinstall: "echo hello from optional dep",
+      },
+    }),
   });
 
   const mainDir = tempDirWithFiles("main-package", {
     "package.json": JSON.stringify({
-      name: "main-package", 
+      name: "main-package",
       version: "1.0.0",
       optionalDependencies: {
-        "optional-dep": `file:${depDir}`
-      }
-    })
+        "optional-dep": `file:${depDir}`,
+      },
+    }),
   });
 
   // Run bun install and expect it to handle the optional dependency
@@ -90,7 +87,7 @@ test("lifecycle script with optional dependency should handle directory deletion
   expect(stderr).not.toContain("assertion");
   expect(stderr).not.toContain("atIndex");
   expect(stderr).not.toContain("panic");
-  
+
   // For optional dependencies, the install should succeed even if scripts fail
   // The process may warn about deleting the optional dependency
   expect(exitCode).toBe(0);

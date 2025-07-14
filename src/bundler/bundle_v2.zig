@@ -2331,7 +2331,7 @@ pub const BundleV2 = struct {
         var html_files: std.AutoArrayHashMapUnmanaged(Index, void) = .{};
 
         // Separate non-failing files into two lists: JS and CSS
-        const js_reachable_files = reachable_files: {
+        const js_reachable_files, const css_reachable_files = reachable_files: {
             var css_total_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.css_file_count);
             try start.css_entry_points.ensureUnusedCapacity(this.graph.allocator, this.graph.css_file_count);
             var js_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.ast.len - this.graph.css_file_count - 1);
@@ -2434,7 +2434,7 @@ pub const BundleV2 = struct {
                 }
             }
 
-            break :reachable_files js_files.items;
+            break :reachable_files .{ js_files.items, css_total_files.items };
         };
 
         this.graph.heap.helpCatchMemoryIssues();
@@ -2457,6 +2457,11 @@ pub const BundleV2 = struct {
             this.graph.server_component_boundaries,
             js_reachable_files,
         );
+
+        // Generate code for CSS modules
+        for (css_reachable_files) |source_index| {
+            try this.linker.generateCodeForCSSModuleIfNeeded(source_index.get());
+        }
 
         this.graph.heap.helpCatchMemoryIssues();
 

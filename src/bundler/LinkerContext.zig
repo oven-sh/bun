@@ -436,6 +436,7 @@ pub const LinkerContext = struct {
     }
 
     pub const generateCodeForLazyExport = @import("linker_context/generateCodeForLazyExport.zig").generateCodeForLazyExport;
+    pub const generateCodeForCSSModuleIfNeeded = @import("linker_context/generateCodeForLazyExport.zig").generateCodeForCSSModuleIfNeeded;
     pub const scanImportsAndExports = @import("linker_context/scanImportsAndExports.zig").scanImportsAndExports;
     pub const doStep5 = @import("linker_context/doStep5.zig").doStep5;
     pub const createExportsForFile = @import("linker_context/doStep5.zig").createExportsForFile;

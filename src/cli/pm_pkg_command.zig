@@ -48,7 +48,6 @@ pub const PmPkgCommand = struct {
     fn printHelp() void {
         Output.prettyln("<r><b>bun pm pkg<r> <d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         const help_text =
-            \\
             \\  Manage data in package.json
             \\
             \\<b>Subcommands<r>:
@@ -68,7 +67,7 @@ pub const PmPkgCommand = struct {
             \\  <d>$<r> <b><green>bun pm pkg<r> <cyan>delete<r> <blue>scripts.test devDependencies.webpack<r>
             \\  <d>$<r> <b><green>bun pm pkg<r> <cyan>fix<r>
             \\
-            \\<b>More info<r>: <magenta>https:
+            \\<b>More info<r>: <magenta>https://bun.com/docs/cli/pm#pkg<r>
             \\
         ;
         Output.pretty(help_text, .{});

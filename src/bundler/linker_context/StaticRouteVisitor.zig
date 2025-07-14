@@ -14,12 +14,12 @@ pub fn deinit(this: *StaticRouteVisitor) void {
 }
 
 /// This the quickest, simplest, dumbest way I can think of doing this. Investigate performance.
-pub fn isFullyStatic(this: *StaticRouteVisitor, entry_point_source_index: u32) bool {
+pub fn hasTransitiveUseClient(this: *StaticRouteVisitor, entry_point_source_index: u32) bool {
     const all_import_records: []const ImportRecord.List = this.c.parse_graph.ast.items(.import_records);
     const referenced_source_indices: []const u32 = this.c.parse_graph.server_component_boundaries.list.items(.reference_source_index);
     const use_directives: []const UseDirective = this.c.parse_graph.server_component_boundaries.list.items(.use_directive);
 
-    return this.isFullyStaticImpl(
+    return this.hasTransitiveUseClientImpl(
         all_import_records,
         referenced_source_indices,
         use_directives,
@@ -33,7 +33,7 @@ pub fn isFullyStatic(this: *StaticRouteVisitor, entry_point_source_index: u32) b
 ///    `referenced_source_indices` which has `use_directive ==
 ///    .client`, then we know `source_index` is NOT fully
 ///    static.
-fn isFullyStaticImpl(
+fn hasTransitiveUseClientImpl(
     this: *StaticRouteVisitor,
     all_import_records: []const ImportRecord.List,
     referenced_source_indices: []const u32,
@@ -62,7 +62,7 @@ fn isFullyStaticImpl(
             }
 
             // otherwise check its children
-            if (!this.isFullyStaticImpl(
+            if (!this.hasTransitiveUseClientImpl(
                 all_import_records,
                 referenced_source_indices,
                 use_directives,

@@ -554,7 +554,7 @@ pub fn generateChunksInParallel(
                     extra.bake_is_runtime = chunk.files_with_parts_in_chunk.contains(Index.runtime.get());
                     if (output_kind == .@"entry-point" and side == .server) {
                         extra.is_route = true;
-                        extra.fully_static = static_route_visitor.isFullyStatic(chunk.entry_point.source_index);
+                        extra.fully_static = !static_route_visitor.hasTransitiveUseClient(chunk.entry_point.source_index);
                     }
 
                     break :brk extra;

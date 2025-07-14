@@ -87,7 +87,7 @@ pub const ShellErr = union(enum) {
                 return globalThis.throwValue(err);
             },
             .custom => {
-                const err_value = bun.String.createUTF8(this.custom).toErrorInstance(globalThis);
+                const err_value = bun.String.cloneUTF8(this.custom).toErrorInstance(globalThis);
                 return globalThis.throwValue(err_value);
                 // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
@@ -3912,7 +3912,7 @@ pub const ShellSrcBuilder = struct {
         if (!invalid) return false;
         if (allow_escape) {
             if (needsEscapeUtf8AsciiLatin1(utf8)) {
-                const bunstr = bun.String.createUTF8(utf8);
+                const bunstr = bun.String.cloneUTF8(utf8);
                 defer bunstr.deref();
                 try this.appendJSStrRef(bunstr);
                 return true;

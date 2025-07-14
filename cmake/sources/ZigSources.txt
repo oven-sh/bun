@@ -46,6 +46,7 @@ src/ast/SideEffects.zig
 src/ast/skipTypescript.zig
 src/ast/Stmt.zig
 src/ast/Symbol.zig
+src/ast/symbols.zig
 src/ast/template.zig
 src/ast/TS.zig
 src/ast/TypeScript.zig

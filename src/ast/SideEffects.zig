@@ -167,9 +167,17 @@ pub const SideEffects = enum(u1) {
             inline .e_call, .e_new => |call| {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
-                if (call.can_be_unwrapped_if_unused) {
+                if (call.can_be_unwrapped_if_unused != .never) {
                     if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
+                        const joined = Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
+                        if (joined != null and call.can_be_unwrapped_if_unused == .if_unused_and_toString_safe) {
+                            @branchHint(.unlikely);
+                            // For now, only support this for 1 argument.
+                            if (joined.?.data.isSafeToString()) {
+                                return null;
+                            }
+                        }
+                        return joined;
                     } else {
                         return null;
                     }
@@ -388,18 +396,29 @@ pub const SideEffects = enum(u1) {
         }
     }
 
-    // If this is in a dead branch, then we want to trim as much dead code as we
-    // can. Everything can be trimmed except for hoisted declarations ("var" and
-    // "function"), which affect the parent scope. For example:
-    //
-    //   function foo() {
-    //     if (false) { var x; }
-    //     x = 1;
-    //   }
-    //
-    // We can't trim the entire branch as dead or calling foo() will incorrectly
-    // assign to a global variable instead.
-    pub fn shouldKeepStmtInDeadControlFlow(p: anytype, stmt: Stmt, allocator: Allocator) bool {
+    fn shouldKeepStmtsInDeadControlFlow(stmts: []Stmt, allocator: Allocator) bool {
+        for (stmts) |child| {
+            if (shouldKeepStmtInDeadControlFlow(child, allocator)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// If this is in a dead branch, then we want to trim as much dead code as we
+    /// can. Everything can be trimmed except for hoisted declarations ("var" and
+    /// "function"), which affect the parent scope. For example:
+    ///
+    ///   function foo() {
+    ///     if (false) { var x; }
+    ///     x = 1;
+    ///   }
+    ///
+    /// We can't trim the entire branch as dead or calling foo() will incorrectly
+    /// assign to a global variable instead.
+    ///
+    /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
+    pub fn shouldKeepStmtInDeadControlFlow(stmt: Stmt, allocator: Allocator) bool {
         if (!p.options.features.dead_code_elimination) return true;
         switch (stmt.data) {
             // Omit these statements entirely
@@ -430,53 +449,65 @@ pub const SideEffects = enum(u1) {
             },
 
             .s_block => |block| {
-                for (block.stmts) |child| {
-                    if (shouldKeepStmtInDeadControlFlow(p, child, allocator)) {
+                return shouldKeepStmtsInDeadControlFlow(block.stmts, allocator);
+            },
+
+            .s_try => |try_stmt| {
+                if (shouldKeepStmtsInDeadControlFlow(try_stmt.body, allocator)) {
+                    return true;
+                }
+
+                if (try_stmt.catch_) |*catch_stmt| {
+                    if (shouldKeepStmtsInDeadControlFlow(catch_stmt.body, allocator)) {
                         return true;
                     }
                 }
 
-                return false;
+                if (try_stmt.finally) |*finally_stmt| {
+                    if (shouldKeepStmtsInDeadControlFlow(finally_stmt.stmts, allocator)) {
+                        return true;
+                    }
+                }
             },
 
             .s_if => |_if_| {
-                if (shouldKeepStmtInDeadControlFlow(p, _if_.yes, allocator)) {
+                if (shouldKeepStmtInDeadControlFlow(_if_.yes, allocator)) {
                     return true;
                 }
 
                 const no = _if_.no orelse return false;
 
-                return shouldKeepStmtInDeadControlFlow(p, no, allocator);
+                return shouldKeepStmtInDeadControlFlow(no, allocator);
             },
 
             .s_while => {
-                return shouldKeepStmtInDeadControlFlow(p, stmt.data.s_while.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(stmt.data.s_while.body, allocator);
             },
 
             .s_do_while => {
-                return shouldKeepStmtInDeadControlFlow(p, stmt.data.s_do_while.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(stmt.data.s_do_while.body, allocator);
             },
 
             .s_for => |__for__| {
                 if (__for__.init) |init_| {
-                    if (shouldKeepStmtInDeadControlFlow(p, init_, allocator)) {
+                    if (shouldKeepStmtInDeadControlFlow(init_, allocator)) {
                         return true;
                     }
                 }
 
-                return shouldKeepStmtInDeadControlFlow(p, __for__.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
             },
 
             .s_for_in => |__for__| {
-                return shouldKeepStmtInDeadControlFlow(p, __for__.init, allocator) or shouldKeepStmtInDeadControlFlow(p, __for__.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(__for__.init, allocator) or shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
             },
 
             .s_for_of => |__for__| {
-                return shouldKeepStmtInDeadControlFlow(p, __for__.init, allocator) or shouldKeepStmtInDeadControlFlow(p, __for__.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(__for__.init, allocator) or shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
             },
 
             .s_label => |label| {
-                return shouldKeepStmtInDeadControlFlow(p, label.stmt, allocator);
+                return shouldKeepStmtInDeadControlFlow(label.stmt, allocator);
             },
 
             else => return true,

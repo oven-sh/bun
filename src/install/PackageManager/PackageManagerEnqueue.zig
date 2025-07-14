@@ -924,7 +924,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 \\
                 \\Searched in <b>{[search_path]}<r>
                 \\
-                \\Workspace documentation: https://bun.sh/docs/install/workspaces
+                \\Workspace documentation: https://bun.com/docs/install/workspaces
                 \\
             ;
             const link_not_found_fmt =

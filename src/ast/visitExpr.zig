@@ -144,8 +144,8 @@ pub fn VisitExpr(
                 // Substitute user-specified defines for unbound symbols
                 if (p.symbols.items[e_.ref.innerIndex()].kind == .unbound and !result.is_inside_with_scope and !is_delete_target) {
                     if (p.define.forIdentifier(name)) |def| {
-                        if (!def.valueless) {
-                            const newvalue = p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &def);
+                        if (!def.valueless()) {
+                            const newvalue = p.valueForDefine(expr.loc, in.assign_target, is_delete_target, def);
 
                             // Don't substitute an identifier for a non-identifier if this is an
                             // assignment target, since it'll cause a syntax error
@@ -154,19 +154,19 @@ pub fn VisitExpr(
                                 return newvalue;
                             }
 
-                            original_name = def.original_name;
+                            original_name = def.original_name();
                         }
 
                         // Copy the side effect flags over in case this expression is unused
-                        if (def.can_be_removed_if_unused) {
+                        if (def.can_be_removed_if_unused()) {
                             e_.can_be_removed_if_unused = true;
                         }
-                        if (def.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
+                        if (def.call_can_be_unwrapped_if_unused() == .if_unused and !p.options.ignore_dce_annotations) {
                             e_.call_can_be_unwrapped_if_unused = true;
                         }
 
                         // If the user passed --drop=console, drop all property accesses to console.
-                        if (def.method_call_must_be_replaced_with_undefined and in.property_access_for_method_call_maybe_should_replace_with_undefined and in.assign_target == .none) {
+                        if (def.method_call_must_be_replaced_with_undefined() and in.property_access_for_method_call_maybe_should_replace_with_undefined and in.assign_target == .none) {
                             p.method_call_must_be_replaced_with_undefined = true;
                         }
                     }
@@ -260,7 +260,7 @@ pub fn VisitExpr(
                                 .target = if (runtime == .classic) target else p.jsxImport(.createElement, expr.loc),
                                 .args = ExprNodeList.init(args[0..i]),
                                 // Enable tree shaking
-                                .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations) .if_unused else .never,
                                 .close_paren_loc = e_.close_tag_loc,
                             }, expr.loc);
                         }
@@ -365,7 +365,7 @@ pub fn VisitExpr(
                                 .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
                                 .args = ExprNodeList.init(args),
                                 // Enable tree shaking
-                                .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations) .if_unused else .never,
                                 .was_jsx_element = true,
                                 .close_paren_loc = e_.close_tag_loc,
                             }, expr.loc);
@@ -828,26 +828,26 @@ pub fn VisitExpr(
                 const is_call_target = @as(Expr.Tag, p.call_target) == .e_dot and expr.data.e_dot == p.call_target.e_dot;
 
                 if (p.define.dots.get(e_.name)) |parts| {
-                    for (parts) |define| {
+                    for (parts) |*define| {
                         if (p.isDotDefineMatch(expr, define.parts)) {
                             if (in.assign_target == .none) {
                                 // Substitute user-specified defines
-                                if (!define.data.valueless) {
+                                if (!define.data.valueless()) {
                                     return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                                 }
 
-                                if (define.data.method_call_must_be_replaced_with_undefined and in.property_access_for_method_call_maybe_should_replace_with_undefined) {
+                                if (define.data.method_call_must_be_replaced_with_undefined() and in.property_access_for_method_call_maybe_should_replace_with_undefined) {
                                     p.method_call_must_be_replaced_with_undefined = true;
                                 }
                             }
 
                             // Copy the side effect flags over in case this expression is unused
-                            if (define.data.can_be_removed_if_unused) {
+                            if (define.data.can_be_removed_if_unused()) {
                                 e_.can_be_removed_if_unused = true;
                             }
 
-                            if (define.data.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
-                                e_.call_can_be_unwrapped_if_unused = true;
+                            if (define.data.call_can_be_unwrapped_if_unused() != .never and !p.options.ignore_dce_annotations) {
+                                e_.call_can_be_unwrapped_if_unused = define.data.call_can_be_unwrapped_if_unused();
                             }
 
                             break;
@@ -1165,7 +1165,8 @@ pub fn VisitExpr(
                 // Copy the call side effect flag over if this is a known target
                 switch (e_.target.data) {
                     .e_identifier => |ident| {
-                        e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or ident.call_can_be_unwrapped_if_unused;
+                        if (ident.call_can_be_unwrapped_if_unused and e_.can_be_unwrapped_if_unused == .never)
+                            e_.can_be_unwrapped_if_unused = .if_unused;
 
                         // Detect if this is a direct eval. Note that "(1 ? eval : 0)(x)" will
                         // become "eval(x)" after we visit the target due to dead code elimination,
@@ -1201,7 +1202,9 @@ pub fn VisitExpr(
                         }
                     },
                     .e_dot => |dot| {
-                        e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or dot.call_can_be_unwrapped_if_unused;
+                        if (dot.call_can_be_unwrapped_if_unused != .never and e_.can_be_unwrapped_if_unused == .never) {
+                            e_.can_be_unwrapped_if_unused = dot.call_can_be_unwrapped_if_unused;
+                        }
                     },
                     else => {},
                 }
@@ -1272,7 +1275,7 @@ pub fn VisitExpr(
                 }
 
                 if (e_.target.data == .e_require_call_target) {
-                    e_.can_be_unwrapped_if_unused = false;
+                    e_.can_be_unwrapped_if_unused = .never;
 
                     // Heuristic: omit warnings inside try/catch blocks because presumably
                     // the try/catch statement is there to handle the potential run-time

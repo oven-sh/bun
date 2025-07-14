@@ -64,10 +64,10 @@ pub fn Parse(
                 expr = try p.parseSuffix(expr, @as(Level, @enumFromInt(@intFromEnum(Level.call) - 1)), errors, flags);
                 switch (expr.data) {
                     .e_call => |ex| {
-                        ex.can_be_unwrapped_if_unused = true;
+                        ex.can_be_unwrapped_if_unused = .if_unused;
                     },
                     .e_new => |ex| {
-                        ex.can_be_unwrapped_if_unused = true;
+                        ex.can_be_unwrapped_if_unused = .if_unused;
                     },
                     else => {},
                 }

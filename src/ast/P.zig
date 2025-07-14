@@ -3923,9 +3923,9 @@ pub fn NewParser_(
                 .e_call => |ex| {
                     // A call that has been marked "__PURE__" can be removed if all arguments
                     // can be removed. The annotation causes us to ignore the target.
-                    if (ex.can_be_unwrapped_if_unused) {
+                    if (ex.can_be_unwrapped_if_unused != .never) {
                         for (ex.args.slice()) |*arg| {
-                            if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg)) {
+                            if (!(p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg) or (ex.can_be_unwrapped_if_unused == .if_unused_and_toString_safe and arg.data.isSafeToString()))) {
                                 return false;
                             }
                         }
@@ -3936,9 +3936,9 @@ pub fn NewParser_(
 
                     // A call that has been marked "__PURE__" can be removed if all arguments
                     // can be removed. The annotation causes us to ignore the target.
-                    if (ex.can_be_unwrapped_if_unused) {
+                    if (ex.can_be_unwrapped_if_unused != .never) {
                         for (ex.args.slice()) |*arg| {
-                            if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg)) {
+                            if (!(p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg) or (ex.can_be_unwrapped_if_unused == .if_unused_and_toString_safe and arg.data.isSafeToString()))) {
                                 return false;
                             }
                         }
@@ -5210,7 +5210,7 @@ pub fn NewParser_(
                     return p.handleIdentifier(
                         loc,
                         define_data.value.e_identifier,
-                        define_data.original_name.?,
+                        define_data.original_name().?,
                         IdentifierOpts{
                             .assign_target = assign_target,
                             .is_delete_target = is_delete_target,
@@ -5235,7 +5235,6 @@ pub fn NewParser_(
                 .e_dot => |ex| {
                     if (parts.len > 1) {
                         if (ex.optional_chain != null) {
-                            std.Build.Step.Run
                             return false;
                         }
 

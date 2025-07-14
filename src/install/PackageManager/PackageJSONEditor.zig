@@ -407,10 +407,7 @@ pub fn edit(
                 inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
                     if (current_package_json.asProperty(list)) |query| {
                         if (query.expr.data == .e_object) {
-                            const name = if (request.is_aliased)
-                                request.name
-                            else
-                                request.version.literal.slice(request.version_buf);
+                            const name = request.getName();
 
                             if (query.expr.asProperty(name)) |value| {
                                 if (value.expr.data == .e_string) {
@@ -537,69 +534,37 @@ pub fn edit(
             break :brk deps;
         };
 
-        outer: for (updates.*) |*request| {
+        for (updates.*) |*request| {
             if (request.e_string != null) continue;
             defer if (comptime Environment.allow_assert) bun.assert(request.e_string != null);
 
             var k: usize = 0;
             while (k < new_dependencies.len) : (k += 1) {
                 if (new_dependencies[k].key) |key| {
-                    if (!request.is_aliased and request.package_id != invalid_package_id and key.data.e_string.eql(
-                        string,
-                        manager.lockfile.packages.items(.name)[request.package_id].slice(request.version_buf),
-                    )) {
-                        // This actually is a duplicate which we did not
-                        // pick up before dependency resolution.
-                        // For this case, we'll just swap remove it.
-                        if (new_dependencies.len > 1) {
-                            new_dependencies[k] = new_dependencies[new_dependencies.len - 1];
-                            new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
-                        } else {
-                            new_dependencies = &[_]G.Property{};
-                        }
-                        continue;
-                    }
-                    if (key.data.e_string.eql(
-                        string,
-                        if (request.is_aliased)
-                            request.name
-                        else
-                            request.version.literal.slice(request.version_buf),
-                    )) {
-                        if (request.package_id == invalid_package_id) {
-                            // This actually is a duplicate like "react"
-                            // appearing in both "dependencies" and "optionalDependencies".
-                            // For this case, we'll just swap remove it
-                            if (new_dependencies.len > 1) {
-                                new_dependencies[k] = new_dependencies[new_dependencies.len - 1];
-                                new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
-                            } else {
-                                new_dependencies = &[_]G.Property{};
-                            }
-                            continue;
-                        }
-
-                        new_dependencies[k].key = null;
+                    const name = request.getName();
+                    if (!key.data.e_string.eql(string, name)) continue;
+                    if (request.package_id == invalid_package_id) {
+                        // Duplicate dependency (e.g., "react" in both "dependencies" and
+                        // "optionalDependencies"). Remove the old dependency.
+                        new_dependencies[k] = .{};
+                        new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
                     }
                 }
 
-                if (new_dependencies[k].key == null) {
-                    new_dependencies[k].key = JSAst.Expr.allocate(
-                        allocator,
-                        JSAst.E.String,
-                        .{ .data = try allocator.dupe(u8, request.getResolvedName(manager.lockfile)) },
-                        logger.Loc.Empty,
-                    );
+                new_dependencies[k].key = JSAst.Expr.allocate(
+                    allocator,
+                    JSAst.E.String,
+                    .{ .data = try allocator.dupe(u8, request.getResolvedName(manager.lockfile)) },
+                    logger.Loc.Empty,
+                );
 
-                    new_dependencies[k].value = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
-                        // we set it later
-                        .data = "",
-                    }, logger.Loc.Empty);
+                new_dependencies[k].value = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
+                    // we set it later
+                    .data = "",
+                }, logger.Loc.Empty);
 
-                    request.e_string = new_dependencies[k].value.?.data.e_string;
-
-                    if (request.is_aliased) continue :outer;
-                }
+                request.e_string = new_dependencies[k].value.?.data.e_string;
+                break;
             }
         }
 

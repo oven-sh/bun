@@ -948,10 +948,10 @@ pub fn Visit(
                 }
 
                 var visited_count = visited.items.len;
-                if (p.is_control_flow_dead) {
+                if (p.is_control_flow_dead and p.options.features.dead_code_elimination) {
                     var end: usize = 0;
                     for (visited.items) |item| {
-                        if (!SideEffects.shouldKeepStmtInDeadControlFlow(p, item, p.allocator)) {
+                        if (!SideEffects.shouldKeepStmtInDeadControlFlow(item, p.allocator)) {
                             continue;
                         }
 
@@ -1053,9 +1053,10 @@ pub fn Visit(
 
             var output = ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len) catch unreachable;
 
+            const dead_code_elimination = p.options.features.dead_code_elimination;
             for (stmts.items) |stmt| {
-                if (is_control_flow_dead and p.options.features.dead_code_elimination and
-                    !SideEffects.shouldKeepStmtInDeadControlFlow(p, stmt, p.allocator))
+                if (is_control_flow_dead and dead_code_elimination and
+                    !SideEffects.shouldKeepStmtInDeadControlFlow(stmt, p.allocator))
                 {
                     // Strip unnecessary statements if the control flow is dead here
                     continue;

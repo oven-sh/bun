@@ -1041,7 +1041,7 @@ pub fn VisitStmt(
                 if (p.options.features.minify_syntax) {
                     if (effects.ok) {
                         if (effects.value) {
-                            if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(p, data.no.?, p.allocator)) {
+                            if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(data.no.?, p.allocator)) {
                                 if (effects.side_effects == .could_have_side_effects) {
                                     // Keep the condition if it could have side effects (but is still known to be truthy)
                                     if (SideEffects.simplifyUnusedExpr(p, data.test_)) |test_| {
@@ -1055,7 +1055,7 @@ pub fn VisitStmt(
                             }
                         } else {
                             // The test is falsy
-                            if (!SideEffects.shouldKeepStmtInDeadControlFlow(p, data.yes, p.allocator)) {
+                            if (!SideEffects.shouldKeepStmtInDeadControlFlow(data.yes, p.allocator)) {
                                 if (effects.side_effects == .could_have_side_effects) {
                                     // Keep the condition if it could have side effects (but is still known to be truthy)
                                     if (SideEffects.simplifyUnusedExpr(p, data.test_)) |test_| {

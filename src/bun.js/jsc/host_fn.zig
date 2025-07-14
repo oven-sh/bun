@@ -238,6 +238,20 @@ fn checkWrapParams(comptime func: anytype, comptime N: u8) []const std.builtin.T
     return params;
 }
 
+/// Uses .SysV callconv on Windows. Use to satisfy SYSV_ABI requirement in JSC APIs.
+/// Otherwise (when the C++ counterpart has no explicit calling convention) use wrap4.
+pub fn wrap4v(comptime func: anytype) @"return": {
+    const p = checkWrapParams(func, 4);
+    break :@"return" fn (p[0].type.?, p[1].type.?, p[2].type.?, p[3].type.?) callconv(jsc.conv) JSValue;
+} {
+    const p = @typeInfo(@TypeOf(func)).@"fn".params;
+    return struct {
+        pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?) callconv(jsc.conv) JSValue {
+            return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2, arg3 });
+        }
+    }.wrapped;
+}
+
 const private = struct {
     pub extern fn Bun__CreateFFIFunctionWithDataValue(
         *JSGlobalObject,

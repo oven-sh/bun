@@ -25,7 +25,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new WeakSet()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -35,12 +35,12 @@ pub const KnownGlobal = enum {
                         .e_null, .e_undefined => {
                             // "new WeakSet(null)" is pure
                             // "new WeakSet(void 0)" is pure
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         .e_array => |array| {
                             if (array.items.len == 0) {
                                 // "new WeakSet([])" is pure
-                                e.can_be_unwrapped_if_unused = true;
+                                e.can_be_unwrapped_if_unused = .if_unused;
                             } else {
                                 // "new WeakSet([x])" is impure because an exception is thrown if "x" is not an object
                             }
@@ -56,7 +56,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Date()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -70,7 +70,7 @@ pub const KnownGlobal = enum {
                             // "new Date(true)" is pure
                             // "new Date(false)" is pure
                             // "new Date(undefined)" is pure
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         else => {
                             // "new Date(x)" is impure because the argument could be a string with side effects
@@ -85,7 +85,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Set()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
                     return;
                 }
 
@@ -95,7 +95,7 @@ pub const KnownGlobal = enum {
                             // "new Set([a, b, c])" is pure
                             // "new Set(null)" is pure
                             // "new Set(void 0)" is pure
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         else => {
                             // "new Set(x)" is impure because the iterator for "x" could have side effects
@@ -109,7 +109,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Headers()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -120,7 +120,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Response()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -135,7 +135,7 @@ pub const KnownGlobal = enum {
                             // "new Response(false)" is pure
                             // "new Response(undefined)" is pure
 
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         else => {
                             // "new Response(x)" is impure
@@ -149,7 +149,7 @@ pub const KnownGlobal = enum {
                 if (n == 0) {
                     // "new TextEncoder()" is pure
                     // "new TextDecoder()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -163,7 +163,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Map()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
                     return;
                 }
 
@@ -172,7 +172,7 @@ pub const KnownGlobal = enum {
                         .e_null, .e_undefined => {
                             // "new Map(null)" is pure
                             // "new Map(void 0)" is pure
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         .e_array => |array| {
                             var all_items_are_arrays = true;
@@ -185,7 +185,7 @@ pub const KnownGlobal = enum {
 
                             if (all_items_are_arrays) {
                                 // "new Map([[a, b], [c, d]])" is pure
-                                e.can_be_unwrapped_if_unused = true;
+                                e.can_be_unwrapped_if_unused = .if_unused;
                             }
                         },
                         else => {

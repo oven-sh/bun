@@ -168,9 +168,9 @@ fn split(
     var it: SplitNewlineIterator(Char) = .{ .buffer = buffer, .index = 0 };
     while (it.next()) |line| {
         const encoded_line = switch (encoding) {
-            inline .utf8 => bun.String.fromUTF8(line),
-            inline .latin1 => bun.String.createLatin1(line),
-            inline .utf16 => bun.String.fromUTF16(line),
+            inline .utf8 => bun.String.borrowUTF8(line),
+            inline .latin1 => bun.String.cloneLatin1(line),
+            inline .utf16 => bun.String.borrowUTF16(line),
         };
         errdefer encoded_line.deref();
         try lines.append(alloc, encoded_line);
@@ -229,7 +229,7 @@ pub fn parseEnv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
 
     var obj = JSC.JSValue.createEmptyObject(globalThis, map.map.count());
     for (map.map.keys(), map.map.values()) |k, v| {
-        obj.put(globalThis, JSC.ZigString.initUTF8(k), bun.String.createUTF8ForJS(globalThis, v.value));
+        obj.put(globalThis, JSC.ZigString.initUTF8(k), try bun.String.createUTF8ForJS(globalThis, v.value));
     }
     return obj;
 }

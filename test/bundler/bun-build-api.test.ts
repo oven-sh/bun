@@ -807,7 +807,7 @@ describe("sourcemap boolean values", () => {
     expect(build.success).toBe(true);
     expect(build.outputs).toHaveLength(1);
     expect(build.outputs[0].kind).toBe("entry-point");
-    
+
     const output = await build.outputs[0].text();
     expect(output).toContain("//# sourceMappingURL=data:application/json;base64,");
   });
@@ -825,7 +825,7 @@ describe("sourcemap boolean values", () => {
     expect(build.success).toBe(true);
     expect(build.outputs).toHaveLength(1);
     expect(build.outputs[0].kind).toBe("entry-point");
-    
+
     const output = await build.outputs[0].text();
     expect(output).not.toContain("//# sourceMappingURL=");
   });
@@ -843,14 +843,14 @@ describe("sourcemap boolean values", () => {
 
     expect(build.success).toBe(true);
     expect(build.outputs).toHaveLength(2);
-    
+
     const jsOutput = build.outputs.find(o => o.kind === "entry-point");
     const mapOutput = build.outputs.find(o => o.kind === "sourcemap");
-    
+
     expect(jsOutput).toBeTruthy();
     expect(mapOutput).toBeTruthy();
     expect(jsOutput!.sourcemap).toBe(mapOutput);
-    
+
     const jsText = await jsOutput!.text();
     expect(jsText).toContain("//# sourceMappingURL=index.js.map");
   });

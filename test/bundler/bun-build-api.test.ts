@@ -1,5 +1,5 @@
 import assert from "assert";
-import { describe, expect, test, afterEach } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";

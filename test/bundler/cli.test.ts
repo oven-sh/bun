@@ -165,7 +165,7 @@ console.log(utils());`,
     const tmpdir = tmpdirSync();
     const baseDir = `${tmpdir}/bun-build-dirname-filename-${Date.now()}`;
     fs.mkdirSync(baseDir, { recursive: true });
-    fs.mkdirSync(path.join(baseDir, "我")), { recursive: true };
+    (fs.mkdirSync(path.join(baseDir, "我")), { recursive: true });
     fs.writeFileSync(path.join(baseDir, "我", "我.ts"), "console.log(__dirname); console.log(__filename);");
     const { exitCode } = Bun.spawnSync({
       cmd: [bunExe(), "build", path.join(baseDir, "我/我.ts"), "--compile", "--outfile", path.join(baseDir, "exe.exe")],

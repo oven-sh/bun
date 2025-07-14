@@ -174,6 +174,26 @@ This required listing every file individually and would show a warning for any w
 
 This accomplishes the same result with a single glob pattern and no warnings.
 
+## Cross-Platform Compatibility
+
+### Path Separators
+
+Always use forward slashes (`/`) in glob patterns, even on Windows:
+
+```json
+// ✅ Correct - works on all platforms
+{
+  "sideEffects": ["src/effects/*.js"]
+}
+
+// ❌ Avoid - Windows-specific backslashes
+{
+  "sideEffects": ["src\\effects\\*.js"]
+}
+```
+
+Bun automatically handles path normalization internally, so forward slashes in patterns will correctly match Windows paths with backslashes.
+
 ## Best Practices
 
 ### 1. Use Specific Patterns

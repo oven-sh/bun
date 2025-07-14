@@ -534,3 +534,46 @@ console.log("nested side effect - should be preserved");
   expect(bundleContent).toContain("deep side effect");
   expect(bundleContent).toContain("nested side effect");
 });
+
+test("cross-platform path handling (Windows backslashes)", async () => {
+  const dir = tempDirWithFiles("cross-platform-test", {
+    "package.json": JSON.stringify({
+      "name": "cross-platform-test",
+      "sideEffects": ["src/effects/*.js"]  // Always use forward slashes in patterns
+    }),
+    "src/index.js": `
+import "./effects/effect.js";
+import "./utils/util.js";
+console.log("done");
+    `.trim(),
+    "src/effects/effect.js": `
+console.log("effect side effect - should be preserved");
+    `.trim(),
+    "src/utils/util.js": `
+console.log("util side effect - should be tree shaken");
+    `.trim(),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "src/index.js", "--outdir", "dist", "--format", "esm"],
+    env: bunEnv,
+    cwd: dir,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
+  
+  // Effect should be preserved (matches pattern regardless of platform)
+  expect(bundleContent).toContain("effect side effect");
+  
+  // Util should be tree-shaken (doesn't match pattern)
+  expect(bundleContent).not.toContain("util side effect");
+});

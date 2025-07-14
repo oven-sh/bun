@@ -154,14 +154,30 @@ pub const PackageJSON = struct {
             globs: GlobList,
         };
 
+        /// Normalize path separators to forward slashes for glob matching
+        /// This is needed because glob patterns use forward slashes but Windows uses backslashes
+        fn normalizePathForGlob(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            const normalized = try allocator.dupe(u8, path);
+            for (normalized) |*char| {
+                if (char.* == '\\') {
+                    char.* = '/';
+                }
+            }
+            return normalized;
+        }
+
         pub fn hasSideEffects(side_effects: SideEffects, path: []const u8) bool {
             return switch (side_effects) {
                 .unspecified => true,
                 .false => false,
                 .map => |map| map.contains(bun.StringHashMapUnowned.Key.init(path)),
                 .glob => |glob_list| {
+                    // Normalize path for cross-platform glob matching
+                    const normalized_path = normalizePathForGlob(bun.default_allocator, path) catch return true;
+                    defer bun.default_allocator.free(normalized_path);
+                    
                     for (glob_list.items) |pattern| {
-                        if (glob.match(bun.default_allocator, pattern, path).matches()) {
+                        if (glob.match(bun.default_allocator, pattern, normalized_path).matches()) {
                             return true;
                         }
                     }
@@ -172,9 +188,12 @@ pub const PackageJSON = struct {
                     if (mixed.exact.contains(bun.StringHashMapUnowned.Key.init(path))) {
                         return true;
                     }
-                    // Then check glob patterns
+                    // Then check glob patterns with normalized path
+                    const normalized_path = normalizePathForGlob(bun.default_allocator, path) catch return true;
+                    defer bun.default_allocator.free(normalized_path);
+                    
                     for (mixed.globs.items) |pattern| {
-                        if (glob.match(bun.default_allocator, pattern, path).matches()) {
+                        if (glob.match(bun.default_allocator, pattern, normalized_path).matches()) {
                             return true;
                         }
                     }

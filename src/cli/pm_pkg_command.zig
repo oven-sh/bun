@@ -152,7 +152,7 @@ pub const PmPkgCommand = struct {
             return;
         }
 
-        var results = std.StringArrayHashMap([]const u8).init(ctx.allocator);
+        var results = bun.StringArrayHashMap([]const u8).init(ctx.allocator);
         defer {
             for (results.values()) |val| ctx.allocator.free(val);
             results.deinit();

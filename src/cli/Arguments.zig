@@ -674,7 +674,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Invalid value for --console-depth: \"{s}\". Must be a positive integer\n", .{depth_str});
                 Global.exit(1);
             };
-            ctx.runtime_options.console_depth = depth;
+            // Treat depth=0 as maxInt(u16) for infinite depth
+            ctx.runtime_options.console_depth = if (depth == 0) std.math.maxInt(u16) else depth;
         }
 
         if (args.option("--dns-result-order")) |order| {

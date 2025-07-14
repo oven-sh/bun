@@ -407,7 +407,7 @@ pub fn onDrain(this: *PostgresSQLConnection) void {
 
     this.flushData();
 
-    if (this.flags.is_ready_for_query) {
+    if (this.flags.is_ready_for_query and !this.flags.has_backpressure) {
         this.advance();
         this.flushData();
     }

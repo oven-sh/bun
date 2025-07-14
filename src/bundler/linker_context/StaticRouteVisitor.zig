@@ -40,14 +40,13 @@ fn isFullyStaticImpl(
     use_directives: []const UseDirective,
     source_index: Index,
 ) bool {
+    if (this.cache.get(source_index.get())) |result| {
+        return result;
+    }
     if (this.visited.isSet(source_index.get())) {
         return false;
     }
     this.visited.set(source_index.get());
-
-    if (this.cache.get(source_index.get())) |result| {
-        return result;
-    }
 
     const import_records = all_import_records[source_index.get()];
 

@@ -6608,7 +6608,6 @@ const DeferredImportNamespace = js_parser.DeferredImportNamespace;
 const ExprBindingTuple = js_parser.ExprBindingTuple;
 const ExpressionTransposer = js_parser.ExpressionTransposer;
 const FindLabelSymbolResult = js_parser.FindLabelSymbolResult;
-const FindSymbolResult = js_parser.FindSymbolResult;
 const FnOnlyDataVisit = js_parser.FnOnlyDataVisit;
 const FnOrArrowDataParse = js_parser.FnOrArrowDataParse;
 const FnOrArrowDataVisit = js_parser.FnOrArrowDataVisit;

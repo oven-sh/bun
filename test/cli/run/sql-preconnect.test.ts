@@ -81,6 +81,4 @@ describe("--sql-preconnect", () => {
     expect(stdout).toContain("Normal script executed");
     expect(connectionAttempts).toBe(0); // No connection should be attempted without the flag
   });
-
-
 });

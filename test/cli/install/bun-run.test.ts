@@ -446,7 +446,7 @@ it("should show the correct working directory when run with --cwd", async () => 
 
   // The exit code will not be 1 if it panics.
   expect(await res.exited).toBe(0);
-  expect(await Bun.readableStreamToText(res.stdout)).toMatch(/subdir/);
+  expect(await res.stdout.text()).toMatch(/subdir/);
 });
 
 it("DCE annotations are respected", () => {

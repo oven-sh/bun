@@ -389,6 +389,7 @@ pub const Command = struct {
         /// compatibility.
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
+        console_depth: ?u16 = null,
     };
 
     var global_cli_ctx: Context = undefined;

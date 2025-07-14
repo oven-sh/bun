@@ -765,7 +765,7 @@ it("aborts when the uncaughtException handler throws", async () => {
     stderr: "pipe",
   });
   expect(await proc.exited).toBe(7);
-  expect(await new Response(proc.stderr).text()).toContain("bar");
+  expect(await proc.stderr.text()).toContain("bar");
 });
 
 it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
@@ -773,7 +773,7 @@ it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
     stderr: "pipe",
   });
   expect(await proc.exited).toBe(1);
-  expect(await new Response(proc.stderr).text()).toContain("bar");
+  expect(await proc.stderr.text()).toContain("bar");
 });
 
 it("process.hasUncaughtExceptionCaptureCallback", () => {

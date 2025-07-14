@@ -201,8 +201,8 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                     void => .js_undefined,
                     bool => JSC.JSValue.jsBoolean(r),
 
-                    JSC.ArrayBuffer => r.toJS(globalObject, null),
-                    []u8 => JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject, null),
+                    JSC.ArrayBuffer => r.toJS(globalObject),
+                    []u8 => JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject),
 
                     else => switch (@typeInfo(ReturnType)) {
                         .int, .float, .comptime_int, .comptime_float => JSC.JSValue.jsNumber(r),

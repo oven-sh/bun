@@ -76,7 +76,7 @@ pub const bun_install_js_bindings = struct {
             return globalObject.throw("failed to print lockfile as JSON: {s}", .{@errorName(err)});
         };
 
-        var str = bun.String.createUTF8(buffer.list.items);
+        var str = bun.String.cloneUTF8(buffer.list.items);
         defer str.deref();
 
         return str.toJSByParseJSON(globalObject);

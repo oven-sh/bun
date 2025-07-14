@@ -792,3 +792,66 @@ identity(mod23);
   expect(text).not.toContain(" global.");
   expect(text).toContain(" globalThis.");
 });
+
+describe("sourcemap boolean values", () => {
+  test("sourcemap: true should work (boolean)", async () => {
+    const dir = tempDirWithFiles("sourcemap-true-boolean", {
+      "index.js": `console.log("hello");`,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      sourcemap: true,
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(1);
+    expect(build.outputs[0].kind).toBe("entry-point");
+    
+    const output = await build.outputs[0].text();
+    expect(output).toContain("//# sourceMappingURL=data:application/json;base64,");
+  });
+
+  test("sourcemap: false should work (boolean)", async () => {
+    const dir = tempDirWithFiles("sourcemap-false-boolean", {
+      "index.js": `console.log("hello");`,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      sourcemap: false,
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(1);
+    expect(build.outputs[0].kind).toBe("entry-point");
+    
+    const output = await build.outputs[0].text();
+    expect(output).not.toContain("//# sourceMappingURL=");
+  });
+
+  test("sourcemap: true with outdir should create linked sourcemap", async () => {
+    const dir = tempDirWithFiles("sourcemap-true-outdir", {
+      "index.js": `console.log("hello");`,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      outdir: join(dir, "out"),
+      sourcemap: true,
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(2);
+    
+    const jsOutput = build.outputs.find(o => o.kind === "entry-point");
+    const mapOutput = build.outputs.find(o => o.kind === "sourcemap");
+    
+    expect(jsOutput).toBeTruthy();
+    expect(mapOutput).toBeTruthy();
+    expect(jsOutput!.sourcemap).toBe(mapOutput);
+    
+    const jsText = await jsOutput!.text();
+    expect(jsText).toContain("//# sourceMappingURL=index.js.map");
+  });
+});

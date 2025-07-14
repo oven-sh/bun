@@ -17,7 +17,7 @@ body::before {
   inset: 0;
   z-index: -1;
   opacity: 0.05;
-  background: url("./logo.svg");
+  background: url("../logo.svg");
   background-size: 256px;
   transform: rotate(-12deg) scale(1.35);
   animation: slide 30s linear infinite;

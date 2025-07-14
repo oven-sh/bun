@@ -105,7 +105,7 @@ pub const PackageManagerCommand = struct {
         if (strings.eqlComptime(subcommand, "whoami")) return false;
         if (strings.eqlComptime(subcommand, "default-trusted")) return false;
         if (strings.eqlComptime(subcommand, "bin") and global) return false;
-        
+
         // All other commands require package.json
         return true;
     }
@@ -121,9 +121,9 @@ pub const PackageManagerCommand = struct {
                 break :brk loader;
             };
             env.loadProcess();
-            
+
             const pm = try createMinimalPackageManager(ctx, cli, env);
-            
+
             const username = Npm.whoami(ctx.allocator, pm) catch |err| {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
@@ -142,7 +142,7 @@ pub const PackageManagerCommand = struct {
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "cache")) {
             const pm = try createMinimalPackageManager(ctx, cli, null);
-            
+
             var dir: bun.PathBuffer = undefined;
             var fd = pm.getCacheDirectory();
             const outpath = bun.getFdPath(.fromStdDir(fd), &dir) catch |err| {
@@ -229,7 +229,7 @@ pub const PackageManagerCommand = struct {
             Output.flush();
             return;
         }
-        
+
         // Unknown command or shouldn't reach here
         Global.exit(1);
     }
@@ -288,10 +288,10 @@ pub const PackageManagerCommand = struct {
             .subcommand = .pm,
             .root_package_json_name_at_time_of_init = "",
         };
-        
+
         manager.lockfile = try ctx.allocator.create(Lockfile);
         manager.lockfile.initEmpty(ctx.allocator);
-        
+
         try manager.options.load(
             ctx.allocator,
             ctx.log,
@@ -360,11 +360,11 @@ pub const PackageManagerCommand = struct {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
-        
+
         // Get subcommand early to determine if package.json is needed
         var positionals_copy = cli.positionals;
         const subcommand = getSubcommand(&positionals_copy);
-        
+
         var pm, const cwd = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
             if (err == error.MissingPackageJSON) {
                 if (requiresPackageJson(subcommand, cli.global)) {

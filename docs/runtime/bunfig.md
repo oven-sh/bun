@@ -180,6 +180,24 @@ Whether to skip test files when computing coverage statistics. Default `false`.
 coverageSkipTestFiles = false
 ```
 
+### `test.coveragePathIgnorePatterns`
+
+Exclude specific files or file patterns from coverage reports using glob patterns. Can be a single string pattern or an array of patterns.
+
+```toml
+[test]
+# Single pattern
+coveragePathIgnorePatterns = "**/*.spec.ts"
+
+# Multiple patterns  
+coveragePathIgnorePatterns = [
+  "**/*.spec.ts",
+  "**/*.test.ts", 
+  "src/utils/**",
+  "*.config.js"
+]
+```
+
 ### `test.coverageReporter`
 
 By default, coverage reports will be printed to the console. For persistent code coverage reports in CI environments and for other tools use `lcov`.

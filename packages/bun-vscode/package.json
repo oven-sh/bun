@@ -86,7 +86,7 @@
         },
         "bun.test.enable": {
           "type": "boolean",
-          "description": "If the test explorer should be enabled and contribute data to vscode",
+          "description": "If the test explorer should be enabled and integrated with your editor",
           "scope": "window",
           "default": true
         }

@@ -274,6 +274,95 @@ describe("bun run --workspace", () => {
     expect(output).toMatch(/scripta/);
     expect(output).toMatch(/scriptb/);
   });
+
+  test("workspace supports file paths", () => {
+    runWithWorkspaceSuccess({
+      cwd: cwd_root,
+      workspace: "./packages/pkga",
+      target_pattern: /scripta/,
+      antipattern: [/scriptb/, /scriptc/, /scriptd/],
+    });
+  });
+
+  test("workspace supports relative paths", () => {
+    runWithWorkspaceSuccess({
+      cwd: cwd_packages,
+      workspace: "./pkgb", 
+      target_pattern: /scriptb/,
+      antipattern: [/scripta/, /scriptc/, /scriptd/],
+    });
+  });
+
+  test("can mix file paths and package names", () => {
+    runWithWorkspaceSuccess({
+      cwd: cwd_root,
+      workspace: ["./packages/pkga", "pkgb"],
+      target_pattern: [/scripta/, /scriptb/],
+      antipattern: [/scriptc/, /scriptd/],
+    });
+  });
+});
+
+describe("workspace without package names", () => {
+  // Test workspace functionality with packages that don't have name field
+  const cwd_no_names = tempDirWithFiles("testworkspace-no-names", {
+    packages: {
+      unnamed1: {
+        "package.json": JSON.stringify({
+          // No name field
+          scripts: {
+            present: "echo unnamed1-script",
+          },
+        }),
+      },
+      unnamed2: {
+        "package.json": JSON.stringify({
+          // No name field
+          scripts: {
+            present: "echo unnamed2-script",
+          },
+        }),
+      },
+    },
+    "package.json": JSON.stringify({
+      name: "ws",
+      workspaces: ["packages/unnamed1", "packages/unnamed2"],
+    }),
+  });
+
+  test("workspace works with packages without name field using paths", () => {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: cwd_no_names,
+      cmd: [bunExe(), "run", "--workspace", "./packages/unnamed1", "present"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    
+    expect(exitCode).toBe(0);
+    expect(stderr.toString()).toBeEmpty();
+    const output = stdout.toString();
+    
+    expect(output).toMatch(/unnamed1-script/);
+    expect(output).not.toMatch(/unnamed2-script/);
+  });
+
+  test("workspace works with multiple unnamed packages using paths", () => {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: cwd_no_names,
+      cmd: [bunExe(), "run", "--workspace", "./packages/unnamed1", "--workspace", "./packages/unnamed2", "present"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    
+    expect(exitCode).toBe(0);
+    expect(stderr.toString()).toBeEmpty();
+    const output = stdout.toString();
+    
+    expect(output).toMatch(/unnamed1-script/);
+    expect(output).toMatch(/unnamed2-script/);
+  });
 });
 
 describe("workspace ordering test", () => {

@@ -479,8 +479,27 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         const matches_filter = ctx.filters.len > 0 and filter_instance.matches(path, pkgjson.name);
         const matches_workspace = ctx.workspaces.len > 0 and blk: {
             for (ctx.workspaces) |workspace| {
-                if (bun.strings.eql(workspace, pkgjson.name)) {
-                    break :blk true;
+                // Determine if workspace pattern is a path or name
+                const is_path = workspace.len > 0 and workspace[0] == '.';
+                if (is_path) {
+                    // For path patterns, try to match against the package directory path
+                    // Convert workspace pattern to absolute path for comparison
+                    var path_buf: bun.PathBuffer = undefined;
+                    const parts = [_][]const u8{workspace};
+                    const abs_workspace_path = bun.path.joinAbsStringBuf(fsinstance.top_level_dir, &path_buf, &parts, .loose);
+                    
+                    // Normalize both paths for comparison
+                    const normalized_workspace = bun.strings.withoutTrailingSlash(abs_workspace_path);
+                    const normalized_path = bun.strings.withoutTrailingSlash(path);
+                    
+                    if (bun.strings.eql(normalized_workspace, normalized_path)) {
+                        break :blk true;
+                    }
+                } else {
+                    // For name patterns, match against package name
+                    if (bun.strings.eql(workspace, pkgjson.name)) {
+                        break :blk true;
+                    }
                 }
             }
             break :blk false;

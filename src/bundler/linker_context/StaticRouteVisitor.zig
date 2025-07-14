@@ -58,7 +58,7 @@ fn hasTransitiveUseClientImpl(
             for (referenced_source_indices, use_directives) |referenced_source_index, use_directive| {
                 if (use_directive != .client) continue;
                 // it's a client boundary
-                if (referenced_source_index == import_record.source_index.get()) break :result false;
+                if (referenced_source_index == import_record.source_index.get()) break :result true;
             }
 
             // otherwise check its children
@@ -67,9 +67,9 @@ fn hasTransitiveUseClientImpl(
                 referenced_source_indices,
                 use_directives,
                 import_record.source_index,
-            )) break :result false;
+            )) break :result true;
         }
-        break :result true;
+        break :result false;
     };
 
     this.cache.put(bun.default_allocator, source_index.get(), result) catch unreachable;

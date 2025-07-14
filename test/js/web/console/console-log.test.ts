@@ -78,9 +78,8 @@ it("console.group", async () => {
     .trim()
     .replaceAll(filepath, "<file>")
     // Normalize line numbers for consistency between debug and release builds
-    .replace(/at <file>:\d+:\d+/g, "at <file>:NN:NN")
-    .replace(/at new (\w+) \(<file>:\d+:\d+\)/g, "at new $1 (<file>:NN:NN)")
-    .replace(/loadAndEvaluateModule \(\d+:\d+\)/g, "loadAndEvaluateModule (N:NN)");
+    .replace(/\(\d+:\d+\)/g, "(N:NN)")
+    .replace(/<file>:\d+:\d+/g, "<file>:NN:NN");
   expect(stdout).toMatchInlineSnapshot(`
 "Basic group
   Inside basic group

@@ -21,6 +21,10 @@ const JSPromise = JSC.JSPromise;
 const CLI = @import("../cli.zig").Command;
 const EventType = JSC.EventType;
 
+/// Default depth for console.log object inspection
+/// Only --console-depth CLI flag and console.depth bunfig option should modify this
+const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 5;
+
 const Counter = std.AutoHashMapUnmanaged(u64, u32);
 
 const BufferedWriter = std.io.BufferedWriter(4096, Output.WriterType);
@@ -169,9 +173,9 @@ fn messageWithTypeAndLevel_(
     const Writer = @TypeOf(writer);
 
     var print_length = len;
-    // Get console depth from CLI options
+    // Get console depth from CLI options or bunfig, fallback to default
     const cli_context = CLI.get();
-    const console_depth = cli_context.runtime_options.console_depth orelse 5;
+    const console_depth = cli_context.runtime_options.console_depth orelse DEFAULT_CONSOLE_LOG_DEPTH;
 
     var print_options: FormatOptions = .{
         .enable_colors = enable_colors,
@@ -297,10 +301,7 @@ pub const TablePrinter = struct {
                 .ordered_properties = false,
                 .quote_strings = false,
                 .single_line = true,
-                .max_depth = blk: {
-                    const cli_context = CLI.get();
-                    break :blk cli_context.runtime_options.console_depth orelse 5;
-                },
+                .max_depth = 5,
                 .can_throw_stack_overflow = true,
                 .stack_check = bun.StackCheck.init(),
             },
@@ -3644,7 +3645,7 @@ pub fn timeLog(
         .quote_strings = false,
         .max_depth = blk: {
             const cli_context = CLI.get();
-            break :blk cli_context.runtime_options.console_depth orelse 5;
+            break :blk cli_context.runtime_options.console_depth orelse DEFAULT_CONSOLE_LOG_DEPTH;
         },
         .stack_check = bun.StackCheck.init(),
         .can_throw_stack_overflow = true,

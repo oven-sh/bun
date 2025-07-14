@@ -487,11 +487,11 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
                     var path_buf: bun.PathBuffer = undefined;
                     const parts = [_][]const u8{workspace};
                     const abs_workspace_path = bun.path.joinAbsStringBuf(fsinstance.top_level_dir, &path_buf, &parts, .loose);
-                    
+
                     // Normalize both paths for comparison
                     const normalized_workspace = bun.strings.withoutTrailingSlash(abs_workspace_path);
                     const normalized_path = bun.strings.withoutTrailingSlash(path);
-                    
+
                     if (bun.strings.eql(normalized_workspace, normalized_path)) {
                         break :blk true;
                     }

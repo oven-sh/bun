@@ -518,7 +518,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     }
 
     opts.tsconfig_override = if (args.option("--tsconfig-override")) |ts|
-        (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, Output.errorStream(), ts, "tsconfig.json"))
+        resolve_path.joinAbsString(cwd, &[_]string{ts}, .auto)
     else
         null;
 

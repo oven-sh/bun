@@ -1,5 +1,5 @@
 import assert from "assert";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, afterEach } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
@@ -853,5 +853,107 @@ describe("sourcemap boolean values", () => {
 
     const jsText = await jsOutput!.text();
     expect(jsText).toContain("//# sourceMappingURL=index.js.map");
+  });
+});
+
+const originalCwd = process.cwd() + "";
+
+describe("tsconfig option", () => {
+  afterEach(() => {
+    process.chdir(originalCwd);
+  });
+
+  test("should resolve path mappings", async () => {
+    const dir = tempDirWithFiles("tsconfig-api-basic", {
+      "tsconfig.json": `{
+        "compilerOptions": {
+          "paths": {
+            "@/*": ["./src/*"]
+          }
+        }
+      }`,
+      "src/utils.ts": `export const greeting = "Hello World";`,
+      "index.ts": `import { greeting } from "@/utils";
+export { greeting };`,
+    });
+
+    try {
+      process.chdir(dir);
+      const result = await Bun.build({
+        entrypoints: ["./index.ts"],
+        tsconfig: "./tsconfig.json",
+      });
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("Hello World");
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  test("should work from nested directories", async () => {
+    const dir = tempDirWithFiles("tsconfig-api-nested", {
+      "tsconfig.json": `{
+        "compilerOptions": {
+          "paths": {
+            "@/*": ["./src/*"]
+          }
+        }
+      }`,
+      "src/utils.ts": `export const greeting = "Hello World";`,
+      "src/nested/index.ts": `import { greeting } from "@/utils";
+export { greeting };`,
+    });
+
+    try {
+      process.chdir(join(dir, "src/nested"));
+      const result = await Bun.build({
+        entrypoints: ["./index.ts"],
+        tsconfig: "../../tsconfig.json",
+      });
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("Hello World");
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  test("should handle relative tsconfig paths", async () => {
+    const dir = tempDirWithFiles("tsconfig-api-relative", {
+      "tsconfig.json": `{
+        "compilerOptions": {
+          "baseUrl": ".",
+          "paths": {
+            "@/*": ["src/*"]
+          }
+        }
+      }`,
+      "configs/build-tsconfig.json": `{
+        "extends": "../tsconfig.json",
+        "compilerOptions": {
+          "baseUrl": ".."
+        }
+      }`,
+      "src/utils.ts": `export const greeting = "Hello World";`,
+      "index.ts": `import { greeting } from "@/utils";
+export { greeting };`,
+    });
+
+    try {
+      process.chdir(dir);
+      const result = await Bun.build({
+        entrypoints: ["./index.ts"],
+        tsconfig: "./configs/build-tsconfig.json",
+      });
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("Hello World");
+    } finally {
+      process.chdir(originalCwd);
+    }
   });
 });

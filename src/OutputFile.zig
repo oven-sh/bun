@@ -24,6 +24,15 @@ referenced_css_chunks: []const Index = &.{},
 source_index: Index.Optional = .none,
 bake_extra: BakeExtra = .{},
 
+pub const zero_value = OutputFile{
+    .loader = .file,
+    .src_path = Fs.Path.init(""),
+    .value = .noop,
+    .output_kind = .chunk,
+    .side = null,
+    .entry_point_index = null,
+};
+
 pub const BakeExtra = struct {
     is_route: bool = false,
     fully_static: bool = false,

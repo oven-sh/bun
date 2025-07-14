@@ -46,7 +46,7 @@ pub fn init(
         allocator,
         length,
     );
-    output_files.items.len = length;
+    output_files.appendNTimesAssumeCapacity(OutputFile.zero_value, length);
 
     return .{
         .output_files = output_files,
@@ -147,3 +147,4 @@ fn indexForSourcemapOrBytecode(this: *@This()) ?u32 {
 const std = @import("std");
 const bun = @import("bun");
 const options = bun.options;
+const OutputFile = options.OutputFile;

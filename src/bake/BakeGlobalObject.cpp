@@ -246,6 +246,11 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     global->setStackTraceLimit(10); // Node.js defaults to 10
     global->isThreadLocalDefaultGlobalObject = true;
 
+    // if (shouldDisableStopIfNecessaryTimer) {
+    vm.heap.disableStopIfNecessaryTimer();
+    // }
+
+    // if you process.nextTick on a microtask we need thsi
     // TODO: it segfaults! process.nextTick is scoped out for now i guess!
     // vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
     // vm.setOnEachMicrotaskTick([global](JSC::VM &vm) -> void {

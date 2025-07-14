@@ -70,13 +70,7 @@ String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
 {
   level1: {
     level2: {
-      level3: {
-        level4: {
-          level5: {
-            name: "Deeply nested object",
-          },
-        },
-      },
+      level3: [Object ...],
     },
   },
 }

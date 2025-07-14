@@ -23,7 +23,7 @@ const EventType = JSC.EventType;
 
 /// Default depth for console.log object inspection
 /// Only --console-depth CLI flag and console.depth bunfig option should modify this
-const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 5;
+const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
 
 const Counter = std.AutoHashMapUnmanaged(u64, u32);
 

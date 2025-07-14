@@ -193,3 +193,38 @@ v1.0.1
 ```
 
 Supports `patch`, `minor`, `major`, `premajor`, `preminor`, `prepatch`, `prerelease`, `from-git`, or specific versions like `1.2.3`. By default creates git commit and tag unless `--no-git-tag-version` was used to skip.
+
+## pkg
+
+Manage `package.json` data with get, set, delete, and fix operations.
+
+All commands support dot and bracket notation:
+
+```bash
+scripts.build              # dot notation
+contributors[0]            # array access
+workspaces.0               # dot with numeric index
+scripts[test:watch]        # bracket for special chars
+```
+
+Examples:
+
+```bash
+# set
+$ bun pm pkg get name                               # single property
+$ bun pm pkg get name version                       # multiple properties
+$ bun pm pkg get                                    # entire package.json
+$ bun pm pkg get scripts.build                      # nested property
+
+# set
+$ bun pm pkg set name="my-package"                  # simple property
+$ bun pm pkg set scripts.test="jest" version=2.0.0  # multiple properties
+$ bun pm pkg set {"private":"true"} --json          # JSON values with --json flag
+
+# delete
+$ bun pm pkg delete description                     # single property
+$ bun pm pkg delete scripts.test contributors[0]    # multiple/nested
+
+# fix
+$ bun pm pkg fix                                    # auto-fix common issues
+```

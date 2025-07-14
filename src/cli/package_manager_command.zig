@@ -23,6 +23,7 @@ pub const PackCommand = @import("./pack_command.zig").PackCommand;
 const Npm = Install.Npm;
 const PmViewCommand = @import("./pm_view_command.zig");
 const PmVersionCommand = @import("./pm_version_command.zig").PmVersionCommand;
+const PmPkgCommand = @import("./pm_pkg_command.zig").PmPkgCommand;
 const File = bun.sys.File;
 
 const ByName = struct {
@@ -130,6 +131,11 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>
             \\  <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag
             \\  <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version
+            \\  <b><green>bun pm<r> <blue>pkg<r>                  manage data in package.json
+            \\  <d>├<r> <cyan>get<r> <d>[key ...]<r> 
+            \\  <d>├<r> <cyan>set<r> <d>key=value ...<r>
+            \\  <d>├<r> <cyan>delete<r> <d>key ...<r>
+            \\  <d>└<r> <cyan>fix<r>                       auto-correct common package.json errors
             \\  <b><green>bun pm<r> <blue>hash<r>                 generate & print the hash of the current lockfile
             \\  <b><green>bun pm<r> <blue>hash-string<r>          print the string used to hash the lockfile
             \\  <b><green>bun pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile
@@ -433,6 +439,9 @@ pub const PackageManagerCommand = struct {
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "version")) {
             try PmVersionCommand.exec(ctx, pm, pm.options.positionals, cwd);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "pkg")) {
+            try PmPkgCommand.exec(ctx, pm, pm.options.positionals, cwd);
             Global.exit(0);
         }
 

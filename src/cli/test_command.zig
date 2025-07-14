@@ -1015,7 +1015,24 @@ pub const CommandLineReporter = struct {
             var len = "All files".len;
             for (byte_ranges) |*entry| {
                 const utf8 = entry.source_url.slice();
-                len = @max(bun.path.relative(relative_dir, utf8).len, len);
+                const relative_path = bun.path.relative(relative_dir, utf8);
+
+                // Check if this file should be ignored based on coveragePathIgnorePatterns
+                if (opts.ignore_patterns.len > 0) {
+                    var should_ignore = false;
+                    for (opts.ignore_patterns) |pattern| {
+                        if (bun.glob.match(bun.default_allocator, pattern, relative_path).matches()) {
+                            should_ignore = true;
+                            break;
+                        }
+                    }
+
+                    if (should_ignore) {
+                        continue;
+                    }
+                }
+
+                len = @max(relative_path.len, len);
             }
 
             break :brk len;
@@ -1117,6 +1134,24 @@ pub const CommandLineReporter = struct {
         // --- LCOV ---
 
         for (byte_ranges) |*entry| {
+            // Check if this file should be ignored based on coveragePathIgnorePatterns
+            if (opts.ignore_patterns.len > 0) {
+                const utf8 = entry.source_url.slice();
+                const relative_path = bun.path.relative(relative_dir, utf8);
+
+                var should_ignore = false;
+                for (opts.ignore_patterns) |pattern| {
+                    if (bun.glob.match(bun.default_allocator, pattern, relative_path).matches()) {
+                        should_ignore = true;
+                        break;
+                    }
+                }
+
+                if (should_ignore) {
+                    continue;
+                }
+            }
+
             var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
             defer report.deinit(bun.default_allocator);
 
@@ -1145,15 +1180,27 @@ pub const CommandLineReporter = struct {
 
         if (comptime reporters.text) {
             {
-                avg.functions /= avg_count;
-                avg.lines /= avg_count;
-                avg.stmts /= avg_count;
+                if (avg_count == 0) {
+                    avg.functions = 0;
+                    avg.lines = 0;
+                    avg.stmts = 0;
+                } else {
+                    avg.functions /= avg_count;
+                    avg.lines /= avg_count;
+                    avg.stmts /= avg_count;
+                }
+
+                const failed = if (avg_count > 0) base_fraction else bun.sourcemap.coverage.Fraction{
+                    .functions = 0,
+                    .lines = 0,
+                    .stmts = 0,
+                };
 
                 try CodeCoverageReport.Text.writeFormatWithValues(
                     "All files",
                     max_filepath_length,
                     avg,
-                    base_fraction,
+                    failed,
                     failing,
                     console,
                     false,
@@ -1242,6 +1289,7 @@ pub const TestCommand = struct {
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
+        ignore_patterns: []const string = &.{},
     };
     pub const Reporter = enum {
         text,

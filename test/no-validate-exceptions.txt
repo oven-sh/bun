@@ -398,6 +398,7 @@ test/js/third_party/comlink/comlink.test.ts
 test/js/third_party/duckdb/duckdb-basic-usage.test.ts
 test/js/third_party/esbuild/esbuild-child_process.test.ts
 test/js/third_party/express/app.router.test.ts
+test/cli/test/coverage.test.ts
 test/js/third_party/express/express.json.test.ts
 test/js/third_party/express/express.test.ts
 test/js/third_party/express/express.text.test.ts

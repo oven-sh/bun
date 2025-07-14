@@ -2919,6 +2919,44 @@ pub const Expect = struct {
         try this.serializeWithCustomSerializers(globalThis, value, pretty_value);
     }
 
+    fn trySerializeWithCustomSerializers(globalThis: *JSGlobalObject, value: JSValue, file_id: u32, test_runner: *TestRunner) ?JSValue {
+        // Check if there are any custom serializers for this file
+        const serializers = test_runner.snapshot_serializers.get(file_id) orelse return null;
+
+        // Iterate through serializers in reverse order (most recently added first)
+        var i: usize = serializers.items.len;
+        while (i > 0) {
+            i -= 1;
+            const serializer = serializers.items[i];
+
+            // Call the test function to see if this serializer handles this value
+            const test_fn = serializer.get(globalThis, "test") catch continue orelse continue;
+            if (!test_fn.isCallable()) continue;
+
+            const test_result = test_fn.call(globalThis, serializer, &[_]JSValue{value}) catch continue;
+            const should_serialize = test_result.toBoolean();
+
+            if (should_serialize) {
+                // This serializer handles this value type
+                const serialize_fn = serializer.get(globalThis, "serialize") catch continue orelse continue;
+                if (!serialize_fn.isCallable()) continue;
+
+                // Create printer function for this recursive call
+                const printer_fn = JSC.JSFunction.create(globalThis, bun.String.static("printer"), snapshotPrinterCallback, 1, .{});
+                printer_fn.protect();
+
+                // Call serialize(value, printer)
+                const serialized = serialize_fn.call(globalThis, serializer, &[_]JSValue{ value, printer_fn }) catch continue;
+
+                if (serialized.isString()) {
+                    return serialized;
+                }
+            }
+        }
+
+        return null;
+    }
+
     fn serializeWithCustomSerializers(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, pretty_value: *MutableString) bun.JSError!void {
         const runner = Jest.runner orelse {
             // Fallback to default serialization if no runner available
@@ -2991,6 +3029,9 @@ pub const Expect = struct {
         // Create a printer function that serializes values using Jest's default format
         // This is passed as the second argument to serializer.serialize(val, printer)
         const printer_fn = JSC.JSFunction.create(globalThis, bun.String.static("printer"), snapshotPrinterCallback, 1, .{});
+        
+        // Protect the function from garbage collection
+        printer_fn.protect();
 
         return printer_fn;
     }
@@ -3004,7 +3045,36 @@ pub const Expect = struct {
 
         const val = args[0];
 
-        // Use the same pretty formatting as snapshots do
+        // Get the test runner to access serializers for recursive calls
+        const test_runner = Jest.runner orelse {
+            // Fallback to default formatting if no test runner available
+            var temp_pretty_value = MutableString.init(default_allocator, 0) catch |err| {
+                return globalThis.throw("Failed to allocate memory for printer: {}", .{err});
+            };
+            defer temp_pretty_value.deinit();
+
+            val.jestSnapshotPrettyFormat(&temp_pretty_value, globalThis) catch |err| {
+                return globalThis.throw("Failed to format value in printer: {}", .{err});
+            };
+
+            return ZigString.fromUTF8(temp_pretty_value.slice()).toJS(globalThis);
+        };
+
+        // Get current file ID from the active test
+        const file_id = if (test_runner.pending_test) |current_test| 
+            current_test.describe.file_id 
+        else 
+            0; // fallback to 0 if no active test
+
+        // Try to use custom serializers for recursive formatting
+        // This allows nested objects to also use custom serializers
+        if (Expect.trySerializeWithCustomSerializers(globalThis, val, file_id, test_runner)) |result| {
+            if (result.isString()) {
+                return result;
+            }
+        }
+
+        // Fall back to default formatting
         var temp_pretty_value = MutableString.init(default_allocator, 0) catch |err| {
             return globalThis.throw("Failed to allocate memory for printer: {}", .{err});
         };
@@ -3014,7 +3084,6 @@ pub const Expect = struct {
             return globalThis.throw("Failed to format value in printer: {}", .{err});
         };
 
-        // Return the formatted string as a JSValue
         return ZigString.fromUTF8(temp_pretty_value.slice()).toJS(globalThis);
     }
     fn snapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, hint: []const u8, comptime fn_name: []const u8) bun.JSError!JSValue {
@@ -5015,24 +5084,24 @@ pub const Expect = struct {
         }
 
         // Validate serializer has required methods
-        const test_prop = serializer_arg.get(globalThis, "test") catch {
-            return globalThis.throw("addSnapshotSerializer() failed to get 'test' property", .{});
+        const test_prop = serializer_arg.get(globalThis, "test") catch |err| {
+            return globalThis.throwError(err, "Failed to get 'test' property from snapshot serializer");
         } orelse {
-            return globalThis.throw("addSnapshotSerializer() argument must have a 'test' method", .{});
+            return globalThis.throw("Snapshot serializer must have a 'test' method", .{});
         };
 
         if (!test_prop.isCallable()) {
-            return globalThis.throw("addSnapshotSerializer() 'test' property must be a function", .{});
+            return globalThis.throw("Snapshot serializer 'test' property must be a function", .{});
         }
 
-        const serialize_prop = serializer_arg.get(globalThis, "serialize") catch {
-            return globalThis.throw("addSnapshotSerializer() failed to get 'serialize' property", .{});
+        const serialize_prop = serializer_arg.get(globalThis, "serialize") catch |err| {
+            return globalThis.throwError(err, "Failed to get 'serialize' property from snapshot serializer");
         } orelse {
-            return globalThis.throw("addSnapshotSerializer() argument must have a 'serialize' method", .{});
+            return globalThis.throw("Snapshot serializer must have a 'serialize' method", .{});
         };
 
         if (!serialize_prop.isCallable()) {
-            return globalThis.throw("addSnapshotSerializer() 'serialize' property must be a function", .{});
+            return globalThis.throw("Snapshot serializer 'serialize' property must be a function", .{});
         }
 
         // Get the current test runner and file ID
@@ -5040,10 +5109,8 @@ pub const Expect = struct {
             return globalThis.throw("addSnapshotSerializer() can only be called within a test", .{});
         };
 
-        // We need to get the current test scope, but we don't have an Expect instance here
-        // So we'll need to get it from the Jest runner or another way
-        // For now, let's try getting the current test from the Jest runner
-        const current_test = Jest.runner.?.pending_test orelse {
+        // Get the current file ID from the test runner
+        const current_test = runner.pending_test orelse {
             return globalThis.throw("addSnapshotSerializer() can only be called within a test", .{});
         };
 

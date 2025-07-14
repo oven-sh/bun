@@ -283,6 +283,15 @@ pub const TestRunner = struct {
             fail_because_expected_assertion_count,
         };
     };
+
+    pub fn deinit(this: *TestRunner) void {
+        // Clean up snapshot serializers
+        var iter = this.snapshot_serializers.iterator();
+        while (iter.next()) |entry| {
+            entry.value_ptr.deinit(this.allocator);
+        }
+        this.snapshot_serializers.deinit(this.allocator);
+    }
 };
 
 pub const Jest = struct {

@@ -1019,7 +1019,7 @@ describe("bun test", () => {
         .replace(/bun-test-(.*)\.test\.ts/, "bun-test-*.test.ts")
         .replace(/ \[[\d.]+ms\]/g, "") // Remove all timings
         .replace(/Ran \d+ tests across \d+ files?\.\s*$/, "Ran 2 tests across 1 file.") // Normalize test counts
-        .trim()
+        .trim(),
     ).toMatchInlineSnapshot(`
       "bun-test-*.test.ts:
       (pass) group 1 > should match filter

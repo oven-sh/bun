@@ -62,7 +62,7 @@ fn hasTransitiveUseClientImpl(
             }
 
             // otherwise check its children
-            if (!this.hasTransitiveUseClientImpl(
+            if (this.hasTransitiveUseClientImpl(
                 all_import_records,
                 referenced_source_indices,
                 use_directives,

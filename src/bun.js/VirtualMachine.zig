@@ -2966,6 +2966,21 @@ fn printErrorInstance(
         const pad = max_line_number_pad - int_size;
         last_pad = pad;
         try writer.writeByteNTimes(' ', pad);
+        
+        // Add hyperlink for this source line if we have a valid source URL
+        const should_add_hyperlink = brk: {
+            if (top_frame) |frame| {
+                const source_url = frame.source_url.toUTF8(bun.default_allocator);
+                defer source_url.deinit();
+                
+                if (source_url.slice().len > 0 and !strings.hasPrefix(source_url.slice(), "bun:") and !strings.hasPrefix(source_url.slice(), "node:")) {
+                    // For lines before the error, we don't have exact column info, so use column 1
+                    try this.printHyperlink(writer, source_url.slice(), display_line, 1);
+                    break :brk true;
+                }
+            }
+            break :brk false;
+        };
 
         const trimmed = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
         const clamped = trimmed[0..@min(trimmed.len, max_line_length)];
@@ -2987,6 +3002,11 @@ fn printErrorInstance(
                 ),
                 .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
             );
+        }
+        
+        // End hyperlink after printing the line
+        if (should_add_hyperlink) {
+            try this.endHyperlink(writer);
         }
     }
 

@@ -419,7 +419,6 @@ pub const SideEffects = enum(u1) {
     ///
     /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
     pub fn shouldKeepStmtInDeadControlFlow(stmt: Stmt, allocator: Allocator) bool {
-        if (!p.options.features.dead_code_elimination) return true;
         switch (stmt.data) {
             // Omit these statements entirely
             .s_empty, .s_expr, .s_throw, .s_return, .s_break, .s_continue, .s_class, .s_debugger => return false,
@@ -468,6 +467,8 @@ pub const SideEffects = enum(u1) {
                         return true;
                     }
                 }
+
+                return false;
             },
 
             .s_if => |_if_| {

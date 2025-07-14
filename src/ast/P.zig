@@ -132,6 +132,10 @@ pub fn NewParser_(
         pub const maybeDefinedHelper = maybe.maybeDefinedHelper;
         pub const checkIfDefinedHelper = maybe.checkIfDefinedHelper;
 
+        const symbols_zig = @import("symbols.zig").Symbols(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        pub const findSymbol = symbols_zig.findSymbol;
+        pub const findSymbolWithRecordUsage = symbols_zig.findSymbolWithRecordUsage;
+
         macro: MacroState = undefined,
         allocator: Allocator,
         options: Parser.Options,

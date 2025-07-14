@@ -1,4 +1,4 @@
-pub fn Template(
+pub fn Symbols(
     comptime parser_feature__typescript: bool,
     comptime parser_feature__jsx: JSXTransformType,
     comptime parser_feature__scan_only: bool,

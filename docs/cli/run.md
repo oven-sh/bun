@@ -196,7 +196,7 @@ $ bun --console-depth 5 run index.tsx
 This sets how deeply nested objects are displayed in `console.log()` output. The default depth is `2`. Higher values show more nested properties but may produce verbose output for complex objects.
 
 ```js
-const nested = { a: { b: { c: { d: 'deep' } } } };
+const nested = { a: { b: { c: { d: "deep" } } } };
 console.log(nested);
 // With --console-depth 2 (default): { a: { b: [Object] } }
 // With --console-depth 4: { a: { b: { c: { d: 'deep' } } } }

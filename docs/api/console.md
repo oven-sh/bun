@@ -11,7 +11,7 @@ Bun allows you to configure how deeply nested objects are displayed in `console.
 - **Default**: Objects are inspected to a depth of `2` levels
 
 ```js
-const nested = { a: { b: { c: { d: 'deep' } } } };
+const nested = { a: { b: { c: { d: "deep" } } } };
 console.log(nested);
 // Default (depth 2): { a: { b: [Object] } }
 // With depth 4: { a: { b: { c: { d: 'deep' } } } }

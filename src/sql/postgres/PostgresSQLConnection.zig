@@ -1660,6 +1660,8 @@ const PreparedStatementsMap = std.HashMapUnmanaged(u64, *PostgresSQLStatement, b
 
 const debug = bun.Output.scoped(.Postgres, false);
 
+const MAX_PIPELINE_SIZE = 1024 * 64;
+
 // @sortImports
 
 const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
@@ -1687,6 +1689,7 @@ const assert = bun.assert;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
+const AutoFlusher = JSC.WebCore.AutoFlusher;
 
 pub const js = JSC.Codegen.JSPostgresSQLConnection;
 pub const fromJS = js.fromJS;
@@ -1695,6 +1698,3 @@ pub const toJS = js.toJS;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;
-const AutoFlusher = JSC.WebCore.AutoFlusher;
-
-const MAX_PIPELINE_SIZE = 1024 * 64;

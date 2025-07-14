@@ -52,6 +52,9 @@ jsc: *VM = undefined,
 /// bun:wrap is very noisy
 hide_bun_stackframes: bool = true,
 
+/// Terminal hyperlink strategy for stack traces
+hyperlink_strategy: HyperlinkStrategy = .cursor,
+
 is_printing_plugin: bool = false,
 is_shutting_down: bool = false,
 plugin_runner: ?PluginRunner = null,
@@ -393,6 +396,12 @@ pub const GCLevel = enum(u3) {
     none = 0,
     mild = 1,
     aggressive = 2,
+};
+
+pub const HyperlinkStrategy = enum(u8) {
+    none = 0,
+    vscode = 1,
+    cursor = 2,
 };
 
 pub threadlocal var is_main_thread_vm: bool = false;
@@ -2831,6 +2840,53 @@ pub fn printExternallyRemappedZigException(
     );
 }
 
+fn printHyperlink(
+    this: *VirtualMachine,
+    writer: anytype,
+    source_url: []const u8,
+    line: i32,
+    column: i32,
+) !void {
+    if (this.hyperlink_strategy == .none) return;
+
+    // Build the hyperlink URL
+    var url_buf: [4096]u8 = undefined;
+    const url = if (this.hyperlink_strategy == .vscode or this.hyperlink_strategy == .cursor) blk: {
+        // For vscode, use the vscode:// protocol
+        const proto = switch (this.hyperlink_strategy) {
+            .vscode => "vscode",
+            .cursor => "cursor",
+            else => unreachable,
+        };
+        const url_str = if (source_url[0] == '/')
+            std.fmt.bufPrint(&url_buf, "{s}://file{s}:{d}:{d}", .{ proto, source_url, line, column }) catch return
+        else
+            std.fmt.bufPrint(&url_buf, "{s}://file/{s}:{d}:{d}", .{ proto, source_url, line, column }) catch return;
+        break :blk url_str;
+    } else blk: {
+        // For cursor and other editors, use file:// protocol
+        const url_str = if (source_url[0] == '/')
+            std.fmt.bufPrint(&url_buf, "file://{s}", .{source_url}) catch return
+        else
+            std.fmt.bufPrint(&url_buf, "file:///{s}", .{source_url}) catch return;
+        break :blk url_str;
+    };
+
+    // OSC 8 escape sequence: ESC]8;;URL\a
+    try writer.writeAll("\x1b]8;;");
+    try writer.writeAll(url);
+    try writer.writeAll("\x07");
+}
+
+fn endHyperlink(
+    this: *VirtualMachine,
+    writer: anytype,
+) !void {
+    if (this.hyperlink_strategy == .none) return;
+    // End hyperlink: ESC]8;;\a
+    try writer.writeAll("\x1b]8;;\x07");
+}
+
 fn printErrorInstance(
     this: *VirtualMachine,
     comptime mode: enum { js, zig_exception },
@@ -2891,6 +2947,17 @@ fn printErrorInstance(
 
     var source_lines = exception.stack.sourceLineIterator();
     var last_pad: u64 = 0;
+
+    // Get the top frame to get source URL for hyperlinks
+    var top_frame: ?*const JSC.ZigStackFrame = if (exception.stack.frames_len > 0) &exception.stack.frames()[0] else null;
+    if (this.hide_bun_stackframes) {
+        for (exception.stack.frames()) |*frame| {
+            if (frame.position.isInvalid() or frame.source_url.hasPrefixComptime("bun:") or frame.source_url.hasPrefixComptime("node:")) continue;
+            top_frame = frame;
+            break;
+        }
+    }
+
     while (source_lines.untilLast()) |source| {
         defer source.text.deinit();
         const display_line = source.line + 1;
@@ -2951,17 +3018,17 @@ fn printErrorInstance(
     if (source_lines.next()) |source| brk: {
         if (source.text.len == 0) break :brk;
 
-        var top_frame = if (exception.stack.frames_len > 0) &exception.stack.frames()[0] else null;
+        var current_top_frame = if (exception.stack.frames_len > 0) &exception.stack.frames()[0] else null;
 
         if (this.hide_bun_stackframes) {
             for (exception.stack.frames()) |*frame| {
                 if (frame.position.isInvalid() or frame.source_url.hasPrefixComptime("bun:") or frame.source_url.hasPrefixComptime("node:")) continue;
-                top_frame = frame;
+                current_top_frame = frame;
                 break;
             }
         }
 
-        if (top_frame == null or top_frame.?.position.isInvalid()) {
+        if (current_top_frame == null or current_top_frame.?.position.isInvalid()) {
             defer did_print_name = true;
             defer source.text.deinit();
             const trimmed = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
@@ -2988,7 +3055,7 @@ fn printErrorInstance(
             }
 
             try this.printErrorNameAndMessage(name, message, !exception.browser_url.isEmpty(), code, Writer, writer, allow_ansi_color, formatter.error_display_level);
-        } else if (top_frame) |top| {
+        } else if (current_top_frame) |top| {
             defer did_print_name = true;
             const display_line = source.line + 1;
             const int_size = std.fmt.count("{d}", .{display_line});
@@ -2997,6 +3064,15 @@ fn printErrorInstance(
             defer source.text.deinit();
             const text = source.text.slice();
             const trimmed = std.mem.trimRight(u8, std.mem.trim(u8, text, "\n"), "\t ");
+
+            // Get source URL for hyperlink
+            const source_url = top.source_url.toUTF8(bun.default_allocator);
+            defer source_url.deinit();
+
+            // Add hyperlink to line number
+            if (source_url.slice().len > 0 and !strings.hasPrefix(source_url.slice(), "bun:") and !strings.hasPrefix(source_url.slice(), "node:")) {
+                try this.printHyperlink(writer, source_url.slice(), display_line, @intCast(top.position.column.oneBased()));
+            }
 
             // TODO: preserve the divot position and possibly use stringWidth() to figure out where to put the divot
             const clamped = trimmed[0..@min(trimmed.len, max_line_length)];
@@ -3018,6 +3094,11 @@ fn printErrorInstance(
                     ),
                     .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
                 );
+                
+                // End hyperlink before printing the caret
+                if (source_url.slice().len > 0 and !strings.hasPrefix(source_url.slice(), "bun:") and !strings.hasPrefix(source_url.slice(), "node:")) {
+                    try this.endHyperlink(writer);
+                }
 
                 if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
                     const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column.zeroBased()));
@@ -3031,6 +3112,7 @@ fn printErrorInstance(
                     try writer.writeAll("\n");
                 }
             }
+
 
             try this.printErrorNameAndMessage(name, message, !exception.browser_url.isEmpty(), code, Writer, writer, allow_ansi_color, formatter.error_display_level);
         }

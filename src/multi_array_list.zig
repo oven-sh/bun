@@ -22,6 +22,7 @@ pub fn MultiArrayList(comptime T: type) type {
         bytes: [*]align(@alignOf(T)) u8 = undefined,
         len: usize = 0,
         capacity: usize = 0,
+        alloc_ptr: DebugAllocPtr = .{},
 
         pub const empty: Self = .{
             .bytes = undefined,
@@ -185,6 +186,7 @@ pub fn MultiArrayList(comptime T: type) type {
 
         /// Release all allocated memory.
         pub fn deinit(self: *const Self, gpa: Allocator) void {
+            self.alloc_ptr.assertEq(gpa.ptr);
             gpa.free(self.allocatedBytes());
             @constCast(self).* = undefined;
         }
@@ -233,6 +235,7 @@ pub fn MultiArrayList(comptime T: type) type {
 
         /// Extend the list by 1 element. Allocates more memory as necessary.
         pub fn append(self: *Self, gpa: Allocator, elem: T) !void {
+            self.alloc_ptr.set(gpa.ptr);
             try self.ensureUnusedCapacity(gpa, 1);
             self.appendAssumeCapacity(elem);
         }
@@ -249,6 +252,7 @@ pub fn MultiArrayList(comptime T: type) type {
         /// index with uninitialized data.
         /// Allocates more memory as necesasry.
         pub fn addOne(self: *Self, allocator: Allocator) Allocator.Error!usize {
+            self.alloc_ptr.set(allocator.ptr);
             try self.ensureUnusedCapacity(allocator, 1);
             return self.addOneAssumeCapacity();
         }
@@ -277,6 +281,7 @@ pub fn MultiArrayList(comptime T: type) type {
         /// sets the given index to the specified element.  May reallocate
         /// and invalidate iterators.
         pub fn insert(self: *Self, gpa: Allocator, index: usize, elem: T) !void {
+            self.alloc_ptr.set(gpa.ptr);
             try self.ensureUnusedCapacity(gpa, 1);
             self.insertAssumeCapacity(index, elem);
         }
@@ -354,6 +359,7 @@ pub fn MultiArrayList(comptime T: type) type {
         /// Adjust the list's length to `new_len`.
         /// Does not initialize added items, if any.
         pub fn resize(self: *Self, gpa: Allocator, new_len: usize) !void {
+            self.alloc_ptr.set(gpa.ptr);
             try self.ensureTotalCapacity(gpa, new_len);
             self.len = new_len;
         }
@@ -362,6 +368,7 @@ pub fn MultiArrayList(comptime T: type) type {
         /// If `new_len` is greater than zero, this may fail to reduce the capacity,
         /// but the data remains intact and the length is updated to new_len.
         pub fn shrinkAndFree(self: *Self, gpa: Allocator, new_len: usize) void {
+            self.alloc_ptr.set(gpa.ptr);
             if (new_len == 0) return clearAndFree(self, gpa);
 
             assert(new_len <= self.capacity);
@@ -405,6 +412,7 @@ pub fn MultiArrayList(comptime T: type) type {
         }
 
         pub fn clearAndFree(self: *Self, gpa: Allocator) void {
+            self.alloc_ptr.set(gpa.ptr);
             gpa.free(self.allocatedBytes());
             self.* = .{};
         }
@@ -420,6 +428,7 @@ pub fn MultiArrayList(comptime T: type) type {
         /// Implements super-linear growth to achieve amortized O(1) append operations.
         /// Invalidates pointers if additional memory is needed.
         pub fn ensureTotalCapacity(self: *Self, gpa: Allocator, new_capacity: usize) !void {
+            self.alloc_ptr.set(gpa.ptr);
             var better_capacity = self.capacity;
             if (better_capacity >= new_capacity) return;
 
@@ -434,6 +443,7 @@ pub fn MultiArrayList(comptime T: type) type {
         /// Modify the array so that it can hold at least `additional_count` **more** items.
         /// Invalidates pointers if additional memory is needed.
         pub fn ensureUnusedCapacity(self: *Self, gpa: Allocator, additional_count: usize) !void {
+            self.alloc_ptr.set(gpa.ptr);
             return self.ensureTotalCapacity(gpa, self.len + additional_count);
         }
 
@@ -441,6 +451,7 @@ pub fn MultiArrayList(comptime T: type) type {
         /// Invalidates pointers if additional memory is needed.
         /// `new_capacity` must be greater or equal to `len`.
         pub fn setCapacity(self: *Self, gpa: Allocator, new_capacity: usize) !void {
+            self.alloc_ptr.set(gpa.ptr);
             assert(new_capacity >= self.len);
             const new_bytes = try gpa.alignedAlloc(
                 u8,
@@ -612,3 +623,31 @@ pub fn MultiArrayList(comptime T: type) type {
         }
     };
 }
+
+/// In debug mode, this ensures we don't try to use multiple allocators with the same
+/// `MultiArrayList`. In release mode, this is a no-op and doesn't use any additional
+/// memory or CPU time.
+const DebugAllocPtr = struct {
+    const Self = @This();
+
+    ptr: if (bun.Environment.isDebug) ?*anyopaque else void =
+        if (bun.Environment.isDebug) null else {},
+
+    pub fn set(self: *Self, ptr: *anyopaque) void {
+        if (comptime !bun.Environment.isDebug) return;
+        if (self.ptr == null) {
+            self.ptr = ptr;
+        } else {
+            self.assertEq(ptr);
+        }
+    }
+
+    pub fn assertEq(self: Self, ptr: *anyopaque) void {
+        if (comptime !bun.Environment.isDebug) return;
+        bun.assertf(
+            ptr == self.ptr,
+            "cannot use multiple allocators with same MultiArrayList",
+            .{},
+        );
+    }
+};

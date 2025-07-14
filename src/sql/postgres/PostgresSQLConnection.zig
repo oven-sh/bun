@@ -989,14 +989,8 @@ fn advance(this: *PostgresSQLConnection) void {
                     return;
                 } else {
                     const stmt = req.statement orelse {
-                        req.onWriteFail(AnyPostgresError.ExpectedStatement, this.globalObject, this.getQueriesArray());
-                        if (offset == 0) {
-                            req.deref();
-                            this.requests.discard(1);
-                        } else {
-                            // deinit later
-                            req.status = .fail;
-                        }
+                        // statement is not set yet waiting it to RUN before actually doing anything
+                        offset += 1;
                         continue;
                     };
 

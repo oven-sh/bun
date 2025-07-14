@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 describe("--sql-preconnect", () => {
   test("should attempt to preconnect to PostgreSQL on startup", async () => {
@@ -41,7 +41,6 @@ describe("--sql-preconnect", () => {
 
     expect(connectionAttempts).toBeGreaterThan(0);
   });
-
 
   test("should not connect when flag is not used", async () => {
     let connectionAttempts = 0;

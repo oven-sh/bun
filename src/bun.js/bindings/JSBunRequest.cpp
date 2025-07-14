@@ -75,7 +75,7 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
 
     auto* structure = createJSBunRequestStructure(vm, defaultGlobalObject(globalObject));
     auto* raw = Request__clone(this->wrapped(), globalObject);
-    if (!raw) ASSERT_PENDING_EXCEPTION(globalObject);
+    EXCEPTION_ASSERT(!!raw == !throwScope.exception());
     RETURN_IF_EXCEPTION(throwScope, nullptr);
     auto* clone = this->create(vm, structure, raw, nullptr);
 

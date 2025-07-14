@@ -1839,21 +1839,21 @@ inline fn createScope(
         (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
     if (is_test) {
-        if (!is_skip) {
-            if (Jest.runner) |runner| {
-                if (runner.filter_regex) |regex| {
-                    var buffer: bun.MutableString = runner.filter_buffer;
-                    buffer.reset();
-                    appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
-                    buffer.append(label) catch unreachable;
-                    const str = bun.String.fromBytes(buffer.slice());
-                    is_skip = !regex.matches(str);
-                    if (is_skip) {
-                        tag_to_use = .skipped_because_label;
-                        if (comptime is_test) {
-                            // These won't get counted for describe scopes, which means the process will not exit with 1.
-                            runner.summary.skipped_because_label += 1;
-                        }
+        // Apply filter to all tests, including skipped and todo tests
+        if (Jest.runner) |runner| {
+            if (runner.filter_regex) |regex| {
+                var buffer: bun.MutableString = runner.filter_buffer;
+                buffer.reset();
+                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                buffer.append(label) catch unreachable;
+                const str = bun.String.fromBytes(buffer.slice());
+                const matches_filter = regex.matches(str);
+                if (!matches_filter) {
+                    is_skip = true;
+                    tag_to_use = .skipped_because_label;
+                    if (comptime is_test) {
+                        // These won't get counted for describe scopes, which means the process will not exit with 1.
+                        runner.summary.skipped_because_label += 1;
                     }
                 }
             }

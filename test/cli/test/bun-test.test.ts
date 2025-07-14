@@ -974,6 +974,62 @@ describe("bun test", () => {
     expect(stderr).not.toContain("test #1");
     expect(stderr).toContain("index.ts");
   });
+
+  test("Skipped and todo tests are filtered out when not matching -t filter", () => {
+    const stderr = runTest({
+      args: ["-t", "should match"],
+      input: `
+        import { test, describe } from "bun:test";
+
+        describe("group 1", () => {
+          test("should match filter", () => {
+            console.log("this test should run");
+          });
+
+          test("should not match filter", () => {
+            console.log("this test should be filtered out");
+          });
+
+          test.skip("skipped test that should not match", () => {
+            console.log("this skipped test should be filtered out");
+          });
+
+          test.todo("todo test that should not match", () => {
+            console.log("this todo test should be filtered out");
+          });
+        });
+
+        describe("group 2", () => {
+          test("another test that should match filter", () => {
+            console.log("this test should run");
+          });
+
+          test.skip("another skipped test", () => {
+            console.log("this skipped test should be filtered out");
+          });
+
+          test.todo("another todo test", () => {
+            console.log("this todo test should be filtered out");
+          });
+        });
+      `,
+    });
+    expect(
+      stderr
+        .replace(/bun-test-(.*)\.test\.ts/, "bun-test-*.test.ts")
+        .replace(/\[.*ms\]/g, "[xxms]")
+        .trim()
+    ).toMatchInlineSnapshot(`
+      "bun-test-*.test.ts:
+      (pass) group 1 > should match filter [xxms]
+      (pass) group 2 > another test that should match filter [xxms]
+
+       2 pass
+       5 filtered out
+       0 fail
+      Ran 2 tests across 1 file. [xxms]"
+    `);
+  });
 });
 
 function createTest(input?: string | (string | { filename: string; contents: string })[], filename?: string): string {

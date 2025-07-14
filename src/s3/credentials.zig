@@ -798,35 +798,35 @@ pub const S3Credentials = struct {
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 const canonical = brk_canonical: {
                     var query_parts: std.BoundedArray([]const u8, 10) = .{};
-                    
+
                     // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class
-                    
+
                     if (encoded_content_md5) |encoded_content_md5_value| {
                         try query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "Content-MD5={s}", .{encoded_content_md5_value}));
                     }
-                    
+
                     if (acl) |acl_value| {
                         try query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-Acl={s}", .{acl_value}));
                     }
-                    
+
                     try query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-Algorithm=AWS4-HMAC-SHA256", .{}));
-                    
+
                     try query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request", .{ this.accessKeyId, amz_day, region, service_name }));
-                    
+
                     try query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-Date={s}", .{amz_date}));
-                    
+
                     try query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-Expires={}", .{expires}));
-                    
+
                     if (encoded_session_token) |token| {
                         try query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-Security-Token={s}", .{token}));
                     }
-                    
+
                     try query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-SignedHeaders=host", .{}));
-                    
+
                     if (storage_class) |storage_class_value| {
                         try query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "x-amz-storage-class={s}", .{storage_class_value}));
                     }
-                    
+
                     // Join query parameters with &
                     var query_string = std.ArrayList(u8).init(bun.default_allocator);
                     defer query_string.deinit();
@@ -835,7 +835,7 @@ pub const S3Credentials = struct {
                         try query_string.appendSlice(part);
                         bun.default_allocator.free(part);
                     }
-                    
+
                     break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\n\nhost\n{s}", .{ method_name, normalizedPath, query_string.items, host, aws_content_hash });
                 };
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
@@ -847,37 +847,37 @@ pub const S3Credentials = struct {
 
                 // Build final URL with query parameters in alphabetical order to match canonical request
                 var url_query_parts: std.BoundedArray([]const u8, 10) = .{};
-                
+
                 // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class, X-Amz-Signature
-                
+
                 if (encoded_content_md5) |encoded_content_md5_value| {
                     try url_query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "Content-MD5={s}", .{encoded_content_md5_value}));
                 }
-                
+
                 if (acl) |acl_value| {
                     try url_query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-Acl={s}", .{acl_value}));
                 }
-                
+
                 try url_query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-Algorithm=AWS4-HMAC-SHA256", .{}));
-                
+
                 try url_query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request", .{ this.accessKeyId, amz_day, region, service_name }));
-                
+
                 try url_query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-Date={s}", .{amz_date}));
-                
+
                 try url_query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-Expires={}", .{expires}));
-                
+
                 if (encoded_session_token) |token| {
                     try url_query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-Security-Token={s}", .{token}));
                 }
-                
+
                 try url_query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-Signature={s}", .{std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower)}));
-                
+
                 try url_query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "X-Amz-SignedHeaders=host", .{}));
-                
+
                 if (storage_class) |storage_class_value| {
                     try url_query_parts.append(try std.fmt.allocPrint(bun.default_allocator, "x-amz-storage-class={s}", .{storage_class_value}));
                 }
-                
+
                 // Join URL query parameters with &
                 var url_query_string = std.ArrayList(u8).init(bun.default_allocator);
                 defer url_query_string.deinit();
@@ -886,7 +886,7 @@ pub const S3Credentials = struct {
                     try url_query_string.appendSlice(part);
                     bun.default_allocator.free(part);
                 }
-                
+
                 break :brk try std.fmt.allocPrint(bun.default_allocator, "{s}://{s}{s}?{s}", .{ protocol, host, normalizedPath, url_query_string.items });
             } else {
                 var encoded_content_disposition_buffer: [255]u8 = undefined;

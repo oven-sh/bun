@@ -211,7 +211,7 @@ pub fn toBunStringComptime(input: []const u8, comptime encoding: Encoding) bun.S
 
             // If we get here, it means we can safely assume the string is 100% ASCII characters
             // For this, we rely on WebKit to manage the memory.
-            return bun.String.createLatin1(input);
+            return bun.String.cloneLatin1(input);
         },
         .ucs2, .utf16le => {
             // Avoid incomplete characters

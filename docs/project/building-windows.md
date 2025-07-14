@@ -1,4 +1,4 @@
-This document describes the build process for Windows. If you run into problems, please join the [#contributing channel on our Discord](http://bun.sh/discord) for help.
+This document describes the build process for Windows. If you run into problems, please join the [#contributing channel on our Discord](http://bun.com/discord) for help.
 
 It is strongly recommended to use [PowerShell 7 (`pwsh.exe`)](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows?view=powershell-7.4) instead of the default `powershell.exe`.
 
@@ -47,7 +47,7 @@ By default, running unverified scripts are blocked.
 Bun v1.1 or later. We use Bun to run it's own code generators.
 
 ```ps1
-> irm bun.sh/install.ps1 | iex
+> irm bun.com/install.ps1 | iex
 ```
 
 [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload. While installing, make sure to install Git as well, if Git for Windows is not already installed.

@@ -436,10 +436,7 @@ pub export fn napi_create_string_utf8(env_: napi_env, str: ?[*]const u8, length:
     log("napi_create_string_utf8: {s}", .{slice});
 
     const globalObject = env.toJS();
-    const string = bun.String.createUTF8ForJS(globalObject, slice);
-    if (globalObject.hasException()) {
-        return env.setLastError(.pending_exception);
-    }
+    const string = bun.String.createUTF8ForJS(globalObject, slice) catch return env.setLastError(.pending_exception);
     result.set(env, string);
     return env.ok();
 }
@@ -808,7 +805,11 @@ pub export fn napi_get_arraybuffer_info(env_: napi_env, arraybuffer_: napi_value
     };
     env.checkGC();
     const arraybuffer = arraybuffer_.get();
-    const array_buffer = arraybuffer.asArrayBuffer(env.toJS()) orelse return env.setLastError(.arraybuffer_expected);
+    const array_buffer = arraybuffer.asArrayBuffer(env.toJS()) orelse return env.setLastError(.invalid_arg);
+    if (array_buffer.typed_array_type != .ArrayBuffer) {
+        return env.setLastError(.invalid_arg);
+    }
+
     const slice = array_buffer.slice();
     if (data) |dat|
         dat.* = slice.ptr;
@@ -840,7 +841,7 @@ pub export fn napi_get_typedarray_info(
 
     const array_buffer = typedarray.asArrayBuffer(env.toJS()) orelse return env.invalidArg();
     if (maybe_type) |@"type"|
-        @"type".* = napi_typedarray_type.fromJSType(array_buffer.typed_array_type) orelse return env.invalidArg();
+        @"type".* = array_buffer.typed_array_type.toTypedArrayType().toNapi() orelse return env.invalidArg();
 
     // TODO: handle detached
     if (maybe_data) |data|

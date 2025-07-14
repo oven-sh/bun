@@ -314,7 +314,7 @@ pub fn tickConcurrentWithCount(this: *EventLoop) usize {
     return this.tasks.count - start_count;
 }
 
-pub inline fn usocketsLoop(this: *const EventLoop) *uws.Loop {
+pub fn usocketsLoop(this: *const EventLoop) *uws.Loop {
     if (comptime Environment.isWindows) {
         return this.uws_loop.?;
     }
@@ -553,6 +553,11 @@ pub fn ensureWaker(this: *EventLoop) void {
         // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
         // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.jsc, JSC.VM.drainMicrotasks);
     }
+    if (comptime Environment.isWindows) {
+        if (this.uws_loop == null) {
+            this.uws_loop = bun.uws.Loop.get();
+        }
+    }
     bun.uws.Loop.get().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(this));
 }
 
@@ -599,7 +604,7 @@ pub fn enqueueTaskConcurrentBatch(this: *EventLoop, batch: ConcurrentTask.Queue.
         log("enqueueTaskConcurrentBatch({d})", .{batch.count});
     }
 
-    this.concurrent_tasks.pushBatch(batch.front.?, batch.last.?, batch.count);
+    this.concurrent_tasks.pushBatch(batch.front.?, batch.last.?);
     this.wakeup();
 }
 

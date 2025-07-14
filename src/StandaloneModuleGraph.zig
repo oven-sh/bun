@@ -170,7 +170,7 @@ pub const StandaloneModuleGraph = struct {
             if (this.wtf_string.isEmpty()) {
                 switch (this.encoding) {
                     .binary, .utf8 => {
-                        this.wtf_string = bun.String.createUTF8(this.contents);
+                        this.wtf_string = bun.String.cloneUTF8(this.contents);
                     },
                     .latin1 => {
                         this.wtf_string = bun.String.createStaticExternal(this.contents, true);
@@ -203,9 +203,9 @@ pub const StandaloneModuleGraph = struct {
 
                 // The pretty name goes here:
                 if (strings.hasPrefixComptime(this.name, base_public_path_with_default_suffix)) {
-                    b.name = bun.String.createUTF8(this.name[base_public_path_with_default_suffix.len..]);
+                    b.name = bun.String.cloneUTF8(this.name[base_public_path_with_default_suffix.len..]);
                 } else if (this.name.len > 0) {
-                    b.name = bun.String.createUTF8(this.name);
+                    b.name = bun.String.cloneUTF8(this.name);
                 }
 
                 this.cached_blob = b;
@@ -237,6 +237,7 @@ pub const StandaloneModuleGraph = struct {
                         null,
                         std.math.maxInt(i32),
                         std.math.maxInt(i32),
+                        .{},
                     )) {
                         .success => |x| x,
                         .fail => {

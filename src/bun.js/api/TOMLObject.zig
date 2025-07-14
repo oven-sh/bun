@@ -50,7 +50,7 @@ pub fn parse(
     };
 
     const slice = writer.ctx.buffer.slice();
-    var out = bun.String.fromUTF8(slice);
+    var out = bun.String.borrowUTF8(slice);
     defer out.deref();
 
     return out.toJSByParseJSON(globalThis);

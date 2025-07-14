@@ -286,7 +286,7 @@ pub const DataCell = extern struct {
                             const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..];
                             defer if (needs_dynamic_buffer) bun.default_allocator.free(buffer);
                             const unescaped = unescapePostgresString(str_bytes, buffer) catch return error.InvalidByteSequence;
-                            try array.append(bun.default_allocator, DataCell{ .tag = .json, .value = .{ .json = if (unescaped.len > 0) String.createUTF8(unescaped).value.WTFStringImpl else null }, .free_value = 1 });
+                            try array.append(bun.default_allocator, DataCell{ .tag = .json, .value = .{ .json = if (unescaped.len > 0) String.cloneUTF8(unescaped).value.WTFStringImpl else null }, .free_value = 1 });
                             slice = trySlice(slice, current_idx + 1);
                             continue;
                         },
@@ -303,7 +303,7 @@ pub const DataCell = extern struct {
                     const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..];
                     defer if (needs_dynamic_buffer) bun.default_allocator.free(buffer);
                     const string_bytes = unescapePostgresString(str_bytes, buffer) catch return error.InvalidByteSequence;
-                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (string_bytes.len > 0) String.createUTF8(string_bytes).value.WTFStringImpl else null }, .free_value = 1 });
+                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (string_bytes.len > 0) String.cloneUTF8(string_bytes).value.WTFStringImpl else null }, .free_value = 1 });
 
                     slice = trySlice(slice, current_idx + 1);
                     continue;
@@ -374,9 +374,9 @@ pub const DataCell = extern struct {
                             } else {
                                 // the only escape sequency possible here is \b
                                 if (bun.strings.eqlComptime(element, "\\b")) {
-                                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8("\x08").value.WTFStringImpl }, .free_value = 1 });
+                                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8("\x08").value.WTFStringImpl }, .free_value = 1 });
                                 } else {
-                                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 0 });
+                                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.cloneUTF8(element).value.WTFStringImpl else null }, .free_value = 0 });
                                 }
                             }
                             slice = trySlice(slice, current_idx);
@@ -536,7 +536,7 @@ pub const DataCell = extern struct {
                                             if (bigint) {
                                                 try array.append(bun.default_allocator, DataCell{ .tag = .int8, .value = .{ .int8 = std.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat } });
                                             } else {
-                                                try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.cloneUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
                                             }
                                             slice = trySlice(slice, current_idx);
                                             continue;
@@ -667,7 +667,7 @@ pub const DataCell = extern struct {
                     // .int8 is a 64-bit integer always string
                     return DataCell{ .tag = .int8, .value = .{ .int8 = std.fmt.parseInt(i64, bytes, 0) catch 0 } };
                 } else {
-                    return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                    return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
                 }
             },
             .float8 => {
@@ -697,14 +697,14 @@ pub const DataCell = extern struct {
 
                     // if is binary format lets display as a string because JS cant handle it in a safe way
                     const result = parseBinaryNumeric(bytes, &numeric_buffer) catch return error.UnsupportedNumericFormat;
-                    return DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8(result.slice()).value.WTFStringImpl }, .free_value = 1 };
+                    return DataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8(result.slice()).value.WTFStringImpl }, .free_value = 1 };
                 } else {
                     // nice text is actually what we want here
-                    return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                    return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
                 }
             },
             .jsonb, .json => {
-                return DataCell{ .tag = .json, .value = .{ .json = if (bytes.len > 0) String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                return DataCell{ .tag = .json, .value = .{ .json = if (bytes.len > 0) String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
             },
             .bool => {
                 if (binary) {
@@ -790,7 +790,7 @@ pub const DataCell = extern struct {
                 return try parseArray(bytes, bigint, tag, globalObject, null, false);
             },
             else => {
-                return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
             },
         }
     }
@@ -1085,19 +1085,23 @@ pub const DataCell = extern struct {
     };
 };
 
+const debug = bun.Output.scoped(.Postgres, false);
+
+// @sortImports
+
+const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
+const protocol = @import("./PostgresProtocol.zig");
+const std = @import("std");
+const Data = @import("./Data.zig").Data;
+const PostgresSQLQueryResultMode = @import("./PostgresSQLQueryResultMode.zig").PostgresSQLQueryResultMode;
+
+const types = @import("./PostgresTypes.zig");
+const AnyPostgresError = types.AnyPostgresError;
+const int4 = types.int4;
+const short = types.short;
+
 const bun = @import("bun");
+const String = bun.String;
 
 const JSC = bun.JSC;
-const std = @import("std");
 const JSValue = JSC.JSValue;
-const postgres = @import("./postgres.zig");
-const Data = postgres.Data;
-const types = postgres.types;
-const String = bun.String;
-const int4 = postgres.int4;
-const AnyPostgresError = postgres.AnyPostgresError;
-const protocol = postgres.protocol;
-const PostgresSQLQueryResultMode = postgres.PostgresSQLQueryResultMode;
-const PostgresCachedStructure = postgres.PostgresCachedStructure;
-const debug = postgres.debug;
-const short = postgres.short;

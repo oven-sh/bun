@@ -280,13 +280,13 @@ function normalizeQuery(strings, values, binding_idx = 1) {
             binding_values.push(sub_values[j]);
           }
           binding_idx += sub_values.length;
-        } else if (value instanceof SQLArrayParameter) {
+        } else if (value instanceof SQLHelper) {
           const command = detectCommand(query);
           // only selectIn, insert, update, updateSet are allowed
           if (command === SQLCommand.none || command === SQLCommand.where) {
-            throw new SyntaxError("Helper are only allowed for INSERT, UPDATE and WHERE IN commands");
+            throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and WHERE IN commands");
           }
-          const { columns, value: items } = value as SQLArrayParameter;
+          const { columns, value: items } = value as SQLHelper;
           const columnCount = columns.length;
           if (columnCount === 0 && command !== SQLCommand.whereIn) {
             throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
@@ -1300,7 +1300,7 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint
   return createQuery(sqlString, final_values, new SQLResultArray(), undefined, !!bigint, !!simple);
 }
 
-class SQLArrayParameter {
+class SQLHelper {
   value: any;
   columns: string[];
   constructor(value, keys) {
@@ -1339,7 +1339,7 @@ function decodeIfValid(value) {
   }
   return null;
 }
-function loadOptions(o) {
+function loadOptions(o: Bun.SQL.Options) {
   var hostname,
     port,
     username,
@@ -1453,6 +1453,8 @@ function loadOptions(o) {
   idleTimeout ??= o.idle_timeout;
   connectionTimeout ??= o.connectionTimeout;
   connectionTimeout ??= o.connection_timeout;
+  connectionTimeout ??= o.connectTimeout;
+  connectionTimeout ??= o.connect_timeout;
   maxLifetime ??= o.maxLifetime;
   maxLifetime ??= o.max_lifetime;
   bigint ??= o.bigint;
@@ -1746,14 +1748,10 @@ function SQL(o, e = {}) {
       if ($isArray(strings)) {
         // detect if is tagged template
         if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
-          return new SQLArrayParameter(strings, values);
+          return new SQLHelper(strings, values);
         }
-      } else if (
-        typeof strings === "object" &&
-        !(strings instanceof Query) &&
-        !(strings instanceof SQLArrayParameter)
-      ) {
-        return new SQLArrayParameter([strings], values);
+      } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
+        return new SQLHelper([strings], values);
       }
       // we use the same code path as the transaction sql
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
@@ -2079,14 +2077,10 @@ function SQL(o, e = {}) {
       if ($isArray(strings)) {
         // detect if is tagged template
         if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
-          return new SQLArrayParameter(strings, values);
+          return new SQLHelper(strings, values);
         }
-      } else if (
-        typeof strings === "object" &&
-        !(strings instanceof Query) &&
-        !(strings instanceof SQLArrayParameter)
-      ) {
-        return new SQLArrayParameter([strings], values);
+      } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
+        return new SQLHelper([strings], values);
       }
 
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
@@ -2313,10 +2307,10 @@ function SQL(o, e = {}) {
     if ($isArray(strings)) {
       // detect if is tagged template
       if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
-        return new SQLArrayParameter(strings, values);
+        return new SQLHelper(strings, values);
       }
-    } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLArrayParameter)) {
-      return new SQLArrayParameter([strings], values);
+    } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
+      return new SQLHelper([strings], values);
     }
 
     return queryFromPool(strings, values);

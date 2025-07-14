@@ -29,7 +29,7 @@ pub const BuildMessage = struct {
         const array = try JSC.JSValue.createEmptyArray(globalThis, notes.len);
         for (notes, 0..) |note, i| {
             const cloned = try note.clone(bun.default_allocator);
-            array.putIndex(
+            try array.putIndex(
                 globalThis,
                 @intCast(i),
                 try BuildMessage.create(globalThis, bun.default_allocator, logger.Msg{ .data = cloned, .kind = .note }),

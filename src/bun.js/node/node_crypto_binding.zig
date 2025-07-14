@@ -27,8 +27,14 @@ fn ExternCryptoJob(comptime name: []const u8) type {
 
         const Ctx = opaque {
             const ctx_name = name ++ "Ctx";
+
             pub const runTask = @extern(*const fn (*Ctx, *JSGlobalObject) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__runTask" }).*;
-            pub const runFromJS = @extern(*const fn (*Ctx, *JSGlobalObject, JSValue) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__runFromJS" }).*;
+
+            pub fn runFromJS(self: *Ctx, global: *JSGlobalObject, callback: JSValue) bun.JSError!void {
+                const __runFromJS = @extern(*const fn (*Ctx, *JSGlobalObject, JSValue) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__runFromJS" }).*;
+                return bun.jsc.fromJSHostCallGeneric(global, @src(), __runFromJS, .{ self, global, callback });
+            }
+
             pub const deinit = @extern(*const fn (*Ctx) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__deinit" }).*;
         };
 
@@ -72,7 +78,9 @@ fn ExternCryptoJob(comptime name: []const u8) type {
                 return;
             };
 
-            this.ctx.runFromJS(vm.global, callback);
+            this.ctx.runFromJS(vm.global, callback) catch |err| {
+                _ = vm.global.reportUncaughtException(vm.global.takeException(err).asException(vm.global.vm()).?);
+            };
         }
 
         fn deinit(this: *@This()) void {
@@ -514,8 +522,8 @@ fn getHashes(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
     const array = try JSValue.createEmptyArray(global, hashes.count());
 
     for (hashes.keys(), 0..) |hash, i| {
-        const str = String.createUTF8ForJS(global, hash);
-        array.putIndex(global, @intCast(i), str);
+        const str = try String.createUTF8ForJS(global, hash);
+        try array.putIndex(global, @intCast(i), str);
     }
 
     return array;

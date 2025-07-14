@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.2.18",
+  "version": "1.2.19",
   "workspaces": [
     "./packages/bun-types",
     "./packages/@types/bun"
@@ -74,7 +74,7 @@
     "clang-tidy:diff": "bun run analysis --target clang-tidy-diff",
     "zig-format": "bun run analysis:no-llvm --target zig-format",
     "zig-format:check": "bun run analysis:no-llvm --target zig-format-check",
-    "prettier": "bunx prettier@latest --plugin=prettier-plugin-organize-imports --config .prettierrc --write scripts packages src docs 'test/**/*.{test,spec}.{ts,tsx,js,jsx,mts,mjs,cjs,cts}' '!test/**/*fixture*.*'",
+    "prettier": "bunx --bun prettier@latest --plugin=prettier-plugin-organize-imports --config .prettierrc --write scripts packages src docs 'test/**/*.{test,spec}.{ts,tsx,js,jsx,mts,mjs,cjs,cts}' '!test/**/*fixture*.*'",
     "node:test": "node ./scripts/runner.node.mjs --quiet --exec-path=$npm_execpath --node-tests ",
     "node:test:cp": "bun ./scripts/fetch-node-test.ts ",
     "clean:zig": "rm -rf build/debug/cache/zig build/debug/CMakeCache.txt 'build/debug/*.o' .zig-cache zig-out || true",

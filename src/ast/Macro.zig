@@ -118,6 +118,7 @@ pub const MacroContext = struct {
         }
         macro.vm.enableMacroMode();
         defer macro.vm.disableMacroMode();
+        macro.vm.eventLoop().ensureWaker();
 
         const Wrapper = struct {
             args: std.meta.ArgsTuple(@TypeOf(Macro.Runner.run)),
@@ -193,6 +194,7 @@ pub fn init(
     };
 
     vm.enableMacroMode();
+    vm.eventLoop().ensureWaker();
 
     const loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
 

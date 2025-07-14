@@ -1,22 +1,35 @@
 declare module "bun" {
   namespace __internal {
-    type NodeWorkerThreadsWorker = import("node:worker_threads").Worker;
-    type LibWorkerOrBunWorker = Bun.__internal.UseLibDomIfAvailable<"Worker", Bun.Worker>;
-
-    type LibPerformanceOrNodePerfHooksPerformance = Bun.__internal.UseLibDomIfAvailable<
-      "Performance",
-      import("perf_hooks").Performance
-    >;
-
     type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
     type NodeCryptoWebcryptoCryptoKeyPair = import("crypto").webcrypto.CryptoKeyPair;
 
+    type LibWorkerOrBunWorker = LibDomIsLoaded extends true ? {} : Bun.Worker;
     type LibEmptyOrBunWebSocket = LibDomIsLoaded extends true ? {} : Bun.WebSocket;
 
+    type LibPerformanceOrNodePerfHooksPerformance = LibDomIsLoaded extends true ? {} : import("perf_hooks").Performance;
+    type LibEmptyOrPerformanceEntry = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceEntry;
+    type LibEmptyOrPerformanceMark = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMark;
+    type LibEmptyOrPerformanceMeasure = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMeasure;
+    type LibEmptyOrPerformanceObserver = LibDomIsLoaded extends true
+      ? {}
+      : import("node:perf_hooks").PerformanceObserver;
+    type LibEmptyOrPerformanceObserverEntryList = LibDomIsLoaded extends true
+      ? {}
+      : import("node:perf_hooks").PerformanceObserverEntryList;
+    type LibEmptyOrPerformanceResourceTiming = LibDomIsLoaded extends true
+      ? {}
+      : import("node:perf_hooks").PerformanceResourceTiming;
+
     type LibEmptyOrNodeUtilTextEncoder = LibDomIsLoaded extends true ? {} : import("node:util").TextEncoder;
+    type LibEmptyOrNodeStreamWebTextEncoderStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").TextEncoderStream;
 
     type LibEmptyOrNodeUtilTextDecoder = LibDomIsLoaded extends true ? {} : import("node:util").TextDecoder;
+    type LibEmptyOrNodeStreamWebTextDecoderStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").TextDecoderStream;
 
     type LibEmptyOrNodeReadableStream<T> = LibDomIsLoaded extends true
       ? {}
@@ -27,6 +40,20 @@ declare module "bun" {
       : import("node:stream/web").WritableStream<T>;
 
     type LibEmptyOrNodeMessagePort = LibDomIsLoaded extends true ? {} : import("node:worker_threads").MessagePort;
+    type LibEmptyOrBroadcastChannel = LibDomIsLoaded extends true ? {} : import("node:worker_threads").BroadcastChannel;
+    type LibEmptyOrEventSource = LibDomIsLoaded extends true ? {} : import("undici-types").EventSource;
+
+    type LibEmptyOrReadableByteStreamController = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").ReadableByteStreamController;
+
+    type LibEmptyOrReadableStreamBYOBReader = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").ReadableStreamBYOBReader;
+
+    type LibEmptyOrReadableStreamBYOBRequest = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").ReadableStreamBYOBRequest;
   }
 }
 
@@ -1489,7 +1516,7 @@ interface Uint8ArrayConstructor {
   fromHex(hex: string): Uint8Array;
 }
 
-interface BroadcastChannel {}
+interface BroadcastChannel extends Bun.__internal.LibEmptyOrBroadcastChannel {}
 declare var BroadcastChannel: Bun.__internal.UseLibDomIfAvailable<
   "BroadcastChannel",
   typeof import("node:worker_threads").BroadcastChannel
@@ -1593,7 +1620,7 @@ interface FormData {
 }
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
 
-interface EventSource {}
+interface EventSource extends Bun.__internal.LibEmptyOrEventSource {}
 declare var EventSource: Bun.__internal.UseLibDomIfAvailable<
   "EventSource",
   { prototype: EventSource; new (): EventSource }
@@ -1602,67 +1629,67 @@ declare var EventSource: Bun.__internal.UseLibDomIfAvailable<
 interface Performance extends Bun.__internal.LibPerformanceOrNodePerfHooksPerformance {}
 declare var performance: Bun.__internal.UseLibDomIfAvailable<"performance", Performance>;
 
-interface PerformanceEntry {}
+interface PerformanceEntry extends Bun.__internal.LibEmptyOrPerformanceEntry {}
 declare var PerformanceEntry: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceEntry",
   { prototype: PerformanceEntry; new (): PerformanceEntry }
 >;
 
-interface PerformanceMark {}
+interface PerformanceMark extends Bun.__internal.LibEmptyOrPerformanceMark {}
 declare var PerformanceMark: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceMark",
   { prototype: PerformanceMark; new (): PerformanceMark }
 >;
 
-interface PerformanceMeasure {}
+interface PerformanceMeasure extends Bun.__internal.LibEmptyOrPerformanceMeasure {}
 declare var PerformanceMeasure: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceMeasure",
   { prototype: PerformanceMeasure; new (): PerformanceMeasure }
 >;
 
-interface PerformanceObserver {}
+interface PerformanceObserver extends Bun.__internal.LibEmptyOrPerformanceObserver {}
 declare var PerformanceObserver: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceObserver",
   { prototype: PerformanceObserver; new (): PerformanceObserver }
 >;
 
-interface PerformanceObserverEntryList {}
+interface PerformanceObserverEntryList extends Bun.__internal.LibEmptyOrPerformanceObserverEntryList {}
 declare var PerformanceObserverEntryList: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceObserverEntryList",
   { prototype: PerformanceObserverEntryList; new (): PerformanceObserverEntryList }
 >;
 
-interface PerformanceResourceTiming {}
+interface PerformanceResourceTiming extends Bun.__internal.LibEmptyOrPerformanceResourceTiming {}
 declare var PerformanceResourceTiming: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceResourceTiming",
   { prototype: PerformanceResourceTiming; new (): PerformanceResourceTiming }
 >;
 
-interface ReadableByteStreamController {}
+interface ReadableByteStreamController extends Bun.__internal.LibEmptyOrReadableByteStreamController {}
 declare var ReadableByteStreamController: Bun.__internal.UseLibDomIfAvailable<
   "ReadableByteStreamController",
   { prototype: ReadableByteStreamController; new (): ReadableByteStreamController }
 >;
 
-interface ReadableStreamBYOBReader {}
+interface ReadableStreamBYOBReader extends Bun.__internal.LibEmptyOrReadableStreamBYOBReader {}
 declare var ReadableStreamBYOBReader: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStreamBYOBReader",
   { prototype: ReadableStreamBYOBReader; new (): ReadableStreamBYOBReader }
 >;
 
-interface ReadableStreamBYOBRequest {}
+interface ReadableStreamBYOBRequest extends Bun.__internal.LibEmptyOrReadableStreamBYOBRequest {}
 declare var ReadableStreamBYOBRequest: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStreamBYOBRequest",
   { prototype: ReadableStreamBYOBRequest; new (): ReadableStreamBYOBRequest }
 >;
 
-interface TextDecoderStream {}
+interface TextDecoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextDecoderStream {}
 declare var TextDecoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoderStream",
   { prototype: TextDecoderStream; new (): TextDecoderStream }
 >;
 
-interface TextEncoderStream {}
+interface TextEncoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextEncoderStream {}
 declare var TextEncoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextEncoderStream",
   { prototype: TextEncoderStream; new (): TextEncoderStream }

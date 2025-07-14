@@ -7,7 +7,7 @@ Features:
 - Generates `.patch` files applied to dependencies in `node_modules` on install
 - `.patch` files can be committed to your repository, reused across multiple installs, projects, and machines
 - `"patchedDependencies"` in `package.json` keeps track of patched packages
-- `bun patch` lets you patch packages in `node_modules/` while preserving the integrity of Bun's [Global Cache](https://bun.sh/docs/install/cache)
+- `bun patch` lets you patch packages in `node_modules/` while preserving the integrity of Bun's [Global Cache](https://bun.com/docs/install/cache)
 - Test your changes locally before committing them with `bun patch --commit <pkg>`
 - To preserve disk space and keep `bun install` fast, patched packages are committed to the Global Cache and shared across projects where possible
 
@@ -34,7 +34,7 @@ If you forget to do this, you might end up editing the package globally in the c
 
 #### Step 2. Test your changes locally
 
-`bun patch <pkg>` makes it safe to edit the `<pkg>` in `node_modules/` directly, while preserving the integrity of Bun's [Global Cache](https://bun.sh/docs/install/cache). This works by re-creating an unlinked clone of the package in `node_modules/` and diffing it against the original package in the Global Cache.
+`bun patch <pkg>` makes it safe to edit the `<pkg>` in `node_modules/` directly, while preserving the integrity of Bun's [Global Cache](https://bun.com/docs/install/cache). This works by re-creating an unlinked clone of the package in `node_modules/` and diffing it against the original package in the Global Cache.
 
 #### Step 3. Commit your changes
 

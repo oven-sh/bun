@@ -3,7 +3,7 @@ const Body = @This();
 
 value: Value, // = Value.empty,
 
-pub inline fn len(this: *const Body) Blob.SizeType {
+pub fn len(this: *Body) Blob.SizeType {
     return this.value.size();
 }
 
@@ -366,9 +366,9 @@ pub const Value = union(Tag) {
         }
     }
 
-    pub fn size(this: *const Value) Blob.SizeType {
+    pub fn size(this: *Value) Blob.SizeType {
         return switch (this.*) {
-            .Blob => this.Blob.size,
+            .Blob => @truncate(this.Blob.getSizeForBindings()),
             .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
             .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
             .Locked => this.Locked.sizeHint(),
@@ -561,12 +561,6 @@ pub const Value = union(Tag) {
                     };
                 }
 
-                // if (bytes.len <= InlineBlob.available_bytes) {
-                //     return Body.Value{
-                //         .InlineBlob = InlineBlob.init(bytes),
-                //     };
-                // }
-
                 return Body.Value{
                     .InternalBlob = .{
                         .bytes = std.ArrayList(u8){
@@ -597,7 +591,8 @@ pub const Value = union(Tag) {
         if (js_type == .DOMWrapper) {
             if (value.as(Blob)) |blob| {
                 return Body.Value{
-                    .Blob = blob.dupe(),
+                    // We must preserve "type" so that DOMFormData and the "type" field are preserved.
+                    .Blob = blob.dupeWithContentType(true),
                 };
             }
         }
@@ -611,17 +606,16 @@ pub const Value = union(Tag) {
 
             switch (readable.ptr) {
                 .Blob => |blob| {
-                    const store = blob.detachStore() orelse {
-                        return Body.Value{ .Blob = Blob.initEmpty(globalThis) };
-                    };
+                    defer readable.forceDetach(globalThis);
+                    if (blob.toAnyBlob(globalThis)) |any_blob| {
+                        return switch (any_blob) {
+                            .Blob => .{ .Blob = any_blob.Blob },
+                            .InternalBlob => .{ .InternalBlob = any_blob.InternalBlob },
+                            .WTFStringImpl => .{ .WTFStringImpl = any_blob.WTFStringImpl },
+                        };
+                    }
 
-                    readable.forceDetach(globalThis);
-
-                    const result: Value = .{
-                        .Blob = Blob.initWithStore(store, globalThis),
-                    };
-
-                    return result;
+                    return .Empty;
                 },
                 else => {},
             }

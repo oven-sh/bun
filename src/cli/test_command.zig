@@ -1320,7 +1320,7 @@ pub const TestCommand = struct {
             }
             Output.prettyError(
                 \\
-                \\Learn more about the test runner: <magenta>https://bun.sh/docs/cli/test<r>
+                \\Learn more about the test runner: <magenta>https://bun.com/docs/cli/test<r>
             , .{});
         } else {
             Output.prettyError("\n", .{});

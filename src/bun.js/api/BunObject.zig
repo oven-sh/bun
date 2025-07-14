@@ -43,6 +43,9 @@ pub const BunObject = struct {
     pub const zstdCompress = toJSCallback(JSZstd.compress);
     pub const zstdDecompress = toJSCallback(JSZstd.decompress);
 
+    // Browser automation API
+    pub const browser = toJSCallback(@import("Browser.zig").Browser.launch);
+
     // --- Callbacks ---
 
     // --- Getters ---

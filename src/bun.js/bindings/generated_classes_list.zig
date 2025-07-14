@@ -90,4 +90,11 @@ pub const Classes = struct {
     pub const BlockList = api.BlockList;
     pub const NativeZstd = api.NativeZstd;
     pub const SourceMap = bun.sourcemap.JSSourceMap;
+    pub const Browser = api.Browser;
+    pub const Page = api.Page;
+    pub const ElementHandle = api.ElementHandle;
+    pub const Keyboard = api.Keyboard;
+    pub const Mouse = api.Mouse;
+    pub const Touchscreen = api.Touchscreen;
+    pub const JSHandle = api.JSHandle;
 };

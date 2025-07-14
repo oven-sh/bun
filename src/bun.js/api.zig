@@ -46,6 +46,15 @@ pub const Valkey = @import("../valkey/js_valkey.zig").JSValkeyClient;
 pub const BlockList = @import("./node/net/BlockList.zig");
 pub const NativeZstd = @import("./node/zlib/NativeZstd.zig");
 
+// Browser automation API
+pub const Browser = @import("api/Browser.zig").Browser;
+pub const Page = @import("api/Page.zig").Page;
+pub const ElementHandle = @import("api/Page.zig").ElementHandle;
+pub const Keyboard = @import("api/Page.zig").Keyboard;
+pub const Mouse = @import("api/Page.zig").Mouse;
+pub const Touchscreen = @import("api/Page.zig").Touchscreen;
+pub const JSHandle = @import("api/Page.zig").JSHandle;
+
 pub const napi = @import("../napi/napi.zig");
 
 pub const node = @import("node.zig");

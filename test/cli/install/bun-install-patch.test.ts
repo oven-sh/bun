@@ -121,7 +121,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        using filedir = tempDirWithFiles("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",

@@ -375,9 +375,13 @@ it("bun pm migrate", async () => {
 
 it("should work without package.json for global commands", async () => {
   const test_dir = tmpdirSync();
-  
+
   // Test pm cache without package.json
-  const { stdout: cacheOut, stderr: cacheErr, exitCode: cacheCode } = Bun.spawnSync({
+  const {
+    stdout: cacheOut,
+    stderr: cacheErr,
+    exitCode: cacheCode,
+  } = Bun.spawnSync({
     cmd: [bunExe(), "pm", "cache"],
     cwd: test_dir,
     stdout: "pipe",
@@ -390,7 +394,11 @@ it("should work without package.json for global commands", async () => {
   expect(cacheOut.toString("utf-8")).toMatch(/cache/);
 
   // Test pm whoami without package.json (will fail auth but shouldn't fail for missing package.json)
-  const { stdout: whoamiOut, stderr: whoamiErr, exitCode: whoamiCode } = Bun.spawnSync({
+  const {
+    stdout: whoamiOut,
+    stderr: whoamiErr,
+    exitCode: whoamiCode,
+  } = Bun.spawnSync({
     cmd: [bunExe(), "pm", "whoami"],
     cwd: test_dir,
     stdout: "pipe",
@@ -403,7 +411,11 @@ it("should work without package.json for global commands", async () => {
   expect(whoamiErr.toString("utf-8")).not.toContain("No package.json");
 
   // Test pm bin -g without package.json
-  const { stdout: binOut, stderr: binErr, exitCode: binCode } = Bun.spawnSync({
+  const {
+    stdout: binOut,
+    stderr: binErr,
+    exitCode: binCode,
+  } = Bun.spawnSync({
     cmd: [bunExe(), "pm", "bin", "-g"],
     cwd: test_dir,
     stdout: "pipe",
@@ -416,7 +428,11 @@ it("should work without package.json for global commands", async () => {
   expect(binOut.toString("utf-8")).toMatch(/bin/);
 
   // Test pm default-trusted without package.json
-  const { stdout: trustedOut, stderr: trustedErr, exitCode: trustedCode } = Bun.spawnSync({
+  const {
+    stdout: trustedOut,
+    stderr: trustedErr,
+    exitCode: trustedCode,
+  } = Bun.spawnSync({
     cmd: [bunExe(), "pm", "default-trusted"],
     cwd: test_dir,
     stdout: "pipe",
@@ -431,9 +447,13 @@ it("should work without package.json for global commands", async () => {
 
 it("should require package.json for project-specific commands", async () => {
   const test_dir = tmpdirSync();
-  
+
   // Test pm ls without package.json (should fail)
-  const { stdout: lsOut, stderr: lsErr, exitCode: lsCode } = Bun.spawnSync({
+  const {
+    stdout: lsOut,
+    stderr: lsErr,
+    exitCode: lsCode,
+  } = Bun.spawnSync({
     cmd: [bunExe(), "pm", "ls"],
     cwd: test_dir,
     stdout: "pipe",
@@ -445,7 +465,11 @@ it("should require package.json for project-specific commands", async () => {
   expect(lsErr.toString("utf-8")).toContain("No package.json");
 
   // Test pm version without package.json (should fail)
-  const { stdout: versionOut, stderr: versionErr, exitCode: versionCode } = Bun.spawnSync({
+  const {
+    stdout: versionOut,
+    stderr: versionErr,
+    exitCode: versionCode,
+  } = Bun.spawnSync({
     cmd: [bunExe(), "pm", "version"],
     cwd: test_dir,
     stdout: "pipe",
@@ -457,7 +481,11 @@ it("should require package.json for project-specific commands", async () => {
   expect(versionErr.toString("utf-8")).toContain("No package.json");
 
   // Test pm bin (without -g) without package.json (should fail)
-  const { stdout: binOut, stderr: binErr, exitCode: binCode } = Bun.spawnSync({
+  const {
+    stdout: binOut,
+    stderr: binErr,
+    exitCode: binCode,
+  } = Bun.spawnSync({
     cmd: [bunExe(), "pm", "bin"],
     cwd: test_dir,
     stdout: "pipe",

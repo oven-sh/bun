@@ -6,13 +6,17 @@ import { bunEnv, bunExe, tmpdirSync } from "harness";
 
 it("pm cache commands work without package.json (#18733)", async () => {
   const test_dir = tmpdirSync();
-  
+
   // Test pm cache without package.json
-  const { stdout: cacheOut, stderr: cacheErr, exitCode: cacheCode } = Bun.spawnSync({
+  const {
+    stdout: cacheOut,
+    stderr: cacheErr,
+    exitCode: cacheCode,
+  } = Bun.spawnSync({
     cmd: [bunExe(), "pm", "cache"],
     cwd: test_dir,
     stdout: "pipe",
-    stdin: "pipe", 
+    stdin: "pipe",
     stderr: "pipe",
     env: bunEnv,
   });
@@ -21,12 +25,16 @@ it("pm cache commands work without package.json (#18733)", async () => {
   expect(cacheOut.toString("utf-8")).toMatch(/cache/);
 
   // Test pm cache rm without package.json (verify command works, don't check output details)
-  const { stdout: cacheRmOut, stderr: cacheRmErr, exitCode: cacheRmCode } = Bun.spawnSync({
+  const {
+    stdout: cacheRmOut,
+    stderr: cacheRmErr,
+    exitCode: cacheRmCode,
+  } = Bun.spawnSync({
     cmd: [bunExe(), "pm", "cache", "rm"],
     cwd: test_dir,
     stdout: "pipe",
     stdin: "pipe",
-    stderr: "pipe", 
+    stderr: "pipe",
     env: bunEnv,
   });
   expect(cacheRmCode).toBe(0);

@@ -260,8 +260,7 @@ JSC_DEFINE_HOST_FUNCTION(jsJSBunRequestClone, (JSC::JSGlobalObject * globalObjec
 
     auto clone = request->clone(vm, globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(clone));
+    return JSValue::encode(clone);
 }
 
 Structure* createJSBunRequestStructure(JSC::VM& vm, Zig::GlobalObject* globalObject)

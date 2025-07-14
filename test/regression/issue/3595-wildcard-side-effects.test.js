@@ -273,3 +273,264 @@ export const used = "used";
   expect(stderr).not.toContain("wildcard sideEffects are not supported yet");
   expect(stdout).not.toContain("wildcard sideEffects are not supported yet");
 });
+
+test("glob patterns should NOT match files outside the pattern", async () => {
+  const dir = tempDirWithFiles("glob-fail-test", {
+    "package.json": JSON.stringify({
+      "name": "glob-fail-test",
+      "sideEffects": ["src/components/*.js"]
+    }),
+    "src/index.js": `
+import "./components/comp.js";
+import "./utils/util.js";
+import "./root.js";
+console.log("done");
+    `.trim(),
+    "src/components/comp.js": `
+console.log("component side effect");
+    `.trim(),
+    "src/utils/util.js": `
+console.log("utility side effect - should be tree shaken");
+    `.trim(),
+    "src/root.js": `
+console.log("root side effect - should be tree shaken");
+    `.trim(),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "src/index.js", "--outdir", "dist", "--format", "esm"],
+    env: bunEnv,
+    cwd: dir,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
+  
+  // Component should match and preserve side effects
+  expect(bundleContent).toContain("component side effect");
+  
+  // Utils and root should NOT match and be tree-shaken
+  expect(bundleContent).not.toContain("utility side effect");
+  expect(bundleContent).not.toContain("root side effect");
+});
+
+test("sideEffects false should tree-shake everything", async () => {
+  const dir = tempDirWithFiles("false-sideeffects-test", {
+    "package.json": JSON.stringify({
+      "name": "false-sideeffects-test", 
+      "sideEffects": false
+    }),
+    "src/index.js": `
+import { used } from "./lib/used.js";
+import "./lib/unused.js";
+console.log("used:", used);
+    `.trim(),
+    "src/lib/used.js": `
+export const used = "used";
+    `.trim(),
+    "src/lib/unused.js": `
+console.log("unused side effect - should be tree shaken");
+    `.trim(),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "src/index.js", "--outdir", "dist", "--format", "esm"],
+    env: bunEnv,
+    cwd: dir,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
+  
+  // Should tree-shake unused code
+  expect(bundleContent).not.toContain("unused side effect");
+  
+  // Should keep used code
+  expect(bundleContent).toContain("used");
+});
+
+test("glob patterns with specific file extensions", async () => {
+  const dir = tempDirWithFiles("extension-glob-test", {
+    "package.json": JSON.stringify({
+      "name": "extension-glob-test",
+      "sideEffects": ["src/**/*.effect.js"]
+    }),
+    "src/index.js": `
+import "./utils/util.js";
+import "./effects/main.effect.js";
+import "./effects/secondary.js";
+console.log("done");
+    `.trim(),
+    "src/utils/util.js": `
+console.log("util side effect - should be tree shaken");
+    `.trim(),
+    "src/effects/main.effect.js": `
+console.log("main effect - should be preserved");
+    `.trim(),
+    "src/effects/secondary.js": `
+console.log("secondary effect - should be tree shaken");
+    `.trim(),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "src/index.js", "--outdir", "dist", "--format", "esm"],
+    env: bunEnv,
+    cwd: dir,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
+  
+  // Only .effect.js files should be preserved
+  expect(bundleContent).toContain("main effect - should be preserved");
+  expect(bundleContent).not.toContain("util side effect");
+  expect(bundleContent).not.toContain("secondary effect");
+});
+
+test("CSS files in glob patterns should be ignored", async () => {
+  const dir = tempDirWithFiles("css-glob-test", {
+    "package.json": JSON.stringify({
+      "name": "css-glob-test",
+      "sideEffects": ["src/styles/*.css", "src/lib/*.js"]
+    }),
+    "src/index.js": `
+import { lib } from "./lib/lib.js";
+import "./styles/main.css";
+console.log("lib:", lib);
+    `.trim(),
+    "src/lib/lib.js": `
+console.log("lib side effect");
+export const lib = "lib";
+    `.trim(),
+    "src/styles/main.css": `body { color: red; }`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "src/index.js", "--outdir", "dist", "--format", "esm"],
+    env: bunEnv,
+    cwd: dir,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
+  
+  // JS files should match and preserve side effects
+  expect(bundleContent).toContain("lib side effect");
+});
+
+test("invalid glob patterns should not crash bundler", async () => {
+  const dir = tempDirWithFiles("invalid-glob-test", {
+    "package.json": JSON.stringify({
+      "name": "invalid-glob-test",
+      "sideEffects": ["src/[unclosed.js", "src/lib/*.js"]
+    }),
+    "src/index.js": `
+import { lib } from "./lib/lib.js";
+console.log("lib:", lib);
+    `.trim(),
+    "src/lib/lib.js": `
+console.log("lib side effect");
+export const lib = "lib";
+    `.trim(),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "src/index.js", "--outdir", "dist", "--format", "esm"],
+    env: bunEnv,
+    cwd: dir,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  // Should still build successfully despite invalid glob pattern
+  expect(exitCode).toBe(0);
+  
+  const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
+  
+  // Valid glob should still work
+  expect(bundleContent).toContain("lib side effect");
+});
+
+test("deeply nested glob patterns", async () => {
+  const dir = tempDirWithFiles("deep-glob-test", {
+    "package.json": JSON.stringify({
+      "name": "deep-glob-test",
+      "sideEffects": ["src/**/effects/*.js"]
+    }),
+    "src/index.js": `
+import "./shallow.js";
+import "./components/effects/deep.js";
+import "./utils/helpers/effects/nested.js";
+console.log("done");
+    `.trim(),
+    "src/shallow.js": `
+console.log("shallow side effect - should be tree shaken");
+    `.trim(),
+    "src/components/effects/deep.js": `
+console.log("deep side effect - should be preserved");
+    `.trim(),
+    "src/utils/helpers/effects/nested.js": `
+console.log("nested side effect - should be preserved");
+    `.trim(),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "src/index.js", "--outdir", "dist", "--format", "esm"],
+    env: bunEnv,
+    cwd: dir,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
+  
+  // Shallow should be tree-shaken
+  expect(bundleContent).not.toContain("shallow side effect");
+  
+  // Deep nested effects should be preserved
+  expect(bundleContent).toContain("deep side effect");
+  expect(bundleContent).toContain("nested side effect");
+});

@@ -76,7 +76,11 @@ it("console.group", async () => {
     .replaceAll("\r\n", "\n")
     .replaceAll("\\", "/")
     .trim()
-    .replaceAll(filepath, "<file>");
+    .replaceAll(filepath, "<file>")
+    // Normalize line numbers for consistency between debug and release builds
+    .replace(/at <file>:\d+:\d+/g, "at <file>:NN:NN")
+    .replace(/at new (\w+) \(<file>:\d+:\d+\)/g, "at new $1 (<file>:NN:NN)")
+    .replace(/loadAndEvaluateModule \(\d+:\d+\)/g, "loadAndEvaluateModule (N:NN)");
   expect(stdout).toMatchInlineSnapshot(`
 "Basic group
   Inside basic group
@@ -118,8 +122,8 @@ Quote"Backslash
   expect(stderr).toMatchInlineSnapshot(`
 "Warning log
   warn: console.warn an error
-      at <file>:56:14
-      at loadAndEvaluateModule (7:44)
+      at <file>:NN:NN
+      at loadAndEvaluateModule (N:NN)
 
   52 | console.group("Different logs");
 53 | console.log("Regular log");
@@ -129,8 +133,8 @@ Quote"Backslash
 57 | console.error(new Error("console.error an error"));
                    ^
 error: console.error an error
-      at <file>:57:15
-      at loadAndEvaluateModule (7:44)
+      at <file>:NN:NN
+      at loadAndEvaluateModule (N:NN)
 
   41 | console.groupEnd(); // Extra
 42 | console.groupEnd(); // Extra
@@ -140,14 +144,14 @@ error: console.error an error
 46 |     super(message);
          ^
 NamedError: console.error a named error
-      at new NamedError (<file>:46:5)
-      at <file>:58:15
-      at loadAndEvaluateModule (7:44)
+      at new NamedError (<file>:NN:NN)
+      at <file>:NN:NN
+      at loadAndEvaluateModule (N:NN)
 
   NamedError: console.warn a named error
-      at new NamedError (<file>:46:5)
-      at <file>:59:14
-      at loadAndEvaluateModule (7:44)
+      at new NamedError (<file>:NN:NN)
+      at <file>:NN:NN
+      at loadAndEvaluateModule (N:NN)
 
   Error log"
 `);

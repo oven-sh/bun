@@ -93,8 +93,10 @@ pub const PackCommand = struct {
     };
 
     pub fn execWithManager(ctx: Command.Context, manager: *PackageManager) !void {
-        Output.prettyln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        Output.flush();
+        if (manager.options.log_level != .silent) {
+            Output.prettyln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+            Output.flush();
+        }
 
         var lockfile: Lockfile = undefined;
         const load_from_disk_result = lockfile.loadFromCwd(

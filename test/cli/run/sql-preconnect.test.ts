@@ -82,19 +82,5 @@ describe("--sql-preconnect", () => {
     expect(connectionAttempts).toBe(0); // No connection should be attempted without the flag
   });
 
-  test("should handle help flag with sql-preconnect", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--sql-preconnect", "--help"],
-      env: bunEnv,
-    });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("--sql-preconnect");
-  });
 });

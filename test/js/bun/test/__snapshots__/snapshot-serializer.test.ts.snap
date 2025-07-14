@@ -1,0 +1,9 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`expect.addSnapshotSerializer basic functionality 1`] = `Date(1234567890123)`;
+
+exports[`expect.addSnapshotSerializer with nested objects 1`] = `CustomObject(test: {"nested":true,"array":[1,2,3]})`;
+
+exports[`expect.addSnapshotSerializer precedence - last added wins 1`] = `Second: hello`;
+
+exports[`expect.addSnapshotSerializer handles complex objects 1`] = `Map {"key1" => "value1", "key2" => {"nested":true}, 123 => "number key"}`;

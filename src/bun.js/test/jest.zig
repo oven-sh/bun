@@ -87,6 +87,9 @@ pub const TestRunner = struct {
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
 
+    /// Per-file snapshot serializers, ordered by registration (last added has priority)
+    snapshot_serializers: std.ArrayHashMapUnmanaged(File.ID, std.ArrayListUnmanaged(JSValue), std.array_hash_map.AutoContext(File.ID), false) = .{},
+
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
     pub const Summary = struct {

@@ -2916,11 +2916,106 @@ pub const Expect = struct {
             }
         }
 
-        value.jestSnapshotPrettyFormat(pretty_value, globalThis) catch {
+        try this.serializeWithCustomSerializers(globalThis, value, pretty_value);
+    }
+
+    fn serializeWithCustomSerializers(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, pretty_value: *MutableString) bun.JSError!void {
+        const runner = Jest.runner orelse {
+            // Fallback to default serialization if no runner available
+            return value.jestSnapshotPrettyFormat(pretty_value, globalThis) catch {
+                var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+                defer formatter.deinit();
+                return globalThis.throw("Failed to pretty format value: {s}", .{value.toFmt(&formatter)});
+            };
+        };
+
+        const current_test_scope = this.testScope() orelse {
+            // Fallback to default serialization if no test scope available
+            return value.jestSnapshotPrettyFormat(pretty_value, globalThis) catch {
+                var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+                defer formatter.deinit();
+                return globalThis.throw("Failed to pretty format value: {s}", .{value.toFmt(&formatter)});
+            };
+        };
+
+        const file_id = current_test_scope.describe.file_id;
+
+        // Check if there are any custom serializers for this file
+        if (runner.snapshot_serializers.get(file_id)) |serializers| {
+            // Iterate through serializers in reverse order (most recently added first)
+            var i: usize = serializers.items.len;
+            while (i > 0) {
+                i -= 1;
+                const serializer = serializers.items[i];
+
+                // Call the test function to see if this serializer matches
+                const test_fn = serializer.get(globalThis, "test") catch continue orelse continue;
+                const test_result = test_fn.call(globalThis, serializer, &[_]JSValue{value}) catch continue;
+
+                if (test_result.toBoolean()) {
+                    // This serializer matches, use it
+                    const serialize_fn = serializer.get(globalThis, "serialize") catch continue orelse continue;
+
+                    // Create a printer function for recursive serialization
+                    const printer_fn = this.createPrinterFunction(globalThis, file_id);
+
+                    const serialized_result = serialize_fn.call(globalThis, serializer, &[_]JSValue{ value, printer_fn }) catch {
+                        // If the serializer call fails, continue to the next one
+                        continue;
+                    };
+
+                    // Convert the result to a string
+                    var temp_str = ZigString.Empty;
+                    try serialized_result.toZigString(&temp_str, globalThis);
+                    const result_slice = temp_str.toSlice(default_allocator);
+                    defer result_slice.deinit();
+
+                    try pretty_value.appendSlice(result_slice.slice());
+                    return;
+                }
+            }
+        }
+
+        // No custom serializer matched, use default serialization
+        return value.jestSnapshotPrettyFormat(pretty_value, globalThis) catch {
             var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
             defer formatter.deinit();
             return globalThis.throw("Failed to pretty format value: {s}", .{value.toFmt(&formatter)});
         };
+    }
+
+    fn createPrinterFunction(this: *Expect, globalThis: *JSGlobalObject, file_id: u32) JSValue {
+        _ = this; // For now, we'll use a simpler approach without recursive serialization
+        _ = file_id; // unused for now
+
+        // Create a printer function that serializes values using Jest's default format
+        // This is passed as the second argument to serializer.serialize(val, printer)
+        const printer_fn = JSC.JSFunction.create(globalThis, bun.String.static("printer"), snapshotPrinterCallback, 1, .{});
+
+        return printer_fn;
+    }
+
+    /// Callback function for the printer function passed to snapshot serializers
+    fn snapshotPrinterCallback(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
+        const args = callFrame.argumentsAsArray(1);
+        if (args.len != 1) {
+            return globalThis.throw("printer() requires exactly one argument", .{});
+        }
+
+        const val = args[0];
+
+        // Use the same pretty formatting as snapshots do
+        var temp_pretty_value = MutableString.init(default_allocator, 0) catch |err| {
+            return globalThis.throw("Failed to allocate memory for printer: {}", .{err});
+        };
+        defer temp_pretty_value.deinit();
+
+        val.jestSnapshotPrettyFormat(&temp_pretty_value, globalThis) catch |err| {
+            return globalThis.throw("Failed to format value in printer: {}", .{err});
+        };
+
+        // Return the formatted string as a JSValue
+        return ZigString.fromUTF8(temp_pretty_value.slice()).toJS(globalThis);
     }
     fn snapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, hint: []const u8, comptime fn_name: []const u8) bun.JSError!JSValue {
         var pretty_value: MutableString = try MutableString.init(default_allocator, 0);
@@ -4904,7 +4999,77 @@ pub const Expect = struct {
         return thisValue;
     }
 
-    pub const addSnapshotSerializer = notImplementedStaticFn;
+    pub fn addSnapshotSerializer(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+        defer globalThis.bunVM().autoGarbageCollect();
+
+        const _arguments = callFrame.arguments_old(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len != 1) {
+            return globalThis.throw("addSnapshotSerializer() requires exactly one argument", .{});
+        }
+
+        const serializer_arg = arguments[0];
+        if (!serializer_arg.isObject()) {
+            return globalThis.throw("addSnapshotSerializer() argument must be an object", .{});
+        }
+
+        // Validate serializer has required methods
+        const test_prop = serializer_arg.get(globalThis, "test") catch {
+            return globalThis.throw("addSnapshotSerializer() failed to get 'test' property", .{});
+        } orelse {
+            return globalThis.throw("addSnapshotSerializer() argument must have a 'test' method", .{});
+        };
+
+        if (!test_prop.isCallable()) {
+            return globalThis.throw("addSnapshotSerializer() 'test' property must be a function", .{});
+        }
+
+        const serialize_prop = serializer_arg.get(globalThis, "serialize") catch {
+            return globalThis.throw("addSnapshotSerializer() failed to get 'serialize' property", .{});
+        } orelse {
+            return globalThis.throw("addSnapshotSerializer() argument must have a 'serialize' method", .{});
+        };
+
+        if (!serialize_prop.isCallable()) {
+            return globalThis.throw("addSnapshotSerializer() 'serialize' property must be a function", .{});
+        }
+
+        // Get the current test runner and file ID
+        const runner = Jest.runner orelse {
+            return globalThis.throw("addSnapshotSerializer() can only be called within a test", .{});
+        };
+
+        // We need to get the current test scope, but we don't have an Expect instance here
+        // So we'll need to get it from the Jest runner or another way
+        // For now, let's try getting the current test from the Jest runner
+        const current_test = Jest.runner.?.pending_test orelse {
+            return globalThis.throw("addSnapshotSerializer() can only be called within a test", .{});
+        };
+
+        const current_test_scope = current_test.describe;
+
+        const file_id = current_test_scope.file_id;
+
+        // Get or create the serializer list for this file
+        const gop = runner.snapshot_serializers.getOrPut(runner.allocator, file_id) catch |err| {
+            return globalThis.throw("Failed to allocate memory for snapshot serializer: {}", .{err});
+        };
+
+        if (!gop.found_existing) {
+            gop.value_ptr.* = std.ArrayListUnmanaged(JSValue){};
+        }
+
+        // Add the serializer to the list (most recently added gets priority)
+        gop.value_ptr.append(runner.allocator, serializer_arg) catch |err| {
+            return globalThis.throw("Failed to add snapshot serializer: {}", .{err});
+        };
+
+        // Protect the serializer from garbage collection
+        serializer_arg.protect();
+
+        return .js_undefined;
+    }
 
     pub fn hasAssertions(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         _ = callFrame;

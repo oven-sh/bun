@@ -148,7 +148,7 @@ pub const PackageJSON = struct {
         );
 
         pub const GlobList = std.ArrayListUnmanaged([]const u8);
-        
+
         pub const MixedPatterns = struct {
             exact: Map,
             globs: GlobList,
@@ -175,7 +175,7 @@ pub const PackageJSON = struct {
                     // Normalize path for cross-platform glob matching
                     const normalized_path = normalizePathForGlob(bun.default_allocator, path) catch return true;
                     defer bun.default_allocator.free(normalized_path);
-                    
+
                     for (glob_list.items) |pattern| {
                         if (glob.match(bun.default_allocator, pattern, normalized_path).matches()) {
                             return true;
@@ -191,7 +191,7 @@ pub const PackageJSON = struct {
                     // Then check glob patterns with normalized path
                     const normalized_path = normalizePathForGlob(bun.default_allocator, path) catch return true;
                     defer bun.default_allocator.free(normalized_path);
-                    
+
                     for (mixed.globs.items) |pattern| {
                         if (glob.match(bun.default_allocator, pattern, normalized_path).matches()) {
                             return true;
@@ -829,7 +829,7 @@ pub const PackageJSON = struct {
                 var glob_list = SideEffects.GlobList{};
                 var has_globs = false;
                 var has_exact = false;
-                
+
                 // First pass: check if we have glob patterns and exact patterns
                 while (array.next()) |item| {
                     if (item.asString(allocator)) |name| {
@@ -840,29 +840,29 @@ pub const PackageJSON = struct {
                         }
                     }
                 }
-                
+
                 // Reset array for second pass
                 array = array_;
-                
+
                 if (has_globs and has_exact) {
                     // Mixed patterns - use both exact and glob matching
                     map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
                     glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
-                    
+
                     while (array.next()) |item| {
                         if (item.asString(allocator)) |name| {
                             // Skip CSS files as they're not relevant for tree-shaking
                             if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
                                 continue;
-                                
+
                             // Store the pattern relative to the package directory
                             var joined = [_]string{
                                 json_source.path.name.dirWithTrailingSlash(),
                                 name,
                             };
-                            
+
                             const pattern = r.fs.join(&joined);
-                            
+
                             if (strings.containsChar(name, '*') or strings.containsChar(name, '?') or strings.containsChar(name, '[') or strings.containsChar(name, '{')) {
                                 glob_list.appendAssumeCapacity(pattern);
                             } else {
@@ -881,13 +881,13 @@ pub const PackageJSON = struct {
                             // Skip CSS files as they're not relevant for tree-shaking
                             if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
                                 continue;
-                                
+
                             // Store the pattern relative to the package directory
                             var joined = [_]string{
                                 json_source.path.name.dirWithTrailingSlash(),
                                 name,
                             };
-                            
+
                             const pattern = r.fs.join(&joined);
                             glob_list.appendAssumeCapacity(pattern);
                         }

@@ -287,7 +287,7 @@ describe("bun run --workspace", () => {
   test("workspace supports relative paths", () => {
     runWithWorkspaceSuccess({
       cwd: cwd_packages,
-      workspace: "./pkgb", 
+      workspace: "./pkgb",
       target_pattern: /scriptb/,
       antipattern: [/scripta/, /scriptc/, /scriptd/],
     });
@@ -338,11 +338,11 @@ describe("workspace without package names", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    
+
     expect(exitCode).toBe(0);
     expect(stderr.toString()).toBeEmpty();
     const output = stdout.toString();
-    
+
     expect(output).toMatch(/unnamed1-script/);
     expect(output).not.toMatch(/unnamed2-script/);
   });
@@ -355,11 +355,11 @@ describe("workspace without package names", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    
+
     expect(exitCode).toBe(0);
     expect(stderr.toString()).toBeEmpty();
     const output = stdout.toString();
-    
+
     expect(output).toMatch(/unnamed1-script/);
     expect(output).toMatch(/unnamed2-script/);
   });

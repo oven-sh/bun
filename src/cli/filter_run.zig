@@ -485,7 +485,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             }
             break :blk false;
         };
-        
+
         if (ctx.filters.len > 0 and ctx.workspaces.len > 0) {
             // Both --filter and --workspace specified: package must match at least one
             if (!matches_filter and !matches_workspace) continue;
@@ -588,7 +588,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         }
     }
     // compute dependencies
-    // Skip dependency order computation for --workspace to preserve workspace definition order  
+    // Skip dependency order computation for --workspace to preserve workspace definition order
     const is_workspace_mode = ctx.workspaces.len > 0 and ctx.filters.len == 0;
     if (!is_workspace_mode) {
         for (state.handles) |*handle| {
@@ -636,7 +636,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             state.handles[i + 1].remaining_dependencies += 1;
         }
     }
-    
+
     // In workspace mode, serialize execution to preserve workspace definition order
     if (is_workspace_mode) {
         for (0..state.handles.len - 1) |i| {

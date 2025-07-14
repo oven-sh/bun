@@ -26,15 +26,52 @@ patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
 
+node_linker: NodeLinker = .auto,
+
+pub const NodeLinker = enum(u8) {
+    // If workspaces are used: isolated
+    // If not: hoisted
+    // Used when nodeLinker is absent from package.json/bun.lock/bun.lockb
+    auto,
+
+    hoisted,
+    isolated,
+
+    pub fn fromStr(input: string) ?NodeLinker {
+        if (strings.eqlComptime(input, "hoisted")) {
+            return .hoisted;
+        }
+        if (strings.eqlComptime(input, "isolated")) {
+            return .isolated;
+        }
+        return null;
+    }
+};
+
+pub const DepSorter = struct {
+    lockfile: *const Lockfile,
+
+    pub fn isLessThan(sorter: @This(), l: DependencyID, r: DependencyID) bool {
+        const deps_buf = sorter.lockfile.buffers.dependencies.items;
+        const string_buf = sorter.lockfile.buffers.string_bytes.items;
+
+        const l_dep = &deps_buf[l];
+        const r_dep = &deps_buf[r];
+
+        return switch (l_dep.behavior.cmp(r_dep.behavior)) {
+            .lt => true,
+            .gt => false,
+            .eq => strings.order(l_dep.name.slice(string_buf), r_dep.name.slice(string_buf)) == .lt,
+        };
+    }
+};
+
 pub const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
 
 pub const Scripts = struct {
     const MAX_PARALLEL_PROCESSES = 10;
-    pub const Entry = struct {
-        script: string,
-    };
-    pub const Entries = std.ArrayListUnmanaged(Entry);
+    pub const Entries = std.ArrayListUnmanaged(string);
 
     pub const names = [_]string{
         "preinstall",
@@ -73,7 +110,7 @@ pub const Scripts = struct {
         inline for (Scripts.names) |hook| {
             const list = &@field(this, hook);
             for (list.items) |entry| {
-                allocator.free(entry.script);
+                allocator.free(entry);
             }
             list.deinit(allocator);
         }
@@ -137,7 +174,7 @@ pub const LoadResult = union(enum) {
                 return if (save_text_lockfile) .text else .binary;
             },
             .err => |err| {
-                // an error occured, but we still loaded from an existing lockfile
+                // an error occurred, but we still loaded from an existing lockfile
                 if (options.save_text_lockfile) |save_text_lockfile| {
                     if (save_text_lockfile) {
                         return .text;
@@ -244,9 +281,9 @@ pub fn loadFromDir(
     };
 
     if (lockfile_format == .text) {
-        const source = logger.Source.initPathString("bun.lock", buf);
+        const source = &logger.Source.initPathString("bun.lock", buf);
         initializeStore();
-        const json = JSON.parsePackageJSONUTF8(&source, log, allocator) catch |err| {
+        const json = JSON.parsePackageJSONUTF8(source, log, allocator) catch |err| {
             return .{
                 .err = .{
                     .step = .parse_file,
@@ -257,7 +294,7 @@ pub fn loadFromDir(
             };
         };
 
-        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log, manager) catch |err| {
+        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log, manager) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 else => {
@@ -306,13 +343,13 @@ pub fn loadFromDir(
 
                 const text_lockfile_bytes = writer_buf.list.items;
 
-                const source = logger.Source.initPathString("bun.lock", text_lockfile_bytes);
+                const source = &logger.Source.initPathString("bun.lock", text_lockfile_bytes);
                 initializeStore();
-                const json = JSON.parsePackageJSONUTF8(&source, log, allocator) catch |err| {
+                const json = JSON.parsePackageJSONUTF8(source, log, allocator) catch |err| {
                     Output.panic("failed to print valid json from binary lockfile: {s}", .{@errorName(err)});
                 };
 
-                TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log, manager) catch |err| {
+                TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log, manager) catch |err| {
                     Output.panic("failed to parse text lockfile converted from binary lockfile: {s}", .{@errorName(err)});
                 };
 
@@ -618,6 +655,8 @@ pub fn cleanWithLogger(
     try new.buffers.preallocate(old.buffers, old.allocator);
     try new.patched_dependencies.ensureTotalCapacity(old.allocator, old.patched_dependencies.entries.len);
 
+    new.node_linker = old.node_linker;
+
     old.scratch.dependency_list_queue.head = 0;
 
     {
@@ -873,8 +912,6 @@ pub fn hoist(
     const allocator = lockfile.allocator;
     var slice = lockfile.packages.slice();
 
-    var path_buf: bun.PathBuffer = undefined;
-
     var builder = Tree.Builder(method){
         .name_hashes = slice.items(.name_hash),
         .queue = .init(allocator),
@@ -885,7 +922,6 @@ pub fn hoist(
         .log = log,
         .lockfile = lockfile,
         .manager = manager,
-        .path_buf = &path_buf,
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
     };
@@ -895,7 +931,6 @@ pub fn hoist(
         Tree.invalid_id,
         method,
         &builder,
-        if (method == .filter) manager.options.log_level,
     );
 
     // This goes breadth-first
@@ -905,7 +940,6 @@ pub fn hoist(
             item.hoist_root_id,
             method,
             &builder,
-            if (method == .filter) manager.options.log_level,
         );
     }
 
@@ -1207,6 +1241,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .workspace_versions = .{},
         .overrides = .{},
         .catalogs = .{},
+        .node_linker = .auto,
         .meta_hash = zero_hash,
     };
 }
@@ -1807,8 +1842,8 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
     inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
         const scripts = @field(this.scripts, field_name);
         for (scripts.items) |script| {
-            if (script.script.len > 0) {
-                string_builder.fmtCount("{s}: {s}\n", .{ field_name, script.script });
+            if (script.len > 0) {
+                string_builder.fmtCount("{s}: {s}\n", .{ field_name, script });
                 has_scripts = true;
             }
         }
@@ -1843,8 +1878,8 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
         inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
             const scripts = @field(this.scripts, field_name);
             for (scripts.items) |script| {
-                if (script.script.len > 0) {
-                    _ = string_builder.fmt("{s}: {s}\n", .{ field_name, script.script });
+                if (script.len > 0) {
+                    _ = string_builder.fmt("{s}: {s}\n", .{ field_name, script });
                 }
             }
         }
@@ -1952,17 +1987,17 @@ pub const default_trusted_dependencies = brk: {
             @compileError("default-trusted-dependencies.txt is too large, please increase 'max_default_trusted_dependencies' in lockfile.zig");
         }
 
-        // just in case there's duplicates from truncating
-        if (map.has(dep)) @compileError("Duplicate hash due to u64 -> u32 truncation");
-
-        map.putAssumeCapacity(dep, {});
+        const entry = map.getOrPutAssumeCapacity(dep);
+        if (entry.found_existing) {
+            @compileError("Duplicate trusted dependency: " ++ dep);
+        }
     }
 
     const final = map;
     break :brk &final;
 };
 
-pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
+pub fn hasTrustedDependency(this: *const Lockfile, name: []const u8) bool {
     if (this.trusted_dependencies) |trusted_dependencies| {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
         return trusted_dependencies.contains(hash);
@@ -1998,33 +2033,21 @@ const zero_hash = std.mem.zeroes(MetaHash);
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const bun = @import("bun");
-const clap = bun.clap;
 const default_allocator = bun.default_allocator;
-const js_parser = bun.js_parser;
 const logger = bun.logger;
 const string = bun.string;
 const stringZ = bun.stringZ;
 const strings = bun.strings;
 const assert = bun.assert;
-const AsyncHTTP = bun.http.AsyncHTTP;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const Environment = bun.Environment;
-const FeatureFlags = bun.FeatureFlags;
 const File = bun.sys.File;
-const Glob = bun.glob;
 const Global = bun.Global;
 const GlobalStringBuilder = bun.StringBuilder;
-const HTTPChannel = bun.http.HTTPChannel;
-const HeaderBuilder = bun.http.HeaderBuilder;
 const Install = bun.install;
-const JSAst = bun.JSAst;
-const JSLexer = bun.js_lexer;
 const JSON = bun.JSON;
-const JSPrinter = bun.js_printer;
-const Lock = bun.Mutex;
 const MutableString = bun.MutableString;
 const OOM = bun.OOM;
-const Origin = Install.Origin;
 const Output = bun.Output;
 const PackageID = Install.PackageID;
 const PackageInstall = Install.PackageInstall;
@@ -2036,46 +2059,25 @@ const SlicedString = Semver.SlicedString;
 const String = Semver.String;
 const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const alignment_bytes_to_repeat_buffer = Install.alignment_bytes_to_repeat_buffer;
 const initializeStore = Install.initializeStore;
 const invalid_dependency_id = Install.invalid_dependency_id;
 const invalid_package_id = Install.invalid_package_id;
 pub const StringPool = String.Builder.StringPool;
-const Aligner = Install.Aligner;
 const DependencyID = Install.DependencyID;
 const ExternalSlice = Install.ExternalSlice;
-const ExternalSliceAligned = Install.ExternalSliceAligned;
 const ExternalString = Semver.ExternalString;
-const ExternalStringList = Install.ExternalStringList;
-const ExternalStringMap = Install.ExternalStringMap;
 const Features = Install.Features;
 const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
-const Api = @import("../api/schema.zig").Api;
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
-const BunArguments = @import("../cli.zig").Arguments;
-const Command = @import("../cli.zig").Command;
 const DotEnv = @import("../env_loader.zig");
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const Expr = @import("../js_ast.zig").Expr;
-const linker = @import("../linker.zig");
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const Path = @import("../resolver/resolve_path.zig");
 const Crypto = @import("../sha.zig").Hashers;
 const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
-const sync = @import("../sync.zig");
-const URL = @import("../url.zig").URL;
 const which = @import("../which.zig").which;
-const Bin = @import("./bin.zig").Bin;
 const Dependency = @import("./dependency.zig");
-const Behavior = Dependency.Behavior;
-const ExtractTarball = @import("./extract_tarball.zig");
-const Integrity = @import("./integrity.zig").Integrity;
 const TextLockfile = @import("./lockfile/bun.lock.zig");
 const migration = @import("./migration.zig");
-const Npm = @import("./npm.zig");
-const Repository = @import("./repository.zig").Repository;
 const Resolution = @import("./resolution.zig").Resolution;
-const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;

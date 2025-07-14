@@ -1,5 +1,4 @@
 const JSC = bun.JSC;
-const std = @import("std");
 const bun = @import("bun");
 
 pub const CallbackGetterFn = fn (JSC.JSValue) callconv(.C) JSC.JSValue;

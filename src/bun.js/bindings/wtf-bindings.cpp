@@ -194,7 +194,7 @@ String base64URLEncodeToString(Vector<uint8_t> data)
     std::span<LChar> ptr;
     auto result = String::createUninitialized(encodedLength, ptr);
 
-    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.data()), data.size(), reinterpret_cast<char*>(ptr.data()), encodedLength);
+    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.begin()), data.size(), reinterpret_cast<char*>(ptr.data()), encodedLength);
     if (result.length() != encodedLength) {
         return result.substringSharingImpl(0, encodedLength);
     }

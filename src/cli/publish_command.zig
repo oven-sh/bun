@@ -5,7 +5,6 @@ const Output = bun.Output;
 const Global = bun.Global;
 const http = bun.http;
 const OOM = bun.OOM;
-const Headers = http.Headers;
 const HeaderBuilder = http.HeaderBuilder;
 const MutableString = bun.MutableString;
 const URL = bun.URL;
@@ -34,7 +33,6 @@ const DotEnv = bun.DotEnv;
 const Open = @import("../open.zig");
 const E = bun.JSAst.E;
 const G = bun.JSAst.G;
-const BabyList = bun.BabyList;
 
 pub const PublishCommand = struct {
     pub fn Context(comptime directory_publish: bool) type {
@@ -169,8 +167,8 @@ pub const PublishCommand = struct {
                 const package_json_contents = maybe_package_json_contents orelse return error.MissingPackageJSON;
 
                 const package_name, const package_version, var json, const json_source = package_info: {
-                    const source = logger.Source.initPathString("package.json", package_json_contents);
-                    const json = JSON.parsePackageJSONUTF8(&source, manager.log, ctx.allocator) catch |err| {
+                    const source = &logger.Source.initPathString("package.json", package_json_contents);
+                    const json = JSON.parsePackageJSONUTF8(source, manager.log, ctx.allocator) catch |err| {
                         return switch (err) {
                             error.OutOfMemory => |oom| return oom,
                             else => error.InvalidPackageJSON,
@@ -870,7 +868,7 @@ pub const PublishCommand = struct {
         package_name: string,
         package_version: string,
         json: *Expr,
-        json_source: logger.Source,
+        json_source: *const logger.Source,
         shasum: sha.SHA1.Digest,
         integrity: sha.SHA512.Digest,
     ) OOM!string {
@@ -968,7 +966,7 @@ pub const PublishCommand = struct {
             @TypeOf(&writer),
             &writer,
             json.*,
-            &json_source,
+            json_source,
             .{
                 .minify_whitespace = true,
                 .mangled_props = null,
@@ -1151,7 +1149,7 @@ pub const PublishCommand = struct {
                     var dir, const dir_subpath, const close_dir = dir_info;
                     defer if (close_dir) dir.close();
 
-                    var iter = bun.DirIterator.iterate(dir, .u8);
+                    var iter = bun.DirIterator.iterate(.fromStdDir(dir), .u8);
                     while (iter.next().unwrap() catch null) |entry| {
                         const name, const subpath = name_and_subpath: {
                             const name = entry.name.slice();
@@ -1248,7 +1246,7 @@ pub const PublishCommand = struct {
                 if (ci_name != null) " ci/" else "",
                 ci_name orelse "",
             });
-            // headers.count("user-agent", "npm/10.8.3 node/v22.6.0 darwin arm64 workspaces/false");
+            // headers.count("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.count("user-agent", print_buf.items);
             print_buf.clearRetainingCapacity();
 
@@ -1297,7 +1295,7 @@ pub const PublishCommand = struct {
                 if (ci_name != null) " ci/" else "",
                 ci_name orelse "",
             });
-            // headers.append("user-agent", "npm/10.8.3 node/v22.6.0 darwin arm64 workspaces/false");
+            // headers.append("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.append("user-agent", print_buf.items);
             print_buf.clearRetainingCapacity();
 

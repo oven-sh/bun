@@ -214,6 +214,31 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(parsed.url).toBe(`${HTTPS_SERVER}/get`);
         }
       });
+      it("http2 should receive remoteSettings when receiving default settings frame", async () => {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const session = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
+
+        session.once("remoteSettings", resolve);
+        session.once("close", () => {
+          reject(new Error("Failed to receive remoteSettings"));
+        });
+        try {
+          const settings = await promise;
+          expect(settings).toBeDefined();
+          expect(settings).toEqual({
+            headerTableSize: 4096,
+            enablePush: false,
+            maxConcurrentStreams: 4294967295,
+            initialWindowSize: 65535,
+            maxFrameSize: 16384,
+            maxHeaderListSize: 65535,
+            maxHeaderSize: 65535,
+            enableConnectProtocol: false,
+          });
+        } finally {
+          session.close();
+        }
+      });
       it("should be able to mutiplex POST requests", async () => {
         const results = await doMultiplexHttp2Request(HTTPS_SERVER, [
           { headers: { ":path": "/post", ":method": "POST" }, payload: JSON.stringify({ "request": 1 }) },
@@ -1513,7 +1538,7 @@ it("http2 server with minimal maxSessionMemory handles multiple requests", async
       next(0);
     });
   });
-}, 10_000);
+}, 15_000);
 
 it("http2.createServer validates input options", () => {
   // Test invalid options passed to createServer

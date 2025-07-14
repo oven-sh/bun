@@ -661,7 +661,7 @@ describe("bun test", () => {
         `,
       });
       numbers.forEach(numbers => {
-        expect(stderr).not.toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+        expect(stderr).not.toContain(`(pass) ${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
       });
     });
     test("should allow tests run with test.each to be matched", () => {
@@ -683,9 +683,9 @@ describe("bun test", () => {
       });
       numbers.forEach(numbers => {
         if (numbers[0] === 1) {
-          expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+          expect(stderr).toContain(`(pass) ${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
         } else {
-          expect(stderr).not.toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+          expect(stderr).not.toContain(`(pass) ${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
         }
       });
     });
@@ -883,6 +883,61 @@ describe("bun test", () => {
     test.todo("check formatting for %p", () => {});
   });
 
+  test("Prints error when no test matches", () => {
+    const stderr = runTest({
+      args: ["-t", "not-a-test"],
+      input: `
+        import { test, expect } from "bun:test";
+        test("test", () => {});
+      `,
+      expectExitCode: 1,
+    });
+    expect(
+      stderr
+        .replace(/bun-test-(.*)\.test\.ts/, "bun-test-*.test.ts")
+        .trim()
+        .replace(/\[.*\ms\]/, "[xx ms]"),
+    ).toMatchInlineSnapshot(`
+      "bun-test-*.test.ts:
+
+      error: regex "not-a-test" matched 0 tests. Searched 1 file (skipping 1 test) [xx ms]"
+    `);
+  });
+
+  test("Does not print the regex error when a test fails", () => {
+    const stderr = runTest({
+      args: ["-t", "not-a-test"],
+      input: `
+        import { test, expect } from "bun:test";
+        test("not-a-test", () => {
+          expect(false).toBe(true);
+        });
+      `,
+      expectExitCode: 1,
+    });
+    expect(stderr).not.toContain("error: regex");
+    expect(stderr).toContain("1 fail");
+  });
+
+  test("Does not print the regex error when a test matches and a test passes", () => {
+    const stderr = runTest({
+      args: ["-t", "not-a-test"],
+      input: `
+        import { test, expect } from "bun:test";
+        test("not-a-test", () => {
+          expect(false).toBe(true); 
+        });
+        test("not-a-test", () => {
+          expect(true).toBe(true);
+        });
+      `,
+      expectExitCode: 1,
+    });
+    expect(stderr).not.toContain("error: regex");
+    expect(stderr).toContain("1 fail");
+    expect(stderr).toContain("1 pass");
+  });
+
   test("path to a non-test.ts file will work", () => {
     const stderr = runTest({
       args: ["./index.ts"],
@@ -919,6 +974,63 @@ describe("bun test", () => {
     expect(stderr).not.toContain("test #1");
     expect(stderr).toContain("index.ts");
   });
+
+  test("Skipped and todo tests are filtered out when not matching -t filter", () => {
+    const stderr = runTest({
+      args: ["-t", "should match"],
+      input: `
+        import { test, describe } from "bun:test";
+
+        describe("group 1", () => {
+          test("should match filter", () => {
+            console.log("this test should run");
+          });
+
+          test("should not match filter", () => {
+            console.log("this test should be filtered out");
+          });
+
+          test.skip("skipped test that should not match", () => {
+            console.log("this skipped test should be filtered out");
+          });
+
+          test.todo("todo test that should not match", () => {
+            console.log("this todo test should be filtered out");
+          });
+        });
+
+        describe("group 2", () => {
+          test("another test that should match filter", () => {
+            console.log("this test should run");
+          });
+
+          test.skip("another skipped test", () => {
+            console.log("this skipped test should be filtered out");
+          });
+
+          test.todo("another todo test", () => {
+            console.log("this todo test should be filtered out");
+          });
+        });
+      `,
+    });
+    expect(
+      stderr
+        .replace(/bun-test-(.*)\.test\.ts/, "bun-test-*.test.ts")
+        .replace(/ \[[\d.]+ms\]/g, "") // Remove all timings
+        .replace(/Ran \d+ tests across \d+ files?\.\s*$/, "Ran 2 tests across 1 file.") // Normalize test counts
+        .trim(),
+    ).toMatchInlineSnapshot(`
+      "bun-test-*.test.ts:
+      (pass) group 1 > should match filter
+      (pass) group 2 > another test that should match filter
+
+       2 pass
+       5 filtered out
+       0 fail
+      Ran 2 tests across 1 file."
+    `);
+  });
 });
 
 function createTest(input?: string | (string | { filename: string; contents: string })[], filename?: string): string {
@@ -944,21 +1056,26 @@ function runTest({
   cwd,
   args = [],
   env = {},
+  expectExitCode = undefined,
 }: {
   input?: string | (string | { filename: string; contents: string })[];
   cwd?: string;
   args?: string[];
   env?: Record<string, string | undefined>;
+  expectExitCode?: number;
 } = {}): string {
   cwd ??= createTest(input);
   try {
-    const { stderr } = spawnSync({
+    const { stderr, exitCode } = spawnSync({
       cwd,
       cmd: [bunExe(), "test", ...args],
       env: { ...bunEnv, ...env },
       stderr: "pipe",
       stdout: "ignore",
     });
+    if (expectExitCode !== undefined) {
+      expect(exitCode).toBe(expectExitCode);
+    }
     return stderr.toString();
   } finally {
     rmSync(cwd, { recursive: true });

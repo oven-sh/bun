@@ -5,7 +5,6 @@
 /// Otherwise, use `JSC.JSValue`.
 /// ************************************
 const bun = @import("bun");
-const std = @import("std");
 const JSC = bun.JSC;
 const generic = opaque {
     pub fn value(this: *const generic) JSC.JSValue {
@@ -118,7 +117,6 @@ pub extern "c" fn JSObjectCallAsConstructor(ctx: *JSC.JSGlobalObject, object: JS
 pub extern "c" fn JSObjectMakeDate(ctx: *JSC.JSGlobalObject, argumentCount: usize, arguments: [*c]const JSValueRef, exception: ExceptionRef) JSObjectRef;
 pub const JSChar = u16;
 pub extern fn JSObjectMakeTypedArray(ctx: *JSC.JSGlobalObject, arrayType: JSTypedArrayType, length: usize, exception: ExceptionRef) JSObjectRef;
-pub extern fn JSObjectMakeTypedArrayWithBytesNoCopy(ctx: *JSC.JSGlobalObject, arrayType: JSTypedArrayType, bytes: ?*anyopaque, byteLength: usize, bytesDeallocator: JSTypedArrayBytesDeallocator, deallocatorContext: ?*anyopaque, exception: ExceptionRef) JSObjectRef;
 pub extern fn JSObjectMakeTypedArrayWithArrayBuffer(ctx: *JSC.JSGlobalObject, arrayType: JSTypedArrayType, buffer: JSObjectRef, exception: ExceptionRef) JSObjectRef;
 pub extern fn JSObjectMakeTypedArrayWithArrayBufferAndOffset(ctx: *JSC.JSGlobalObject, arrayType: JSTypedArrayType, buffer: JSObjectRef, byteOffset: usize, length: usize, exception: ExceptionRef) JSObjectRef;
 pub extern fn JSObjectGetTypedArrayBytesPtr(ctx: *JSC.JSGlobalObject, object: JSObjectRef, exception: ExceptionRef) ?*anyopaque;
@@ -126,7 +124,6 @@ pub extern fn JSObjectGetTypedArrayLength(ctx: *JSC.JSGlobalObject, object: JSOb
 pub extern fn JSObjectGetTypedArrayByteLength(ctx: *JSC.JSGlobalObject, object: JSObjectRef, exception: ExceptionRef) usize;
 pub extern fn JSObjectGetTypedArrayByteOffset(ctx: *JSC.JSGlobalObject, object: JSObjectRef, exception: ExceptionRef) usize;
 pub extern fn JSObjectGetTypedArrayBuffer(ctx: *JSC.JSGlobalObject, object: JSObjectRef, exception: ExceptionRef) JSObjectRef;
-pub extern fn JSObjectMakeArrayBufferWithBytesNoCopy(ctx: *JSC.JSGlobalObject, bytes: ?*anyopaque, byteLength: usize, bytesDeallocator: JSTypedArrayBytesDeallocator, deallocatorContext: ?*anyopaque, exception: ExceptionRef) JSObjectRef;
 pub extern fn JSObjectGetArrayBufferBytesPtr(ctx: *JSC.JSGlobalObject, object: JSObjectRef, exception: ExceptionRef) ?*anyopaque;
 pub extern fn JSObjectGetArrayBufferByteLength(ctx: *JSC.JSGlobalObject, object: JSObjectRef, exception: ExceptionRef) usize;
 pub const OpaqueJSContextGroup = struct_OpaqueJSContextGroup;

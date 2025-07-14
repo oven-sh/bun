@@ -1,7 +1,6 @@
 const std = @import("std");
 const JSC = bun.JSC;
 const bun = @import("bun");
-const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const Encoder = JSC.WebCore.encoding;
 const Mutex = bun.Mutex;
@@ -12,7 +11,6 @@ const PathLike = JSC.Node.PathLike;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const Output = bun.Output;
 const string = bun.string;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Environment = bun.Environment;
 const Async = bun.Async;
 const log = Output.scoped(.@"fs.watch", true);
@@ -169,6 +167,7 @@ pub const FSWatcher = struct {
         pub fn dupe(event: Event) !Event {
             return switch (event) {
                 inline .rename, .change => |path, t| @unionInit(Event, @tagName(t), try bun.default_allocator.dupe(u8, path)),
+                .@"error" => |err| .{ .@"error" = err.clone(bun.default_allocator) },
                 inline else => |value, t| @unionInit(Event, @tagName(t), value),
             };
         }
@@ -179,6 +178,7 @@ pub const FSWatcher = struct {
                     else => bun.default_allocator.free(path.*),
                     .windows => path.deinit(),
                 },
+                .@"error" => |*err| err.deinit(),
                 else => {},
             }
         }
@@ -503,7 +503,7 @@ pub const FSWatcher = struct {
                 const globalObject = this.globalThis;
                 var args = [_]JSC.JSValue{
                     EventType.@"error".toJS(globalObject),
-                    err.toJSC(globalObject),
+                    err.toJS(globalObject),
                 };
                 _ = listener.callWithGlobalThis(
                     globalObject,
@@ -526,10 +526,10 @@ pub const FSWatcher = struct {
         if (js_this == .zero) return;
         const listener = js.listenerGetCached(js_this) orelse return;
         const globalObject = this.globalThis;
-        var filename: JSC.JSValue = .undefined;
+        var filename: JSC.JSValue = .js_undefined;
         if (file_name.len > 0) {
             if (this.encoding == .buffer)
-                filename = JSC.ArrayBuffer.createBuffer(globalObject, file_name)
+                filename = JSC.ArrayBuffer.createBuffer(globalObject, file_name) catch return // TODO: properly propagate exception upwards
             else if (this.encoding == .utf8) {
                 filename = JSC.ZigString.fromUTF8(file_name).toJS(globalObject);
             } else {
@@ -558,7 +558,7 @@ pub const FSWatcher = struct {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
         }
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn doUnref(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -566,7 +566,7 @@ pub const FSWatcher = struct {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
         }
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn hasRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -606,7 +606,7 @@ pub const FSWatcher = struct {
                 if (FSWatcher.js.listenerGetCached(js_this)) |listener| {
                     _ = this.refTask();
                     log("emit('close')", .{});
-                    emitJS(listener, this.globalThis, .undefined, .close);
+                    emitJS(listener, this.globalThis, .js_undefined, .close);
                     this.unrefTask();
                 }
             }
@@ -639,36 +639,38 @@ pub const FSWatcher = struct {
 
     pub fn doClose(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         this.close();
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn init(args: Arguments) bun.JSC.Maybe(*FSWatcher) {
-        var buf: bun.PathBuffer = undefined;
-        var slice = args.path.slice();
-        if (bun.strings.startsWith(slice, "file://")) {
-            slice = slice[6..];
-        }
+        const joined_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(joined_buf);
+        const file_path: [:0]const u8 = brk: {
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
+            var slice = args.path.slice();
+            if (bun.strings.startsWith(slice, "file://")) {
+                slice = slice[6..];
+            }
 
-        var parts = [_]string{
-            slice,
+            const cwd = switch (bun.sys.getcwd(buf)) {
+                .result => |r| r,
+                .err => |err| return .{ .err = err },
+            };
+            buf[cwd.len] = std.fs.path.sep;
+
+            const parts = &[_]string{
+                cwd,
+                slice,
+            };
+
+            break :brk Path.joinAbsStringBufZ(
+                buf[0 .. cwd.len + 1],
+                joined_buf,
+                parts,
+                .auto,
+            );
         };
-
-        const cwd = switch (bun.sys.getcwd(&buf)) {
-            .result => |r| r,
-            .err => |err| return .{ .err = err },
-        };
-        buf[cwd.len] = std.fs.path.sep;
-
-        var joined_buf: bun.PathBuffer = undefined;
-        const file_path = Path.joinAbsStringBuf(
-            buf[0 .. cwd.len + 1],
-            &joined_buf,
-            &parts,
-            .auto,
-        );
-
-        joined_buf[file_path.len] = 0;
-        const file_path_z = joined_buf[0..file_path.len :0];
 
         const vm = args.global_this.bunVM();
 
@@ -691,7 +693,7 @@ pub const FSWatcher = struct {
         ctx.current_task.ctx = ctx;
 
         ctx.path_watcher = if (args.signal == null or !args.signal.?.aborted())
-            switch (PathWatcher.watch(vm, file_path_z, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx))) {
+            switch (PathWatcher.watch(vm, file_path, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx))) {
                 .result => |r| r,
                 .err => |err| {
                     ctx.deinit();
@@ -704,7 +706,7 @@ pub const FSWatcher = struct {
             }
         else
             null;
-        ctx.initJS(args.listener);
+        ctx.initJS(args.listener.withAsyncContextIfNeeded(args.global_this));
         return .{ .result = ctx };
     }
 };

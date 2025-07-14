@@ -34,7 +34,7 @@ fn deinit(this: *HTMLBundle) void {
     bun.destroy(this);
 }
 
-pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) JSValue {
+pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) bun.JSError!JSValue {
     return bun.String.createUTF8ForJS(globalObject, this.path);
 }
 
@@ -509,8 +509,6 @@ const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSString = JSC.JSString;
-const JSValueRef = JSC.JSValueRef;
 const JSBundler = JSC.API.JSBundler;
 const HTTPResponse = bun.uws.AnyResponse;
 const uws = bun.uws;

@@ -13,19 +13,15 @@ fs.writeFileSync(fooPath, '');
 
 const dirPath = tmpdir.resolve('delete_me');
 fs.mkdirSync(dirPath, {
-  recursive: true,
+  recursive: true
 });
 
 const barPath = path.join(dirPath, 'bar.cjs');
-fs.writeFileSync(
-  barPath,
-  `
+fs.writeFileSync(barPath, `
     module.exports = () => require('../foo.cjs').call()
-`
-);
+`);
 
 const foo = require(fooPath);
-console.log('fooPath', fooPath, foo);
 const unique = Symbol('unique');
 foo.call = common.mustCall(() => unique);
 const bar = require(barPath);

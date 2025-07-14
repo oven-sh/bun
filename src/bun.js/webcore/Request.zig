@@ -66,7 +66,12 @@ pub export fn Request__setTimeout(this: *Request, seconds: JSC.JSValue, globalTh
     this.setTimeout(seconds.to(c_uint));
 }
 
+pub export fn Request__clone(this: *Request, globalThis: *JSC.JSGlobalObject) *Request {
+    return this.clone(bun.default_allocator, globalThis);
+}
+
 comptime {
+    _ = Request__clone;
     _ = Request__getUWSRequest;
     _ = Request__setInternalEventCallback;
     _ = Request__setTimeout;
@@ -89,7 +94,7 @@ pub const InternalJSEventCallback = struct {
 
     pub fn trigger(this: *InternalJSEventCallback, eventType: EventType, globalThis: *JSC.JSGlobalObject) bool {
         if (this.function.get()) |callback| {
-            _ = callback.call(globalThis, JSC.JSValue.jsUndefined(), &.{JSC.JSValue.jsNumber(
+            _ = callback.call(globalThis, .js_undefined, &.{JSC.JSValue.jsNumber(
                 @intFromEnum(eventType),
             )}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
             return true;
@@ -435,14 +440,14 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
                     var href = bun.JSC.URL.hrefFromString(bun.String.fromBytes(url));
                     if (!href.isEmpty()) {
                         if (href.byteSlice().ptr == url.ptr) {
-                            this.url = bun.String.createLatin1(url[0..href.length()]);
+                            this.url = bun.String.cloneLatin1(url[0..href.length()]);
                             href.deref();
                         } else {
                             this.url = href;
                         }
                     } else {
                         // TODO: what is the right thing to do for invalid URLS?
-                        this.url = bun.String.createUTF8(url);
+                        this.url = bun.String.cloneUTF8(url);
                     }
 
                     return;
@@ -465,7 +470,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
                         req_url,
                     });
                     defer bun.default_allocator.free(temp_url);
-                    this.url = bun.String.createUTF8(temp_url);
+                    this.url = bun.String.cloneUTF8(temp_url);
                 }
 
                 const href = bun.JSC.URL.hrefFromString(this.url);
@@ -482,7 +487,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
         if (comptime Environment.allow_assert) {
             bun.assert(this.sizeOfURL() == req_url.len);
         }
-        this.url = bun.String.createUTF8(req_url);
+        this.url = bun.String.cloneUTF8(req_url);
     }
 }
 
@@ -550,10 +555,10 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
         if (arguments.len > 1 and arguments[1].isObject())
             arguments[1]
         else if (is_first_argument_a_url)
-            JSValue.undefined
+            .js_undefined
         else
             url_or_object,
-        if (is_first_argument_a_url) JSValue.undefined else url_or_object,
+        if (is_first_argument_a_url) .js_undefined else url_or_object,
     };
     const values_to_try = values_to_try_[0 .. @as(usize, @intFromBool(!is_first_argument_a_url)) +
         @as(usize, @intFromBool(arguments.len > 1 and arguments[1].isObject()))];
@@ -932,42 +937,26 @@ pub fn setTimeout(
 }
 
 const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
 const bun = @import("bun");
 const MimeType = bun.http.MimeType;
-const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = bun.http;
 const JSC = bun.JSC;
 
-const Method = @import("../../http/method.zig").Method;
+const Method = @import("../../http/Method.zig").Method;
 const FetchHeaders = bun.webcore.FetchHeaders;
 const AbortSignal = JSC.WebCore.AbortSignal;
-const ObjectPool = @import("../../pool.zig").ObjectPool;
-const SystemError = JSC.SystemError;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
 
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
-const IdentityContext = @import("../../identity_context.zig").IdentityContext;
-const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const NullableAllocator = bun.NullableAllocator;
 
-const VirtualMachine = JSC.VirtualMachine;
-const Task = JSC.Task;
-const JSPrinter = bun.js_printer;
-const picohttp = bun.picohttp;
-const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
 
 const InlineBlob = JSC.WebCore.Blob.Inline;
-const AnyBlob = JSC.WebCore.Blob.Any;
 const InternalBlob = JSC.WebCore.Blob.Internal;
 const BodyMixin = JSC.WebCore.Body.Mixin;
 const Body = JSC.WebCore.Body;

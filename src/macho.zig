@@ -1,7 +1,5 @@
 const std = @import("std");
 const mem = std.mem;
-const fs = std.fs;
-const io = std.io;
 const macho = std.macho;
 const Allocator = mem.Allocator;
 const bun = @import("bun");
@@ -171,7 +169,7 @@ pub const MachoFile = struct {
         // We need to shift [...data after __BUN] forward by size_diff bytes.
         const after_bun_slice = self.data.items[original_data_end + @as(usize, @intCast(size_diff)) ..];
         const prev_after_bun_slice = prev_data_slice[original_segsize..];
-        bun.move(after_bun_slice, prev_after_bun_slice);
+        bun.memmove(after_bun_slice, prev_after_bun_slice);
 
         // Now we copy the u32 size header
         std.mem.writeInt(u32, self.data.items[original_fileoff..][0..4], @intCast(data.len), .little);
@@ -585,6 +583,5 @@ const SEC_CODE_SIGNATURE_HASH_SHA256: u8 = 2;
 const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 
 const SuperBlob = std.macho.SuperBlob;
-const Blob = std.macho.GenericBlob;
 const CodeDirectory = std.macho.CodeDirectory;
 const BlobIndex = std.macho.BlobIndex;

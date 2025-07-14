@@ -2,30 +2,17 @@ const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
-const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const std = @import("std");
 
-const lex = bun.js_lexer;
 const logger = bun.logger;
 const options = @import("options.zig");
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
-const linker = @import("linker.zig");
 
-const sync = @import("./sync.zig");
-const Api = @import("api/schema.zig").Api;
-const resolve_path = @import("./resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("cli.zig").Command;
 const transpiler = bun.transpiler;
-const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = bun.JSC;
 const AsyncHTTP = bun.http.AsyncHTTP;
@@ -426,11 +413,11 @@ pub const Run = struct {
 
                 if (this.ctx.runtime_options.eval.eval_and_print) {
                     const to_print = brk: {
-                        const result = vm.entry_point_result.value.get() orelse .undefined;
+                        const result: JSC.JSValue = vm.entry_point_result.value.get() orelse .js_undefined;
                         if (result.asAnyPromise()) |promise| {
                             switch (promise.status(vm.jsc)) {
                                 .pending => {
-                                    result._then2(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
+                                    result._then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
 
                                     vm.tick();
                                     vm.eventLoop().autoTickActive();
@@ -503,7 +490,7 @@ pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callfr
     const result = arguments[0];
     result.print(global, .Log, .Log);
     Global.exit(global.bunVM().exit_handler.exit_code);
-    return .undefined;
+    return .js_undefined;
 }
 
 pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) noreturn {
@@ -511,7 +498,7 @@ pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callfra
     const result = arguments[0];
     result.print(global, .Log, .Log);
     Global.exit(global.bunVM().exit_handler.exit_code);
-    return .undefined;
+    return .js_undefined;
 }
 
 noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {

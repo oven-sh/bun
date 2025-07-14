@@ -3,15 +3,9 @@ const logger = bun.logger;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const CodePoint = bun.CodePoint;
 
-const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
 const URL = @import("./url.zig").URL;
@@ -91,9 +85,7 @@ pub const Loader = struct {
             this.get("bamboo.buildKey")) != null;
     }
 
-    pub fn loadTracy(this: *const Loader) void {
-        _ = this; // autofix
-    }
+    pub fn loadTracy(_: *const Loader) void {}
 
     pub fn getS3Credentials(this: *Loader) s3.S3Credentials {
         if (this.aws_credentials) |credentials| {
@@ -106,6 +98,7 @@ pub const Loader = struct {
         var endpoint: []const u8 = "";
         var bucket: []const u8 = "";
         var session_token: []const u8 = "";
+        var insecure_http: bool = false;
 
         if (this.get("S3_ACCESS_KEY_ID")) |access_key| {
             accessKeyId = access_key;
@@ -124,9 +117,13 @@ pub const Loader = struct {
             region = region_;
         }
         if (this.get("S3_ENDPOINT")) |endpoint_| {
-            endpoint = bun.URL.parse(endpoint_).hostWithPath();
+            const url = bun.URL.parse(endpoint_);
+            endpoint = url.hostWithPath();
+            insecure_http = url.isHTTP();
         } else if (this.get("AWS_ENDPOINT")) |endpoint_| {
-            endpoint = bun.URL.parse(endpoint_).hostWithPath();
+            const url = bun.URL.parse(endpoint_);
+            endpoint = url.hostWithPath();
+            insecure_http = url.isHTTP();
         }
         if (this.get("S3_BUCKET")) |bucket_| {
             bucket = bucket_;
@@ -146,6 +143,7 @@ pub const Loader = struct {
             .endpoint = endpoint,
             .bucket = bucket,
             .sessionToken = session_token,
+            .insecure_http = insecure_http,
         };
 
         return this.aws_credentials.?;
@@ -422,11 +420,11 @@ pub const Loader = struct {
 
                             _ = try to_string.getOrPutValue(
                                 key_str,
-                                .{
+                                .init(.{
                                     .can_be_removed_if_unused = true,
-                                    .call_can_be_unwrapped_if_unused = true,
+                                    .call_can_be_unwrapped_if_unused = .if_unused,
                                     .value = expr_data,
-                                },
+                                }),
                             );
                             e_strings = e_strings[1..];
                         } else {
@@ -446,11 +444,11 @@ pub const Loader = struct {
 
                                 _ = try to_string.getOrPutValue(
                                     framework_defaults.keys[key_i],
-                                    .{
+                                    .init(.{
                                         .can_be_removed_if_unused = true,
-                                        .call_can_be_unwrapped_if_unused = true,
+                                        .call_can_be_unwrapped_if_unused = .if_unused,
                                         .value = expr_data,
-                                    },
+                                    }),
                                 );
                                 e_strings = e_strings[1..];
                             }
@@ -472,11 +470,11 @@ pub const Loader = struct {
 
                         _ = try to_string.getOrPutValue(
                             key,
-                            .{
+                            .init(.{
                                 .can_be_removed_if_unused = true,
-                                .call_can_be_unwrapped_if_unused = true,
+                                .call_can_be_unwrapped_if_unused = .if_unused,
                                 .value = expr_data,
-                            },
+                            }),
                         );
                         e_strings = e_strings[1..];
                     }
@@ -524,8 +522,8 @@ pub const Loader = struct {
 
     // mostly for tests
     pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool, comptime expand: bool) void {
-        var source = logger.Source.initPathString("test", str);
-        Parser.parse(&source, this.allocator, this.map, overwrite, false, expand);
+        const source = &logger.Source.initPathString("test", str);
+        Parser.parse(source, this.allocator, this.map, overwrite, false, expand);
         std.mem.doNotOptimizeAway(&source);
     }
 
@@ -780,10 +778,10 @@ pub const Loader = struct {
         // The null byte here is mostly for debugging purposes.
         buf[end] = 0;
 
-        const source = logger.Source.initPathString(base, buf[0..amount_read]);
+        const source = &logger.Source.initPathString(base, buf[0..amount_read]);
 
         Parser.parse(
-            &source,
+            source,
             this.allocator,
             this.map,
             override,
@@ -791,7 +789,7 @@ pub const Loader = struct {
             true,
         );
 
-        @field(this, base) = source;
+        @field(this, base) = source.*;
     }
 
     pub fn loadEnvFileDynamic(
@@ -851,10 +849,10 @@ pub const Loader = struct {
         // The null byte here is mostly for debugging purposes.
         buf[end] = 0;
 
-        const source = logger.Source.initPathString(file_path, buf[0..amount_read]);
+        const source = &logger.Source.initPathString(file_path, buf[0..amount_read]);
 
         Parser.parse(
-            &source,
+            source,
             this.allocator,
             this.map,
             override,
@@ -862,7 +860,7 @@ pub const Loader = struct {
             true,
         );
 
-        try this.custom_files_loaded.put(file_path, source);
+        try this.custom_files_loaded.put(file_path, source.*);
     }
 };
 
@@ -1343,8 +1341,5 @@ pub const Map = struct {
 };
 
 pub var instance: ?*Loader = null;
-
-const expectString = std.testing.expectEqualStrings;
-const expect = std.testing.expect;
 
 pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";

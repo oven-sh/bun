@@ -5,7 +5,7 @@ if (!common.hasCrypto)
   common.skip('missing crypto');
 const assert = require('assert');
 const http2 = require('http2');
-const { once } = require('events');
+
 const server = http2.createServer();
 
 // Each of these headers must appear only once
@@ -24,11 +24,10 @@ const singles = [
 
 server.on('stream', common.mustNotCall());
 
-server.listen(0, "127.0.0.1", common.mustCall(async () => {
-  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-  await once(client, 'connect');
+server.listen(0, common.mustCall(() => {
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+
   for (const i of singles) {
- 
     assert.throws(
       () => client.request({ [i]: 'abc', [i.toUpperCase()]: 'xyz' }),
       {

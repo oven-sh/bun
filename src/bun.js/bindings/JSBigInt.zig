@@ -37,10 +37,6 @@ pub const JSBigInt = opaque {
 
     extern fn JSC__JSBigInt__toString(*JSBigInt, *JSGlobalObject) bun.String;
     pub fn toString(this: *JSBigInt, global: *JSGlobalObject) JSError!bun.String {
-        const str = JSC__JSBigInt__toString(this, global);
-        if (global.hasException()) {
-            return error.JSError;
-        }
-        return str;
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSBigInt__toString, .{ this, global });
     }
 };

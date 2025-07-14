@@ -6,6 +6,13 @@
 // Typedefs for JSC intrinsics. Instead of @, we use $
 type TODO = any;
 
+declare module "bun" {
+  interface Socket {
+    $write(data: string | BufferSource, byteOffset?: number, byteLength?: number): number;
+    $end(): void;
+  }
+}
+
 /** $debug is a preprocessor macro that works like a templated console.log, and only runs in debug mode if you pass
  * BUN_DEBUG_JS=<module>
  *
@@ -137,6 +144,7 @@ declare function $getInternalField<Fields extends any[], N extends keyof Fields>
   number: N,
 ): Fields[N];
 declare function $fulfillPromise(...args: any[]): TODO;
+declare function $rejectPromise(...args: any[]): TODO;
 declare function $loadEsmIntoCjs(...args: any[]): TODO;
 declare function $getGeneratorInternalField(): TODO;
 declare function $getAsyncGeneratorInternalField(): TODO;
@@ -336,6 +344,7 @@ declare function $addEventListener(): TODO;
 declare function $appendFromJS(): TODO;
 declare function $argv(): TODO;
 declare function $assignToStream(): TODO;
+declare function $assignStreamIntoResumableSink(): TODO;
 declare function $associatedReadableByteStreamController(): TODO;
 declare function $autoAllocateChunkSize(): TODO;
 declare function $backpressure(): TODO;
@@ -733,6 +742,8 @@ declare function $ERR_INVALID_ASYNC_ID(name, value): RangeError;
 declare function $ERR_ASYNC_TYPE(name): TypeError;
 declare function $ERR_ASYNC_CALLBACK(name): TypeError;
 declare function $ERR_AMBIGUOUS_ARGUMENT(arg, message): TypeError;
+declare function $ERR_INVALID_FD_TYPE(type): TypeError;
+declare function $ERR_IP_BLOCKED(ip): Error;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
@@ -762,6 +773,7 @@ declare function $ERR_TLS_RENEGOTIATION_DISABLED(): Error;
 declare function $ERR_UNAVAILABLE_DURING_EXIT(): Error;
 declare function $ERR_TLS_CERT_ALTNAME_FORMAT(): SyntaxError;
 declare function $ERR_TLS_SNI_FROM_SERVER(): Error;
+declare function $ERR_SSL_NO_CIPHER_MATCH(): Error;
 declare function $ERR_INVALID_URI(): URIError;
 declare function $ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED(): TypeError;
 declare function $ERR_HTTP2_INFO_STATUS_NOT_ALLOWED(): RangeError;
@@ -787,6 +799,15 @@ declare function $ERR_HTTP_BODY_NOT_ALLOWED(): Error;
 declare function $ERR_HTTP_SOCKET_ASSIGNED(): Error;
 declare function $ERR_DIR_CLOSED(): Error;
 declare function $ERR_INVALID_MIME_SYNTAX(production: string, str: string, invalidIndex: number | -1): TypeError;
+declare function $ERR_SOCKET_CONNECTION_TIMEOUT(): Error;
+declare function $ERR_INVALID_HANDLE_TYPE(): TypeError;
+declare function $ERR_TLS_HANDSHAKE_TIMEOUT(): Error;
+declare function $ERR_VM_MODULE_STATUS(reason: string): Error;
+declare function $ERR_VM_MODULE_ALREADY_LINKED(): Error;
+declare function $ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA(): Error;
+declare function $ERR_VM_MODULE_NOT_MODULE(): Error;
+declare function $ERR_VM_MODULE_DIFFERENT_CONTEXT(): Error;
+declare function $ERR_VM_MODULE_LINK_FAILURE(message: string, cause: Error): Error;
 
 /**
  * Convert a function to a class-like object.

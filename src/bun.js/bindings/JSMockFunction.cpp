@@ -387,6 +387,7 @@ public:
         JSArray* val = calls.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->calls.set(vm(), this, val);
         }
         return val;
@@ -396,6 +397,7 @@ public:
         JSArray* val = contexts.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->contexts.set(vm(), this, val);
         }
         return val;
@@ -405,6 +407,7 @@ public:
         JSArray* val = instances.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->instances.set(vm(), this, val);
         }
         return val;
@@ -414,6 +417,7 @@ public:
         JSArray* val = returnValues.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->returnValues.set(vm(), this, val);
         }
         return val;
@@ -423,6 +427,7 @@ public:
         JSArray* val = invocationCallOrder.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->invocationCallOrder.set(vm(), this, val);
         }
         return val;
@@ -1011,7 +1016,7 @@ extern "C" JSC::EncodedJSValue JSMockFunction__getCalls(EncodedJSValue encodedVa
         return JSValue::encode(mock->getCalls());
     }
 
-    return JSValue::encode({});
+    return {};
 }
 extern "C" JSC::EncodedJSValue JSMockFunction__getReturns(EncodedJSValue encodedValue)
 {
@@ -1020,7 +1025,7 @@ extern "C" JSC::EncodedJSValue JSMockFunction__getReturns(EncodedJSValue encoded
         return JSValue::encode(mock->getReturnValues());
     }
 
-    return JSValue::encode({});
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

@@ -495,7 +495,7 @@ describe("streaming", () => {
         ipc: onMessage,
       });
 
-      let [exitCode, stderr] = await Promise.all([subprocess.exited, new Response(subprocess.stderr).text()]);
+      let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
       expect(exitCode).toBeInteger();
       expect(stderr).toContain("error: Oops");
       expect(onMessage).toHaveBeenCalled();
@@ -526,7 +526,7 @@ describe("streaming", () => {
         ipc: onMessage,
       });
 
-      let [exitCode, stderr] = await Promise.all([subprocess.exited, new Response(subprocess.stderr).text()]);
+      let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
       expect(exitCode).toBeInteger();
       expect(stderr).toContain("error: Oops");
       expect(onMessage).toHaveBeenCalled();
@@ -1360,7 +1360,7 @@ it("does propagate type for Blob", async () => {
     port: 0,
     development: false,
     async fetch(req) {
-      expect(req.headers.get("Content-Type")).toBeNull();
+      expect(req.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
       return new Response(new Blob(["hey"], { type: "text/plain;charset=utf-8" }));
     },
   });
@@ -1389,7 +1389,7 @@ it("unix socket connection in Bun.serve", async () => {
   const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`;
   const received: Buffer[] = [];
   const { resolve, promise } = Promise.withResolvers();
-  const connection = await Bun.connect({
+  await using connection = await Bun.connect({
     unix,
     socket: {
       data(socket, data) {
@@ -2171,4 +2171,25 @@ it("do the best effort to flush everything", async () => {
   });
   let response = await fetch(server.url);
   expect(await response.text()).toBe("bun");
+});
+
+it("#20283", async () => {
+  using server = Bun.serve({
+    routes: {
+      "/": async req => {
+        // calling clone() with no cookies should not crash
+        const cloned = req.clone();
+        return Response.json({
+          cookies: req.cookies,
+          clonedCookies: cloned.cookies,
+        });
+      },
+    },
+    port: 0,
+  });
+
+  const response = await fetch(server.url);
+  const json = await response.json();
+  // there should be no cookies and the clone should have succeeded
+  expect(json).toEqual({ cookies: {}, clonedCookies: {} });
 });

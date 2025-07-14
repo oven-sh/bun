@@ -72,6 +72,7 @@ async function buildRootModule(dryRun?: boolean) {
     },
   });
   write(join(cwd, "bin", "bun.exe"), "");
+  write(join(cwd, "bin", "bunx.exe"), "");
   write(
     join(cwd, "bin", "README.txt"),
     `The 'bun.exe' file is a placeholder for the binary file, which
@@ -105,12 +106,12 @@ without *requiring* a postinstall script.
     ),
     bin: {
       bun: "bin/bun.exe",
-      bunx: "bin/bun.exe",
+      bunx: "bin/bunx.exe",
     },
     os,
     cpu,
     keywords: ["bun", "bun.js", "node", "node.js", "runtime", "bundler", "transpiler", "typescript"],
-    homepage: "https://bun.sh",
+    homepage: "https://bun.com",
     bugs: "https://github.com/oven-sh/issues",
     license: "MIT",
     repository: "https://github.com/oven-sh/bun",
@@ -140,7 +141,7 @@ async function buildModule(
     name: module,
     version: version,
     description: "This is the macOS arm64 binary for Bun, a fast all-in-one JavaScript runtime.",
-    homepage: "https://bun.sh",
+    homepage: "https://bun.com",
     bugs: "https://github.com/oven-sh/issues",
     license: "MIT",
     repository: "https://github.com/oven-sh/bun",

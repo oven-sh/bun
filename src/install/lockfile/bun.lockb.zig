@@ -7,6 +7,7 @@ const has_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "tRuStEDd".*));
 const has_empty_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "eMpTrUsT".*));
 const has_overrides_tag: u64 = @bitCast(@as([8]u8, "oVeRriDs".*));
 const has_catalogs_tag: u64 = @bitCast(@as([8]u8, "cAtAlOgS".*));
+const has_node_linker_tag: u64 = @bitCast(@as([8]u8, "nOdLiNkR".*));
 
 pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
 
@@ -242,6 +243,11 @@ pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total
                 external_deps_buf.items,
             );
         }
+    }
+
+    if (this.node_linker != .auto) {
+        try writer.writeAll(std.mem.asBytes(&has_node_linker_tag));
+        try writer.writeInt(u8, @intFromEnum(this.node_linker), .little);
     }
 
     total_size.* = try stream.getPos();
@@ -520,6 +526,21 @@ pub fn load(
         }
     }
 
+    {
+        lockfile.node_linker = .auto;
+
+        const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+        if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+            const next_num = try reader.readInt(u64, .little);
+            if (next_num == has_node_linker_tag) {
+                lockfile.node_linker = try reader.readEnum(Lockfile.NodeLinker, .little);
+            } else {
+                stream.pos -= 8;
+            }
+        }
+    }
+
     lockfile.scratch = Lockfile.Scratch.init(allocator);
     lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
     lockfile.string_pool = StringPool.init(allocator);
@@ -557,7 +578,6 @@ pub fn load(
 const Allocator = std.mem.Allocator;
 const Dependency = install.Dependency;
 const Environment = bun.Environment;
-const IdentityContext = bun.IdentityContext;
 const Lockfile = install.Lockfile;
 const PackageID = install.PackageID;
 const PackageIndex = Lockfile.PackageIndex;

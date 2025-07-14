@@ -498,10 +498,9 @@ function emitConvertValue(
         if (decl === "declare") {
           cpp.line(`${type.cppName()} ${storageLocation};`);
         }
-        cpp.line(`if (!convert${type.cppInternalName()}(&${storageLocation}, global, ${jsValueRef}))`);
-        cpp.indent();
-        cpp.line(`return {};`);
-        cpp.dedent();
+        cpp.line(`auto did_convert = convert${type.cppInternalName()}(&${storageLocation}, global, ${jsValueRef});`);
+        cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
+        cpp.line(`if (!did_convert) return {};`);
         break;
       }
       default:
@@ -1017,7 +1016,9 @@ function emitCppVariationSelector(fn: Func, namespaceVar: string) {
     }
 
     if (variants.length === 1) {
-      cpp.line(`return ${extInternalDispatchVariant(namespaceVar, fn.name, variants[0].suffix)}(global, callFrame);`);
+      cpp.line(
+        `RELEASE_AND_RETURN(throwScope, ${extInternalDispatchVariant(namespaceVar, fn.name, variants[0].suffix)}(global, callFrame));`,
+      );
     } else {
       let argIndex = 0;
       let strategies: DistinguishStrategy[] | null = null;
@@ -1053,7 +1054,9 @@ function emitCppVariationSelector(fn: Func, namespaceVar: string) {
         const { condition, canThrow } = getDistinguishCode(s, arg.type, "distinguishingValue");
         cpp.line(`if (${condition}) {`);
         cpp.indent();
-        cpp.line(`return ${extInternalDispatchVariant(namespaceVar, fn.name, v.suffix)}(global, callFrame);`);
+        cpp.line(
+          `RELEASE_AND_RETURN(throwScope, ${extInternalDispatchVariant(namespaceVar, fn.name, v.suffix)}(global, callFrame));`,
+        );
         cpp.dedent();
         cpp.line(`}`);
         if (canThrow) {
@@ -1363,7 +1366,7 @@ for (const [filename, { functions, typedefs }] of files) {
 
       switch (returnStrategy.type) {
         case "jsvalue":
-          zigInternal.add(`return JSC.toJSHostValue(${globalObjectArg}, `);
+          zigInternal.add(`return JSC.toJSHostCall(${globalObjectArg}, @src(), `);
           break;
         case "basic-out-param":
           zigInternal.add(`out.* = @as(bun.JSError!${returnStrategy.abiType}, `);
@@ -1373,7 +1376,12 @@ for (const [filename, { functions, typedefs }] of files) {
           break;
       }
 
-      zigInternal.line(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${fn.name + vari.suffix}(`);
+      zigInternal.add(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${fn.name + vari.suffix}`);
+      if (returnStrategy.type === "jsvalue") {
+        zigInternal.line(", .{");
+      } else {
+        zigInternal.line("(");
+      }
       zigInternal.indent();
       for (const arg of vari.args) {
         const argName = arg.zigMappedName!;
@@ -1421,7 +1429,7 @@ for (const [filename, { functions, typedefs }] of files) {
       zigInternal.dedent();
       switch (returnStrategy.type) {
         case "jsvalue":
-          zigInternal.line(`));`);
+          zigInternal.line(`});`);
           break;
         case "basic-out-param":
         case "void":

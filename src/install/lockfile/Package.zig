@@ -527,6 +527,7 @@ pub const Package = extern struct {
             update: u32 = 0,
             overrides_changed: bool = false,
             catalogs_changed: bool = false,
+            node_linker_changed: bool = false,
 
             // bool for if this dependency should be added to lockfile trusted dependencies.
             // it is false when the new trusted dependency is coming from the default list.
@@ -543,6 +544,7 @@ pub const Package = extern struct {
 
             pub inline fn hasDiffs(this: Summary) bool {
                 return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed or this.catalogs_changed or
+                    this.node_linker_changed or
                     this.added_trusted_dependencies.count() > 0 or
                     this.removed_trusted_dependencies.count() > 0 or
                     this.patched_dependencies_changed;
@@ -657,6 +659,10 @@ pub const Package = extern struct {
                             break :catalogs;
                         }
                     }
+                }
+
+                if (from_lockfile.node_linker != to_lockfile.node_linker) {
+                    summary.node_linker_changed = true;
                 }
             }
 
@@ -853,10 +859,10 @@ pub const Package = extern struct {
                                 var local_buf: bun.PathBuffer = undefined;
                                 const package_json_path = Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &local_buf, &.{ path, "package.json" }, .auto);
 
-                                const source = bun.sys.File.toSource(package_json_path, allocator, .{}).unwrap() catch {
+                                const source = &(bun.sys.File.toSource(package_json_path, allocator, .{}).unwrap() catch {
                                     // Can't guarantee this workspace still exists
                                     break :brk false;
-                                };
+                                });
 
                                 var workspace = Package{};
 
@@ -952,13 +958,13 @@ pub const Package = extern struct {
         pm: *PackageManager,
         allocator: Allocator,
         log: *logger.Log,
-        source: logger.Source,
+        source: *const logger.Source,
         comptime ResolverContext: type,
         resolver: *ResolverContext,
         comptime features: Features,
     ) !void {
         initializeStore();
-        const json = JSON.parsePackageJSONUTF8(&source, log, allocator) catch |err| {
+        const json = JSON.parsePackageJSONUTF8(source, log, allocator) catch |err| {
             log.print(Output.errorWriter()) catch {};
             Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
             Global.crash();
@@ -982,7 +988,7 @@ pub const Package = extern struct {
         pm: *PackageManager,
         allocator: Allocator,
         log: *logger.Log,
-        source: logger.Source,
+        source: *const logger.Source,
         comptime group: DependencyGroup,
         string_builder: *StringBuilder,
         comptime features: Features,
@@ -1088,7 +1094,7 @@ pub const Package = extern struct {
             .npm => {
                 const npm = dependency_version.value.npm;
                 if (workspace_version != null) {
-                    if (npm.version.satisfies(workspace_version.?, buf, buf)) {
+                    if (pm.options.link_workspace_packages and npm.version.satisfies(workspace_version.?, buf, buf)) {
                         const path = workspace_path.?.sliced(buf);
                         if (Dependency.parseWithTag(
                             allocator,
@@ -1139,7 +1145,7 @@ pub const Package = extern struct {
                         // workspace is not required to have a version, but if it does
                         // and this version doesn't match it, fail to install
                         try log.addErrorFmt(
-                            &source,
+                            source,
                             logger.Loc.Empty,
                             allocator,
                             "No matching version for workspace dependency \"{s}\". Version: \"{s}\"",
@@ -1245,11 +1251,11 @@ pub const Package = extern struct {
 
                     notes[0] = .{
                         .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{external_alias.slice(buf)}),
-                        .location = logger.Location.initOrNull(&source, source.rangeOfString(entry.value_ptr.*)),
+                        .location = logger.Location.initOrNull(source, source.rangeOfString(entry.value_ptr.*)),
                     };
 
                     try log.addRangeWarningFmtWithNotes(
-                        &source,
+                        source,
                         source.rangeOfString(key_loc),
                         lockfile.allocator,
                         notes,
@@ -1271,7 +1277,7 @@ pub const Package = extern struct {
         pm: *PackageManager,
         allocator: Allocator,
         log: *logger.Log,
-        source: logger.Source,
+        source: *const logger.Source,
         json: Expr,
         comptime ResolverContext: type,
         resolver: *ResolverContext,
@@ -1437,7 +1443,7 @@ pub const Package = extern struct {
                 switch (dependencies_q.expr.data) {
                     .e_array => |arr| {
                         if (!group.behavior.isWorkspace()) {
-                            log.addErrorFmt(&source, dependencies_q.loc, allocator,
+                            log.addErrorFmt(source, dependencies_q.loc, allocator,
                                 \\{0s} expects a map of specifiers, e.g.
                                 \\  <r><green>"{0s}"<r>: {{
                                 \\    <green>"bun"<r>: <green>"latest"<r>
@@ -1450,7 +1456,7 @@ pub const Package = extern struct {
                             &pm.workspace_package_json_cache,
                             log,
                             arr,
-                            &source,
+                            source,
                             dependencies_q.loc,
                             &string_builder,
                         );
@@ -1468,7 +1474,7 @@ pub const Package = extern struct {
                             //
                             if (obj.get("packages")) |packages_query| {
                                 if (packages_query.data != .e_array) {
-                                    log.addErrorFmt(&source, packages_query.loc, allocator,
+                                    log.addErrorFmt(source, packages_query.loc, allocator,
                                         // TODO: what if we could comptime call the syntax highlighter
                                         \\"workspaces.packages" expects an array of strings, e.g.
                                         \\  "workspaces": {{
@@ -1484,7 +1490,7 @@ pub const Package = extern struct {
                                     &pm.workspace_package_json_cache,
                                     log,
                                     packages_query.data.e_array,
-                                    &source,
+                                    source,
                                     packages_query.loc,
                                     &string_builder,
                                 );
@@ -1495,7 +1501,7 @@ pub const Package = extern struct {
                         for (obj.properties.slice()) |item| {
                             const key = item.key.?.asString(allocator).?;
                             const value = item.value.?.asString(allocator) orelse {
-                                log.addErrorFmt(&source, item.value.?.loc, allocator,
+                                log.addErrorFmt(source, item.value.?.loc, allocator,
                                     // TODO: what if we could comptime call the syntax highlighter
                                     \\{0s} expects a map of specifiers, e.g.
                                     \\  <r><green>"{0s}"<r>: {{
@@ -1518,7 +1524,7 @@ pub const Package = extern struct {
                     },
                     else => {
                         if (group.behavior.isWorkspace()) {
-                            log.addErrorFmt(&source, dependencies_q.loc, allocator,
+                            log.addErrorFmt(source, dependencies_q.loc, allocator,
                                 // TODO: what if we could comptime call the syntax highlighter
                                 \\"workspaces" expects an array of strings, e.g.
                                 \\  <r><green>"workspaces"<r>: [
@@ -1526,7 +1532,7 @@ pub const Package = extern struct {
                                 \\  ]
                             , .{}) catch {};
                         } else {
-                            log.addErrorFmt(&source, dependencies_q.loc, allocator,
+                            log.addErrorFmt(source, dependencies_q.loc, allocator,
                                 \\{0s} expects a map of specifiers, e.g.
                                 \\  <r><green>"{0s}"<r>: {{
                                 \\    <green>"bun"<r>: <green>"latest"<r>
@@ -1547,7 +1553,7 @@ pub const Package = extern struct {
                         try lockfile.trusted_dependencies.?.ensureUnusedCapacity(allocator, arr.items.len);
                         for (arr.slice()) |item| {
                             const name = item.asString(allocator) orelse {
-                                log.addErrorFmt(&source, q.loc, allocator,
+                                log.addErrorFmt(source, q.loc, allocator,
                                     \\trustedDependencies expects an array of strings, e.g.
                                     \\  <r><green>"trustedDependencies"<r>: [
                                     \\    <green>"package_name"<r>
@@ -1559,7 +1565,7 @@ pub const Package = extern struct {
                         }
                     },
                     else => {
-                        log.addErrorFmt(&source, q.loc, allocator,
+                        log.addErrorFmt(source, q.loc, allocator,
                             \\trustedDependencies expects an array of strings, e.g.
                             \\  <r><green>"trustedDependencies"<r>: [
                             \\    <green>"package_name"<r>
@@ -1576,6 +1582,19 @@ pub const Package = extern struct {
 
             if (json.get("workspaces")) |workspaces_expr| {
                 lockfile.catalogs.parseCount(lockfile, workspaces_expr, &string_builder);
+
+                if (workspaces_expr.get("nodeLinker")) |node_linker_expr| {
+                    if (!node_linker_expr.isString()) {
+                        try log.addError(source, node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
+                        return error.InvalidPackageJSON;
+                    }
+
+                    const node_linker_str = node_linker_expr.data.e_string.slice(allocator);
+                    lockfile.node_linker = Lockfile.NodeLinker.fromStr(node_linker_str) orelse {
+                        try log.addError(source, node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
+                        return error.InvalidPackageJSON;
+                    };
+                }
             }
         }
 
@@ -1940,7 +1959,7 @@ pub const Package = extern struct {
         if (comptime features.is_main) {
             try lockfile.overrides.parseAppend(pm, lockfile, package, log, source, json, &string_builder);
             if (json.get("workspaces")) |workspaces_expr| {
-                try lockfile.catalogs.parseAppend(pm, lockfile, log, &source, workspaces_expr, &string_builder);
+                try lockfile.catalogs.parseAppend(pm, lockfile, log, source, workspaces_expr, &string_builder);
             }
         }
 
@@ -2138,16 +2157,11 @@ const ExternalStringList = install.ExternalStringList;
 const ExternalStringMap = install.ExternalStringMap;
 const Features = install.Features;
 const FileSystem = bun.fs.FileSystem;
-const Glob = bun.glob;
 const Global = bun.Global;
-const IdentityContext = bun.IdentityContext;
-const Integrity = @import("../integrity.zig").Integrity;
 const JSAst = bun.JSAst;
 const JSON = bun.JSON;
 const Lockfile = install.Lockfile;
 const Npm = install.Npm;
-const OOM = install.OOM;
-const Origin = install.Origin;
 const Output = bun.Output;
 const PackageID = bun.install.PackageID;
 const PackageIDSlice = Lockfile.PackageIDSlice;
@@ -2172,5 +2186,4 @@ const invalid_package_id = install.invalid_package_id;
 const logger = bun.logger;
 const std = @import("std");
 const string = []const u8;
-const stringZ = [:0]const u8;
 const strings = bun.strings;

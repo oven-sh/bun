@@ -2,13 +2,9 @@ const std = @import("std");
 const bun = @import("bun");
 const windows = bun.windows;
 const uv = windows.libuv;
-const Path = @import("../../resolver/resolve_path.zig");
-const Fs = @import("../../fs.zig");
-const Mutex = bun.Mutex;
 const string = bun.string;
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Output = bun.Output;
 const Watcher = bun.Watcher;
 
@@ -160,7 +156,7 @@ pub const PathWatcher = struct {
             if (event.emit(hash, timestamp, event_type)) {
                 const ctx: *FSWatcher = @alignCast(@ptrCast(this.handlers.keys()[i]));
                 onPathUpdateFn(ctx, event_type.toEvent(switch (ctx.encoding) {
-                    .utf8 => .{ .string = bun.String.createUTF8(path) },
+                    .utf8 => .{ .string = bun.String.cloneUTF8(path) },
                     else => .{ .bytes_to_free = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory() },
                 }), is_file);
                 if (comptime bun.Environment.isDebug)

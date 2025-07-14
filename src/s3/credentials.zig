@@ -7,9 +7,7 @@ const ACL = @import("./acl.zig").ACL;
 const StorageClass = @import("./storage_class.zig").StorageClass;
 
 const JSC = bun.JSC;
-const RareData = JSC.RareData;
 const strings = bun.strings;
-const DotEnv = bun.DotEnv;
 
 pub const S3Credentials = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
@@ -182,6 +180,17 @@ pub const S3Credentials = struct {
                         });
                     } else {
                         new_credentials.options.partSize = @intCast(pageSize);
+                    }
+                }
+                if (try opts.getOptional(globalObject, "partSize", i64)) |partSize| {
+                    if (partSize < MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE and partSize > MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
+                        return globalObject.throwRangeError(partSize, .{
+                            .min = @intCast(MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE),
+                            .max = @intCast(MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE),
+                            .field_name = "partSize",
+                        });
+                    } else {
+                        new_credentials.options.partSize = @intCast(partSize);
                     }
                 }
 

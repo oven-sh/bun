@@ -1,8 +1,6 @@
 const JSC = bun.JSC;
 const bun = @import("bun");
-const string = bun.string;
 const std = @import("std");
-const Output = bun.Output;
 
 const Environment = bun.Environment;
 const system = std.posix.system;

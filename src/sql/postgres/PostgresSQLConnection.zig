@@ -62,6 +62,40 @@ max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
         .nsec = 0,
     },
 },
+auto_flusher: AutoFlusher = .{},
+
+pub fn onAutoFlush(this: *@This()) bool {
+    if (this.flags.has_backpressure) {
+        // if we have backpressure, wait for onWritable
+        return false;
+    }
+    this.ref();
+    defer this.deref();
+
+    // drain as much as we can
+    this.drainInternal();
+
+    // if we dont have backpressure and if we still have data to send, return true otherwise return false and wait for onWritable
+    return !this.flags.has_backpressure and this.write_buffer.len() > 0;
+}
+
+fn registerAutoFlusher(this: *PostgresSQLConnection) void {
+    if (this.flags.has_backpressure) {
+        // we will flush only inside onWritable
+        return;
+    }
+    if (!this.auto_flusher.registered) {
+        AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalObject.bunVM());
+        this.auto_flusher.registered = true;
+    }
+}
+
+fn unregisterAutoFlusher(this: *PostgresSQLConnection) void {
+    if (this.auto_flusher.registered) {
+        AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, this.globalObject.bunVM());
+        this.auto_flusher.registered = false;
+    }
+}
 
 fn getTimeoutInterval(this: *const PostgresSQLConnection) u32 {
     return switch (this.status) {
@@ -234,7 +268,8 @@ pub fn finalize(this: *PostgresSQLConnection) void {
 
 pub fn flushDataAndResetTimeout(this: *PostgresSQLConnection) void {
     this.resetConnectionTimeout();
-    this.flushData();
+    // defer flushing, so if many queries are running in parallel in the same connection, we don't flush more than once
+    this.registerAutoFlusher();
 }
 
 pub fn flushData(this: *PostgresSQLConnection) void {
@@ -245,6 +280,7 @@ pub fn flushData(this: *PostgresSQLConnection) void {
     if (chunk.len == 0) return;
     const wrote = this.socket.write(chunk);
     this.flags.has_backpressure = wrote < chunk.len;
+
     if (wrote > 0) {
         SocketMonitor.write(chunk[0..@intCast(wrote)]);
         this.write_buffer.consume(@intCast(wrote));
@@ -290,6 +326,8 @@ pub fn fail(this: *PostgresSQLConnection, message: []const u8, err: AnyPostgresE
 }
 
 pub fn onClose(this: *PostgresSQLConnection) void {
+    this.unregisterAutoFlusher();
+
     var vm = this.globalObject.bunVM();
     const loop = vm.eventLoop();
     loop.enter();
@@ -401,13 +439,18 @@ pub fn onDrain(this: *PostgresSQLConnection) void {
         return;
     }
 
+    this.drainInternal();
+}
+
+fn drainInternal(this: *PostgresSQLConnection) void {
     const event_loop = this.globalObject.bunVM().eventLoop();
     event_loop.enter();
     defer event_loop.exit();
 
     this.flushData();
 
-    if (this.flags.is_ready_for_query and !this.flags.has_backpressure) {
+    if (!this.flags.has_backpressure) {
+        // no backpressure yet so pipeline more if possible and flush again
         this.advance();
         this.flushData();
     }
@@ -867,7 +910,6 @@ fn current(this: *PostgresSQLConnection) ?*PostgresSQLQuery {
     if (this.requests.readableLength() == 0) {
         return null;
     }
-
     return this.requests.peekItem(0);
 }
 
@@ -876,7 +918,11 @@ pub fn hasQueryRunning(this: *PostgresSQLConnection) bool {
 }
 
 pub fn canPipeline(this: *PostgresSQLConnection) bool {
-    return this.nonpipelinable_requests == 0 and !this.flags.use_unnamed_prepared_statements and !this.flags.waiting_to_prepare and !this.flags.has_backpressure;
+    return this.nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
+        !this.flags.use_unnamed_prepared_statements and // unnamed statements are not pipelinable
+        !this.flags.waiting_to_prepare and // cannot pipeline when waiting prepare
+        !this.flags.has_backpressure and // dont make sense to buffer more if we have backpressure
+        this.write_buffer.len() < MAX_PIPELINE_SIZE; // buffer is too big need to flush before pipeline more
 }
 
 pub const Writer = struct {
@@ -885,7 +931,7 @@ pub const Writer = struct {
     pub fn write(this: Writer, data: []const u8) AnyPostgresError!void {
         var buffer = &this.connection.write_buffer;
         try buffer.write(bun.default_allocator, data);
-        if (buffer.len() > 1024 * 64) {
+        if (buffer.len() >= MAX_PIPELINE_SIZE) {
             // too much data, flush it
             this.connection.flushData();
         }
@@ -1238,7 +1284,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             }
             this.advance();
 
-            this.flushData();
+            this.registerAutoFlusher();
         },
         .CommandComplete => {
             var request = this.current() orelse return error.ExpectedRequest;
@@ -1649,3 +1695,6 @@ pub const toJS = js.toJS;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;
+const AutoFlusher = JSC.WebCore.AutoFlusher;
+
+const MAX_PIPELINE_SIZE = 1024 * 64;

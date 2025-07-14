@@ -13,7 +13,9 @@ pub fn deinit(this: *StaticRouteVisitor) void {
     this.visited.deinit(bun.default_allocator);
 }
 
-/// This the quickest, simplest, dumbest way I can think of doing this. Investigate performance.
+/// This the quickest, simplest, dumbest way I can think of doing this.
+/// Investigate performance. It can have false negatives (it doesn't properly
+/// handle cycles), but that's okay as it's just used an optimization
 pub fn hasTransitiveUseClient(this: *StaticRouteVisitor, entry_point_source_index: u32) bool {
     const all_import_records: []const ImportRecord.List = this.c.parse_graph.ast.items(.import_records);
     const referenced_source_indices: []const u32 = this.c.parse_graph.server_component_boundaries.list.items(.reference_source_index);

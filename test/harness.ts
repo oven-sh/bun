@@ -1731,7 +1731,6 @@ export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
       .replaceAll(fs.realpathSync.native(process.cwd()).replaceAll("\\", "/"), "<cwd>")
       .replaceAll(fs.realpathSync.native(os.tmpdir()).replaceAll("\\", "/"), "<tmp>")
       .replaceAll(fs.realpathSync.native(os.homedir()).replaceAll("\\", "/"), "<home>")
-      .replaceAll(fs.realpathSync.native(process.cwd()).replaceAll("\\", "/"), "<cwd>")
       // look for [\d\d ms] or [\d\d s] with optional periods
       .replace(/\s\[[\d.]+\s?m?s\]/gm, "")
       .replace(/^\[[\d.]+\s?m?s\]/gm, "")

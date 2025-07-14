@@ -1,8 +1,8 @@
 import { spawn } from "bun";
-import { describe, expect, it, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
-import { rmSync, writeFileSync, mkdirSync } from "fs";
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
   await using proc = spawn({
@@ -716,22 +716,25 @@ describe("bun pm pkg", () => {
       // Test that bracket[0] and dot.0 notation produce identical results
       const { output: bracketOutput } = await runPmPkg(["get", "contributors[0].name"], testDir!);
       const { output: dotOutput } = await runPmPkg(["get", "contributors.0.name"], testDir!);
-      
+
       expect(bracketOutput.trim()).toBe(dotOutput.trim());
       expect(bracketOutput.trim()).toBe('"John Doe"');
     });
 
     it("should handle complex mixed notation patterns", async () => {
       // Set up a complex nested structure for testing
-      const { code: setCode } = await runPmPkg(["set", "nested.array=[{\"prop\":\"value1\"},{\"prop\":\"value2\"}]", "--json"], testDir!);
+      const { code: setCode } = await runPmPkg(
+        ["set", 'nested.array=[{"prop":"value1"},{"prop":"value2"}]', "--json"],
+        testDir!,
+      );
       expect(setCode).toBe(0);
 
       // Test various notation combinations
       const testCases = [
-        "nested.array.0.prop",      // dot.dot.dot
-        "nested.array[0].prop",     // dot.bracket.dot  
-        "nested[array][0][prop]",   // bracket.bracket.bracket
-        "nested[array].0.prop",     // bracket.dot.dot
+        "nested.array.0.prop", // dot.dot.dot
+        "nested.array[0].prop", // dot.bracket.dot
+        "nested[array][0][prop]", // bracket.bracket.bracket
+        "nested[array].0.prop", // bracket.dot.dot
       ];
 
       for (const notation of testCases) {
@@ -744,8 +747,8 @@ describe("bun pm pkg", () => {
     it("should handle string properties in bracket notation", async () => {
       // Test various string property access patterns
       const testCases = [
-        ["scripts[test]", '"echo \'test\'"'],
-        ["scripts[build]", '"echo \'build\'"'],
+        ["scripts[test]", "\"echo 'test'\""],
+        ["scripts[build]", "\"echo 'build'\""],
         ["engines[node]", '">=18"'],
         ["bin[test-cli]", '"./bin/cli.js"'],
       ];
@@ -775,10 +778,10 @@ describe("bun pm pkg", () => {
 
     it("should gracefully handle invalid notation patterns", async () => {
       const invalidCases = [
-        "contributors.999",         // Out of bounds array index
-        "scripts[nonexistent]",     // Non-existent property
-        "keywords.abc",            // Non-numeric on array
-        "nonexistent.0",           // Non-existent parent
+        "contributors.999", // Out of bounds array index
+        "scripts[nonexistent]", // Non-existent property
+        "keywords.abc", // Non-numeric on array
+        "nonexistent.0", // Non-existent parent
       ];
 
       for (const notation of invalidCases) {
@@ -790,11 +793,7 @@ describe("bun pm pkg", () => {
 
     it("should reject empty bracket notation for get operations (npm compatibility)", async () => {
       // Empty brackets are not valid for retrieving values, only for setting
-      const invalidEmptyBracketCases = [
-        "contributors[]",
-        "contributors[].name",
-        "scripts[]",
-      ];
+      const invalidEmptyBracketCases = ["contributors[]", "contributors[].name", "scripts[]"];
 
       for (const notation of invalidEmptyBracketCases) {
         const { error, code } = await runPmPkg(["get", notation], testDir!, false);
@@ -811,7 +810,7 @@ describe("bun pm pkg", () => {
       const { output: getOutput1 } = await runPmPkg(["get", "test.array.0"], testDir!);
       expect(getOutput1.trim()).toBe('"first"');
 
-      // Set using dot notation, get using dot notation  
+      // Set using dot notation, get using dot notation
       const { code: setCode2 } = await runPmPkg(["set", "test.bracket.access=success"], testDir!);
       expect(setCode2).toBe(0);
 
@@ -835,27 +834,28 @@ describe("bun pm pkg", () => {
     it("should verify npm compatibility with real-world patterns", async () => {
       // Create a package.json structure similar to real projects
       const realWorldDir = tempDirWithFiles("real-world-test", {
-        "package.json": JSON.stringify({
-          name: "my-project",
-          version: "1.0.0",
-          scripts: {
-            "test": "jest",
-            "test:watch": "jest --watch",
-            "build": "webpack",
-            "build:prod": "webpack --mode=production"
+        "package.json": JSON.stringify(
+          {
+            name: "my-project",
+            version: "1.0.0",
+            scripts: {
+              "test": "jest",
+              "test:watch": "jest --watch",
+              "build": "webpack",
+              "build:prod": "webpack --mode=production",
+            },
+            dependencies: {
+              "react": "^18.0.0",
+              "@types/node": "^20.0.0",
+            },
+            workspaces: ["packages/*", "apps/*"],
+            publishConfig: {
+              registry: "https://npm.pkg.github.com",
+            },
           },
-          dependencies: {
-            "react": "^18.0.0",
-            "@types/node": "^20.0.0"
-          },
-          workspaces: [
-            "packages/*",
-            "apps/*"
-          ],
-          publishConfig: {
-            registry: "https://npm.pkg.github.com"
-          }
-        }, null, 2)
+          null,
+          2,
+        ),
       });
 
       try {
@@ -886,19 +886,23 @@ describe("bun pm pkg", () => {
 
     beforeEach(() => {
       fixTestDir = tempDirWithFiles("fix-test", {
-        "package.json": JSON.stringify({
-          name: "TEST-PACKAGE",
-          version: "1.0.0",
-          description: "Test package",
-          main: "index.js",
-          bin: {
-            "mycli": "./bin/nonexistent.js",
-            "othercli": "./bin/also-missing.js"
+        "package.json": JSON.stringify(
+          {
+            name: "TEST-PACKAGE",
+            version: "1.0.0",
+            description: "Test package",
+            main: "index.js",
+            bin: {
+              "mycli": "./bin/nonexistent.js",
+              "othercli": "./bin/also-missing.js",
+            },
+            dependencies: {
+              "react": "^18.0.0",
+            },
           },
-          dependencies: {
-            "react": "^18.0.0"
-          }
-        }, null, 2)
+          null,
+          2,
+        ),
       });
     });
 
@@ -926,18 +930,22 @@ describe("bun pm pkg", () => {
     it("should not modify package.json if no fixes are needed", async () => {
       // First, create a package.json that doesn't need fixing
       const goodDir = tempDirWithFiles("good-package", {
-        "package.json": JSON.stringify({
-          name: "good-package",
-          version: "1.0.0",
-          description: "Already good package"
-        }, null, 2)
+        "package.json": JSON.stringify(
+          {
+            name: "good-package",
+            version: "1.0.0",
+            description: "Already good package",
+          },
+          null,
+          2,
+        ),
       });
 
       try {
         const beforeContent = await Bun.file(join(goodDir, "package.json")).text();
         const { code } = await runPmPkg(["fix"], goodDir);
         expect(code).toBe(0);
-        
+
         const afterContent = await Bun.file(join(goodDir, "package.json")).text();
         expect(afterContent).toBe(beforeContent);
       } finally {
@@ -948,14 +956,18 @@ describe("bun pm pkg", () => {
     it("should handle package.json with existing bin files", async () => {
       // Create a package with an actual bin file
       const binDir = tempDirWithFiles("bin-test", {
-        "package.json": JSON.stringify({
-          name: "BIN-PACKAGE",
-          version: "1.0.0",
-          bin: {
-            "actualcli": "./bin/real.js"
-          }
-        }, null, 2),
-        "bin/real.js": "#!/usr/bin/env node\nconsole.log('Hello');"
+        "package.json": JSON.stringify(
+          {
+            name: "BIN-PACKAGE",
+            version: "1.0.0",
+            bin: {
+              "actualcli": "./bin/real.js",
+            },
+          },
+          null,
+          2,
+        ),
+        "bin/real.js": "#!/usr/bin/env node\nconsole.log('Hello');",
       });
 
       try {
@@ -963,7 +975,7 @@ describe("bun pm pkg", () => {
         expect(code).toBe(0);
         // Should not warn about the real file
         expect(error).not.toContain("No bin file found at ./bin/real.js");
-        
+
         // Should still fix the name
         const { output: nameOutput } = await runPmPkg(["get", "name"], binDir);
         expect(nameOutput.trim()).toBe('"bin-package"');
@@ -992,7 +1004,7 @@ describe("bun pm pkg", () => {
 
     it("should handle malformed package.json gracefully", async () => {
       const malformedDir = tempDirWithFiles("malformed-test", {
-        "package.json": '{"name": "test", invalid}'
+        "package.json": '{"name": "test", invalid}',
       });
 
       try {
@@ -1006,7 +1018,7 @@ describe("bun pm pkg", () => {
 
     it("should handle non-object package.json", async () => {
       const nonObjectDir = tempDirWithFiles("non-object-test", {
-        "package.json": '"this is not an object"'
+        "package.json": '"this is not an object"',
       });
 
       try {
@@ -1020,14 +1032,18 @@ describe("bun pm pkg", () => {
 
     it("should fix multiple issues in one run", async () => {
       const multiIssueDir = tempDirWithFiles("multi-issue-test", {
-        "package.json": JSON.stringify({
-          name: "MULTIPLE-ISSUES-PACKAGE",
-          version: "1.0.0",
-          bin: {
-            "missing1": "./nonexistent1.js",
-            "missing2": "./nonexistent2.js"
-          }
-        }, null, 2)
+        "package.json": JSON.stringify(
+          {
+            name: "MULTIPLE-ISSUES-PACKAGE",
+            version: "1.0.0",
+            bin: {
+              "missing1": "./nonexistent1.js",
+              "missing2": "./nonexistent2.js",
+            },
+          },
+          null,
+          2,
+        ),
       });
 
       try {
@@ -1048,11 +1064,15 @@ describe("bun pm pkg", () => {
 
     it("should not crash on empty bin object", async () => {
       const emptyBinDir = tempDirWithFiles("empty-bin-test", {
-        "package.json": JSON.stringify({
-          name: "EMPTY-BIN-PACKAGE",
-          version: "1.0.0",
-          bin: {}
-        }, null, 2)
+        "package.json": JSON.stringify(
+          {
+            name: "EMPTY-BIN-PACKAGE",
+            version: "1.0.0",
+            bin: {},
+          },
+          null,
+          2,
+        ),
       });
 
       try {
@@ -1085,11 +1105,15 @@ describe("bun pm pkg", () => {
 
     beforeEach(() => {
       emptyKeyDir = tempDirWithFiles("empty-key-test", {
-        "package.json": JSON.stringify({
-          name: "test-package",
-          version: "1.0.0",
-          "": "empty-key-value"
-        }, null, 2)
+        "package.json": JSON.stringify(
+          {
+            name: "test-package",
+            version: "1.0.0",
+            "": "empty-key-value",
+          },
+          null,
+          2,
+        ),
       });
     });
 

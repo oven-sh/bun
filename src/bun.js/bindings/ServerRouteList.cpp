@@ -244,12 +244,8 @@ JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t ind
 
     auto* params = paramsObjectForRoute(vm, globalObject, index, req);
 
-    JSBunRequest* request = JSBunRequest::create(
-        vm,
-        structure,
-        requestPtr,
-        params);
-    EXCEPTION_ASSERT(!scope.exception());
+    JSBunRequest* request = JSBunRequest::create(vm, structure, requestPtr, params);
+    scope.assertNoException();
     *requestObject = JSValue::encode(request);
 
     JSValue callback = m_routes.at(index).get();

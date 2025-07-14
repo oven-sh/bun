@@ -290,9 +290,13 @@ pub fn cloneValue(
     this: *Response,
     globalThis: *JSGlobalObject,
 ) bun.JSError!Response {
+    var body = try this.body.clone(globalThis);
+    errdefer body.deinit(bun.default_allocator);
+    var init = try this.init.clone(globalThis);
+    errdefer init.deinit(bun.default_allocator);
     return Response{
-        .body = try this.body.clone(globalThis),
-        .init = try this.init.clone(globalThis),
+        .body = body,
+        .init = init,
         .url = this.url.clone(),
         .redirected = this.redirected,
     };

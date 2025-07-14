@@ -897,7 +897,9 @@ pub fn cloneInto(
     _ = allocator;
     this.ensureURL() catch {};
     const vm = globalThis.bunVM();
-    const body = try vm.initRequestBodyValue(try this.body.value.clone(globalThis));
+    var body_ = try this.body.value.clone(globalThis);
+    errdefer body_.deinit();
+    const body = try vm.initRequestBodyValue(body_);
     const original_url = req.url;
 
     req.* = Request{

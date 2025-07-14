@@ -946,6 +946,7 @@ void populateESMExports(
     bool ignoreESModuleAnnotation)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     const Identifier& esModuleMarker = vm.propertyNames->__esModule;
 
     // Bun's interpretation of the "__esModule" annotation:
@@ -981,10 +982,9 @@ void populateESMExports(
     if (auto* exports = result.getObject()) {
         bool hasESModuleMarker = false;
         if (!ignoreESModuleAnnotation) {
-            auto catchScope = DECLARE_CATCH_SCOPE(vm);
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
             auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
-            RETURN_IF_EXCEPTION(catchScope, );
+            RETURN_IF_EXCEPTION(scope, );
             if (has) {
                 JSValue value = slot.getValue(globalObject, esModuleMarker);
                 if (!value.isUndefinedOrNull()) {
@@ -993,21 +993,12 @@ void populateESMExports(
                     }
                 }
             }
-            if (catchScope.exception()) {
-                catchScope.clearException();
-            }
         }
 
         auto* structure = exports->structure();
         uint32_t size = structure->inlineSize() + structure->outOfLineSize();
         exportNames.reserveCapacity(size + 2);
         exportValues.ensureCapacity(size + 2);
-
-        auto catchScope = DECLARE_CATCH_SCOPE(vm);
-
-        if (catchScope.exception()) {
-            catchScope.clearException();
-        }
 
         if (hasESModuleMarker) {
             if (canPerformFastEnumeration(structure)) {
@@ -1027,8 +1018,8 @@ void populateESMExports(
             } else {
                 JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
                 exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
-                if (catchScope.exception()) {
-                    catchScope.clearExceptionExceptTermination();
+                if (scope.exception() && vm.hasPendingTerminationException()) {
+                    scope.clearException();
                     return;
                 }
 
@@ -1042,7 +1033,7 @@ void populateESMExports(
 
                     JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
                     auto has = exports->getPropertySlot(globalObject, property, slot);
-                    RETURN_IF_EXCEPTION(catchScope, );
+                    RETURN_IF_EXCEPTION(scope, );
                     if (!has) continue;
 
                     // Allow DontEnum properties which are not getter/setters
@@ -1059,8 +1050,8 @@ void populateESMExports(
 
                     // If it throws, we keep them in the exports list, but mark it as undefined
                     // This is consistent with what Node.js does.
-                    if (catchScope.exception()) {
-                        catchScope.clearException();
+                    if (scope.exception()) {
+                        scope.clearException();
                         getterResult = jsUndefined();
                     }
 
@@ -1085,8 +1076,8 @@ void populateESMExports(
         } else {
             JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
             exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
-            if (catchScope.exception()) {
-                catchScope.clearExceptionExceptTermination();
+            if (scope.exception() && vm.hasPendingTerminationException()) {
+                scope.clearException();
                 return;
             }
 
@@ -1100,7 +1091,7 @@ void populateESMExports(
 
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
                 auto has = exports->getPropertySlot(globalObject, property, slot);
-                RETURN_IF_EXCEPTION(catchScope, );
+                RETURN_IF_EXCEPTION(scope, );
                 if (!has) continue;
 
                 if (slot.attributes() & PropertyAttribute::DontEnum) {
@@ -1117,8 +1108,8 @@ void populateESMExports(
 
                 // If it throws, we keep them in the exports list, but mark it as undefined
                 // This is consistent with what Node.js does.
-                if (catchScope.exception()) {
-                    catchScope.clearException();
+                if (scope.exception()) {
+                    scope.clearException();
                     getterResult = jsUndefined();
                 }
 
@@ -1142,7 +1133,7 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
     auto result = this->exportsObject();
     RETURN_IF_EXCEPTION(scope, );
 
-    populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation);
+    RETURN_IF_EXCEPTION(scope, populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation));
 }
 
 void JSCommonJSModule::setExportsObject(JSC::JSValue exportsObject)

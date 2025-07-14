@@ -135,6 +135,7 @@ test/js/bun/http/serve-body-leak.test.ts
 test/js/bun/http/serve-listen.test.ts
 test/js/bun/http/serve.test.ts
 test/js/bun/import-attributes/import-attributes.test.ts
+test/js/bun/resolve/resolve.test.ts
 test/js/bun/ini/ini.test.ts
 test/js/bun/io/bun-write.test.js
 test/js/bun/jsc/bun-jsc.test.ts
@@ -693,6 +694,7 @@ vendor/elysia/test/ws/aot.test.ts
 vendor/elysia/test/ws/connection.test.ts
 vendor/elysia/test/ws/destructuring.test.ts
 vendor/elysia/test/ws/message.test.ts
+
 
 # List of tests that potentially throw inside of reifyStaticProperties
 test/js/node/test/parallel/test-stream-iterator-helpers-test262-tests.mjs

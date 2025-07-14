@@ -1018,7 +1018,7 @@ describe("bun test", () => {
       stderr
         .replace(/bun-test-(.*)\.test\.ts/, "bun-test-*.test.ts")
         .replace(/\[.*ms\]/g, "[xxms]")
-        .trim()
+        .trim(),
     ).toMatchInlineSnapshot(`
       "bun-test-*.test.ts:
       (pass) group 1 > should match filter [xxms]

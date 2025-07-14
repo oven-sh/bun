@@ -721,8 +721,8 @@ test("regression/NODE_PATHBuild api", async () => {
   });
 
   await proc.exited;
-  const output = await new Response(proc.stdout).text();
-  const error = await new Response(proc.stderr).text();
+  const output = await proc.stdout.text();
+  const error = await proc.stderr.text();
 
   expect(error).toBe("");
   expect(output.trim()).toBe("MyClass");

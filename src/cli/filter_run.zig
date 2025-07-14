@@ -475,8 +475,30 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
 
         const pkgscripts = pkgjson.scripts orelse continue;
 
-        if (!filter_instance.matches(path, pkgjson.name))
+        // Check if package matches either --filter or --workspace criteria
+        const matches_filter = ctx.filters.len > 0 and filter_instance.matches(path, pkgjson.name);
+        const matches_workspace = ctx.workspaces.len > 0 and blk: {
+            for (ctx.workspaces) |workspace| {
+                if (bun.strings.eql(workspace, pkgjson.name)) {
+                    break :blk true;
+                }
+            }
+            break :blk false;
+        };
+        
+        if (ctx.filters.len > 0 and ctx.workspaces.len > 0) {
+            // Both --filter and --workspace specified: package must match at least one
+            if (!matches_filter and !matches_workspace) continue;
+        } else if (ctx.filters.len > 0) {
+            // Only --filter specified
+            if (!matches_filter) continue;
+        } else if (ctx.workspaces.len > 0) {
+            // Only --workspace specified
+            if (!matches_workspace) continue;
+        } else {
+            // Neither specified (shouldn't happen, but handle gracefully)
             continue;
+        }
 
         const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_transpiler, null, dirpath, ctx.debug.run_in_bun);
 
@@ -565,38 +587,44 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             // &state.handles[i];
         }
     }
-    // compute dependencies (TODO: maybe we should do this only in a workspace?)
-    for (state.handles) |*handle| {
-        var iter = handle.config.deps.map.iterator();
-        while (iter.next()) |entry| {
-            var sfa = std.heap.stackFallback(256, ctx.allocator);
-            const alloc = sfa.get();
-            const buf = try alloc.alloc(u8, entry.key_ptr.len());
-            defer alloc.free(buf);
-            const name = entry.key_ptr.slice(buf);
-            // is it a workspace dependency?
-            if (map.get(name)) |pkgs| {
-                for (pkgs.items) |dep| {
-                    try dep.dependents.append(handle);
-                    handle.remaining_dependencies += 1;
+    // compute dependencies
+    // Skip dependency order computation for --workspace to preserve workspace definition order  
+    const is_workspace_mode = ctx.workspaces.len > 0 and ctx.filters.len == 0;
+    if (!is_workspace_mode) {
+        for (state.handles) |*handle| {
+            var iter = handle.config.deps.map.iterator();
+            while (iter.next()) |entry| {
+                var sfa = std.heap.stackFallback(256, ctx.allocator);
+                const alloc = sfa.get();
+                const buf = try alloc.alloc(u8, entry.key_ptr.len());
+                defer alloc.free(buf);
+                const name = entry.key_ptr.slice(buf);
+                // is it a workspace dependency?
+                if (map.get(name)) |pkgs| {
+                    for (pkgs.items) |dep| {
+                        try dep.dependents.append(handle);
+                        handle.remaining_dependencies += 1;
+                    }
                 }
             }
         }
     }
 
-    // check if there is a dependency cycle
+    // check if there is a dependency cycle (skip in workspace mode)
     var has_cycle = false;
-    for (state.handles) |*handle| {
-        if (hasCycle(handle)) {
-            has_cycle = true;
-            break;
-        }
-    }
-    // if there is, we ignore dependency order completely
-    if (has_cycle) {
+    if (!is_workspace_mode) {
         for (state.handles) |*handle| {
-            handle.dependents.clearRetainingCapacity();
-            handle.remaining_dependencies = 0;
+            if (hasCycle(handle)) {
+                has_cycle = true;
+                break;
+            }
+        }
+        // if there is, we ignore dependency order completely
+        if (has_cycle) {
+            for (state.handles) |*handle| {
+                handle.dependents.clearRetainingCapacity();
+                handle.remaining_dependencies = 0;
+            }
         }
     }
 
@@ -606,6 +634,17 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         if (bun.strings.eql(state.handles[i].config.package_name, state.handles[i + 1].config.package_name)) {
             try state.handles[i].dependents.append(&state.handles[i + 1]);
             state.handles[i + 1].remaining_dependencies += 1;
+        }
+    }
+    
+    // In workspace mode, serialize execution to preserve workspace definition order
+    if (is_workspace_mode) {
+        for (0..state.handles.len - 1) |i| {
+            // Only create dependencies between different packages, not within the same package
+            if (!bun.strings.eql(state.handles[i].config.package_name, state.handles[i + 1].config.package_name)) {
+                try state.handles[i].dependents.append(&state.handles[i + 1]);
+                state.handles[i + 1].remaining_dependencies += 1;
+            }
         }
     }
 

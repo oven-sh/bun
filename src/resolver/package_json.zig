@@ -127,6 +127,18 @@ pub const PackageJSON = struct {
     exports: ?ExportsMap = null,
     imports: ?ExportsMap = null,
 
+    /// Normalize path separators to forward slashes for glob matching
+    /// This is needed because glob patterns use forward slashes but Windows uses backslashes
+    fn normalizePathForGlob(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+        const normalized = try allocator.dupe(u8, path);
+        for (normalized) |*char| {
+            if (char.* == '\\') {
+                char.* = '/';
+            }
+        }
+        return normalized;
+    }
+
     pub const SideEffects = union(enum) {
         /// either `package.json` is missing "sideEffects", it is true, or some
         /// other unsupported value. Treat all files as side effects
@@ -153,18 +165,6 @@ pub const PackageJSON = struct {
             exact: Map,
             globs: GlobList,
         };
-
-        /// Normalize path separators to forward slashes for glob matching
-        /// This is needed because glob patterns use forward slashes but Windows uses backslashes
-        fn normalizePathForGlob(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-            const normalized = try allocator.dupe(u8, path);
-            for (normalized) |*char| {
-                if (char.* == '\\') {
-                    char.* = '/';
-                }
-            }
-            return normalized;
-        }
 
         pub fn hasSideEffects(side_effects: SideEffects, path: []const u8) bool {
             return switch (side_effects) {
@@ -864,7 +864,9 @@ pub const PackageJSON = struct {
                             const pattern = r.fs.join(&joined);
 
                             if (strings.containsChar(name, '*') or strings.containsChar(name, '?') or strings.containsChar(name, '[') or strings.containsChar(name, '{')) {
-                                glob_list.appendAssumeCapacity(pattern);
+                                // Normalize pattern to use forward slashes for cross-platform compatibility
+                                const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
+                                glob_list.appendAssumeCapacity(normalized_pattern);
                             } else {
                                 _ = map.getOrPutAssumeCapacity(
                                     bun.StringHashMapUnowned.Key.init(pattern),
@@ -889,7 +891,9 @@ pub const PackageJSON = struct {
                             };
 
                             const pattern = r.fs.join(&joined);
-                            glob_list.appendAssumeCapacity(pattern);
+                            // Normalize pattern to use forward slashes for cross-platform compatibility
+                            const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
+                            glob_list.appendAssumeCapacity(normalized_pattern);
                         }
                     }
                     package_json.side_effects = .{ .glob = glob_list };

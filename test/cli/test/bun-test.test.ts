@@ -1144,7 +1144,13 @@ describe("bun test", () => {
     });
 
     const result = spawnSync({
-      cmd: [bunExe(), "test", "--tsconfig-override", "./packages/app/tsconfig.spec.json", "./packages/app/src/index.test.ts"],
+      cmd: [
+        bunExe(),
+        "test",
+        "--tsconfig-override",
+        "./packages/app/tsconfig.spec.json",
+        "./packages/app/src/index.test.ts",
+      ],
       env: bunEnv,
       cwd: dir,
       stdout: "pipe",

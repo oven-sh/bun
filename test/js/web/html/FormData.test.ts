@@ -649,6 +649,31 @@ describe("FormData", () => {
 
 // https://github.com/oven-sh/bun/issues/14988
 describe("Content-Type header propagation", () => {
+  describe("https://github.com/oven-sh/bun/issues/21011", () => {
+    function createRequest() {
+      const formData = new FormData();
+      formData.append("key", "value");
+
+      return new Request("https://example.com/api/endpoint", {
+        method: "POST",
+        body: formData,
+      });
+    }
+
+    test("without checking body", async () => {
+      const request = createRequest();
+      expect(request.headers.get("Content-Type")).toStartWith("multipart/form-data");
+    });
+
+    test("check body", async () => {
+      const request = createRequest();
+      if (!request.body) {
+        expect.unreachable();
+      }
+      expect(request.headers.get("Content-Type")).toStartWith("multipart/form-data");
+    });
+  });
+
   // Shared test server that validates multipart/form-data content-type
   function createTestServer() {
     return Bun.serve({

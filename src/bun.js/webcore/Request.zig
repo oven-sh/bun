@@ -825,11 +825,18 @@ pub fn ensureFetchHeaders(
     } else {
         // we don't have a request context, so we need to create an empty headers object
         this._headers = FetchHeaders.createEmpty();
+        const content_type = switch (this.body.value) {
+            .Blob => |blob| blob.content_type,
+            .Locked => |locked| if (locked.readable.get(globalThis)) |*readable| switch (readable.ptr) {
+                .Blob => |blob| blob.content_type,
+                else => null,
+            } else null,
+            else => null,
+        };
 
-        if (this.body.value == .Blob) {
-            const content_type = this.body.value.Blob.content_type;
-            if (content_type.len > 0) {
-                try this._headers.?.put(.ContentType, content_type, globalThis);
+        if (content_type) |content_type_| {
+            if (content_type_.len > 0) {
+                try this._headers.?.put(.ContentType, content_type_, globalThis);
             }
         }
     }

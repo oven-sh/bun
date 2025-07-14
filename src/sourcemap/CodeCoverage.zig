@@ -267,6 +267,386 @@ pub const Report = struct {
         }
     };
 
+    pub const Html = struct {
+        pub fn writeIndexFile(
+            reports: []const *const Report,
+            base_path: []const u8,
+            total_fraction: Fraction,
+            writer: anytype,
+        ) !void {
+            try writer.writeAll(
+                \\<!DOCTYPE html>
+                \\<html lang="en">
+                \\<head>
+                \\    <meta charset="UTF-8">
+                \\    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                \\    <title>Code Coverage Report</title>
+                \\    <style>
+                \\        * { margin: 0; padding: 0; box-sizing: border-box; }
+                \\        body { 
+                \\            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+                \\            background: #f8f9fa; color: #212529; line-height: 1.6; 
+                \\        }
+                \\        .header { 
+                \\            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                \\            color: white; padding: 2rem 0; text-align: center; 
+                \\        }
+                \\        .header h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+                \\        .header p { font-size: 1.1rem; opacity: 0.9; }
+                \\        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+                \\        .summary { 
+                \\            background: white; border-radius: 12px; padding: 2rem; 
+                \\            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+                \\        }
+                \\        .summary h2 { margin-bottom: 1.5rem; color: #495057; }
+                \\        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+                \\        .metric { 
+                \\            text-align: center; padding: 1.5rem; border-radius: 8px; 
+                \\            background: #f8f9fa; border: 2px solid #e9ecef; 
+                \\        }
+                \\        .metric.high { border-color: #28a745; background: #d4edda; }
+                \\        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+                \\        .metric.low { border-color: #dc3545; background: #f8d7da; }
+                \\        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+                \\        .metric.high .metric-value { color: #155724; }
+                \\        .metric.medium .metric-value { color: #856404; }
+                \\        .metric.low .metric-value { color: #721c24; }
+                \\        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+                \\        .files-table { 
+                \\            background: white; border-radius: 12px; padding: 2rem; 
+                \\            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+                \\        }
+                \\        .files-table h2 { margin-bottom: 1.5rem; color: #495057; }
+                \\        table { width: 100%; border-collapse: collapse; }
+                \\        th, td { padding: 1rem; text-align: left; border-bottom: 1px solid #e9ecef; }
+                \\        th { background: #f8f9fa; font-weight: 600; color: #495057; }
+                \\        tr:hover { background: #f8f9fa; }
+                \\        .file-link { color: #667eea; text-decoration: none; font-weight: 500; }
+                \\        .file-link:hover { text-decoration: underline; }
+                \\        .coverage-bar { 
+                \\            width: 60px; height: 8px; background: #e9ecef; border-radius: 4px; 
+                \\            position: relative; overflow: hidden; 
+                \\        }
+                \\        .coverage-fill { 
+                \\            height: 100%; border-radius: 4px; transition: width 0.3s ease; 
+                \\        }
+                \\        .coverage-fill.high { background: #28a745; }
+                \\        .coverage-fill.medium { background: #ffc107; }
+                \\        .coverage-fill.low { background: #dc3545; }
+                \\        .coverage-text { font-weight: 600; }
+                \\        .coverage-text.high { color: #155724; }
+                \\        .coverage-text.medium { color: #856404; }
+                \\        .coverage-text.low { color: #721c24; }
+                \\        .footer { 
+                \\            text-align: center; padding: 2rem; color: #6c757d; 
+                \\            font-size: 0.9rem; 
+                \\        }
+                \\        @media (max-width: 768px) {
+                \\            .container { padding: 1rem; }
+                \\            .header h1 { font-size: 2rem; }
+                \\            .metrics { grid-template-columns: 1fr; }
+                \\            table { font-size: 0.9rem; }
+                \\            th, td { padding: 0.75rem; }
+                \\        }
+                \\    </style>
+                \\</head>
+                \\<body>
+                \\    <div class="header">
+                \\        <h1>📊 Code Coverage Report</h1>
+                \\        <p>Generated by Bun Test Runner</p>
+                \\    </div>
+                \\    <div class="container">
+                \\        <div class="summary">
+                \\            <h2>📈 Coverage Summary</h2>
+                \\            <div class="metrics">
+                \\
+            );
+
+            const functions_percent = total_fraction.functions * 100.0;
+            const lines_percent = total_fraction.lines * 100.0;
+
+            const functions_level = getCoverageLevel(functions_percent);
+            const lines_level = getCoverageLevel(lines_percent);
+
+            try writer.print(
+                \\                <div class="metric {s}">
+                \\                    <div class="metric-value">{d:.1}%</div>
+                \\                    <div class="metric-label">Functions</div>
+                \\                </div>
+                \\                <div class="metric {s}">
+                \\                    <div class="metric-value">{d:.1}%</div>
+                \\                    <div class="metric-label">Lines</div>
+                \\                </div>
+                \\
+            , .{ functions_level, functions_percent, lines_level, lines_percent });
+
+            try writer.writeAll(
+                \\            </div>
+                \\        </div>
+                \\        <div class="files-table">
+                \\            <h2>📁 Files</h2>
+                \\            <table>
+                \\                <thead>
+                \\                    <tr>
+                \\                        <th>File</th>
+                \\                        <th>Functions</th>
+                \\                        <th>Lines</th>
+                \\                        <th>Coverage</th>
+                \\                    </tr>
+                \\                </thead>
+                \\                <tbody>
+                \\
+            );
+
+            for (reports) |report| {
+                var filename = report.source_url.slice();
+                if (base_path.len > 0) {
+                    filename = bun.path.relative(base_path, filename);
+                }
+
+                const functions_frac = report.functionCoverageFraction();
+                const lines_frac = report.linesCoverageFraction();
+                const functions_pct = functions_frac * 100.0;
+                const lines_pct = lines_frac * 100.0;
+                const avg_pct = (functions_pct + lines_pct) / 2.0;
+
+                const functions_lvl = getCoverageLevel(functions_pct);
+                const lines_lvl = getCoverageLevel(lines_pct);
+                const avg_lvl = getCoverageLevel(avg_pct);
+
+                // Generate HTML filename
+                const html_filename_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(html_filename_buf);
+                const safe_filename_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(safe_filename_buf);
+                const replacements_made = std.mem.replace(u8, filename, std.fs.path.sep_str, "_", safe_filename_buf);
+                // Calculate the correct length: original length + (replacements * (replacement_length - original_length))
+                const safe_filename_len = filename.len + replacements_made * ("_".len - std.fs.path.sep_str.len);
+                const safe_filename = if (replacements_made > 0) safe_filename_buf[0..safe_filename_len] else filename;
+                const html_filename = std.fmt.bufPrintZ(html_filename_buf, "{s}.html", .{safe_filename}) catch continue;
+
+                try writer.print(
+                    \\                    <tr>
+                    \\                        <td><a href="{s}" class="file-link">{s}</a></td>
+                    \\                        <td>
+                    \\                            <span class="coverage-text {s}">{d:.1}%</span>
+                    \\                            <div class="coverage-bar">
+                    \\                                <div class="coverage-fill {s}" style="width: {d:.1}%"></div>
+                    \\                            </div>
+                    \\                        </td>
+                    \\                        <td>
+                    \\                            <span class="coverage-text {s}">{d:.1}%</span>
+                    \\                            <div class="coverage-bar">
+                    \\                                <div class="coverage-fill {s}" style="width: {d:.1}%"></div>
+                    \\                            </div>
+                    \\                        </td>
+                    \\                        <td>
+                    \\                            <div class="coverage-bar">
+                    \\                                <div class="coverage-fill {s}" style="width: {d:.1}%"></div>
+                    \\                            </div>
+                    \\                        </td>
+                    \\                    </tr>
+                    \\
+                , .{ html_filename, filename, functions_lvl, functions_pct, functions_lvl, functions_pct, lines_lvl, lines_pct, lines_lvl, lines_pct, avg_lvl, avg_pct });
+            }
+
+            try writer.writeAll(
+                \\                </tbody>
+                \\            </table>
+                \\        </div>
+                \\    </div>
+                \\    <div class="footer">
+                \\        Generated with ❤️ by Bun Test Runner
+                \\    </div>
+                \\</body>
+                \\</html>
+                \\
+            );
+        }
+
+        pub fn writeFileReport(
+            report: *const Report,
+            source_content: []const u8,
+            base_path: []const u8,
+            writer: anytype,
+        ) !void {
+            var filename = report.source_url.slice();
+            if (base_path.len > 0) {
+                filename = bun.path.relative(base_path, filename);
+            }
+
+            const functions_frac = report.functionCoverageFraction();
+            const lines_frac = report.linesCoverageFraction();
+            const functions_pct = functions_frac * 100.0;
+            const lines_pct = lines_frac * 100.0;
+
+            const functions_lvl = getCoverageLevel(functions_pct);
+            const lines_lvl = getCoverageLevel(lines_pct);
+
+            try writer.print(
+                \\<!DOCTYPE html>
+                \\<html lang="en">
+                \\<head>
+                \\    <meta charset="UTF-8">
+                \\    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                \\    <title>Coverage: {s}</title>
+                \\    <style>
+                \\        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+                \\        body {{ 
+                \\            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+                \\            background: #f8f9fa; color: #212529; line-height: 1.6; 
+                \\        }}
+                \\        .header {{ 
+                \\            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                \\            color: white; padding: 1.5rem 0; 
+                \\        }}
+                \\        .header-content {{ max-width: 1200px; margin: 0 auto; padding: 0 2rem; }}
+                \\        .header h1 {{ font-size: 1.8rem; margin-bottom: 0.5rem; }}
+                \\        .back-link {{ color: rgba(255,255,255,0.9); text-decoration: none; font-size: 0.9rem; }}
+                \\        .back-link:hover {{ text-decoration: underline; }}
+                \\        .container {{ max-width: 1200px; margin: 0 auto; padding: 2rem; }}
+                \\        .file-summary {{ 
+                \\            background: white; border-radius: 12px; padding: 2rem; 
+                \\            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+                \\        }}
+                \\        .metrics {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }}
+                \\        .metric {{ 
+                \\            text-align: center; padding: 1.5rem; border-radius: 8px; 
+                \\            background: #f8f9fa; border: 2px solid #e9ecef; 
+                \\        }}
+                \\        .metric.high {{ border-color: #28a745; background: #d4edda; }}
+                \\        .metric.medium {{ border-color: #ffc107; background: #fff3cd; }}
+                \\        .metric.low {{ border-color: #dc3545; background: #f8d7da; }}
+                \\        .metric-value {{ font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }}
+                \\        .metric.high .metric-value {{ color: #155724; }}
+                \\        .metric.medium .metric-value {{ color: #856404; }}
+                \\        .metric.low .metric-value {{ color: #721c24; }}
+                \\        .metric-label {{ font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }}
+                \\        .source-code {{ 
+                \\            background: white; border-radius: 12px; 
+                \\            box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; 
+                \\        }}
+                \\        .source-header {{ 
+                \\            background: #f8f9fa; padding: 1rem 2rem; border-bottom: 1px solid #e9ecef; 
+                \\            font-weight: 600; color: #495057; 
+                \\        }}
+                \\        .source-content {{ 
+                \\            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+                \\            font-size: 0.9rem; line-height: 1.4; overflow-x: auto; 
+                \\        }}
+                \\        .line {{ display: flex; }}
+                \\        .line-number {{ 
+                \\            background: #f8f9fa; color: #6c757d; padding: 0.25rem 1rem; 
+                \\            text-align: right; min-width: 60px; user-select: none; 
+                \\            border-right: 1px solid #e9ecef; 
+                \\        }}
+                \\        .line-content {{ padding: 0.25rem 1rem; flex: 1; white-space: pre; }}
+                \\        .line.covered {{ background: rgba(40, 167, 69, 0.1); }}
+                \\        .line.uncovered {{ background: rgba(220, 53, 69, 0.1); }}
+                \\        .line.not-executable {{ }}
+                \\        .legend {{ 
+                \\            background: white; border-radius: 12px; padding: 1.5rem; 
+                \\            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+                \\        }}
+                \\        .legend h3 {{ margin-bottom: 1rem; color: #495057; }}
+                \\        .legend-items {{ display: flex; gap: 2rem; flex-wrap: wrap; }}
+                \\        .legend-item {{ display: flex; align-items: center; gap: 0.5rem; }}
+                \\        .legend-color {{ width: 16px; height: 16px; border-radius: 3px; }}
+                \\        .legend-color.covered {{ background: rgba(40, 167, 69, 0.3); }}
+                \\        .legend-color.uncovered {{ background: rgba(220, 53, 69, 0.3); }}
+                \\        .legend-color.not-executable {{ background: transparent; }}
+                \\        @media (max-width: 768px) {{
+                \\            .container {{ padding: 1rem; }}
+                \\            .header h1 {{ font-size: 1.5rem; }}
+                \\            .metrics {{ grid-template-columns: 1fr; }}
+                \\            .legend-items {{ flex-direction: column; gap: 1rem; }}
+                \\        }}
+                \\    </style>
+                \\</head>
+                \\<body>
+                \\    <div class="header">
+                \\        <div class="header-content">
+                \\            <a href="index.html" class="back-link">← Back to Summary</a>
+                \\            <h1>📄 {s}</h1>
+                \\        </div>
+                \\    </div>
+                \\    <div class="container">
+                \\        <div class="file-summary">
+                \\            <div class="metrics">
+                \\                <div class="metric {s}">
+                \\                    <div class="metric-value">{d:.1}%</div>
+                \\                    <div class="metric-label">Functions</div>
+                \\                </div>
+                \\                <div class="metric {s}">
+                \\                    <div class="metric-value">{d:.1}%</div>
+                \\                    <div class="metric-label">Lines</div>
+                \\                </div>
+                \\            </div>
+                \\        </div>
+                \\        <div class="legend">
+                \\            <h3>🎨 Legend</h3>
+                \\            <div class="legend-items">
+                \\                <div class="legend-item">
+                \\                    <div class="legend-color covered"></div>
+                \\                    <span>Covered lines</span>
+                \\                </div>
+                \\                <div class="legend-item">
+                \\                    <div class="legend-color uncovered"></div>
+                \\                    <span>Uncovered lines</span>
+                \\                </div>
+                \\                <div class="legend-item">
+                \\                    <div class="legend-color not-executable"></div>
+                \\                    <span>Not executable</span>
+                \\                </div>
+                \\            </div>
+                \\        </div>
+                \\        <div class="source-code">
+                \\            <div class="source-header">Source Code</div>
+                \\            <div class="source-content">
+                \\
+            , .{ filename, filename, functions_lvl, functions_pct, lines_lvl, lines_pct });
+
+            // Split source content into lines
+            var lines = std.mem.splitScalar(u8, source_content, '\n');
+            var line_num: u32 = 0;
+
+            while (lines.next()) |line| {
+                line_num += 1;
+
+                const is_executable = report.executable_lines.isSet(line_num - 1);
+                const is_covered = report.lines_which_have_executed.isSet(line_num - 1);
+
+                const class_name = if (!is_executable)
+                    "not-executable"
+                else if (is_covered)
+                    "covered"
+                else
+                    "uncovered";
+
+                try writer.print(
+                    \\                <div class="line {s}">
+                    \\                    <div class="line-number">{d}</div>
+                    \\                    <div class="line-content">{s}</div>
+                    \\                </div>
+                    \\
+                , .{ class_name, line_num, std.mem.trimRight(u8, line, " \t\r") });
+            }
+
+            try writer.writeAll(
+                \\            </div>
+                \\        </div>
+                \\    </div>
+                \\</body>
+                \\</html>
+                \\
+            );
+        }
+
+        inline fn getCoverageLevel(percent: f64) []const u8 {
+            return if (percent >= 80.0) "high" else if (percent >= 50.0) "medium" else "low";
+        }
+    };
+
     pub fn deinit(this: *Report, allocator: std.mem.Allocator) void {
         this.executable_lines.deinit(allocator);
         this.lines_which_have_executed.deinit(allocator);

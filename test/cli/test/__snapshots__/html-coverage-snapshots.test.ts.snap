@@ -1,0 +1,3137 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`html coverage reporter - complete HTML output snapshot single file: html-coverage-reporter-single-file 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coverage: calculator.ts</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 1.5rem 0; 
+        }
+        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 2rem; }
+        .header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .back-link { color: rgba(255,255,255,0.9); text-decoration: none; font-size: 0.9rem; }
+        .back-link:hover { text-decoration: underline; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .file-summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .source-code { 
+            background: white; border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; 
+        }
+        .source-header { 
+            background: #f8f9fa; padding: 1rem 2rem; border-bottom: 1px solid #e9ecef; 
+            font-weight: 600; color: #495057; 
+        }
+        .source-content { 
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+            font-size: 0.9rem; line-height: 1.4; overflow-x: auto; 
+        }
+        .line { display: flex; }
+        .line-number { 
+            background: #f8f9fa; color: #6c757d; padding: 0.25rem 1rem; 
+            text-align: right; min-width: 60px; user-select: none; 
+            border-right: 1px solid #e9ecef; 
+        }
+        .line-content { padding: 0.25rem 1rem; flex: 1; white-space: pre; }
+        .line.covered { background: rgba(40, 167, 69, 0.1); }
+        .line.uncovered { background: rgba(220, 53, 69, 0.1); }
+        .line.not-executable { }
+        .legend { 
+            background: white; border-radius: 12px; padding: 1.5rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .legend h3 { margin-bottom: 1rem; color: #495057; }
+        .legend-items { display: flex; gap: 2rem; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; }
+        .legend-color.covered { background: rgba(40, 167, 69, 0.3); }
+        .legend-color.uncovered { background: rgba(220, 53, 69, 0.3); }
+        .legend-color.not-executable { background: transparent; }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 1.5rem; }
+            .metrics { grid-template-columns: 1fr; }
+            .legend-items { flex-direction: column; gap: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <a href="index.html" class="back-link">← Back to Summary</a>
+            <h1>📄 calculator.ts</h1>
+        </div>
+    </div>
+    <div class="container">
+        <div class="file-summary">
+            <div class="metrics">
+                <div class="metric medium">
+                    <div class="metric-value">60.0%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric low">
+                    <div class="metric-value">45.5%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="legend">
+            <h3>🎨 Legend</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <div class="legend-color covered"></div>
+                    <span>Covered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color uncovered"></div>
+                    <span>Uncovered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color not-executable"></div>
+                    <span>Not executable</span>
+                </div>
+            </div>
+        </div>
+        <div class="source-code">
+            <div class="source-header">Source Code</div>
+            <div class="source-content">
+                <div class="line not-executable">
+                    <div class="line-number">1</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">2</div>
+                    <div class="line-content">export function add(a: number, b: number): number {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">3</div>
+                    <div class="line-content">  return a + b;</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">4</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">5</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">6</div>
+                    <div class="line-content">export function subtract(a: number, b: number): number {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">7</div>
+                    <div class="line-content">  return a - b;</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">8</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">9</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">10</div>
+                    <div class="line-content">export function multiply(a: number, b: number): number {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">11</div>
+                    <div class="line-content">  if (a === 0 || b === 0) {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">12</div>
+                    <div class="line-content">    return 0;</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">13</div>
+                    <div class="line-content">  }</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">14</div>
+                    <div class="line-content">  return a * b;</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">15</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">16</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">17</div>
+                    <div class="line-content">export function divide(a: number, b: number): number {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">18</div>
+                    <div class="line-content">  if (b === 0) {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">19</div>
+                    <div class="line-content">    throw new Error("Division by zero");</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">20</div>
+                    <div class="line-content">  }</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">21</div>
+                    <div class="line-content">  return a / b;</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">22</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">23</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">24</div>
+                    <div class="line-content">export function complexOperation(x: number): number {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">25</div>
+                    <div class="line-content">  if (x < 0) {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">26</div>
+                    <div class="line-content">    return -1;</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">27</div>
+                    <div class="line-content">  } else if (x === 0) {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">28</div>
+                    <div class="line-content">    return 0;</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">29</div>
+                    <div class="line-content">  } else if (x > 100) {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">30</div>
+                    <div class="line-content">    return 100;</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">31</div>
+                    <div class="line-content">  }</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">32</div>
+                    <div class="line-content">  return x * 2;</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">33</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">34</div>
+                    <div class="line-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"
+`;
+
+exports[`html coverage reporter - complete HTML output snapshot single file: html-coverage-reporter-single-file-process-output 1`] = `
+{
+  "exitCode": 0,
+  "htmlFilesGenerated": 3,
+  "stderr": 
+"calculator.test.ts:
+(pass) add function
+(pass) subtract function
+(pass) multiply function
+
+ 3 pass
+ 0 fail
+ 5 expect() calls
+Ran 3 tests across 1 file."
+,
+  "stdout": "bun test <version> (<revision>)",
+}
+`;
+
+exports[`html coverage reporter - complete HTML output snapshot multiple files: html-coverage-reporter-multiple-files-index 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Coverage Report</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 2rem 0; text-align: center; 
+        }
+        .header h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+        .header p { font-size: 1.1rem; opacity: 0.9; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .summary h2 { margin-bottom: 1.5rem; color: #495057; }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .files-table { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+        }
+        .files-table h2 { margin-bottom: 1.5rem; color: #495057; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 1rem; text-align: left; border-bottom: 1px solid #e9ecef; }
+        th { background: #f8f9fa; font-weight: 600; color: #495057; }
+        tr:hover { background: #f8f9fa; }
+        .file-link { color: #667eea; text-decoration: none; font-weight: 500; }
+        .file-link:hover { text-decoration: underline; }
+        .coverage-bar { 
+            width: 60px; height: 8px; background: #e9ecef; border-radius: 4px; 
+            position: relative; overflow: hidden; 
+        }
+        .coverage-fill { 
+            height: 100%; border-radius: 4px; transition: width 0.3s ease; 
+        }
+        .coverage-fill.high { background: #28a745; }
+        .coverage-fill.medium { background: #ffc107; }
+        .coverage-fill.low { background: #dc3545; }
+        .coverage-text { font-weight: 600; }
+        .coverage-text.high { color: #155724; }
+        .coverage-text.medium { color: #856404; }
+        .coverage-text.low { color: #721c24; }
+        .footer { 
+            text-align: center; padding: 2rem; color: #6c757d; 
+            font-size: 0.9rem; 
+        }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 2rem; }
+            .metrics { grid-template-columns: 1fr; }
+            table { font-size: 0.9rem; }
+            th, td { padding: 0.75rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 Code Coverage Report</h1>
+        <p>Generated by Bun Test Runner</p>
+    </div>
+    <div class="container">
+        <div class="summary">
+            <h2>📈 Coverage Summary</h2>
+            <div class="metrics">
+                <div class="metric low">
+                    <div class="metric-value">0.0%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric low">
+                    <div class="metric-value">0.0%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="files-table">
+            <h2>📁 Files</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Functions</th>
+                        <th>Lines</th>
+                        <th>Coverage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><a href="src_math_operations.ts.html" class="file-link">src/math/operations.ts</a></td>
+                        <td>
+                            <span class="coverage-text medium">66.7%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill medium" style="width: 66.7%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text low">36.4%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill low" style="width: 36.4%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill medium" style="width: 51.5%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><a href="src_utils_string-utils.ts.html" class="file-link">src/utils/string-utils.ts</a></td>
+                        <td>
+                            <span class="coverage-text medium">50.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill medium" style="width: 50.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text medium">57.1%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill medium" style="width: 57.1%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill medium" style="width: 53.6%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><a href="src_validation_validators.ts.html" class="file-link">src/validation/validators.ts</a></td>
+                        <td>
+                            <span class="coverage-text low">33.3%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill low" style="width: 33.3%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text low">26.7%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill low" style="width: 26.7%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill low" style="width: 30.0%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><a href="test_math.test.ts.html" class="file-link">test/math.test.ts</a></td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><a href="test_string-utils.test.ts.html" class="file-link">test/string-utils.test.ts</a></td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><a href="test_validation.test.ts.html" class="file-link">test/validation.test.ts</a></td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="footer">
+        Generated with ❤️ by Bun Test Runner
+    </div>
+</body>
+</html>"
+`;
+
+exports[`html coverage reporter - complete HTML output snapshot multiple files: html-coverage-reporter-multiple-files 1`] = `
+{
+  "index.html": 
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Coverage Report</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 2rem 0; text-align: center; 
+        }
+        .header h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+        .header p { font-size: 1.1rem; opacity: 0.9; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .summary h2 { margin-bottom: 1.5rem; color: #495057; }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .files-table { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+        }
+        .files-table h2 { margin-bottom: 1.5rem; color: #495057; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 1rem; text-align: left; border-bottom: 1px solid #e9ecef; }
+        th { background: #f8f9fa; font-weight: 600; color: #495057; }
+        tr:hover { background: #f8f9fa; }
+        .file-link { color: #667eea; text-decoration: none; font-weight: 500; }
+        .file-link:hover { text-decoration: underline; }
+        .coverage-bar { 
+            width: 60px; height: 8px; background: #e9ecef; border-radius: 4px; 
+            position: relative; overflow: hidden; 
+        }
+        .coverage-fill { 
+            height: 100%; border-radius: 4px; transition: width 0.3s ease; 
+        }
+        .coverage-fill.high { background: #28a745; }
+        .coverage-fill.medium { background: #ffc107; }
+        .coverage-fill.low { background: #dc3545; }
+        .coverage-text { font-weight: 600; }
+        .coverage-text.high { color: #155724; }
+        .coverage-text.medium { color: #856404; }
+        .coverage-text.low { color: #721c24; }
+        .footer { 
+            text-align: center; padding: 2rem; color: #6c757d; 
+            font-size: 0.9rem; 
+        }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 2rem; }
+            .metrics { grid-template-columns: 1fr; }
+            table { font-size: 0.9rem; }
+            th, td { padding: 0.75rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 Code Coverage Report</h1>
+        <p>Generated by Bun Test Runner</p>
+    </div>
+    <div class="container">
+        <div class="summary">
+            <h2>📈 Coverage Summary</h2>
+            <div class="metrics">
+                <div class="metric low">
+                    <div class="metric-value">0.0%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric low">
+                    <div class="metric-value">0.0%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="files-table">
+            <h2>📁 Files</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Functions</th>
+                        <th>Lines</th>
+                        <th>Coverage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><a href="src_math_operations.ts.html" class="file-link">src/math/operations.ts</a></td>
+                        <td>
+                            <span class="coverage-text medium">66.7%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill medium" style="width: 66.7%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text low">36.4%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill low" style="width: 36.4%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill medium" style="width: 51.5%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><a href="src_utils_string-utils.ts.html" class="file-link">src/utils/string-utils.ts</a></td>
+                        <td>
+                            <span class="coverage-text medium">50.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill medium" style="width: 50.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text medium">57.1%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill medium" style="width: 57.1%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill medium" style="width: 53.6%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><a href="src_validation_validators.ts.html" class="file-link">src/validation/validators.ts</a></td>
+                        <td>
+                            <span class="coverage-text low">33.3%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill low" style="width: 33.3%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text low">26.7%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill low" style="width: 26.7%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill low" style="width: 30.0%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><a href="test_math.test.ts.html" class="file-link">test/math.test.ts</a></td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><a href="test_string-utils.test.ts.html" class="file-link">test/string-utils.test.ts</a></td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><a href="test_validation.test.ts.html" class="file-link">test/validation.test.ts</a></td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="footer">
+        Generated with ❤️ by Bun Test Runner
+    </div>
+</body>
+</html>"
+,
+  "src_math_operations.ts.html": 
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coverage: src/math/operations.ts</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 1.5rem 0; 
+        }
+        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 2rem; }
+        .header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .back-link { color: rgba(255,255,255,0.9); text-decoration: none; font-size: 0.9rem; }
+        .back-link:hover { text-decoration: underline; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .file-summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .source-code { 
+            background: white; border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; 
+        }
+        .source-header { 
+            background: #f8f9fa; padding: 1rem 2rem; border-bottom: 1px solid #e9ecef; 
+            font-weight: 600; color: #495057; 
+        }
+        .source-content { 
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+            font-size: 0.9rem; line-height: 1.4; overflow-x: auto; 
+        }
+        .line { display: flex; }
+        .line-number { 
+            background: #f8f9fa; color: #6c757d; padding: 0.25rem 1rem; 
+            text-align: right; min-width: 60px; user-select: none; 
+            border-right: 1px solid #e9ecef; 
+        }
+        .line-content { padding: 0.25rem 1rem; flex: 1; white-space: pre; }
+        .line.covered { background: rgba(40, 167, 69, 0.1); }
+        .line.uncovered { background: rgba(220, 53, 69, 0.1); }
+        .line.not-executable { }
+        .legend { 
+            background: white; border-radius: 12px; padding: 1.5rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .legend h3 { margin-bottom: 1rem; color: #495057; }
+        .legend-items { display: flex; gap: 2rem; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; }
+        .legend-color.covered { background: rgba(40, 167, 69, 0.3); }
+        .legend-color.uncovered { background: rgba(220, 53, 69, 0.3); }
+        .legend-color.not-executable { background: transparent; }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 1.5rem; }
+            .metrics { grid-template-columns: 1fr; }
+            .legend-items { flex-direction: column; gap: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <a href="index.html" class="back-link">← Back to Summary</a>
+            <h1>📄 src/math/operations.ts</h1>
+        </div>
+    </div>
+    <div class="container">
+        <div class="file-summary">
+            <div class="metrics">
+                <div class="metric medium">
+                    <div class="metric-value">66.7%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric low">
+                    <div class="metric-value">36.4%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="legend">
+            <h3>🎨 Legend</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <div class="legend-color covered"></div>
+                    <span>Covered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color uncovered"></div>
+                    <span>Uncovered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color not-executable"></div>
+                    <span>Not executable</span>
+                </div>
+            </div>
+        </div>
+        <div class="source-code">
+            <div class="source-header">Source Code</div>
+            <div class="source-content">
+                <div class="line not-executable">
+                    <div class="line-number">1</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">2</div>
+                    <div class="line-content">export function add(a: number, b: number): number {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">3</div>
+                    <div class="line-content">  return a + b;</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">4</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">5</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">6</div>
+                    <div class="line-content">export function multiply(a: number, b: number): number {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">7</div>
+                    <div class="line-content">  return a * b;</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">8</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">9</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">10</div>
+                    <div class="line-content">export function power(base: number, exponent: number): number {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">11</div>
+                    <div class="line-content">  if (exponent === 0) {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">12</div>
+                    <div class="line-content">    return 1;</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">13</div>
+                    <div class="line-content">  }</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">14</div>
+                    <div class="line-content">  if (exponent === 1) {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">15</div>
+                    <div class="line-content">    return base;</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">16</div>
+                    <div class="line-content">  }</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">17</div>
+                    <div class="line-content">  return Math.pow(base, exponent);</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">18</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">19</div>
+                    <div class="line-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"
+,
+  "src_utils_string-utils.ts.html": 
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coverage: src/utils/string-utils.ts</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 1.5rem 0; 
+        }
+        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 2rem; }
+        .header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .back-link { color: rgba(255,255,255,0.9); text-decoration: none; font-size: 0.9rem; }
+        .back-link:hover { text-decoration: underline; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .file-summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .source-code { 
+            background: white; border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; 
+        }
+        .source-header { 
+            background: #f8f9fa; padding: 1rem 2rem; border-bottom: 1px solid #e9ecef; 
+            font-weight: 600; color: #495057; 
+        }
+        .source-content { 
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+            font-size: 0.9rem; line-height: 1.4; overflow-x: auto; 
+        }
+        .line { display: flex; }
+        .line-number { 
+            background: #f8f9fa; color: #6c757d; padding: 0.25rem 1rem; 
+            text-align: right; min-width: 60px; user-select: none; 
+            border-right: 1px solid #e9ecef; 
+        }
+        .line-content { padding: 0.25rem 1rem; flex: 1; white-space: pre; }
+        .line.covered { background: rgba(40, 167, 69, 0.1); }
+        .line.uncovered { background: rgba(220, 53, 69, 0.1); }
+        .line.not-executable { }
+        .legend { 
+            background: white; border-radius: 12px; padding: 1.5rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .legend h3 { margin-bottom: 1rem; color: #495057; }
+        .legend-items { display: flex; gap: 2rem; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; }
+        .legend-color.covered { background: rgba(40, 167, 69, 0.3); }
+        .legend-color.uncovered { background: rgba(220, 53, 69, 0.3); }
+        .legend-color.not-executable { background: transparent; }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 1.5rem; }
+            .metrics { grid-template-columns: 1fr; }
+            .legend-items { flex-direction: column; gap: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <a href="index.html" class="back-link">← Back to Summary</a>
+            <h1>📄 src/utils/string-utils.ts</h1>
+        </div>
+    </div>
+    <div class="container">
+        <div class="file-summary">
+            <div class="metrics">
+                <div class="metric medium">
+                    <div class="metric-value">50.0%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric medium">
+                    <div class="metric-value">57.1%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="legend">
+            <h3>🎨 Legend</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <div class="legend-color covered"></div>
+                    <span>Covered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color uncovered"></div>
+                    <span>Uncovered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color not-executable"></div>
+                    <span>Not executable</span>
+                </div>
+            </div>
+        </div>
+        <div class="source-code">
+            <div class="source-header">Source Code</div>
+            <div class="source-content">
+                <div class="line not-executable">
+                    <div class="line-number">1</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">2</div>
+                    <div class="line-content">export function capitalize(str: string): string {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">3</div>
+                    <div class="line-content">  if (!str) {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">4</div>
+                    <div class="line-content">    return "";</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">5</div>
+                    <div class="line-content">  }</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">6</div>
+                    <div class="line-content">  return str.charAt(0).toUpperCase() + str.slice(1);</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">7</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">8</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">9</div>
+                    <div class="line-content">export function reverse(str: string): string {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">10</div>
+                    <div class="line-content">  return str.split("").reverse().join("");</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">11</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">12</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">13</div>
+                    <div class="line-content">export function isPalindrome(str: string): boolean {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">14</div>
+                    <div class="line-content">  const cleaned = str.toLowerCase().replace(/[^a-z0-9]/g, "");</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">15</div>
+                    <div class="line-content">  return cleaned === cleaned.split("").reverse().join("");</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">16</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">17</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">18</div>
+                    <div class="line-content">export function truncate(str: string, maxLength: number): string {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">19</div>
+                    <div class="line-content">  if (str.length <= maxLength) {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">20</div>
+                    <div class="line-content">    return str;</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">21</div>
+                    <div class="line-content">  }</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">22</div>
+                    <div class="line-content">  return str.slice(0, maxLength - 3) + "...";</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">23</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">24</div>
+                    <div class="line-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"
+,
+  "src_validation_validators.ts.html": 
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coverage: src/validation/validators.ts</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 1.5rem 0; 
+        }
+        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 2rem; }
+        .header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .back-link { color: rgba(255,255,255,0.9); text-decoration: none; font-size: 0.9rem; }
+        .back-link:hover { text-decoration: underline; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .file-summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .source-code { 
+            background: white; border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; 
+        }
+        .source-header { 
+            background: #f8f9fa; padding: 1rem 2rem; border-bottom: 1px solid #e9ecef; 
+            font-weight: 600; color: #495057; 
+        }
+        .source-content { 
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+            font-size: 0.9rem; line-height: 1.4; overflow-x: auto; 
+        }
+        .line { display: flex; }
+        .line-number { 
+            background: #f8f9fa; color: #6c757d; padding: 0.25rem 1rem; 
+            text-align: right; min-width: 60px; user-select: none; 
+            border-right: 1px solid #e9ecef; 
+        }
+        .line-content { padding: 0.25rem 1rem; flex: 1; white-space: pre; }
+        .line.covered { background: rgba(40, 167, 69, 0.1); }
+        .line.uncovered { background: rgba(220, 53, 69, 0.1); }
+        .line.not-executable { }
+        .legend { 
+            background: white; border-radius: 12px; padding: 1.5rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .legend h3 { margin-bottom: 1rem; color: #495057; }
+        .legend-items { display: flex; gap: 2rem; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; }
+        .legend-color.covered { background: rgba(40, 167, 69, 0.3); }
+        .legend-color.uncovered { background: rgba(220, 53, 69, 0.3); }
+        .legend-color.not-executable { background: transparent; }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 1.5rem; }
+            .metrics { grid-template-columns: 1fr; }
+            .legend-items { flex-direction: column; gap: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <a href="index.html" class="back-link">← Back to Summary</a>
+            <h1>📄 src/validation/validators.ts</h1>
+        </div>
+    </div>
+    <div class="container">
+        <div class="file-summary">
+            <div class="metrics">
+                <div class="metric low">
+                    <div class="metric-value">33.3%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric low">
+                    <div class="metric-value">26.7%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="legend">
+            <h3>🎨 Legend</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <div class="legend-color covered"></div>
+                    <span>Covered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color uncovered"></div>
+                    <span>Uncovered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color not-executable"></div>
+                    <span>Not executable</span>
+                </div>
+            </div>
+        </div>
+        <div class="source-code">
+            <div class="source-header">Source Code</div>
+            <div class="source-content">
+                <div class="line not-executable">
+                    <div class="line-number">1</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">2</div>
+                    <div class="line-content">export function isEmail(email: string): boolean {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">3</div>
+                    <div class="line-content">  const emailRegex = /^[^/s@]+@[^/s@]+/.[^/s@]+$/;</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">4</div>
+                    <div class="line-content">  return emailRegex.test(email);</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">5</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">6</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">7</div>
+                    <div class="line-content">export function isPhoneNumber(phone: string): boolean {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">8</div>
+                    <div class="line-content">  const phoneRegex = /^/+?[/d/s-()]+$/;</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">9</div>
+                    <div class="line-content">  return phoneRegex.test(phone) && phone.replace(//D/g, "").length >= 10;</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">10</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">11</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">12</div>
+                    <div class="line-content">export function isStrongPassword(password: string): boolean {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">13</div>
+                    <div class="line-content">  if (password.length < 8) {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">14</div>
+                    <div class="line-content">    return false;</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">15</div>
+                    <div class="line-content">  }</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">16</div>
+                    <div class="line-content">  const hasUpper = /[A-Z]/.test(password);</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">17</div>
+                    <div class="line-content">  const hasLower = /[a-z]/.test(password);</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">18</div>
+                    <div class="line-content">  const hasNumber = //d/.test(password);</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">19</div>
+                    <div class="line-content">  const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(password);</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">20</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">21</div>
+                    <div class="line-content">  return hasUpper && hasLower && hasNumber && hasSpecial;</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">22</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">23</div>
+                    <div class="line-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"
+,
+  "test_math.test.ts.html": 
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coverage: test/math.test.ts</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 1.5rem 0; 
+        }
+        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 2rem; }
+        .header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .back-link { color: rgba(255,255,255,0.9); text-decoration: none; font-size: 0.9rem; }
+        .back-link:hover { text-decoration: underline; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .file-summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .source-code { 
+            background: white; border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; 
+        }
+        .source-header { 
+            background: #f8f9fa; padding: 1rem 2rem; border-bottom: 1px solid #e9ecef; 
+            font-weight: 600; color: #495057; 
+        }
+        .source-content { 
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+            font-size: 0.9rem; line-height: 1.4; overflow-x: auto; 
+        }
+        .line { display: flex; }
+        .line-number { 
+            background: #f8f9fa; color: #6c757d; padding: 0.25rem 1rem; 
+            text-align: right; min-width: 60px; user-select: none; 
+            border-right: 1px solid #e9ecef; 
+        }
+        .line-content { padding: 0.25rem 1rem; flex: 1; white-space: pre; }
+        .line.covered { background: rgba(40, 167, 69, 0.1); }
+        .line.uncovered { background: rgba(220, 53, 69, 0.1); }
+        .line.not-executable { }
+        .legend { 
+            background: white; border-radius: 12px; padding: 1.5rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .legend h3 { margin-bottom: 1rem; color: #495057; }
+        .legend-items { display: flex; gap: 2rem; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; }
+        .legend-color.covered { background: rgba(40, 167, 69, 0.3); }
+        .legend-color.uncovered { background: rgba(220, 53, 69, 0.3); }
+        .legend-color.not-executable { background: transparent; }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 1.5rem; }
+            .metrics { grid-template-columns: 1fr; }
+            .legend-items { flex-direction: column; gap: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <a href="index.html" class="back-link">← Back to Summary</a>
+            <h1>📄 test/math.test.ts</h1>
+        </div>
+    </div>
+    <div class="container">
+        <div class="file-summary">
+            <div class="metrics">
+                <div class="metric high">
+                    <div class="metric-value">100.0%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric high">
+                    <div class="metric-value">100.0%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="legend">
+            <h3>🎨 Legend</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <div class="legend-color covered"></div>
+                    <span>Covered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color uncovered"></div>
+                    <span>Uncovered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color not-executable"></div>
+                    <span>Not executable</span>
+                </div>
+            </div>
+        </div>
+        <div class="source-code">
+            <div class="source-header">Source Code</div>
+            <div class="source-content">
+                <div class="line not-executable">
+                    <div class="line-number">1</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">2</div>
+                    <div class="line-content">import { add, multiply } from "../src/math/operations";</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">3</div>
+                    <div class="line-content">import { expect, test } from "bun:test";</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">4</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">5</div>
+                    <div class="line-content">test("add function", () => {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">6</div>
+                    <div class="line-content">  expect(add(2, 3)).toBe(5);</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">7</div>
+                    <div class="line-content">  expect(add(0, 0)).toBe(0);</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">8</div>
+                    <div class="line-content">});</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">9</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">10</div>
+                    <div class="line-content">test("multiply function", () => {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">11</div>
+                    <div class="line-content">  expect(multiply(4, 5)).toBe(20);</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">12</div>
+                    <div class="line-content">  expect(multiply(0, 10)).toBe(0);</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">13</div>
+                    <div class="line-content">});</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">14</div>
+                    <div class="line-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"
+,
+  "test_string-utils.test.ts.html": 
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coverage: test/string-utils.test.ts</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 1.5rem 0; 
+        }
+        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 2rem; }
+        .header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .back-link { color: rgba(255,255,255,0.9); text-decoration: none; font-size: 0.9rem; }
+        .back-link:hover { text-decoration: underline; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .file-summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .source-code { 
+            background: white; border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; 
+        }
+        .source-header { 
+            background: #f8f9fa; padding: 1rem 2rem; border-bottom: 1px solid #e9ecef; 
+            font-weight: 600; color: #495057; 
+        }
+        .source-content { 
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+            font-size: 0.9rem; line-height: 1.4; overflow-x: auto; 
+        }
+        .line { display: flex; }
+        .line-number { 
+            background: #f8f9fa; color: #6c757d; padding: 0.25rem 1rem; 
+            text-align: right; min-width: 60px; user-select: none; 
+            border-right: 1px solid #e9ecef; 
+        }
+        .line-content { padding: 0.25rem 1rem; flex: 1; white-space: pre; }
+        .line.covered { background: rgba(40, 167, 69, 0.1); }
+        .line.uncovered { background: rgba(220, 53, 69, 0.1); }
+        .line.not-executable { }
+        .legend { 
+            background: white; border-radius: 12px; padding: 1.5rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .legend h3 { margin-bottom: 1rem; color: #495057; }
+        .legend-items { display: flex; gap: 2rem; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; }
+        .legend-color.covered { background: rgba(40, 167, 69, 0.3); }
+        .legend-color.uncovered { background: rgba(220, 53, 69, 0.3); }
+        .legend-color.not-executable { background: transparent; }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 1.5rem; }
+            .metrics { grid-template-columns: 1fr; }
+            .legend-items { flex-direction: column; gap: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <a href="index.html" class="back-link">← Back to Summary</a>
+            <h1>📄 test/string-utils.test.ts</h1>
+        </div>
+    </div>
+    <div class="container">
+        <div class="file-summary">
+            <div class="metrics">
+                <div class="metric high">
+                    <div class="metric-value">100.0%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric high">
+                    <div class="metric-value">100.0%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="legend">
+            <h3>🎨 Legend</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <div class="legend-color covered"></div>
+                    <span>Covered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color uncovered"></div>
+                    <span>Uncovered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color not-executable"></div>
+                    <span>Not executable</span>
+                </div>
+            </div>
+        </div>
+        <div class="source-code">
+            <div class="source-header">Source Code</div>
+            <div class="source-content">
+                <div class="line not-executable">
+                    <div class="line-number">1</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">2</div>
+                    <div class="line-content">import { capitalize, reverse } from "../src/utils/string-utils";</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">3</div>
+                    <div class="line-content">import { expect, test } from "bun:test";</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">4</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">5</div>
+                    <div class="line-content">test("capitalize function", () => {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">6</div>
+                    <div class="line-content">  expect(capitalize("hello")).toBe("Hello");</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">7</div>
+                    <div class="line-content">  expect(capitalize("")).toBe("");</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">8</div>
+                    <div class="line-content">});</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">9</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">10</div>
+                    <div class="line-content">test("reverse function", () => {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">11</div>
+                    <div class="line-content">  expect(reverse("hello")).toBe("olleh");</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">12</div>
+                    <div class="line-content">  expect(reverse("a")).toBe("a");</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">13</div>
+                    <div class="line-content">});</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">14</div>
+                    <div class="line-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"
+,
+  "test_validation.test.ts.html": 
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coverage: test/validation.test.ts</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 1.5rem 0; 
+        }
+        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 2rem; }
+        .header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .back-link { color: rgba(255,255,255,0.9); text-decoration: none; font-size: 0.9rem; }
+        .back-link:hover { text-decoration: underline; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .file-summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .source-code { 
+            background: white; border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; 
+        }
+        .source-header { 
+            background: #f8f9fa; padding: 1rem 2rem; border-bottom: 1px solid #e9ecef; 
+            font-weight: 600; color: #495057; 
+        }
+        .source-content { 
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+            font-size: 0.9rem; line-height: 1.4; overflow-x: auto; 
+        }
+        .line { display: flex; }
+        .line-number { 
+            background: #f8f9fa; color: #6c757d; padding: 0.25rem 1rem; 
+            text-align: right; min-width: 60px; user-select: none; 
+            border-right: 1px solid #e9ecef; 
+        }
+        .line-content { padding: 0.25rem 1rem; flex: 1; white-space: pre; }
+        .line.covered { background: rgba(40, 167, 69, 0.1); }
+        .line.uncovered { background: rgba(220, 53, 69, 0.1); }
+        .line.not-executable { }
+        .legend { 
+            background: white; border-radius: 12px; padding: 1.5rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .legend h3 { margin-bottom: 1rem; color: #495057; }
+        .legend-items { display: flex; gap: 2rem; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; }
+        .legend-color.covered { background: rgba(40, 167, 69, 0.3); }
+        .legend-color.uncovered { background: rgba(220, 53, 69, 0.3); }
+        .legend-color.not-executable { background: transparent; }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 1.5rem; }
+            .metrics { grid-template-columns: 1fr; }
+            .legend-items { flex-direction: column; gap: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <a href="index.html" class="back-link">← Back to Summary</a>
+            <h1>📄 test/validation.test.ts</h1>
+        </div>
+    </div>
+    <div class="container">
+        <div class="file-summary">
+            <div class="metrics">
+                <div class="metric high">
+                    <div class="metric-value">100.0%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric high">
+                    <div class="metric-value">100.0%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="legend">
+            <h3>🎨 Legend</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <div class="legend-color covered"></div>
+                    <span>Covered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color uncovered"></div>
+                    <span>Uncovered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color not-executable"></div>
+                    <span>Not executable</span>
+                </div>
+            </div>
+        </div>
+        <div class="source-code">
+            <div class="source-header">Source Code</div>
+            <div class="source-content">
+                <div class="line not-executable">
+                    <div class="line-number">1</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">2</div>
+                    <div class="line-content">import { isEmail } from "../src/validation/validators";</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">3</div>
+                    <div class="line-content">import { expect, test } from "bun:test";</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">4</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">5</div>
+                    <div class="line-content">test("isEmail function", () => {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">6</div>
+                    <div class="line-content">  expect(isEmail("test@example.com")).toBe(true);</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">7</div>
+                    <div class="line-content">  expect(isEmail("invalid-email")).toBe(false);</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">8</div>
+                    <div class="line-content">});</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">9</div>
+                    <div class="line-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"
+,
+}
+`;
+
+exports[`html coverage reporter - complete HTML output snapshot multiple files: html-coverage-reporter-multiple-files-process-output 1`] = `
+{
+  "exitCode": 0,
+  "htmlFileNames": [
+    "index.html",
+    "src_math_operations.ts.html",
+    "src_utils_string-utils.ts.html",
+    "src_validation_validators.ts.html",
+    "test_math.test.ts.html",
+    "test_string-utils.test.ts.html",
+    "test_validation.test.ts.html",
+  ],
+  "htmlFilesGenerated": 7,
+  "stderr": 
+"test/string-utils.test.ts:
+(pass) capitalize function
+(pass) reverse function
+
+test/math.test.ts:
+(pass) add function
+(pass) multiply function
+
+test/validation.test.ts:
+(pass) isEmail function
+
+ 5 pass
+ 0 fail
+ 10 expect() calls
+Ran 5 tests across 3 files."
+,
+  "stdout": "bun test <version> (<revision>)",
+}
+`;
+
+exports[`html coverage reporter - edge cases and special scenarios: html-coverage-reporter-edge-cases-complex-paths 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coverage: src/complex-paths.ts</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 1.5rem 0; 
+        }
+        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 2rem; }
+        .header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .back-link { color: rgba(255,255,255,0.9); text-decoration: none; font-size: 0.9rem; }
+        .back-link:hover { text-decoration: underline; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .file-summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .source-code { 
+            background: white; border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; 
+        }
+        .source-header { 
+            background: #f8f9fa; padding: 1rem 2rem; border-bottom: 1px solid #e9ecef; 
+            font-weight: 600; color: #495057; 
+        }
+        .source-content { 
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+            font-size: 0.9rem; line-height: 1.4; overflow-x: auto; 
+        }
+        .line { display: flex; }
+        .line-number { 
+            background: #f8f9fa; color: #6c757d; padding: 0.25rem 1rem; 
+            text-align: right; min-width: 60px; user-select: none; 
+            border-right: 1px solid #e9ecef; 
+        }
+        .line-content { padding: 0.25rem 1rem; flex: 1; white-space: pre; }
+        .line.covered { background: rgba(40, 167, 69, 0.1); }
+        .line.uncovered { background: rgba(220, 53, 69, 0.1); }
+        .line.not-executable { }
+        .legend { 
+            background: white; border-radius: 12px; padding: 1.5rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .legend h3 { margin-bottom: 1rem; color: #495057; }
+        .legend-items { display: flex; gap: 2rem; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; }
+        .legend-color.covered { background: rgba(40, 167, 69, 0.3); }
+        .legend-color.uncovered { background: rgba(220, 53, 69, 0.3); }
+        .legend-color.not-executable { background: transparent; }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 1.5rem; }
+            .metrics { grid-template-columns: 1fr; }
+            .legend-items { flex-direction: column; gap: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <a href="index.html" class="back-link">← Back to Summary</a>
+            <h1>📄 src/complex-paths.ts</h1>
+        </div>
+    </div>
+    <div class="container">
+        <div class="file-summary">
+            <div class="metrics">
+                <div class="metric high">
+                    <div class="metric-value">100.0%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric high">
+                    <div class="metric-value">87.5%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="legend">
+            <h3>🎨 Legend</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <div class="legend-color covered"></div>
+                    <span>Covered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color uncovered"></div>
+                    <span>Uncovered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color not-executable"></div>
+                    <span>Not executable</span>
+                </div>
+            </div>
+        </div>
+        <div class="source-code">
+            <div class="source-header">Source Code</div>
+            <div class="source-content">
+                <div class="line not-executable">
+                    <div class="line-number">1</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">2</div>
+                    <div class="line-content">export function processPath(inputPath: string): string {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">3</div>
+                    <div class="line-content">  if (!inputPath) {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">4</div>
+                    <div class="line-content">    return "";</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">5</div>
+                    <div class="line-content">  }</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">6</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">7</div>
+                    <div class="line-content">  // This code path won't be covered</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">8</div>
+                    <div class="line-content">  if (inputPath.includes("../")) {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">9</div>
+                    <div class="line-content">    throw new Error("Invalid path");</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">10</div>
+                    <div class="line-content">  }</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">11</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">12</div>
+                    <div class="line-content">  return inputPath.replace(////g, "/");</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">13</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">14</div>
+                    <div class="line-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"
+`;
+
+exports[`html coverage reporter - edge cases and special scenarios: html-coverage-reporter-edge-cases 1`] = `
+{
+  "index.html": 
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Coverage Report</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 2rem 0; text-align: center; 
+        }
+        .header h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+        .header p { font-size: 1.1rem; opacity: 0.9; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .summary h2 { margin-bottom: 1.5rem; color: #495057; }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .files-table { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+        }
+        .files-table h2 { margin-bottom: 1.5rem; color: #495057; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 1rem; text-align: left; border-bottom: 1px solid #e9ecef; }
+        th { background: #f8f9fa; font-weight: 600; color: #495057; }
+        tr:hover { background: #f8f9fa; }
+        .file-link { color: #667eea; text-decoration: none; font-weight: 500; }
+        .file-link:hover { text-decoration: underline; }
+        .coverage-bar { 
+            width: 60px; height: 8px; background: #e9ecef; border-radius: 4px; 
+            position: relative; overflow: hidden; 
+        }
+        .coverage-fill { 
+            height: 100%; border-radius: 4px; transition: width 0.3s ease; 
+        }
+        .coverage-fill.high { background: #28a745; }
+        .coverage-fill.medium { background: #ffc107; }
+        .coverage-fill.low { background: #dc3545; }
+        .coverage-text { font-weight: 600; }
+        .coverage-text.high { color: #155724; }
+        .coverage-text.medium { color: #856404; }
+        .coverage-text.low { color: #721c24; }
+        .footer { 
+            text-align: center; padding: 2rem; color: #6c757d; 
+            font-size: 0.9rem; 
+        }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 2rem; }
+            .metrics { grid-template-columns: 1fr; }
+            table { font-size: 0.9rem; }
+            th, td { padding: 0.75rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 Code Coverage Report</h1>
+        <p>Generated by Bun Test Runner</p>
+    </div>
+    <div class="container">
+        <div class="summary">
+            <h2>📈 Coverage Summary</h2>
+            <div class="metrics">
+                <div class="metric low">
+                    <div class="metric-value">0.0%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric low">
+                    <div class="metric-value">0.0%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="files-table">
+            <h2>📁 Files</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Functions</th>
+                        <th>Lines</th>
+                        <th>Coverage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><a href="src_complex-paths.ts.html" class="file-link">src/complex-paths.ts</a></td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text high">87.5%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 87.5%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 93.8%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><a href="src_unicode-content.ts.html" class="file-link">src/unicode-content.ts</a></td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text high">90.9%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 90.9%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 95.5%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><a href="test_basic.test.ts.html" class="file-link">test/basic.test.ts</a></td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="footer">
+        Generated with ❤️ by Bun Test Runner
+    </div>
+</body>
+</html>"
+,
+  "src_complex-paths.ts.html": 
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coverage: src/complex-paths.ts</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 1.5rem 0; 
+        }
+        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 2rem; }
+        .header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .back-link { color: rgba(255,255,255,0.9); text-decoration: none; font-size: 0.9rem; }
+        .back-link:hover { text-decoration: underline; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .file-summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .source-code { 
+            background: white; border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; 
+        }
+        .source-header { 
+            background: #f8f9fa; padding: 1rem 2rem; border-bottom: 1px solid #e9ecef; 
+            font-weight: 600; color: #495057; 
+        }
+        .source-content { 
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+            font-size: 0.9rem; line-height: 1.4; overflow-x: auto; 
+        }
+        .line { display: flex; }
+        .line-number { 
+            background: #f8f9fa; color: #6c757d; padding: 0.25rem 1rem; 
+            text-align: right; min-width: 60px; user-select: none; 
+            border-right: 1px solid #e9ecef; 
+        }
+        .line-content { padding: 0.25rem 1rem; flex: 1; white-space: pre; }
+        .line.covered { background: rgba(40, 167, 69, 0.1); }
+        .line.uncovered { background: rgba(220, 53, 69, 0.1); }
+        .line.not-executable { }
+        .legend { 
+            background: white; border-radius: 12px; padding: 1.5rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .legend h3 { margin-bottom: 1rem; color: #495057; }
+        .legend-items { display: flex; gap: 2rem; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; }
+        .legend-color.covered { background: rgba(40, 167, 69, 0.3); }
+        .legend-color.uncovered { background: rgba(220, 53, 69, 0.3); }
+        .legend-color.not-executable { background: transparent; }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 1.5rem; }
+            .metrics { grid-template-columns: 1fr; }
+            .legend-items { flex-direction: column; gap: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <a href="index.html" class="back-link">← Back to Summary</a>
+            <h1>📄 src/complex-paths.ts</h1>
+        </div>
+    </div>
+    <div class="container">
+        <div class="file-summary">
+            <div class="metrics">
+                <div class="metric high">
+                    <div class="metric-value">100.0%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric high">
+                    <div class="metric-value">87.5%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="legend">
+            <h3>🎨 Legend</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <div class="legend-color covered"></div>
+                    <span>Covered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color uncovered"></div>
+                    <span>Uncovered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color not-executable"></div>
+                    <span>Not executable</span>
+                </div>
+            </div>
+        </div>
+        <div class="source-code">
+            <div class="source-header">Source Code</div>
+            <div class="source-content">
+                <div class="line not-executable">
+                    <div class="line-number">1</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">2</div>
+                    <div class="line-content">export function processPath(inputPath: string): string {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">3</div>
+                    <div class="line-content">  if (!inputPath) {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">4</div>
+                    <div class="line-content">    return "";</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">5</div>
+                    <div class="line-content">  }</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">6</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">7</div>
+                    <div class="line-content">  // This code path won't be covered</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">8</div>
+                    <div class="line-content">  if (inputPath.includes("../")) {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">9</div>
+                    <div class="line-content">    throw new Error("Invalid path");</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">10</div>
+                    <div class="line-content">  }</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">11</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">12</div>
+                    <div class="line-content">  return inputPath.replace(////g, "/");</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">13</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">14</div>
+                    <div class="line-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"
+,
+  "src_unicode-content.ts.html": 
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coverage: src/unicode-content.ts</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 1.5rem 0; 
+        }
+        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 2rem; }
+        .header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .back-link { color: rgba(255,255,255,0.9); text-decoration: none; font-size: 0.9rem; }
+        .back-link:hover { text-decoration: underline; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .file-summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .source-code { 
+            background: white; border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; 
+        }
+        .source-header { 
+            background: #f8f9fa; padding: 1rem 2rem; border-bottom: 1px solid #e9ecef; 
+            font-weight: 600; color: #495057; 
+        }
+        .source-content { 
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+            font-size: 0.9rem; line-height: 1.4; overflow-x: auto; 
+        }
+        .line { display: flex; }
+        .line-number { 
+            background: #f8f9fa; color: #6c757d; padding: 0.25rem 1rem; 
+            text-align: right; min-width: 60px; user-select: none; 
+            border-right: 1px solid #e9ecef; 
+        }
+        .line-content { padding: 0.25rem 1rem; flex: 1; white-space: pre; }
+        .line.covered { background: rgba(40, 167, 69, 0.1); }
+        .line.uncovered { background: rgba(220, 53, 69, 0.1); }
+        .line.not-executable { }
+        .legend { 
+            background: white; border-radius: 12px; padding: 1.5rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .legend h3 { margin-bottom: 1rem; color: #495057; }
+        .legend-items { display: flex; gap: 2rem; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; }
+        .legend-color.covered { background: rgba(40, 167, 69, 0.3); }
+        .legend-color.uncovered { background: rgba(220, 53, 69, 0.3); }
+        .legend-color.not-executable { background: transparent; }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 1.5rem; }
+            .metrics { grid-template-columns: 1fr; }
+            .legend-items { flex-direction: column; gap: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <a href="index.html" class="back-link">← Back to Summary</a>
+            <h1>📄 src/unicode-content.ts</h1>
+        </div>
+    </div>
+    <div class="container">
+        <div class="file-summary">
+            <div class="metrics">
+                <div class="metric high">
+                    <div class="metric-value">100.0%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric high">
+                    <div class="metric-value">90.9%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="legend">
+            <h3>🎨 Legend</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <div class="legend-color covered"></div>
+                    <span>Covered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color uncovered"></div>
+                    <span>Uncovered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color not-executable"></div>
+                    <span>Not executable</span>
+                </div>
+            </div>
+        </div>
+        <div class="source-code">
+            <div class="source-header">Source Code</div>
+            <div class="source-content">
+                <div class="line not-executable">
+                    <div class="line-number">1</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">2</div>
+                    <div class="line-content">export function greetInLanguages(name: string): string {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">3</div>
+                    <div class="line-content">  const greetings = [</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">4</div>
+                    <div class="line-content">    \`Hello, \${name}! 🌍\`,</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">5</div>
+                    <div class="line-content">    \`Hola, \${name}! 🇪🇸\`,</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">6</div>
+                    <div class="line-content">    \`Bonjour, \${name}! 🇫🇷\`,</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">7</div>
+                    <div class="line-content">    \`Guten Tag, \${name}! 🇩🇪\`,</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">8</div>
+                    <div class="line-content">  ];</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">9</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">10</div>
+                    <div class="line-content">  // This will be uncovered</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">11</div>
+                    <div class="line-content">  if (name.length > 20) {</div>
+                </div>
+                <div class="line uncovered">
+                    <div class="line-number">12</div>
+                    <div class="line-content">    return "Name too long";</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">13</div>
+                    <div class="line-content">  }</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">14</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">15</div>
+                    <div class="line-content">  return greetings[0];</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">16</div>
+                    <div class="line-content">}</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">17</div>
+                    <div class="line-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"
+,
+  "test_basic.test.ts.html": 
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coverage: test/basic.test.ts</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 1.5rem 0; 
+        }
+        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 2rem; }
+        .header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .back-link { color: rgba(255,255,255,0.9); text-decoration: none; font-size: 0.9rem; }
+        .back-link:hover { text-decoration: underline; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .file-summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .source-code { 
+            background: white; border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; 
+        }
+        .source-header { 
+            background: #f8f9fa; padding: 1rem 2rem; border-bottom: 1px solid #e9ecef; 
+            font-weight: 600; color: #495057; 
+        }
+        .source-content { 
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; 
+            font-size: 0.9rem; line-height: 1.4; overflow-x: auto; 
+        }
+        .line { display: flex; }
+        .line-number { 
+            background: #f8f9fa; color: #6c757d; padding: 0.25rem 1rem; 
+            text-align: right; min-width: 60px; user-select: none; 
+            border-right: 1px solid #e9ecef; 
+        }
+        .line-content { padding: 0.25rem 1rem; flex: 1; white-space: pre; }
+        .line.covered { background: rgba(40, 167, 69, 0.1); }
+        .line.uncovered { background: rgba(220, 53, 69, 0.1); }
+        .line.not-executable { }
+        .legend { 
+            background: white; border-radius: 12px; padding: 1.5rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .legend h3 { margin-bottom: 1rem; color: #495057; }
+        .legend-items { display: flex; gap: 2rem; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; }
+        .legend-color.covered { background: rgba(40, 167, 69, 0.3); }
+        .legend-color.uncovered { background: rgba(220, 53, 69, 0.3); }
+        .legend-color.not-executable { background: transparent; }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 1.5rem; }
+            .metrics { grid-template-columns: 1fr; }
+            .legend-items { flex-direction: column; gap: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <a href="index.html" class="back-link">← Back to Summary</a>
+            <h1>📄 test/basic.test.ts</h1>
+        </div>
+    </div>
+    <div class="container">
+        <div class="file-summary">
+            <div class="metrics">
+                <div class="metric high">
+                    <div class="metric-value">100.0%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric high">
+                    <div class="metric-value">100.0%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="legend">
+            <h3>🎨 Legend</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <div class="legend-color covered"></div>
+                    <span>Covered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color uncovered"></div>
+                    <span>Uncovered lines</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color not-executable"></div>
+                    <span>Not executable</span>
+                </div>
+            </div>
+        </div>
+        <div class="source-code">
+            <div class="source-header">Source Code</div>
+            <div class="source-content">
+                <div class="line not-executable">
+                    <div class="line-number">1</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">2</div>
+                    <div class="line-content">import { processPath } from "../src/complex-paths";</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">3</div>
+                    <div class="line-content">import { greetInLanguages } from "../src/unicode-content";</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">4</div>
+                    <div class="line-content">import { expect, test } from "bun:test";</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">5</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">6</div>
+                    <div class="line-content">test("processPath basic case", () => {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">7</div>
+                    <div class="line-content">  expect(processPath("src/file.ts")).toBe("src/file.ts");</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">8</div>
+                    <div class="line-content">  expect(processPath("")).toBe("");</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">9</div>
+                    <div class="line-content">});</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">10</div>
+                    <div class="line-content"></div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">11</div>
+                    <div class="line-content">test("greetInLanguages basic case", () => {</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">12</div>
+                    <div class="line-content">  expect(greetInLanguages("World")).toContain("Hello, World!");</div>
+                </div>
+                <div class="line covered">
+                    <div class="line-number">13</div>
+                    <div class="line-content">});</div>
+                </div>
+                <div class="line not-executable">
+                    <div class="line-number">14</div>
+                    <div class="line-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"
+,
+}
+`;
+
+exports[`html coverage reporter - edge cases and special scenarios: html-coverage-reporter-edge-cases-process-output 1`] = `
+{
+  "exitCode": 0,
+  "htmlFileNames": [
+    "index.html",
+    "src_complex-paths.ts.html",
+    "src_unicode-content.ts.html",
+    "test_basic.test.ts.html",
+  ],
+  "htmlFilesGenerated": 4,
+  "stderr": 
+"test/basic.test.ts:
+(pass) processPath basic case
+(pass) greetInLanguages basic case
+
+ 2 pass
+ 0 fail
+ 3 expect() calls
+Ran 2 tests across 1 file."
+,
+  "stdout": "bun test <version> (<revision>)",
+}
+`;
+
+exports[`html coverage reporter - combined with lcov reporter snapshot: html-coverage-reporter-combined-with-lcov-reporter-html-content 1`] = `
+{
+  "htmlContent": 
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Coverage Report</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #f8f9fa; color: #212529; line-height: 1.6; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; padding: 2rem 0; text-align: center; 
+        }
+        .header h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+        .header p { font-size: 1.1rem; opacity: 0.9; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .summary { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem; 
+        }
+        .summary h2 { margin-bottom: 1.5rem; color: #495057; }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .metric { 
+            text-align: center; padding: 1.5rem; border-radius: 8px; 
+            background: #f8f9fa; border: 2px solid #e9ecef; 
+        }
+        .metric.high { border-color: #28a745; background: #d4edda; }
+        .metric.medium { border-color: #ffc107; background: #fff3cd; }
+        .metric.low { border-color: #dc3545; background: #f8d7da; }
+        .metric-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .metric.high .metric-value { color: #155724; }
+        .metric.medium .metric-value { color: #856404; }
+        .metric.low .metric-value { color: #721c24; }
+        .metric-label { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .files-table { 
+            background: white; border-radius: 12px; padding: 2rem; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+        }
+        .files-table h2 { margin-bottom: 1.5rem; color: #495057; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 1rem; text-align: left; border-bottom: 1px solid #e9ecef; }
+        th { background: #f8f9fa; font-weight: 600; color: #495057; }
+        tr:hover { background: #f8f9fa; }
+        .file-link { color: #667eea; text-decoration: none; font-weight: 500; }
+        .file-link:hover { text-decoration: underline; }
+        .coverage-bar { 
+            width: 60px; height: 8px; background: #e9ecef; border-radius: 4px; 
+            position: relative; overflow: hidden; 
+        }
+        .coverage-fill { 
+            height: 100%; border-radius: 4px; transition: width 0.3s ease; 
+        }
+        .coverage-fill.high { background: #28a745; }
+        .coverage-fill.medium { background: #ffc107; }
+        .coverage-fill.low { background: #dc3545; }
+        .coverage-text { font-weight: 600; }
+        .coverage-text.high { color: #155724; }
+        .coverage-text.medium { color: #856404; }
+        .coverage-text.low { color: #721c24; }
+        .footer { 
+            text-align: center; padding: 2rem; color: #6c757d; 
+            font-size: 0.9rem; 
+        }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 2rem; }
+            .metrics { grid-template-columns: 1fr; }
+            table { font-size: 0.9rem; }
+            th, td { padding: 0.75rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 Code Coverage Report</h1>
+        <p>Generated by Bun Test Runner</p>
+    </div>
+    <div class="container">
+        <div class="summary">
+            <h2>📈 Coverage Summary</h2>
+            <div class="metrics">
+                <div class="metric low">
+                    <div class="metric-value">0.0%</div>
+                    <div class="metric-label">Functions</div>
+                </div>
+                <div class="metric low">
+                    <div class="metric-value">0.0%</div>
+                    <div class="metric-label">Lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="files-table">
+            <h2>📁 Files</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Functions</th>
+                        <th>Lines</th>
+                        <th>Coverage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><a href="lib_calculator.ts.html" class="file-link">lib/calculator.ts</a></td>
+                        <td>
+                            <span class="coverage-text medium">60.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill medium" style="width: 60.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text medium">66.7%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill medium" style="width: 66.7%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill medium" style="width: 63.3%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><a href="test_calculator.test.ts.html" class="file-link">test/calculator.test.ts</a></td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="coverage-text high">100.0%</span>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="coverage-bar">
+                                <div class="coverage-fill high" style="width: 100.0%"></div>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="footer">
+        Generated with ❤️ by Bun Test Runner
+    </div>
+</body>
+</html>"
+,
+  "lcovContent": 
+"TN:
+SF:lib/calculator.ts
+FNF:5
+FNH:3
+DA:2,10
+DA:3,12
+DA:4,13
+DA:7,12
+DA:8,13
+DA:11,12
+DA:12,30
+DA:13,8
+DA:14,0
+DA:15,1
+DA:18,0
+DA:19,0
+DA:20,0
+DA:21,0
+DA:22,1
+LF:25
+LH:10
+end_of_record
+TN:
+SF:test/calculator.test.ts
+FNF:1
+FNH:1
+DA:2,47
+DA:3,60
+DA:5,37
+DA:6,30
+DA:8,33
+DA:9,38
+DA:10,37
+DA:13,2
+LF:14
+LH:8
+end_of_record"
+,
+}
+`;
+
+exports[`html coverage reporter - combined with lcov reporter snapshot: html-coverage-reporter-combined-with-lcov-reporter 1`] = `
+{
+  "allFiles": [
+    "index.html",
+    "lcov.info",
+    "lib_calculator.ts.html",
+    "test_calculator.test.ts.html",
+  ],
+  "exitCode": 0,
+  "htmlFilesGenerated": 3,
+  "lcovFilesGenerated": 1,
+  "stderr": 
+"test/calculator.test.ts:
+(pass) calculator operations
+
+ 1 pass
+ 0 fail
+ 3 expect() calls
+Ran 1 test across 1 file."
+,
+  "stdout": "bun test <version> (<revision>)",
+}
+`;

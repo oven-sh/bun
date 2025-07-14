@@ -1,0 +1,147 @@
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  padding: 20px;
+  background: #f8fafc;
+  color: #1e293b;
+  line-height: 1.6;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 30px;
+  padding: 20px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.header h1 {
+  color: #1e293b;
+  margin: 0 0 8px 0;
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.file-name {
+  color: #64748b;
+  font-family: "Courier New", Consolas, monospace;
+  font-size: 1rem;
+}
+
+.summary {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.summary h2 {
+  margin: 0 0 20px 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+}
+
+.metric {
+  text-align: center;
+  padding: 15px;
+  border-radius: 6px;
+  color: white;
+  font-weight: bold;
+}
+
+.metric.high {
+  background: #059669;
+}
+
+.metric.medium {
+  background: #d97706;
+}
+
+.metric.low {
+  background: #dc2626;
+}
+
+.metric-label {
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+  opacity: 0.9;
+}
+
+.metric-value {
+  font-size: 2em;
+  font-weight: bold;
+  margin-bottom: 5px;
+}
+
+.metric-detail {
+  font-size: 0.875rem;
+  opacity: 0.9;
+  font-family: "Courier New", Consolas, monospace;
+}
+
+.uncovered-section {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.uncovered-section h3 {
+  color: #dc2626;
+  margin: 0 0 15px 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.uncovered-lines {
+  font-family: "Courier New", Consolas, monospace;
+  line-height: 1.8;
+}
+
+.line-number,
+.line-range {
+  background: #dc2626;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin: 2px;
+  display: inline-block;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.footer {
+  text-align: center;
+  margin-top: 30px;
+  padding: 15px;
+  color: #64748b;
+  font-size: 0.875rem;
+}
+
+@media (max-width: 768px) {
+  body {
+    padding: 10px;
+  }
+
+  .metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .metric {
+    padding: 12px;
+  }
+
+  .metric-value {
+    font-size: 1.5em;
+  }
+}

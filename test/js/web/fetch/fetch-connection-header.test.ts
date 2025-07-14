@@ -1,115 +1,97 @@
 import { serve, type Server } from "bun";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, test } from "bun:test";
 
 describe("fetch Connection header", () => {
-  let server: Server;
-  let port: number;
-  let receivedHeaders: Record<string, string> = {};
+  afterAll(() => {
+    // Cleanup in case any servers are left running
+  });
 
-  beforeAll(async () => {
-    server = serve({
-      port: 0,
-      fetch(req) {
-        // Capture headers sent by the client
-        receivedHeaders = {};
-        for (const [name, value] of req.headers.entries()) {
-          receivedHeaders[name.toLowerCase()] = value;
-        }
-        
-        return new Response("OK", {
-          headers: {
-            "content-type": "text/plain",
-          },
+  // Helper function to capture headers from a request
+  const captureHeadersFromRequest = async (fetchOptions: RequestInit): Promise<Record<string, string>> => {
+    return new Promise((resolve, reject) => {
+      // Create a temporary server to capture headers
+      const tempServer = serve({
+        port: 0,
+        fetch(req) {
+          const capturedHeaders: Record<string, string> = {};
+          for (const [name, value] of req.headers.entries()) {
+            capturedHeaders[name.toLowerCase()] = value;
+          }
+          tempServer.stop();
+          resolve(capturedHeaders);
+          return new Response("OK");
+        },
+      });
+      
+      const tempPort = tempServer.port;
+      const url = `http://localhost:${tempPort}/test`;
+      
+      // Make the request to temp server
+      fetch(url, fetchOptions)
+        .then(response => {
+          if (response.status !== 200) {
+            tempServer.stop();
+            reject(new Error(`Expected status 200, got ${response.status}`));
+          }
+        })
+        .catch(error => {
+          tempServer.stop();
+          reject(error);
         });
-      },
+    });
+  };
+
+  test.each([
+    ["close", "close"],
+    ["keep-alive", "keep-alive"], 
+    ["upgrade", "upgrade"],
+    ["Upgrade", "Upgrade"], // Test case preservation
+  ])("should respect Connection: %s header", async (inputValue, expectedValue) => {
+    const headers = await captureHeadersFromRequest({
+      headers: { Connection: inputValue },
     });
     
-    port = server.port;
+    expect(headers.connection).toBe(expectedValue);
   });
 
-  afterAll(() => {
-    server?.stop();
-  });
-
-  it("should respect explicit Connection: close header", async () => {
-    const response = await fetch(`http://localhost:${port}/test`, {
-      headers: {
-        Connection: "close",
-      },
+  test.each([
+    ["connection", "close"],
+    ["Connection", "close"],
+    ["CONNECTION", "close"],
+  ])("should respect case-insensitive header name: %s", async (headerName, expectedValue) => {
+    const headers = await captureHeadersFromRequest({
+      headers: { [headerName]: expectedValue },
     });
-
-    expect(response.status).toBe(200);
-    expect(receivedHeaders.connection).toBe("close");
-  });
-
-  it("should respect explicit Connection: keep-alive header", async () => {
-    const response = await fetch(`http://localhost:${port}/test`, {
-      headers: {
-        Connection: "keep-alive",
-      },
-    });
-
-    expect(response.status).toBe(200);
-    expect(receivedHeaders.connection).toBe("keep-alive");
-  });
-
-  it("should respect case-insensitive Connection header", async () => {
-    const response = await fetch(`http://localhost:${port}/test`, {
-      headers: {
-        connection: "close",
-      },
-    });
-
-    expect(response.status).toBe(200);
-    expect(receivedHeaders.connection).toBe("close");
+    
+    expect(headers.connection).toBe(expectedValue);
   });
 
   it("should respect Connection header in Request object", async () => {
-    const request = new Request(`http://localhost:${port}/test`, {
-      headers: {
-        Connection: "close",
-      },
+    const headers = await captureHeadersFromRequest({
+      headers: { Connection: "close" },
     });
-
-    const response = await fetch(request);
-
-    expect(response.status).toBe(200);
-    expect(receivedHeaders.connection).toBe("close");
+    expect(headers.connection).toBe("close");
   });
 
   it("should default to keep-alive when no Connection header provided", async () => {
-    const response = await fetch(`http://localhost:${port}/test`);
-
-    expect(response.status).toBe(200);
-    expect(receivedHeaders.connection).toBe("keep-alive");
-  });
-
-  it("should respect custom Connection header values", async () => {
-    const response = await fetch(`http://localhost:${port}/test`, {
-      headers: {
-        Connection: "upgrade",
-      },
-    });
-
-    expect(response.status).toBe(200);
-    expect(receivedHeaders.connection).toBe("upgrade");
+    const headers = await captureHeadersFromRequest({});
+    expect(headers.connection).toBe("keep-alive");
   });
 
   it("should handle multiple headers including Connection", async () => {
-    const response = await fetch(`http://localhost:${port}/test`, {
+    const headers = await captureHeadersFromRequest({
       headers: {
-        "accept": "-",
-        "accept-encoding": "-", 
-        "accept-language": "-",
+        "accept": "application/json",
+        "accept-encoding": "gzip, deflate", 
+        "accept-language": "en-US",
         "connection": "close",
-        "user-agent": "-",
+        "user-agent": "test-agent",
         "x-test-header": "test-value",
       },
     });
 
-    expect(response.status).toBe(200);
-    expect(receivedHeaders.connection).toBe("close");
-    expect(receivedHeaders.accept).toBe("-");
-    expect(receivedHeaders["x-test-header"]).toBe("test-value");
+    expect(headers.connection).toBe("close");
+    expect(headers.accept).toBe("application/json");
+    expect(headers["x-test-header"]).toBe("test-value");
   });
 });

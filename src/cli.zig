@@ -410,6 +410,7 @@ pub const Command = struct {
         runtime_options: RuntimeOptions = .{},
 
         filters: []const []const u8 = &.{},
+        run_all: bool = false,
 
         preloads: []const string = &.{},
         has_loaded_global_config: bool = false,

@@ -1330,6 +1330,52 @@ pub const RunCommand = struct {
         _ = _bootAndHandleError(ctx, absolute_script_path.?, null);
         return true;
     }
+
+    /// Match a pattern against script names, supporting :* and : suffixes
+    fn matchesPattern(script_name: []const u8, pattern: []const u8) bool {
+        if (strings.eql(script_name, pattern)) {
+            return true;
+        }
+        
+        // Handle pattern:* (match anything starting with "pattern:")
+        if (strings.endsWith(pattern, ":*")) {
+            const prefix = pattern[0..pattern.len - 1]; // Remove the '*'
+            return strings.startsWith(script_name, prefix);
+        }
+        
+        // Handle pattern: (same as pattern:*)  
+        if (strings.endsWith(pattern, ":")) {
+            return strings.startsWith(script_name, pattern);
+        }
+        
+        return false;
+    }
+
+    /// Find all scripts matching the given patterns
+    fn findMatchingScripts(
+        allocator: std.mem.Allocator,
+        package_json: *const PackageJSON,
+        patterns: []const []const u8,
+    ) !std.ArrayList([]const u8) {
+        var matches = std.ArrayList([]const u8).init(allocator);
+        
+        if (package_json.scripts) |scripts| {
+            var script_iter = scripts.iterator();
+            while (script_iter.next()) |entry| {
+                const script_name = entry.key_ptr.*;
+                
+                for (patterns) |pattern| {
+                    if (matchesPattern(script_name, pattern)) {
+                        try matches.append(script_name);
+                        break; // Don't add the same script multiple times
+                    }
+                }
+            }
+        }
+        
+        return matches;
+    }
+
     pub fn exec(
         ctx: Command.Context,
         cfg: struct {
@@ -1337,7 +1383,7 @@ pub const RunCommand = struct {
             log_errors: bool,
             allow_fast_run_for_extensions: bool,
         },
-    ) !bool {
+    ) anyerror!bool {
         const bin_dirs_only = cfg.bin_dirs_only;
         const log_errors = cfg.log_errors;
 
@@ -1354,6 +1400,101 @@ pub const RunCommand = struct {
             positionals = positionals[1..];
         }
         const passthrough = ctx.passthrough; // unclear why passthrough is an escaped string, it should probably be []const []const u8 and allow its users to escape it.
+
+        // Handle --all flag: run multiple targets sequentially
+        if (ctx.run_all) {
+            if (target_name.len == 0 and positionals.len == 0) {
+                if (log_errors) {
+                    Output.prettyErrorln("<r><red>error<r>: --all flag requires at least one target", .{});
+                }
+                return false;
+            }
+
+            // Collect all targets and expand patterns
+            var all_targets = std.ArrayList([]const u8).init(ctx.allocator);
+            defer all_targets.deinit();
+            
+            if (target_name.len > 0) {
+                try all_targets.append(target_name);
+            }
+            for (positionals) |pos| {
+                try all_targets.append(pos);
+            }
+            
+            // Check if any targets are patterns that need expansion
+            var expanded_targets = std.ArrayList([]const u8).init(ctx.allocator);
+            defer expanded_targets.deinit();
+            
+            // Get package.json for pattern expansion
+            var this_transpiler: transpiler.Transpiler = undefined;
+            const root_dir_info = configureEnvForRun(ctx, &this_transpiler, null, log_errors, false) catch |err| {
+                if (log_errors) {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to configure environment: {s}", .{@errorName(err)});
+                }
+                return false;
+            };
+            
+            for (all_targets.items) |target| {
+                // Check if this is a pattern (ends with :* or :)
+                if (strings.endsWith(target, ":*") or strings.endsWith(target, ":")) {
+                    // Expand pattern against package.json scripts
+                    if (root_dir_info.enclosing_package_json) |package_json| {
+                        var matches = findMatchingScripts(ctx.allocator, package_json, &[_][]const u8{target}) catch |err| {
+                            if (log_errors) {
+                                Output.prettyErrorln("<r><red>error<r>: Failed to expand pattern '{s}': {s}", .{ target, @errorName(err) });
+                            }
+                            continue;
+                        };
+                        defer matches.deinit();
+                        
+                        for (matches.items) |match| {
+                            try expanded_targets.append(match);
+                        }
+                    } else {
+                        // No package.json found, treat as literal target
+                        try expanded_targets.append(target);
+                    }
+                } else {
+                    // Regular target, add as-is
+                    try expanded_targets.append(target);
+                }
+            }
+            
+            if (expanded_targets.items.len == 0) {
+                if (log_errors) {
+                    Output.prettyErrorln("<r><red>error<r>: No targets found matching the given patterns", .{});
+                }
+                return false;
+            }
+            
+            // Execute each target sequentially
+            var failed = false;
+            for (expanded_targets.items) |target| {
+                // Create new context with single target
+                var new_ctx = ctx.*;
+                var temp_positionals = [_][]const u8{target};
+                new_ctx.positionals = &temp_positionals;
+                new_ctx.run_all = false; // Disable --all for recursive calls
+                
+                // Call exec recursively for this single target
+                const success = exec(&new_ctx, cfg) catch |err| {
+                    if (log_errors) {
+                        Output.prettyErrorln("<r><red>error<r>: Failed to run target '{s}': {s}", .{ target, @errorName(err) });
+                    }
+                    failed = true;
+                    continue;
+                };
+                
+                if (!success) {
+                    if (log_errors) {
+                        Output.prettyErrorln("<r><red>error<r>: Target '{s}' failed", .{target});
+                    }
+                    failed = true;
+                }
+            }
+            
+            return !failed;
+        }
 
         var try_fast_run = false;
         var skip_script_check = false;

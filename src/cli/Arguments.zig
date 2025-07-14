@@ -112,12 +112,12 @@ pub const runtime_params_ = [_]ParamType{
 
 pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern") catch unreachable,
+    clap.parseParam("--all                             Run multiple scripts or files sequentially") catch unreachable,
     clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
 };
 
 pub const auto_only_params = [_]ParamType{
-    // clap.parseParam("--all") catch unreachable,
     clap.parseParam("--silent                          Don't print the script command") catch unreachable,
     clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
     clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
@@ -379,6 +379,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
     if (cmd == .RunCommand or cmd == .AutoCommand) {
         ctx.filters = args.options("--filter");
+        ctx.run_all = args.flag("--all");
 
         if (args.option("--elide-lines")) |elide_lines| {
             if (elide_lines.len > 0) {

@@ -31,7 +31,7 @@ describe("console depth", () => {
     return output.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
   }
 
-  test("default console depth should be 2", async () => {
+  test("default console depth should be 5", async () => {
     const dir = tempDirWithFiles("console-depth-default", {
       "test.js": testScript,
     });
@@ -54,7 +54,13 @@ describe("console depth", () => {
 "{
   level1: {
     level2: {
-      level3: [Object ...],
+      level3: {
+        level4: {
+          level5: {
+            level6: [Object ...],
+          },
+        },
+      },
     },
   },
 }"

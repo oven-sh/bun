@@ -171,7 +171,7 @@ fn messageWithTypeAndLevel_(
     var print_length = len;
     // Get console depth from CLI options
     const cli_context = CLI.get();
-    const console_depth = cli_context.runtime_options.console_depth orelse 2;
+    const console_depth = cli_context.runtime_options.console_depth orelse 5;
 
     var print_options: FormatOptions = .{
         .enable_colors = enable_colors,
@@ -3644,7 +3644,7 @@ pub fn timeLog(
         .quote_strings = false,
         .max_depth = blk: {
             const cli_context = CLI.get();
-            break :blk cli_context.runtime_options.console_depth orelse 2;
+            break :blk cli_context.runtime_options.console_depth orelse 5;
         },
         .stack_check = bun.StackCheck.init(),
         .can_throw_stack_overflow = true,

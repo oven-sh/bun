@@ -1,11 +1,11 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("wildcard sideEffects support - issue #3595", async () => {
   const dir = tempDirWithFiles("wildcard-side-effects-test", {
     "package.json": JSON.stringify({
       "name": "wildcard-side-effects-test",
-      "sideEffects": ["src/lib/side-effects/*.js"]
+      "sideEffects": ["src/lib/side-effects/*.js"],
     }),
     "src/index.js": `
 import { used } from "./lib/used.js";
@@ -48,13 +48,13 @@ export const sideEffect = "side-effect";
 
   // Check bundle content
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   // Side effect should be preserved
   expect(bundleContent).toContain("This is a side effect and should be preserved");
-  
+
   // Unused code should be tree-shaken
   expect(bundleContent).not.toContain("This should be tree-shaken out");
-  
+
   // Used code should be included
   expect(bundleContent).toContain("used");
 });
@@ -63,7 +63,7 @@ test("wildcard sideEffects with question mark pattern", async () => {
   const dir = tempDirWithFiles("wildcard-side-effects-question-mark", {
     "package.json": JSON.stringify({
       "name": "wildcard-side-effects-test",
-      "sideEffects": ["src/lib/file?.js"]
+      "sideEffects": ["src/lib/file?.js"],
     }),
     "src/index.js": `
 import { used } from "./lib/used.js";
@@ -105,12 +105,12 @@ export const fileAB = "fileAB";
   expect(stderr).toBe("");
 
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   // Single character matches should have side effects
   expect(bundleContent).toContain("file1 side effect");
   expect(bundleContent).toContain("file2 side effect");
-  
-  // Multi-character filename should not match single ? pattern  
+
+  // Multi-character filename should not match single ? pattern
   expect(bundleContent).not.toContain("fileAB side effect");
 });
 
@@ -118,7 +118,7 @@ test("wildcard sideEffects with brace expansion", async () => {
   const dir = tempDirWithFiles("wildcard-side-effects-brace", {
     "package.json": JSON.stringify({
       "name": "wildcard-side-effects-test",
-      "sideEffects": ["src/lib/{components,utils}/*.js"]
+      "sideEffects": ["src/lib/{components,utils}/*.js"],
     }),
     "src/index.js": `
 import { used } from "./lib/used.js";
@@ -165,12 +165,12 @@ export const other = "other";
   expect(stderr).toBe("");
 
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   // Components and utils should have side effects
   expect(bundleContent).toContain("comp1 side effect");
   expect(bundleContent).toContain("comp2 side effect");
   expect(bundleContent).toContain("util1 side effect");
-  
+
   // Other directory should not match
   expect(bundleContent).not.toContain("other side effect");
 });
@@ -179,10 +179,7 @@ test("mixed sideEffects with exact and glob patterns", async () => {
   const dir = tempDirWithFiles("mixed-side-effects", {
     "package.json": JSON.stringify({
       "name": "mixed-side-effects-test",
-      "sideEffects": [
-        "src/lib/specific.js",
-        "src/lib/glob/*.js"
-      ]
+      "sideEffects": ["src/lib/specific.js", "src/lib/glob/*.js"],
     }),
     "src/index.js": `
 import { used } from "./lib/used.js";
@@ -229,12 +226,12 @@ export const other = "other";
   expect(stderr).toBe("");
 
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   // Specific file and glob matches should have side effects
   expect(bundleContent).toContain("specific side effect");
   expect(bundleContent).toContain("glob1 side effect");
   expect(bundleContent).toContain("glob2 side effect");
-  
+
   // Other file should not have side effects
   expect(bundleContent).not.toContain("other side effect");
 });
@@ -243,7 +240,7 @@ test("no warning for wildcard sideEffects (regression test)", async () => {
   const dir = tempDirWithFiles("no-warning-test", {
     "package.json": JSON.stringify({
       "name": "no-warning-test",
-      "sideEffects": ["src/lib/side-effects/*.js"]
+      "sideEffects": ["src/lib/side-effects/*.js"],
     }),
     "src/index.js": `
 import { used } from "./lib/used.js";
@@ -268,7 +265,7 @@ export const used = "used";
 
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");
-  
+
   // Should not contain the old warning about wildcard sideEffects not being supported
   expect(stderr).not.toContain("wildcard sideEffects are not supported yet");
   expect(stdout).not.toContain("wildcard sideEffects are not supported yet");
@@ -278,7 +275,7 @@ test("glob patterns should NOT match files outside the pattern", async () => {
   const dir = tempDirWithFiles("glob-fail-test", {
     "package.json": JSON.stringify({
       "name": "glob-fail-test",
-      "sideEffects": ["src/components/*.js"]
+      "sideEffects": ["src/components/*.js"],
     }),
     "src/index.js": `
 import "./components/comp.js";
@@ -313,10 +310,10 @@ console.log("root side effect - should be tree shaken");
   expect(stderr).toBe("");
 
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   // Component should match and preserve side effects
   expect(bundleContent).toContain("component side effect");
-  
+
   // Utils and root should NOT match and be tree-shaken
   expect(bundleContent).not.toContain("utility side effect");
   expect(bundleContent).not.toContain("root side effect");
@@ -325,8 +322,8 @@ console.log("root side effect - should be tree shaken");
 test("sideEffects false should tree-shake everything", async () => {
   const dir = tempDirWithFiles("false-sideeffects-test", {
     "package.json": JSON.stringify({
-      "name": "false-sideeffects-test", 
-      "sideEffects": false
+      "name": "false-sideeffects-test",
+      "sideEffects": false,
     }),
     "src/index.js": `
 import { used } from "./lib/used.js";
@@ -357,10 +354,10 @@ console.log("unused side effect - should be tree shaken");
   expect(stderr).toBe("");
 
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   // Should tree-shake unused code
   expect(bundleContent).not.toContain("unused side effect");
-  
+
   // Should keep used code
   expect(bundleContent).toContain("used");
 });
@@ -369,7 +366,7 @@ test("glob patterns with specific file extensions", async () => {
   const dir = tempDirWithFiles("extension-glob-test", {
     "package.json": JSON.stringify({
       "name": "extension-glob-test",
-      "sideEffects": ["src/**/*.effect.js"]
+      "sideEffects": ["src/**/*.effect.js"],
     }),
     "src/index.js": `
 import "./utils/util.js";
@@ -404,7 +401,7 @@ console.log("secondary effect - should be tree shaken");
   expect(stderr).toBe("");
 
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   // Only .effect.js files should be preserved
   expect(bundleContent).toContain("main effect - should be preserved");
   expect(bundleContent).not.toContain("util side effect");
@@ -415,7 +412,7 @@ test("CSS files in glob patterns should be ignored", async () => {
   const dir = tempDirWithFiles("css-glob-test", {
     "package.json": JSON.stringify({
       "name": "css-glob-test",
-      "sideEffects": ["src/styles/*.css", "src/lib/*.js"]
+      "sideEffects": ["src/styles/*.css", "src/lib/*.js"],
     }),
     "src/index.js": `
 import { lib } from "./lib/lib.js";
@@ -445,7 +442,7 @@ export const lib = "lib";
   expect(stderr).toBe("");
 
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   // JS files should match and preserve side effects
   expect(bundleContent).toContain("lib side effect");
 });
@@ -454,7 +451,7 @@ test("invalid glob patterns should not crash bundler", async () => {
   const dir = tempDirWithFiles("invalid-glob-test", {
     "package.json": JSON.stringify({
       "name": "invalid-glob-test",
-      "sideEffects": ["src/[unclosed.js", "src/lib/*.js"]
+      "sideEffects": ["src/[unclosed.js", "src/lib/*.js"],
     }),
     "src/index.js": `
 import { lib } from "./lib/lib.js";
@@ -480,9 +477,9 @@ export const lib = "lib";
 
   // Should still build successfully despite invalid glob pattern
   expect(exitCode).toBe(0);
-  
+
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   // Valid glob should still work
   expect(bundleContent).toContain("lib side effect");
 });
@@ -491,7 +488,7 @@ test("deeply nested glob patterns", async () => {
   const dir = tempDirWithFiles("deep-glob-test", {
     "package.json": JSON.stringify({
       "name": "deep-glob-test",
-      "sideEffects": ["src/**/effects/*.js"]
+      "sideEffects": ["src/**/effects/*.js"],
     }),
     "src/index.js": `
 import "./shallow.js";
@@ -526,10 +523,10 @@ console.log("nested side effect - should be preserved");
   expect(stderr).toBe("");
 
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   // Shallow should be tree-shaken
   expect(bundleContent).not.toContain("shallow side effect");
-  
+
   // Deep nested effects should be preserved
   expect(bundleContent).toContain("deep side effect");
   expect(bundleContent).toContain("nested side effect");
@@ -539,7 +536,7 @@ test("cross-platform path handling (Windows backslashes)", async () => {
   const dir = tempDirWithFiles("cross-platform-test", {
     "package.json": JSON.stringify({
       "name": "cross-platform-test",
-      "sideEffects": ["src/effects/*.js"]  // Always use forward slashes in patterns
+      "sideEffects": ["src/effects/*.js"], // Always use forward slashes in patterns
     }),
     "src/index.js": `
 import "./effects/effect.js";
@@ -570,10 +567,10 @@ console.log("util side effect - should be tree shaken");
   expect(stderr).toBe("");
 
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   // Effect should be preserved (matches pattern regardless of platform)
   expect(bundleContent).toContain("effect side effect");
-  
+
   // Util should be tree-shaken (doesn't match pattern)
   expect(bundleContent).not.toContain("util side effect");
 });

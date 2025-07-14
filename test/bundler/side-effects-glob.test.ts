@@ -1,11 +1,11 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("glob sideEffects basic pattern", async () => {
   const dir = tempDirWithFiles("glob-side-effects-basic", {
     "package.json": JSON.stringify({
       "name": "glob-side-effects-test",
-      "sideEffects": ["src/effects/*.js"]
+      "sideEffects": ["src/effects/*.js"],
     }),
     "src/index.js": `
 import { used } from "./lib/used.js";
@@ -40,7 +40,7 @@ export const effect = "effect";
   expect(stderr).toBe("");
 
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   expect(bundleContent).toContain("side effect preserved");
   expect(bundleContent).not.toContain("should be tree-shaken");
   expect(bundleContent).toContain("used");
@@ -49,8 +49,8 @@ export const effect = "effect";
 test("glob sideEffects question mark pattern", async () => {
   const dir = tempDirWithFiles("glob-side-effects-question", {
     "package.json": JSON.stringify({
-      "name": "glob-side-effects-test", 
-      "sideEffects": ["src/file?.js"]
+      "name": "glob-side-effects-test",
+      "sideEffects": ["src/file?.js"],
     }),
     "src/index.js": `
 import { file1 } from "./file1.js";
@@ -93,11 +93,11 @@ export const other = "other";
   expect(stderr).toBe("");
 
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   // Single character matches should have side effects
   expect(bundleContent).toContain("file1 effect");
   expect(bundleContent).toContain("file2 effect");
-  
+
   // Multi-character and other files should not
   expect(bundleContent).not.toContain("fileAB effect");
   expect(bundleContent).not.toContain("other effect");
@@ -107,7 +107,7 @@ test("glob sideEffects brace expansion", async () => {
   const dir = tempDirWithFiles("glob-side-effects-brace", {
     "package.json": JSON.stringify({
       "name": "glob-side-effects-test",
-      "sideEffects": ["src/{components,utils}/*.js"]
+      "sideEffects": ["src/{components,utils}/*.js"],
     }),
     "src/index.js": `
 import { comp } from "./components/comp.js";
@@ -145,7 +145,7 @@ export const other = "other";
   expect(stderr).toBe("");
 
   const bundleContent = await Bun.file(`${dir}/dist/index.js`).text();
-  
+
   expect(bundleContent).toContain("component effect");
   expect(bundleContent).toContain("utility effect");
   expect(bundleContent).not.toContain("other effect");

@@ -5319,10 +5319,6 @@ void JSC__VM__shrinkFootprint(JSC::VM* arg0)
 {
     arg0->shrinkFootprintWhenIdle();
 };
-void JSC__VM__whenIdle(JSC::VM* arg0, void (*ArgFn1)())
-{
-    arg0->whenIdle(ArgFn1);
-};
 
 void JSC__VM__holdAPILock(JSC::VM* arg0, void* ctx, void (*callback)(void* arg0))
 {

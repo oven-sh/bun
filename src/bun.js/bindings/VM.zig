@@ -74,14 +74,6 @@ pub const VM = opaque {
         return JSC__VM__deleteAllCode(vm, global_object);
     }
 
-    extern fn JSC__VM__whenIdle(vm: *VM, callback: *const fn (...) callconv(.C) void) void;
-    pub fn whenIdle(
-        vm: *VM,
-        callback: *const fn (...) callconv(.C) void,
-    ) void {
-        return JSC__VM__whenIdle(vm, callback);
-    }
-
     extern fn JSC__VM__shrinkFootprint(vm: *VM) void;
     pub fn shrinkFootprint(
         vm: *VM,

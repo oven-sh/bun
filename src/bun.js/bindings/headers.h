@@ -322,7 +322,6 @@ CPP_DECL void JSC__VM__setExecutionTimeLimit(JSC::VM* arg0, double arg1);
 CPP_DECL void JSC__VM__shrinkFootprint(JSC::VM* arg0);
 CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
-CPP_DECL void JSC__VM__whenIdle(JSC::VM* arg0, void(* ArgFn1)());
 
 CPP_DECL void FFI__ptr__put(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 

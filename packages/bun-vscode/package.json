@@ -10,15 +10,13 @@
   "devDependencies": {
     "@types/bun": "^1.1.10",
     "@types/vscode": "^1.60.0",
-    "@types/xml2js": "^0.4.14",
     "@vscode/debugadapter": "^1.56.0",
     "@vscode/debugadapter-testsupport": "^1.56.0",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^2.20.1",
     "esbuild": "^0.19.2",
-    "typescript": "^5.0.0",
-    "xml2js": "^0.6.2"
+    "typescript": "^5.0.0"
   },
   "activationEvents": [
     "onStartupFinished"
@@ -73,7 +71,7 @@
         },
         "bun.test.filePattern": {
           "type": "string",
-          "default": "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts}",
+          "default": "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}",
           "description": "Glob pattern to find test files"
         },
         "bun.test.customFlag": {
@@ -83,8 +81,14 @@
         },
         "bun.test.customScript": {
           "type": "string",
-          "default": "",
+          "default": "bun test",
           "description": "Custom script to use instead of `bun test`, for example script from `package.json`"
+        },
+        "bun.test.enable": {
+          "type": "boolean",
+          "description": "If the test explorer should be enabled and contribute data to vscode",
+          "scope": "window",
+          "default": true
         }
       }
     },

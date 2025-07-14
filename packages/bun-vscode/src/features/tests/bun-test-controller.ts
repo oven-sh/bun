@@ -67,10 +67,7 @@ export class BunTestController implements vscode.Disposable {
     try {
       this.signal = await this.createSignal();
       await this.signal.ready;
-      debug.appendLine(`Signal initialized at: ${this.signal.url}`);
-
       this.signal.on("Signal.Socket.connect", (socket: net.Socket) => {
-        debug.appendLine("Bun connected to signal socket");
         this.handleSocketConnection(socket, this.currentRun!);
       });
 
@@ -89,7 +86,7 @@ export class BunTestController implements vscode.Disposable {
     };
 
     this.testController.refreshHandler = async token => {
-      const files = await this.discoverInitialTests(token);
+      const files = await this.discoverInitialTests(token, false);
       if (!files?.length) return;
 
       const filePaths = new Set(files.map(f => f.fsPath));
@@ -137,10 +134,13 @@ export class BunTestController implements vscode.Disposable {
     return document?.uri?.scheme === "file" && /\.(test|spec)\.(js|jsx|ts|tsx|cjs|mts)$/.test(document.uri.fsPath);
   }
 
-  private async discoverInitialTests(cancellationToken?: vscode.CancellationToken): Promise<vscode.Uri[] | undefined> {
+  private async discoverInitialTests(
+    cancellationToken?: vscode.CancellationToken,
+    reset: boolean = true,
+  ): Promise<vscode.Uri[] | undefined> {
     try {
       const tests = await this.findTestFiles(cancellationToken);
-      this.createFileTestItems(tests);
+      this.createFileTestItems(tests, reset);
       return tests;
     } catch {
       return undefined;
@@ -201,7 +201,7 @@ export class BunTestController implements vscode.Disposable {
     return [...ignoreGlobs.values()];
   }
 
-  private createFileTestItems(files: vscode.Uri[]): void {
+  private createFileTestItems(files: vscode.Uri[], reset: boolean = true): void {
     if (files.length === 0) {
       return;
     }
@@ -214,7 +214,9 @@ export class BunTestController implements vscode.Disposable {
           path.relative(this.workspaceFolder.uri.fsPath, file.fsPath) || file.fsPath,
           file,
         );
-        fileTestItem.children.replace([]);
+        if (reset) {
+          fileTestItem.children.replace([]);
+        }
         fileTestItem.canResolveChildren = true;
         this.testController.items.add(fileTestItem);
       }
@@ -297,7 +299,9 @@ export class BunTestController implements vscode.Disposable {
         );
         this.testController.items.add(fileTestItem);
       }
-      fileTestItem.children.replace([]);
+      if (!this.currentRun) {
+        fileTestItem.children.replace([]);
+      }
       fileTestItem.canResolveChildren = false;
 
       this.addTestNodes(testNodes, fileTestItem, targetPath);
@@ -475,18 +479,22 @@ export class BunTestController implements vscode.Disposable {
         : this.escapeTestName(node.name);
       const testId = `${filePath}#${nodePath}`;
 
-      const testItem = this.testController.createTestItem(testId, this.stripAnsi(node.name), vscode.Uri.file(filePath));
+      // Check if test already exists to avoid duplicates
+      let testItem = parent.children.get(testId);
+      if (!testItem) {
+        testItem = this.testController.createTestItem(testId, this.stripAnsi(node.name), vscode.Uri.file(filePath));
 
-      testItem.tags = [new vscode.TestTag(node.type === "describe" ? "describe" : "test")];
+        testItem.tags = [new vscode.TestTag(node.type === "describe" ? "describe" : "test")];
 
-      if (typeof node.line === "number") {
-        testItem.range = new vscode.Range(
-          new vscode.Position(node.line, 0),
-          new vscode.Position(node.line, node.name.length),
-        );
+        if (typeof node.line === "number") {
+          testItem.range = new vscode.Range(
+            new vscode.Position(node.line, 0),
+            new vscode.Position(node.line, node.name.length),
+          );
+        }
+
+        parent.children.add(testItem);
       }
-
-      parent.children.add(testItem);
 
       if (node.children.length > 0) {
         this.addTestNodes(node.children, testItem, filePath, nodePath);
@@ -611,16 +619,28 @@ export class BunTestController implements vscode.Disposable {
     });
 
     const { bunCommand, testArgs } = this.getBunExecutionConfig();
-    let args = [...testArgs, ...Array.from(allFiles)];
+
+    let args = [...testArgs, ...allFiles];
+    let printedArgs = `\x1b[34;1m>\x1b[0m \x1b[34;1m${bunCommand} ${testArgs.join(" ")}\x1b[2m`;
+
+    for (const file of allFiles) {
+      const f = path.relative(this.workspaceFolder.uri.fsPath, file) || file
+      if (f.includes(" ")) {
+        printedArgs += ` ".${path.sep}${f}"`;
+      } else {
+        printedArgs += ` .${path.sep}${f}`;
+      }
+    }
 
     if (isIndividualTestRun) {
       const pattern = this.buildTestNamePattern(tests);
       if (pattern) {
         args.push("--test-name-pattern", process.platform === "win32" ? `"${pattern}"` : pattern);
+        printedArgs += `\x1b[0m\x1b[2m --test-name-pattern "${pattern}"\x1b[0m`;
       }
     }
 
-    run.appendOutput(`\r\n\x1b[34m>\x1b[0m \x1b[2m${bunCommand} ${args.join(" ")}\x1b[0m\r\n\r\n`);
+    run.appendOutput(printedArgs + "\x1b[0m\r\n\r\n");
     args.push(`--inspect-wait=${this.signal!.url}`);
 
     for (const test of tests) {
@@ -634,17 +654,18 @@ export class BunTestController implements vscode.Disposable {
     const proc = spawn(bunCommand, args, {
       cwd: this.workspaceFolder.uri.fsPath,
       env: {
-        ...process.env,
         BUN_DEBUG_QUIET_LOGS: "1",
         FORCE_COLOR: "1",
-        NO_COLOR: "0",
+        ...process.env,
       },
     });
 
     this.activeProcesses.add(proc);
 
     proc.on("exit", (code, signal) => {
-      debug.appendLine(`Process exited with code ${code}, signal ${signal}`);
+      if (code !== 0 && code !== 1) {
+        debug.appendLine(`Test process failed: exit ${code}, signal ${signal}`);
+      }
     });
 
     proc.on("error", error => {
@@ -666,9 +687,7 @@ export class BunTestController implements vscode.Disposable {
     try {
       await socketPromise;
     } catch (error) {
-      debug.appendLine(`Failed to establish inspector connection: ${error}`);
-      debug.appendLine(`Signal URL was: ${this.signal!.url}`);
-      debug.appendLine(`Command was: ${bunCommand} ${args.join(" ")}`);
+      debug.appendLine(`Connection failed: ${error} (URL: ${this.signal!.url})`);
       throw error;
     }
 
@@ -725,7 +744,7 @@ export class BunTestController implements vscode.Disposable {
             run.passed(item, previousResult.duration);
             break;
           case "failed":
-            run.failed(item, previousResult.message || new vscode.TestMessage("Test failed"), previousResult.duration);
+            run.failed(item, [], previousResult.duration);
             break;
           case "skipped":
             run.skipped(item);
@@ -763,16 +782,11 @@ export class BunTestController implements vscode.Disposable {
       this.handleLifecycleError(event, run);
     });
 
-    this.debugAdapter.on("Inspector.event", e => {
-      debug.appendLine(`Received inspector event: ${e.method}`);
-    });
-
     this.debugAdapter.on("Inspector.error", e => {
       debug.appendLine(`Inspector error: ${e}`);
     });
 
     socket.on("close", () => {
-      debug.appendLine("Inspector connection closed");
       this.debugAdapter = null;
     });
 
@@ -799,7 +813,6 @@ export class BunTestController implements vscode.Disposable {
     const { id: inspectorTestId, url: sourceURL, name, type, parentId, line } = params;
 
     if (!sourceURL) {
-      debug.appendLine(`Warning: Test found without URL: ${name}`);
       return;
     }
 
@@ -814,8 +827,6 @@ export class BunTestController implements vscode.Disposable {
       this.inspectorToVSCode.set(inspectorTestId, testItem);
       this.vscodeToInspector.set(testItem.id, inspectorTestId);
       this.discoveredTestIds.add(testItem.id);
-    } else {
-      debug.appendLine(`Could not find VS Code test item for: ${name} in ${path.basename(filePath)}`);
     }
   }
 
@@ -959,7 +970,6 @@ export class BunTestController implements vscode.Disposable {
         break;
       case "skip":
       case "todo":
-      case "skipped_because_label":
         run.skipped(testItem);
         this.testResultHistory.set(testItem.id, { status: "skipped" });
         break;
@@ -969,6 +979,8 @@ export class BunTestController implements vscode.Disposable {
         );
         run.failed(testItem, timeoutMsg, duration);
         this.testResultHistory.set(testItem.id, { status: "failed", message: timeoutMsg, duration });
+        break;
+      case "skipped_because_label":
         break;
     }
   }

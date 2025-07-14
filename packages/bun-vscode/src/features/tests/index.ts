@@ -7,6 +7,12 @@ export async function registerTests(context: vscode.ExtensionContext) {
     return;
   }
 
+  const config = vscode.workspace.getConfiguration("bun.test");
+  const enable = config.get<boolean>("enable", true);
+  if (!enable) {
+    return;
+  }
+
   try {
     const controller = vscode.tests.createTestController("bun-tests", "Bun Tests");
     context.subscriptions.push(controller);

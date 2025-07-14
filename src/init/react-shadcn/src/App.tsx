@@ -1,6 +1,7 @@
+import "./styles/index.css";
+
 import { Card, CardContent } from "@/components/ui/card";
-import { APITester } from "./APITester";
-import "./index.css";
+import { APITester } from "./api-tester";
 
 import logo from "./logo.svg";
 import reactLogo from "./react.svg";
@@ -35,5 +36,3 @@ export function App() {
     </div>
   );
 }
-
-export default App;

@@ -14,12 +14,11 @@ declare module "*.jsonc" {
 }
 
 declare module "*/bun.lock" {
-  var contents: import("bun").BunLockFile;
+  var contents: Bun.BunLockFile;
   export = contents;
 }
 
 declare module "*.html" {
-  var contents: import("bun").HTMLBundle;
-
+  var contents: Bun.HTMLBundle;
   export = contents;
 }

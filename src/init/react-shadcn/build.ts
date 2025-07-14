@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { build, type BuildConfig } from "bun";
 import plugin from "bun-plugin-tailwind";
 import { existsSync } from "fs";
 import { rm } from "fs/promises";
@@ -49,11 +48,12 @@ const parseValue = (value: string): any => {
 };
 
 function parseArgs(): Partial<Bun.BuildConfig> {
-  const config: Record<string, any> = {};
+  const config: Partial<Bun.BuildConfig> = {};
   const args = process.argv.slice(2);
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
+    if (arg === undefined) continue;
     if (!arg.startsWith("--")) continue;
 
     if (arg.startsWith("--no-")) {
@@ -62,7 +62,7 @@ function parseArgs(): Partial<Bun.BuildConfig> {
       continue;
     }
 
-    if (!arg.includes("=") && (i === args.length - 1 || args[i + 1].startsWith("--"))) {
+    if (!arg.includes("=") && (i === args.length - 1 || args[i + 1]?.startsWith("--"))) {
       const key = toCamelCase(arg.slice(2));
       config[key] = true;
       continue;
@@ -72,10 +72,10 @@ function parseArgs(): Partial<Bun.BuildConfig> {
     let value: string;
 
     if (arg.includes("=")) {
-      [key, value] = arg.slice(2).split("=", 2);
+      [key, value] = arg.slice(2).split("=", 2) as [string, string];
     } else {
       key = arg.slice(2);
-      value = args[++i];
+      value = args[++i] ?? "";
     }
 
     key = toCamelCase(key);
@@ -89,7 +89,7 @@ function parseArgs(): Partial<Bun.BuildConfig> {
     }
   }
 
-  return config as Partial<BuildConfig>;
+  return config;
 }
 
 const formatFileSize = (bytes: number): string => {

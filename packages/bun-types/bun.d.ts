@@ -1187,7 +1187,6 @@ declare module "bun" {
     ttl: number;
   }
 
-  interface FileBlob extends BunFile {}
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
@@ -1259,6 +1258,7 @@ declare module "bun" {
      * A UNIX timestamp indicating when the file was last modified.
      */
     lastModified: number;
+
     /**
      * The name or path of the file, as specified in the constructor.
      */
@@ -1313,9 +1313,7 @@ declare module "bun" {
   }
 
   namespace SQL {
-    type AwaitPromisesArray<T extends Array<PromiseLike<any>>> = {
-      [K in keyof T]: Awaited<T[K]>;
-    };
+    type AwaitPromisesArray<T extends Array<PromiseLike<any>>> = { [K in keyof T]: Awaited<T[K]> };
 
     type ContextCallbackResult<T> = T extends Array<PromiseLike<any>> ? AwaitPromisesArray<T> : Awaited<T>;
     type ContextCallback<T, SQL> = (sql: SQL) => Promise<T>;

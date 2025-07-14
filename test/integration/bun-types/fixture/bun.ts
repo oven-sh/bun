@@ -32,7 +32,7 @@ import * as tsd from "./utilities";
 {
   const f = Bun.file("asdf");
   tsd.expectType<BunFile>(f);
-  tsd.expectType<FileBlob>(f);
+  tsd.expectType<FileBlob>(f); // This will be removed in the future
 }
 {
   Bun.spawn(["anything"], {

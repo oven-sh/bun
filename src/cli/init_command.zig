@@ -1161,29 +1161,31 @@ const Template = enum {
     const ReactShadcn = struct {
         const files: []const TemplateFile = &.{
             .{ .path = "bunfig.toml", .contents = @embedFile("../init/react-shadcn/bunfig.toml") },
-            .{ .path = "styles/globals.css", .contents = @embedFile("../init/react-shadcn/styles/globals.css") },
             .{ .path = "package.json", .contents = @embedFile("../init/react-shadcn/package.json") },
             .{ .path = "components.json", .contents = @embedFile("../init/react-shadcn/components.json") },
             .{ .path = "tsconfig.json", .contents = @embedFile("../init/react-shadcn/tsconfig.json") },
             .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-shadcn/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
-            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-shadcn/src/index.tsx") },
-            .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-shadcn/src/App.tsx") },
+            .{ .path = "build.ts", .contents = @embedFile("../init/react-shadcn/build.ts") },
+
+            .{ .path = "src/styles/globals.css", .contents = @embedFile("../init/react-shadcn/src/styles/globals.css") },
+            .{ .path = "src/styles/index.css", .contents = @embedFile("../init/react-shadcn/src/styles/index.css") },
+
+            .{ .path = "src/server.ts", .contents = @embedFile("../init/react-shadcn/src/server.ts") },
+
+            .{ .path = "src/app.tsx", .contents = @embedFile("../init/react-shadcn/src/app.tsx") },
             .{ .path = "src/index.html", .contents = @embedFile("../init/react-shadcn/src/index.html") },
-            .{ .path = "src/index.css", .contents = @embedFile("../init/react-shadcn/src/index.css") },
             .{ .path = "src/components/ui/card.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/card.tsx") },
             .{ .path = "src/components/ui/label.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/label.tsx") },
             .{ .path = "src/components/ui/button.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/button.tsx") },
             .{ .path = "src/components/ui/select.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/select.tsx") },
             .{ .path = "src/components/ui/input.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/input.tsx") },
-            .{ .path = "src/components/ui/form.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/form.tsx") },
-            .{ .path = "src/APITester.tsx", .contents = @embedFile("../init/react-shadcn/src/APITester.tsx") },
+            .{ .path = "src/api-tester.tsx", .contents = @embedFile("../init/react-shadcn/src/api-tester.tsx") },
             .{ .path = "src/lib/utils.ts", .contents = @embedFile("../init/react-shadcn/src/lib/utils.ts") },
             .{ .path = "src/react.svg", .contents = @embedFile("../init/react-shadcn/src/react.svg") },
-            .{ .path = "src/frontend.tsx", .contents = @embedFile("../init/react-shadcn/src/frontend.tsx") },
+            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-shadcn/src/index.tsx") },
             .{ .path = "src/logo.svg", .contents = @embedFile("../init/react-shadcn/src/logo.svg") },
-            .{ .path = "build.ts", .contents = @embedFile("../init/react-shadcn/build.ts") },
         };
     };
 

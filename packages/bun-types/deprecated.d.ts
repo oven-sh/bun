@@ -14,6 +14,9 @@ declare module "bun" {
     ): void;
   }
 
+  /** @deprecated Use {@link BunFile Bun.BunFile} instead */
+  interface FileBlob extends BunFile {}
+
   /** @deprecated Use {@link SQL.Query Bun.SQL.Query} */
   type SQLQuery<T = any> = SQL.Query<T>;
 

@@ -41,6 +41,8 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
         // https://ui.shadcn.com/docs/installation/manual
         // This will probably be tricky to keep updated.
         // but hopefully the dependency scanning will just handle it for us.
+
+        // try result.dependencies.insert("tw-animate-css");
         try result.dependencies.insert("tailwindcss-animate");
         try result.dependencies.insert("class-variance-authority");
         try result.dependencies.insert("clsx");

@@ -1,4 +1,4 @@
-@import "../styles/globals.css";
+@import "./globals.css";
 
 @layer base {
   :root {

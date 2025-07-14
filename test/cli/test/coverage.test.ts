@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
@@ -52,7 +52,9 @@ export class Y {
   });
   expect(result.exitCode).toBe(0);
   expect(result.signalCode).toBeUndefined();
-  expect(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8")).toMatchSnapshot();
+  expect(normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8"), dir)).toMatchSnapshot(
+    "lcov-coverage-reporter-output",
+  );
 });
 
 test("coverage excludes node_modules directory", () => {
@@ -117,19 +119,11 @@ test("should call both functions", () => {
 
   let stderr = result.stderr.toString("utf-8");
   // Normalize output for cross-platform consistency
-  stderr = stderr
-    .replace(/v\d+\.\d+\.\d+/g, "vX.X.X")
-    .replace(/\\\\/g, "/")
-    .replace(/\\\w:/g, "/")
-    .replace(/\d+(\.\d+)?ms/g, "XXXms")
-    .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
-    .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]")
-    .replace(/\d+ expect\(\) calls?/g, "X expect() calls");
+  stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"
-test.test.ts:
-(pass) should call both functions [XXXms]
+"test.test.ts:
+(pass) should call both functions
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
@@ -140,9 +134,8 @@ All files      |  100.00 |  100.00 |
 
  1 pass
  0 fail
- X expect() calls
-Ran 1 test across 1 file. [XXXms]
-"
+ 2 expect() calls
+Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
@@ -191,19 +184,11 @@ test("should call only some functions", () => {
 
   let stderr = result.stderr.toString("utf-8");
   // Normalize output for cross-platform consistency
-  stderr = stderr
-    .replace(/v\d+\.\d+\.\d+/g, "vX.X.X")
-    .replace(/\\\\/g, "/")
-    .replace(/\\\w:/g, "/")
-    .replace(/\d+(\.\d+)?ms/g, "XXXms")
-    .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
-    .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]")
-    .replace(/\d+ expect\(\) calls?/g, "X expect() calls");
+  stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"
-test.test.ts:
-(pass) should call only some functions [XXXms]
+"test.test.ts:
+(pass) should call only some functions
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
@@ -214,9 +199,8 @@ All files      |   75.00 |   83.33 |
 
  1 pass
  0 fail
- X expect() calls
-Ran 1 test across 1 file. [XXXms]
-"
+ 2 expect() calls
+Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
@@ -265,18 +249,11 @@ test("should call all functions", () => {
 
   let stderr = result.stderr.toString("utf-8");
   // Normalize output for cross-platform consistency
-  stderr = stderr
-    .replace(/v\d+\.\d+\.\d+/g, "vX.X.X")
-    .replace(/\\\\/g, "/")
-    .replace(/\\\w:/g, "/")
-    .replace(/\d+(\.\d+)?ms/g, "XXXms")
-    .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
-    .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]");
+  stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"
-test.test.ts:
-(pass) should call all functions [XXXms]
+"test.test.ts:
+(pass) should call all functions
 --------------|---------|---------|-------------------
 File          | % Funcs | % Lines | Uncovered Line #s
 --------------|---------|---------|-------------------
@@ -288,8 +265,7 @@ All files     |  100.00 |  100.00 |
  1 pass
  0 fail
  3 expect() calls
-Ran 1 test across 1 file. [XXXms]
-"
+Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
@@ -340,18 +316,11 @@ test("should call all functions", () => {
 
   let stderr = result.stderr.toString("utf-8");
   // Normalize output for cross-platform consistency
-  stderr = stderr
-    .replace(/v\d+\.\d+\.\d+/g, "vX.X.X")
-    .replace(/\\\\/g, "/")
-    .replace(/\\\w:/g, "/")
-    .replace(/\d+(\.\d+)?ms/g, "XXXms")
-    .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
-    .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]");
+  stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"
-main.test.ts:
-(pass) should call all functions [XXXms]
+"main.test.ts:
+(pass) should call all functions
 
 src/feature.spec.ts:
 ----------------|---------|---------|-------------------
@@ -365,8 +334,7 @@ All files       |  100.00 |  100.00 |
  1 pass
  0 fail
  3 expect() calls
-Ran 1 test across 2 files. [XXXms]
-"
+Ran 1 test across 2 files."
 `);
   expect(result.exitCode).toBe(0);
 });
@@ -410,10 +378,7 @@ test("should call both functions", () => {
 
   let lcovContent = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
   // Normalize LCOV content for cross-platform consistency
-  lcovContent = lcovContent
-    .replace(/\\\\/g, "/")
-    .replace(/\\\w:/g, "/")
-    .replace(/SF:[^\n]*[\\\/]/g, "SF:");
+  lcovContent = normalizeBunSnapshot(lcovContent, dir);
 
   expect(lcovContent).toMatchInlineSnapshot(`
 "TN:
@@ -438,8 +403,7 @@ DA:8,36
 DA:9,2
 LF:10
 LH:7
-end_of_record
-"
+end_of_record"
 `);
   expect(result.exitCode).toBe(0);
 });
@@ -449,6 +413,7 @@ test("coveragePathIgnorePatterns - invalid config type", () => {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = 123
+coverageSkipTestFiles = false
 `,
     "test.test.ts": `
 import { test, expect } from "bun:test";
@@ -469,20 +434,15 @@ test("should pass", () => {
 
   let stderr = result.stderr.toString("utf-8");
   // Normalize error output for cross-platform consistency
-  stderr = stderr
-    .replace(/\\\\/g, "/")
-    .replace(/\\\w:/g, "/")
-    .replace(/[^:\s]+[\/\\]cov_[^\/\\]+[\/\\]/g, "TEMP_DIR/")
-    .replace(/at [^:\s]+[\/\\]cov_[^\/\\]+[\/\\]/g, "at TEMP_DIR/");
+  stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
 "3 | coveragePathIgnorePatterns = 123
                                  ^
 error: coveragePathIgnorePatterns must be a string or array of strings
-    at TEMP_DIR/bunfig.toml:3:30
+    at <dir>/bunfig.toml:3:30
 
-Invalid Bunfig: failed to load bunfig
-"
+Invalid Bunfig: failed to load bunfig"
 `);
   expect(result.exitCode).toBe(1);
 });
@@ -492,6 +452,7 @@ test("coveragePathIgnorePatterns - invalid array item", () => {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = ["valid-pattern", 123]
+coverageSkipTestFiles = false
 `,
     "test.test.ts": `
 import { test, expect } from "bun:test";
@@ -512,20 +473,15 @@ test("should pass", () => {
 
   let stderr = result.stderr.toString("utf-8");
   // Normalize error output for cross-platform consistency
-  stderr = stderr
-    .replace(/\\\\/g, "/")
-    .replace(/\\\w:/g, "/")
-    .replace(/[^:\s]+[\/\\]cov_[^\/\\]+[\/\\]/g, "TEMP_DIR/")
-    .replace(/at [^:\s]+[\/\\]cov_[^\/\\]+[\/\\]/g, "at TEMP_DIR/");
+  stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
 "3 | coveragePathIgnorePatterns = ["valid-pattern", 123]
                                                    ^
 error: coveragePathIgnorePatterns array must contain only strings
-    at TEMP_DIR/bunfig.toml:3:48
+    at <dir>/bunfig.toml:3:48
 
-Invalid Bunfig: failed to load bunfig
-"
+Invalid Bunfig: failed to load bunfig"
 `);
   expect(result.exitCode).toBe(1);
 });
@@ -562,18 +518,11 @@ test("should call function", () => {
 
   let stderr = result.stderr.toString("utf-8");
   // Normalize output for cross-platform consistency
-  stderr = stderr
-    .replace(/v\d+\.\d+\.\d+/g, "vX.X.X")
-    .replace(/\\\\/g, "/")
-    .replace(/\\\w:/g, "/")
-    .replace(/\d+(\.\d+)?ms/g, "XXXms")
-    .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
-    .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]");
+  stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"
-test.test.ts:
-(pass) should call function [XXXms]
+"test.test.ts:
+(pass) should call function
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
@@ -585,8 +534,7 @@ All files      |  100.00 |  100.00 |
  1 pass
  0 fail
  1 expect() calls
-Ran 1 test across 1 file. [XXXms]
-"
+Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
@@ -623,18 +571,11 @@ test("should call function", () => {
 
   let stderr = result.stderr.toString("utf-8");
   // Normalize output for cross-platform consistency
-  stderr = stderr
-    .replace(/v\d+\.\d+\.\d+/g, "vX.X.X")
-    .replace(/\\\\/g, "/")
-    .replace(/\\\w:/g, "/")
-    .replace(/\d+(\.\d+)?ms/g, "XXXms")
-    .replace(/\[\d+(\.\d+)?s\]/g, "[XXXs]")
-    .replace(/Ran \d+ tests? across \d+ files?\. \[\d+(\.\d+)?s\]/g, "Ran X tests across X files. [XXXs]");
+  stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"
-test.test.ts:
-(pass) should call function [XXXms]
+"test.test.ts:
+(pass) should call function
 -----------|---------|---------|-------------------
 File       | % Funcs | % Lines | Uncovered Line #s
 -----------|---------|---------|-------------------
@@ -644,8 +585,7 @@ All files  |    0.00 |    0.00 |
  1 pass
  0 fail
  1 expect() calls
-Ran 1 test across 1 file. [XXXms]
-"
+Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });

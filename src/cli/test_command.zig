@@ -824,10 +824,8 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        const writer_ = Output.errorWriter();
-        var buffered_writer = std.io.bufferedWriter(writer_);
-        var writer = buffered_writer.writer();
-        defer buffered_writer.flush() catch unreachable;
+        const writer = Output.errorWriterBuffered();
+        defer Output.flush();
 
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
@@ -842,7 +840,8 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_ = Output.errorWriter();
+        var writer_ = Output.errorWriterBuffered();
+        defer Output.flush();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         // when the tests fail, we want to repeat the failures at the end
@@ -856,12 +855,10 @@ pub const CommandLineReporter = struct {
 
         // We must always reset the colors because (skip) will have set them to <d>
         if (Output.enable_ansi_colors_stderr) {
-            writer.writeAll(Output.prettyFmt("<r>", true)) catch unreachable;
+            writer.writeAll(Output.prettyFmt("<r>", true)) catch {};
         }
 
-        writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch unreachable;
-
-        Output.flush();
+        writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch {};
 
         // this.updateDots();
         this.summary().fail += 1;
@@ -876,11 +873,12 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_ = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         // If you do it.only, don't report the skipped tests because its pretty noisy
         if (jest.Jest.runner != null and !jest.Jest.runner.?.only) {
+            var writer_ = Output.errorWriterBuffered();
+            defer Output.flush();
             // when the tests skip, we want to repeat the failures at the end
             // so that you can see them better when there are lots of tests that ran
             const initial_length = this.skips_to_repeat_buf.items.len;
@@ -890,8 +888,7 @@ pub const CommandLineReporter = struct {
             const line_number = this.jest.tests.items(.line_number)[id];
             printTestLine(.skip, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter, line_number);
 
-            writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
-            Output.flush();
+            writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch {};
         }
 
         // this.updateDots();
@@ -904,7 +901,8 @@ pub const CommandLineReporter = struct {
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         if (this.file_reporter) |_| {
-            var writer_ = Output.errorWriter();
+            var writer_ = Output.errorWriterBuffered();
+            defer Output.flush();
 
             const initial_length = this.skips_to_repeat_buf.items.len;
             var writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
@@ -913,8 +911,7 @@ pub const CommandLineReporter = struct {
             const line_number = this.jest.tests.items(.line_number)[id];
             printTestLine(.skipped_because_label, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter, line_number);
 
-            writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
-            Output.flush();
+            writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch {};
         }
 
         // this.updateDots();
@@ -924,7 +921,7 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestTodo(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_ = Output.errorWriter();
+        var writer_ = Output.errorWriterBuffered();
 
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
@@ -937,7 +934,7 @@ pub const CommandLineReporter = struct {
         const line_number = this.jest.tests.items(.line_number)[id];
         printTestLine(.todo, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter, line_number);
 
-        writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch unreachable;
+        writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch {};
         Output.flush();
 
         // this.updateDots();

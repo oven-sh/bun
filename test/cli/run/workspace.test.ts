@@ -172,16 +172,16 @@ describe("bun run --workspace", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    
+
     expect(exitCode).toBe(0);
     expect(stderr.toString()).toBeEmpty();
     const output = stdout.toString();
-    
+
     // Check that the order matches workspace definition order
     const indexA = output.indexOf("scripta");
     const indexB = output.indexOf("scriptb");
     const indexC = output.indexOf("scriptc");
-    
+
     expect(indexA).toBeLessThan(indexB);
     expect(indexB).toBeLessThan(indexC);
   });
@@ -239,11 +239,11 @@ describe("bun run --workspace", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    
+
     expect(exitCode).toBe(0);
     expect(stderr.toString()).toBeEmpty();
     const output = stdout.toString();
-    
+
     // Should run both pkga (via --workspace) and pkgb (via --filter)
     expect(output).toMatch(/scripta/);
     expect(output).toMatch(/scriptb/);
@@ -266,11 +266,11 @@ describe("bun run --workspace", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    
+
     expect(exitCode).toBe(0);
     expect(stderr.toString()).toBeEmpty();
     const output = stdout.toString();
-    
+
     expect(output).toMatch(/scripta/);
     expect(output).toMatch(/scriptb/);
   });
@@ -307,7 +307,7 @@ describe("workspace ordering test", () => {
     },
     "package.json": JSON.stringify({
       name: "ws",
-      workspaces: ["packages/pkgc", "packages/pkga", "packages/pkgb"],  // Different order
+      workspaces: ["packages/pkgc", "packages/pkga", "packages/pkgb"], // Different order
     }),
   });
 
@@ -319,16 +319,16 @@ describe("workspace ordering test", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    
+
     expect(exitCode).toBe(0);
     expect(stderr.toString()).toBeEmpty();
     const output = stdout.toString();
-    
+
     // Check that the order matches workspace definition order (c, a, b)
     const indexA = output.indexOf("scripta");
     const indexB = output.indexOf("scriptb");
     const indexC = output.indexOf("scriptc");
-    
+
     // In this test, the workspace order is pkgc, pkga, pkgb
     // So we should see c before a, and a before b
     expect(indexC).toBeLessThan(indexA);

@@ -17,6 +17,7 @@ const fs = @import("../fs.zig");
 const resolver = @import("./resolver.zig");
 const js_lexer = bun.js_lexer;
 const resolve_path = @import("./resolve_path.zig");
+const glob = @import("../glob.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
 const MainFieldMap = bun.StringMap;
@@ -134,8 +135,10 @@ pub const PackageJSON = struct {
         false,
         /// "sideEffects": ["file.js", "other.js"]
         map: Map,
-        // /// "sideEffects": ["side_effects/*.js"]
-        // glob: TODO,
+        /// "sideEffects": ["side_effects/*.js"]
+        glob: GlobList,
+        /// "sideEffects": ["file.js", "side_effects/*.js"] - mixed patterns
+        mixed: MixedPatterns,
 
         pub const Map = std.HashMapUnmanaged(
             bun.StringHashMapUnowned.Key,
@@ -144,11 +147,39 @@ pub const PackageJSON = struct {
             80,
         );
 
+        pub const GlobList = std.ArrayListUnmanaged([]const u8);
+        
+        pub const MixedPatterns = struct {
+            exact: Map,
+            globs: GlobList,
+        };
+
         pub fn hasSideEffects(side_effects: SideEffects, path: []const u8) bool {
             return switch (side_effects) {
                 .unspecified => true,
                 .false => false,
                 .map => |map| map.contains(bun.StringHashMapUnowned.Key.init(path)),
+                .glob => |glob_list| {
+                    for (glob_list.items) |pattern| {
+                        if (glob.match(bun.default_allocator, pattern, path).matches()) {
+                            return true;
+                        }
+                    }
+                    return false;
+                },
+                .mixed => |mixed| {
+                    // First check exact matches
+                    if (mixed.exact.contains(bun.StringHashMapUnowned.Key.init(path))) {
+                        return true;
+                    }
+                    // Then check glob patterns
+                    for (mixed.globs.items) |pattern| {
+                        if (glob.match(bun.default_allocator, pattern, path).matches()) {
+                            return true;
+                        }
+                    }
+                    return false;
+                },
             };
         }
     };
@@ -769,47 +800,97 @@ pub const PackageJSON = struct {
             }
         }
 
-        if (json.get("sideEffects")) |side_effects_field| outer: {
+        if (json.get("sideEffects")) |side_effects_field| {
             if (side_effects_field.asBool()) |boolean| {
                 if (!boolean)
                     package_json.side_effects = .{ .false = {} };
             } else if (side_effects_field.asArray()) |array_| {
                 var array = array_;
-                // TODO: switch to only storing hashes
                 var map = SideEffects.Map{};
-                map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                var glob_list = SideEffects.GlobList{};
+                var has_globs = false;
+                var has_exact = false;
+                
+                // First pass: check if we have glob patterns and exact patterns
                 while (array.next()) |item| {
                     if (item.asString(allocator)) |name| {
-                        // TODO: support RegExp using JavaScriptCore <> C++ bindings
-                        if (strings.containsChar(name, '*')) {
-                            // https://sourcegraph.com/search?q=context:global+file:package.json+sideEffects%22:+%5B&patternType=standard&sm=1&groupBy=repo
-                            // a lot of these seem to be css files which we don't care about for now anyway
-                            // so we can just skip them in here
-                            if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
-                                continue;
-
-                            r.log.addWarning(
-                                &json_source,
-                                item.loc,
-                                "wildcard sideEffects are not supported yet, which means this package will be deoptimized",
-                            ) catch unreachable;
-                            map.deinit(allocator);
-
-                            package_json.side_effects = .{ .unspecified = {} };
-                            break :outer;
+                        if (strings.containsChar(name, '*') or strings.containsChar(name, '?') or strings.containsChar(name, '[') or strings.containsChar(name, '{')) {
+                            has_globs = true;
+                        } else {
+                            has_exact = true;
                         }
-
-                        var joined = [_]string{
-                            json_source.path.name.dirWithTrailingSlash(),
-                            name,
-                        };
-
-                        _ = map.getOrPutAssumeCapacity(
-                            bun.StringHashMapUnowned.Key.init(r.fs.join(&joined)),
-                        );
                     }
                 }
-                package_json.side_effects = .{ .map = map };
+                
+                // Reset array for second pass
+                array = array_;
+                
+                if (has_globs and has_exact) {
+                    // Mixed patterns - use both exact and glob matching
+                    map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                    glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                    
+                    while (array.next()) |item| {
+                        if (item.asString(allocator)) |name| {
+                            // Skip CSS files as they're not relevant for tree-shaking
+                            if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
+                                continue;
+                                
+                            // Store the pattern relative to the package directory
+                            var joined = [_]string{
+                                json_source.path.name.dirWithTrailingSlash(),
+                                name,
+                            };
+                            
+                            const pattern = r.fs.join(&joined);
+                            
+                            if (strings.containsChar(name, '*') or strings.containsChar(name, '?') or strings.containsChar(name, '[') or strings.containsChar(name, '{')) {
+                                glob_list.appendAssumeCapacity(pattern);
+                            } else {
+                                _ = map.getOrPutAssumeCapacity(
+                                    bun.StringHashMapUnowned.Key.init(pattern),
+                                );
+                            }
+                        }
+                    }
+                    package_json.side_effects = .{ .mixed = .{ .exact = map, .globs = glob_list } };
+                } else if (has_globs) {
+                    // Only glob patterns
+                    glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                    while (array.next()) |item| {
+                        if (item.asString(allocator)) |name| {
+                            // Skip CSS files as they're not relevant for tree-shaking
+                            if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
+                                continue;
+                                
+                            // Store the pattern relative to the package directory
+                            var joined = [_]string{
+                                json_source.path.name.dirWithTrailingSlash(),
+                                name,
+                            };
+                            
+                            const pattern = r.fs.join(&joined);
+                            glob_list.appendAssumeCapacity(pattern);
+                        }
+                    }
+                    package_json.side_effects = .{ .glob = glob_list };
+                } else {
+                    // Only exact matches
+                    map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                    while (array.next()) |item| {
+                        if (item.asString(allocator)) |name| {
+                            var joined = [_]string{
+                                json_source.path.name.dirWithTrailingSlash(),
+                                name,
+                            };
+
+                            _ = map.getOrPutAssumeCapacity(
+                                bun.StringHashMapUnowned.Key.init(r.fs.join(&joined)),
+                            );
+                        }
+                    }
+                    package_json.side_effects = .{ .map = map };
+                }
             }
         }
 

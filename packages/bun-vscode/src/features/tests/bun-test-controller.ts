@@ -624,7 +624,7 @@ export class BunTestController implements vscode.Disposable {
     let printedArgs = `\x1b[34;1m>\x1b[0m \x1b[34;1m${bunCommand} ${testArgs.join(" ")}\x1b[2m`;
 
     for (const file of allFiles) {
-      const f = path.relative(this.workspaceFolder.uri.fsPath, file) || file
+      const f = path.relative(this.workspaceFolder.uri.fsPath, file) || file;
       if (f.includes(" ")) {
         printedArgs += ` ".${path.sep}${f}"`;
       } else {

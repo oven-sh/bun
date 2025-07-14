@@ -155,6 +155,11 @@ it("networkInterfaces", () => {
       if (nI.cidr)
         // may be null
         expect(typeof nI.cidr).toBe("string");
+
+      if (nI.family === "IPv6") {
+        expect(nI.scopeid).toBeNumber();
+        expect(nI.scope_id).toBeUndefined();
+      }
     }
   }
 });

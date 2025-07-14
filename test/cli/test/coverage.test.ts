@@ -83,6 +83,7 @@ test("coveragePathIgnorePatterns - single pattern string", () => {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = "ignore-me.ts"
+coverageSkipTestFiles = false
 `,
     "include-me.ts": `
 export function includeMe() {
@@ -151,6 +152,7 @@ test("coveragePathIgnorePatterns - partial coverage without nan", () => {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = "ignore-me.ts"
+coverageSkipTestFiles = false
 `,
     "include-me.ts": `
 export function includeMe() {
@@ -224,6 +226,7 @@ test("coveragePathIgnorePatterns - array of patterns", () => {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = ["utils/**", "*.config.ts"]
+coverageSkipTestFiles = false
 `,
     "src/main.ts": `
 export function main() {
@@ -296,6 +299,7 @@ test("coveragePathIgnorePatterns - glob patterns", () => {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = ["**/*.spec.ts", "test-utils/**"]
+coverageSkipTestFiles = false
 `,
     "src/feature.ts": `
 export function feature() {
@@ -372,6 +376,7 @@ test("coveragePathIgnorePatterns - lcov reporter", () => {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = "ignore-me.ts"
+coverageSkipTestFiles = false
 `,
     "include-me.ts": `
 export function includeMe() {
@@ -530,6 +535,7 @@ test("coveragePathIgnorePatterns - empty array", () => {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = []
+coverageSkipTestFiles = false
 `,
     "include-me.ts": `
 export function includeMe() {
@@ -590,6 +596,7 @@ test("coveragePathIgnorePatterns - ignore all files", () => {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = "**"
+coverageSkipTestFiles = false
 `,
     "include-me.ts": `
 export function includeMe() {

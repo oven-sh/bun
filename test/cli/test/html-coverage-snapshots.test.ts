@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, readdirSorted, tempDirWithFiles } from "harness";
-import { readdirSync, readFileSync } from "node:fs";
+import { bunEnv, bunExe, normalizeBunSnapshot, readdirSorted, tempDirWithFiles } from "harness";
+import { readFileSync } from "node:fs";
 import path from "path";
-import { normalizeBunSnapshot } from "harness";
 
 // Helper function to normalize HTML content for consistent snapshots
 function normalizeHtmlContent(html: string, dir: string): string {

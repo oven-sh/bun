@@ -983,18 +983,21 @@ void populateESMExports(
         bool hasESModuleMarker = false;
         if (!ignoreESModuleAnnotation) {
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
-            if (exports->getPropertySlot(globalObject, esModuleMarker, slot)) {
+            auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
+            scope.assertNoException();
+            if (has) {
                 JSValue value = slot.getValue(globalObject, esModuleMarker);
+                CLEAR_IF_EXCEPTION(scope);
                 if (!value.isUndefinedOrNull()) {
                     if (value.pureToBoolean() == TriState::True) {
                         hasESModuleMarker = true;
                     }
                 }
             }
-            CLEAR_IF_EXCEPTION(scope);
         }
 
         auto* structure = exports->structure();
+
         uint32_t size = structure->inlineSize() + structure->outOfLineSize();
         exportNames.reserveCapacity(size + 2);
         exportValues.ensureCapacity(size + 2);
@@ -1033,8 +1036,9 @@ void populateESMExports(
                         continue;
 
                     JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
-                    if (!exports->getPropertySlot(globalObject, property, slot))
-                        continue;
+                    auto has = exports->getPropertySlot(globalObject, property, slot);
+                    RETURN_IF_EXCEPTION(scope, );
+                    if (!has) continue;
 
                     // Allow DontEnum properties which are not getter/setters
                     // https://github.com/oven-sh/bun/issues/4432
@@ -1090,8 +1094,9 @@ void populateESMExports(
                     continue;
 
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
-                if (!exports->getPropertySlot(globalObject, property, slot))
-                    continue;
+                auto has = exports->getPropertySlot(globalObject, property, slot);
+                RETURN_IF_EXCEPTION(scope, );
+                if (!has) continue;
 
                 if (slot.attributes() & PropertyAttribute::DontEnum) {
                     // Allow DontEnum properties which are not getter/setters

@@ -2075,7 +2075,7 @@ fn dependencyResolutionFailure(dep: *const Dependency, pkg_path: ?string, alloca
         "prod";
 
     const dep_name = dep.name.slice(buf);
-    
+
     // Search for the dependency location in the AST
     const loc = findDependencyInAST(ast_root, dep_name, pkg_path);
     const final_loc = if (loc.start != -1) loc else fallback_loc;

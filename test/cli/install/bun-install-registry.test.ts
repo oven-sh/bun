@@ -8485,14 +8485,16 @@ describe("outdated", () => {
     expect(out).toContain("a-dep");
   });
 
-  test.skip("--json flag", async () => {
-    // TODO: Fix test registry issues - manually tested and working
+  test("--json flag", async () => {
     await write(
       packageJson,
       JSON.stringify({
         name: "json-test",
         dependencies: {
-          "a-dep": "1.0.1",
+          "no-deps": "1.0.0", // outdated - latest is 1.0.5 in test registry
+        },
+        devDependencies: {
+          "a-dep": "1.0.1", // outdated - latest is 1.0.3 in test registry
         },
       }),
     );
@@ -8523,7 +8525,19 @@ describe("outdated", () => {
     expect(parsed).toBeDefined();
     expect(typeof parsed).toBe("object");
     
-    // Verify JSON structure for any packages found
+    // Should contain no-deps with prod dependency type
+    expect(parsed["no-deps"]).toBeDefined();
+    expect(parsed["no-deps"].current).toBe("1.0.0");
+    expect(parsed["no-deps"].latest).toBe("1.0.5");
+    expect(parsed["no-deps"].dependencyType).toBe("prod");
+    
+    // Should contain a-dep with dev dependency type
+    expect(parsed["a-dep"]).toBeDefined();
+    expect(parsed["a-dep"].current).toBe("1.0.1");
+    expect(parsed["a-dep"].latest).toBe("1.0.3");
+    expect(parsed["a-dep"].dependencyType).toBe("dev");
+    
+    // Verify JSON structure for all packages
     for (const pkgName of Object.keys(parsed)) {
       const pkg = parsed[pkgName];
       expect(pkg).toHaveProperty("current");

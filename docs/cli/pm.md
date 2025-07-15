@@ -13,12 +13,14 @@ This command creates a `.tgz` file containing all files that would be published 
 ## Examples
 
 Basic usage:
+
 ```bash
 $ bun pm pack
 # Creates my-package-1.0.0.tgz in current directory
 ```
 
 Quiet mode for scripting:
+
 ```bash
 $ TARBALL=$(bun pm pack --quiet)
 $ echo "Created: $TARBALL"
@@ -26,6 +28,7 @@ $ echo "Created: $TARBALL"
 ```
 
 Custom destination:
+
 ```bash
 $ bun pm pack --destination ./dist
 # Saves tarball in ./dist/ directory
@@ -45,6 +48,7 @@ $ bun pm pack --destination ./dist
 ## Output Modes
 
 **Default output:**
+
 ```bash
 $ bun pm pack
 bun pack v1.2.19
@@ -61,6 +65,7 @@ Packed size: 249B
 ```
 
 **Quiet output:**
+
 ```bash
 $ bun pm pack --quiet
 my-package-1.0.0.tgz

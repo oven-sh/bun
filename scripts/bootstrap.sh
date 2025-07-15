@@ -1532,6 +1532,19 @@ clean_system() {
 	done
 }
 
+ensure_no_tmpfs() {
+	if ! [ "$os" = "linux" ]; then
+		return
+	fi
+	if ! [ "$distro" = "ubuntu" ]; then
+		return
+	fi
+
+	execute_sudo systemctl mask tmp.mount
+	execute_sudo rm -rf /tmp
+	execute mkdir /tmp
+}
+
 main() {
 	check_features "$@"
 	check_operating_system
@@ -1547,6 +1560,7 @@ main() {
 	install_age
 	configure_core_dumps
 	clean_system
+	ensure_no_tmpfs
 }
 
 main "$@"

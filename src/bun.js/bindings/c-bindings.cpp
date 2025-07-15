@@ -931,7 +931,8 @@ static uint32_t* pe_section_size = nullptr;
 static uint8_t* pe_section_data = nullptr;
 
 // Helper function to find and map the .bun section
-static bool initializePESection() {
+static bool initializePESection()
+{
     if (pe_section_size != nullptr) return true;
 
     HMODULE hModule = GetModuleHandleA(NULL);
@@ -944,7 +945,7 @@ static bool initializePESection() {
     if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) return false;
 
     PIMAGE_SECTION_HEADER sectionHeader = IMAGE_FIRST_SECTION(ntHeaders);
-    
+
     for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
         if (strncmp((char*)sectionHeader->Name, ".bun", 4) == 0) {
             // Found the .bun section
@@ -955,7 +956,7 @@ static bool initializePESection() {
         }
         sectionHeader++;
     }
-    
+
     return false;
 }
 

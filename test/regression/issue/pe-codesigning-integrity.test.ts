@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { readFileSync, unlinkSync } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("PE codesigning integrity", () => {
@@ -36,7 +36,7 @@ describe("PE codesigning integrity", () => {
       return {
         signature: dosSignature,
         e_lfanew,
-        isValid: dosSignature === 0x5A4D && e_lfanew > 0 && e_lfanew < 0x1000
+        isValid: dosSignature === 0x5a4d && e_lfanew > 0 && e_lfanew < 0x1000,
       };
     }
 
@@ -52,7 +52,7 @@ describe("PE codesigning integrity", () => {
         machine,
         numberOfSections,
         sizeOfOptionalHeader,
-        isValid: peSignature === 0x00004550 && numberOfSections > 0
+        isValid: peSignature === 0x00004550 && numberOfSections > 0,
       };
     }
 
@@ -68,21 +68,21 @@ describe("PE codesigning integrity", () => {
         sizeOfImage,
         fileAlignment,
         sectionAlignment,
-        isValid: magic === 0x020B
+        isValid: magic === 0x020b,
       };
     }
 
     // Parse section headers
     parseSectionHeaders(offset: number, count: number) {
       const sections = [];
-      
+
       for (let i = 0; i < count; i++) {
-        const sectionOffset = offset + (i * 40); // Each section header is 40 bytes
-        
+        const sectionOffset = offset + i * 40; // Each section header is 40 bytes
+
         // Read section name (8 bytes)
         const nameBytes = new Uint8Array(this.buffer, sectionOffset, 8);
         const name = new TextDecoder().decode(nameBytes).replace(/\0/g, "");
-        
+
         const virtualSize = this.view.getUint32(sectionOffset + 8, true);
         const virtualAddress = this.view.getUint32(sectionOffset + 12, true);
         const sizeOfRawData = this.view.getUint32(sectionOffset + 16, true);
@@ -96,7 +96,7 @@ describe("PE codesigning integrity", () => {
           sizeOfRawData,
           pointerToRawData,
           characteristics,
-          isValid: sizeOfRawData > 0 && pointerToRawData > 0
+          isValid: sizeOfRawData > 0 && pointerToRawData > 0,
         });
       }
 
@@ -109,33 +109,30 @@ describe("PE codesigning integrity", () => {
       if (!bunSection) return null;
 
       // Read the .bun section data
-      const sectionData = new Uint8Array(
-        this.buffer, 
-        bunSection.pointerToRawData, 
-        bunSection.sizeOfRawData
-      );
+      const sectionData = new Uint8Array(this.buffer, bunSection.pointerToRawData, bunSection.sizeOfRawData);
 
       // First 4 bytes should be the data size
       const dataSize = new DataView(sectionData.buffer, bunSection.pointerToRawData).getUint32(0, true);
-      
+
       // Validate the size is reasonable - it should match or be close to virtual size
       if (dataSize > bunSection.sizeOfRawData || dataSize === 0) {
         throw new Error(`Invalid .bun section: data size ${dataSize} vs section size ${bunSection.sizeOfRawData}`);
       }
 
       // The virtual size should match the data size (plus some alignment)
-      if (dataSize > bunSection.virtualSize + 16) { // Allow some padding
+      if (dataSize > bunSection.virtualSize + 16) {
+        // Allow some padding
         throw new Error(`Invalid .bun section: data size ${dataSize} exceeds virtual size ${bunSection.virtualSize}`);
       }
 
       // Extract the actual embedded data (skip the 4-byte size header)
       const embeddedData = sectionData.slice(4, 4 + dataSize);
-      
+
       return {
         section: bunSection,
         dataSize,
         embeddedData,
-        isValid: dataSize > 0 && dataSize <= bunSection.virtualSize
+        isValid: dataSize > 0 && dataSize <= bunSection.virtualSize,
       };
     }
 
@@ -162,7 +159,7 @@ describe("PE codesigning integrity", () => {
         pe,
         optional,
         sections,
-        bunSection
+        bunSection,
       };
     }
   }
@@ -198,23 +195,23 @@ console.log("Test data:", JSON.stringify(data));
     // Read the generated PE file
     const exePath = join(tempDir, "test-pe-simple.exe");
     const peData = readFileSync(exePath);
-    
+
     // Parse and validate PE structure
     const parser = new PEParser(peData);
     const validation = parser.validatePE();
 
     // Validate DOS header
-    expect(validation.dos.signature).toBe(0x5A4D); // "MZ"
+    expect(validation.dos.signature).toBe(0x5a4d); // "MZ"
     expect(validation.dos.e_lfanew).toBeGreaterThan(0);
     expect(validation.dos.e_lfanew).toBeLessThan(0x1000);
 
-    // Validate PE header  
+    // Validate PE header
     expect(validation.pe.signature).toBe(0x00004550); // "PE\0\0"
     expect(validation.pe.machine).toBe(0x8664); // x64
     expect(validation.pe.numberOfSections).toBeGreaterThan(0);
 
     // Validate optional header
-    expect(validation.optional.magic).toBe(0x020B); // PE32+
+    expect(validation.optional.magic).toBe(0x020b); // PE32+
     expect(validation.optional.fileAlignment).toBeGreaterThan(0);
     expect(validation.optional.sectionAlignment).toBeGreaterThan(0);
 
@@ -230,7 +227,7 @@ console.log("Test data:", JSON.stringify(data));
     // Validate embedded data contains our test content
     // The embedded data is in StandaloneModuleGraph format, which includes:
     // - Virtual path (B:/~BUN/root/filename)
-    // - JavaScript source code  
+    // - JavaScript source code
     // - Binary metadata and trailer
     const embeddedText = new TextDecoder().decode(validation.bunSection!.embeddedData);
     expect(embeddedText).toContain("B:/~BUN/root/"); // Windows virtual path
@@ -248,7 +245,7 @@ console.log("Large PE test");
 const largeData = {
   message: "Large data test",
   content: "${"x".repeat(5000)}", // 5KB of data
-  array: ${JSON.stringify(Array.from({length: 100}, (_, i) => `item-${i}`))},
+  array: ${JSON.stringify(Array.from({ length: 100 }, (_, i) => `item-${i}`))},
   timestamp: ${Date.now()}
 };
 
@@ -270,7 +267,7 @@ console.log("Large data length:", JSON.stringify(largeData).length);
     // Read and validate the larger PE file
     const exePath = join(tempDir, "test-pe-large.exe");
     const peData = readFileSync(exePath);
-    
+
     const parser = new PEParser(peData);
     const validation = parser.validatePE();
 
@@ -305,7 +302,7 @@ console.log("Large data length:", JSON.stringify(largeData).length);
 
     const exePath = join(tempDir, "test-pe-alignment.exe");
     const peData = readFileSync(exePath);
-    
+
     const parser = new PEParser(peData);
     const validation = parser.validatePE();
 
@@ -316,8 +313,8 @@ console.log("Large data length:", JSON.stringify(largeData).length);
     for (const section of validation.sections) {
       // File offset should be aligned to file alignment
       expect(section.pointerToRawData % fileAlignment).toBe(0);
-      
-      // Virtual address should be aligned to section alignment  
+
+      // Virtual address should be aligned to section alignment
       expect(section.virtualAddress % sectionAlignment).toBe(0);
     }
 
@@ -346,20 +343,20 @@ console.log("Large data length:", JSON.stringify(largeData).length);
 
     const exePath = join(tempDir, "test-pe-characteristics.exe");
     const peData = readFileSync(exePath);
-    
+
     const parser = new PEParser(peData);
     const validation = parser.validatePE();
 
     // Find .bun section and check its characteristics
     const bunSection = validation.bunSection!.section;
-    
+
     // .bun section should have IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ
     const IMAGE_SCN_CNT_INITIALIZED_DATA = 0x00000040;
     const IMAGE_SCN_MEM_READ = 0x40000000;
     const expectedCharacteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ;
-    
+
     expect(bunSection.characteristics & expectedCharacteristics).toBe(expectedCharacteristics);
-    
+
     // Should NOT have execute permissions
     const IMAGE_SCN_MEM_EXECUTE = 0x20000000;
     expect(bunSection.characteristics & IMAGE_SCN_MEM_EXECUTE).toBe(0);

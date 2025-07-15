@@ -939,7 +939,7 @@ pub const StandaloneModuleGraph = struct {
             const offsets = std.mem.bytesAsValue(Offsets, macho_bytes_slice).*;
             return try StandaloneModuleGraph.fromBytes(allocator, @constCast(macho_bytes), offsets);
         }
-        
+
         if (comptime Environment.isWindows) {
             const pe_bytes = PE.getData() orelse return null;
             if (pe_bytes.len < @sizeOf(Offsets) + trailer.len) {

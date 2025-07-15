@@ -348,7 +348,9 @@ pub fn writeOutputFilesToDisk(
     }
 
     {
-        for (c.parse_graph.additional_output_files.items, output_files.getMutableAdditionalOutputFiles()) |*src, *dest| {
+        const additional_output_files = output_files.getMutableAdditionalOutputFiles();
+        output_files.total_insertions += @intCast(additional_output_files.len);
+        for (c.parse_graph.additional_output_files.items, additional_output_files) |*src, *dest| {
             const bytes = src.value.buffer.bytes;
             src.value.buffer.bytes.len = 0;
 

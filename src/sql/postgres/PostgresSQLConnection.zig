@@ -1683,8 +1683,6 @@ const PreparedStatementsMap = std.HashMapUnmanaged(u64, *PostgresSQLStatement, b
 
 const debug = bun.Output.scoped(.Postgres, false);
 
-const MAX_PIPELINE_SIZE = 1024 * 64;
-
 // @sortImports
 
 const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");

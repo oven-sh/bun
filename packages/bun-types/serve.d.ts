@@ -826,7 +826,7 @@ declare module "bun" {
      *
      * Passing other options such as `port` or `hostname` won't do anything.
      */
-    reload<WebSocketData, R extends string>(options: Serve.Options<WebSocketData, R>): Server<WebSocketData>;
+    reload<R extends string>(options: Serve.Options<WebSocketData, R>): Server<WebSocketData>;
 
     /**
      * Mock the fetch handler for a running server.

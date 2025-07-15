@@ -845,30 +845,46 @@ pub const CommandLineReporter = struct {
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
-        // when the tests fail, we want to repeat the failures at the end
-        // so that you can see them better when there are lots of tests that ran
-        const initial_length = this.failures_to_repeat_buf.items.len;
-        var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
-
-        writeTestStatusLine(.fail, &writer);
         const line_number = this.jest.tests.items(.line_number)[id];
-        printTestLine(.fail, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter, line_number);
 
-        // In agent mode, immediately print failures
+        // In agent mode, print failures immediately with clean format
         if (this.jest.test_options.agent) {
             var writer_ = Output.errorWriterBuffered();
             defer Output.flush();
-            writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch {};
+            
+            // Add source_url:line above the failing test output
+            const filename = brk: {
+                if (strings.hasPrefix(file, bun.fs.FileSystem.instance.top_level_dir)) {
+                    break :brk strings.withoutLeadingPathSeparator(file[bun.fs.FileSystem.instance.top_level_dir.len..]);
+                } else {
+                    break :brk file;
+                }
+            };
+            
+            if (line_number > 0) {
+                writer_.print("{s}:{d}\n", .{ filename, line_number }) catch {};
+            } else {
+                writer_.print("{s}\n", .{filename}) catch {};
+            }
+            
+            writer_.print("FAIL: {s}\n", .{label}) catch {};
         } else {
-            // In normal mode, output to stderr at the end
+            // In normal mode, build the repeat buffer for later display
+            const initial_length = this.failures_to_repeat_buf.items.len;
+            var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
+
+            writeTestStatusLine(.fail, &writer);
+            printTestLine(.fail, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter, line_number);
+
+            // We must always reset the colors because (skip) will have set them to <d>
+            if (Output.enable_ansi_colors_stderr) {
+                writer.writeAll(Output.prettyFmt("<r>", true)) catch {};
+            }
+
+            // Output to stderr immediately in normal mode
             var writer_ = Output.errorWriterBuffered();
             defer Output.flush();
             writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch {};
-        }
-
-        // We must always reset the colors because (skip) will have set them to <d>
-        if (Output.enable_ansi_colors_stderr) {
-            writer.writeAll(Output.prettyFmt("<r>", true)) catch {};
         }
 
         // this.updateDots();
@@ -1867,12 +1883,15 @@ pub const TestCommand = struct {
         vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
-            if (repeat_count > 1) {
-                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });
-            } else {
-                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
+            // In agent mode, don't print the file name header
+            if (!reporter.jest.test_options.agent) {
+                if (repeat_count > 1) {
+                    Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });
+                } else {
+                    Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
+                }
+                Output.flush();
             }
-            Output.flush();
 
             var promise = try vm.loadEntryPointForTestRunner(file_path);
             reporter.summary().files += 1;

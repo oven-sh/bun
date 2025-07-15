@@ -2338,7 +2338,7 @@ extern fn Bun__CallFrame__getLineNumber(callframe: *JSC.CallFrame, globalObject:
 
 fn captureTestLineNumber(callframe: *JSC.CallFrame, globalThis: *JSGlobalObject) u32 {
     if (Jest.runner) |runner| {
-        if (runner.test_options.file_reporter == .junit) {
+        if (runner.test_options.file_reporter == .junit or runner.test_options.agent) {
             return Bun__CallFrame__getLineNumber(callframe, globalThis);
         }
     }

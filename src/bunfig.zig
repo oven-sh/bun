@@ -662,7 +662,8 @@ pub const Bunfig = struct {
                     if (console_expr.get("depth")) |depth| {
                         if (depth.data == .e_number) {
                             const depth_value = @as(u16, @intFromFloat(depth.data.e_number.value));
-                            this.ctx.runtime_options.console_depth = depth_value;
+                            // Treat depth=0 as maxInt(u16) for infinite depth
+                            this.ctx.runtime_options.console_depth = if (depth_value == 0) std.math.maxInt(u16) else depth_value;
                         } else {
                             try this.addError(depth.loc, "Expected number");
                         }

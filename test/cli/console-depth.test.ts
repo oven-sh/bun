@@ -229,7 +229,7 @@ describe("console depth", () => {
     );
   });
 
-  test("edge case: depth 0 should show only top level structure", async () => {
+  test("edge case: depth 0 should show infinite depth", async () => {
     const dir = tempDirWithFiles("console-depth-zero", {
       "test.js": testScript,
     });
@@ -250,7 +250,70 @@ describe("console depth", () => {
     expect(stderr).toBe("");
     expect(normalizeOutput(stdout)).toMatchInlineSnapshot(`
 "{
-  level1: [Object ...],
+  level1: {
+    level2: {
+      level3: {
+        level4: {
+          level5: {
+            level6: {
+              level7: {
+                level8: {
+                  level9: {
+                    level10: \"deep value\",
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}"
+`);
+  });
+
+  test("bunfig.toml depth=0 should show infinite depth", async () => {
+    const dir = tempDirWithFiles("console-depth-bunfig-zero", {
+      "test.js": testScript,
+      "bunfig.toml": `[console]\ndepth = 0`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.js"],
+      env: bunEnv,
+      cwd: dir,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(normalizeOutput(stdout)).toMatchInlineSnapshot(`
+"{
+  level1: {
+    level2: {
+      level3: {
+        level4: {
+          level5: {
+            level6: {
+              level7: {
+                level8: {
+                  level9: {
+                    level10: \"deep value\",
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
 }"
 `);
   });

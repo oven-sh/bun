@@ -15,6 +15,7 @@ Options for the `pack` command:
 - `--filename`: Specify an exact file name for the tarball to be saved at.
 - `--ignore-scripts`: Skip running pre/postpack and prepare scripts.
 - `--gzip-level`: Set a custom compression level for gzip, ranging from 0 to 9 (default is 9).
+- `--quiet`: Only output the tarball filename, suppressing other output.
 
 > Note `--filename` and `--destination` cannot be used at the same time
 

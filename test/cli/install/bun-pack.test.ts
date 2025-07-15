@@ -394,6 +394,35 @@ describe("flags", () => {
 
     expect(results).toEqual([true, true, false, true, false]);
   });
+
+  test("--quiet", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-quiet-test",
+          version: "1.1.1",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv, "--quiet");
+
+    // Should not contain verbose output
+    expect(out).not.toContain("Total files:");
+    expect(out).not.toContain("Shasum:");
+    expect(out).not.toContain("Integrity:");
+    expect(out).not.toContain("Unpacked size:");
+    expect(out).not.toContain("Packed size:");
+    expect(out).not.toContain("bun pack v");
+
+    // Should only contain the tarball name
+    expect(out.trim()).toBe("pack-quiet-test-1.1.1.tgz");
+
+    // Should still create the tarball
+    expect(await exists(join(packageDir, "pack-quiet-test-1.1.1.tgz"))).toBeTrue();
+  });
 });
 
 test("shasum and integrity are consistent", async () => {

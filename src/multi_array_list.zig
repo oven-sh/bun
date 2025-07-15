@@ -5,6 +5,7 @@ const assert = bun.assert;
 const meta = std.meta;
 const mem = std.mem;
 const Allocator = mem.Allocator;
+const DebugAllocPtr = @import("./debug.zig").AllocPtr;
 
 /// A MultiArrayList stores a list of a struct or tagged union type.
 /// Instead of storing a single list of items, MultiArrayList
@@ -623,31 +624,3 @@ pub fn MultiArrayList(comptime T: type) type {
         }
     };
 }
-
-/// In debug mode, this ensures we don't try to use multiple allocators with the same
-/// `MultiArrayList`. In release mode, this is a no-op and doesn't use any additional
-/// memory or CPU time.
-const DebugAllocPtr = struct {
-    const Self = @This();
-
-    ptr: if (bun.Environment.isDebug) ?*anyopaque else void =
-        if (bun.Environment.isDebug) null else {},
-
-    pub fn set(self: *Self, ptr: *anyopaque) void {
-        if (comptime !bun.Environment.isDebug) return;
-        if (self.ptr == null) {
-            self.ptr = ptr;
-        } else {
-            self.assertEq(ptr);
-        }
-    }
-
-    pub fn assertEq(self: Self, ptr: *anyopaque) void {
-        if (comptime !bun.Environment.isDebug) return;
-        bun.assertf(
-            ptr == self.ptr,
-            "cannot use multiple allocators with same MultiArrayList",
-            .{},
-        );
-    }
-};

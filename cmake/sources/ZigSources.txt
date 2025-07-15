@@ -460,6 +460,7 @@ src/css/values/time.zig
 src/css/values/url.zig
 src/css/values/values.zig
 src/darwin.zig
+src/debug.zig
 src/defines-table.zig
 src/defines.zig
 src/deps/boringssl.translated.zig

@@ -304,10 +304,11 @@ pub fn looksLikeListContainerType(comptime T: type) ?struct { list: ListContaine
             return .{ .list = .array_list, .child = std.meta.Child(tyinfo.@"struct".fields[0].type) };
 
         // Looks like babylist
-        if (tyinfo.@"struct".fields.len == 3 and
+        if (tyinfo.@"struct".fields.len == 4 and
             std.mem.eql(u8, tyinfo.@"struct".fields[0].name, "ptr") and
             std.mem.eql(u8, tyinfo.@"struct".fields[1].name, "len") and
-            std.mem.eql(u8, tyinfo.@"struct".fields[2].name, "cap"))
+            std.mem.eql(u8, tyinfo.@"struct".fields[2].name, "cap") and
+            std.mem.eql(u8, tyinfo.@"struct".fields[3].name, "alloc_ptr"))
             return .{ .list = .baby_list, .child = std.meta.Child(tyinfo.@"struct".fields[0].type) };
 
         // Looks like SmallList

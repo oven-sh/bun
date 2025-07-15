@@ -4460,13 +4460,14 @@ extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompi
 static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject, JSC::JSValue source, JSC::Wasm::CompilerMode mode, JSC::JSObject* importObject)
 {
     auto globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSLockHolder locker(vm);
 
     // validateResponseForWasmStreaming throws the proper exception. Since this is being
     // executed in a .then(...) callback, throwing is perfectly fine.
-    auto valid = Zig__GlobalObject__validateResponseForWasmStreaming(globalObject, JSC::JSValue::encode(source));
-    if (!valid) return nullptr;
+    Zig__GlobalObject__validateResponseForWasmStreaming(globalObject, JSC::JSValue::encode(source));
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject);
@@ -4487,6 +4488,7 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGl
 
     arguments.append(readableStreamMaybe);
     JSC::call(globalObject, builtin, callData, wrapper, arguments);
+    scope.assertNoException();
     return promise;
 }
 

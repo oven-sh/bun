@@ -11,7 +11,8 @@ test("blob: imports have sourcemapped stacktraces", async () => {
       return Bun.inspect(new Error());  
     }
   `,
-    ], { type: "application/typescript" },
+    ],
+    { type: "application/typescript" },
   );
 
   const url = URL.createObjectURL(blob);

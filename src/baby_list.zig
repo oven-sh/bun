@@ -147,9 +147,14 @@ pub fn BabyList(comptime Type: type) type {
             this.len = 0;
         }
 
-        pub fn replaceRange(this: *@This(), start: usize, len_: usize, new_items: []const Type) !void {
-            // TODO: doesn't this need the allocator???
-            var list_ = this.makeListManaged(bun.default_allocator);
+        pub fn replaceRange(
+            allocator: std.mem.Allocator,
+            this: *@This(),
+            start: usize,
+            len_: usize,
+            new_items: []const Type,
+        ) !void {
+            var list_ = this.makeListManaged(allocator);
             try list_.replaceRange(start, len_, new_items);
         }
 

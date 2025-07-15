@@ -719,7 +719,9 @@ class PooledConnection {
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
+  enablePipelining: boolean = true;
   #onConnected(err, _) {
+    this.connection?.setPipelining(this.enablePipelining);
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onconnect) {
       connectionInfo.onconnect(err);
@@ -793,6 +795,10 @@ class PooledConnection {
     this.queries.add(onClose);
     // @ts-ignore
     query.finally(onQueryFinish.bind(this, onClose));
+  }
+  setPipelining(pipelining: boolean) {
+    this.enablePipelining = pipelining;
+    this.connection?.setPipelining(pipelining);
   }
   #doRetry() {
     if (this.pool.closed) {
@@ -901,9 +907,12 @@ class ConnectionPool {
       this.totalQueries--;
     }
     const currentQueryCount = connection.queryCount;
-    connection.flags &= ~PooledConnectionFlags.reserved;
     if (currentQueryCount == 0) {
+      connection.flags &= ~PooledConnectionFlags.reserved;
       connection.flags &= ~PooledConnectionFlags.preReserved;
+      if (!connection.enablePipelining) {
+        connection.setPipelining(true);
+      }
     }
     if (this.onAllQueriesFinished) {
       // we are waiting for all queries to finish, lets check if we can call it
@@ -949,7 +958,6 @@ class ConnectionPool {
         return;
       }
     }
-
     this.readyConnections.add(connection);
     this.flushConcurrentQueries();
   }
@@ -972,13 +980,7 @@ class ConnectionPool {
   hasPendingQueries() {
     if (this.waitingQueue.length > 0 || this.reservedQueue.length > 0) return true;
     if (this.poolStarted) {
-      const pollSize = this.connections.length;
-      for (let i = 0; i < pollSize; i++) {
-        const connection = this.connections[i];
-        if (connection.queryCount > 0) {
-          return true;
-        }
-      }
+      return this.totalQueries > 0;
     }
     return false;
   }
@@ -1192,8 +1194,8 @@ class ConnectionPool {
           if (queryCount < leastQueries) {
             leastQueries = queryCount;
             connectionWithLeastQueries = connection;
-            continue;
           }
+          continue;
         }
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
@@ -1950,6 +1952,7 @@ function SQL(o, e = {}) {
     if (err) {
       return reject(err);
     }
+    pooledConnection.setPipelining(false);
     const state = {
       connectionState: ReservedConnectionState.acceptQueries,
       reject,

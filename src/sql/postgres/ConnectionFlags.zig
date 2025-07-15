@@ -4,6 +4,7 @@ pub const ConnectionFlags = packed struct {
     use_unnamed_prepared_statements: bool = false,
     waiting_to_prepare: bool = false,
     has_backpressure: bool = false,
+    disable_pipelining: bool = false,
 };
 
 // @sortImports

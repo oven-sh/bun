@@ -32,7 +32,10 @@ export default [
       flush: {
         fn: "doFlush",
       },
-
+      setPipelining: {
+        fn: "doSetPipelining",
+        length: 1,
+      },
       queries: {
         getter: "getQueries",
         this: true,

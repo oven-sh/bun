@@ -810,21 +810,21 @@ pub const S3Credentials = struct {
                     if (acl) |acl_value| {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-Acl={s}", .{acl_value}));
                     }
-                    
+
                     try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-Algorithm=AWS4-HMAC-SHA256", .{}));
-                    
+
                     try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request", .{ this.accessKeyId, amz_day, region, service_name }));
-                    
+
                     try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-Date={s}", .{amz_date}));
-                    
+
                     try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-Expires={}", .{expires}));
-                    
+
                     if (encoded_session_token) |token| {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-Security-Token={s}", .{token}));
                     }
-                    
+
                     try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-SignedHeaders=host", .{}));
-                    
+
                     if (storage_class) |storage_class_value| {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "x-amz-storage-class={s}", .{storage_class_value}));
                     }
@@ -861,23 +861,23 @@ pub const S3Credentials = struct {
                 if (acl) |acl_value| {
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Acl={s}", .{acl_value}));
                 }
-                
+
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Algorithm=AWS4-HMAC-SHA256", .{}));
-                
+
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request", .{ this.accessKeyId, amz_day, region, service_name }));
-                
+
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Date={s}", .{amz_date}));
-                
+
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Expires={}", .{expires}));
-                
+
                 if (encoded_session_token) |token| {
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Security-Token={s}", .{token}));
                 }
-                
+
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Signature={s}", .{std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower)}));
-                
+
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-SignedHeaders=host", .{}));
-                
+
                 if (storage_class) |storage_class_value| {
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "x-amz-storage-class={s}", .{storage_class_value}));
                 }

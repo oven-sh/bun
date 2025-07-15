@@ -855,6 +855,7 @@ class ConnectionPool {
 
   poolStarted: boolean = false;
   closed: boolean = false;
+  totalQueries: number = 0;
   onAllQueriesFinished: (() => void) | null = null;
   constructor(connectionInfo) {
     this.connectionInfo = connectionInfo;
@@ -862,53 +863,42 @@ class ConnectionPool {
     this.readyConnections = new Set();
   }
 
+  maxDistribution() {
+    if (!this.waitingQueue.length) return 0;
+    const result = Math.ceil((this.waitingQueue.length + this.totalQueries) / this.connections.length);
+    return result ? result : 1;
+  }
+
   flushConcurrentQueries() {
-    if (this.waitingQueue.length === 0) {
+    const maxDistribution = this.maxDistribution();
+    if (maxDistribution === 0) {
       return;
     }
-    while (this.waitingQueue.length > 0) {
-      let endReached = true;
-      // no need to filter for reserved connections because there are not in the readyConnections
-      // preReserved only shows that we wanna avoiding adding more queries to it
+
+    while (true) {
       const nonReservedConnections = Array.from(this.readyConnections).filter(
-        c => !(c.flags & PooledConnectionFlags.preReserved),
+        c => !(c.flags & PooledConnectionFlags.preReserved) && c.queryCount < maxDistribution,
       );
       if (nonReservedConnections.length === 0) {
         return;
       }
-      // kinda balance the load between connections
       const orderedConnections = nonReservedConnections.sort((a, b) => a.queryCount - b.queryCount);
-      const leastQueries = orderedConnections[0].queryCount;
-
       for (const connection of orderedConnections) {
-        if (connection.queryCount > leastQueries) {
-          endReached = false;
-          break;
-        }
-
         const pending = this.waitingQueue.shift();
-        if (pending) {
-          connection.queryCount++;
-          pending(null, connection);
+        if (!pending) {
+          return;
         }
+        connection.queryCount++;
+        this.totalQueries++;
+        pending(null, connection);
       }
-      const halfPoolSize = Math.ceil(this.connections.length / 2);
-      if (endReached || orderedConnections.length < halfPoolSize) {
-        // we are able to distribute the load between connections but the connection pool is less than half of the pool size
-        // so we can stop here and wait for the next tick to flush the waiting queue
-        break;
-      }
-    }
-    if (this.waitingQueue.length > 0) {
-      // we still wanna to flush the waiting queue but lets wait for the next tick because some connections might be released
-      // this is better for query performance
-      process.nextTick(this.flushConcurrentQueries.bind(this));
     }
   }
 
   release(connection: PooledConnection, connectingEvent: boolean = false) {
     if (!connectingEvent) {
       connection.queryCount--;
+      this.totalQueries--;
     }
     const was_reserved = connection.flags & PooledConnectionFlags.reserved;
     connection.flags &= ~PooledConnectionFlags.reserved;
@@ -951,12 +941,12 @@ class ConnectionPool {
         if (pendingReserved) {
           connection.flags |= PooledConnectionFlags.reserved;
           connection.queryCount++;
+          this.totalQueries++;
           // we have a connection waiting for a reserved connection lets prioritize it
           pendingReserved(connection.storedError, connection);
           return;
         }
       }
-
       this.readyConnections.add(connection);
       this.flushConcurrentQueries();
       return;
@@ -967,6 +957,7 @@ class ConnectionPool {
       if (pendingReserved) {
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
+        this.totalQueries++;
         // we have a connection waiting for a reserved connection lets prioritize it
         pendingReserved(connection.storedError, connection);
         return;
@@ -974,7 +965,6 @@ class ConnectionPool {
     }
 
     this.readyConnections.add(connection);
-
     this.flushConcurrentQueries();
   }
 
@@ -992,6 +982,7 @@ class ConnectionPool {
     }
     return false;
   }
+
   hasPendingQueries() {
     if (this.waitingQueue.length > 0 || this.reservedQueue.length > 0) return true;
     if (this.poolStarted) {
@@ -1220,6 +1211,7 @@ class ConnectionPool {
         }
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
+        this.totalQueries++;
         this.readyConnections.delete(connection);
         onConnected(null, connection);
         return;

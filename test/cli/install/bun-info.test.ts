@@ -26,11 +26,7 @@ describe("bun info", () => {
       env: bunEnv,
     });
 
-    const [output, error, exitCode] = await Promise.all([
-      new Response(stdout).text(),
-      new Response(stderr).text(),
-      exited,
-    ]);
+    const [output, error, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
     return { output, error, code: exitCode };
   }

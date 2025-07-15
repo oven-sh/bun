@@ -644,7 +644,6 @@ test(
   },
 );
 
-// Test reusePort property
 test("reusePort: false (default)", {
   reusePort: false,
   port: 0,
@@ -674,5 +673,151 @@ test("ipv6Only: true", {
   port: 0,
   fetch() {
     return new Response("ipv6Only true");
+  },
+});
+
+test("idleTimeout: default (10 seconds)", {
+  port: 0,
+  fetch() {
+    return new Response("default idleTimeout");
+  },
+});
+
+test("idleTimeout: custom value (30 seconds)", {
+  idleTimeout: 30,
+  port: 0,
+  fetch() {
+    return new Response("custom idleTimeout");
+  },
+});
+
+test("idleTimeout: 0 (no timeout)", {
+  idleTimeout: 0,
+  port: 0,
+  fetch() {
+    return new Response("no idleTimeout");
+  },
+});
+
+test("maxRequestBodySize: default (128MB)", {
+  port: 0,
+  fetch() {
+    return new Response("default maxRequestBodySize");
+  },
+});
+
+test("maxRequestBodySize: custom small value", {
+  maxRequestBodySize: 1024 * 1024, // 1MB
+  port: 0,
+  fetch() {
+    return new Response("small maxRequestBodySize");
+  },
+});
+
+test("maxRequestBodySize: custom large value", {
+  maxRequestBodySize: 1024 * 1024 * 1024, // 1GB
+  port: 0,
+  fetch() {
+    return new Response("large maxRequestBodySize");
+  },
+});
+
+test("development: true", {
+  development: true,
+  port: 0,
+  fetch() {
+    return new Response("development mode on");
+  },
+});
+
+test("development: false", {
+  development: false,
+  port: 0,
+  fetch() {
+    return new Response("development mode off");
+  },
+});
+
+test("development: defaults to process.env.NODE_ENV !== 'production'", {
+  development: process.env.NODE_ENV !== "production",
+  port: 0,
+  fetch() {
+    return new Response("development from env");
+  },
+});
+
+test(
+  "error callback handles errors",
+  {
+    port: 0,
+    fetch() {
+      throw new Error("Test error");
+    },
+    error(error) {
+      return new Response(`Error handled: ${error.message}`, { status: 500 });
+    },
+  },
+  {
+    overrideExpectBehavior: async server => {
+      const res = await fetch(server.url);
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("Error handled: Test error");
+    },
+  },
+);
+
+test(
+  "error callback with async handler",
+  {
+    port: 0,
+    fetch() {
+      throw new Error("Async test error");
+    },
+    async error(error) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      return new Response(`Async error handled: ${error.message}`, { status: 503 });
+    },
+  },
+  {
+    overrideExpectBehavior: async server => {
+      const res = await fetch(server.url);
+      expect(res.status).toBe(503);
+      expect(await res.text()).toBe("Async error handled: Async test error");
+    },
+  },
+);
+
+test("id: custom server identifier", {
+  id: "my-custom-server-id",
+  port: 0,
+  fetch() {
+    return new Response("server with custom id");
+  },
+});
+
+test("id: null (no identifier)", {
+  id: null,
+  port: 0,
+  fetch() {
+    return new Response("server with null id");
+  },
+});
+
+test("multiple properties combined", {
+  hostname: "127.0.0.1",
+  port: 0,
+  reusePort: true,
+  idleTimeout: 20,
+  maxRequestBodySize: 1024 * 1024 * 10, // 10MB
+  development: true,
+  id: "combined-test-server",
+  fetch(req) {
+    return Response.json({
+      url: req.url,
+      method: req.method,
+    });
+  },
+  error(error) {
+    return new Response(`Combined server error: ${error.message}`, { status: 500 });
   },
 });

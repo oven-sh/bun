@@ -687,7 +687,6 @@ pub const ShellSubprocess = struct {
                 },
                 .lazy = false,
                 .PATH = event_loop.env().get("PATH") orelse "",
-                .argv = undefined,
                 .detached = false,
                 .cmd_parent = cmd_parent,
                 // .ipc_mode = IPCMode.none,
@@ -839,7 +838,7 @@ pub const ShellSubprocess = struct {
             spawn_options.no_sigpipe = no_sigpipe;
         }
 
-        spawn_args.cmd_parent.args.append(allocator, null) catch {
+        spawn_args.cmd_parent.args.append(null) catch {
             return .{ .err = .{ .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
         };
 

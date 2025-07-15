@@ -80,10 +80,10 @@ Exclude specific files or file patterns from coverage reports using glob pattern
 # Single pattern
 coveragePathIgnorePatterns = "**/*.spec.ts"
 
-# Multiple patterns  
+# Multiple patterns
 coveragePathIgnorePatterns = [
   "**/*.spec.ts",
-  "**/*.test.ts", 
+  "**/*.test.ts",
   "src/utils/**",
   "*.config.js"
 ]

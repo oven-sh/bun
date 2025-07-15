@@ -57,7 +57,6 @@ coverageThreshold = { lines = 0.9, functions = 0.9, statements = 0.9 }
 
 Setting any of these thresholds enables `fail_on_low_coverage`, causing the test run to fail if coverage is below the threshold.
 
-
 ### Sourcemaps
 
 Internally, Bun transpiles all files by default, so Bun automatically generates an internal [source map](https://web.dev/source-maps/) that maps lines of your original source code onto Bun's internal representation. If for any reason you want to disable this, set `test.coverageIgnoreSourcemaps` to `true`; this will rarely be desirable outside of advanced use cases.
@@ -89,10 +88,10 @@ You can exclude specific files or file patterns from coverage reports using `cov
 # Single pattern
 coveragePathIgnorePatterns = "**/*.spec.ts"
 
-# Multiple patterns  
+# Multiple patterns
 coveragePathIgnorePatterns = [
   "**/*.spec.ts",
-  "**/*.test.ts", 
+  "**/*.test.ts",
   "src/utils/**",
   "*.config.js"
 ]
@@ -101,6 +100,7 @@ coveragePathIgnorePatterns = [
 This option accepts glob patterns and works similarly to Jest's `collectCoverageFrom` ignore patterns. Files matching any of these patterns will be excluded from coverage calculation and reporting in both text and LCOV outputs.
 
 Common use cases:
+
 - Exclude utility files: `"src/utils/**"`
 - Exclude configuration files: `"*.config.js"`
 - Exclude specific test patterns: `"**/*.spec.ts"`

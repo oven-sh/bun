@@ -29,7 +29,7 @@ pub const SecTrustCreateWithCertificatesFunc = *const fn (CFTypeRef, CFTypeRef, 
 pub const SecTrustEvaluateWithErrorFunc = *const fn (SecTrustRef, *?CFErrorRef) callconv(.C) Boolean;
 pub const SecPolicyCopyPropertiesFunc = *const fn (SecPolicyRef) callconv(.C) CFDictionaryRef;
 
-// CoreFoundation function pointers  
+// CoreFoundation function pointers
 pub const CFArrayGetCountFunc = *const fn (CFArrayRef) callconv(.C) CFIndex;
 pub const CFArrayGetValueAtIndexFunc = *const fn (CFArrayRef, CFIndex) callconv(.C) CFTypeRef;
 pub const CFDataGetBytePtrFunc = *const fn (CFDataRef) callconv(.C) [*]const u8;
@@ -59,7 +59,7 @@ pub const MacOSCAFunctions = extern struct {
     SecTrustCreateWithCertificates: ?SecTrustCreateWithCertificatesFunc,
     SecTrustEvaluateWithError: ?SecTrustEvaluateWithErrorFunc,
     SecPolicyCopyProperties: ?SecPolicyCopyPropertiesFunc,
-    
+
     // CoreFoundation functions
     CFArrayGetCount: ?CFArrayGetCountFunc,
     CFArrayGetValueAtIndex: ?CFArrayGetValueAtIndexFunc,
@@ -75,7 +75,7 @@ pub const MacOSCAFunctions = extern struct {
     CFNumberGetTypeID: ?CFNumberGetTypeIDFunc,
     CFStringGetCString: ?CFStringGetCStringFunc,
     CFNumberGetValue: ?CFNumberGetValueFunc,
-    
+
     // Constants
     kSecClass: ConstantRef,
     kSecClassCertificate: ConstantRef,
@@ -110,22 +110,22 @@ fn dlsym_constant(handle: ?*anyopaque, comptime symbol: [:0]const u8) ConstantRe
 
 fn initMacOSCAFunctions() bool {
     if (ca_functions != null) return true;
-    
+
     init_mutex.lock();
     defer init_mutex.unlock();
-    
+
     if (ca_functions != null) return true;
-    
+
     if (!Environment.isMac) return false;
-    
+
     // Load Security framework
     const security_handle = bun.sys.dlopen("/System/Library/Frameworks/Security.framework/Security", .{ .LAZY = true, .LOCAL = true });
     if (security_handle == null) return false;
-    
-    // Load CoreFoundation framework  
+
+    // Load CoreFoundation framework
     const cf_handle = bun.sys.dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", .{ .LAZY = true, .LOCAL = true });
     if (cf_handle == null) return false;
-    
+
     ca_functions = MacOSCAFunctions{
         // Security framework functions
         .SecTrustCopyAnchorCertificates = dlsym(security_handle, SecTrustCopyAnchorCertificatesFunc, "SecTrustCopyAnchorCertificates"),
@@ -136,7 +136,7 @@ fn initMacOSCAFunctions() bool {
         .SecTrustCreateWithCertificates = dlsym(security_handle, SecTrustCreateWithCertificatesFunc, "SecTrustCreateWithCertificates"),
         .SecTrustEvaluateWithError = dlsym(security_handle, SecTrustEvaluateWithErrorFunc, "SecTrustEvaluateWithError"),
         .SecPolicyCopyProperties = dlsym(security_handle, SecPolicyCopyPropertiesFunc, "SecPolicyCopyProperties"),
-        
+
         // CoreFoundation functions
         .CFArrayGetCount = dlsym(cf_handle, CFArrayGetCountFunc, "CFArrayGetCount"),
         .CFArrayGetValueAtIndex = dlsym(cf_handle, CFArrayGetValueAtIndexFunc, "CFArrayGetValueAtIndex"),
@@ -152,7 +152,7 @@ fn initMacOSCAFunctions() bool {
         .CFNumberGetTypeID = dlsym(cf_handle, CFNumberGetTypeIDFunc, "CFNumberGetTypeID"),
         .CFStringGetCString = dlsym(cf_handle, CFStringGetCStringFunc, "CFStringGetCString"),
         .CFNumberGetValue = dlsym(cf_handle, CFNumberGetValueFunc, "CFNumberGetValue"),
-        
+
         // Constants
         .kSecClass = dlsym_constant(security_handle, "kSecClass"),
         .kSecClassCertificate = dlsym_constant(security_handle, "kSecClassCertificate"),
@@ -167,7 +167,7 @@ fn initMacOSCAFunctions() bool {
         .kSecPolicyOid = dlsym_constant(security_handle, "kSecPolicyOid"),
         .kSecPolicyAppleSSL = dlsym_constant(security_handle, "kSecPolicyAppleSSL"),
     };
-    
+
     // Verify critical functions were loaded
     if (ca_functions.?.SecCertificateCopyData == null or
         ca_functions.?.CFArrayGetCount == null or
@@ -179,7 +179,7 @@ fn initMacOSCAFunctions() bool {
         ca_functions = null;
         return false;
     }
-    
+
     return true;
 }
 

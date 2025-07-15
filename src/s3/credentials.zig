@@ -496,6 +496,11 @@ pub const S3Credentials = struct {
         return buffer[0..written];
     }
 
+    fn normalizeName(name: []const u8) []const u8 {
+        if (name.len == 0) return name;
+        return std.mem.trim(u8, name, "/\\");
+    }
+
     pub fn signRequest(this: *const @This(), signOptions: SignOptions, comptime allow_empty_path: bool, signQueryOption: ?SignQueryOptions) !SignResult {
         const method = signOptions.method;
         const request_path = signOptions.path;
@@ -565,16 +570,8 @@ pub const S3Credentials = struct {
             }
         }
 
-        if (strings.endsWith(path, "/")) {
-            path = path[0 .. path.len - 1];
-        } else if (strings.endsWith(path, "\\")) {
-            path = path[0 .. path.len - 1];
-        }
-        if (strings.startsWith(path, "/")) {
-            path = path[1..];
-        } else if (strings.startsWith(path, "\\")) {
-            path = path[1..];
-        }
+        path = normalizeName(path);
+        bucket = normalizeName(bucket);
 
         // if we allow path.len == 0 it will list the bucket for now we disallow
         if (!allow_empty_path and path.len == 0) return error.InvalidPath;

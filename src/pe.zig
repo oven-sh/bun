@@ -11,10 +11,12 @@ const strings = bun.strings;
 pub const PEFile = struct {
     data: std.ArrayList(u8),
     allocator: Allocator,
-    dos_header: *DOSHeader,
-    pe_header: *PEHeader,
-    optional_header: *OptionalHeader64,
-    section_headers: []SectionHeader,
+    // Store offsets instead of pointers to avoid invalidation after resize
+    dos_header_offset: usize,
+    pe_header_offset: usize, 
+    optional_header_offset: usize,
+    section_headers_offset: usize,
+    num_sections: u16,
     
     const DOSHeader = extern struct {
         e_magic: u16, // Magic number
@@ -111,6 +113,23 @@ pub const PEFile = struct {
     const IMAGE_SCN_MEM_WRITE = 0x80000000;
     const IMAGE_SCN_MEM_EXECUTE = 0x20000000;
 
+    // Helper methods to safely access headers
+    fn getDosHeader(self: *const PEFile) *DOSHeader {
+        return @ptrCast(@alignCast(self.data.items.ptr + self.dos_header_offset));
+    }
+
+    fn getPEHeader(self: *const PEFile) *PEHeader {
+        return @ptrCast(@alignCast(self.data.items.ptr + self.pe_header_offset));
+    }
+
+    fn getOptionalHeader(self: *const PEFile) *OptionalHeader64 {
+        return @ptrCast(@alignCast(self.data.items.ptr + self.optional_header_offset));
+    }
+
+    fn getSectionHeaders(self: *const PEFile) []SectionHeader {
+        return @as([*]SectionHeader, @ptrCast(@alignCast(self.data.items.ptr + self.section_headers_offset)))[0..self.num_sections];
+    }
+
     pub fn init(allocator: Allocator, pe_data: []const u8) !*PEFile {
         // Reserve some extra space for adding sections, but no need for 16KB alignment
         var data = try std.ArrayList(u8).initCapacity(allocator, pe_data.len + 64 * 1024);
@@ -124,28 +143,36 @@ pub const PEFile = struct {
             return error.InvalidPEFile;
         }
 
-        const dos_header: *DOSHeader = @ptrCast(@alignCast(data.items.ptr));
+        const dos_header: *const DOSHeader = @ptrCast(@alignCast(data.items.ptr));
         if (dos_header.e_magic != DOS_SIGNATURE) {
             return error.InvalidDOSSignature;
         }
 
-        // Parse PE header
-        if (data.items.len < dos_header.e_lfanew + @sizeOf(PEHeader)) {
+        // Validate e_lfanew offset (should be reasonable)
+        if (dos_header.e_lfanew < @sizeOf(DOSHeader) or dos_header.e_lfanew > 0x1000) {
             return error.InvalidPEFile;
         }
 
-        const pe_header: *PEHeader = @ptrCast(@alignCast(data.items.ptr + dos_header.e_lfanew));
+        // Calculate offsets
+        const pe_header_offset = dos_header.e_lfanew;
+        const optional_header_offset = pe_header_offset + @sizeOf(PEHeader);
+
+        // Parse PE header
+        if (data.items.len < pe_header_offset + @sizeOf(PEHeader)) {
+            return error.InvalidPEFile;
+        }
+
+        const pe_header: *const PEHeader = @ptrCast(@alignCast(data.items.ptr + pe_header_offset));
         if (pe_header.signature != PE_SIGNATURE) {
             return error.InvalidPESignature;
         }
 
         // Parse optional header
-        const optional_header_offset = dos_header.e_lfanew + @sizeOf(PEHeader);
         if (data.items.len < optional_header_offset + @sizeOf(OptionalHeader64)) {
             return error.InvalidPEFile;
         }
 
-        const optional_header: *OptionalHeader64 = @ptrCast(@alignCast(data.items.ptr + optional_header_offset));
+        const optional_header: *const OptionalHeader64 = @ptrCast(@alignCast(data.items.ptr + optional_header_offset));
         if (optional_header.magic != OPTIONAL_HEADER_MAGIC_64) {
             return error.UnsupportedPEFormat;
         }
@@ -157,15 +184,20 @@ pub const PEFile = struct {
             return error.InvalidPEFile;
         }
 
-        const section_headers: []SectionHeader = @as([*]SectionHeader, @ptrCast(@alignCast(data.items.ptr + section_headers_offset)))[0..pe_header.number_of_sections];
+        // Check if we have space for at least one more section header (for future addition)
+        const max_sections_space = section_headers_offset + @sizeOf(SectionHeader) * 96; // PE max sections
+        if (data.items.len < max_sections_space) {
+            // Not enough space to add sections - we'll need to handle this in addBunSection
+        }
 
         self.* = .{
             .data = data,
             .allocator = allocator,
-            .dos_header = dos_header,
-            .pe_header = pe_header,
-            .optional_header = optional_header,
-            .section_headers = section_headers,
+            .dos_header_offset = 0,
+            .pe_header_offset = pe_header_offset,
+            .optional_header_offset = optional_header_offset,
+            .section_headers_offset = section_headers_offset,
+            .num_sections = pe_header.number_of_sections,
         };
 
         return self;
@@ -179,10 +211,11 @@ pub const PEFile = struct {
     /// Add a new section to the PE file for storing Bun module data
     pub fn addBunSection(self: *PEFile, data_to_embed: []const u8) !void {
         const section_name = ".bun\x00\x00\x00\x00";
-        const aligned_size = alignSize(@intCast(data_to_embed.len + @sizeOf(u32)), self.optional_header.file_alignment);
+        const optional_header = self.getOptionalHeader();
+        const aligned_size = alignSize(@intCast(data_to_embed.len + @sizeOf(u32)), optional_header.file_alignment);
         
         // Check if we can add another section
-        if (self.pe_header.number_of_sections >= 95) { // PE limit is 96 sections
+        if (self.num_sections >= 95) { // PE limit is 96 sections
             return error.TooManySections;
         }
 
@@ -190,9 +223,10 @@ pub const PEFile = struct {
         var last_section_end: u32 = 0;
         var last_virtual_end: u32 = 0;
         
-        for (self.section_headers) |section| {
+        const section_headers = self.getSectionHeaders();
+        for (section_headers) |section| {
             const section_file_end = section.pointer_to_raw_data + section.size_of_raw_data;
-            const section_virtual_end = section.virtual_address + alignSize(section.virtual_size, self.optional_header.section_alignment);
+            const section_virtual_end = section.virtual_address + alignSize(section.virtual_size, optional_header.section_alignment);
             
             if (section_file_end > last_section_end) {
                 last_section_end = section_file_end;
@@ -206,9 +240,9 @@ pub const PEFile = struct {
         const new_section = SectionHeader{
             .name = section_name.*,
             .virtual_size = @intCast(data_to_embed.len + @sizeOf(u32)),
-            .virtual_address = alignSize(last_virtual_end, self.optional_header.section_alignment),
+            .virtual_address = alignSize(last_virtual_end, optional_header.section_alignment),
             .size_of_raw_data = aligned_size,
-            .pointer_to_raw_data = alignSize(last_section_end, self.optional_header.file_alignment),
+            .pointer_to_raw_data = alignSize(last_section_end, optional_header.file_alignment),
             .pointer_to_relocations = 0,
             .pointer_to_line_numbers = 0,
             .number_of_relocations = 0,
@@ -223,9 +257,13 @@ pub const PEFile = struct {
         // Zero out the new section data
         @memset(self.data.items[last_section_end..new_data_size], 0);
 
-        // Write the section header
-        const section_headers_offset = self.dos_header.e_lfanew + @sizeOf(PEHeader) + self.pe_header.size_of_optional_header;
-        const new_section_offset = section_headers_offset + @sizeOf(SectionHeader) * self.pe_header.number_of_sections;
+        // Write the section header - use our stored offset
+        const new_section_offset = self.section_headers_offset + @sizeOf(SectionHeader) * self.num_sections;
+        
+        // Check bounds before writing
+        if (new_section_offset + @sizeOf(SectionHeader) > self.data.items.len) {
+            return error.InsufficientSpace;
+        }
         
         const new_section_ptr: *SectionHeader = @ptrCast(@alignCast(self.data.items.ptr + new_section_offset));
         new_section_ptr.* = new_section;
@@ -235,22 +273,29 @@ pub const PEFile = struct {
         std.mem.writeInt(u32, self.data.items[data_offset..][0..4], @intCast(data_to_embed.len), .little);
         @memcpy(self.data.items[data_offset + 4..][0..data_to_embed.len], data_to_embed);
 
-        // Update PE header
-        self.pe_header.number_of_sections += 1;
+        // Update PE header - get fresh pointer after resize
+        const pe_header = self.getPEHeader();
+        pe_header.number_of_sections += 1;
+        self.num_sections += 1;
 
-        // Update optional header
-        self.optional_header.size_of_image = alignSize(new_section.virtual_address + new_section.virtual_size, self.optional_header.section_alignment);
-        self.optional_header.size_of_initialized_data += new_section.size_of_raw_data;
-
-        // Update section headers slice
-        self.section_headers = @as([*]SectionHeader, @ptrCast(@alignCast(self.data.items.ptr + section_headers_offset)))[0..self.pe_header.number_of_sections];
+        // Update optional header - get fresh pointer after resize
+        const updated_optional_header = self.getOptionalHeader();
+        updated_optional_header.size_of_image = alignSize(new_section.virtual_address + new_section.virtual_size, updated_optional_header.section_alignment);
+        updated_optional_header.size_of_initialized_data += new_section.size_of_raw_data;
     }
 
     /// Find the .bun section and return its data
     pub fn getBunSectionData(self: *const PEFile) ![]const u8 {
-        for (self.section_headers) |section| {
+        const section_headers = self.getSectionHeaders();
+        for (section_headers) |section| {
             if (strings.eqlComptime(section.name[0..4], ".bun")) {
                 if (section.size_of_raw_data < @sizeOf(u32)) {
+                    return error.InvalidBunSection;
+                }
+                
+                // Bounds check
+                if (section.pointer_to_raw_data >= self.data.items.len or 
+                    section.pointer_to_raw_data + section.size_of_raw_data > self.data.items.len) {
                     return error.InvalidBunSection;
                 }
                 
@@ -269,13 +314,20 @@ pub const PEFile = struct {
 
     /// Get the length of the Bun section data
     pub fn getBunSectionLength(self: *const PEFile) !u32 {
-        for (self.section_headers) |section| {
+        const section_headers = self.getSectionHeaders();
+        for (section_headers) |section| {
             if (strings.eqlComptime(section.name[0..4], ".bun")) {
                 if (section.size_of_raw_data < @sizeOf(u32)) {
                     return error.InvalidBunSection;
                 }
                 
-                const section_data = self.data.items[section.pointer_to_raw_data..][0..section.size_of_raw_data];
+                // Bounds check
+                if (section.pointer_to_raw_data >= self.data.items.len or 
+                    section.pointer_to_raw_data + @sizeOf(u32) > self.data.items.len) {
+                    return error.InvalidBunSection;
+                }
+                
+                const section_data = self.data.items[section.pointer_to_raw_data..];
                 return std.mem.readInt(u32, section_data[0..4], .little);
             }
         }
@@ -290,22 +342,26 @@ pub const PEFile = struct {
     /// Validate the PE file structure
     pub fn validate(self: *const PEFile) !void {
         // Check DOS header
-        if (self.dos_header.e_magic != DOS_SIGNATURE) {
+        const dos_header = self.getDosHeader();
+        if (dos_header.e_magic != DOS_SIGNATURE) {
             return error.InvalidDOSSignature;
         }
 
         // Check PE header
-        if (self.pe_header.signature != PE_SIGNATURE) {
+        const pe_header = self.getPEHeader();
+        if (pe_header.signature != PE_SIGNATURE) {
             return error.InvalidPESignature;
         }
 
         // Check optional header
-        if (self.optional_header.magic != OPTIONAL_HEADER_MAGIC_64) {
+        const optional_header = self.getOptionalHeader();
+        if (optional_header.magic != OPTIONAL_HEADER_MAGIC_64) {
             return error.UnsupportedPEFormat;
         }
 
         // Validate section headers
-        for (self.section_headers) |section| {
+        const section_headers = self.getSectionHeaders();
+        for (section_headers) |section| {
             if (section.pointer_to_raw_data + section.size_of_raw_data > self.data.items.len) {
                 return error.InvalidSectionData;
             }
@@ -315,6 +371,9 @@ pub const PEFile = struct {
 
 /// Align size to the nearest multiple of alignment
 fn alignSize(size: u32, alignment: u32) u32 {
+    if (alignment == 0) return size;
+    // Check for overflow
+    if (size > std.math.maxInt(u32) - alignment + 1) return std.math.maxInt(u32);
     return (size + alignment - 1) & ~(alignment - 1);
 }
 

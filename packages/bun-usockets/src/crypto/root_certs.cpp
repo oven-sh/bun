@@ -8,6 +8,7 @@
 static const int root_certs_size = sizeof(root_certs) / sizeof(root_certs[0]);
 
 extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char* error_msg);
+extern "C" bool Bun__useSystemCA();
 
 // This callback is used to avoid the default passphrase callback in OpenSSL
 // which will typically prompt for the passphrase. The prompting is designed
@@ -159,6 +160,24 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   if (!X509_STORE_set_default_paths(store)) {
     X509_STORE_free(store);
     return NULL;
+  }
+
+  // When --system-ca flag is set, only use system CA store and skip embedded certificates
+  if (Bun__useSystemCA()) {
+    // Still load extra certificates from NODE_EXTRA_CA_CERTS if specified
+    const char *extra_certs = getenv("NODE_EXTRA_CA_CERTS");
+    if (extra_certs && extra_certs[0]) {
+      STACK_OF(X509) *extra_cert_instances = us_ssl_ctx_load_all_certs_from_file(extra_certs);
+      if (extra_cert_instances) {
+        for (int i = 0; i < sk_X509_num(extra_cert_instances); i++) {
+          X509 *cert = sk_X509_value(extra_cert_instances, i);
+          X509_up_ref(cert);
+          X509_STORE_add_cert(store, cert);
+        }
+        sk_X509_pop_free(extra_cert_instances, X509_free);
+      }
+    }
+    return store;
   }
 
   us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();

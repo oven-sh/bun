@@ -109,6 +109,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
+    clap.parseParam("--system-ca                       Use the system certificate authority store for HTTPS requests") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -668,6 +669,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.runtime_options.smol = args.flag("--smol");
         ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
         ctx.runtime_options.expose_gc = args.flag("--expose-gc");
+        ctx.runtime_options.system_ca = args.flag("--system-ca");
 
         if (args.option("--console-depth")) |depth_str| {
             const depth = std.fmt.parseInt(u16, depth_str, 10) catch {
@@ -1168,6 +1170,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
+
+export fn Bun__useSystemCA() bool {
+    return CLI.Command.get().runtime_options.system_ca;
+}
 
 const bun = @import("bun");
 const std = @import("std");

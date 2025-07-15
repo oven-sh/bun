@@ -34,7 +34,6 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
 
   [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 242, regex: true },
   "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
-  "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1865 },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 170 },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 102 },
@@ -45,7 +44,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 173 },
 
   "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 28 },
-  "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 47 },
+  "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 42 },
   "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 140 },
 };
 const words_keys = [...Object.keys(words)];

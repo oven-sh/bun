@@ -6,7 +6,7 @@ pub fn toJS(
     value: *Data,
 ) AnyPostgresError!JSValue {
     defer value.deinit();
-    var str = bun.String.fromUTF8(value.slice());
+    var str = bun.String.borrowUTF8(value.slice());
     defer str.deref();
     const parse_result = JSValue.parse(str.toJS(globalObject), globalObject);
     if (parse_result.AnyPostgresError()) {

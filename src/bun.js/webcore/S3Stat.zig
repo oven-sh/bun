@@ -32,8 +32,8 @@ pub const S3Stat = struct {
 
         return S3Stat.new(.{
             .size = size,
-            .etag = bun.String.createUTF8(etag),
-            .contentType = bun.String.createUTF8(contentType),
+            .etag = bun.String.cloneUTF8(etag),
+            .contentType = bun.String.cloneUTF8(contentType),
             .lastModified = last_modified,
         });
     }

@@ -72,7 +72,7 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         defer prev = arg;
 
         if (arg.len >= 1 and arg[0] == '-') {
-            try args.append(bun.String.createUTF8(arg));
+            try args.append(bun.String.cloneUTF8(arg));
             continue;
         }
 
@@ -107,7 +107,7 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         });
 
         if (prev) |p| if (map.has(p)) {
-            try args.append(bun.String.createUTF8(arg));
+            try args.append(bun.String.cloneUTF8(arg));
             continue;
         };
 
@@ -152,7 +152,7 @@ fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     } else {
         const exe_path = bun.selfExePath() catch null;
         args_list.appendAssumeCapacity(
-            if (exe_path) |str| bun.String.fromUTF8(str) else bun.String.static("bun"),
+            if (exe_path) |str| bun.String.borrowUTF8(str) else bun.String.static("bun"),
         );
     }
 
@@ -163,7 +163,7 @@ fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         if (vm.worker != null and vm.worker.?.eval_mode) {
             args_list.appendAssumeCapacity(bun.String.static("[worker eval]"));
         } else {
-            args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
+            args_list.appendAssumeCapacity(bun.String.borrowUTF8(vm.main));
         }
     }
 
@@ -175,7 +175,7 @@ fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         }
     } else {
         for (vm.argv) |arg| {
-            const str = bun.String.fromUTF8(arg);
+            const str = bun.String.borrowUTF8(arg);
             // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
             args_list.appendAssumeCapacity(str);
         }
@@ -248,7 +248,7 @@ fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JS
                 fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1 :0];
             }
             const withoutTrailingSlash = if (Environment.isWindows) strings.withoutTrailingSlashWindowsPath else strings.withoutTrailingSlash;
-            var str = bun.String.createUTF8(withoutTrailingSlash(fs.top_level_dir));
+            var str = bun.String.cloneUTF8(withoutTrailingSlash(fs.top_level_dir));
             return str.transferToJS(globalObject);
         },
         .err => |e| {

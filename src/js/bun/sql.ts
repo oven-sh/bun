@@ -900,9 +900,11 @@ class ConnectionPool {
       connection.queryCount--;
       this.totalQueries--;
     }
-    const was_reserved = connection.flags & PooledConnectionFlags.reserved;
+    const currentQueryCount = connection.queryCount;
     connection.flags &= ~PooledConnectionFlags.reserved;
-    connection.flags &= ~PooledConnectionFlags.preReserved;
+    if (currentQueryCount == 0) {
+      connection.flags &= ~PooledConnectionFlags.preReserved;
+    }
     if (this.onAllQueriesFinished) {
       // we are waiting for all queries to finish, lets check if we can call it
       if (!this.hasPendingQueries()) {
@@ -935,23 +937,7 @@ class ConnectionPool {
       return;
     }
 
-    if (was_reserved) {
-      if (this.waitingQueue.length > 0 || this.reservedQueue.length > 0) {
-        const pendingReserved = this.reservedQueue.shift();
-        if (pendingReserved) {
-          connection.flags |= PooledConnectionFlags.reserved;
-          connection.queryCount++;
-          this.totalQueries++;
-          // we have a connection waiting for a reserved connection lets prioritize it
-          pendingReserved(connection.storedError, connection);
-          return;
-        }
-      }
-      this.readyConnections.add(connection);
-      this.flushConcurrentQueries();
-      return;
-    }
-    if (connection.queryCount === 0) {
+    if (currentQueryCount == 0) {
       // ok we can actually bind reserved queries to it
       const pendingReserved = this.reservedQueue.shift();
       if (pendingReserved) {

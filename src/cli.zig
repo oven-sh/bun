@@ -1658,7 +1658,7 @@ pub fn printRevisionAndExit() noreturn {
     Global.exit(0);
 }
 
-// Export function to check if --use-system-ca flag is set
+// Export function to check if --use-system-ca CLI flag is set
 export fn Bun__useSystemCAFromCLI() c_int {
     if (global_cli_ctx.runtime_options.use_system_ca) {
         return 1;

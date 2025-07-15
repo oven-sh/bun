@@ -194,21 +194,7 @@ export fn Bun__getMacOSCAFunctions() ?*MacOSCAFunctions {
 // External function to check CLI flag
 extern "C" fn Bun__useSystemCAFromCLI() c_int;
 
-// Check if system CA loading is enabled
+// Check if system CA loading is enabled via CLI flag
 export fn Bun__useSystemCA() c_int {
-    // First check CLI flag
-    if (Bun__useSystemCAFromCLI() == 1) {
-        return 1;
-    }
-    
-    // Fallback to environment variable for backward compatibility
-    const env_var = std.process.getEnvVarOwned(bun.default_allocator, "BUN_USE_SYSTEM_CA") catch return 0;
-    defer bun.default_allocator.free(env_var);
-    
-    // Return 1 if the environment variable is set to "1" or "true"
-    if (std.mem.eql(u8, env_var, "1") or std.mem.eql(u8, env_var, "true")) {
-        return 1;
-    }
-    
-    return 0;
+    return Bun__useSystemCAFromCLI();
 }

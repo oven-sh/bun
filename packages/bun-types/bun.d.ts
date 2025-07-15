@@ -70,17 +70,6 @@ declare module "bun" {
         : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
   }
 
-  /**
-   * Asks TypeScript to eagerly evaluate a type, making it
-   * easier to read when hovering in an editor.
-   *
-   * This type seriously slows down tsc, so should be used
-   * sparingly, during times of debugging only.
-   */
-  type Pretty<T> = {
-    [Key in keyof T]: T[Key];
-  } & {};
-
   interface ErrorEventInit extends EventInit {
     colno?: number;
     error?: any;

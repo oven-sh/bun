@@ -37,6 +37,9 @@ describe("basic", () => {
       : {
           name,
           ...catalogs,
+          workspaces: {
+            packages: ["packages/*"],
+          },
         };
 
     await Promise.all([

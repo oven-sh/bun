@@ -128,7 +128,7 @@ test("basic + websocket + upgrade", {
   },
 });
 
-test("basic + websocket + upgrade + all handlers", {
+test<{ name: string }, "/">("basic + websocket + upgrade + all handlers", {
   fetch(req, server) {
     expectType(server.upgrade).is<
       (
@@ -242,7 +242,6 @@ test(
 
 test(
   "basic unix socket + websocket + upgrade",
-  // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
@@ -263,7 +262,6 @@ test(
 
 test(
   "basic unix socket + websocket + upgrade + tls",
-  // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
@@ -307,7 +305,6 @@ test(
 
 test(
   "basic unix socket + upgrade + cheap request to check upgrade",
-  // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
@@ -528,6 +525,7 @@ test("basic websocket upgrade and ws publish/subscribe to topics", {
 
 test(
   "port with unix socket (is a type error)",
+  // @ts-expect-error Cannot pass unix and port
   {
     unix: `${tmpdirSync()}/bun.sock`,
     port: 0,
@@ -546,6 +544,7 @@ test(
 
 test(
   "port with unix socket with websocket + upgrade (is a type error)",
+  // @ts-expect-error cannot pass unix and port at same time
   {
     unix: `${tmpdirSync()}/bun.sock`,
     port: 0,

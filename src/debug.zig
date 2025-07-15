@@ -1,5 +1,7 @@
 const bun = @import("bun");
 
+const isDebug = bun.Environment.ci_assert;
+
 /// Use this in unmanaged containers to ensure multiple allocators aren't being used with the
 /// same container. Each method of the container that accepts an allocator parameter should call
 /// either `AllocPtr.set` (for non-const methods) or `AllocPtr.assertEq` (for const methods).
@@ -8,8 +10,7 @@ const bun = @import("bun");
 pub const AllocPtr = struct {
     const Self = @This();
 
-    ptr: if (bun.Environment.isDebug) ?*anyopaque else void =
-        if (bun.Environment.isDebug) null else {},
+    ptr: if (isDebug) ?*anyopaque else void = if (isDebug) null,
 
     pub fn init(ptr: *anyopaque) Self {
         var self = Self{};
@@ -18,7 +19,7 @@ pub const AllocPtr = struct {
     }
 
     pub fn set(self: *Self, ptr: *anyopaque) void {
-        if (comptime !bun.Environment.isDebug) return;
+        if (comptime !isDebug) return;
         if (self.ptr == null) {
             self.ptr = ptr;
         } else {
@@ -27,7 +28,7 @@ pub const AllocPtr = struct {
     }
 
     pub fn assertEq(self: Self, ptr: *anyopaque) void {
-        if (comptime !bun.Environment.isDebug) return;
+        if (comptime !isDebug) return;
         bun.assertf(ptr == self.ptr, "cannot use multiple allocators with same container", .{});
     }
 };

@@ -388,7 +388,7 @@ pub const CssColor = union(enum) {
 
         const check_converted = struct {
             fn run(color: *const CssColor) bool {
-                bun.debugAssert(color.* != .light_dark and color.* != .current_color and color.* != .system);
+                bun.debugAssert(color.* != .light_dark and color.* != .current_color);
                 return switch (color.*) {
                     .rgba => T == RGBA,
                     .lab => |lab| switch (lab.*) {
@@ -412,7 +412,8 @@ pub const CssColor = union(enum) {
                         .hsl => T == HSL,
                         .hwb => T == HWB,
                     },
-                    .system => bun.Output.panic("Unreachable code: system colors cannot be converted to a color.\n\nThis is a bug in Bun's CSS color parser. Please file a bug report at https://github.com/oven-sh/bun/issues/new/choose", .{}),
+                    // System colors cannot be converted to specific color spaces at parse time
+                    .system => false,
                     // We checked these above
                     .light_dark, .current_color => unreachable,
                 };

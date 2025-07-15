@@ -14,7 +14,6 @@ const File = bun.sys.File;
 
 const debug = Output.scoped(.CLI, true);
 
-const sync = bun.sync;
 const Api = @import("api/schema.zig").Api;
 const clap = bun.clap;
 const BunJS = @import("./bun_js.zig");

@@ -1923,7 +1923,7 @@ pub fn parseIntoBinaryLockfile(
                     if (dep.behavior.optional) {
                         continue;
                     }
-                    try dependencyResolutionFailure(dep, null, allocator, lockfile.buffers.string_bytes.items, source, log, root_pkg_exr.loc);
+                    try dependencyResolutionFailure(dep, null, allocator, lockfile.buffers.string_bytes.items, source, log, root_pkg_exr.loc, root);
                     return error.InvalidPackageInfo;
                 };
 
@@ -1954,7 +1954,7 @@ pub fn parseIntoBinaryLockfile(
                         if (dep.behavior.optional) {
                             continue;
                         }
-                        try dependencyResolutionFailure(dep, workspace_name, allocator, lockfile.buffers.string_bytes.items, source, log, root_pkg_exr.loc);
+                        try dependencyResolutionFailure(dep, workspace_name, allocator, lockfile.buffers.string_bytes.items, source, log, root_pkg_exr.loc, root);
                         return error.InvalidPackageInfo;
                     };
 
@@ -1988,7 +1988,7 @@ pub fn parseIntoBinaryLockfile(
                         if (dep.behavior.optional) {
                             continue :deps;
                         }
-                        try dependencyResolutionFailure(dep, pkg_path, allocator, lockfile.buffers.string_bytes.items, source, log, key.loc);
+                        try dependencyResolutionFailure(dep, pkg_path, allocator, lockfile.buffers.string_bytes.items, source, log, key.loc, root);
                         return error.InvalidPackageInfo;
                     },
                 };
@@ -2023,7 +2023,46 @@ fn mapDepToPkg(dep: *Dependency, dep_id: DependencyID, pkg_id: PackageID, lockfi
     }
 }
 
-fn dependencyResolutionFailure(dep: *const Dependency, pkg_path: ?string, allocator: std.mem.Allocator, buf: string, source: *const logger.Source, log: *logger.Log, loc: logger.Loc) OOM!void {
+fn findDependencyInAST(ast_root: Expr, dep_name: string, pkg_path: ?string) logger.Loc {
+    // For root dependencies, look in workspaces[""]
+    if (pkg_path == null) {
+        if (ast_root.get("workspaces")) |workspaces| {
+            if (workspaces.get("")) |root_workspace| {
+                return findDependencyInWorkspace(root_workspace, dep_name);
+            }
+        }
+    } else {
+        // For package dependencies, look in packages[pkg_path]
+        if (ast_root.get("packages")) |packages| {
+            if (packages.get(pkg_path.?)) |package| {
+                return findDependencyInWorkspace(package, dep_name);
+            }
+        }
+    }
+    return logger.Loc.Empty;
+}
+
+fn findDependencyInWorkspace(workspace: Expr, dep_name: string) logger.Loc {
+    // Check all dependency groups
+    const dep_groups = [_][]const u8{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" };
+    for (dep_groups) |group_name| {
+        if (workspace.get(group_name)) |deps| {
+            if (deps.isObject()) {
+                for (deps.data.e_object.properties.slice()) |prop| {
+                    const key = prop.key.?;
+                    if (key.asString(bun.default_allocator)) |key_name| {
+                        if (strings.eqlLong(key_name, dep_name, true)) {
+                            return key.loc;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return logger.Loc.Empty;
+}
+
+fn dependencyResolutionFailure(dep: *const Dependency, pkg_path: ?string, allocator: std.mem.Allocator, buf: string, source: *const logger.Source, log: *logger.Log, fallback_loc: logger.Loc, ast_root: Expr) OOM!void {
     const behavior_str = if (dep.behavior.dev)
         "dev"
     else if (dep.behavior.optional)
@@ -2035,16 +2074,22 @@ fn dependencyResolutionFailure(dep: *const Dependency, pkg_path: ?string, alloca
     else
         "prod";
 
+    const dep_name = dep.name.slice(buf);
+    
+    // Search for the dependency location in the AST
+    const loc = findDependencyInAST(ast_root, dep_name, pkg_path);
+    const final_loc = if (loc.start != -1) loc else fallback_loc;
+
     if (pkg_path) |path| {
-        try log.addErrorFmt(source, loc, allocator, "Failed to resolve {s} dependency '{s}' for package '{s}'", .{
+        try log.addErrorFmt(source, final_loc, allocator, "Failed to resolve {s} dependency '{s}' for package '{s}'", .{
             behavior_str,
-            dep.name.slice(buf),
+            dep_name,
             path,
         });
     } else {
-        try log.addErrorFmt(source, loc, allocator, "Failed to resolve root {s} dependency '{s}'", .{
+        try log.addErrorFmt(source, final_loc, allocator, "Failed to resolve root {s} dependency '{s}'", .{
             behavior_str,
-            dep.name.slice(buf),
+            dep_name,
         });
     }
 }

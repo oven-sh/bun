@@ -378,6 +378,7 @@ pub const Command = struct {
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,
         redis_preconnect: bool = false,
+        sql_preconnect: bool = false,
         eval: struct {
             script: []const u8 = "",
             eval_and_print: bool = false,
@@ -388,6 +389,7 @@ pub const Command = struct {
         /// compatibility.
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
+        console_depth: ?u16 = null,
     };
 
     var global_cli_ctx: Context = undefined;

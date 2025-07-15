@@ -117,7 +117,6 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_addBytesBo
     auto& impl = castedThis->wrapped();
 
     auto chunkValue = callFrame->uncheckedArgument(0);
-    std::span<const uint8_t> chunk;
 
     // See getWasmBufferFromValue in JSC's JSWebAssemblyHelpers.h
     if (auto arrayBufferView = jsDynamicCast<JSArrayBufferView*>(chunkValue)) {
@@ -133,7 +132,8 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_addBytesBo
             }
         }
 
-        chunk = { static_cast<const uint8_t*>(arrayBufferView->vector()), arrayBufferView->byteLength() };
+        impl.addBytes({ static_cast<const uint8_t*>(arrayBufferView->vector()), arrayBufferView->byteLength() });
+        return encodedJSUndefined();
     } else if (auto arrayBuffer = jsDynamicCast<JSArrayBuffer*>(chunkValue)) {
         auto arrayBufferImpl = arrayBuffer->impl();
         if (arrayBufferImpl->isDetached()) {
@@ -141,16 +141,12 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_addBytesBo
             return {};
         }
 
-        chunk = { static_cast<const uint8_t*>(arrayBufferImpl->data()), arrayBufferImpl->byteLength() };
+        impl.addBytes({ static_cast<const uint8_t*>(arrayBufferImpl->data()), arrayBufferImpl->byteLength() });
+        return encodedJSUndefined();
     } else [[unlikely]] {
         // See WasmStreamingObject::Push in Node.js's node_wasm_web_api.cc
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "chunk must be an ArrayBufferView or an ArrayBuffer");
     }
-
-    RETURN_IF_EXCEPTION(throwScope, {});
-    impl.addBytes(chunk);
-
-    return encodedJSUndefined();
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_addBytes, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -171,14 +167,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_finalize, (JSG
 
 static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_failBody(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, typename IDLOperation<JSWasmStreamingCompiler>::ClassParameter castedThis)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = castedThis->wrapped();
-
-    // This should never fail due to it being internal
+    // This should never fail since this method is only called internally
     auto error = callFrame->uncheckedArgument(0);
-    impl.fail(lexicalGlobalObject, error);
-
+    castedThis->wrapped().fail(lexicalGlobalObject, error);
     return encodedJSUndefined();
 }
 

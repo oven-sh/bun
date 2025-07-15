@@ -15,7 +15,7 @@ afterAll(() => {
 });
 
 describe("basic", () => {
-  async function createBasicCatalogMonorepo(packageDir: string, name: string, inTopLevelKey = false) {
+  async function createBasicCatalogMonorepo(packageDir: string, name: string, inTopLevelKey: boolean = false) {
     const catalogs = {
       catalog: {
         "no-deps": "2.0.0",
@@ -26,14 +26,18 @@ describe("basic", () => {
         },
       },
     };
-    const packageJson = {
-      name,
-      workspaces: {
-        packages: ["packages/*"],
-        ...(inTopLevelKey ? catalogs : {}),
-      },
-      ...(inTopLevelKey ? {} : catalogs),
-    };
+    const packageJson = !inTopLevelKey
+      ? {
+          name,
+          workspaces: {
+            packages: ["packages/*"],
+            ...catalogs,
+          },
+        }
+      : {
+          name,
+          ...catalogs,
+        };
 
     await Promise.all([
       write(join(packageDir, "package.json"), JSON.stringify(packageJson)),
@@ -129,7 +133,7 @@ describe("basic", () => {
       });
 
       // update catalogs
-      packageJson.workspaces.catalogs.a["a-dep"] = "1.0.10";
+      packageJson.workspaces!.catalogs!.a["a-dep"] = "1.0.10";
       await write(join(packageDir, "package.json"), JSON.stringify(packageJson));
       ({ err } = await runBunInstall(bunEnv, packageDir, { savesLockfile: true }));
       expect(err).toContain("Saved lockfile");

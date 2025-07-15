@@ -2,7 +2,6 @@
 
 import { expectType } from "./utilities";
 
-// Test with normal bun.serve
 const s1 = Bun.serve({
   routes: {
     "/:hey": req => {

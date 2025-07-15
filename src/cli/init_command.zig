@@ -1127,13 +1127,15 @@ const Template = enum {
             .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-app/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
+
+            .{ .path = "src/server.ts", .contents = @embedFile("../init/react-app/src/server.ts") },
+
             .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-app/src/index.tsx") },
-            .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-app/src/App.tsx") },
+            .{ .path = "src/app.tsx", .contents = @embedFile("../init/react-app/src/app.tsx") },
             .{ .path = "src/index.html", .contents = @embedFile("../init/react-app/src/index.html") },
             .{ .path = "src/index.css", .contents = @embedFile("../init/react-app/src/index.css") },
-            .{ .path = "src/APITester.tsx", .contents = @embedFile("../init/react-app/src/APITester.tsx") },
+            .{ .path = "src/api-tester.tsx", .contents = @embedFile("../init/react-app/src/api-tester.tsx") },
             .{ .path = "src/react.svg", .contents = @embedFile("../init/react-app/src/react.svg") },
-            .{ .path = "src/frontend.tsx", .contents = @embedFile("../init/react-app/src/frontend.tsx") },
             .{ .path = "src/logo.svg", .contents = @embedFile("../init/react-app/src/logo.svg") },
         };
     };

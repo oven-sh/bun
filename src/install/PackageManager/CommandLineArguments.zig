@@ -117,7 +117,7 @@ const patch_commit_params: []const ParamType = &(shared_params ++ [_]ParamType{
 });
 
 const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
-    // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
+    clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
     clap.parseParam("-F, --filter <STR>...                        Display outdated dependencies for each matching workspace") catch unreachable,
     clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
 });

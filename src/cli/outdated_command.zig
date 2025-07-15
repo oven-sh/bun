@@ -50,10 +50,10 @@ pub const OutdatedCommand = struct {
         };
         defer ctx.allocator.free(original_cwd);
 
-        try outdated(ctx, original_cwd, manager);
+        try outdated(ctx, original_cwd, manager, cli.json_output);
     }
 
-    fn outdated(ctx: Command.Context, original_cwd: string, manager: *PackageManager) !void {
+    fn outdated(ctx: Command.Context, original_cwd: string, manager: *PackageManager, json_output: bool) !void {
         const load_lockfile_result = manager.lockfile.loadFromCwd(
             manager,
             manager.allocator,
@@ -108,14 +108,22 @@ pub const OutdatedCommand = struct {
                     defer bun.default_allocator.free(workspace_pkg_ids);
 
                     try updateManifestsIfNecessary(manager, workspace_pkg_ids);
-                    try printOutdatedInfoTable(manager, workspace_pkg_ids, true, enable_ansi_colors);
+                    if (json_output) {
+                        try printOutdatedInfoJson(manager, workspace_pkg_ids, true);
+                    } else {
+                        try printOutdatedInfoTable(manager, workspace_pkg_ids, true, enable_ansi_colors);
+                    }
                 } else {
                     // just the current workspace
                     const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
                     if (root_pkg_id == invalid_package_id) return;
 
                     try updateManifestsIfNecessary(manager, &.{root_pkg_id});
-                    try printOutdatedInfoTable(manager, &.{root_pkg_id}, false, enable_ansi_colors);
+                    if (json_output) {
+                        try printOutdatedInfoJson(manager, &.{root_pkg_id}, false);
+                    } else {
+                        try printOutdatedInfoTable(manager, &.{root_pkg_id}, false, enable_ansi_colors);
+                    }
                 }
             },
         }
@@ -220,6 +228,199 @@ pub const OutdatedCommand = struct {
         }
 
         return workspace_pkg_ids.items;
+    }
+
+    fn printOutdatedInfoJson(
+        manager: *PackageManager,
+        workspace_pkg_ids: []const PackageID,
+        was_filtered: bool,
+    ) !void {
+        const package_patterns = package_patterns: {
+            const args = manager.options.positionals[1..];
+            if (args.len == 0) break :package_patterns null;
+
+            var at_least_one_greater_than_zero = false;
+
+            const patterns_buf = bun.default_allocator.alloc(FilterType, args.len) catch bun.outOfMemory();
+            for (args, patterns_buf) |arg, *converted| {
+                if (arg.len == 0) {
+                    converted.* = FilterType.init(&.{}, false);
+                    continue;
+                }
+
+                if ((arg.len == 1 and arg[0] == '*') or strings.eqlComptime(arg, "**")) {
+                    converted.* = .all;
+                    at_least_one_greater_than_zero = true;
+                    continue;
+                }
+
+                converted.* = FilterType.init(arg, false);
+                at_least_one_greater_than_zero = at_least_one_greater_than_zero or arg.len > 0;
+            }
+
+            // nothing will match
+            if (!at_least_one_greater_than_zero) return;
+
+            break :package_patterns patterns_buf;
+        };
+        defer if (package_patterns) |patterns| bun.default_allocator.free(patterns);
+
+        const lockfile = manager.lockfile;
+        const string_buf = lockfile.buffers.string_bytes.items;
+        const dependencies = lockfile.buffers.dependencies.items;
+        const packages = lockfile.packages.slice();
+        const pkg_names = packages.items(.name);
+        const pkg_resolutions = packages.items(.resolution);
+        const pkg_dependencies = packages.items(.dependencies);
+
+        var outdated_ids: std.ArrayListUnmanaged(struct { 
+            package_id: PackageID, 
+            dep_id: DependencyID, 
+            workspace_pkg_id: PackageID 
+        }) = .{};
+        defer outdated_ids.deinit(bun.default_allocator);
+
+        for (workspace_pkg_ids) |workspace_pkg_id| {
+            const pkg_deps = pkg_dependencies[workspace_pkg_id];
+            for (pkg_deps.begin()..pkg_deps.end()) |dep_id| {
+                const package_id = lockfile.buffers.resolutions.items[dep_id];
+                if (package_id == invalid_package_id) continue;
+                const dep = lockfile.buffers.dependencies.items[dep_id];
+                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
+                const resolution = pkg_resolutions[package_id];
+                if (resolution.tag != .npm) continue;
+
+                // package patterns match against dependency name (name in package.json)
+                if (package_patterns) |patterns| {
+                    const match = match: {
+                        for (patterns) |pattern| {
+                            switch (pattern) {
+                                .path => unreachable,
+                                .name => |name_pattern| {
+                                    if (name_pattern.len == 0) continue;
+                                    if (!glob.walk.matchImpl(bun.default_allocator, name_pattern, dep.name.slice(string_buf)).matches()) {
+                                        break :match false;
+                                    }
+                                },
+                                .all => {},
+                            }
+                        }
+
+                        break :match true;
+                    };
+                    if (!match) {
+                        continue;
+                    }
+                }
+
+                const package_name = pkg_names[package_id].slice(string_buf);
+
+                var expired = false;
+                const manifest = manager.manifests.byNameAllowExpired(
+                    manager,
+                    manager.scopeForPackageName(package_name),
+                    package_name,
+                    &expired,
+                    .load_from_memory_fallback_to_disk,
+                ) orelse continue;
+
+                const latest = manifest.findByDistTag("latest") orelse continue;
+
+                if (resolution.value.npm.version.order(latest.version, string_buf, manifest.string_buf) != .lt) continue;
+
+                outdated_ids.append(
+                    bun.default_allocator,
+                    .{
+                        .package_id = package_id,
+                        .dep_id = @intCast(dep_id),
+                        .workspace_pkg_id = workspace_pkg_id,
+                    },
+                ) catch bun.outOfMemory();
+            }
+        }
+
+        if (outdated_ids.items.len == 0) {
+            Output.print("{{}}\n", .{});
+            return;
+        }
+
+        var json_obj = std.ArrayList(u8).init(bun.default_allocator);
+        defer json_obj.deinit();
+        var writer = json_obj.writer();
+        
+        try writer.writeAll("{\n");
+        
+        var first_package = true;
+        
+        for (workspace_pkg_ids) |workspace_pkg_id| {
+            inline for ([_]Behavior{
+                .{ .prod = true },
+                .{ .dev = true },
+                .{ .peer = true },
+                .{ .optional = true },
+            }) |group_behavior| {
+                for (outdated_ids.items) |ids| {
+                    if (workspace_pkg_id != ids.workspace_pkg_id) continue;
+                    const package_id = ids.package_id;
+                    const dep_id = ids.dep_id;
+
+                    const dep = dependencies[dep_id];
+                    if (!dep.behavior.includes(group_behavior)) continue;
+
+                    const package_name = pkg_names[package_id].slice(string_buf);
+                    const resolution = pkg_resolutions[package_id];
+
+                    var expired = false;
+                    const manifest = manager.manifests.byNameAllowExpired(
+                        manager,
+                        manager.scopeForPackageName(package_name),
+                        package_name,
+                        &expired,
+                        .load_from_memory_fallback_to_disk,
+                    ) orelse continue;
+
+                    const latest = manifest.findByDistTag("latest") orelse continue;
+                    const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                    const update = if (resolved_version.tag == .npm)
+                        manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
+                    else
+                        manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+
+                    if (!first_package) {
+                        try writer.writeAll(",\n");
+                    }
+                    first_package = false;
+
+                    const dependency_type = if (dep.behavior.dev)
+                        "dev"
+                    else if (dep.behavior.peer)
+                        "peer"
+                    else if (dep.behavior.optional)
+                        "optional"
+                    else
+                        "prod";
+
+                    try writer.print("  \"{s}\": {{\n", .{package_name});
+                    try writer.print("    \"current\": \"{}\",\n", .{resolution.value.npm.version.fmt(string_buf)});
+                    try writer.print("    \"update\": \"{}\",\n", .{update.version.fmt(manifest.string_buf)});
+                    try writer.print("    \"latest\": \"{}\",\n", .{latest.version.fmt(manifest.string_buf)});
+                    try writer.print("    \"dependencyType\": \"{s}\"", .{dependency_type});
+                    
+                    if (was_filtered) {
+                        const workspace_name = pkg_names[workspace_pkg_id].slice(string_buf);
+                        try writer.print(",\n    \"workspace\": \"{s}\"", .{workspace_name});
+                    }
+                    
+                    try writer.writeAll("\n  }");
+                }
+            }
+        }
+        
+        try writer.writeAll("\n}\n");
+        
+        Output.print("{s}", .{json_obj.items});
+        Output.flush();
     }
 
     fn printOutdatedInfoTable(

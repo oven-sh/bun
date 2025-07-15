@@ -186,6 +186,7 @@ pub const Subcommand = enum {
             .audit,
             .pm,
             .info,
+            .outdated,
             => true,
             else => false,
         };

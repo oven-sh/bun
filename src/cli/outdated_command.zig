@@ -393,13 +393,13 @@ pub const OutdatedCommand = struct {
                     first_package = false;
 
                     const dependency_type = if (dep.behavior.dev)
-                        "dev"
+                        "development"
                     else if (dep.behavior.peer)
                         "peer"
                     else if (dep.behavior.optional)
                         "optional"
                     else
-                        "prod";
+                        "production";
 
                     try writer.print("  \"{s}\": {{\n", .{package_name});
                     try writer.print("    \"current\": \"{}\",\n", .{resolution.value.npm.version.fmt(string_buf)});

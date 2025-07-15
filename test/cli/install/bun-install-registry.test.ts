@@ -8525,17 +8525,17 @@ describe("outdated", () => {
     expect(parsed).toBeDefined();
     expect(typeof parsed).toBe("object");
     
-    // Should contain no-deps with prod dependency type
+    // Should contain no-deps with production dependency type
     expect(parsed["no-deps"]).toBeDefined();
     expect(parsed["no-deps"].current).toBe("1.0.0");
     expect(parsed["no-deps"].latest).toBe("1.0.5");
-    expect(parsed["no-deps"].type).toBe("prod");
+    expect(parsed["no-deps"].type).toBe("production");
     
-    // Should contain a-dep with dev dependency type
+    // Should contain a-dep with development dependency type
     expect(parsed["a-dep"]).toBeDefined();
     expect(parsed["a-dep"].current).toBe("1.0.1");
     expect(parsed["a-dep"].latest).toBe("1.0.3");
-    expect(parsed["a-dep"].type).toBe("dev");
+    expect(parsed["a-dep"].type).toBe("development");
     
     // Verify JSON structure for all packages
     for (const pkgName of Object.keys(parsed)) {
@@ -8544,7 +8544,7 @@ describe("outdated", () => {
       expect(pkg).toHaveProperty("update"); 
       expect(pkg).toHaveProperty("latest");
       expect(pkg).toHaveProperty("type");
-      expect(["prod", "dev", "peer", "optional"]).toContain(pkg.type);
+      expect(["production", "development", "peer", "optional"]).toContain(pkg.type);
     }
   });
 });

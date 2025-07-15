@@ -29,7 +29,6 @@
 const std = @import("std");
 const bun = @import("bun");
 const ThreadPool = @This();
-const Mutex = bun.threading.Mutex;
 const Futex = bun.threading.Futex;
 const WaitGroup = bun.threading.WaitGroup;
 

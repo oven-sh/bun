@@ -106,6 +106,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
     clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
     clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
+    clap.parseParam("--sql-preconnect                  Preconnect to PostgreSQL at startup") catch unreachable,
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
@@ -587,6 +588,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (args.flag("--redis-preconnect")) {
             ctx.runtime_options.redis_preconnect = true;
+        }
+
+        if (args.flag("--sql-preconnect")) {
+            ctx.runtime_options.sql_preconnect = true;
         }
 
         if (args.flag("--no-addons")) {

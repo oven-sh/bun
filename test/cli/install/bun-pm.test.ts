@@ -375,6 +375,7 @@ it("bun pm migrate", async () => {
 
 it("should work without package.json for global commands", async () => {
   const test_dir = tmpdirSync();
+  const cache_dir = join(test_dir, ".cache");
 
   // Test pm cache without package.json
   const {
@@ -387,11 +388,14 @@ it("should work without package.json for global commands", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env: bunEnv,
+    env: {
+      ...bunEnv,
+      BUN_INSTALL_CACHE_DIR: cache_dir,
+    },
   });
   expect(cacheCode).toBe(0);
   expect(cacheErr.toString("utf-8")).toBe("");
-  expect(cacheOut.toString("utf-8")).toMatch(/^\/.*/);
+  expect(cacheOut.toString("utf-8")).toBe(cache_dir);
 
   // Test pm whoami without package.json (will fail auth but shouldn't fail for missing package.json)
   const {

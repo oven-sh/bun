@@ -946,7 +946,6 @@ void populateESMExports(
     bool ignoreESModuleAnnotation)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     const Identifier& esModuleMarker = vm.propertyNames->__esModule;
 
     // Bun's interpretation of the "__esModule" annotation:
@@ -978,14 +977,13 @@ void populateESMExports(
     //       it to something that does NOT evaluate to "true" I could find were in
     //       unit tests of build tools. Happy to revisit this if users file an issue.
     bool needsToAssignDefault = true;
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* exports = result.getObject()) {
         bool hasESModuleMarker = false;
         if (!ignoreESModuleAnnotation) {
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
-            auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
-            RETURN_IF_EXCEPTION(scope, );
-            if (has) {
+            if (exports->getPropertySlot(globalObject, esModuleMarker, slot)) {
                 JSValue value = slot.getValue(globalObject, esModuleMarker);
                 if (!value.isUndefinedOrNull()) {
                     if (value.pureToBoolean() == TriState::True) {
@@ -993,12 +991,15 @@ void populateESMExports(
                     }
                 }
             }
+            CLEAR_IF_EXCEPTION(scope);
         }
 
         auto* structure = exports->structure();
         uint32_t size = structure->inlineSize() + structure->outOfLineSize();
         exportNames.reserveCapacity(size + 2);
         exportValues.ensureCapacity(size + 2);
+
+        CLEAR_IF_EXCEPTION(scope);
 
         if (hasESModuleMarker) {
             if (canPerformFastEnumeration(structure)) {
@@ -1018,8 +1019,8 @@ void populateESMExports(
             } else {
                 JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
                 exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
-                if (scope.exception() && vm.hasPendingTerminationException()) {
-                    scope.clearException();
+                if (scope.exception()) [[unlikely]] {
+                    if (!vm.hasPendingTerminationException()) scope.clearException();
                     return;
                 }
 
@@ -1032,9 +1033,8 @@ void populateESMExports(
                         continue;
 
                     JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
-                    auto has = exports->getPropertySlot(globalObject, property, slot);
-                    RETURN_IF_EXCEPTION(scope, );
-                    if (!has) continue;
+                    if (!exports->getPropertySlot(globalObject, property, slot))
+                        continue;
 
                     // Allow DontEnum properties which are not getter/setters
                     // https://github.com/oven-sh/bun/issues/4432
@@ -1050,7 +1050,7 @@ void populateESMExports(
 
                     // If it throws, we keep them in the exports list, but mark it as undefined
                     // This is consistent with what Node.js does.
-                    if (scope.exception()) {
+                    if (scope.exception()) [[unlikely]] {
                         scope.clearException();
                         getterResult = jsUndefined();
                     }
@@ -1076,8 +1076,8 @@ void populateESMExports(
         } else {
             JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
             exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
-            if (scope.exception() && vm.hasPendingTerminationException()) {
-                scope.clearException();
+            if (scope.exception()) [[unlikely]] {
+                if (!vm.hasPendingTerminationException()) scope.clearException();
                 return;
             }
 
@@ -1090,9 +1090,8 @@ void populateESMExports(
                     continue;
 
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
-                auto has = exports->getPropertySlot(globalObject, property, slot);
-                RETURN_IF_EXCEPTION(scope, );
-                if (!has) continue;
+                if (!exports->getPropertySlot(globalObject, property, slot))
+                    continue;
 
                 if (slot.attributes() & PropertyAttribute::DontEnum) {
                     // Allow DontEnum properties which are not getter/setters
@@ -1108,7 +1107,7 @@ void populateESMExports(
 
                 // If it throws, we keep them in the exports list, but mark it as undefined
                 // This is consistent with what Node.js does.
-                if (scope.exception()) {
+                if (scope.exception()) [[unlikely]] {
                     scope.clearException();
                     getterResult = jsUndefined();
                 }
@@ -1133,7 +1132,7 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
     auto result = this->exportsObject();
     RETURN_IF_EXCEPTION(scope, );
 
-    RETURN_IF_EXCEPTION(scope, populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation));
+    RELEASE_AND_RETURN(scope, populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation));
 }
 
 void JSCommonJSModule::setExportsObject(JSC::JSValue exportsObject)

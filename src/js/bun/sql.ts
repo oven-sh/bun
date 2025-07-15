@@ -721,7 +721,6 @@ class PooledConnection {
   queryCount: number = 0;
   enablePipelining: boolean = true;
   #onConnected(err, _) {
-    this.connection?.setPipelining(this.enablePipelining);
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onconnect) {
       connectionInfo.onconnect(err);
@@ -796,10 +795,7 @@ class PooledConnection {
     // @ts-ignore
     query.finally(onQueryFinish.bind(this, onClose));
   }
-  setPipelining(pipelining: boolean) {
-    this.enablePipelining = pipelining;
-    this.connection?.setPipelining(pipelining);
-  }
+
   #doRetry() {
     if (this.pool.closed) {
       return;
@@ -910,9 +906,6 @@ class ConnectionPool {
     if (currentQueryCount == 0) {
       connection.flags &= ~PooledConnectionFlags.reserved;
       connection.flags &= ~PooledConnectionFlags.preReserved;
-      if (!connection.enablePipelining) {
-        connection.setPipelining(true);
-      }
     }
     if (this.onAllQueriesFinished) {
       // we are waiting for all queries to finish, lets check if we can call it
@@ -1952,7 +1945,6 @@ function SQL(o, e = {}) {
     if (err) {
       return reject(err);
     }
-    pooledConnection.setPipelining(false);
     const state = {
       connectionState: ReservedConnectionState.acceptQueries,
       reject,

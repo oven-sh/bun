@@ -814,16 +814,6 @@ pub fn doRef(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSEr
     return .js_undefined;
 }
 
-pub fn doSetPipelining(this: *@This(), _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-    const args = callframe.arguments();
-    if (args.len == 0) {
-        return .js_undefined;
-    }
-    const pipelining = args[0].toBoolean();
-    this.flags.disable_pipelining = !pipelining;
-    return .js_undefined;
-}
-
 pub fn doUnref(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     this.poll_ref.unref(this.globalObject.bunVM());
     this.updateHasPendingActivity();
@@ -944,8 +934,7 @@ pub fn hasQueryRunning(this: *PostgresSQLConnection) bool {
 }
 
 pub fn canPipeline(this: *PostgresSQLConnection) bool {
-    return !this.flags.disable_pipelining and // check if pipelining is enabled in the connection
-        this.nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
+    return this.nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
         !this.flags.use_unnamed_prepared_statements and // unnamed statements are not pipelinable
         !this.flags.waiting_to_prepare and // cannot pipeline when waiting prepare
         !this.flags.has_backpressure and // dont make sense to buffer more if we have backpressure
@@ -1204,7 +1193,30 @@ fn advance(this: *PostgresSQLConnection) void {
                 // if we are running, we need to wait for it to be success or fail
                 return;
             },
-            .success, .fail => {
+            .success => {
+                if (req.flags.simple) {
+                    this.nonpipelinable_requests -= 1;
+                } else if (req.flags.pipelined) {
+                    this.pipelined_requests -= 1;
+                } else if (this.flags.waiting_to_prepare) {
+                    this.flags.waiting_to_prepare = false;
+                }
+                if (offset > 0) {
+                    // deinit later
+                    req.status = .fail;
+                    offset += 1;
+                    continue;
+                }
+                req.deref();
+                this.requests.discard(1);
+                continue;
+            },
+            .fail => {
+                if (offset > 0) {
+                    // deinit later
+                    offset += 1;
+                    continue;
+                }
                 req.deref();
                 this.requests.discard(1);
                 continue;

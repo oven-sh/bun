@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { cssInternals } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 import { normalizeBunSnapshot } from "harness";
 
 test("CSS calc with percentage and NaN should not crash", () => {
@@ -7,7 +7,7 @@ test("CSS calc with percentage and NaN should not crash", () => {
   // containing NaN values in percentage contexts. The crash was caused by an
   // unreachable panic in the calc.zig file when trying to convert calc expressions
   // to simple values.
-  
+
   const testCases = [
     "calc(50% + NaN)",
     "calc(50% - NaN)",
@@ -18,14 +18,14 @@ test("CSS calc with percentage and NaN should not crash", () => {
     "calc(NaN * 50%)",
     "calc(NaN / 50%)",
   ];
-  
+
   for (const testCase of testCases) {
     const css = `
       .test {
         color: hsl(200, ${testCase}, 50%);
       }
     `;
-    
+
     // This should not crash - it should either parse successfully or fail gracefully
     try {
       const result = cssInternals._test(css, css);
@@ -55,12 +55,12 @@ test("CSS calc with percentage and NaN - snapshot outputs", () => {
     "calc(50% * Infinity)",
     "calc(50% / Infinity)",
   ];
-  
+
   const results = {};
-  
+
   for (const testCase of testCases) {
     const css = `.test { color: hsl(200, ${testCase}, 50%); }`;
-    
+
     try {
       const result = cssInternals._test(css, css);
       results[testCase] = { success: true, output: result };
@@ -68,6 +68,6 @@ test("CSS calc with percentage and NaN - snapshot outputs", () => {
       results[testCase] = { success: false, error: error.message };
     }
   }
-  
+
   expect(normalizeBunSnapshot(JSON.stringify(results, null, 2))).toMatchSnapshot();
 });

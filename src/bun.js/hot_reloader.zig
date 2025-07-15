@@ -357,10 +357,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     for (parents, 0..) |parent_hash, entry_id| {
                                         if (parent_hash == current_hash) {
                                             const affected_path = file_paths[entry_id];
-                                            const was_deleted = check: {
-                                                std.posix.access(affected_path, std.posix.F_OK) catch break :check true;
-                                                break :check false;
-                                            };
+                                            const was_deleted = !bun.sys.exists(affected_path);
                                             if (!was_deleted) continue;
 
                                             affected_buf[affected_i] = affected_path[file_path.len..];

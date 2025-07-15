@@ -655,7 +655,7 @@ pub const UpgradeCommand = struct {
                     defer save_dir_.deleteTree(version_name) catch {};
 
                     if (err == error.FileNotFound) {
-                        if (std.fs.cwd().access(exe, .{})) {
+                        if (!bun.sys.exists(exe)) {
                             // On systems like NixOS, the FileNotFound is actually the system-wide linker,
                             // as they do not have one (most systems have it at a known path). This is how
                             // ChildProcess returns FileNotFound despite the actual
@@ -674,7 +674,7 @@ pub const UpgradeCommand = struct {
                             , .{});
                             Global.exit(1);
                             return;
-                        } else |_| {}
+                        }
                     }
 
                     Output.prettyErrorln("<r><red>error<r><d>:<r> Failed to verify Bun (code: {s})<r>)", .{@errorName(err)});

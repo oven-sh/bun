@@ -241,8 +241,9 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
         var sliced = try key_file_name.toSlice(global, bun.default_allocator);
         defer sliced.deinit();
         if (sliced.len > 0) {
-            result.key_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
-            if (std.posix.system.access(result.key_file_name, std.posix.F_OK) != 0) {
+            const key_file_name_ = try bun.default_allocator.dupeZ(u8, sliced.slice());
+            result.key_file_name = key_file_name_;
+            if (bun.sys.existsAtType(key_file_name_).unwrapOr(.directory) != .file) {
                 return global.throwInvalidArguments("Unable to access keyFile path", .{});
             }
             any = true;
@@ -333,8 +334,9 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
         var sliced = try cert_file_name.toSlice(global, bun.default_allocator);
         defer sliced.deinit();
         if (sliced.len > 0) {
-            result.cert_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
-            if (std.posix.system.access(result.cert_file_name, std.posix.F_OK) != 0) {
+            const cert_file_name_ = try bun.default_allocator.dupeZ(u8, sliced.slice());
+            result.cert_file_name = cert_file_name_;
+            if (bun.sys.existsAtType(cert_file_name_).unwrapOr(.directory) != .file) {
                 return global.throwInvalidArguments("Unable to access certFile path", .{});
             }
             any = true;
@@ -550,8 +552,9 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
         var sliced = try ca_file_name.toSlice(global, bun.default_allocator);
         defer sliced.deinit();
         if (sliced.len > 0) {
-            result.ca_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
-            if (std.posix.system.access(result.ca_file_name, std.posix.F_OK) != 0) {
+            const ca_file_name_ = try bun.default_allocator.dupeZ(u8, sliced.slice());
+            result.ca_file_name = ca_file_name_;
+            if (bun.sys.existsAtType(ca_file_name_).unwrapOr(.directory) != .file) {
                 return global.throwInvalidArguments("Invalid caFile path", .{});
             }
         }
@@ -581,7 +584,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
             defer sliced.deinit();
             if (sliced.len > 0) {
                 result.dh_params_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
-                if (std.posix.system.access(result.dh_params_file_name, std.posix.F_OK) != 0) {
+                if (bun.sys.existsAtType(result.dh_params_file_name).unwrapOr(.directory) != .file) {
                     return global.throwInvalidArguments("Invalid dhParamsFile path", .{});
                 }
             }

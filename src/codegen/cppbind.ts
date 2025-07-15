@@ -502,16 +502,17 @@ function generateZigFn(
   resultSourceLinks: string[],
   dstDir: string,
 ): void {
+  const returnType = generateZigType(fn.returnType);
   if (fn.tag === "nothrow") {
     if (resultBindings.length) resultBindings.push("");
     resultBindings.push(
       generateZigSourceComment(dstDir, resultSourceLinks, fn),
-      `    pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
+      `    pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`,
     );
   } else if (fn.tag === "check_slow" || fn.tag === "zero_is_throw") {
     if (resultBindings.length) resultBindings.push("");
     resultRaw.push(
-      `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
+      `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`,
     );
     let globalThisArg: CppParameter | undefined;
     for (const param of fn.parameters) {
@@ -524,8 +525,14 @@ function generateZigFn(
     if (!globalThisArg) throwError(fn.position, "no globalThis argument found (required for " + fn.tag + ")");
     resultBindings.push(generateZigSourceComment(dstDir, resultSourceLinks, fn));
     if (fn.tag === "check_slow") {
+      if (returnType === "jsc.JSValue") {
+        appendError(
+          fn.position,
+          "Use ZIG_EXPORT(zero_is_throw) instead of ZIG_EXPORT(check_slow) for functions that return JSValue",
+        );
+      }
       resultBindings.push(
-        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${generateZigType(fn.returnType)} {`,
+        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
         `        var scope: jsc.CatchScope = undefined;`,
         `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
         `        defer scope.deinit();`,
@@ -536,8 +543,11 @@ function generateZigFn(
         `    }`,
       );
     } else if (fn.tag === "zero_is_throw") {
+      if (returnType !== "jsc.JSValue") {
+        appendError(fn.position, "ZIG_EXPORT(zero_is_throw) is only allowed for functions that return JSValue");
+      }
       resultBindings.push(
-        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${generateZigType(fn.returnType)} {`,
+        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
         `        var scope: jsc.ExceptionValidationScope = undefined;`,
         `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
         `        defer scope.deinit();`,

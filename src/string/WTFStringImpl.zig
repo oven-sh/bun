@@ -220,7 +220,7 @@ pub const WTFStringImplStruct = extern struct {
     }
 
     pub fn hasPrefix(self: WTFStringImpl, text: []const u8) bool {
-        return bun.cpp.Bun__WTFStringImpl__hasPrefix(self, &text.ptr[0], text.len);
+        return bun.cpp.Bun__WTFStringImpl__hasPrefix(self, text.ptr, text.len);
     }
 };
 

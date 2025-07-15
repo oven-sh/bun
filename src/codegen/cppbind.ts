@@ -30,6 +30,7 @@ type CppType =
       child: CppType;
       position: Srcloc;
       isConst: boolean;
+      isMany: boolean;
     }
   | {
       type: "named";
@@ -233,6 +234,7 @@ function processDeclarator(
       child: rootmostType,
       position: nodePosition(declarator, ctx),
       isConst,
+      isMany: false,
     });
   }
 
@@ -268,6 +270,15 @@ function processFunction(ctx: ParseContext, node: SyntaxNode, tag: ExportTag): C
     parameters.push({ type: paramDeclarator.type, name: text(name, ctx) });
   }
 
+  for (let i = 0; i < parameters.length; i++) {
+    const param = parameters[i];
+    const next = parameters[i + 1];
+    if (param.type.type === "pointer" && next?.type.type === "named" && next.type.name === "size_t") {
+      param.type.isMany = true;
+      i++;
+    }
+  }
+
   return {
     returnType: declarator.type,
     name: text(nameNode, ctx),
@@ -296,6 +307,8 @@ for (const line of sharedTypesLines) {
 const errorsForTypes: Map<string, PositionedError> = new Map();
 function generateZigType(type: CppType, subLevel?: boolean) {
   if (type.type === "pointer") {
+    if (type.isMany && type.isConst) return `?[*]const ${generateZigType(type.child, true)}`;
+    if (type.isMany) return `?[*]${generateZigType(type.child, true)}`;
     if (type.isConst) return `?*const ${generateZigType(type.child, true)}`;
     return `?*${generateZigType(type.child, true)}`;
   }

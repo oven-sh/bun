@@ -3193,7 +3193,7 @@ fn stringToEquivalentNumberValue(str: []const u8) f64 {
     if (str.len == 0) return 0;
     if (!bun.strings.isAllASCII(str))
         return std.math.nan(f64);
-    return bun.cpp.JSC__jsToNumber(&str.ptr[0], str.len);
+    return bun.cpp.JSC__jsToNumber(str.ptr, str.len);
 }
 
 // @sortImports

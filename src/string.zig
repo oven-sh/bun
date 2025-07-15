@@ -168,7 +168,7 @@ pub const String = extern struct {
     pub fn createLatin1(bytes: []const u8) String {
         JSC.markBinding(@src());
         if (bytes.len == 0) return String.empty;
-        return validateRefCount(bun.cpp.BunString__fromLatin1(&bytes.ptr[0], bytes.len));
+        return validateRefCount(bun.cpp.BunString__fromLatin1(bytes.ptr, bytes.len));
     }
 
     pub inline fn validateRefCount(this: String) String {
@@ -190,9 +190,9 @@ pub const String = extern struct {
     pub fn createUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
         if (bun.strings.firstNonASCII16([]const u16, bytes) == null) {
-            return validateRefCount(bun.cpp.BunString__fromUTF16ToLatin1(&bytes.ptr[0], bytes.len));
+            return validateRefCount(bun.cpp.BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len));
         }
-        return validateRefCount(bun.cpp.BunString__fromUTF16(&bytes.ptr[0], bytes.len));
+        return validateRefCount(bun.cpp.BunString__fromUTF16(bytes.ptr, bytes.len));
     }
 
     pub fn createFormat(comptime fmt: [:0]const u8, args: anytype) OOM!String {
@@ -246,12 +246,12 @@ pub const String = extern struct {
 
     /// Must be given ascii input
     pub fn createAtomASCII(bytes: []const u8) String {
-        return bun.cpp.BunString__createAtom(&bytes.ptr[0], bytes.len);
+        return bun.cpp.BunString__createAtom(bytes.ptr, bytes.len);
     }
 
     /// Will return null if the input is non-ascii or too long
     pub fn tryCreateAtom(bytes: []const u8) ?String {
-        const atom = bun.cpp.BunString__tryCreateAtom(&bytes.ptr[0], bytes.len);
+        const atom = bun.cpp.BunString__tryCreateAtom(bytes.ptr, bytes.len);
         return if (atom.tag == .Dead) null else atom;
     }
 
@@ -827,7 +827,7 @@ pub const String = extern struct {
 
     pub fn createUTF8ForJS(globalObject: *JSC.JSGlobalObject, utf8_slice: []const u8) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        return bun.cpp.BunString__createUTF8ForJS(globalObject, &utf8_slice.ptr[0], utf8_slice.len);
+        return bun.cpp.BunString__createUTF8ForJS(globalObject, utf8_slice.ptr, utf8_slice.len);
     }
 
     pub fn createFormatForJS(globalObject: *JSC.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError!JSC.JSValue {
@@ -835,7 +835,7 @@ pub const String = extern struct {
         var builder = std.ArrayList(u8).init(bun.default_allocator);
         defer builder.deinit();
         builder.writer().print(fmt, args) catch bun.outOfMemory();
-        return bun.cpp.BunString__createUTF8ForJS(globalObject, &builder.items.ptr[0], builder.items.len);
+        return bun.cpp.BunString__createUTF8ForJS(globalObject, builder.items.ptr, builder.items.len);
     }
 
     pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {

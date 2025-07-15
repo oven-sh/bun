@@ -36,6 +36,7 @@ pub const RuntimeFeatureFlag = enum {
     BUN_INTERNAL_BUNX_INSTALL,
     BUN_NO_CODESIGN_MACHO_BINARY,
     BUN_TRACE,
+    NODE_NO_WARNINGS,
 };
 
 /// Enable breaking changes for the next major release of Bun

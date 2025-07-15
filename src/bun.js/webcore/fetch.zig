@@ -1881,6 +1881,11 @@ pub fn Bun__fetch_(
             }
         }
 
+        // If no redirect was found in options/init objects, check the Request object
+        if (request) |req| {
+            break :extract_redirect_type req.redirect;
+        }
+
         break :extract_redirect_type redirect_type;
     };
 

@@ -934,7 +934,7 @@ pub fn hasQueryRunning(this: *PostgresSQLConnection) bool {
 }
 
 pub fn canPipeline(this: *PostgresSQLConnection) bool {
-    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SQL_QUERY_PIPELINE)) {
+    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING)) {
         @branchHint(.unlikely);
         return false;
     }

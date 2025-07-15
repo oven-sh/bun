@@ -536,9 +536,7 @@ pub const Installer = struct {
                     const dependencies = lockfile.buffers.dependencies.items;
 
                     for (entry_dependencies[this.entry_id.get()].slice()) |dep| {
-                        const dep_node_id = entry_node_ids[dep.entry_id.get()];
-                        const dep_dep_id = node_dep_ids[dep_node_id.get()];
-                        const dep_name = dependencies[dep_dep_id].name;
+                        const dep_name = dependencies[dep.dep_id].name;
 
                         var dest: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
                         defer dest.deinit();

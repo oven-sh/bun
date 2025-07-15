@@ -1,12 +1,9 @@
-import { serve, type Server } from "bun";
-import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { serve } from "bun";
+import { describe, expect, it, test } from "bun:test";
 
 // Regression test for issue #17012
 // Connection header should be respected in fetch() requests
 describe("Issue #17012: Connection header ignored in fetch", () => {
-  let server: Server;
-  let port: number;
-
   // Helper function to capture headers from a request
   const makeRequestAndCaptureHeaders = async (request: Request | string, options?: RequestInit): Promise<Record<string, string>> => {
     return new Promise((resolve, reject) => {
@@ -64,23 +61,9 @@ describe("Issue #17012: Connection header ignored in fetch", () => {
     });
   };
 
-  beforeAll(async () => {
-    server = serve({
-      port: 0,
-      fetch() {
-        return new Response("OK");
-      },
-    });
-    port = server.port;
-  });
-
-  afterAll(() => {
-    server?.stop();
-  });
-
   it("should send Connection: close when explicitly set in Request headers", async () => {
     // Reproduce the exact scenario from the issue
-    const request = new Request(`http://localhost:${port}/`, {
+    const request = new Request(`http://localhost:12345/`, {
       headers: {
         'accept':          '-',
         'accept-encoding': '-',
@@ -106,7 +89,7 @@ describe("Issue #17012: Connection header ignored in fetch", () => {
     ["keep-alive", "keep-alive"],
     ["close", "close"],
   ])("should send Connection: %s when explicitly set", async (connectionValue, expectedValue) => {
-    const request = new Request(`http://localhost:${port}/`, {
+    const request = new Request(`http://localhost:12345/`, {
       headers: { 'connection': connectionValue }
     });
 
@@ -115,7 +98,7 @@ describe("Issue #17012: Connection header ignored in fetch", () => {
   });
 
   it("should default to keep-alive when Connection header not provided", async () => {
-    const headers = await makeRequestAndCaptureHeaders(`http://localhost:${port}/`);
+    const headers = await makeRequestAndCaptureHeaders(`http://localhost:12345/`);
     expect(headers.connection).toBe("keep-alive");
   });
 });

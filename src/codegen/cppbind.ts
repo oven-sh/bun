@@ -516,14 +516,13 @@ function generateZigFn(
   dstDir: string,
 ): void {
   const returnType = generateZigType(fn.returnType);
+  if (resultBindings.length) resultBindings.push("");
+  resultBindings.push(generateZigSourceComment(dstDir, resultSourceLinks, fn));
   if (fn.tag === "nothrow") {
-    if (resultBindings.length) resultBindings.push("");
     resultBindings.push(
-      generateZigSourceComment(dstDir, resultSourceLinks, fn),
       `    pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`,
     );
   } else if (fn.tag === "check_slow" || fn.tag === "zero_is_throw") {
-    if (resultBindings.length) resultBindings.push("");
     resultRaw.push(
       `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`,
     );
@@ -536,7 +535,6 @@ function generateZigFn(
       }
     }
     if (!globalThisArg) throwError(fn.position, "no globalThis argument found (required for " + fn.tag + ")");
-    resultBindings.push(generateZigSourceComment(dstDir, resultSourceLinks, fn));
     if (fn.tag === "check_slow") {
       if (returnType === "jsc.JSValue") {
         appendError(

@@ -6589,3 +6589,12 @@ extern "C" double Bun__JSC__operationMathPow(double x, double y)
 {
     return operationMathPow(x, y);
 }
+
+#if !ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__RETURN_IF_EXCEPTION(JSC::JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RETURN_IF_EXCEPTION(scope, true);
+    return false;
+}
+#endif

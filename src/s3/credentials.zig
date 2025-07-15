@@ -408,6 +408,7 @@ pub const S3Credentials = struct {
         method: bun.http.Method,
         content_hash: ?[]const u8 = null,
         content_md5: ?[]const u8 = null,
+        content_length: ?u64 = null,
         search_params: ?[]const u8 = null,
         content_disposition: ?[]const u8 = null,
         acl: ?ACL = null,
@@ -501,6 +502,7 @@ pub const S3Credentials = struct {
         const request_path = signOptions.path;
         const content_hash = signOptions.content_hash;
         var content_md5 = signOptions.content_md5;
+        const content_length = signOptions.content_length;
 
         if (content_md5) |content_md5_val| {
             const len = bun.base64.encodeLen(content_md5_val);
@@ -629,126 +631,255 @@ pub const S3Credentials = struct {
 
         const amz_day = amz_date[0..8];
         const signed_headers = if (signQuery) "host" else brk: {
-            if (content_md5 != null) {
-                if (storage_class != null) {
-                    if (acl != null) {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+            if (content_length != null and (method == .PUT or method == .POST)) {
+                 if (content_md5 != null) {
+                    if (storage_class != null) {
+                        if (acl != null) {
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;content-length;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-disposition;content-length;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             } else {
-                                break :brk "content-disposition;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                if (session_token != null) {
+                                    break :brk "content-length;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-length;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             }
                         } else {
-                            if (session_token != null) {
-                                break :brk "content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                            // ... (repeat for all combinations with content-length)
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;content-length;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-disposition;content-length;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             } else {
-                                break :brk "content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                if (session_token != null) {
+                                    break :brk "content-length;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-length;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             }
                         }
-                    } else {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                    } else { // no storage_class
+                        if (acl != null) {
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;content-length;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-disposition;content-length;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                                }
                             } else {
-                                break :brk "content-disposition;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                if (session_token != null) {
+                                    break :brk "content-length;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-length;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                                }
                             }
-                        } else {
-                            if (session_token != null) {
-                                break :brk "content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
-                            } else {
-                                break :brk "content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                        } else { // no acl
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;content-length;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-disposition;content-length;content-md5;host;x-amz-content-sha256;x-amz-date";
+                                }
+                            } else { // no content_disposition
+                                if (session_token != null) {
+                                    break :brk "content-length;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-length;content-md5;host;x-amz-content-sha256;x-amz-date";
+                                }
                             }
                         }
                     }
-                } else {
-                    if (acl != null) {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                } else { // no content_md5
+                    if (storage_class != null) {
+                        if (acl != null) {
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;content-length;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-disposition;content-length;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             } else {
-                                break :brk "content-disposition;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                                if (session_token != null) {
+                                    break :brk "content-length;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-length;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             }
-                        } else {
-                            if (session_token != null) {
-                                break :brk "content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
-                            } else {
-                                break :brk "content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                        } else { // no acl
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;content-length;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-disposition;content-length;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
+                            } else { // no content_disposition
+                                if (session_token != null) {
+                                    break :brk "content-length;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-length;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             }
                         }
-                    } else {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                    } else { // no storage_class
+                         if (acl != null) {
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;content-length;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-disposition;content-length;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                                }
                             } else {
-                                break :brk "content-disposition;content-md5;host;x-amz-content-sha256;x-amz-date";
+                                if (session_token != null) {
+                                    break :brk "content-length;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-length;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                                }
                             }
-                        } else {
-                            if (session_token != null) {
-                                break :brk "content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
-                            } else {
-                                break :brk "content-md5;host;x-amz-content-sha256;x-amz-date";
+                        } else { // no acl
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;content-length;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-disposition;content-length;host;x-amz-content-sha256;x-amz-date";
+                                }
+                            } else { // no content_disposition
+                                if (session_token != null) {
+                                    break :brk "content-length;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-length;host;x-amz-content-sha256;x-amz-date";
+                                }
                             }
                         }
                     }
                 }
-            } else {
-                if (storage_class != null) {
-                    if (acl != null) {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+            } else { // No content_length or not PUT/POST
+                if (content_md5 != null) {
+                    if (storage_class != null) {
+                        if (acl != null) {
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-disposition;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             } else {
-                                break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                if (session_token != null) {
+                                    break :brk "content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             }
                         } else {
-                            if (session_token != null) {
-                                break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-disposition;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             } else {
-                                break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                if (session_token != null) {
+                                    break :brk "content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             }
                         }
                     } else {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                        if (acl != null) {
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-disposition;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                                }
                             } else {
-                                break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                if (session_token != null) {
+                                    break :brk "content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                                }
                             }
                         } else {
-                            if (session_token != null) {
-                                break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-disposition;content-md5;host;x-amz-content-sha256;x-amz-date";
+                                }
                             } else {
-                                break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                if (session_token != null) {
+                                    break :brk "content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-md5;host;x-amz-content-sha256;x-amz-date";
+                                }
                             }
                         }
                     }
                 } else {
-                    if (acl != null) {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                    if (storage_class != null) {
+                        if (acl != null) {
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             } else {
-                                break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                                if (session_token != null) {
+                                    break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             }
                         } else {
-                            if (session_token != null) {
-                                break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             } else {
-                                break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                                if (session_token != null) {
+                                    break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
+                                } else {
+                                    break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
+                                }
                             }
                         }
                     } else {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                        if (acl != null) {
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                                }
                             } else {
-                                break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date";
+                                if (session_token != null) {
+                                    break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date";
+                                }
                             }
                         } else {
-                            if (session_token != null) {
-                                break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                            if (content_disposition != null) {
+                                if (session_token != null) {
+                                    break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date";
+                                }
                             } else {
-                                break :brk "host;x-amz-content-sha256;x-amz-date";
+                                if (session_token != null) {
+                                    break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
+                                } else {
+                                    break :brk "host;x-amz-content-sha256;x-amz-date";
+                                }
                             }
                         }
                     }
@@ -794,342 +925,94 @@ pub const S3Credentials = struct {
                 if (content_md5) |content_md5_value| {
                     encoded_content_md5 = encodeURIComponent(content_md5_value, &content_md5_encoded_buffer, true) catch return error.FailedToGenerateSignature;
                 }
+                var content_length_str_buffer: [20]u8 = undefined; // Max u64 is 20 digits
+                var content_length_str: ?[]const u8 = null;
+                if (content_length) |cl| {
+                    content_length_str = std.fmt.bufPrint(&content_length_str_buffer, "{d}", .{cl}) catch ""; // Should not fail
+                }
 
-                const canonical = brk_canonical: {
-                    if (encoded_content_md5) |encoded_content_md5_value| {
-                        if (storage_class) |storage_class_value| {
-                            if (acl) |acl_value| {
-                                if (encoded_session_token) |token| {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nContent-MD5={s}&X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&x-amz-storage-class={s}\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, encoded_content_md5_value, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, storage_class_value, host, signed_headers, aws_content_hash });
-                                } else {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nContent-MD5={s}&X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&x-amz-storage-class={s}\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, encoded_content_md5_value, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, storage_class_value, host, signed_headers, aws_content_hash });
-                                }
-                            } else {
-                                if (encoded_session_token) |token| {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nContent-MD5={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&x-amz-storage-class={s}\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, encoded_content_md5_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, storage_class_value, host, signed_headers, aws_content_hash });
-                                } else {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nContent-MD5={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&x-amz-storage-class={s}\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, encoded_content_md5_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, storage_class_value, host, signed_headers, aws_content_hash });
-                                }
-                            }
-                        } else {
-                            if (acl) |acl_value| {
-                                if (encoded_session_token) |token| {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nContent-MD5={s}&X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, encoded_content_md5_value, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, host, signed_headers, aws_content_hash });
-                                } else {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nContent-MD5={s}&X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, encoded_content_md5_value, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signed_headers, aws_content_hash });
-                                }
-                            } else {
-                                if (encoded_session_token) |token| {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nContent-MD5={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, encoded_content_md5_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, host, signed_headers, aws_content_hash });
-                                } else {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nContent-MD5={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, encoded_content_md5_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signed_headers, aws_content_hash });
-                                }
-                            }
-                        }
-                    } else {
-                        if (storage_class) |storage_class_value| {
-                            if (acl) |acl_value| {
-                                if (encoded_session_token) |token| {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&x-amz-storage-class={s}\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, storage_class_value, host, signed_headers, aws_content_hash });
-                                } else {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&x-amz-storage-class={s}\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, storage_class_value, host, signed_headers, aws_content_hash });
-                                }
-                            } else {
-                                if (encoded_session_token) |token| {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&x-amz-storage-class={s}\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, storage_class_value, host, signed_headers, aws_content_hash });
-                                } else {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&x-amz-storage-class={s}\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, storage_class_value, host, signed_headers, aws_content_hash });
-                                }
-                            }
-                        } else {
-                            if (acl) |acl_value| {
-                                if (encoded_session_token) |token| {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, host, signed_headers, aws_content_hash });
-                                } else {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signed_headers, aws_content_hash });
-                                }
-                            } else {
-                                if (encoded_session_token) |token| {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, host, signed_headers, aws_content_hash });
-                                } else {
-                                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, host, signed_headers, aws_content_hash });
-                                }
-                            }
+
+                const canonical_query_params = brk_canonical_query: {
+                    var writer = std.ArrayList(u8).init(bun.default_allocator);
+                    defer writer.deinit();
+                    const stream = writer.writer();
+
+                    if (acl) |acl_value| {
+                        try stream.print("X-Amz-Acl={s}&", .{acl_value});
+                    }
+                    try stream.print("X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={d}", .{ this.accessKeyId, amz_day, region, service_name, amz_date, expires });
+
+                    if (encoded_session_token) |token| {
+                        try stream.print("&X-Amz-Security-Token={s}", .{token});
+                    }
+                    try stream.print("&X-Amz-SignedHeaders=host", .{});
+                     if (storage_class) |sc_val| {
+                        try stream.print("&x-amz-storage-class={s}", .{sc_val});
+                    }
+                    if (encoded_content_md5) |md5_val| {
+                         try stream.print("&Content-MD5={s}", .{md5_val});
+                    }
+                    if (content_length_str) |cl_str| {
+                        if (method == .PUT or method == .POST) {
+                             try stream.print("&Content-Length={s}", .{cl_str});
                         }
                     }
+                    // Note: content_disposition is not typically part of presigned URL query parameters for uploads, but rather a header.
+                    // If it needs to be included, it would be similar to the above.
+                    break :brk_canonical_query writer.toOwnedSlice() catch bun.outOfMemory();
                 };
+                defer bun.default_allocator.free(canonical_query_params);
+
+
+                const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\\n{s}\\n{s}\\nhost:{s}\\n\\n{s}\\n{s}", .{ method_name, normalizedPath, canonical_query_params, host, signed_headers, aws_content_hash });
+
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
+
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
 
                 const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, std.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
 
                 const signature = bun.hmac.generate(sigDateRegionServiceReq, signValue, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
 
-                if (encoded_content_md5) |encoded_content_md5_value| {
-                    if (storage_class) |storage_class_value| {
-                        if (acl) |acl_value| {
-                            if (encoded_session_token) |token| {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?X-Amz-Acl={s}&x-amz-storage-class={s}&Content-MD5={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, acl_value, storage_class_value, encoded_content_md5_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            } else {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?X-Amz-Acl={s}&x-amz-storage-class={s}&Content-MD5={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, acl_value, storage_class_value, encoded_content_md5_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            }
-                        } else {
-                            if (encoded_session_token) |token| {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?x-amz-storage-class={s}&Content-MD5={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, storage_class_value, encoded_content_md5_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            } else {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?x-amz-storage-class={s}&Content-MD5={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, storage_class_value, encoded_content_md5_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            }
-                        }
-                    } else {
-                        if (acl) |acl_value| {
-                            if (encoded_session_token) |token| {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?X-Amz-Acl={s}&Content-MD5={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, acl_value, encoded_content_md5_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            } else {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?X-Amz-Acl={s}&Content-MD5={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, acl_value, encoded_content_md5_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            }
-                        } else {
-                            if (encoded_session_token) |token| {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&Content-MD5={s}&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, encoded_content_md5_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            } else {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&Content-MD5={s}&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, encoded_content_md5_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            }
-                        }
-                    }
-                } else {
-                    if (storage_class) |storage_class_value| {
-                        if (acl) |acl_value| {
-                            if (encoded_session_token) |token| {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?X-Amz-Acl={s}&x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            } else {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?X-Amz-Acl={s}&x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            }
-                        } else {
-                            if (encoded_session_token) |token| {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            } else {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            }
-                        }
-                    } else {
-                        if (acl) |acl_value| {
-                            if (encoded_session_token) |token| {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            } else {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            }
-                        } else {
-                            if (encoded_session_token) |token| {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            } else {
-                                break :brk try std.fmt.allocPrint(
-                                    bun.default_allocator,
-                                    "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                    .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
-                                );
-                            }
-                        }
-                    }
-                }
-            } else {
+                break :brk try std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "{s}://{s}{s}?{s}&X-Amz-Signature={s}",
+                    .{ protocol, host, normalizedPath, canonical_query_params, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                );
+
+            } else { // Not signQuery
                 var encoded_content_disposition_buffer: [255]u8 = undefined;
-                const encoded_content_disposition: []const u8 = if (content_disposition) |cd| encodeURIComponent(cd, &encoded_content_disposition_buffer, true) catch return error.ContentTypeIsTooLong else "";
-                const canonical = brk_canonical: {
-                    if (content_md5) |content_md5_value| {
-                        if (storage_class) |storage_class_value| {
-                            if (acl) |acl_value| {
-                                if (content_disposition != null) {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, content_md5_value, host, acl_value, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, content_md5_value, host, acl_value, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, acl_value, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, acl_value, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            } else {
-                                if (content_disposition != null) {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, content_md5_value, host, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, content_md5_value, host, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            }
-                        } else {
-                            if (acl) |acl_value| {
-                                if (content_disposition != null) {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, content_md5_value, host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, content_md5_value, host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            } else {
-                                if (content_disposition != null) {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, content_md5_value, host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, content_md5_value, host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{
-                                            method_name,
-                                            normalizedPath,
-                                            if (search_params) |p| p[1..] else "",
-                                            content_md5_value,
-                                            host,
-                                            aws_content_hash,
-                                            amz_date,
-                                            signed_headers,
-                                            aws_content_hash,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        if (storage_class) |storage_class_value| {
-                            if (acl) |acl_value| {
-                                if (content_disposition != null) {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, acl_value, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, acl_value, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            } else {
-                                if (content_disposition != null) {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            }
-                        } else {
-                            if (acl) |acl_value| {
-                                if (content_disposition != null) {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            } else {
-                                if (content_disposition != null) {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", encoded_content_disposition, host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            }
-                        }
+                const canonical_headers = brk_canonical_headers: {
+                    var writer = std.ArrayList(u8).init(bun.default_allocator);
+                    defer writer.deinit();
+                    const stream = writer.writer();
+                    if (content_disposition) |cd| {
+                        const encoded_cd = encodeURIComponent(cd, &encoded_content_disposition_buffer, true) catch return error.ContentTypeIsTooLong;
+                        try stream.print("content-disposition:{s}\\n", .{encoded_cd});
                     }
+                    if (content_length != null and (method == .PUT or method == .POST)) {
+                        try stream.print("content-length:{d}\\n", .{content_length.?});
+                    }
+                    if (content_md5) |md5| {
+                        try stream.print("content-md5:{s}\\n", .{md5});
+                    }
+                    try stream.print("host:{s}\\n", .{host});
+                    if (acl) |acl_value| {
+                        try stream.print("x-amz-acl:{s}\\n", .{acl_value});
+                    }
+                    try stream.print("x-amz-content-sha256:{s}\\nx-amz-date:{s}\\n", .{aws_content_hash, amz_date});
+                    if (session_token) |token| {
+                        try stream.print("x-amz-security-token:{s}\\n", .{token});
+                    }
+                    if (storage_class) |sc| {
+                        try stream.print("x-amz-storage-class:{s}\\n", .{sc});
+                    }
+                    break :brk_canonical_headers writer.toOwnedSlice() catch bun.outOfMemory();
                 };
+                defer bun.default_allocator.free(canonical_headers);
+
+                const canonical = try std.fmt.bufPrint(&tmp_buffer, "{s}\\n{s}\\n{s}\\n{s}\\n{s}\\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", canonical_headers, signed_headers, aws_content_hash });
+
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
 
@@ -1209,6 +1092,15 @@ pub const S3Credentials = struct {
             result.content_md5 = content_md5_value;
             result._headers[result._headers_len] = .{ .name = "content-md5", .value = content_md5_value };
             result._headers_len += 1;
+        }
+
+        if (content_length) |cl| {
+            if (method == .PUT or method == .POST) {
+                 var cl_buf: [20]u8 = undefined;
+                 const cl_str = std.fmt.bufPrint(&cl_buf, "{d}", .{cl}) catch ""; // Should not fail
+                 result._headers[result._headers_len] = .{ .name = "Content-Length", .value = bun.default_allocator.dupe(u8, cl_str) catch bun.outOfMemory() };
+                 result._headers_len += 1;
+            }
         }
 
         return result;

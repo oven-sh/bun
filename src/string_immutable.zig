@@ -741,10 +741,6 @@ pub fn endsWithComptime(self: string, comptime str: anytype) callconv(bun.callco
     return self.len >= str.len and eqlComptimeIgnoreLen(self[self.len - str.len .. self.len], comptime str);
 }
 
-pub fn startsWithComptime(self: string, comptime str: anytype) callconv(bun.callconv_inline) bool {
-    return self.len >= str.len and eqlComptimeIgnoreLen(self[0..str.len], comptime str);
-}
-
 pub fn startsWithChar(self: string, char: u8) callconv(bun.callconv_inline) bool {
     return self.len > 0 and self[0] == char;
 }

@@ -327,7 +327,7 @@ pub const WhyCommand = struct {
                     .spec = spec,
                     .dep_type = dep_type,
                     .pkg_id = @as(PackageID, @intCast(pkg_idx)),
-                    .workspace = strings.startsWithComptime(dep_pkg_version, "workspace:") or dep_pkg_version.len == 0,
+                    .workspace = strings.hasPrefixComptime(dep_pkg_version, "workspace:") or dep_pkg_version.len == 0,
                 });
             }
 

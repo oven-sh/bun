@@ -5,7 +5,10 @@ import { describe, expect, it, test } from "bun:test";
 // Connection header should be respected in fetch() requests
 describe("Issue #17012: Connection header ignored in fetch", () => {
   // Helper function to capture headers from a request
-  const makeRequestAndCaptureHeaders = async (request: Request | string, options?: RequestInit): Promise<Record<string, string>> => {
+  const makeRequestAndCaptureHeaders = async (
+    request: Request | string,
+    options?: RequestInit,
+  ): Promise<Record<string, string>> => {
     return new Promise((resolve, reject) => {
       // Create a temporary server to capture headers
       const tempServer = serve({
@@ -20,9 +23,9 @@ describe("Issue #17012: Connection header ignored in fetch", () => {
           return new Response("OK");
         },
       });
-      
+
       const tempPort = tempServer.port;
-      
+
       // Make the request to temp server
       if (typeof request === "string") {
         // URL string case
@@ -39,12 +42,12 @@ describe("Issue #17012: Connection header ignored in fetch", () => {
             reject(error);
           });
       } else {
-        // Request object case - extract headers and make new request to temp server  
+        // Request object case - extract headers and make new request to temp server
         const headers: Record<string, string> = {};
         for (const [name, value] of request.headers.entries()) {
           headers[name] = value;
         }
-        
+
         const url = `http://localhost:${tempPort}/`;
         fetch(url, { headers })
           .then(response => {
@@ -65,18 +68,18 @@ describe("Issue #17012: Connection header ignored in fetch", () => {
     // Reproduce the exact scenario from the issue
     const request = new Request(`http://localhost:12345/`, {
       headers: {
-        'accept':          '-',
-        'accept-encoding': '-',
-        'accept-language': '-',
-        'connection':      'close',                     // This should NOT be ignored
-        'user-agent':      '-',
-        'x-version-node':  process.versions.node,
-        'x-version-bun':   process.versions.bun || '',
-      }
+        "accept": "-",
+        "accept-encoding": "-",
+        "accept-language": "-",
+        "connection": "close", // This should NOT be ignored
+        "user-agent": "-",
+        "x-version-node": process.versions.node,
+        "x-version-bun": process.versions.bun || "",
+      },
     });
 
     const headers = await makeRequestAndCaptureHeaders(request);
-    
+
     // The bug was that 'keep-alive' was always sent instead of 'close'
     expect(headers.connection).toBe("close");
     expect(headers.accept).toBe("-");
@@ -90,7 +93,7 @@ describe("Issue #17012: Connection header ignored in fetch", () => {
     ["close", "close"],
   ])("should send Connection: %s when explicitly set", async (connectionValue, expectedValue) => {
     const request = new Request(`http://localhost:12345/`, {
-      headers: { 'connection': connectionValue }
+      headers: { "connection": connectionValue },
     });
 
     const headers = await makeRequestAndCaptureHeaders(request);

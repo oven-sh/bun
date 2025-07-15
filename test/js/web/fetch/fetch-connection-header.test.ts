@@ -1,4 +1,4 @@
-import { serve, type Server } from "bun";
+import { serve } from "bun";
 import { afterAll, describe, expect, it, test } from "bun:test";
 
 describe("fetch Connection header", () => {
@@ -22,10 +22,10 @@ describe("fetch Connection header", () => {
           return new Response("OK");
         },
       });
-      
+
       const tempPort = tempServer.port;
       const url = `http://localhost:${tempPort}/test`;
-      
+
       // Make the request to temp server
       fetch(url, fetchOptions)
         .then(response => {
@@ -43,14 +43,14 @@ describe("fetch Connection header", () => {
 
   test.each([
     ["close", "close"],
-    ["keep-alive", "keep-alive"], 
+    ["keep-alive", "keep-alive"],
     ["upgrade", "upgrade"],
     ["Upgrade", "Upgrade"], // Test case preservation
   ])("should respect Connection: %s header", async (inputValue, expectedValue) => {
     const headers = await captureHeadersFromRequest({
       headers: { Connection: inputValue },
     });
-    
+
     expect(headers.connection).toBe(expectedValue);
   });
 
@@ -62,7 +62,7 @@ describe("fetch Connection header", () => {
     const headers = await captureHeadersFromRequest({
       headers: { [headerName]: expectedValue },
     });
-    
+
     expect(headers.connection).toBe(expectedValue);
   });
 
@@ -82,7 +82,7 @@ describe("fetch Connection header", () => {
     const headers = await captureHeadersFromRequest({
       headers: {
         "accept": "application/json",
-        "accept-encoding": "gzip, deflate", 
+        "accept-encoding": "gzip, deflate",
         "accept-language": "en-US",
         "connection": "close",
         "user-agent": "test-agent",

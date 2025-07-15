@@ -95,7 +95,7 @@ pub const BunObject = struct {
     fn toJSGetter(comptime getter: anytype) LazyPropertyCallback {
         return struct {
             pub fn callback(this: *JSC.JSGlobalObject, object: *JSC.JSObject) callconv(JSC.conv) JSValue {
-                return bun.jsc.toJSHostValue(this, getter(this, object));
+                return bun.jsc.toJSHostCall(this, @src(), getter, .{ this, object });
             }
         }.callback;
     }
@@ -199,7 +199,7 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
         if (!result) {
             return globalThis.throw("String has invalid utf-16: {s}", .{bunstr.byteSlice()});
         }
-        var str = bun.String.createUTF8(outbuf.items[0..]);
+        var str = bun.String.cloneUTF8(outbuf.items[0..]);
         return str.transferToJS(globalThis);
     }
 
@@ -271,8 +271,8 @@ pub fn braces(global: *JSC.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
 
 pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments_ = callframe.arguments_old(2);
-    const path_buf = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(path_buf);
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
     var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
@@ -381,7 +381,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     const writer = buffered_writer.writer();
     const Writer = @TypeOf(writer);
     const properties: JSValue = if (arguments[1].jsType().isArray()) arguments[1] else .js_undefined;
-    var table_printer = ConsoleObject.TablePrinter.init(
+    var table_printer = try ConsoleObject.TablePrinter.init(
         globalThis,
         .Log,
         value,
@@ -472,7 +472,7 @@ export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
     defer formatter.deinit();
     writer.print("{}", .{value.toFmt(&formatter)}) catch return .empty;
     buffered_writer.flush() catch return .empty;
-    return bun.String.createUTF8(array.slice());
+    return bun.String.cloneUTF8(array.slice());
 }
 
 export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String {
@@ -492,7 +492,7 @@ export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) b
     }) catch return .empty;
     if (globalThis.hasException()) return .empty;
     buffered_writer.flush() catch return .empty;
-    return bun.String.createUTF8(array.slice());
+    return bun.String.cloneUTF8(array.slice());
 }
 
 pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -606,7 +606,7 @@ pub fn getMain(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
             if (comptime Environment.isWindows) {
                 var wpath: bun.WPathBuffer = undefined;
                 const fdpath = bun.getFdPathW(fd, &wpath) catch break :use_resolved_path;
-                vm.main_resolved_path = bun.String.createUTF16(fdpath);
+                vm.main_resolved_path = bun.String.cloneUTF16(fdpath);
             } else {
                 var path: bun.PathBuffer = undefined;
                 const fdpath = bun.getFdPath(fd, &path) catch break :use_resolved_path;
@@ -615,7 +615,7 @@ pub fn getMain(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
                 if (bun.String.tryCreateAtom(fdpath)) |atom| {
                     vm.main_resolved_path = atom;
                 } else {
-                    vm.main_resolved_path = bun.String.createUTF8(fdpath);
+                    vm.main_resolved_path = bun.String.cloneUTF8(fdpath);
                 }
             }
         }
@@ -762,7 +762,7 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     }
 
     //NOTE: if argument is > max(i32) then it will be truncated
-    const milliseconds = arg.coerce(i32, globalObject);
+    const milliseconds = try arg.coerce(i32, globalObject);
     if (milliseconds < 0) {
         return globalObject.throwInvalidArguments("argument to sleepSync must not be negative, got {d}", .{milliseconds});
     }
@@ -847,7 +847,7 @@ fn doResolveWithArgs(ctx: *JSC.JSGlobalObject, specifier: bun.String, from: bun.
     );
 
     if (!errorable.success) {
-        return ctx.throwValue(bun.cast(JSC.C.JSValueRef, errorable.result.err.ptr.?).?.value());
+        return ctx.throwValue(errorable.result.err.value);
     }
 
     if (query_string.len > 0) {
@@ -905,7 +905,7 @@ export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: 
     const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
 
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
+    return JSC.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier_str, source_str, is_esm, true, is_user_require_resolve });
 }
 
 export fn Bun__resolveSyncWithPaths(
@@ -934,12 +934,12 @@ export fn Bun__resolveSyncWithPaths(
     bun_vm.transpiler.resolver.custom_dir_paths = paths;
     defer bun_vm.transpiler.resolver.custom_dir_paths = null;
 
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
+    return JSC.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier_str, source_str, is_esm, true, is_user_require_resolve });
 }
 
 export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, is_esm: bool) JSC.JSValue {
     Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier.*, source.*, is_esm, true, false));
+    return JSC.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier.*, source.*, is_esm, true, false });
 }
 
 export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue, source: *bun.String, is_esm: bool, is_user_require_resolve: bool) JSC.JSValue {
@@ -948,7 +948,7 @@ export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue
     if (specifier_str.length() == 0) {
         return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true, is_user_require_resolve));
+    return JSC.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier_str, source.*, is_esm, true, is_user_require_resolve });
 }
 
 pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1184,7 +1184,6 @@ pub fn allocUnsafe(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     if (!size.isUInt32AsAnyInt()) {
         return globalThis.throwInvalidArguments("Expected a positive number", .{});
     }
-
     return JSC.JSValue.createUninitializedUint8Array(globalThis, size.toUInt64NoTruncate());
 }
 
@@ -1249,15 +1248,16 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
         .result => |map| map,
 
         .err => |err| {
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
     };
 
-    return JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(globalThis, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array, @as(?*anyopaque, @ptrCast(map.ptr)), map.len, struct {
+    const S = struct {
         pub fn x(ptr: ?*anyopaque, size: ?*anyopaque) callconv(.C) void {
-            _ = bun.sys.munmap(@as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
+            _ = bun.sys.munmap(@as([*]align(std.heap.page_size_min) const u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
         }
-    }.x, @as(?*anyopaque, @ptrFromInt(map.len)), null).?.value();
+    };
+    return bun.jsc.array_buffer.makeTypedArrayWithBytesNoCopy(globalThis, .TypeUint8, map.ptr, map.len, S.x, @ptrFromInt(map.len));
 }
 
 pub fn getTranspilerConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -1315,7 +1315,7 @@ pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) bun.J
         // We don't really do that right now, but exposing the output source
         // code here as an easily accessible Blob is even worse for them.
         // So let's omit any source code files from the list.
-        if (unsorted_files[index].loader.isJavaScriptLike()) continue;
+        if (!unsorted_files[index].appearsInEmbeddedFilesArray()) continue;
         sort_indices.appendAssumeCapacity(@intCast(index));
     }
 
@@ -1329,7 +1329,7 @@ pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) bun.J
         const blob = JSC.WebCore.Blob.new(input_blob.dupeWithContentType(true));
         blob.allocator = bun.default_allocator;
         blob.name = input_blob.name.dupeRef();
-        array.putIndex(globalThis, i, blob.toJS(globalThis));
+        try array.putIndex(globalThis, i, blob.toJS(globalThis));
         i += 1;
     }
 
@@ -1507,21 +1507,21 @@ pub const JSZlib = struct {
         var library: Library = .zlib;
         if (options_val_) |options_val| {
             if (try options_val.get(globalThis, "windowBits")) |window| {
-                opts.windowBits = window.coerce(i32, globalThis);
+                opts.windowBits = try window.coerce(i32, globalThis);
                 library = .zlib;
             }
 
             if (try options_val.get(globalThis, "level")) |level| {
-                opts.level = level.coerce(i32, globalThis);
+                opts.level = try level.coerce(i32, globalThis);
             }
 
             if (try options_val.get(globalThis, "memLevel")) |memLevel| {
-                opts.memLevel = memLevel.coerce(i32, globalThis);
+                opts.memLevel = try memLevel.coerce(i32, globalThis);
                 library = .zlib;
             }
 
             if (try options_val.get(globalThis, "strategy")) |strategy| {
-                opts.strategy = strategy.coerce(i32, globalThis);
+                opts.strategy = try strategy.coerce(i32, globalThis);
                 library = .zlib;
             }
 
@@ -1580,7 +1580,7 @@ pub const JSZlib = struct {
                 reader.list_ptr = &reader.list;
 
                 var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
-                return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
+                return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator);
             },
             .libdeflate => {
                 var decompressor: *bun.libdeflate.Decompressor = bun.libdeflate.Decompressor.alloc() orelse {
@@ -1616,7 +1616,7 @@ pub const JSZlib = struct {
                 }
 
                 var array_buffer = JSC.ArrayBuffer.fromBytes(list.items, .Uint8Array);
-                return array_buffer.toJSWithContext(globalThis, list.items.ptr, global_deallocator, null);
+                return array_buffer.toJSWithContext(globalThis, list.items.ptr, global_deallocator);
             },
         }
     }
@@ -1633,7 +1633,7 @@ pub const JSZlib = struct {
 
         if (options_val_) |options_val| {
             if (try options_val.get(globalThis, "windowBits")) |window| {
-                windowBits = window.coerce(i32, globalThis);
+                windowBits = try window.coerce(i32, globalThis);
                 library = .zlib;
             }
 
@@ -1648,7 +1648,7 @@ pub const JSZlib = struct {
             }
 
             if (try options_val.get(globalThis, "level")) |level_value| {
-                level = level_value.coerce(i32, globalThis);
+                level = try level_value.coerce(i32, globalThis);
                 if (globalThis.hasException()) return .zero;
             }
         }
@@ -1687,7 +1687,7 @@ pub const JSZlib = struct {
                 reader.list_ptr = &reader.list;
 
                 var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
-                return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
+                return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator);
             },
             .libdeflate => {
                 var compressor: *bun.libdeflate.Compressor = bun.libdeflate.Compressor.alloc(level orelse 6) orelse {
@@ -1717,7 +1717,7 @@ pub const JSZlib = struct {
                 }
 
                 var array_buffer = JSC.ArrayBuffer.fromBytes(list.items, .Uint8Array);
-                return array_buffer.toJSWithContext(globalThis, list.items.ptr, global_deallocator, null);
+                return array_buffer.toJSWithContext(globalThis, list.items.ptr, global_deallocator);
             },
         }
     }
@@ -1749,7 +1749,7 @@ pub const JSZstd = struct {
     fn getLevel(globalThis: *JSGlobalObject, options_val: ?JSValue) bun.JSError!i32 {
         if (options_val) |option_obj| {
             if (try option_obj.get(globalThis, "level")) |level_val| {
-                const value = level_val.coerce(i32, globalThis);
+                const value = try level_val.coerce(i32, globalThis);
                 if (globalThis.hasException()) return error.JSError;
 
                 if (value < 1 or value > 22) {
@@ -1948,15 +1948,6 @@ pub const JSZstd = struct {
 
             const output_slice = this.output;
             const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
-            if (globalThis.hasException()) {
-                promise.reject(globalThis, error.JSError);
-                return;
-            }
-            if (buffer_value == .zero) {
-                promise.reject(globalThis, ZigString.init("Failed to create buffer").toErrorInstance(globalThis));
-                return;
-            }
-
             this.output = &[_]u8{};
             promise.resolve(globalThis, buffer_value);
         }

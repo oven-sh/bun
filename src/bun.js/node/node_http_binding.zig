@@ -35,7 +35,7 @@ pub fn setMaxHTTPHeaderSize(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
         return globalThis.throwNotEnoughArguments("setMaxHTTPHeaderSize", 1, arguments.len);
     }
     const value = arguments[0];
-    const num = value.coerceToInt64(globalThis);
+    const num = try value.coerceToInt64(globalThis);
     if (num <= 0) {
         return globalThis.throwInvalidArgumentTypeValue("maxHeaderSize", "non-negative integer", value);
     }

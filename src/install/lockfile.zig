@@ -26,15 +26,52 @@ patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
 
+node_linker: NodeLinker = .auto,
+
+pub const NodeLinker = enum(u8) {
+    // If workspaces are used: isolated
+    // If not: hoisted
+    // Used when nodeLinker is absent from package.json/bun.lock/bun.lockb
+    auto,
+
+    hoisted,
+    isolated,
+
+    pub fn fromStr(input: string) ?NodeLinker {
+        if (strings.eqlComptime(input, "hoisted")) {
+            return .hoisted;
+        }
+        if (strings.eqlComptime(input, "isolated")) {
+            return .isolated;
+        }
+        return null;
+    }
+};
+
+pub const DepSorter = struct {
+    lockfile: *const Lockfile,
+
+    pub fn isLessThan(sorter: @This(), l: DependencyID, r: DependencyID) bool {
+        const deps_buf = sorter.lockfile.buffers.dependencies.items;
+        const string_buf = sorter.lockfile.buffers.string_bytes.items;
+
+        const l_dep = &deps_buf[l];
+        const r_dep = &deps_buf[r];
+
+        return switch (l_dep.behavior.cmp(r_dep.behavior)) {
+            .lt => true,
+            .gt => false,
+            .eq => strings.order(l_dep.name.slice(string_buf), r_dep.name.slice(string_buf)) == .lt,
+        };
+    }
+};
+
 pub const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
 
 pub const Scripts = struct {
     const MAX_PARALLEL_PROCESSES = 10;
-    pub const Entry = struct {
-        script: string,
-    };
-    pub const Entries = std.ArrayListUnmanaged(Entry);
+    pub const Entries = std.ArrayListUnmanaged(string);
 
     pub const names = [_]string{
         "preinstall",
@@ -73,7 +110,7 @@ pub const Scripts = struct {
         inline for (Scripts.names) |hook| {
             const list = &@field(this, hook);
             for (list.items) |entry| {
-                allocator.free(entry.script);
+                allocator.free(entry);
             }
             list.deinit(allocator);
         }
@@ -618,6 +655,8 @@ pub fn cleanWithLogger(
     try new.buffers.preallocate(old.buffers, old.allocator);
     try new.patched_dependencies.ensureTotalCapacity(old.allocator, old.patched_dependencies.entries.len);
 
+    new.node_linker = old.node_linker;
+
     old.scratch.dependency_list_queue.head = 0;
 
     {
@@ -873,8 +912,6 @@ pub fn hoist(
     const allocator = lockfile.allocator;
     var slice = lockfile.packages.slice();
 
-    var path_buf: bun.PathBuffer = undefined;
-
     var builder = Tree.Builder(method){
         .name_hashes = slice.items(.name_hash),
         .queue = .init(allocator),
@@ -885,7 +922,6 @@ pub fn hoist(
         .log = log,
         .lockfile = lockfile,
         .manager = manager,
-        .path_buf = &path_buf,
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
     };
@@ -895,7 +931,6 @@ pub fn hoist(
         Tree.invalid_id,
         method,
         &builder,
-        if (method == .filter) manager.options.log_level,
     );
 
     // This goes breadth-first
@@ -905,7 +940,6 @@ pub fn hoist(
             item.hoist_root_id,
             method,
             &builder,
-            if (method == .filter) manager.options.log_level,
         );
     }
 
@@ -1207,6 +1241,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .workspace_versions = .{},
         .overrides = .{},
         .catalogs = .{},
+        .node_linker = .auto,
         .meta_hash = zero_hash,
     };
 }
@@ -1807,8 +1842,8 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
     inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
         const scripts = @field(this.scripts, field_name);
         for (scripts.items) |script| {
-            if (script.script.len > 0) {
-                string_builder.fmtCount("{s}: {s}\n", .{ field_name, script.script });
+            if (script.len > 0) {
+                string_builder.fmtCount("{s}: {s}\n", .{ field_name, script });
                 has_scripts = true;
             }
         }
@@ -1843,8 +1878,8 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
         inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
             const scripts = @field(this.scripts, field_name);
             for (scripts.items) |script| {
-                if (script.script.len > 0) {
-                    _ = string_builder.fmt("{s}: {s}\n", .{ field_name, script.script });
+                if (script.len > 0) {
+                    _ = string_builder.fmt("{s}: {s}\n", .{ field_name, script });
                 }
             }
         }
@@ -1952,17 +1987,17 @@ pub const default_trusted_dependencies = brk: {
             @compileError("default-trusted-dependencies.txt is too large, please increase 'max_default_trusted_dependencies' in lockfile.zig");
         }
 
-        // just in case there's duplicates from truncating
-        if (map.has(dep)) @compileError("Duplicate hash due to u64 -> u32 truncation");
-
-        map.putAssumeCapacity(dep, {});
+        const entry = map.getOrPutAssumeCapacity(dep);
+        if (entry.found_existing) {
+            @compileError("Duplicate trusted dependency: " ++ dep);
+        }
     }
 
     const final = map;
     break :brk &final;
 };
 
-pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
+pub fn hasTrustedDependency(this: *const Lockfile, name: []const u8) bool {
     if (this.trusted_dependencies) |trusted_dependencies| {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
         return trusted_dependencies.contains(hash);

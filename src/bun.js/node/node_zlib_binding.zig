@@ -247,7 +247,7 @@ pub fn CompressionStream(comptime T: type) type {
 
         pub fn setOnError(_: *T, this_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
             if (value.isFunction()) {
-                T.js.errorCallbackSetCached(this_value, globalObject, value);
+                T.js.errorCallbackSetCached(this_value, globalObject, value.withAsyncContextIfNeeded(globalObject));
             }
         }
 

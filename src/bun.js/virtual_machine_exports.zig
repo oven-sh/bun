@@ -12,6 +12,7 @@ pub export fn Bun__getVM() *JSC.VirtualMachine {
     return JSC.VirtualMachine.get();
 }
 
+/// Caller must check for termination exception
 pub export fn Bun__drainMicrotasks() void {
     JSC.VirtualMachine.get().eventLoop().tick();
 }
@@ -85,11 +86,9 @@ pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *JSC.CppT
 
 pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
     JSC.markBinding(@src());
-    // This JSGlobalObject might not be the main script execution context
-    // See the crash in https://github.com/oven-sh/bun/issues/9778
-    const vm = JSC.VirtualMachine.get();
-    if (!value.isTerminationException(vm.jsc)) {
-        _ = vm.uncaughtException(globalObject, value, false);
+
+    if (!value.isTerminationException()) {
+        _ = globalObject.bunVM().uncaughtException(globalObject, value, false);
     }
     return .js_undefined;
 }
@@ -115,7 +114,7 @@ pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.
     if (result == .zero)
         return;
 
-    _ = jsc_vm.unhandledRejection(global, result, promise.toJS());
+    jsc_vm.unhandledRejection(global, result, promise.toJS());
     jsc_vm.autoGarbageCollect();
 }
 
@@ -173,6 +172,14 @@ export fn Bun__getVerboseFetchValue() i32 {
     };
 }
 
+const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
+export fn Bun__addBakeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const slice = specifier.toUTF8(sfb.get());
+    defer slice.deinit();
+    vm.source_mappings.putBakeSourceProvider(@as(*BakeSourceProvider, @ptrCast(opaque_source_provider)), slice.slice());
+}
+
 export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
     var sfb = std.heap.stackFallback(4096, bun.default_allocator);
     const slice = specifier.toUTF8(sfb.get());
@@ -197,7 +204,7 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject,
         return globalObject.throwInvalidArguments("setSyntheticAllocationLimitForTesting expects a number", .{});
     }
 
-    const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));
+    const limit: usize = @intCast(@max(try args[0].coerceToInt64(globalObject), 1024 * 1024));
     const prev = VirtualMachine.synthetic_allocation_limit;
     VirtualMachine.synthetic_allocation_limit = limit;
     VirtualMachine.string_allocation_limit = limit;

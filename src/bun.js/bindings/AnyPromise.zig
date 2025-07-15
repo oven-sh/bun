@@ -76,11 +76,15 @@ pub const AnyPromise = union(enum) {
             args: Args,
 
             pub fn call(wrap_: *@This(), global: *JSC.JSGlobalObject) callconv(.c) JSC.JSValue {
-                return JSC.toJSHostValue(global, @call(.auto, Fn, wrap_.args));
+                return JSC.toJSHostCall(global, @src(), Fn, wrap_.args);
             }
         };
 
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
         var ctx = Wrapper{ .args = args };
         JSC__AnyPromise__wrap(globalObject, this.asValue(), &ctx, @ptrCast(&Wrapper.call));
+        bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
     }
 };

@@ -22,6 +22,7 @@ const Environment = bun.Environment;
 pub const PackCommand = @import("./pack_command.zig").PackCommand;
 const Npm = Install.Npm;
 const PmViewCommand = @import("./pm_view_command.zig");
+const PmVersionCommand = @import("./pm_version_command.zig").PmVersionCommand;
 const File = bun.sys.File;
 
 const ByName = struct {
@@ -126,7 +127,9 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
             \\  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
             \\  <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
-            \\  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry
+            \\  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>
+            \\  <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag
+            \\  <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version
             \\  <b><green>bun pm<r> <blue>hash<r>                 generate & print the hash of the current lockfile
             \\  <b><green>bun pm<r> <blue>hash-string<r>          print the string used to hash the lockfile
             \\  <b><green>bun pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile
@@ -138,7 +141,7 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r>  <cyan>--all<r>                    trust all untrusted dependencies
             \\  <b><green>bun pm<r> <blue>default-trusted<r>      print the default trusted dependencies list
             \\
-            \\Learn more about these at <magenta>https://bun.sh/docs/cli/pm<r>.
+            \\Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
             \\
         ;
 
@@ -427,6 +430,9 @@ pub const PackageManagerCommand = struct {
             const lockfile = load_lockfile.ok.lockfile;
 
             lockfile.saveToDisk(&load_lockfile, &pm.options);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "version")) {
+            try PmVersionCommand.exec(ctx, pm, pm.options.positionals, cwd);
             Global.exit(0);
         }
 

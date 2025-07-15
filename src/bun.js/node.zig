@@ -193,7 +193,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             return switch (this) {
                 .result => |r| switch (ReturnType) {
                     JSC.JSValue => r,
@@ -201,8 +201,8 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                     void => .js_undefined,
                     bool => JSC.JSValue.jsBoolean(r),
 
-                    JSC.ArrayBuffer => r.toJS(globalObject, null),
-                    []u8 => JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject, null),
+                    JSC.ArrayBuffer => r.toJS(globalObject),
+                    []u8 => JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject),
 
                     else => switch (@typeInfo(ReturnType)) {
                         .int, .float, .comptime_int, .comptime_float => JSC.JSValue.jsNumber(r),
@@ -215,14 +215,14 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                         },
                     },
                 },
-                .err => |e| e.toJSC(globalObject),
+                .err => |e| e.toJS(globalObject),
             };
         }
 
         pub fn toArrayBuffer(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
             return switch (this) {
                 .result => |r| JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject, null),
-                .err => |e| e.toJSC(globalObject),
+                .err => |e| e.toJS(globalObject),
             };
         }
 

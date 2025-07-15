@@ -136,6 +136,9 @@ pub const BundleV2 = struct {
     /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
     /// and `bun build` cli) runs at the top of an event loop. When this is
     /// true, a callback is executed after all work is complete.
+    ///
+    /// You can find which callbacks are run by looking at the
+    /// `finishFromBakeDevServer(...)` function here
     asynchronous: bool = false,
     thread_lock: bun.DebugThreadLock,
 
@@ -179,27 +182,23 @@ pub const BundleV2 = struct {
 
         const this_transpiler = this.transpiler;
         const client_transpiler = try allocator.create(Transpiler);
-        const defines = this_transpiler.options.transform_options.define;
         client_transpiler.* = this_transpiler.*;
         client_transpiler.options = this_transpiler.options;
 
         client_transpiler.options.target = .browser;
         client_transpiler.options.main_fields = options.Target.DefaultMainFields.get(options.Target.browser);
         client_transpiler.options.conditions = try options.ESMConditions.init(allocator, options.Target.browser.defaultConditions());
-        client_transpiler.options.define = try options.Define.init(
-            allocator,
-            if (defines) |user_defines|
-                try options.Define.Data.fromInput(try options.stringHashMapFromArrays(
-                    options.defines.RawDefines,
-                    allocator,
-                    user_defines.keys,
-                    user_defines.values,
-                ), this_transpiler.options.transform_options.drop, this_transpiler.log, allocator)
-            else
-                null,
-            null,
-            this_transpiler.options.define.drop_debugger,
-        );
+
+        // We need to make sure it has [hash] in the names so we don't get conflicts.
+        if (this_transpiler.options.compile) {
+            client_transpiler.options.asset_naming = bun.options.PathTemplate.asset.data;
+            client_transpiler.options.chunk_naming = bun.options.PathTemplate.chunk.data;
+            client_transpiler.options.entry_naming = "./[name]-[hash].[ext]";
+
+            // Avoid setting a public path for --compile since all the assets
+            // will be served relative to the server root.
+            client_transpiler.options.public_path = "";
+        }
 
         client_transpiler.setLog(this_transpiler.log);
         client_transpiler.setAllocator(allocator);
@@ -207,8 +206,10 @@ pub const BundleV2 = struct {
         client_transpiler.macro_context = js_ast.Macro.MacroContext.init(client_transpiler);
         const CacheSet = @import("../cache.zig");
         client_transpiler.resolver.caches = CacheSet.Set.init(allocator);
-        client_transpiler.resolver.opts = client_transpiler.options;
 
+        try client_transpiler.configureDefines();
+        client_transpiler.resolver.opts = client_transpiler.options;
+        client_transpiler.resolver.env_loader = client_transpiler.env;
         this.client_transpiler = client_transpiler;
         return client_transpiler;
     }
@@ -1525,8 +1526,12 @@ pub const BundleV2 = struct {
                     else
                         PathTemplate.asset;
 
-                    if (this.transpiler.options.asset_naming.len > 0)
-                        template.data = this.transpiler.options.asset_naming;
+                    const target = targets[index];
+                    const asset_naming = this.transpilerForTarget(target).options.asset_naming;
+                    if (asset_naming.len > 0) {
+                        template.data = asset_naming;
+                    }
+
                     const source = &sources[index];
 
                     const output_path = brk: {
@@ -1546,7 +1551,7 @@ pub const BundleV2 = struct {
                         }
 
                         if (template.needs(.target)) {
-                            template.placeholder.target = @tagName(targets[index]);
+                            template.placeholder.target = @tagName(target);
                         }
                         break :brk std.fmt.allocPrint(bun.default_allocator, "{}", .{template}) catch bun.outOfMemory();
                     };
@@ -1750,7 +1755,7 @@ pub const BundleV2 = struct {
             if (!transpiler.options.production) {
                 try transpiler.options.conditions.appendSlice(&.{"development"});
             }
-
+            transpiler.resolver.env_loader = transpiler.env;
             transpiler.resolver.opts = transpiler.options;
         }
 
@@ -1862,7 +1867,7 @@ pub const BundleV2 = struct {
                             to_assign_on_sourcemap = result;
                         }
 
-                        output_files_js.putIndex(globalThis, @as(u32, @intCast(i)), result);
+                        output_files_js.putIndex(globalThis, @as(u32, @intCast(i)), result) catch return; // TODO: properly propagate exception upwards
                     }
 
                     root_obj.put(globalThis, JSC.ZigString.static("outputs"), output_files_js);
@@ -1959,7 +1964,8 @@ pub const BundleV2 = struct {
                 this.decrementScanCounter();
             },
             .success => |code| {
-                const should_copy_for_bundling = load.parse_task.defer_copy_for_bundling and code.loader.shouldCopyForBundling();
+                // When a plugin returns a file loader, we always need to populate additional_files
+                const should_copy_for_bundling = code.loader.shouldCopyForBundling();
                 if (should_copy_for_bundling) {
                     const source_index = load.source_index;
                     var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
@@ -2614,9 +2620,6 @@ pub const BundleV2 = struct {
     pub fn enqueueOnLoadPluginIfNeededImpl(this: *BundleV2, parse: *ParseTask) bool {
         if (this.plugins) |plugins| {
             if (plugins.hasAnyMatches(&parse.path, true)) {
-                if (parse.is_entry_point and parse.loader != null and parse.loader.?.shouldCopyForBundling()) {
-                    parse.defer_copy_for_bundling = true;
-                }
                 // This is where onLoad plugins are enqueued
                 debug("enqueue onLoad: {s}:{s}", .{
                     parse.path.namespace,
@@ -2950,8 +2953,8 @@ pub const BundleV2 = struct {
                                     ) catch bun.outOfMemory();
                                 }
                             } else {
-                                const buf = bun.PathBufferPool.get();
-                                defer bun.PathBufferPool.put(buf);
+                                const buf = bun.path_buffer_pool.get();
+                                defer bun.path_buffer_pool.put(buf);
                                 const specifier_to_use = if (loader == .html and bun.strings.hasPrefix(import_record.path.text, bun.fs.FileSystem.instance.top_level_dir)) brk: {
                                     const specifier_to_use = import_record.path.text[bun.fs.FileSystem.instance.top_level_dir.len..];
                                     if (Environment.isWindows) {

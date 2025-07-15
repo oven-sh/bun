@@ -642,8 +642,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         errdefer types.deinit(allocator);
 
         for (options.framework.file_system_router_types, 0..) |fsr, i| {
-            const buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
             const joined_root = bun.path.joinAbsStringBuf(dev.root, buf, &.{fsr.root}, .auto);
             const entry = dev.server_transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse
                 continue;
@@ -1531,7 +1531,60 @@ fn onFrameworkRequestWithBundle(
 ) bun.JSError!void {
     const route_bundle = dev.routeBundlePtr(route_bundle_index);
     assert(route_bundle.data == .framework);
+
     const bundle = &route_bundle.data.framework;
+
+    // Extract route params by re-matching the URL
+    var params: FrameworkRouter.MatchedParams = undefined;
+    const url_bunstr = switch (req) {
+        .stack => |r| bun.String{
+            .tag = .ZigString,
+            .value = .{ .ZigString = bun.ZigString.fromUTF8(r.url()) },
+        },
+        .saved => |data| brk: {
+            const url = data.request.url;
+            url.ref();
+            break :brk url;
+        },
+    };
+    defer url_bunstr.deref();
+    const url = url_bunstr.toUTF8(bun.default_allocator);
+    defer url.deinit();
+
+    // Extract pathname from URL (remove protocol, host, query, hash)
+    const pathname = if (std.mem.indexOf(u8, url.byteSlice(), "://")) |proto_end| blk: {
+        const after_proto = url.byteSlice()[proto_end + 3 ..];
+        if (std.mem.indexOfScalar(u8, after_proto, '/')) |path_start| {
+            const path_with_query = after_proto[path_start..];
+            // Remove query string and hash
+            const end = bun.strings.indexOfAny(path_with_query, "?#") orelse path_with_query.len;
+            break :blk path_with_query[0..end];
+        }
+        break :blk "/";
+    } else url.byteSlice();
+
+    // Create params JSValue
+    // TODO: lazy structure caching since we are making these objects a lot
+    const params_js_value = if (dev.router.matchSlow(pathname, &params)) |_| blk: {
+        const global = dev.vm.global;
+        const params_array = params.params.slice();
+
+        if (params_array.len == 0) {
+            break :blk JSValue.null;
+        }
+
+        // Create a JavaScript object with params
+        const obj = JSValue.createEmptyObject(global, params_array.len);
+        for (params_array) |param| {
+            const key_str = bun.String.cloneUTF8(param.key);
+            defer key_str.deref();
+            const value_str = bun.String.cloneUTF8(param.value);
+            defer value_str.deref();
+
+            obj.put(global, key_str, value_str.toJS(global));
+        }
+        break :blk obj;
+    } else JSValue.null;
 
     const server_request_callback = dev.server_fetch_function_callback.get() orelse
         unreachable; // did not initialize server code
@@ -1542,12 +1595,12 @@ fn onFrameworkRequestWithBundle(
         req,
         resp,
         server_request_callback,
-        4,
+        5,
         .{
             // routerTypeMain
             router_type.server_file_string.get() orelse str: {
                 const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, router_type.server_file).get()];
-                const str = bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(name));
+                const str = try bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(name));
                 dev.releaseRelativePathBuf();
                 router_type.server_file_string = .create(str, dev.vm.global);
                 break :str str;
@@ -1564,15 +1617,15 @@ fn onFrameworkRequestWithBundle(
                 }
                 const arr = try JSValue.createEmptyArray(global, n);
                 route = dev.router.routePtr(bundle.route_index);
-                var route_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
-                arr.putIndex(global, 0, route_name.transferToJS(global));
+                var route_name = bun.String.cloneUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
+                try arr.putIndex(global, 0, route_name.transferToJS(global));
                 dev.releaseRelativePathBuf();
                 n = 1;
                 while (true) {
                     if (route.file_layout.unwrap()) |layout| {
-                        var layout_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, layout).get()]));
+                        var layout_name = bun.String.cloneUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, layout).get()]));
                         defer dev.releaseRelativePathBuf();
-                        arr.putIndex(global, @intCast(n), layout_name.transferToJS(global));
+                        try arr.putIndex(global, @intCast(n), layout_name.transferToJS(global));
                         n += 1;
                     }
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
@@ -1599,6 +1652,8 @@ fn onFrameworkRequestWithBundle(
                 bundle.cached_css_file_array = .create(js, dev.vm.global);
                 break :arr js;
             },
+            // params
+            params_js_value,
         },
     );
 }
@@ -1905,7 +1960,7 @@ fn startAsyncBundle(
             str.deref();
         };
         for (entry_points.set.keys()) |key| {
-            try trigger_files.append(bun.String.createUTF8(key));
+            try trigger_files.append(bun.String.cloneUTF8(key));
         }
 
         agent.notifyBundleStart(dev.inspector_server_id, trigger_files.items);
@@ -2152,9 +2207,9 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!J
         const path = std.fmt.bufPrint(&buf, asset_prefix ++ "/{s}.css", .{
             &std.fmt.bytesToHex(std.mem.asBytes(&item), .lower),
         }) catch unreachable;
-        const str = bun.String.createUTF8(path);
+        const str = bun.String.cloneUTF8(path);
         defer str.deref();
-        arr.putIndex(dev.vm.global, @intCast(i), str.toJS(dev.vm.global));
+        try arr.putIndex(dev.vm.global, @intCast(i), str.toJS(dev.vm.global));
     }
     return arr;
 }
@@ -2195,10 +2250,10 @@ fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *JSC.JSGlobalObjec
     const arr = try JSC.JSArray.createEmpty(global, items.len);
     const names = dev.server_graph.bundled_files.keys();
     for (items, 0..) |item, i| {
-        const str = bun.String.createUTF8(dev.relativePath(names[item.get()]));
+        const str = bun.String.cloneUTF8(dev.relativePath(names[item.get()]));
         defer dev.releaseRelativePathBuf();
         defer str.deref();
-        arr.putIndex(global, @intCast(i), str.toJS(global));
+        try arr.putIndex(global, @intCast(i), str.toJS(global));
     }
     return arr;
 }
@@ -2534,7 +2589,7 @@ pub fn finalizeBundle(
         const server_bundle = try dev.server_graph.takeJSBundle(&.{ .kind = .hmr_chunk });
         defer dev.allocator.free(server_bundle);
 
-        const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.createLatin1(server_bundle)) catch |err| {
+        const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle)) catch |err| {
             // No user code has been evaluated yet, since everything is to
             // be wrapped in a function clousure. This means that the likely
             // error is going to be a syntax error, or other mistake in the
@@ -3083,12 +3138,8 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
         return;
     }
 
-    if (DevServer.AnyResponse != @typeInfo(@TypeOf(resp)).pointer.child) {
-        unreachable; // mismatch between `is_ssl` with server and response types. optimize these checks out.
-    }
-
-    if (dev.server.?.config.onRequest != .zero) {
-        dev.server.?.onRequest(req, resp);
+    if (dev.server.?.config().onRequest != .zero) {
+        dev.server.?.onRequest(req, AnyResponse.init(resp));
         return;
     }
 
@@ -5129,8 +5180,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
             dev.relative_path_buf_lock.lock();
             defer dev.relative_path_buf_lock.unlock();
 
-            const buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
 
             var file_paths = try ArrayListUnmanaged([]const u8).initCapacity(gpa, g.current_chunk_parts.items.len);
             errdefer file_paths.deinit(gpa);
@@ -5413,8 +5464,8 @@ const DirectoryWatchStore = struct {
             => bun.debugAssert(false),
         }
 
-        const buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(buf);
+        const buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(buf);
         const joined = bun.path.joinAbsStringBuf(bun.path.dirname(import_source, .auto), buf, &.{specifier}, .auto);
         const dir = bun.path.dirname(joined, .auto);
 
@@ -5843,8 +5894,8 @@ pub const SerializedFailure = struct {
 
 // For debugging, it is helpful to be able to see bundles.
 fn dumpBundle(dump_dir: std.fs.Dir, graph: bake.Graph, rel_path: []const u8, chunk: []const u8, wrap: bool) !void {
-    const buf = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(buf);
+    const buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(buf);
     const name = bun.path.joinAbsStringBuf("/", buf, &.{
         @tagName(graph),
         rel_path,
@@ -7597,8 +7648,8 @@ pub const SourceMapStore = struct {
             dev.relative_path_buf_lock.lock();
             defer dev.relative_path_buf_lock.unlock();
 
-            const buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
 
             for (paths) |native_file_path| {
                 try source_map_strings.appendSlice(",");
@@ -7989,6 +8040,7 @@ pub const SourceMapStore = struct {
             null,
             @intCast(entry.paths.len),
             0, // unused
+            .{},
         )) {
             .fail => |fail| {
                 Output.debugWarn("Failed to re-parse source map: {s}", .{fail.msg});
@@ -8148,7 +8200,7 @@ const ErrorReportRequest = struct {
             const result: *const SourceMapStore.GetResult = &(gop.value_ptr.* orelse continue);
 
             // When before the first generated line, remap to the HMR runtime
-            const generated_mappings = result.mappings.items(.generated);
+            const generated_mappings = result.mappings.generated();
             if (frame.position.line.oneBased() < generated_mappings[1].lines) {
                 frame.source_url = .init(runtime_name); // matches value in source map
                 frame.position = .invalid;
@@ -8156,8 +8208,7 @@ const ErrorReportRequest = struct {
             }
 
             // Remap the frame
-            const remapped = SourceMap.Mapping.find(
-                result.mappings,
+            const remapped = result.mappings.find(
                 frame.position.line.oneBased(),
                 frame.position.column.zeroBased(),
             );

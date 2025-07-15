@@ -1741,9 +1741,17 @@ pub const SideEffects = enum(u1) {
             inline .e_call, .e_new => |call| {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
-                if (call.can_be_unwrapped_if_unused) {
+                if (call.can_be_unwrapped_if_unused != .never) {
                     if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
+                        const joined = Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
+                        if (joined != null and call.can_be_unwrapped_if_unused == .if_unused_and_toString_safe) {
+                            @branchHint(.unlikely);
+                            // For now, only support this for 1 argument.
+                            if (joined.?.data.isSafeToString()) {
+                                return null;
+                            }
+                        }
+                        return joined;
                     } else {
                         return null;
                     }
@@ -1962,19 +1970,29 @@ pub const SideEffects = enum(u1) {
         }
     }
 
-    // If this is in a dead branch, then we want to trim as much dead code as we
-    // can. Everything can be trimmed except for hoisted declarations ("var" and
-    // "function"), which affect the parent scope. For example:
-    //
-    //   function foo() {
-    //     if (false) { var x; }
-    //     x = 1;
-    //   }
-    //
-    // We can't trim the entire branch as dead or calling foo() will incorrectly
-    // assign to a global variable instead.
-    pub fn shouldKeepStmtInDeadControlFlow(p: anytype, stmt: Stmt, allocator: Allocator) bool {
-        if (!p.options.features.dead_code_elimination) return true;
+    fn shouldKeepStmtsInDeadControlFlow(stmts: []Stmt, allocator: Allocator) bool {
+        for (stmts) |child| {
+            if (shouldKeepStmtInDeadControlFlow(child, allocator)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// If this is in a dead branch, then we want to trim as much dead code as we
+    /// can. Everything can be trimmed except for hoisted declarations ("var" and
+    /// "function"), which affect the parent scope. For example:
+    ///
+    ///   function foo() {
+    ///     if (false) { var x; }
+    ///     x = 1;
+    ///   }
+    ///
+    /// We can't trim the entire branch as dead or calling foo() will incorrectly
+    /// assign to a global variable instead.
+    ///
+    /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
+    pub fn shouldKeepStmtInDeadControlFlow(stmt: Stmt, allocator: Allocator) bool {
         switch (stmt.data) {
             // Omit these statements entirely
             .s_empty, .s_expr, .s_throw, .s_return, .s_break, .s_continue, .s_class, .s_debugger => return false,
@@ -2004,8 +2022,22 @@ pub const SideEffects = enum(u1) {
             },
 
             .s_block => |block| {
-                for (block.stmts) |child| {
-                    if (shouldKeepStmtInDeadControlFlow(p, child, allocator)) {
+                return shouldKeepStmtsInDeadControlFlow(block.stmts, allocator);
+            },
+
+            .s_try => |try_stmt| {
+                if (shouldKeepStmtsInDeadControlFlow(try_stmt.body, allocator)) {
+                    return true;
+                }
+
+                if (try_stmt.catch_) |*catch_stmt| {
+                    if (shouldKeepStmtsInDeadControlFlow(catch_stmt.body, allocator)) {
+                        return true;
+                    }
+                }
+
+                if (try_stmt.finally) |*finally_stmt| {
+                    if (shouldKeepStmtsInDeadControlFlow(finally_stmt.stmts, allocator)) {
                         return true;
                     }
                 }
@@ -2014,43 +2046,43 @@ pub const SideEffects = enum(u1) {
             },
 
             .s_if => |_if_| {
-                if (shouldKeepStmtInDeadControlFlow(p, _if_.yes, allocator)) {
+                if (shouldKeepStmtInDeadControlFlow(_if_.yes, allocator)) {
                     return true;
                 }
 
                 const no = _if_.no orelse return false;
 
-                return shouldKeepStmtInDeadControlFlow(p, no, allocator);
+                return shouldKeepStmtInDeadControlFlow(no, allocator);
             },
 
             .s_while => {
-                return shouldKeepStmtInDeadControlFlow(p, stmt.data.s_while.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(stmt.data.s_while.body, allocator);
             },
 
             .s_do_while => {
-                return shouldKeepStmtInDeadControlFlow(p, stmt.data.s_do_while.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(stmt.data.s_do_while.body, allocator);
             },
 
             .s_for => |__for__| {
                 if (__for__.init) |init_| {
-                    if (shouldKeepStmtInDeadControlFlow(p, init_, allocator)) {
+                    if (shouldKeepStmtInDeadControlFlow(init_, allocator)) {
                         return true;
                     }
                 }
 
-                return shouldKeepStmtInDeadControlFlow(p, __for__.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
             },
 
             .s_for_in => |__for__| {
-                return shouldKeepStmtInDeadControlFlow(p, __for__.init, allocator) or shouldKeepStmtInDeadControlFlow(p, __for__.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(__for__.init, allocator) or shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
             },
 
             .s_for_of => |__for__| {
-                return shouldKeepStmtInDeadControlFlow(p, __for__.init, allocator) or shouldKeepStmtInDeadControlFlow(p, __for__.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(__for__.init, allocator) or shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
             },
 
             .s_label => |label| {
-                return shouldKeepStmtInDeadControlFlow(p, label.stmt, allocator);
+                return shouldKeepStmtInDeadControlFlow(label.stmt, allocator);
             },
 
             else => return true,
@@ -4521,7 +4553,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new WeakSet()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -4531,12 +4563,12 @@ pub const KnownGlobal = enum {
                         .e_null, .e_undefined => {
                             // "new WeakSet(null)" is pure
                             // "new WeakSet(void 0)" is pure
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         .e_array => |array| {
                             if (array.items.len == 0) {
                                 // "new WeakSet([])" is pure
-                                e.can_be_unwrapped_if_unused = true;
+                                e.can_be_unwrapped_if_unused = .if_unused;
                             } else {
                                 // "new WeakSet([x])" is impure because an exception is thrown if "x" is not an object
                             }
@@ -4552,7 +4584,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Date()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -4566,7 +4598,7 @@ pub const KnownGlobal = enum {
                             // "new Date(true)" is pure
                             // "new Date(false)" is pure
                             // "new Date(undefined)" is pure
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         else => {
                             // "new Date(x)" is impure because the argument could be a string with side effects
@@ -4581,7 +4613,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Set()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
                     return;
                 }
 
@@ -4591,7 +4623,7 @@ pub const KnownGlobal = enum {
                             // "new Set([a, b, c])" is pure
                             // "new Set(null)" is pure
                             // "new Set(void 0)" is pure
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         else => {
                             // "new Set(x)" is impure because the iterator for "x" could have side effects
@@ -4605,7 +4637,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Headers()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -4616,7 +4648,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Response()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -4631,7 +4663,7 @@ pub const KnownGlobal = enum {
                             // "new Response(false)" is pure
                             // "new Response(undefined)" is pure
 
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         else => {
                             // "new Response(x)" is impure
@@ -4645,7 +4677,7 @@ pub const KnownGlobal = enum {
                 if (n == 0) {
                     // "new TextEncoder()" is pure
                     // "new TextDecoder()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
 
                     return;
                 }
@@ -4659,7 +4691,7 @@ pub const KnownGlobal = enum {
 
                 if (n == 0) {
                     // "new Map()" is pure
-                    e.can_be_unwrapped_if_unused = true;
+                    e.can_be_unwrapped_if_unused = .if_unused;
                     return;
                 }
 
@@ -4668,7 +4700,7 @@ pub const KnownGlobal = enum {
                         .e_null, .e_undefined => {
                             // "new Map(null)" is pure
                             // "new Map(void 0)" is pure
-                            e.can_be_unwrapped_if_unused = true;
+                            e.can_be_unwrapped_if_unused = .if_unused;
                         },
                         .e_array => |array| {
                             var all_items_are_arrays = true;
@@ -4681,7 +4713,7 @@ pub const KnownGlobal = enum {
 
                             if (all_items_are_arrays) {
                                 // "new Map([[a, b], [c, d]])" is pure
-                                e.can_be_unwrapped_if_unused = true;
+                                e.can_be_unwrapped_if_unused = .if_unused;
                             }
                         },
                         else => {
@@ -13007,10 +13039,10 @@ fn NewParser_(
                 expr = try p.parseSuffix(expr, @as(Level, @enumFromInt(@intFromEnum(Level.call) - 1)), errors, flags);
                 switch (expr.data) {
                     .e_call => |ex| {
-                        ex.can_be_unwrapped_if_unused = true;
+                        ex.can_be_unwrapped_if_unused = .if_unused;
                     },
                     .e_new => |ex| {
-                        ex.can_be_unwrapped_if_unused = true;
+                        ex.can_be_unwrapped_if_unused = .if_unused;
                     },
                     else => {},
                 }
@@ -16235,8 +16267,8 @@ fn NewParser_(
                     // Substitute user-specified defines for unbound symbols
                     if (p.symbols.items[e_.ref.innerIndex()].kind == .unbound and !result.is_inside_with_scope and !is_delete_target) {
                         if (p.define.forIdentifier(name)) |def| {
-                            if (!def.valueless) {
-                                const newvalue = p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &def);
+                            if (!def.valueless()) {
+                                const newvalue = p.valueForDefine(expr.loc, in.assign_target, is_delete_target, def);
 
                                 // Don't substitute an identifier for a non-identifier if this is an
                                 // assignment target, since it'll cause a syntax error
@@ -16245,19 +16277,19 @@ fn NewParser_(
                                     return newvalue;
                                 }
 
-                                original_name = def.original_name;
+                                original_name = def.original_name();
                             }
 
                             // Copy the side effect flags over in case this expression is unused
-                            if (def.can_be_removed_if_unused) {
+                            if (def.can_be_removed_if_unused()) {
                                 e_.can_be_removed_if_unused = true;
                             }
-                            if (def.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
+                            if (def.call_can_be_unwrapped_if_unused() == .if_unused and !p.options.ignore_dce_annotations) {
                                 e_.call_can_be_unwrapped_if_unused = true;
                             }
 
                             // If the user passed --drop=console, drop all property accesses to console.
-                            if (def.method_call_must_be_replaced_with_undefined and in.property_access_for_method_call_maybe_should_replace_with_undefined and in.assign_target == .none) {
+                            if (def.method_call_must_be_replaced_with_undefined() and in.property_access_for_method_call_maybe_should_replace_with_undefined and in.assign_target == .none) {
                                 p.method_call_must_be_replaced_with_undefined = true;
                             }
                         }
@@ -16350,7 +16382,7 @@ fn NewParser_(
                                     .target = if (runtime == .classic) target else p.jsxImport(.createElement, expr.loc),
                                     .args = ExprNodeList.init(args[0..i]),
                                     // Enable tree shaking
-                                    .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                    .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations) .if_unused else .never,
                                     .close_paren_loc = e_.close_tag_loc,
                                 }, expr.loc);
                             }
@@ -16455,7 +16487,7 @@ fn NewParser_(
                                     .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
                                     .args = ExprNodeList.init(args),
                                     // Enable tree shaking
-                                    .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                    .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations) .if_unused else .never,
                                     .was_jsx_element = true,
                                     .close_paren_loc = e_.close_tag_loc,
                                 }, expr.loc);
@@ -16910,26 +16942,26 @@ fn NewParser_(
                     const is_call_target = @as(Expr.Tag, p.call_target) == .e_dot and expr.data.e_dot == p.call_target.e_dot;
 
                     if (p.define.dots.get(e_.name)) |parts| {
-                        for (parts) |define| {
+                        for (parts) |*define| {
                             if (p.isDotDefineMatch(expr, define.parts)) {
                                 if (in.assign_target == .none) {
                                     // Substitute user-specified defines
-                                    if (!define.data.valueless) {
+                                    if (!define.data.valueless()) {
                                         return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                                     }
 
-                                    if (define.data.method_call_must_be_replaced_with_undefined and in.property_access_for_method_call_maybe_should_replace_with_undefined) {
+                                    if (define.data.method_call_must_be_replaced_with_undefined() and in.property_access_for_method_call_maybe_should_replace_with_undefined) {
                                         p.method_call_must_be_replaced_with_undefined = true;
                                     }
                                 }
 
                                 // Copy the side effect flags over in case this expression is unused
-                                if (define.data.can_be_removed_if_unused) {
+                                if (define.data.can_be_removed_if_unused()) {
                                     e_.can_be_removed_if_unused = true;
                                 }
 
-                                if (define.data.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
-                                    e_.call_can_be_unwrapped_if_unused = true;
+                                if (define.data.call_can_be_unwrapped_if_unused() != .never and !p.options.ignore_dce_annotations) {
+                                    e_.call_can_be_unwrapped_if_unused = define.data.call_can_be_unwrapped_if_unused();
                                 }
 
                                 break;
@@ -17233,7 +17265,8 @@ fn NewParser_(
                     // Copy the call side effect flag over if this is a known target
                     switch (e_.target.data) {
                         .e_identifier => |ident| {
-                            e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or ident.call_can_be_unwrapped_if_unused;
+                            if (ident.call_can_be_unwrapped_if_unused and e_.can_be_unwrapped_if_unused == .never)
+                                e_.can_be_unwrapped_if_unused = .if_unused;
 
                             // Detect if this is a direct eval. Note that "(1 ? eval : 0)(x)" will
                             // become "eval(x)" after we visit the target due to dead code elimination,
@@ -17269,7 +17302,9 @@ fn NewParser_(
                             }
                         },
                         .e_dot => |dot| {
-                            e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or dot.call_can_be_unwrapped_if_unused;
+                            if (dot.call_can_be_unwrapped_if_unused != .never and e_.can_be_unwrapped_if_unused == .never) {
+                                e_.can_be_unwrapped_if_unused = dot.call_can_be_unwrapped_if_unused;
+                            }
                         },
                         else => {},
                     }
@@ -17340,7 +17375,7 @@ fn NewParser_(
                     }
 
                     if (e_.target.data == .e_require_call_target) {
-                        e_.can_be_unwrapped_if_unused = false;
+                        e_.can_be_unwrapped_if_unused = .never;
 
                         // Heuristic: omit warnings inside try/catch blocks because presumably
                         // the try/catch statement is there to handle the potential run-time
@@ -17948,9 +17983,9 @@ fn NewParser_(
                 .e_call => |ex| {
                     // A call that has been marked "__PURE__" can be removed if all arguments
                     // can be removed. The annotation causes us to ignore the target.
-                    if (ex.can_be_unwrapped_if_unused) {
+                    if (ex.can_be_unwrapped_if_unused != .never) {
                         for (ex.args.slice()) |*arg| {
-                            if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg)) {
+                            if (!(p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg) or (ex.can_be_unwrapped_if_unused == .if_unused_and_toString_safe and arg.data.isSafeToString()))) {
                                 return false;
                             }
                         }
@@ -17961,9 +17996,9 @@ fn NewParser_(
 
                     // A call that has been marked "__PURE__" can be removed if all arguments
                     // can be removed. The annotation causes us to ignore the target.
-                    if (ex.can_be_unwrapped_if_unused) {
+                    if (ex.can_be_unwrapped_if_unused != .never) {
                         for (ex.args.slice()) |*arg| {
-                            if (!p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg)) {
+                            if (!(p.exprCanBeRemovedIfUnusedWithoutDCECheck(arg) or (ex.can_be_unwrapped_if_unused == .if_unused_and_toString_safe and arg.data.isSafeToString()))) {
                                 return false;
                             }
                         }
@@ -19382,22 +19417,36 @@ fn NewParser_(
                                 // > export default default_export;
                                 // > $RefreshReg(default_export, "App.tsx:default")
                                 const ref = if (data.value == .expr) emit_temp_var: {
-                                    const temp_id = p.generateTempRef("default_export");
-                                    try p.current_scope.generated.push(p.allocator, temp_id);
+                                    const ref_to_use = brk: {
+                                        if (func.func.name) |*loc_ref| {
+                                            // Input:
+                                            //
+                                            //  export default function Foo() {}
+                                            //
+                                            // Output:
+                                            //
+                                            //  const Foo = _s(function Foo() {})
+                                            //  export default Foo;
+                                            if (loc_ref.ref) |ref| break :brk ref;
+                                        }
 
+                                        const temp_id = p.generateTempRef("default_export");
+                                        try p.current_scope.generated.push(p.allocator, temp_id);
+                                        break :brk temp_id;
+                                    };
                                     stmts.append(Stmt.alloc(S.Local, .{
                                         .kind = .k_const,
                                         .decls = try G.Decl.List.fromSlice(p.allocator, &.{
                                             .{
-                                                .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = temp_id }, stmt.loc),
+                                                .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = ref_to_use }, stmt.loc),
                                                 .value = data.value.expr,
                                             },
                                         }),
                                     }, stmt.loc)) catch bun.outOfMemory();
 
-                                    data.value = .{ .expr = .initIdentifier(temp_id, stmt.loc) };
+                                    data.value = .{ .expr = .initIdentifier(ref_to_use, stmt.loc) };
 
-                                    break :emit_temp_var temp_id;
+                                    break :emit_temp_var ref_to_use;
                                 } else data.default_name.ref.?;
 
                                 if (p.options.features.server_components.wrapsExports()) {
@@ -20029,7 +20078,7 @@ fn NewParser_(
                 if (p.options.features.minify_syntax) {
                     if (effects.ok) {
                         if (effects.value) {
-                            if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(p, data.no.?, p.allocator)) {
+                            if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(data.no.?, p.allocator)) {
                                 if (effects.side_effects == .could_have_side_effects) {
                                     // Keep the condition if it could have side effects (but is still known to be truthy)
                                     if (SideEffects.simplifyUnusedExpr(p, data.test_)) |test_| {
@@ -20043,7 +20092,7 @@ fn NewParser_(
                             }
                         } else {
                             // The test is falsy
-                            if (!SideEffects.shouldKeepStmtInDeadControlFlow(p, data.yes, p.allocator)) {
+                            if (!SideEffects.shouldKeepStmtInDeadControlFlow(data.yes, p.allocator)) {
                                 if (effects.side_effects == .could_have_side_effects) {
                                     // Keep the condition if it could have side effects (but is still known to be truthy)
                                     if (SideEffects.simplifyUnusedExpr(p, data.test_)) |test_| {
@@ -21624,7 +21673,7 @@ fn NewParser_(
                     return p.handleIdentifier(
                         loc,
                         define_data.value.e_identifier,
-                        define_data.original_name.?,
+                        define_data.original_name().?,
                         IdentifierOpts{
                             .assign_target = assign_target,
                             .is_delete_target = is_delete_target,
@@ -22364,10 +22413,10 @@ fn NewParser_(
                 }
 
                 var visited_count = visited.items.len;
-                if (p.is_control_flow_dead) {
+                if (p.is_control_flow_dead and p.options.features.dead_code_elimination) {
                     var end: usize = 0;
                     for (visited.items) |item| {
-                        if (!SideEffects.shouldKeepStmtInDeadControlFlow(p, item, p.allocator)) {
+                        if (!SideEffects.shouldKeepStmtInDeadControlFlow(item, p.allocator)) {
                             continue;
                         }
 
@@ -22469,9 +22518,10 @@ fn NewParser_(
 
             var output = ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len) catch unreachable;
 
+            const dead_code_elimination = p.options.features.dead_code_elimination;
             for (stmts.items) |stmt| {
-                if (is_control_flow_dead and p.options.features.dead_code_elimination and
-                    !SideEffects.shouldKeepStmtInDeadControlFlow(p, stmt, p.allocator))
+                if (is_control_flow_dead and dead_code_elimination and
+                    !SideEffects.shouldKeepStmtInDeadControlFlow(stmt, p.allocator))
                 {
                     // Strip unnecessary statements if the control flow is dead here
                     continue;

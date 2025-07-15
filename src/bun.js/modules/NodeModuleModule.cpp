@@ -20,21 +20,22 @@
 #include "ErrorCode.h"
 
 #include "GeneratedNodeModuleModule.h"
+#include "ZigGeneratedClasses.h"
 
 namespace Bun {
 
 using namespace JSC;
 
+BUN_DECLARE_HOST_FUNCTION(Bun__JSSourceMap__find);
+
 BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDebugNoop);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionFindSourceMap);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionSourceMap);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSyncBuiltinExports);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 
@@ -252,13 +253,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
             ERR::INVALID_ARG_VALUE(scope, globalObject,
                 "filename"_s, argument,
                 "must be a file URL object, file URL string, or absolute path string"_s);
-            RELEASE_AND_RETURN(scope, JSValue::encode({}));
+            RELEASE_AND_RETURN(scope, {});
         }
         if (!url.protocolIsFile()) {
             ERR::INVALID_ARG_VALUE(scope, globalObject,
                 "filename"_s, argument,
                 "must be a file URL object, file URL string, or absolute path string"_s);
-            RELEASE_AND_RETURN(scope, JSValue::encode({}));
+            RELEASE_AND_RETURN(scope, {});
         }
         val = url.fileSystemPath();
     }
@@ -287,13 +288,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap,
-    (JSGlobalObject * globalObject,
-        CallFrame* callFrame))
-{
-    return JSValue::encode(jsUndefined());
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))
@@ -301,41 +295,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionSourceMap, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    throwException(globalObject, scope,
-        createError(globalObject, "Not implemented"_s));
-    return {};
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     switch (callFrame->argumentCount()) {
     case 0: {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         // not "requires" because "require" could be confusing
-        JSC::throwTypeError(
-            globalObject, scope,
-            "Module._resolveFilename needs 2+ arguments (a string)"_s);
-        scope.release();
-        return JSC::JSValue::encode(JSC::JSValue {});
+        JSC::throwTypeError(globalObject, scope, "Module._resolveFilename needs 2+ arguments (a string)"_s);
+        return {};
     }
     default: {
         JSC::JSValue moduleName = callFrame->argument(0);
         JSC::JSValue fromValue = callFrame->argument(1);
 
         if (moduleName.isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-            JSC::throwTypeError(globalObject, scope,
-                "Module._resolveFilename expects a string"_s);
-            scope.release();
-            return JSC::JSValue::encode(JSC::JSValue {});
+            JSC::throwTypeError(globalObject, scope, "Module._resolveFilename expects a string"_s);
+            return {};
         }
 
         if (
@@ -347,28 +326,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             // weird thing.
             (fromValue.isObject()) {
 
-            if (auto idValue = fromValue.getObject()->getIfPropertyExists(
-                    globalObject, builtinNames(vm).filenamePublicName())) {
+            auto idValue = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (idValue) {
                 if (idValue.isString()) {
                     fromValue = idValue;
                 }
             }
         }
 
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        auto result = Bun__resolveSync(
-            globalObject,
-            JSC::JSValue::encode(moduleName), JSValue::encode(fromValue),
-            false,
-            true);
+        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!JSC::JSValue::decode(result).isString()) {
             JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
-            return JSC::JSValue::encode(JSC::JSValue {});
+            return {};
         }
 
-        scope.release();
         return result;
     }
     }
@@ -596,10 +570,10 @@ static JSValue getPathCacheObject(VM& vm, JSObject* moduleObject)
 static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    JSFunction* sourceMapFunction = JSFunction::create(
-        vm, globalObject, 1, "SourceMap"_s, jsFunctionSourceMap,
-        ImplementationVisibility::Public, NoIntrinsic, jsFunctionSourceMap);
-    return sourceMapFunction;
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+
+    // Return the actual SourceMap constructor from code generation
+    return zigGlobalObject->JSSourceMapConstructor();
 }
 
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
@@ -612,9 +586,7 @@ static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
     }
 
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return JSC::constructArray(
-        globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr),
-        JSC::ArgList(args));
+    return JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
 }
 
 static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
@@ -749,10 +721,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        vm, globalObject, 1, String(), resolverFunctionCallback);
+    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String(), resolverFunctionCallback);
 
     auto result = promise->then(globalObject, resolverFunction, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
     Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), result);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -860,7 +832,7 @@ builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 0
-findSourceMap           jsFunctionFindSourceMap           Function 0
+findSourceMap           Bun__JSSourceMap__find           Function 1
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1
@@ -931,6 +903,82 @@ const JSC::ClassInfo JSModuleConstructor::s_info = {
     CREATE_METHOD_TABLE(JSModuleConstructor)
 };
 
+static JSC::Structure* createNodeModuleSourceMapEntryStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 6);
+    PropertyOffset offset;
+
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "generatedLine"), 0, offset);
+    RELEASE_ASSERT(offset == 0);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "generatedColumn"), 0, offset);
+    RELEASE_ASSERT(offset == 1);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "originalLine"), 0, offset);
+    RELEASE_ASSERT(offset == 2);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "originalColumn"), 0, offset);
+    RELEASE_ASSERT(offset == 3);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "originalSource"), 0, offset);
+    RELEASE_ASSERT(offset == 4);
+    structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->name, 0, offset);
+    RELEASE_ASSERT(offset == 5);
+
+    return structure;
+}
+
+extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapEntryObject(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue encodedGeneratedLine,
+    JSC::EncodedJSValue encodedGeneratedColumn,
+    JSC::EncodedJSValue encodedOriginalLine,
+    JSC::EncodedJSValue encodedOriginalColumn,
+    JSC::EncodedJSValue encodedOriginalSource,
+    JSC::EncodedJSValue encodedName)
+{
+    auto& vm = globalObject->vm();
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSObject* object = JSC::constructEmptyObject(vm, zigGlobalObject->m_nodeModuleSourceMapEntryStructure.getInitializedOnMainThread(zigGlobalObject));
+    object->putDirectOffset(vm, 0, JSC::JSValue::decode(encodedGeneratedLine));
+    object->putDirectOffset(vm, 1, JSC::JSValue::decode(encodedGeneratedColumn));
+    object->putDirectOffset(vm, 2, JSC::JSValue::decode(encodedOriginalLine));
+    object->putDirectOffset(vm, 3, JSC::JSValue::decode(encodedOriginalColumn));
+    object->putDirectOffset(vm, 4, JSC::JSValue::decode(encodedOriginalSource));
+    object->putDirectOffset(vm, 5, JSC::JSValue::decode(encodedName));
+    return JSValue::encode(object);
+}
+
+static JSC::Structure* createNodeModuleSourceMapOriginStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 4);
+    PropertyOffset offset;
+
+    structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->name, 0, offset);
+    RELEASE_ASSERT(offset == 0);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "line"), 0, offset);
+    RELEASE_ASSERT(offset == 1);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "column"), 0, offset);
+    RELEASE_ASSERT(offset == 2);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "fileName"), 0, offset);
+    RELEASE_ASSERT(offset == 3);
+
+    return structure;
+}
+
+extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapOriginObject(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue encodedName,
+    JSC::EncodedJSValue encodedLine,
+    JSC::EncodedJSValue encodedColumn,
+    JSC::EncodedJSValue encodedSource)
+{
+    auto& vm = globalObject->vm();
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSObject* object = JSC::constructEmptyObject(vm, zigGlobalObject->m_nodeModuleSourceMapOriginStructure.getInitializedOnMainThread(zigGlobalObject));
+    object->putDirectOffset(vm, 0, JSC::JSValue::decode(encodedName));
+    object->putDirectOffset(vm, 1, JSC::JSValue::decode(encodedLine));
+    object->putDirectOffset(vm, 2, JSC::JSValue::decode(encodedColumn));
+    object->putDirectOffset(vm, 3, JSC::JSValue::decode(encodedSource));
+    return JSValue::encode(object);
+}
+
 void addNodeModuleConstructorProperties(JSC::VM& vm,
     Zig::GlobalObject* globalObject)
 {
@@ -939,6 +987,15 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             JSObject* moduleConstructor = JSModuleConstructor::create(
                 init.vm, static_cast<Zig::GlobalObject*>(init.owner));
             init.set(moduleConstructor);
+        });
+
+    globalObject->m_nodeModuleSourceMapEntryStructure.initLater(
+        [](const Zig::GlobalObject::Initializer<Structure>& init) {
+            init.set(createNodeModuleSourceMapEntryStructure(init.vm, init.owner));
+        });
+    globalObject->m_nodeModuleSourceMapOriginStructure.initLater(
+        [](const Zig::GlobalObject::Initializer<Structure>& init) {
+            init.set(createNodeModuleSourceMapOriginStructure(init.vm, init.owner));
         });
 
     globalObject->m_moduleRunMainFunction.initLater(
@@ -1016,8 +1073,7 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
-    auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(
-        globalObject);
+    auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
     if (constructor->hasNonReifiedStaticProperties()) {
         constructor->reifyAllStaticProperties(globalObject);
         if (catchScope.exception()) {
@@ -1031,18 +1087,14 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     exportNames.append(vm.propertyNames->defaultKeyword);
     exportValues.append(constructor);
 
-    for (unsigned i = 0; i < Bun::countof(Bun::nodeModuleObjectTableValues);
-        ++i) {
+    for (unsigned i = 0; i < Bun::countof(Bun::nodeModuleObjectTableValues); ++i) {
         const auto& entry = Bun::nodeModuleObjectTableValues[i];
         const auto& property = Identifier::fromString(vm, entry.m_key);
-        JSValue value = constructor->getIfPropertyExists(globalObject, property);
+        JSValue value = constructor->get(globalObject, property);
 
         if (catchScope.exception()) [[unlikely]] {
             value = {};
             catchScope.clearException();
-        }
-        if (value.isEmpty()) [[unlikely]] {
-            value = JSC::jsUndefined();
         }
 
         exportNames.append(property);

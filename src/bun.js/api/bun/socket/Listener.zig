@@ -90,10 +90,11 @@ pub fn reload(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JS
         return globalObject.throw("Expected \"socket\" object", .{});
     };
 
-    const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
+    var handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
 
     var prev_handlers = &this.handlers;
     prev_handlers.unprotect();
+    handlers.withAsyncContextIfNeeded(globalObject);
     this.handlers = handlers; // TODO: this is a memory leak
     this.handlers.protect();
 
@@ -264,8 +265,14 @@ pub fn listen(globalObject: *JSC.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                 break :brk socket_context.listenUnix(ssl_enabled, host, host.len, socket_flags, 8, &errno);
             },
             .fd => |fd| {
-                _ = fd;
-                return globalObject.ERR(.INVALID_ARG_VALUE, "Bun does not support listening on a file descriptor.", .{}).throw();
+                const err: bun.jsc.SystemError = .{
+                    .errno = @intFromEnum(bun.sys.SystemErrno.EINVAL),
+                    .code = .static("EINVAL"),
+                    .message = .static("Bun does not support listening on a file descriptor."),
+                    .syscall = .static("listen"),
+                    .fd = fd.uv(),
+                };
+                return globalObject.throwValue(err.toErrorInstance(globalObject));
             },
         }
     } orelse {
@@ -277,7 +284,7 @@ pub fn listen(globalObject: *JSC.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         const err = globalObject.createErrorInstance("Failed to listen at {s}", .{bun.span(hostname_or_unix.slice())});
         log("Failed to listen {d}", .{errno});
         if (errno != 0) {
-            err.put(globalObject, ZigString.static("syscall"), bun.String.createUTF8ForJS(globalObject, "listen"));
+            err.put(globalObject, ZigString.static("syscall"), try bun.String.createUTF8ForJS(globalObject, "listen"));
             err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
             err.put(globalObject, ZigString.static("address"), hostname_or_unix.toZigString().toJS(globalObject));
             if (port) |p| err.put(globalObject, ZigString.static("port"), .jsNumber(p));

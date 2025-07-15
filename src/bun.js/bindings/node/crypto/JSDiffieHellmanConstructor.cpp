@@ -25,6 +25,7 @@ JSC_DEFINE_HOST_FUNCTION(callDiffieHellman, (JSC::JSGlobalObject * lexicalGlobal
     ArgList args = ArgList(callFrame);
     auto callData = JSC::getConstructData(constructor);
     JSC::JSValue result = JSC::construct(globalObject, constructor, callData, args);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }
 
@@ -88,7 +89,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         if (bits < 2) {
             ERR_put_error(ERR_LIB_DH, 0, DH_R_MODULUS_TOO_LARGE, __FILE__, __LINE__);
             throwCryptoError(globalObject, scope, ERR_get_error(), "Invalid prime length"_s);
-            return JSValue::encode({});
+            return {};
         }
 
         if (!generatorValue.isNumber()) {
@@ -102,7 +103,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         if (generator < 2) {
             ERR_put_error(ERR_LIB_DH, 0, DH_R_BAD_GENERATOR, __FILE__, __LINE__);
             throwCryptoError(globalObject, scope, ERR_get_error(), "Invalid generator"_s);
-            return JSValue::encode({});
+            return {};
         }
 
         dh = ncrypto::DHPointer::New(bits, generator);
@@ -132,7 +133,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
             if (generator < 2) {
                 ERR_put_error(ERR_LIB_DH, 0, DH_R_BAD_GENERATOR, __FILE__, __LINE__);
                 throwCryptoError(globalObject, scope, ERR_get_error(), "Invalid generator"_s);
-                return JSValue::encode({});
+                return {};
             }
             bn_g = ncrypto::BignumPointer::New();
             if (!bn_g.setWord(generator)) {
@@ -155,7 +156,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
             if (bn_g.getWord() < 2) {
                 ERR_put_error(ERR_LIB_DH, 0, DH_R_BAD_GENERATOR, __FILE__, __LINE__);
                 throwCryptoError(globalObject, scope, ERR_get_error(), "Invalid generator"_s);
-                return JSValue::encode({});
+                return {};
             }
         }
 

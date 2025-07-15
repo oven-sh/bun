@@ -429,7 +429,7 @@ pub const AsyncModule = struct {
             errorable = JSC.ErrorableResolvedSource.ok(this.resumeLoadingModule(&log) catch |err| {
                 switch (err) {
                     error.JSError => {
-                        errorable = .err(error.JSError, this.globalThis.takeError(error.JSError).asVoid());
+                        errorable = .err(error.JSError, this.globalThis.takeError(error.JSError));
                         break :outer;
                     },
                     else => {
@@ -468,13 +468,16 @@ pub const AsyncModule = struct {
         specifier_: bun.String,
         referrer_: bun.String,
         log: *logger.Log,
-    ) void {
+    ) bun.JSExecutionTerminated!void {
         JSC.markBinding(@src());
         var specifier = specifier_;
         var referrer = referrer_;
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalThis, @src());
         defer {
             specifier.deref();
             referrer.deref();
+            scope.deinit();
         }
 
         var errorable: JSC.ErrorableResolvedSource = undefined;
@@ -487,7 +490,7 @@ pub const AsyncModule = struct {
             }
 
             if (e == error.JSError) {
-                errorable = JSC.ErrorableResolvedSource.err(error.JSError, globalThis.takeError(error.JSError).asVoid());
+                errorable = JSC.ErrorableResolvedSource.err(error.JSError, globalThis.takeError(error.JSError));
             } else {
                 VirtualMachine.processFetchLog(
                     globalThis,
@@ -512,6 +515,7 @@ pub const AsyncModule = struct {
             &specifier,
             &referrer,
         );
+        try scope.assertNoExceptionExceptTermination();
     }
 
     pub fn resolveError(this: *AsyncModule, vm: *VirtualMachine, import_record_id: u32, result: PackageResolveError) !void {
@@ -775,7 +779,7 @@ pub const AsyncModule = struct {
 
         return ResolvedSource{
             .allocator = null,
-            .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
+            .source_code = bun.String.cloneLatin1(printer.ctx.getWritten()),
             .specifier = String.init(specifier),
             .source_url = String.init(path.text),
             .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
@@ -1073,7 +1077,7 @@ pub fn transpileSourceCode(
             if (loader == .json) {
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.createUTF8(source.contents),
+                    .source_code = bun.String.cloneUTF8(source.contents),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .tag = ResolvedSource.Tag.json_for_object_loader,
@@ -1117,7 +1121,7 @@ pub fn transpileSourceCode(
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.createLatin1(source.contents),
+                    .source_code = bun.String.cloneLatin1(source.contents),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .already_bundled = true,
@@ -1159,7 +1163,7 @@ pub fn transpileSourceCode(
                     .source_code = switch (entry.output_code) {
                         .string => entry.output_code.string,
                         .utf8 => brk: {
-                            const result = bun.String.createUTF8(entry.output_code.utf8);
+                            const result = bun.String.cloneUTF8(entry.output_code.utf8);
                             cache.output_code_allocator.free(entry.output_code.utf8);
                             entry.output_code.utf8 = "";
                             break :brk result;
@@ -1286,7 +1290,7 @@ pub fn transpileSourceCode(
                 .allocator = null,
                 .source_code = brk: {
                     const written = printer.ctx.getWritten();
-                    const result = cache.output_code orelse bun.String.createLatin1(written);
+                    const result = cache.output_code orelse bun.String.cloneLatin1(written);
 
                     if (written.len > 1024 * 1024 * 2 or jsc_vm.smol) {
                         printer.ctx.buffer.deinit();
@@ -1354,7 +1358,7 @@ pub fn transpileSourceCode(
                         globalValue.put(
                             globalThis,
                             ZigString.static("wasmSourceBytes"),
-                            JSC.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
+                            try JSC.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
                         );
                     }
                 }
@@ -1419,7 +1423,7 @@ pub fn transpileSourceCode(
 
             return ResolvedSource{
                 .allocator = null,
-                .source_code = bun.String.createUTF8(sqlite_module_source_code_string),
+                .source_code = bun.String.cloneUTF8(sqlite_module_source_code_string),
                 .specifier = input_specifier,
                 .source_url = input_specifier.createIfDifferent(path.text),
                 .tag = .esm,
@@ -1518,10 +1522,10 @@ pub fn transpileSourceCode(
                     defer buf.deinit();
                     var writer = buf.writer();
                     JSC.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
-                    break :brk bun.String.createUTF8ForJS(globalObject.?, buf.slice());
+                    break :brk try bun.String.createUTF8ForJS(globalObject.?, buf.slice());
                 }
 
-                break :brk bun.String.createUTF8ForJS(globalObject.?, path.text);
+                break :brk try bun.String.createUTF8ForJS(globalObject.?, path.text);
             };
 
             return ResolvedSource{
@@ -1616,7 +1620,7 @@ pub export fn Bun__transpileFile(
     var virtual_source_to_use: ?logger.Source = null;
     var blob_to_deinit: ?JSC.WebCore.Blob = null;
     var lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, type_attribute_str) catch {
-        ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.ERR(.MODULE_NOT_FOUND, "Blob not found", .{}).toJS().asVoid());
+        ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.ERR(.MODULE_NOT_FOUND, "Blob not found", .{}).toJS());
         return null;
     };
     defer if (blob_to_deinit) |*blob| blob.deinit();
@@ -1815,7 +1819,7 @@ pub export fn Bun__transpileFile(
                 },
                 error.PluginError => return null,
                 error.JSError => {
-                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError).asVoid());
+                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
                     return null;
                 },
                 else => {
@@ -1856,7 +1860,7 @@ fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded:
     return switch (hardcoded) {
         .@"bun:main" => .{
             .allocator = null,
-            .source_code = bun.String.createUTF8(jsc_vm.entry_point.source.contents),
+            .source_code = bun.String.cloneUTF8(jsc_vm.entry_point.source.contents),
             .specifier = specifier,
             .source_url = specifier,
             .tag = .esm,
@@ -1890,7 +1894,7 @@ pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?Reso
         if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(spec.slice()))) |entry| {
             return .{
                 .allocator = null,
-                .source_code = bun.String.createUTF8(entry.source.contents),
+                .source_code = bun.String.cloneUTF8(entry.source.contents),
                 .specifier = specifier,
                 .source_url = specifier.dupeRef(),
             };
@@ -1991,7 +1995,7 @@ export fn Bun__transpileVirtualModule(
             switch (err) {
                 error.PluginError => return true,
                 error.JSError => {
-                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError).asVoid());
+                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
                     return true;
                 },
                 else => {
@@ -2140,12 +2144,12 @@ pub const RuntimeTranspilerStore = struct {
     }
 
     // This is run at the top of the event loop on the JS thread.
-    pub fn drain(this: *RuntimeTranspilerStore) void {
+    pub fn drain(this: *RuntimeTranspilerStore) bun.JSExecutionTerminated!void {
         var batch = this.queue.popBatch();
         var iter = batch.iterator();
         if (iter.next()) |job| {
             // we run just one job first to see if there are more
-            job.runFromJSThread();
+            try job.runFromJSThread();
         } else {
             return;
         }
@@ -2155,8 +2159,8 @@ pub const RuntimeTranspilerStore = struct {
         const jsc_vm = vm.jsc;
         while (iter.next()) |job| {
             // if there are more, we need to drain the microtasks from the previous run
-            event_loop.drainMicrotasksWithGlobal(global, jsc_vm);
-            job.runFromJSThread();
+            try event_loop.drainMicrotasksWithGlobal(global, jsc_vm);
+            try job.runFromJSThread();
         }
 
         // immediately after this is called, the microtasks will be drained again.
@@ -2263,7 +2267,7 @@ pub const RuntimeTranspilerStore = struct {
             this.vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&this.vm.transpiler_store));
         }
 
-        pub fn runFromJSThread(this: *TranspilerJob) void {
+        pub fn runFromJSThread(this: *TranspilerJob) bun.JSExecutionTerminated!void {
             var vm = this.vm;
             const promise = this.promise.swap();
             const globalThis = this.globalThis;
@@ -2276,7 +2280,7 @@ pub const RuntimeTranspilerStore = struct {
             var resolved_source = this.resolved_source;
             const specifier = brk: {
                 if (this.parse_error != null) {
-                    break :brk bun.String.createUTF8(this.path.text);
+                    break :brk bun.String.cloneUTF8(this.path.text);
                 }
 
                 const out = this.non_threadsafe_input_specifier;
@@ -2296,7 +2300,7 @@ pub const RuntimeTranspilerStore = struct {
 
             _ = vm.transpiler_store.store.put(this);
 
-            ModuleLoader.AsyncModule.fulfill(globalThis, promise, &resolved_source, parse_error, specifier, referrer, &log);
+            try ModuleLoader.AsyncModule.fulfill(globalThis, promise, &resolved_source, parse_error, specifier, referrer, &log);
         }
 
         pub fn schedule(this: *TranspilerJob) void {
@@ -2498,7 +2502,7 @@ pub const RuntimeTranspilerStore = struct {
                     .source_code = switch (entry.output_code) {
                         .string => entry.output_code.string,
                         .utf8 => brk: {
-                            const result = bun.String.createUTF8(entry.output_code.utf8);
+                            const result = bun.String.cloneUTF8(entry.output_code.utf8);
                             cache.output_code_allocator.free(entry.output_code.utf8);
                             entry.output_code.utf8 = "";
                             break :brk result;
@@ -2515,7 +2519,7 @@ pub const RuntimeTranspilerStore = struct {
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.createLatin1(parse_result.source.contents),
+                    .source_code = bun.String.cloneLatin1(parse_result.source.contents),
                     .already_bundled = true,
                     .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
                     .bytecode_cache_size = bytecode_slice.len,
@@ -2595,7 +2599,7 @@ pub const RuntimeTranspilerStore = struct {
             const source_code = brk: {
                 const written = printer.ctx.getWritten();
 
-                const result = cache.output_code orelse bun.String.createLatin1(written);
+                const result = cache.output_code orelse bun.String.cloneLatin1(written);
 
                 if (written.len > 1024 * 1024 * 2 or vm.smol) {
                     printer.ctx.buffer.deinit();
@@ -3051,7 +3055,7 @@ export fn Bun__resolveEmbeddedNodeFile(vm: *VirtualMachine, in_out_str: *bun.Str
     const input_path = in_out_str.toUTF8(bun.default_allocator);
     defer input_path.deinit();
     const result = ModuleLoader.resolveEmbeddedFile(vm, input_path.slice(), "node") orelse return false;
-    in_out_str.* = bun.String.createUTF8(result);
+    in_out_str.* = bun.String.cloneUTF8(result);
     return true;
 }
 

@@ -78,7 +78,7 @@ export fn Bun__encoding__toString(input: [*]const u8, len: usize, globalObject: 
 }
 
 // pub fn writeUTF16AsUTF8(utf16: [*]const u16, len: usize, to: [*]u8, to_len: usize) callconv(.C) i32 {
-//     return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, utf16[0..len], true).written);
+//     return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, utf16[0..len]).written);
 // }
 pub fn toString(input: []const u8, globalObject: *JSGlobalObject, encoding: Encoding) JSValue {
     return switch (encoding) {
@@ -211,7 +211,7 @@ pub fn toBunStringComptime(input: []const u8, comptime encoding: Encoding) bun.S
 
             // If we get here, it means we can safely assume the string is 100% ASCII characters
             // For this, we rely on WebKit to manage the memory.
-            return bun.String.createLatin1(input);
+            return bun.String.cloneLatin1(input);
         },
         .ucs2, .utf16le => {
             // Avoid incomplete characters
@@ -357,7 +357,12 @@ pub fn writeU16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, compt
 
     switch (comptime encoding) {
         .utf8 => {
-            return strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, input[0..len], allow_partial_write).written;
+            return strings.copyUTF16IntoUTF8Impl(
+                to[0..to_len],
+                []const u16,
+                input[0..len],
+                allow_partial_write,
+            ).written;
         },
         .latin1, .ascii, .buffer => {
             const out = @min(len, to_len);

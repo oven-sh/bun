@@ -31,6 +31,25 @@ static_routes: StaticRouteMap,
 // TODO: no code to sort this data structure
 dynamic_routes: DynamicRouteMap,
 
+/// Arena allocator for pattern strings.
+///
+/// This should be passed into `EncodedPattern.initFromParts` or should be the
+/// allocator used to allocate `StaticRoute.route_path`.
+///
+/// Q: Why use this and not just free the strings for `EncodedPattern` and
+///    `StaticRoute` manually?
+///
+/// A: Inside `fr.insert(...)` we iterate over `EncodedPattern/StaticRoute`,
+///    turning them into a bunch of `Route.Part`s, and we discard the original
+///    `EncodePattern/StaticRoute` structure.
+///
+///    In this process it's too easy to lose the original base pointer and
+///    length of the entire allocation. So we'll just allocate everything in
+///    this arena to ensure that everything gets freed.
+///
+///    Thank you to `AllocationScope` for catching this! Hell yeah!
+pattern_string_arena: bun.ArenaAllocator,
+
 /// The above structure is optimized for incremental updates, but
 /// production has a different set of requirements:
 /// - Trivially serializable to a binary file (no pointers)
@@ -128,6 +147,7 @@ pub fn initEmpty(root: []const u8, types: []Type, allocator: Allocator) !Framewo
         .routes = routes,
         .dynamic_routes = .{},
         .static_routes = .{},
+        .pattern_string_arena = bun.ArenaAllocator.init(allocator),
     };
 }
 
@@ -136,6 +156,7 @@ pub fn deinit(fr: *FrameworkRouter, allocator: Allocator) void {
     fr.static_routes.deinit(allocator);
     fr.dynamic_routes.deinit(allocator);
     allocator.free(fr.types);
+    fr.pattern_string_arena.deinit();
 }
 
 pub fn memoryCost(fr: *FrameworkRouter) usize {
@@ -1029,9 +1050,9 @@ fn scanInner(
                     const result = switch (param_count > 0) {
                         inline else => |has_dynamic_comptime| result: {
                             const pattern = if (has_dynamic_comptime)
-                                try EncodedPattern.initFromParts(parsed.parts, alloc)
+                                try EncodedPattern.initFromParts(parsed.parts, fr.pattern_string_arena.allocator())
                             else static_route: {
-                                const allocation = try bun.default_allocator.alloc(u8, static_total_len);
+                                const allocation = try fr.pattern_string_arena.allocator().alloc(u8, static_total_len);
                                 var s = std.io.fixedBufferStream(allocation);
                                 for (parsed.parts) |part|
                                     switch (part) {
@@ -1146,7 +1167,7 @@ pub const JSFrameworkRouter = struct {
         if (jsfr.stored_parse_errors.items.len > 0) {
             const arr = try JSValue.createEmptyArray(global, jsfr.stored_parse_errors.items.len);
             for (jsfr.stored_parse_errors.items, 0..) |*item, i| {
-                arr.putIndex(
+                try arr.putIndex(
                     global,
                     @intCast(i),
                     global.createErrorInstance("Invalid route {}: {s}", .{
@@ -1180,7 +1201,7 @@ pub const JSFrameworkRouter = struct {
                 .params = if (params_out.params.len > 0) params: {
                     const obj = JSValue.createEmptyObject(global, params_out.params.len);
                     for (params_out.params.slice()) |param| {
-                        const value = bun.String.createUTF8(param.value);
+                        const value = bun.String.cloneUTF8(param.value);
                         defer value.deref();
                         obj.put(global, param.key, value.toJS(global));
                     }
@@ -1218,7 +1239,7 @@ pub const JSFrameworkRouter = struct {
                 next = route.first_child.unwrap();
                 var i: u32 = 0;
                 while (next) |r| : (next = jsfr.router.routePtr(r).next_sibling.unwrap()) {
-                    arr.putIndex(global, i, try routeToJson(jsfr, global, r, allocator));
+                    try arr.putIndex(global, i, try routeToJson(jsfr, global, r, allocator));
                     i += 1;
                 }
                 break :brk arr;
@@ -1286,7 +1307,7 @@ pub const JSFrameworkRouter = struct {
         defer rendered.deinit();
         var it = pattern.iterate();
         while (it.next()) |part| try part.toStringForInternalUse(rendered.writer());
-        var str = bun.String.createUTF8(rendered.items);
+        var str = bun.String.cloneUTF8(rendered.items);
         return str.transferToJS(global);
     }
 
@@ -1294,12 +1315,12 @@ pub const JSFrameworkRouter = struct {
         var rendered = std.ArrayList(u8).init(temp_allocator);
         defer rendered.deinit();
         try part.toStringForInternalUse(rendered.writer());
-        var str = bun.String.createUTF8(rendered.items);
+        var str = bun.String.cloneUTF8(rendered.items);
         return str.transferToJS(global);
     }
 
     pub fn getFileIdForRouter(jsfr: *JSFrameworkRouter, abs_path: []const u8, _: Route.Index, _: Route.FileKind) !OpaqueFileId {
-        try jsfr.files.append(bun.default_allocator, bun.String.createUTF8(abs_path));
+        try jsfr.files.append(bun.default_allocator, bun.String.cloneUTF8(abs_path));
         return OpaqueFileId.init(@intCast(jsfr.files.items.len - 1));
     }
 

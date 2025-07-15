@@ -165,6 +165,12 @@ pub fn toExternal(this: Dependency) External {
     return bytes;
 }
 
+// Needed when a dependency uses workspace: protocol and isn't
+// marked with workspace behavior.
+pub fn isWorkspaceDep(this: *const Dependency) bool {
+    return this.behavior.isWorkspace() or this.version.tag == .workspace;
+}
+
 pub inline fn isSCPLikePath(dependency: string) bool {
     // Shortest valid expression: h:p
     if (dependency.len < 3) return false;
@@ -330,42 +336,42 @@ pub const Version = struct {
 
         switch (dep.tag) {
             .dist_tag => {
-                object.put(globalThis, "name", dep.value.dist_tag.name.toJS(buf, globalThis));
-                object.put(globalThis, "tag", dep.value.dist_tag.tag.toJS(buf, globalThis));
+                object.put(globalThis, "name", try dep.value.dist_tag.name.toJS(buf, globalThis));
+                object.put(globalThis, "tag", try dep.value.dist_tag.tag.toJS(buf, globalThis));
             },
             .folder => {
-                object.put(globalThis, "folder", dep.value.folder.toJS(buf, globalThis));
+                object.put(globalThis, "folder", try dep.value.folder.toJS(buf, globalThis));
             },
             .git => {
-                object.put(globalThis, "owner", dep.value.git.owner.toJS(buf, globalThis));
-                object.put(globalThis, "repo", dep.value.git.repo.toJS(buf, globalThis));
-                object.put(globalThis, "ref", dep.value.git.committish.toJS(buf, globalThis));
+                object.put(globalThis, "owner", try dep.value.git.owner.toJS(buf, globalThis));
+                object.put(globalThis, "repo", try dep.value.git.repo.toJS(buf, globalThis));
+                object.put(globalThis, "ref", try dep.value.git.committish.toJS(buf, globalThis));
             },
             .github => {
-                object.put(globalThis, "owner", dep.value.github.owner.toJS(buf, globalThis));
-                object.put(globalThis, "repo", dep.value.github.repo.toJS(buf, globalThis));
-                object.put(globalThis, "ref", dep.value.github.committish.toJS(buf, globalThis));
+                object.put(globalThis, "owner", try dep.value.github.owner.toJS(buf, globalThis));
+                object.put(globalThis, "repo", try dep.value.github.repo.toJS(buf, globalThis));
+                object.put(globalThis, "ref", try dep.value.github.committish.toJS(buf, globalThis));
             },
             .npm => {
-                object.put(globalThis, "name", dep.value.npm.name.toJS(buf, globalThis));
+                object.put(globalThis, "name", try dep.value.npm.name.toJS(buf, globalThis));
                 var version_str = try bun.String.createFormat("{}", .{dep.value.npm.version.fmt(buf)});
                 object.put(globalThis, "version", version_str.transferToJS(globalThis));
                 object.put(globalThis, "alias", JSC.JSValue.jsBoolean(dep.value.npm.is_alias));
             },
             .symlink => {
-                object.put(globalThis, "path", dep.value.symlink.toJS(buf, globalThis));
+                object.put(globalThis, "path", try dep.value.symlink.toJS(buf, globalThis));
             },
             .workspace => {
-                object.put(globalThis, "name", dep.value.workspace.toJS(buf, globalThis));
+                object.put(globalThis, "name", try dep.value.workspace.toJS(buf, globalThis));
             },
             .tarball => {
-                object.put(globalThis, "name", dep.value.tarball.package_name.toJS(buf, globalThis));
+                object.put(globalThis, "name", try dep.value.tarball.package_name.toJS(buf, globalThis));
                 switch (dep.value.tarball.uri) {
                     .local => |*local| {
-                        object.put(globalThis, "path", local.toJS(buf, globalThis));
+                        object.put(globalThis, "path", try local.toJS(buf, globalThis));
                     },
                     .remote => |*remote| {
-                        object.put(globalThis, "url", remote.toJS(buf, globalThis));
+                        object.put(globalThis, "url", try remote.toJS(buf, globalThis));
                     },
                 }
             },
@@ -1397,6 +1403,14 @@ pub const Behavior = packed struct(u8) {
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
         if (eq(lhs, rhs)) {
             return .eq;
+        }
+
+        if (lhs.isWorkspaceOnly() != rhs.isWorkspaceOnly()) {
+            // ensure isWorkspaceOnly deps are placed at the beginning
+            return if (lhs.isWorkspaceOnly())
+                .lt
+            else
+                .gt;
         }
 
         if (lhs.isProd() != rhs.isProd()) {

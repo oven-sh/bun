@@ -907,13 +907,16 @@ pub fn cloneInto(
     var body_ = try this.body.value.clone(globalThis);
     errdefer body_.deinit();
     const body = try vm.initRequestBodyValue(body_);
-    const original_url = req.url;
+    const url = if (preserve_url) req.url else this.url.dupeRef();
+    errdefer if (!preserve_url) url.deref();
+    const _headers = try this.cloneHeaders(globalThis);
+    errdefer if (_headers) |_h| _h.deref();
 
     req.* = Request{
         .body = body,
-        .url = if (preserve_url) original_url else this.url.dupeRef(),
+        .url = url,
         .method = this.method,
-        ._headers = try this.cloneHeaders(globalThis),
+        ._headers = _headers,
     };
 
     if (this.signal) |signal| {

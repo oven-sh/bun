@@ -1099,7 +1099,9 @@ declare module "bun" {
    *
    * @param options Server configuration options
    *
-   * @example Basic Usage
+   * @example
+   * **Basic Usage**
+   *
    * ```ts
    * Bun.serve({
    *   port: 3000,
@@ -1109,7 +1111,9 @@ declare module "bun" {
    * });
    * ```
    *
-   * @example Route-based Handlers
+   * @example
+   * **Route-based Handlers**
+   *
    * ```ts
    * Bun.serve({
    *   routes: {
@@ -1149,7 +1153,9 @@ declare module "bun" {
    * });
    * ```
    *
-   * @example Path Parameters
+   * @example
+   * **Path Parameters**
+   *
    * ```ts
    * Bun.serve({
    *   routes: {
@@ -1169,7 +1175,9 @@ declare module "bun" {
    * });
    * ```
    *
-   * @example Route Precedence
+   * @example
+   * **Route Precedence**
+   *
    * ```ts
    * // Routes are matched in the following order:
    * // 1. Exact static routes ("/about")
@@ -1186,7 +1194,9 @@ declare module "bun" {
    * });
    * ```
    *
-   * @example Error Handling
+   * @example
+   * **Error Handling**
+   *
    * ```ts
    * Bun.serve({
    *   routes: {
@@ -1204,7 +1214,9 @@ declare module "bun" {
    * });
    * ```
    *
-   * @example Server Lifecycle
+   * @example
+   * **Server Lifecycle**
+   *
    * ```ts
    * const server = Bun.serve({
    *   // Server config...
@@ -1221,7 +1233,9 @@ declare module "bun" {
    * server.stop();
    * ```
    *
-   * @example Development Mode
+   * @example
+   * **Development Mode**
+   *
    * ```ts
    * Bun.serve({
    *   development: true, // Enable hot reloading
@@ -1231,7 +1245,9 @@ declare module "bun" {
    * });
    * ```
    *
-   * @example Type-Safe Request Handling
+   * @example
+   * **Type-Safe Request Handling**
+   *
    * ```ts
    * type Post = {
    *   id: string;

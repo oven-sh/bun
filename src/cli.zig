@@ -362,6 +362,7 @@ pub const Command = struct {
 
         file_reporter: ?TestCommand.FileReporter = null,
         reporter_outfile: ?[]const u8 = null,
+        agent: bool = false,
     };
 
     pub const Debugger = union(enum) {

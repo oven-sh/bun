@@ -824,15 +824,18 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        const writer = Output.errorWriterBuffered();
-        defer Output.flush();
-
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
-        writeTestStatusLine(.pass, &writer);
+        // In agent mode, don't print pass status
+        if (!this.jest.test_options.agent) {
+            const writer = Output.errorWriterBuffered();
+            defer Output.flush();
 
-        const line_number = this.jest.tests.items(.line_number)[id];
-        printTestLine(.pass, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter, line_number);
+            writeTestStatusLine(.pass, &writer);
+
+            const line_number = this.jest.tests.items(.line_number)[id];
+            printTestLine(.pass, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter, line_number);
+        }
 
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.pass;
         this.summary().pass += 1;
@@ -840,8 +843,6 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_ = Output.errorWriterBuffered();
-        defer Output.flush();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         // when the tests fail, we want to repeat the failures at the end
@@ -853,12 +854,22 @@ pub const CommandLineReporter = struct {
         const line_number = this.jest.tests.items(.line_number)[id];
         printTestLine(.fail, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter, line_number);
 
+        // In agent mode, immediately print failures
+        if (this.jest.test_options.agent) {
+            var writer_ = Output.errorWriterBuffered();
+            defer Output.flush();
+            writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch {};
+        } else {
+            // In normal mode, output to stderr at the end
+            var writer_ = Output.errorWriterBuffered();
+            defer Output.flush();
+            writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch {};
+        }
+
         // We must always reset the colors because (skip) will have set them to <d>
         if (Output.enable_ansi_colors_stderr) {
             writer.writeAll(Output.prettyFmt("<r>", true)) catch {};
         }
-
-        writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch {};
 
         // this.updateDots();
         this.summary().fail += 1;
@@ -876,7 +887,8 @@ pub const CommandLineReporter = struct {
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         // If you do it.only, don't report the skipped tests because its pretty noisy
-        if (jest.Jest.runner != null and !jest.Jest.runner.?.only) {
+        // In agent mode, don't print skipped tests
+        if (jest.Jest.runner != null and !jest.Jest.runner.?.only and !this.jest.test_options.agent) {
             var writer_ = Output.errorWriterBuffered();
             defer Output.flush();
             // when the tests skip, we want to repeat the failures at the end
@@ -921,21 +933,24 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestTodo(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_ = Output.errorWriterBuffered();
-
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
-        // when the tests skip, we want to repeat the failures at the end
-        // so that you can see them better when there are lots of tests that ran
-        const initial_length = this.todos_to_repeat_buf.items.len;
-        var writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
+        // In agent mode, don't print todo status
+        if (!this.jest.test_options.agent) {
+            var writer_ = Output.errorWriterBuffered();
 
-        writeTestStatusLine(.todo, &writer);
-        const line_number = this.jest.tests.items(.line_number)[id];
-        printTestLine(.todo, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter, line_number);
+            // when the tests skip, we want to repeat the failures at the end
+            // so that you can see them better when there are lots of tests that ran
+            const initial_length = this.todos_to_repeat_buf.items.len;
+            var writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
 
-        writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch {};
-        Output.flush();
+            writeTestStatusLine(.todo, &writer);
+            const line_number = this.jest.tests.items(.line_number)[id];
+            printTestLine(.todo, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter, line_number);
+
+            writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch {};
+            Output.flush();
+        }
 
         // this.updateDots();
         this.summary().todo += 1;
@@ -1307,6 +1322,12 @@ pub const TestCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         Output.is_github_action = Output.isGithubAction();
 
+        // Disable ANSI colors in agent mode
+        if (ctx.test_options.agent) {
+            Output.enable_ansi_colors_stderr = false;
+            Output.enable_ansi_colors_stdout = false;
+        }
+
         // print the version so you know its doing stuff if it takes a sec
         Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
@@ -1530,7 +1551,8 @@ pub const TestCommand = struct {
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
         var coverage_options = ctx.test_options.coverage;
-        if (reporter.summary().pass > 20) {
+        // In agent mode, don't print repeat buffers since errors are printed immediately
+        if (reporter.summary().pass > 20 and !ctx.test_options.agent) {
             if (reporter.summary().skip > 0) {
                 Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary().skip});
                 Output.flush();
@@ -1737,7 +1759,11 @@ pub const TestCommand = struct {
         }
         const summary = reporter.summary();
 
-        if (failed_to_find_any_tests or summary.didLabelFilterOutAllTests() or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
+        // In agent mode, exit with code 1 when no tests are run
+        const no_tests_run = (summary.pass + summary.fail + summary.skip + summary.todo) == 0;
+        const should_exit_with_error = failed_to_find_any_tests or summary.didLabelFilterOutAllTests() or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success or (ctx.test_options.agent and no_tests_run);
+        
+        if (should_exit_with_error) {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             Global.exit(reporter.jest.unhandled_errors_between_tests);

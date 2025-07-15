@@ -192,6 +192,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
     clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit is the only supported format.") catch unreachable,
     clap.parseParam("--reporter-outfile <STR>         The output file used for the format from --reporter.") catch unreachable,
+    clap.parseParam("--agent                          Use agent reporter (only prints errors and summary).") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -481,6 +482,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");
         ctx.test_options.only = args.flag("--only");
+        ctx.test_options.agent = args.flag("--agent");
     }
 
     ctx.args.absolute_working_dir = cwd;
@@ -674,7 +676,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Invalid value for --console-depth: \"{s}\". Must be a positive integer\n", .{depth_str});
                 Global.exit(1);
             };
-            ctx.runtime_options.console_depth = depth;
+            // Treat depth=0 as maxInt(u16) for infinite depth
+            ctx.runtime_options.console_depth = if (depth == 0) std.math.maxInt(u16) else depth;
         }
 
         if (args.option("--dns-result-order")) |order| {

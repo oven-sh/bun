@@ -114,11 +114,11 @@ test("fetch with Request respects redirect when fetch has other options but no r
         });
       }
       if (url.pathname === "/target") {
-        return new Response("Target reached", { 
+        return new Response("Target reached", {
           status: 200,
           headers: {
-            "X-Target": "true"
-          }
+            "X-Target": "true",
+          },
         });
       }
       return new Response("Not found", { status: 404 });
@@ -129,19 +129,19 @@ test("fetch with Request respects redirect when fetch has other options but no r
   const request = new Request(`${server.url}/redirect`, {
     redirect: "manual",
     headers: {
-      "X-Original": "request"
-    }
+      "X-Original": "request",
+    },
   });
 
   // Test 1: fetch with other options but NO redirect option
   // Should use the Request's redirect: "manual"
   const response1 = await fetch(request, {
     headers: {
-      "X-Additional": "fetch-option"
+      "X-Additional": "fetch-option",
     },
     // Note: no redirect option here
   });
-  
+
   expect(response1.status).toBe(302);
   expect(response1.url).toBe(`${server.url}/redirect`);
   expect(response1.redirected).toBe(false);
@@ -150,11 +150,11 @@ test("fetch with Request respects redirect when fetch has other options but no r
   // Test 2: fetch with explicit redirect option should override Request's redirect
   const response2 = await fetch(request, {
     headers: {
-      "X-Additional": "fetch-option"
+      "X-Additional": "fetch-option",
     },
-    redirect: "follow" // Explicitly override
+    redirect: "follow", // Explicitly override
   });
-  
+
   expect(response2.status).toBe(200);
   expect(response2.url).toBe(new URL("/target", server.url).href);
   expect(response2.redirected).toBe(true);
@@ -162,7 +162,7 @@ test("fetch with Request respects redirect when fetch has other options but no r
 
   // Test 3: fetch with empty options object should use Request's redirect
   const response3 = await fetch(request, {});
-  
+
   expect(response3.status).toBe(302);
   expect(response3.url).toBe(`${server.url}/redirect`);
   expect(response3.redirected).toBe(false);

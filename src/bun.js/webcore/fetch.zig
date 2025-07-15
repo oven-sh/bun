@@ -1869,7 +1869,7 @@ pub fn Bun__fetch_(
         if (request) |req| {
             redirect_type = req.redirect;
         }
-        
+
         // Then check options/init objects which can override the Request's redirect
         const objects_to_try = [_]JSValue{
             options_object orelse .zero,

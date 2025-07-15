@@ -6,7 +6,7 @@
  */
 
 import { createRoot } from "react-dom/client";
-import { App } from "./App";
+import { App } from "./app";
 
 function start() {
   const root = createRoot(document.getElementById("root")!);

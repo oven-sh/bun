@@ -519,6 +519,7 @@ test/js/web/fetch/client-fetch.test.ts
 test/js/web/fetch/content-length.test.js
 test/js/web/fetch/cookies.test.ts
 test/js/web/fetch/fetch-args.test.ts
+test/js/web/fetch/fetch-connection-header.test.ts
 test/js/web/fetch/fetch-gzip.test.ts
 test/js/web/fetch/fetch-preconnect.test.ts
 test/js/web/fetch/fetch-redirect.test.ts

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 15
+# Version: 16
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1538,6 +1538,17 @@ clean_system() {
 	done
 }
 
+ensure_no_tmpfs() {
+	if ! [ "$os" = "linux" ]; then
+		return
+	fi
+	if ! [ "$distro" = "ubuntu" ]; then
+		return
+	fi
+
+	execute_sudo systemctl mask tmp.mount
+}
+
 main() {
 	check_features "$@"
 	check_operating_system
@@ -1555,6 +1566,7 @@ main() {
 		configure_core_dumps
 	fi
 	clean_system
+	ensure_no_tmpfs
 }
 
 main "$@"

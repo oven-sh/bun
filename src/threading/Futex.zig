@@ -309,3 +309,51 @@ const WasmImpl = struct {
         _ = woken_count; // can be 0 when linker flag 'shared-memory' is not enabled
     }
 };
+
+/// Deadline is used to wait efficiently for a pointer's value to change using Futex and a fixed timeout.
+///
+/// Futex's timedWait() api uses a relative duration which suffers from over-waiting
+/// when used in a loop which is often required due to the possibility of spurious wakeups.
+///
+/// Deadline instead converts the relative timeout to an absolute one so that multiple calls
+/// to Futex timedWait() can block for and report more accurate error.Timeouts.
+pub const Deadline = struct {
+    timeout: ?u64,
+    started: std.time.Timer,
+
+    /// Create the deadline to expire after the given amount of time in nanoseconds passes.
+    /// Pass in `null` to have the deadline call `Futex.wait()` and never expire.
+    pub fn init(expires_in_ns: ?u64) Deadline {
+        var deadline: Deadline = undefined;
+        deadline.timeout = expires_in_ns;
+
+        // std.time.Timer is required to be supported for somewhat accurate reportings of error.Timeout.
+        if (deadline.timeout != null) {
+            deadline.started = std.time.Timer.start() catch unreachable;
+        }
+
+        return deadline;
+    }
+
+    /// Wait until either:
+    /// - the `ptr`'s value changes from `expect`.
+    /// - `Futex.wake()` is called on the `ptr`.
+    /// - A spurious wake occurs.
+    /// - The deadline expires; In which case `error.Timeout` is returned.
+    pub fn wait(self: *Deadline, ptr: *const atomic.Value(u32), expect: u32) error{Timeout}!void {
+        @branchHint(.cold);
+
+        // Check if we actually have a timeout to wait until.
+        // If not just wait "forever".
+        const timeout_ns = self.timeout orelse {
+            return Futex.waitForever(ptr, expect);
+        };
+
+        // Get how much time has passed since we started waiting
+        // then subtract that from the init() timeout to get how much longer to wait.
+        // Use overflow to detect when we've been waiting longer than the init() timeout.
+        const elapsed_ns = self.started.read();
+        const until_timeout_ns = std.math.sub(u64, timeout_ns, elapsed_ns) catch 0;
+        return Futex.wait(ptr, expect, until_timeout_ns);
+    }
+};

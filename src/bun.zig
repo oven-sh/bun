@@ -1847,7 +1847,9 @@ pub const Loader = bundle_v2.Loader;
 pub const BundleV2 = bundle_v2.BundleV2;
 pub const ParseTask = bundle_v2.ParseTask;
 
-pub const Mutex = @import("./Mutex.zig");
+pub const threading = @import("./threading.zig");
+pub const Mutex = threading.Mutex;
+pub const Futex = threading.Futex;
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 
 pub fn threadlocalAllocator() std.mem.Allocator {
@@ -2974,8 +2976,6 @@ pub fn SliceIterator(comptime T: type) type {
         }
     };
 }
-
-pub const Futex = @import("./Futex.zig");
 
 // TODO: migrate
 pub const ArenaAllocator = std.heap.ArenaAllocator;

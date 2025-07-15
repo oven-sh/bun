@@ -1,8 +1,8 @@
 const std = @import("std");
 const bun = @import("bun");
 const Mutex = bun.Mutex;
-const sync = @import("../../sync.zig");
-const Semaphore = sync.Semaphore;
+const sync = bun.sync;
+const Semaphore = std.Thread.Semaphore;
 const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const string = bun.string;
 

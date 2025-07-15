@@ -13,13 +13,9 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
         // TODO(@paperclover/bake): instead of running a renamer per chunk, run it per file
         debug(" START {d} renamers", .{chunks.len});
         defer debug("  DONE {d} renamers", .{chunks.len});
-        var wait_group = try c.allocator.create(sync.WaitGroup);
-        wait_group.init();
-        defer {
-            wait_group.deinit();
-            c.allocator.destroy(wait_group);
-        }
-        wait_group.counter = @as(u32, @truncate(chunks.len));
+        const wait_group = try c.allocator.create(sync.WaitGroup);
+        defer c.allocator.destroy(wait_group);
+        wait_group.* = .initWithCount(@as(u32, @intCast(chunks.len)));
         const ctx = GenerateChunkCtx{ .chunk = &chunks[0], .wg = wait_group, .c = c, .chunks = chunks };
         try c.parse_graph.pool.worker_pool.doPtr(c.allocator, wait_group, ctx, LinkerContext.generateJSRenamer, chunks);
     }
@@ -37,12 +33,6 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
         // Remove duplicate rules across files. This must be done in serial, not
         // in parallel, and must be done from the last rule to the first rule.
         if (c.parse_graph.css_file_count > 0) {
-            var wait_group = try c.allocator.create(sync.WaitGroup);
-            wait_group.init();
-            defer {
-                wait_group.deinit();
-                c.allocator.destroy(wait_group);
-            }
             const total_count = total_count: {
                 var total_count: usize = 0;
                 for (chunks) |*chunk| {
@@ -50,6 +40,9 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                 }
                 break :total_count total_count;
             };
+            const wait_group = try c.allocator.create(sync.WaitGroup);
+            defer c.allocator.destroy(wait_group);
+            wait_group.* = .initWithCount(total_count);
 
             debug(" START {d} prepare CSS ast (total count)", .{total_count});
             defer debug("  DONE {d} prepare CSS ast (total count)", .{total_count});
@@ -71,7 +64,6 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                     i += 1;
                 }
             }
-            wait_group.counter = @as(u32, @truncate(total_count));
             c.parse_graph.pool.worker_pool.schedule(batch);
             wait_group.wait();
         } else if (Environment.isDebug) {
@@ -84,13 +76,10 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
     {
         const chunk_contexts = c.allocator.alloc(GenerateChunkCtx, chunks.len) catch unreachable;
         defer c.allocator.free(chunk_contexts);
-        var wait_group = try c.allocator.create(sync.WaitGroup);
-        wait_group.init();
+        const wait_group = try c.allocator.create(sync.WaitGroup);
+        defer c.allocator.destroy(wait_group);
+        wait_group.* = .init();
 
-        defer {
-            wait_group.deinit();
-            c.allocator.destroy(wait_group);
-        }
         errdefer wait_group.wait();
         {
             var total_count: usize = 0;
@@ -183,7 +172,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                     },
                 }
             }
-            wait_group.counter = @as(u32, @truncate(total_count));
+            wait_group.addUnsynchronized(@as(u32, @intCast(total_count)));
             c.parse_graph.pool.worker_pool.schedule(batch);
             wait_group.wait();
         }
@@ -202,8 +191,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
             bun.assert(chunks_to_do.len > 0);
             debug(" START {d} postprocess chunks", .{chunks_to_do.len});
             defer debug("  DONE {d} postprocess chunks", .{chunks_to_do.len});
-            wait_group.init();
-            wait_group.counter = @as(u32, @truncate(chunks_to_do.len));
+            wait_group.* = .initWithCount(@as(u32, @intCast(chunks_to_do.len)));
 
             try c.parse_graph.pool.worker_pool.doPtr(
                 c.allocator,
@@ -576,7 +564,7 @@ pub const ThreadPool = bun.bundle_v2.ThreadPool;
 const Loc = Logger.Loc;
 const Chunk = bun.bundle_v2.Chunk;
 
-const sync = bun.ThreadPool;
+const sync = bun.threading;
 const GenerateChunkCtx = LinkerContext.GenerateChunkCtx;
 const CompileResult = LinkerContext.CompileResult;
 const PendingPartRange = LinkerContext.PendingPartRange;
@@ -599,4 +587,4 @@ const base64 = bun.base64;
 
 const JSC = bun.JSC;
 
-pub const ThreadPoolLib = bun.ThreadPool;
+const ThreadPoolLib = bun.ThreadPool;

@@ -1,10 +1,37 @@
 // Thank you @kprotty.
-// https://github.com/kprotty/zap/blob/blog/src/thread_pool.zig
+//
+// This file contains code derived from the following source:
+//   https://github.com/kprotty/zap/blob/blog/src/thread_pool.zig
+//
+// That code is covered by the following copyright and license notice:
+//   MIT License
+//
+//   Copyright (c) 2021 kprotty
+//
+//   Permission is hereby granted, free of charge, to any person obtaining a copy
+//   of this software and associated documentation files (the "Software"), to deal
+//   in the Software without restriction, including without limitation the rights
+//   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+//   copies of the Software, and to permit persons to whom the Software is
+//   furnished to do so, subject to the following conditions:
+//
+//   The above copyright notice and this permission notice shall be included in all
+//   copies or substantial portions of the Software.
+//
+//   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+//   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+//   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+//   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+//   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+//   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+//   SOFTWARE.
 
 const std = @import("std");
 const bun = @import("bun");
 const ThreadPool = @This();
+const Mutex = bun.threading.Mutex;
 const Futex = bun.threading.Futex;
+const WaitGroup = bun.threading.WaitGroup;
 
 const Environment = bun.Environment;
 const assert = bun.assert;
@@ -17,13 +44,13 @@ on_thread_spawn: ?OnSpawnCallback = null,
 threadpool_context: ?*anyopaque = null,
 stack_size: u32,
 max_threads: u32,
-sync: Atomic(u32) = Atomic(u32).init(@as(u32, @bitCast(Sync{}))),
+sync: Atomic(u32) = .init(@as(u32, @bitCast(Sync{}))),
 idle_event: Event = .{},
 join_event: Event = .{},
 run_queue: Node.Queue = .{},
-threads: Atomic(?*Thread) = Atomic(?*Thread).init(null),
+threads: Atomic(?*Thread) = .init(null),
 name: []const u8 = "",
-spawned_thread_count: Atomic(u32) = Atomic(u32).init(0),
+spawned_thread_count: Atomic(u32) = .init(0),
 
 const Sync = packed struct {
     /// Tracks the number of threads not searching for Tasks
@@ -131,61 +158,6 @@ pub const Batch = struct {
     }
 };
 
-pub const WaitGroup = struct {
-    mutex: bun.Mutex = .{},
-    counter: u32 = 0,
-    event: std.Thread.ResetEvent = .{},
-
-    pub fn init(self: *WaitGroup) void {
-        self.* = .{};
-    }
-
-    pub fn deinit(self: *WaitGroup) void {
-        self.event.reset();
-        self.* = undefined;
-    }
-
-    pub fn start(self: *WaitGroup) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        self.counter += 1;
-    }
-
-    pub fn isDone(this: *WaitGroup) bool {
-        return @atomicLoad(u32, &this.counter, .monotonic) == 0;
-    }
-
-    pub fn finish(self: *WaitGroup) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        self.counter -= 1;
-
-        if (self.counter == 0) {
-            self.event.set();
-        }
-    }
-
-    pub fn wait(self: *WaitGroup) void {
-        while (true) {
-            self.mutex.lock();
-
-            if (self.counter == 0) {
-                self.mutex.unlock();
-                return;
-            }
-
-            self.mutex.unlock();
-            self.event.wait();
-        }
-    }
-
-    pub fn reset(self: *WaitGroup) void {
-        self.event.reset();
-    }
-};
-
 pub fn ConcurrentFunction(
     comptime Function: anytype,
 ) type {
@@ -253,7 +225,7 @@ pub fn do(
     comptime Run: anytype,
     values: anytype,
 ) !void {
-    return try Do(this, allocator, wg, @TypeOf(ctx), ctx, Run, @TypeOf(values), values, false);
+    return try do_impl(this, allocator, wg, @TypeOf(ctx), ctx, Run, @TypeOf(values), values, false);
 }
 
 pub fn doPtr(
@@ -264,10 +236,10 @@ pub fn doPtr(
     comptime Run: anytype,
     values: anytype,
 ) !void {
-    return try Do(this, allocator, wg, @TypeOf(ctx), ctx, Run, @TypeOf(values), values, true);
+    return try do_impl(this, allocator, wg, @TypeOf(ctx), ctx, Run, @TypeOf(values), values, true);
 }
 
-pub fn Do(
+fn do_impl(
     this: *ThreadPool,
     allocator: std.mem.Allocator,
     wg: ?*WaitGroup,
@@ -283,15 +255,15 @@ pub fn Do(
     var allocated_wait_group: ?*WaitGroup = null;
     defer {
         if (allocated_wait_group) |group| {
-            group.deinit();
             allocator.destroy(group);
         }
     }
 
     var wait_group = wg orelse brk: {
-        allocated_wait_group = try allocator.create(WaitGroup);
-        allocated_wait_group.?.init();
-        break :brk allocated_wait_group.?;
+        const new_wg = try allocator.create(WaitGroup);
+        new_wg.* = .{};
+        allocated_wait_group = new_wg;
+        break :brk new_wg;
     };
     const WaitContext = struct {
         wait_group: *WaitGroup = undefined,
@@ -323,32 +295,22 @@ pub fn Do(
         .values = values,
     };
     defer allocator.destroy(wait_context);
-    var tasks = allocator.alloc(RunnerTask, values.len) catch unreachable;
+    const tasks = allocator.alloc(RunnerTask, values.len) catch unreachable;
     defer allocator.free(tasks);
-    var batch: Batch = undefined;
-    var offset = tasks.len - 1;
+    var batch: Batch = .{};
+    var offset = tasks.len;
 
-    {
-        tasks[0] = .{
+    for (tasks) |*runner_task| {
+        offset -= 1;
+        runner_task.* = .{
             .i = offset,
             .task = .{ .callback = RunnerTask.call },
             .ctx = wait_context,
         };
-        batch = Batch.from(&tasks[0].task);
-    }
-    if (tasks.len > 1) {
-        for (tasks[1..]) |*runner_task| {
-            offset -= 1;
-            runner_task.* = .{
-                .i = offset,
-                .task = .{ .callback = RunnerTask.call },
-                .ctx = wait_context,
-            };
-            batch.push(Batch.from(&runner_task.task));
-        }
+        batch.push(Batch.from(&runner_task.task));
     }
 
-    wait_group.counter += @as(u32, @intCast(values.len));
+    wait_group.add(@as(u32, @intCast(values.len)));
     this.schedule(batch);
     wait_group.wait();
 }
@@ -663,7 +625,7 @@ pub const Thread = struct {
         };
         self.idle_queue.push(list);
     }
-    var counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+    var counter: std.atomic.Value(u32) = .init(0);
 
     /// Thread entry point which runs a worker for the ThreadPool
     fn run(thread_pool: *ThreadPool) void {
@@ -767,7 +729,7 @@ pub const Thread = struct {
 /// The event can be shutdown(), waking up all wait()ing threads and
 /// making subsequent wait()'s return immediately.
 const Event = struct {
-    state: Atomic(u32) = Atomic(u32).init(EMPTY),
+    state: Atomic(u32) = .init(EMPTY),
 
     const EMPTY = 0;
     const WAITING = 1;
@@ -861,7 +823,7 @@ pub const Node = struct {
 
     /// An unbounded multi-producer-(non blocking)-multi-consumer queue of Node pointers.
     const Queue = struct {
-        stack: Atomic(usize) = Atomic(usize).init(0),
+        stack: Atomic(usize) = .init(0),
         cache: ?*Node = null,
 
         const HAS_CACHE: usize = 0b01;
@@ -961,8 +923,8 @@ pub const Node = struct {
 
     /// A bounded single-producer, multi-consumer ring buffer for node pointers.
     const Buffer = struct {
-        head: Atomic(Index) = Atomic(Index).init(0),
-        tail: Atomic(Index) = Atomic(Index).init(0),
+        head: Atomic(Index) = .init(0),
+        tail: Atomic(Index) = .init(0),
         array: [capacity]Atomic(*Node) = undefined,
 
         const Index = u32;

@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("bun");
 const C = @import("std").zig.c_builtins;
-const pthread_rwlock_t = if (bun.Environment.isPosix) @import("../sync.zig").RwLock.pthread_rwlock_t else *anyopaque;
+const pthread_rwlock_t = std.c.pthread_rwlock_t;
 const time_t = C.time_t;
 const va_list = C.va_list;
 const struct_timeval = C.struct_timeval;

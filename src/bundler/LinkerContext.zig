@@ -19,7 +19,7 @@ pub const LinkerContext = struct {
 
     options: LinkerOptions = .{},
 
-    wait_group: ThreadPoolLib.WaitGroup = .{},
+    wait_group: sync.WaitGroup = .init(),
 
     ambiguous_result_pool: std.ArrayList(MatchImport) = undefined,
 
@@ -76,10 +76,10 @@ pub const LinkerContext = struct {
     };
 
     pub const SourceMapData = struct {
-        line_offset_wait_group: sync.WaitGroup = .{},
+        line_offset_wait_group: sync.WaitGroup = .init(),
         line_offset_tasks: []Task = &.{},
 
-        quoted_contents_wait_group: sync.WaitGroup = .{},
+        quoted_contents_wait_group: sync.WaitGroup = .init(),
         quoted_contents_tasks: []Task = &.{},
 
         pub const Task = struct {
@@ -207,7 +207,7 @@ pub const LinkerContext = struct {
 
         try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys());
         bundle.dynamic_import_entry_points.deinit();
-        this.wait_group.init();
+        this.wait_group = .init();
         this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
 
         var runtime_named_exports = &this.graph.ast.items(.named_exports)[Index.runtime.get()];
@@ -252,10 +252,8 @@ pub const LinkerContext = struct {
         reachable: []const Index.Int,
     ) void {
         bun.assert(this.options.source_maps != .none);
-        this.source_maps.line_offset_wait_group.init();
-        this.source_maps.quoted_contents_wait_group.init();
-        this.source_maps.line_offset_wait_group.counter = @as(u32, @truncate(reachable.len));
-        this.source_maps.quoted_contents_wait_group.counter = @as(u32, @truncate(reachable.len));
+        this.source_maps.line_offset_wait_group = .initWithCount(@as(u32, @intCast(reachable.len)));
+        this.source_maps.quoted_contents_wait_group = .initWithCount(@as(u32, @intCast(reachable.len)));
         this.source_maps.line_offset_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
         this.source_maps.quoted_contents_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
 
@@ -283,7 +281,7 @@ pub const LinkerContext = struct {
     }
 
     pub fn scheduleTasks(this: *LinkerContext, batch: ThreadPoolLib.Batch) void {
-        _ = this.pending_task_count.fetchAdd(@as(u32, @truncate(batch.len)), .monotonic);
+        _ = this.pending_task_count.fetchAdd(@as(u32, @intCast(batch.len)), .monotonic);
         this.parse_graph.pool.worker_pool.schedule(batch);
     }
 
@@ -2488,11 +2486,11 @@ const sourcemap = bun.sourcemap;
 const StringJoiner = bun.StringJoiner;
 const base64 = bun.base64;
 pub const Ref = @import("../ast/base.zig").Ref;
-pub const ThreadPoolLib = @import("../thread_pool.zig");
+pub const ThreadPoolLib = bun.ThreadPool;
 const BabyList = @import("../baby_list.zig").BabyList;
 pub const Fs = @import("../fs.zig");
 const _resolver = @import("../resolver/resolver.zig");
-const sync = bun.ThreadPool;
+const sync = bun.threading;
 const ImportRecord = bun.ImportRecord;
 const runtime = @import("../runtime.zig");
 

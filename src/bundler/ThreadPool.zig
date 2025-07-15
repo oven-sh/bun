@@ -302,7 +302,7 @@ const Logger = @import("../logger.zig");
 const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
 pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = @import("../thread_pool.zig");
+const ThreadPoolLib = bun.ThreadPool;
 const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 const allocators = @import("../allocators.zig");
 

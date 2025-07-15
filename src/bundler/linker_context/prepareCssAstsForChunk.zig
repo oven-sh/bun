@@ -277,7 +277,7 @@ const LinkerContext = bun.bundle_v2.LinkerContext;
 const ThreadPoolLib = bun.ThreadPool;
 
 const std = @import("std");
-const sync = bun.ThreadPool;
+const sync = bun.threading;
 const ImportRecord = bun.ImportRecord;
 
 const bundler = bun.bundle_v2;

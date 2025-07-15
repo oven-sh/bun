@@ -4,9 +4,11 @@ import { expectType } from "./utilities";
 
 const s1 = Bun.serve({
   routes: {
-    "/:hey": req => {
+    "/ws/:name": req => {
+      expectType(req.params.name).is<string>();
+
       s1.upgrade(req, {
-        data: { name: "hey" },
+        data: { name: req.params.name },
       });
     },
   },
@@ -21,7 +23,9 @@ const s1 = Bun.serve({
 
 const s2 = Bun.serve({
   routes: {
-    "/:hey": req => {
+    "/ws/:name": req => {
+      expectType(req.params.name).is<string>();
+
       // @ts-expect-error - Should error because data was not passed
       s2.upgrade(req, {});
     },
@@ -36,7 +40,9 @@ const s2 = Bun.serve({
 
 const s3 = Bun.serve({
   routes: {
-    "/:hey": req => {
+    "/ws/:name": req => {
+      expectType(req.params.name).is<string>();
+
       // @ts-expect-error - Should error because data and object was not passed
       s3.upgrade(req);
     },
@@ -51,7 +57,9 @@ const s3 = Bun.serve({
 
 const s4 = Bun.serve({
   routes: {
-    "/:hey": req => {
+    "/ws/:name": req => {
+      expectType(req.params.name).is<string>();
+
       s4.upgrade(req);
     },
   },

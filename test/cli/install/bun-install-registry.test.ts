@@ -8529,13 +8529,13 @@ describe("outdated", () => {
     expect(parsed["no-deps"]).toBeDefined();
     expect(parsed["no-deps"].current).toBe("1.0.0");
     expect(parsed["no-deps"].latest).toBe("1.0.5");
-    expect(parsed["no-deps"].dependencyType).toBe("prod");
+    expect(parsed["no-deps"].type).toBe("prod");
     
     // Should contain a-dep with dev dependency type
     expect(parsed["a-dep"]).toBeDefined();
     expect(parsed["a-dep"].current).toBe("1.0.1");
     expect(parsed["a-dep"].latest).toBe("1.0.3");
-    expect(parsed["a-dep"].dependencyType).toBe("dev");
+    expect(parsed["a-dep"].type).toBe("dev");
     
     // Verify JSON structure for all packages
     for (const pkgName of Object.keys(parsed)) {
@@ -8543,8 +8543,8 @@ describe("outdated", () => {
       expect(pkg).toHaveProperty("current");
       expect(pkg).toHaveProperty("update"); 
       expect(pkg).toHaveProperty("latest");
-      expect(pkg).toHaveProperty("dependencyType");
-      expect(["prod", "dev", "peer", "optional"]).toContain(pkg.dependencyType);
+      expect(pkg).toHaveProperty("type");
+      expect(["prod", "dev", "peer", "optional"]).toContain(pkg.type);
     }
   });
 });

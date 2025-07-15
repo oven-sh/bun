@@ -405,7 +405,7 @@ pub const OutdatedCommand = struct {
                     try writer.print("    \"current\": \"{}\",\n", .{resolution.value.npm.version.fmt(string_buf)});
                     try writer.print("    \"update\": \"{}\",\n", .{update.version.fmt(manifest.string_buf)});
                     try writer.print("    \"latest\": \"{}\",\n", .{latest.version.fmt(manifest.string_buf)});
-                    try writer.print("    \"dependencyType\": \"{s}\"", .{dependency_type});
+                    try writer.print("    \"type\": \"{s}\"", .{dependency_type});
                     
                     if (was_filtered) {
                         const workspace_name = pkg_names[workspace_pkg_id].slice(string_buf);

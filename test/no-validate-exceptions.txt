@@ -98,6 +98,7 @@ test/integration/sass/sass.test.ts
 test/integration/sharp/sharp.test.ts
 test/integration/svelte/client-side.test.ts
 test/integration/typegraphql/src/typegraphql.test.ts
+test/cli/run/sql-preconnect.test.ts
 test/internal/bindgen.test.ts
 test/js/bun/bun-object/deep-match.spec.ts
 test/js/bun/bun-object/write.spec.ts
@@ -135,6 +136,7 @@ test/js/bun/http/serve-body-leak.test.ts
 test/js/bun/http/serve-listen.test.ts
 test/js/bun/http/serve.test.ts
 test/js/bun/import-attributes/import-attributes.test.ts
+test/js/bun/resolve/resolve.test.ts
 test/js/bun/ini/ini.test.ts
 test/js/bun/io/bun-write.test.js
 test/js/bun/jsc/bun-jsc.test.ts
@@ -397,6 +399,7 @@ test/js/third_party/comlink/comlink.test.ts
 test/js/third_party/duckdb/duckdb-basic-usage.test.ts
 test/js/third_party/esbuild/esbuild-child_process.test.ts
 test/js/third_party/express/app.router.test.ts
+test/cli/test/coverage.test.ts
 test/js/third_party/express/express.json.test.ts
 test/js/third_party/express/express.test.ts
 test/js/third_party/express/express.text.test.ts
@@ -516,6 +519,7 @@ test/js/web/fetch/client-fetch.test.ts
 test/js/web/fetch/content-length.test.js
 test/js/web/fetch/cookies.test.ts
 test/js/web/fetch/fetch-args.test.ts
+test/js/web/fetch/fetch-connection-header.test.ts
 test/js/web/fetch/fetch-gzip.test.ts
 test/js/web/fetch/fetch-preconnect.test.ts
 test/js/web/fetch/fetch-redirect.test.ts
@@ -693,6 +697,7 @@ vendor/elysia/test/ws/aot.test.ts
 vendor/elysia/test/ws/connection.test.ts
 vendor/elysia/test/ws/destructuring.test.ts
 vendor/elysia/test/ws/message.test.ts
+
 
 # List of tests that potentially throw inside of reifyStaticProperties
 test/js/node/test/parallel/test-stream-iterator-helpers-test262-tests.mjs

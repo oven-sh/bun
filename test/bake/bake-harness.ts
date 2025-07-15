@@ -10,7 +10,7 @@
  * export BUN_DEV_SERVER_TEST_TEMP="/Users/clo/scratch/dev"
  */
 import { Bake, BunFile, Subprocess } from "bun";
-import fs, { readFileSync, realpathSync, rmdirSync } from "node:fs";
+import fs, { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import assert from "node:assert";
@@ -1143,7 +1143,7 @@ export class Client extends EventEmitter {
   }
 
   /**
-   * Looks through all loaded stylesheets to find a rule with this EXACT selector,
+   * Looks through loaded stylesheets to find a rule with this EXACT selector,
    * then it returns the values in it.
    */
   style(selector: string): LazyStyle {
@@ -1810,8 +1810,6 @@ function testImpl<T extends DevServerTest>(
     }
 
     await dev.gracefulExit();
-
-    rmdirSync(root, { recursive: true });
   }
 
   try {

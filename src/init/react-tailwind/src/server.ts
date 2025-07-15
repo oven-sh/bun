@@ -13,6 +13,7 @@ const server = serve({
           method: "GET",
         });
       },
+
       async PUT(req) {
         return Response.json({
           message: "Hello, world!",

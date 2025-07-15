@@ -570,3 +570,109 @@ test(
     },
   },
 );
+
+test("hostname: 0.0.0.0 (default - listen on all interfaces)", {
+  hostname: "0.0.0.0",
+  fetch() {
+    return new Response("listening on all interfaces");
+  },
+});
+
+test("hostname: 127.0.0.1 (localhost only)", {
+  hostname: "127.0.0.1",
+  fetch() {
+    return new Response("listening on localhost only");
+  },
+});
+
+test("hostname: localhost", {
+  hostname: "localhost",
+  fetch() {
+    return new Response("listening on localhost");
+  },
+});
+
+test(
+  "hostname: custom IPv4 address",
+  {
+    hostname: "192.168.1.100",
+    fetch() {
+      return new Response("custom hostname");
+    },
+  },
+  {
+    onConstructorFailure: error => {
+      expect(error.message).toContain("Failed to start server");
+    },
+  },
+);
+
+test("port: number type", {
+  port: 3000,
+  fetch() {
+    return new Response("port as number");
+  },
+});
+
+test("port: string type", {
+  port: "3001",
+  fetch() {
+    return new Response("port as string");
+  },
+});
+
+test("port: 0 (random port assignment)", {
+  port: 0,
+  fetch() {
+    return new Response("random port");
+  },
+});
+
+test(
+  "port: from environment variable",
+  {
+    port: process.env.PORT || "3002",
+    fetch() {
+      return new Response("port from env");
+    },
+  },
+  {
+    overrideExpectBehavior: server => {
+      expect(server.port).toBeGreaterThan(0);
+      expect(server.url).toBeDefined();
+    },
+  },
+);
+
+// Test reusePort property
+test("reusePort: false (default)", {
+  reusePort: false,
+  port: 0,
+  fetch() {
+    return new Response("reusePort false");
+  },
+});
+
+test("reusePort: true", {
+  reusePort: true,
+  port: 0,
+  fetch() {
+    return new Response("reusePort true");
+  },
+});
+
+test("ipv6Only: false (default)", {
+  ipv6Only: false,
+  port: 0,
+  fetch() {
+    return new Response("ipv6Only false");
+  },
+});
+
+test("ipv6Only: true", {
+  ipv6Only: true,
+  port: 0,
+  fetch() {
+    return new Response("ipv6Only true");
+  },
+});

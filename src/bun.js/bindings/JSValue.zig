@@ -643,7 +643,10 @@ pub const JSValue = enum(i64) {
     }
 
     pub inline fn jsBoolean(i: bool) JSValue {
-        return bun.cpp.JSC__JSValue__jsBoolean(i);
+        return switch (i) {
+            false => .false,
+            true => .true,
+        };
     }
 
     pub inline fn jsEmptyString(globalThis: *JSGlobalObject) JSValue {

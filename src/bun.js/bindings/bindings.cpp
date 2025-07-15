@@ -3782,11 +3782,6 @@ void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* ar
     return JSC::JSValue::decode(JSValue0).isUndefinedOrNull();
 }
 
-[[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__jsBoolean(bool arg0)
-{
-    return JSC::JSValue::encode(JSC::jsBoolean(arg0));
-}
-
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__jsEmptyString(JSC::JSGlobalObject* arg0)
 {
     return JSC::JSValue::encode(JSC::jsEmptyString(arg0->vm()));

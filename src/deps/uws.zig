@@ -139,6 +139,10 @@ export fn BUN__warn__extra_ca_load_failed(filename: [*c]const u8, error_msg: [*c
     bun.Output.warn("ignoring extra certs from {s}, load failed: {s}", .{ filename, error_msg });
 }
 
+export fn BUN_warn__system_ca_load_failed(error_msg: [*c]const u8) void {
+    bun.Output.warn("ignoring system CA load failed: {s}", .{error_msg});
+}
+
 pub const LIBUS_SOCKET_DESCRIPTOR = switch (bun.Environment.isWindows) {
     true => *anyopaque,
     false => i32,

@@ -6,13 +6,13 @@
 #include <atomic>
 #include <string.h>
 #ifdef __APPLE__
-#include <Security/Security.h>
+#include <Security/Security.h> // TODO: dynamic load this only when the flag is set
 #endif
 
 static const int root_certs_size = sizeof(root_certs) / sizeof(root_certs[0]);
 extern "C" bool Bun__useSystemCA();
 extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char* error_msg);
-
+extern "C" void BUN_warn__system_ca_load_failed(const char* error_msg);
 // This callback is used to avoid the default passphrase callback in OpenSSL
 // which will typically prompt for the passphrase. The prompting is designed
 // for the OpenSSL CLI, but works poorly for this case because it involves
@@ -225,9 +225,7 @@ static bool us_internal_is_certificate_trusted_for_policy(X509* cert, SecCertifi
     err = SecTrustSettingsCopyTrustSettings(ref, trust_domain, &trust_settings);
 
     if (err != errSecSuccess && err != errSecItemNotFound) {
-      fprintf(stderr,
-              "ERROR: failed to copy trust settings of system certificate%d\n",
-              err);
+      BUN_warn__system_ca_load_failed("failed to copy trust settings of system certificate");
       continue;
     }
 
@@ -279,7 +277,7 @@ static STACK_OF(X509) *us_internal_init_system_certs_from_macos_keychain() {
   CFRelease(search);
 
   if (ortn) {
-    fprintf(stderr, "ERROR: SecItemCopyMatching failed %d\n", ortn);
+    BUN_warn__system_ca_load_failed("SecItemCopyMatching failed");
   }
 
   CFIndex count = CFArrayGetCount(curr_anchors);
@@ -290,7 +288,7 @@ static STACK_OF(X509) *us_internal_init_system_certs_from_macos_keychain() {
 
     CFDataRef der_data = SecCertificateCopyData(cert_ref);
     if (!der_data) {
-      fprintf(stderr, "ERROR: SecCertificateCopyData failed\n");
+      BUN_warn__system_ca_load_failed("SecCertificateCopyData failed");
       continue;
     }
     auto data_buffer_pointer = CFDataGetBytePtr(der_data);
@@ -319,7 +317,7 @@ end:
 
   char error_msg[256];
   ERR_error_string_n(ERR_peek_last_error(), error_msg, sizeof(error_msg));
-  BUN__warn__extra_ca_load_failed("system", error_msg);
+  BUN_warn__system_ca_load_failed(error_msg);
   ERR_clear_error();
   return NULL;
 }
@@ -329,7 +327,6 @@ static STACK_OF(X509) *us_internal_init_system_certs() {
   #ifdef __APPLE__
   return us_internal_init_system_certs_from_macos_keychain();
   #endif
-
 
   return NULL;
 }

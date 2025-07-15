@@ -335,61 +335,8 @@ pub const utils = struct {
 /// This matches the macOS interface but for PE files
 pub const BUN_COMPILED_SECTION_NAME = ".bun";
 
-/// Global storage for the embedded Bun data (similar to macOS BUN_COMPILED)
-var bun_section_data: ?[]const u8 = null;
-var bun_section_length: u32 = 0;
-
-/// Initialize the Bun section data from the current executable
-/// This should be called once at startup
-pub fn initializeBunSection() void {
-    if (bun_section_data != null) return; // Already initialized
-    
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-    
-    // Try to read the current executable
-    const exe_path = std.fs.selfExePathAlloc(allocator) catch return;
-    defer allocator.free(exe_path);
-    
-    const exe_file = std.fs.openFileAbsolute(exe_path, .{}) catch return;
-    defer exe_file.close();
-    
-    const exe_size = exe_file.getEndPos() catch return;
-    const exe_data = allocator.alloc(u8, exe_size) catch return;
-    defer allocator.free(exe_data);
-    
-    _ = exe_file.readAll(exe_data) catch return;
-    
-    // Parse the PE file
-    const pe_file = PEFile.init(allocator, exe_data) catch return;
-    defer pe_file.deinit();
-    
-    // Get the Bun section data
-    const section_data = pe_file.getBunSectionData() catch return;
-    
-    // Allocate persistent storage for the section data
-    const persistent_data = std.heap.page_allocator.alloc(u8, section_data.len) catch return;
-    @memcpy(persistent_data, section_data);
-    
-    bun_section_data = persistent_data;
-    bun_section_length = @intCast(section_data.len);
-}
-
-/// External C interface for accessing the Bun section length
-/// This will be called from C++ code to get the embedded data size
-export fn Bun__getStandaloneModuleGraphPELength() callconv(.C) u32 {
-    if (bun_section_data == null) {
-        initializeBunSection();
-    }
-    return bun_section_length;
-}
-
-/// External C interface for accessing the Bun section data
-/// This will be called from C++ code to get the embedded data
-export fn Bun__getStandaloneModuleGraphPEData() callconv(.C) ?[*]const u8 {
-    if (bun_section_data == null) {
-        initializeBunSection();
-    }
-    return if (bun_section_data) |data| data.ptr else null;
-}
+/// External C interface declarations - these are implemented in C++ bindings
+/// The C++ code uses Windows PE APIs to directly access the .bun section
+/// from the current process memory without loading the entire executable
+extern "C" fn Bun__getStandaloneModuleGraphPELength() u32;
+extern "C" fn Bun__getStandaloneModuleGraphPEData() ?[*]u8;

@@ -140,7 +140,7 @@ pub const StandaloneModuleGraph = struct {
 
     const PE = struct {
         pub extern "C" fn Bun__getStandaloneModuleGraphPELength() u32;
-        pub extern "C" fn Bun__getStandaloneModuleGraphPEData() ?[*]const u8;
+        pub extern "C" fn Bun__getStandaloneModuleGraphPEData() ?[*]u8;
 
         pub fn getData() ?[]const u8 {
             const length = Bun__getStandaloneModuleGraphPELength();

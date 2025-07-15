@@ -216,9 +216,9 @@ fn InitLibrary() void {
 
 pub const FSEventsLoop = struct {
     signal_source: CFRunLoopSourceRef,
-    mutex: Mutex,
+    mutex: Mutex = .{},
     loop: CFRunLoopRef = null,
-    sem: Semaphore,
+    sem: Semaphore = .{},
     thread: std.Thread = undefined,
     tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     watchers: bun.BabyList(?*FSEventsWatcher) = .{},
@@ -321,7 +321,7 @@ pub const FSEventsLoop = struct {
             return error.FailedToCreateCoreFoudationSourceLoop;
         }
 
-        const fs_loop = FSEventsLoop{ .sem = Semaphore.init(0), .mutex = .{}, .signal_source = signal_source };
+        const fs_loop = FSEventsLoop{ .signal_source = signal_source };
 
         this.* = fs_loop;
         this.thread = try std.Thread.spawn(.{}, FSEventsLoop.CFThreadLoop, .{this});
@@ -545,8 +545,6 @@ pub const FSEventsLoop = struct {
 
         CF.Release(this.signal_source);
         this.signal_source = null;
-
-        this.sem.deinit();
 
         if (this.watcher_count > 0) {
             while (this.watchers.pop()) |watcher| {

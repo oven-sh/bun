@@ -340,6 +340,24 @@ declare module "bun" {
    * ```
    */
   interface WebSocketHandler<T> {
+    /**
+     * Specify the type for the {@link ServerWebSocket.data} property on
+     * connecting websocket clients. You can pass this value when you make a
+     * call to {@link Server.upgrade}.
+     *
+     * This pattern exists in Bun due to a [TypeScript limitation (#26242)](https://github.com/microsoft/TypeScript/issues/26242)
+     *
+     * @example
+     * ```ts
+     * Bun.serve({
+     *   websocket: {
+     *     data: {} as { name: string }, // ← Specify the type of `ws.data` like this
+     *     message: (ws, message) => console.log(ws.data.name, 'says:', message);
+     *   },
+     *   // ...
+     * });
+     * ```
+     */
     data?: T;
 
     /**

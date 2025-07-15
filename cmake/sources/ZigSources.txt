@@ -236,6 +236,7 @@ src/bun.js/ResolveMessage.zig
 src/bun.js/RuntimeTranspilerCache.zig
 src/bun.js/SavedSourceMap.zig
 src/bun.js/Strong.zig
+src/bun.js/system_ca.zig
 src/bun.js/test/diff_format.zig
 src/bun.js/test/expect.zig
 src/bun.js/test/jest.zig

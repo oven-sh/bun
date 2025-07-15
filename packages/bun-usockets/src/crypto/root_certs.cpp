@@ -9,6 +9,20 @@ static const int root_certs_size = sizeof(root_certs) / sizeof(root_certs[0]);
 
 extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char* error_msg);
 
+// macOS system CA loading functions from Zig
+struct MacOSCAFunctions {
+    int (*SecTrustCopyAnchorCertificates)(void** anchor_certs);
+    void* (*SecCertificateCopyData)(void* cert_ref);
+    long (*CFArrayGetCount)(void* array);
+    void* (*CFArrayGetValueAtIndex)(void* array, long index);
+    const unsigned char* (*CFDataGetBytePtr)(void* data);
+    long (*CFDataGetLength)(void* data);
+    void (*CFRelease)(void* ref);
+};
+
+extern "C" MacOSCAFunctions* Bun__getMacOSCAFunctions();
+extern "C" int Bun__useSystemCA();
+
 // This callback is used to avoid the default passphrase callback in OpenSSL
 // which will typically prompt for the passphrase. The prompting is designed
 // for the OpenSSL CLI, but works poorly for this case because it involves
@@ -38,6 +52,57 @@ us_ssl_ctx_get_X509_without_callback_from(struct us_cert_string_t content) {
     BIO_free(in);
   }
   return x;
+}
+
+static STACK_OF(X509) *us_load_system_cas() {
+  MacOSCAFunctions* ca_funcs = Bun__getMacOSCAFunctions();
+  if (!ca_funcs) {
+    return NULL;
+  }
+
+  void* anchor_certs = NULL;
+  int status = ca_funcs->SecTrustCopyAnchorCertificates(&anchor_certs);
+  if (status != 0 || !anchor_certs) {
+    return NULL;
+  }
+
+  long cert_count = ca_funcs->CFArrayGetCount(anchor_certs);
+  if (cert_count == 0) {
+    ca_funcs->CFRelease(anchor_certs);
+    return NULL;
+  }
+
+  STACK_OF(X509) *stack = sk_X509_new_null();
+  if (!stack) {
+    ca_funcs->CFRelease(anchor_certs);
+    return NULL;
+  }
+
+  for (long i = 0; i < cert_count; i++) {
+    void* cert_ref = ca_funcs->CFArrayGetValueAtIndex(anchor_certs, i);
+    if (!cert_ref) continue;
+
+    void* cert_data = ca_funcs->SecCertificateCopyData(cert_ref);
+    if (!cert_data) continue;
+
+    const unsigned char* data_ptr = ca_funcs->CFDataGetBytePtr(cert_data);
+    long data_len = ca_funcs->CFDataGetLength(cert_data);
+
+    if (data_len > 0) {
+      const unsigned char* data_ptr_copy = data_ptr;
+      X509* x509 = d2i_X509(NULL, &data_ptr_copy, data_len);
+      if (x509) {
+        if (!sk_X509_push(stack, x509)) {
+          X509_free(x509);
+        }
+      }
+    }
+
+    ca_funcs->CFRelease(cert_data);
+  }
+
+  ca_funcs->CFRelease(anchor_certs);
+  return stack;
 }
 
 static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename) {
@@ -179,6 +244,19 @@ extern "C" X509_STORE *us_get_default_ca_store() {
       X509 *cert = sk_X509_value(root_extra_cert_instances, i);
       X509_up_ref(cert);
       X509_STORE_add_cert(store, cert);
+    }
+  }
+
+  // Load macOS system CAs if enabled
+  if (Bun__useSystemCA()) {
+    STACK_OF(X509) *system_cas = us_load_system_cas();
+    if (system_cas) {
+      for (int i = 0; i < sk_X509_num(system_cas); i++) {
+        X509 *cert = sk_X509_value(system_cas, i);
+        X509_up_ref(cert);
+        X509_STORE_add_cert(store, cert);
+      }
+      sk_X509_pop_free(system_cas, X509_free);
     }
   }
 

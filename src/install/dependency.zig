@@ -1413,32 +1413,32 @@ pub const Behavior = packed struct(u8) {
                 .gt;
         }
 
-        if (lhs.isProd() != rhs.isProd()) {
-            return if (lhs.isProd())
-                .gt
-            else
-                .lt;
-        }
-
         if (lhs.isDev() != rhs.isDev()) {
             return if (lhs.isDev())
-                .gt
+                .lt
             else
-                .lt;
+                .gt;
         }
 
         if (lhs.isOptional() != rhs.isOptional()) {
             return if (lhs.isOptional())
-                .gt
+                .lt
             else
-                .lt;
+                .gt;
+        }
+
+        if (lhs.isProd() != rhs.isProd()) {
+            return if (lhs.isProd())
+                .lt
+            else
+                .gt;
         }
 
         if (lhs.isPeer() != rhs.isPeer()) {
             return if (lhs.isPeer())
-                .gt
+                .lt
             else
-                .lt;
+                .gt;
         }
 
         if (lhs.isWorkspace() != rhs.isWorkspace()) {

@@ -1656,6 +1656,7 @@ export class VerdaccioRegistry {
     if (!opts.npm) {
       bunfig += `registry = "${this.registryUrl()}"`;
     }
+    bunfig += `node_modules = ${opts.isolated ? "isolated" : "hoisted"}`;
     await write(join(dir, "bunfig.toml"), bunfig);
   }
 }
@@ -1663,6 +1664,7 @@ export class VerdaccioRegistry {
 type BunfigOpts = {
   saveTextLockfile?: boolean;
   npm?: boolean;
+  isolated?: boolean;
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {

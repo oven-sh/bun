@@ -19,6 +19,7 @@ const LoaderMap = bun.StringArrayHashMapUnmanaged(options.Loader);
 const JSONParser = bun.JSON;
 const Command = @import("cli.zig").Command;
 const TOML = @import("./toml/toml_parser.zig").TOML;
+const PackageManager = bun.install.PackageManager;
 
 // TODO: replace Api.TransformOptions with Bunfig
 pub const Bunfig = struct {
@@ -503,6 +504,16 @@ pub const Bunfig = struct {
                     if (install_obj.get("ignoreScripts")) |ignore_scripts_expr| {
                         if (ignore_scripts_expr.asBool()) |ignore_scripts| {
                             install.ignore_scripts = ignore_scripts;
+                        }
+                    }
+
+                    if (install_obj.get("node_modules")) |node_linker_expr| {
+                        try this.expectString(node_linker_expr);
+                        if (node_linker_expr.asString(this.allocator)) |node_linker_str| {
+                            install.node_linker = PackageManager.Options.NodeLinker.fromStr(node_linker_str);
+                            if (install.node_linker == null) {
+                                try this.addError(node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
+                            }
                         }
                     }
 

@@ -1037,6 +1037,12 @@ pub fn loadNpmrc(
         }
     }
 
+    if (out.get("node-linker")) |node_linker_expr| {
+        if (node_linker_expr.asString(allocator)) |node_linker_str| {
+            install.node_linker = bun.install.PackageManager.Options.NodeLinker.fromStr(node_linker_str);
+        }
+    }
+
     var registry_map = install.scoped orelse bun.Schema.Api.NpmRegistryMap{};
 
     // Process scopes

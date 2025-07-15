@@ -201,7 +201,7 @@ const json = struct {
                     return IPCDecodeError.OutOfMemory;
                 }
                 break :ascii s;
-            } else bun.String.fromUTF8(json_data);
+            } else bun.String.borrowUTF8(json_data);
 
             defer {
                 str.deref();

@@ -341,6 +341,34 @@ pub const Bunfig = struct {
                         try this.expect(expr, .e_boolean);
                         this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
                     }
+
+                    if (test_.get("coveragePathIgnorePatterns")) |expr| brk: {
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                const pattern = try str.string(allocator);
+                                const patterns = try allocator.alloc(string, 1);
+                                patterns[0] = pattern;
+                                this.ctx.test_options.coverage.ignore_patterns = patterns;
+                            },
+                            .e_array => |arr| {
+                                if (arr.items.len == 0) break :brk;
+
+                                const patterns = try allocator.alloc(string, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    if (item.data != .e_string) {
+                                        try this.addError(item.loc, "coveragePathIgnorePatterns array must contain only strings");
+                                        return;
+                                    }
+                                    patterns[i] = try item.data.e_string.string(allocator);
+                                }
+                                this.ctx.test_options.coverage.ignore_patterns = patterns;
+                            },
+                            else => {
+                                try this.addError(expr.loc, "coveragePathIgnorePatterns must be a string or array of strings");
+                                return;
+                            },
+                        }
+                    }
                 }
             }
 
@@ -626,6 +654,18 @@ pub const Bunfig = struct {
                             this.ctx.debug.run_in_bun = value;
                         } else {
                             try this.addError(bun_flag.loc, "Expected boolean");
+                        }
+                    }
+                }
+
+                if (json.get("console")) |console_expr| {
+                    if (console_expr.get("depth")) |depth| {
+                        if (depth.data == .e_number) {
+                            const depth_value = @as(u16, @intFromFloat(depth.data.e_number.value));
+                            // Treat depth=0 as maxInt(u16) for infinite depth
+                            this.ctx.runtime_options.console_depth = if (depth_value == 0) std.math.maxInt(u16) else depth_value;
+                        } else {
+                            try this.addError(depth.loc, "Expected number");
                         }
                     }
                 }

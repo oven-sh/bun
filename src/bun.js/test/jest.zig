@@ -198,28 +198,33 @@ pub const TestRunner = struct {
         onTestTodo: OnTestUpdate,
     };
 
-    pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
+    pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .pass;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestPass(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
     }
 
-    pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
+    pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .fail;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestFail(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
     }
 
-    pub fn reportSkip(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
+    pub fn reportSkip(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .skip;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestSkip(this.callback, test_id, file, label, 0, 0, parent);
     }
 
-    pub fn reportTodo(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
+    pub fn reportTodo(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .todo;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestTodo(this.callback, test_id, file, label, 0, 0, parent);
     }
 
-    pub fn reportFilteredOut(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
+    pub fn reportFilteredOut(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .skip;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestFilteredOut(this.callback, test_id, file, label, 0, 0, parent);
     }
 
@@ -261,6 +266,7 @@ pub const TestRunner = struct {
 
     pub const Test = struct {
         status: Status = Status.pending,
+        line_number: u32 = 0,
 
         pub const ID = u32;
         pub const null_id: ID = std.math.maxInt(Test.ID);
@@ -272,6 +278,7 @@ pub const TestRunner = struct {
             fail,
             skip,
             todo,
+            timeout,
             skipped_because_label,
             /// A test marked as `.failing()` actually passed
             fail_because_failing_test_passed,
@@ -551,6 +558,7 @@ pub const TestScope = struct {
     task: ?*TestRunnerTask = null,
     tag: Tag = .pass,
     snapshot_count: usize = 0,
+    line_number: u32 = 0,
 
     // null if the test does not set a timeout
     timeout_millis: u32 = std.math.maxInt(u32),
@@ -832,6 +840,8 @@ pub const DescribeScope = struct {
     done: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
+    line_number: u32 = 0,
+    test_id_for_debugger: u32 = 0,
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1154,7 +1164,7 @@ pub const DescribeScope = struct {
             if (this.runCallback(globalObject, .beforeAll)) |err| {
                 _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
                 while (i < end) {
-                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
+                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this, tests[i].line_number);
                     i += 1;
                 }
                 this.deinit(globalObject);
@@ -1396,6 +1406,9 @@ pub const TestRunnerTask = struct {
                 .skip => {
                     this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, test_id_for_debugger, describe);
                 },
+                .skipped_because_label => {
+                    this.processTestResult(globalThis, .{ .skipped_because_label = {} }, test_, test_id, test_id_for_debugger, describe);
+                },
                 else => {},
             }
             this.deinit();
@@ -1412,7 +1425,7 @@ pub const TestRunnerTask = struct {
 
             if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
                 _ = jsc_vm.uncaughtException(globalThis, err, true);
-                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
+                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe, test_.line_number);
                 return false;
             }
         }
@@ -1454,7 +1467,7 @@ pub const TestRunnerTask = struct {
         const elapsed = now.duration(&this.started_at).ms();
         this.ref.unref(this.globalThis.bunVM());
         this.globalThis.requestTermination();
-        this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .{ .timeout = @intCast(@max(elapsed, 0)) });
+        this.handleResult(.{ .timeout = {} }, .{ .timeout = @intCast(@max(elapsed, 0)) });
     }
 
     const ResultType = union(enum) {
@@ -1591,6 +1604,7 @@ pub const TestRunnerTask = struct {
                 count,
                 elapsed,
                 describe,
+                test_.line_number,
             ),
             .fail => |count| Jest.runner.?.reportFailure(
                 test_id,
@@ -1599,6 +1613,7 @@ pub const TestRunnerTask = struct {
                 count,
                 elapsed,
                 describe,
+                test_.line_number,
             ),
             .fail_because_failing_test_passed => |count| {
                 Output.prettyErrorln("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works", .{});
@@ -1609,6 +1624,7 @@ pub const TestRunnerTask = struct {
                     count,
                     elapsed,
                     describe,
+                    test_.line_number,
                 );
             },
             .fail_because_expected_has_assertions => {
@@ -1621,6 +1637,7 @@ pub const TestRunnerTask = struct {
                     0,
                     elapsed,
                     describe,
+                    test_.line_number,
                 );
             },
             .fail_because_expected_assertion_count => |counter| {
@@ -1636,11 +1653,21 @@ pub const TestRunnerTask = struct {
                     counter.actual,
                     elapsed,
                     describe,
+                    test_.line_number,
                 );
             },
-            .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
-            .skipped_because_label => Jest.runner.?.reportFilteredOut(test_id, this.source_file_path, test_.label, describe),
-            .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe),
+            .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe, test_.line_number),
+            .skipped_because_label => Jest.runner.?.reportFilteredOut(test_id, this.source_file_path, test_.label, describe, test_.line_number),
+            .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe, test_.line_number),
+            .timeout => Jest.runner.?.reportFailure(
+                test_id,
+                this.source_file_path,
+                test_.label,
+                0,
+                elapsed,
+                describe,
+                test_.line_number,
+            ),
             .fail_because_todo_passed => |count| {
                 Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
                 Jest.runner.?.reportFailure(
@@ -1650,6 +1677,7 @@ pub const TestRunnerTask = struct {
                     count,
                     elapsed,
                     describe,
+                    test_.line_number,
                 );
             },
             .pending => @panic("Unexpected pending test"),
@@ -1662,6 +1690,8 @@ pub const TestRunnerTask = struct {
                         .pass => .pass,
                         .skip => .skip,
                         .todo => .todo,
+                        .timeout => .timeout,
+                        .skipped_because_label => .skipped_because_label,
                         else => .fail,
                     }, @floatFromInt(elapsed));
                 }
@@ -1701,6 +1731,7 @@ pub const Result = union(TestRunner.Test.Status) {
     fail: u32,
     skip: void,
     todo: void,
+    timeout: void,
     skipped_because_label: void,
     fail_because_failing_test_passed: u32,
     fail_because_todo_passed: u32,
@@ -1708,14 +1739,14 @@ pub const Result = union(TestRunner.Test.Status) {
     fail_because_expected_assertion_count: Counter,
 
     pub fn isFailure(this: *const Result) bool {
-        return this.* == .fail or this.* == .fail_because_expected_has_assertions or this.* == .fail_because_expected_assertion_count;
+        return this.* == .fail or this.* == .timeout or this.* == .fail_because_expected_has_assertions or this.* == .fail_because_expected_assertion_count;
     }
 
     pub fn forceTODO(this: Result, is_todo: bool) Result {
         if (is_todo and this == .pass)
             return .{ .fail_because_todo_passed = this.pass };
 
-        if (is_todo and this == .fail) {
+        if (is_todo and (this == .fail or this == .timeout)) {
             return .{ .todo = {} };
         }
         return this;
@@ -1843,22 +1874,18 @@ inline fn createScope(
         (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
     if (is_test) {
-        if (!is_skip) {
-            if (Jest.runner) |runner| {
-                if (runner.filter_regex) |regex| {
-                    var buffer: bun.MutableString = runner.filter_buffer;
-                    buffer.reset();
-                    appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
-                    buffer.append(label) catch unreachable;
-                    const str = bun.String.fromBytes(buffer.slice());
-                    is_skip = !regex.matches(str);
-                    if (is_skip) {
-                        tag_to_use = .skipped_because_label;
-                        if (comptime is_test) {
-                            // These won't get counted for describe scopes, which means the process will not exit with 1.
-                            runner.summary.skipped_because_label += 1;
-                        }
-                    }
+        // Apply filter to all tests, including skipped and todo tests
+        if (Jest.runner) |runner| {
+            if (runner.filter_regex) |regex| {
+                var buffer: bun.MutableString = runner.filter_buffer;
+                buffer.reset();
+                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                buffer.append(label) catch unreachable;
+                const str = bun.String.fromBytes(buffer.slice());
+                const matches_filter = regex.matches(str);
+                if (!matches_filter) {
+                    is_skip = true;
+                    tag_to_use = .skipped_because_label;
                 }
             }
         }
@@ -1887,16 +1914,16 @@ inline fn createScope(
             .func_arg = function_args,
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
+            .line_number = captureTestLineNumber(callframe, globalThis),
             .test_id_for_debugger = brk: {
-                if (!is_skip) {
-                    const vm = globalThis.bunVM();
-                    if (vm.debugger) |*debugger| {
-                        if (debugger.test_reporter_agent.isEnabled()) {
-                            max_test_id_for_debugger += 1;
-                            var name = bun.String.init(label);
-                            debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name);
-                            break :brk max_test_id_for_debugger;
-                        }
+                const vm = globalThis.bunVM();
+                if (vm.debugger) |*debugger| {
+                    if (debugger.test_reporter_agent.isEnabled()) {
+                        max_test_id_for_debugger += 1;
+                        var name = bun.String.init(label);
+                        const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
+                        debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, .@"test", parent_id);
+                        break :brk max_test_id_for_debugger;
                     }
                 }
 
@@ -1910,6 +1937,20 @@ inline fn createScope(
             .parent = parent,
             .file_id = parent.file_id,
             .tag = tag_to_use,
+            .line_number = captureTestLineNumber(callframe, globalThis),
+            .test_id_for_debugger = brk: {
+                const vm = globalThis.bunVM();
+                if (vm.debugger) |*debugger| {
+                    if (debugger.test_reporter_agent.isEnabled()) {
+                        max_test_id_for_debugger += 1;
+                        var name = bun.String.init(label);
+                        const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
+                        debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, .describe, parent_id);
+                        break :brk max_test_id_for_debugger;
+                    }
+                }
+                break :brk 0;
+            },
         };
 
         return scope.run(globalThis, function, &.{});
@@ -2036,7 +2077,11 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
     return list.toOwnedSlice(allocator);
 }
 
-pub const EachData = struct { strong: JSC.Strong.Optional, is_test: bool };
+pub const EachData = struct {
+    strong: JSC.Strong.Optional,
+    is_test: bool,
+    line_number: u32 = 0,
+};
 
 fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
     const signature = "eachBind";
@@ -2158,16 +2203,17 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                 (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
                 (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
-            if (Jest.runner.?.filter_regex) |regex| {
-                var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
-                buffer.reset();
-                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
-                buffer.append(formattedLabel) catch unreachable;
-                const str = bun.String.fromBytes(buffer.slice());
-                is_skip = !regex.matches(str);
-                if (is_skip) {
-                    if (each_data.is_test) {
-                        Jest.runner.?.summary.skipped_because_label += 1;
+            var tag_to_use = tag;
+            if (!is_skip) {
+                if (Jest.runner.?.filter_regex) |regex| {
+                    var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
+                    buffer.reset();
+                    appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                    buffer.append(formattedLabel) catch unreachable;
+                    const str = bun.String.fromBytes(buffer.slice());
+                    is_skip = !regex.matches(str);
+                    if (is_skip) {
+                        tag_to_use = .skipped_because_label;
                     }
                 }
             }
@@ -2175,21 +2221,46 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
             if (is_skip) {
                 parent.skip_count += 1;
                 function.unprotect();
-                // lets free the formatted label
-                allocator.free(formattedLabel);
-            } else if (each_data.is_test) {
-                if (Jest.runner.?.only and tag != .only) {
-                    return .js_undefined;
+            }
+
+            if (each_data.is_test) {
+                if (Jest.runner.?.only and tag != .only and tag_to_use != .skip and tag_to_use != .skipped_because_label) {
+                    allocator.free(formattedLabel);
+                    for (function_args) |arg| {
+                        if (arg != .zero) arg.unprotect();
+                    }
+                    allocator.free(function_args);
                 } else {
-                    function.protect();
+                    if (!is_skip) {
+                        function.protect();
+                    } else {
+                        for (function_args) |arg| {
+                            if (arg != .zero) arg.unprotect();
+                        }
+                        allocator.free(function_args);
+                    }
                     parent.tests.append(allocator, TestScope{
                         .label = formattedLabel,
                         .parent = parent,
-                        .tag = tag,
-                        .func = function,
-                        .func_arg = function_args,
+                        .tag = tag_to_use,
+                        .func = if (is_skip) .zero else function,
+                        .func_arg = if (is_skip) &.{} else function_args,
                         .func_has_callback = has_callback_function,
                         .timeout_millis = timeout_ms,
+                        .line_number = each_data.line_number,
+                        .test_id_for_debugger = brk: {
+                            const vm = globalThis.bunVM();
+                            if (vm.debugger) |*debugger| {
+                                if (debugger.test_reporter_agent.isEnabled()) {
+                                    max_test_id_for_debugger += 1;
+                                    var name = bun.String.init(formattedLabel);
+                                    const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
+                                    debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, .@"test", parent_id);
+                                    break :brk max_test_id_for_debugger;
+                                }
+                            }
+                            break :brk 0;
+                        },
                     }) catch unreachable;
                 }
             } else {
@@ -2199,6 +2270,19 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     .parent = parent,
                     .file_id = parent.file_id,
                     .tag = tag,
+                    .test_id_for_debugger = brk: {
+                        const vm = globalThis.bunVM();
+                        if (vm.debugger) |*debugger| {
+                            if (debugger.test_reporter_agent.isEnabled()) {
+                                max_test_id_for_debugger += 1;
+                                var name = bun.String.init(formattedLabel);
+                                const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
+                                debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, .describe, parent_id);
+                                break :brk max_test_id_for_debugger;
+                            }
+                        }
+                        break :brk 0;
+                    },
                 };
 
                 const ret = scope.run(globalThis, function, function_args);
@@ -2238,6 +2322,7 @@ inline fn createEach(
     each_data.* = EachData{
         .strong = strong,
         .is_test = is_test,
+        .line_number = captureTestLineNumber(callframe, globalThis),
     };
 
     return JSC.host_fn.NewFunctionWithData(globalThis, name, 3, eachBind, true, each_data);
@@ -2252,3 +2337,14 @@ fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalO
 }
 
 const assert = bun.assert;
+
+extern fn Bun__CallFrame__getLineNumber(callframe: *JSC.CallFrame, globalObject: *JSC.JSGlobalObject) u32;
+
+fn captureTestLineNumber(callframe: *JSC.CallFrame, globalThis: *JSGlobalObject) u32 {
+    if (Jest.runner) |runner| {
+        if (runner.test_options.file_reporter == .junit) {
+            return Bun__CallFrame__getLineNumber(callframe, globalThis);
+        }
+    }
+    return 0;
+}

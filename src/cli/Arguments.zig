@@ -106,8 +106,10 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
     clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
     clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
+    clap.parseParam("--sql-preconnect                  Preconnect to PostgreSQL at startup") catch unreachable,
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
+    clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -588,6 +590,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.runtime_options.redis_preconnect = true;
         }
 
+        if (args.flag("--sql-preconnect")) {
+            ctx.runtime_options.sql_preconnect = true;
+        }
+
         if (args.flag("--no-addons")) {
             // used for disabling process.dlopen and
             // for disabling export condition "node-addons"
@@ -667,6 +673,15 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.runtime_options.smol = args.flag("--smol");
         ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
         ctx.runtime_options.expose_gc = args.flag("--expose-gc");
+
+        if (args.option("--console-depth")) |depth_str| {
+            const depth = std.fmt.parseInt(u16, depth_str, 10) catch {
+                Output.errGeneric("Invalid value for --console-depth: \"{s}\". Must be a positive integer\n", .{depth_str});
+                Global.exit(1);
+            };
+            // Treat depth=0 as maxInt(u16) for infinite depth
+            ctx.runtime_options.console_depth = if (depth == 0) std.math.maxInt(u16) else depth;
+        }
 
         if (args.option("--dns-result-order")) |order| {
             ctx.runtime_options.dns_result_order = order;

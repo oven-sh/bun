@@ -199,7 +199,7 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
         if (!result) {
             return globalThis.throw("String has invalid utf-16: {s}", .{bunstr.byteSlice()});
         }
-        var str = bun.String.createUTF8(outbuf.items[0..]);
+        var str = bun.String.cloneUTF8(outbuf.items[0..]);
         return str.transferToJS(globalThis);
     }
 
@@ -472,7 +472,7 @@ export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
     defer formatter.deinit();
     writer.print("{}", .{value.toFmt(&formatter)}) catch return .empty;
     buffered_writer.flush() catch return .empty;
-    return bun.String.createUTF8(array.slice());
+    return bun.String.cloneUTF8(array.slice());
 }
 
 export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String {
@@ -492,7 +492,7 @@ export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) b
     }) catch return .empty;
     if (globalThis.hasException()) return .empty;
     buffered_writer.flush() catch return .empty;
-    return bun.String.createUTF8(array.slice());
+    return bun.String.cloneUTF8(array.slice());
 }
 
 pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -606,7 +606,7 @@ pub fn getMain(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
             if (comptime Environment.isWindows) {
                 var wpath: bun.WPathBuffer = undefined;
                 const fdpath = bun.getFdPathW(fd, &wpath) catch break :use_resolved_path;
-                vm.main_resolved_path = bun.String.createUTF16(fdpath);
+                vm.main_resolved_path = bun.String.cloneUTF16(fdpath);
             } else {
                 var path: bun.PathBuffer = undefined;
                 const fdpath = bun.getFdPath(fd, &path) catch break :use_resolved_path;
@@ -615,7 +615,7 @@ pub fn getMain(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
                 if (bun.String.tryCreateAtom(fdpath)) |atom| {
                     vm.main_resolved_path = atom;
                 } else {
-                    vm.main_resolved_path = bun.String.createUTF8(fdpath);
+                    vm.main_resolved_path = bun.String.cloneUTF8(fdpath);
                 }
             }
         }

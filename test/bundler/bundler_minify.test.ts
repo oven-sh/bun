@@ -554,7 +554,7 @@ describe("bundler", () => {
         export function jsx(type, props) {
           return {type, props};
         }
-        export const Fragment = Symbol.for("jsx-runtime");
+        export const Fragment = (globalThis.doNotDCE = Symbol.for("jsx-runtime"));
       `,
       "/node_modules/dev-trap/package.json": `{
         "name": "dev-trap",
@@ -625,5 +625,69 @@ describe("bundler", () => {
       "123",
       "456",
     ],
+  });
+
+  itBundled("minify/TrimCodeInDeadControlFlow", {
+    files: {
+      "/entry.js": /* js */ `
+        // Basic dead code elimination after return
+        function test1() {
+          return 'foo'; 
+          try { 
+            return 'bar';
+          } catch {}
+        }
+
+        // Keep var declarations in dead try block
+        function test2() {
+          return foo = true; 
+          try { 
+            var foo;
+          } catch {}
+        }
+
+        // Keep var declarations in dead catch block
+        function test3() {
+          return foo = true; 
+          try {} catch { 
+            var foo;
+          }
+        }
+
+        // Complex async function with dead code after early return
+        async function test4() {
+          if (true) return { status: "disabled_for_development" };
+          try {
+            const response = await httpClients.releasesApi.get();
+            if (!response.ok) return { status: "no_release_found" };
+            if (response.statusCode === 204) return { status: "up_to_date" };
+          } catch (error) {
+            return { status: "no_release_found" };
+          }
+          return { status: "downloading" };
+        }
+
+        console.log(test1());
+        console.log(test2());
+        console.log(test3());
+        test4().then(result => console.log(result.status));
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      expect(file).toContain('function test1(){return"foo"}');
+      expect(file).toContain("return foo=!0;try{var foo}catch{}");
+      expect(file).toContain("return foo=!0;try{}catch{var foo}");
+      expect(file).toContain('async function test4(){return{status:"disabled_for_development"}}');
+      expect(file).not.toContain("no_release_found");
+      expect(file).not.toContain("downloading");
+      expect(file).not.toContain("up_to_date");
+    },
+    run: {
+      stdout: "foo\ntrue\ntrue\ndisabled_for_development",
+    },
   });
 });

@@ -413,7 +413,13 @@ pub const LifecycleScriptSubprocess = struct {
                                 Lockfile.Scripts.names[new_script_index],
                                 @errorName(err),
                             });
-                            Global.exit(1);
+                            if (this.ctx) |this_ctx| {
+                                this_ctx.installer.store.entries.items(.step)[this_ctx.entry_id.get()].store(.done, .monotonic);
+                                this_ctx.installer.onTaskComplete(this_ctx.entry_id, .fail);
+                            }
+                            _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
+                            this.deinit();
+                            return;
                         };
                         return;
                     }
@@ -571,6 +577,12 @@ pub const LifecycleScriptSubprocess = struct {
                 Lockfile.Scripts.names[list.first_index],
                 @errorName(err),
             });
+            if (lifecycle_subprocess.ctx) |subprocess_ctx| {
+                subprocess_ctx.installer.store.entries.items(.step)[subprocess_ctx.entry_id.get()].store(.done, .monotonic);
+                subprocess_ctx.installer.onTaskComplete(subprocess_ctx.entry_id, .fail);
+            }
+            _ = manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
+            lifecycle_subprocess.deinit();
         };
     }
 };

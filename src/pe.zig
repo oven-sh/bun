@@ -4,7 +4,8 @@ const Allocator = mem.Allocator;
 const bun = @import("bun");
 const strings = bun.strings;
 
-pub const BLOB_HEADER_ALIGNMENT = 16 * 1024;
+// Windows PE sections use standard file alignment (typically 512 bytes)
+// No special 16KB alignment needed like macOS code signing
 
 /// Windows PE Binary manipulation for codesigning standalone executables
 pub const PEFile = struct {
@@ -111,7 +112,8 @@ pub const PEFile = struct {
     const IMAGE_SCN_MEM_EXECUTE = 0x20000000;
 
     pub fn init(allocator: Allocator, pe_data: []const u8) !*PEFile {
-        var data = try std.ArrayList(u8).initCapacity(allocator, pe_data.len + BLOB_HEADER_ALIGNMENT);
+        // Reserve some extra space for adding sections, but no need for 16KB alignment
+        var data = try std.ArrayList(u8).initCapacity(allocator, pe_data.len + 64 * 1024);
         try data.appendSlice(pe_data);
 
         const self = try allocator.create(PEFile);

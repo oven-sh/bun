@@ -719,7 +719,6 @@ class PooledConnection {
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
-  enablePipelining: boolean = true;
   #onConnected(err, _) {
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onconnect) {

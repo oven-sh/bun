@@ -223,8 +223,9 @@ pub fn Calc(comptime V: type) type {
                 },
                 Percentage => return switch (this) {
                     .value => |v| v.*,
-                    // TODO: give a better error message
-                    else => bun.unreachablePanic("", .{}),
+                    // For calc expressions that can't be reduced to a simple value (e.g., containing NaN, variables, etc.)
+                    // we return a default value instead of panicking
+                    else => Percentage{ .v = std.math.nan(f32) },
                 },
                 Time => return switch (this) {
                     .value => |v| v.*,

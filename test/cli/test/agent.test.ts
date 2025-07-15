@@ -1,6 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, tempDirWithFiles, normalizeBunSnapshot } from "harness";
-import { join } from "path";
+import { expect, test } from "bun:test";
+import { bunExe, tempDirWithFiles } from "harness";
 
 test("--agent flag: only prints errors and summary", async () => {
   const dir = tempDirWithFiles("agent-test-1", {

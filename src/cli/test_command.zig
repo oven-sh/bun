@@ -851,7 +851,7 @@ pub const CommandLineReporter = struct {
         if (this.jest.test_options.agent) {
             var writer_ = Output.errorWriterBuffered();
             defer Output.flush();
-            
+
             // Add source_url:line above the failing test output
             const filename = brk: {
                 if (strings.hasPrefix(file, bun.fs.FileSystem.instance.top_level_dir)) {
@@ -860,13 +860,13 @@ pub const CommandLineReporter = struct {
                     break :brk file;
                 }
             };
-            
+
             if (line_number > 0) {
                 writer_.print("{s}:{d}\n", .{ filename, line_number }) catch {};
             } else {
                 writer_.print("{s}\n", .{filename}) catch {};
             }
-            
+
             writer_.print("FAIL: {s}\n", .{label}) catch {};
         } else {
             // In normal mode, build the repeat buffer for later display
@@ -1778,7 +1778,7 @@ pub const TestCommand = struct {
         // In agent mode, exit with code 1 when no tests are run
         const no_tests_run = (summary.pass + summary.fail + summary.skip + summary.todo) == 0;
         const should_exit_with_error = failed_to_find_any_tests or summary.didLabelFilterOutAllTests() or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success or (ctx.test_options.agent and no_tests_run);
-        
+
         if (should_exit_with_error) {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {

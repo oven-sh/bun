@@ -1,7 +1,6 @@
 import { spawn } from "bun";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
-import { join } from "path";
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("dependency resolution failure should point to dependency location, not package location", async () => {
   const dir = tempDirWithFiles("dependency-location-test", {
@@ -10,17 +9,21 @@ test("dependency resolution failure should point to dependency location, not pac
         "non-existent-package": "1.0.0",
       },
     }),
-    "bun.lock": JSON.stringify({
-      lockfileVersion: 0,
-      workspaces: {
-        "": {
-          dependencies: {
-            "non-existent-package": "1.0.0"
-          }
-        }
+    "bun.lock": JSON.stringify(
+      {
+        lockfileVersion: 0,
+        workspaces: {
+          "": {
+            dependencies: {
+              "non-existent-package": "1.0.0",
+            },
+          },
+        },
+        packages: {},
       },
-      packages: {}
-    }, null, 2)
+      null,
+      2,
+    ),
   });
 
   await using proc = spawn({
@@ -39,7 +42,7 @@ test("dependency resolution failure should point to dependency location, not pac
 
   expect(exitCode).toBe(1);
   expect(stderr).toContain("Failed to resolve root prod dependency 'non-existent-package'");
-  
+
   // The error should reference the dependency line, not the root package
   // We expect to see line 4 (where "non-existent-package" is defined in the bun.lock)
   // not line 3 (where the "" workspace is defined)

@@ -522,27 +522,30 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   STACK_OF(X509) *root_extra_cert_instances = default_ca_certificates->root_extra_cert_instances;
   STACK_OF(X509) *system_cert_instances = default_ca_certificates->system_cert_instances;
 
-  // If using system CA, only load system certificates (replace bundled)
-  if (Bun__useSystemCA()) {
-    if (system_cert_instances) {
-      for (int i = 0; i < sk_X509_num(system_cert_instances); i++) {
-        X509 *cert = sk_X509_value(system_cert_instances, i);
-        X509_up_ref(cert);
-        X509_STORE_add_cert(store, cert);
-      }
-    }
-  } else {
-    // load all root_cert_instances on the default ca store
-    for (size_t i = 0; i < root_certs_size; i++) {
-      X509 *cert = root_cert_instances[i];
-      if (cert == NULL)
-        continue;
+  // Node.js loads certificates in this order:
+  // 1. Default root certs (bundled Mozilla certs)
+  // 2. System certs (when --use-system-ca is enabled)
+  // 3. Extra certs (NODE_EXTRA_CA_CERTS)
+
+  // 1. Always load bundled root certificates first
+  for (size_t i = 0; i < root_certs_size; i++) {
+    X509 *cert = root_cert_instances[i];
+    if (cert == NULL)
+      continue;
+    X509_up_ref(cert);
+    X509_STORE_add_cert(store, cert);
+  }
+
+  // 2. Add system certificates when --use-system-ca flag is enabled
+  if (Bun__useSystemCA() && system_cert_instances) {
+    for (int i = 0; i < sk_X509_num(system_cert_instances); i++) {
+      X509 *cert = sk_X509_value(system_cert_instances, i);
       X509_up_ref(cert);
       X509_STORE_add_cert(store, cert);
     }
   }
 
-  // Always include extra CAs from NODE_EXTRA_CA_CERTS
+  // 3. Always include extra CAs from NODE_EXTRA_CA_CERTS last
   if (root_extra_cert_instances) {
     for (int i = 0; i < sk_X509_num(root_extra_cert_instances); i++) {
       X509 *cert = sk_X509_value(root_extra_cert_instances, i);

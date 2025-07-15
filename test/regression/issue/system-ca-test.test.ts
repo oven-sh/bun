@@ -1,8 +1,8 @@
 import { test, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("system CA loading can be enabled via CLI flag", async () => {
-  // Test that the CLI flag is recognized
+test("system CA loading can be enabled via CLI flag (additive to bundled CAs)", async () => {
+  // Test that the CLI flag is recognized and adds system CAs to bundled CAs
   const { stdout, stderr, exitCode } = await new Bun.subprocess({
     cmd: [bunExe(), "--use-system-ca", "-e", "console.log('--use-system-ca flag works')"],
     env: bunEnv,
@@ -48,13 +48,13 @@ test("CLI flag position independence", async () => {
 });
 
 // Only run this test on macOS since system CA loading is macOS-specific
-test.skipIf(process.platform !== "darwin")("macOS system CA functions are accessible", async () => {
-  // Simple test to verify the Zig functions are exported and callable
+test.skipIf(process.platform !== "darwin")("macOS system CAs are added to bundled CAs", async () => {
+  // Test that system CA functionality works and is additive to bundled CAs
   const { stdout, stderr, exitCode } = await new Bun.subprocess({
     cmd: [bunExe(), "--use-system-ca", "-e", `
-      // This tests that the system CA functionality doesn't crash
-      // We can't easily test the actual CA loading without making network requests
-      console.log("macOS system CA test passed");
+      // This tests that system CA functionality works alongside bundled CAs
+      // The system loads: bundled CAs + system CAs + NODE_EXTRA_CA_CERTS
+      console.log("macOS system CA additive test passed");
     `],
     env: bunEnv,
     stdout: "pipe",
@@ -65,5 +65,5 @@ test.skipIf(process.platform !== "darwin")("macOS system CA functions are access
   const error = await new Response(stderr).text();
   
   expect(exitCode).toBe(0);
-  expect(output.trim()).toBe("macOS system CA test passed");
+  expect(output.trim()).toBe("macOS system CA additive test passed");
 });

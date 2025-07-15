@@ -523,6 +523,8 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 
 absolute_sources(BUN_ZIG_SOURCES ${CWD}/cmake/sources/ZigSources.txt)
 
+zig_embed_dependencies(BUN_INIT_TEMPLATE_FILES ${CWD}/src/cli/init_command.zig)
+
 list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
   ${BUN_BINDGEN_ZIG_OUTPUTS}
@@ -609,6 +611,7 @@ register_command(
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}
+    ${BUN_INIT_TEMPLATE_FILES}
 )
 
 set_property(TARGET bun-zig PROPERTY JOB_POOL compile_pool)

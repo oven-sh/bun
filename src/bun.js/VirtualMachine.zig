@@ -567,7 +567,9 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
                 error.JSExecutionTerminated => {}, // we are returning anyway
             };
             _ = Bun__handleUnhandledRejection(globalObject, reason, promise);
-            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch {};
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
             return;
         },
         .warn_with_error_code => {
@@ -575,7 +577,9 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
                 error.JSExecutionTerminated => {}, // we are returning anyway
             };
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
-            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch {};
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
             this.exit_handler.exit_code = 1;
             return;
         },
@@ -586,7 +590,9 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             _ = this.uncaughtException(globalObject, wrapped_reason, true);
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
-            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch {};
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
             return;
         },
         .throw => {

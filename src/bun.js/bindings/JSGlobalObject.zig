@@ -808,6 +808,11 @@ pub const JSGlobalObject = opaque {
         return JSC.VirtualMachine.reportUncaughtException(global, exception);
     }
 
+    pub fn reportUncaughtExceptionFromError(global: *JSGlobalObject, proof: bun.JSError) void {
+        JSC.markBinding(@src());
+        _ = global.reportUncaughtException(global.takeException(proof).asException(global.vm()).?);
+    }
+
     pub fn onCrash() callconv(.C) void {
         JSC.markBinding(@src());
         bun.Output.flush();

@@ -6595,7 +6595,7 @@ const c = struct {
     // BakeSourceProvider.cpp
     extern fn BakeGetDefaultExportFromModule(global: *JSC.JSGlobalObject, module: JSValue) JSValue;
 
-    fn BakeLoadServerHmrPatch(global: *JSC.JSGlobalObject, code: bun.String) !JSValue {
+    fn BakeLoadServerHmrPatch(global: *JSC.JSGlobalObject, code: bun.String) bun.JSError!JSValue {
         const f = @extern(*const fn (*JSC.JSGlobalObject, bun.String) callconv(.c) JSValue, .{ .name = "BakeLoadServerHmrPatch" }).*;
         return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code });
     }

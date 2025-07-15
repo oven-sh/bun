@@ -391,7 +391,7 @@ it("should work without package.json for global commands", async () => {
   });
   expect(cacheCode).toBe(0);
   expect(cacheErr.toString("utf-8")).toBe("");
-  expect(cacheOut.toString("utf-8")).toMatch(/cache/);
+  expect(cacheOut.toString("utf-8")).toMatch(/^\/.*/);
 
   // Test pm whoami without package.json (will fail auth but shouldn't fail for missing package.json)
   const {

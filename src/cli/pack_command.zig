@@ -63,7 +63,7 @@ pub const PackCommand = struct {
             maybe_integrity: ?[sha.SHA512.digest]u8,
             log_level: LogLevel,
         ) void {
-            if (log_level != .silent) {
+            if (log_level != .silent and log_level != .quiet) {
                 Output.prettyln("\n<r><b><blue>Total files<r>: {d}", .{stats.total_files});
                 if (maybe_shasum) |shasum| {
                     Output.prettyln("<b><blue>Shasum<r>: {s}", .{std.fmt.bytesToHex(shasum, .lower)});
@@ -93,8 +93,10 @@ pub const PackCommand = struct {
     };
 
     pub fn execWithManager(ctx: Command.Context, manager: *PackageManager) !void {
-        Output.prettyln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        Output.flush();
+        if (manager.options.log_level != .silent and manager.options.log_level != .quiet) {
+            Output.prettyln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+            Output.flush();
+        }
 
         var lockfile: Lockfile = undefined;
         const load_from_disk_result = lockfile.loadFromCwd(
@@ -2426,7 +2428,7 @@ pub const PackCommand = struct {
         package_json_len: usize,
     ) void {
         const root_dir = bun.FD.fromStdDir(root_dir_std);
-        if (ctx.manager.options.log_level == .silent) return;
+        if (ctx.manager.options.log_level == .silent or ctx.manager.options.log_level == .quiet) return;
         const packed_fmt = "<r><b><cyan>packed<r> {} {s}";
 
         if (comptime is_dry_run) {

@@ -22,7 +22,7 @@ it("pm cache commands work without package.json (#18733)", async () => {
   });
   expect(cacheCode).toBe(0);
   expect(cacheErr.toString("utf-8")).toBe("");
-  expect(cacheOut.toString("utf-8")).toMatch(/^\/.*/); 
+  expect(cacheOut.toString("utf-8")).toMatch(/^\/.*/);
 
   // Test pm cache rm without package.json (verify command works, don't check output details)
   const {

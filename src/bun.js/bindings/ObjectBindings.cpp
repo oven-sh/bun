@@ -25,8 +25,9 @@ static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSO
     while (true) {
         Structure* structure = object->structureID().decode();
         if (!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) [[likely]] {
-            if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
-                return true;
+            auto has = object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (has) return true;
         } else {
             bool hasSlot = structure->classInfoForCells()->methodTable.getOwnPropertySlot(object, globalObject, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);

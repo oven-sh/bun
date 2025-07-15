@@ -1411,6 +1411,8 @@ Process::~Process()
 {
 }
 
+extern "C" bool Bun__NODE_NO_WARNINGS();
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1425,11 +1427,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalG
         args.append(value);
         process->wrapped().emit(ident, args);
         return JSValue::encode(jsUndefined());
+    } else if (!Bun__NODE_NO_WARNINGS()) {
+        auto jsArgs = JSValue::encode(value);
+        Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log), static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
+        RETURN_IF_EXCEPTION(scope, {});
     }
-
-    auto jsArgs = JSValue::encode(value);
-    Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log), static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
-    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 

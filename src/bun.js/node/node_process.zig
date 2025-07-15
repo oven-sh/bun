@@ -312,6 +312,10 @@ comptime {
     }
 }
 
+pub export fn Bun__NODE_NO_WARNINGS() callconv(.C) bool {
+    return bun.getRuntimeFeatureFlag(.NODE_NO_WARNINGS);
+}
+
 pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;
 pub export const Bun__version_with_sha: [*:0]const u8 = "v" ++ bun.Global.package_json_version_with_sha;
 pub export const Bun__versions_boringssl: [*:0]const u8 = bun.Global.versions.boringssl;

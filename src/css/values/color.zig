@@ -387,17 +387,17 @@ pub const CssColor = union(enum) {
         }
 
         const check_converted = struct {
-            fn run(color: *const CssColor) bool {
+            fn run(color: *const CssColor) css.Result(bool) {
                 bun.debugAssert(color.* != .light_dark and color.* != .current_color);
                 return switch (color.*) {
-                    .rgba => T == RGBA,
-                    .lab => |lab| switch (lab.*) {
+                    .rgba => .{ .result = T == RGBA },
+                    .lab => |lab| .{ .result = switch (lab.*) {
                         .lab => T == LAB,
                         .lch => T == LCH,
                         .oklab => T == OKLAB,
                         .oklch => T == OKLCH,
-                    },
-                    .predefined => |pre| switch (pre.*) {
+                    } },
+                    .predefined => |pre| .{ .result = switch (pre.*) {
                         .srgb => T == SRGB,
                         .srgb_linear => T == SRGBLinear,
                         .display_p3 => T == P3,
@@ -406,22 +406,34 @@ pub const CssColor = union(enum) {
                         .rec2020 => T == Rec2020,
                         .xyz_d50 => T == XYZd50,
                         .xyz_d65 => T == XYZd65,
-                    },
-                    .float => |f| switch (f.*) {
+                    } },
+                    .float => |f| .{ .result = switch (f.*) {
                         .rgb => T == SRGB,
                         .hsl => T == HSL,
                         .hwb => T == HWB,
-                    },
+                    } },
                     // System colors cannot be converted to specific color spaces at parse time
-                    .system => false,
+                    .system => .{ .err = css.ParseError(css.ParserError){
+                        .kind = .{ .custom = .{ .unexpected_value = .{
+                            .expected = "convertible color",
+                            .received = "system color",
+                        } } },
+                        .location = css.SourceLocation{ .line = 0, .column = 0 },
+                    } },
                     // We checked these above
                     .light_dark, .current_color => unreachable,
                 };
             }
         };
 
-        const converted_first = check_converted.run(this);
-        const converted_second = check_converted.run(other);
+        const converted_first = switch (check_converted.run(this)) {
+            .result => |v| v,
+            .err => return null,
+        };
+        const converted_second = switch (check_converted.run(other)) {
+            .result => |v| v,
+            .err => return null,
+        };
 
         // https://drafts.csswg.org/css-color-5/#color-mix-result
         var first_color = T.tryFromCssColor(this) orelse return null;

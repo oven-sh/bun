@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 test("fetch with Request object respects redirect: 'manual' option", async () => {
   // Test server that redirects
@@ -66,14 +66,11 @@ test("fetch with Request object respects redirect: 'manual' option", async () =>
     stderr: "pipe",
   });
 
-  const [bunStdout, bunExitCode] = await Promise.all([
-    new Response(bunProc.stdout).text(),
-    bunProc.exited,
-  ]);
+  const [bunStdout, bunExitCode] = await Promise.all([new Response(bunProc.stdout).text(), bunProc.exited]);
 
   expect(bunExitCode).toBe(0);
   const bunResult = JSON.parse(bunStdout.trim());
-  
+
   // The bug: Bun follows the redirect even though redirect: "manual" was specified
   // Expected: status=302, url=original, redirected=false
   // Actual (bug): status=200, url=target, redirected=true
@@ -81,7 +78,7 @@ test("fetch with Request object respects redirect: 'manual' option", async () =>
     status: 302,
     url: `${server.url}/redirect`,
     redirected: false,
-    location: "/target"
+    location: "/target",
   });
 });
 
@@ -91,9 +88,9 @@ test("fetch with Request object respects redirect: 'manual' for external URLs", 
   const request = new Request("https://w3id.org/security/v1", {
     redirect: "manual",
   });
-  
+
   const response = await fetch(request);
-  
+
   // When redirect: "manual" is set, we should get the redirect response
   expect([301, 302, 303, 307, 308]).toContain(response.status); // Any redirect status
   expect(response.url).toBe("https://w3id.org/security/v1");

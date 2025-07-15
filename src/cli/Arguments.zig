@@ -95,6 +95,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk") catch unreachable,
     clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
     clap.parseParam("--port <STR>                      Set the default port for Bun.serve") catch unreachable,
+    clap.parseParam("--use-system-ca                   Use the system CA store instead of the embedded certificates") catch unreachable,
     clap.parseParam("-u, --origin <STR>") catch unreachable,
     clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
     clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
@@ -668,6 +669,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.runtime_options.smol = args.flag("--smol");
         ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
         ctx.runtime_options.expose_gc = args.flag("--expose-gc");
+        ctx.runtime_options.use_system_ca = args.flag("--use-system-ca");
 
         if (args.option("--console-depth")) |depth_str| {
             const depth = std.fmt.parseInt(u16, depth_str, 10) catch {

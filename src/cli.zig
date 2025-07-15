@@ -389,6 +389,7 @@ pub const Command = struct {
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
         console_depth: ?u16 = null,
+        use_system_ca: bool = false,
     };
 
     var global_cli_ctx: Context = undefined;
@@ -1655,4 +1656,12 @@ pub fn printRevisionAndExit() noreturn {
     @branchHint(.cold);
     Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
     Global.exit(0);
+}
+
+// Export function to check if --use-system-ca flag is set
+export fn Bun__useSystemCAFromCLI() c_int {
+    if (global_cli_ctx.runtime_options.use_system_ca) {
+        return 1;
+    }
+    return 0;
 }

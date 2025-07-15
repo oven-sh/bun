@@ -1850,7 +1850,7 @@ pub const threading = @import("./threading.zig");
 pub const Mutex = threading.Mutex;
 pub const Futex = threading.Futex;
 pub const ThreadPool = threading.ThreadPool;
-pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
+pub const UnboundedQueue = threading.UnboundedQueue;
 
 pub fn threadlocalAllocator() std.mem.Allocator {
     if (comptime use_mimalloc) {

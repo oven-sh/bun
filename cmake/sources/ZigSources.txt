@@ -242,7 +242,6 @@ src/bun.js/test/jest.zig
 src/bun.js/test/pretty_format.zig
 src/bun.js/test/snapshot.zig
 src/bun.js/test/test.zig
-src/bun.js/unbounded_queue.zig
 src/bun.js/uuid.zig
 src/bun.js/virtual_machine_exports.zig
 src/bun.js/VirtualMachine.zig
@@ -838,6 +837,7 @@ src/threading/Condition.zig
 src/threading/Futex.zig
 src/threading/Mutex.zig
 src/threading/ThreadPool.zig
+src/threading/unbounded_queue.zig
 src/threading/WaitGroup.zig
 src/tmp.zig
 src/toml/toml_lexer.zig

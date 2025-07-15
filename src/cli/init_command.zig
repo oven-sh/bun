@@ -1146,15 +1146,17 @@ const Template = enum {
             .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-tailwind/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
-            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-tailwind/src/index.tsx") },
-            .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-tailwind/src/App.tsx") },
+            .{ .path = "build.ts", .contents = @embedFile("../init/react-tailwind/build.ts") },
+
+            .{ .path = "src/server.ts", .contents = @embedFile("../init/react-tailwind/src/server.ts") },
+
+            .{ .path = "src/app.tsx", .contents = @embedFile("../init/react-tailwind/src/app.tsx") },
             .{ .path = "src/index.html", .contents = @embedFile("../init/react-tailwind/src/index.html") },
             .{ .path = "src/index.css", .contents = @embedFile("../init/react-tailwind/src/index.css") },
-            .{ .path = "src/APITester.tsx", .contents = @embedFile("../init/react-tailwind/src/APITester.tsx") },
+            .{ .path = "src/api-tester.tsx", .contents = @embedFile("../init/react-tailwind/src/api-tester.tsx") },
             .{ .path = "src/react.svg", .contents = @embedFile("../init/react-tailwind/src/react.svg") },
-            .{ .path = "src/frontend.tsx", .contents = @embedFile("../init/react-tailwind/src/frontend.tsx") },
+            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-tailwind/src/index.tsx") },
             .{ .path = "src/logo.svg", .contents = @embedFile("../init/react-tailwind/src/logo.svg") },
-            .{ .path = "build.ts", .contents = @embedFile("../init/react-tailwind/build.ts") },
         };
     };
 

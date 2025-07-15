@@ -323,6 +323,18 @@ describe("@types/bun integration test", () => {
       },
       {
         category: "Error",
+        file: "spawn.ts",
+        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
+        file: "spawn.ts",
+        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        code: 2339,
+      },
+      {
+        category: "Error",
         file: "streams.ts",
         message: "No overload matches this call.",
         code: 2769,

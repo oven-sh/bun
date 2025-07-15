@@ -22,10 +22,10 @@ async function packExpectError(cwd: string, env: NodeJS.Dict<string>, ...args: s
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
+  const err = await stderr.text();
   expect(err).not.toContain("panic:");
 
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
 
   const exitCode = await exited;
   expect(exitCode).toBeGreaterThan(0);
@@ -791,7 +791,7 @@ describe("bundledDependnecies", () => {
       env: bunEnv,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).toContain("error:");
     expect(err).toContain("to be a boolean or an array of strings");
     expect(err).not.toContain("warning:");

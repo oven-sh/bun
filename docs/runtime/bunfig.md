@@ -108,6 +108,21 @@ The `telemetry` field permit to enable/disable the analytics records. Bun record
 telemetry = false
 ```
 
+### `console`
+
+Configure console output behavior.
+
+#### `console.depth`
+
+Set the default depth for `console.log()` object inspection. Default `2`.
+
+```toml
+[console]
+depth = 3
+```
+
+This controls how deeply nested objects are displayed in console output. Higher values show more nested properties but may produce verbose output for complex objects. This setting can be overridden by the `--console-depth` CLI flag.
+
 ## Test runner
 
 The test runner is configured under the `[test]` section of your bunfig.toml.

@@ -1541,8 +1541,6 @@ ensure_no_tmpfs() {
 	fi
 
 	execute_sudo systemctl mask tmp.mount
-	execute_sudo rm -rf /tmp
-	execute mkdir /tmp
 }
 
 main() {

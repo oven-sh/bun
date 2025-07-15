@@ -192,8 +192,8 @@ describe("errors", () => {
       env: bunEnv,
     });
 
-    const out = await Bun.readableStreamToText(stdout);
-    const err = stderrForInstall(await Bun.readableStreamToText(stderr));
+    const out = await stdout.text();
+    const err = stderrForInstall(await stderr.text());
 
     expect(err).toContain("no-deps@catalog: failed to resolve");
     expect(err).toContain("a-dep@catalog:aaaaaaaaaaaaaaaaa failed to resolve");
@@ -224,8 +224,8 @@ describe("errors", () => {
       env: bunEnv,
     });
 
-    const out = await Bun.readableStreamToText(stdout);
-    const err = stderrForInstall(await Bun.readableStreamToText(stderr));
+    const out = await stdout.text();
+    const err = stderrForInstall(await stderr.text());
 
     expect(err).toContain("no-deps@catalog: failed to resolve");
   });

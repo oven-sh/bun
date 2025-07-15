@@ -1,6 +1,8 @@
 //! This is a copy-pasta of std.Thread.Mutex with some changes.
 //! - No assert with unreachable
 //! - uses bun.Futex instead of std.Thread.Futex
+//! Synchronized with std as of Zig 0.14.1
+//!
 //! Mutex is a synchronization primitive which enforces atomic access to a shared region of code known as the "critical section".
 //! It does this by blocking ensuring only one thread is in the critical section at any given point in time by blocking the others.
 //! Mutex can be statically initialized and is at most `@sizeOf(u64)` large.
@@ -56,13 +58,12 @@ const Impl = if (builtin.mode == .Debug and !builtin.single_threaded)
 else
     ReleaseImpl;
 
-pub const ReleaseImpl =
-    if (builtin.os.tag == .windows)
-        WindowsImpl
-    else if (builtin.os.tag.isDarwin())
-        DarwinImpl
-    else
-        FutexImpl;
+pub const ReleaseImpl = if (builtin.os.tag == .windows)
+    WindowsImpl
+else if (builtin.os.tag.isDarwin())
+    DarwinImpl
+else
+    FutexImpl;
 
 pub const ExternImpl = ReleaseImpl.Type;
 
@@ -94,8 +95,8 @@ const DebugImpl = struct {
     }
 };
 
-// SRWLOCK on windows is almost always faster than Futex solution.
-// It also implements an efficient Condition with requeue support for us.
+/// SRWLOCK on windows is almost always faster than Futex solution.
+/// It also implements an efficient Condition with requeue support for us.
 const WindowsImpl = struct {
     srwlock: Type = .{},
 
@@ -116,7 +117,7 @@ const WindowsImpl = struct {
     pub const Type = windows.SRWLOCK;
 };
 
-// os_unfair_lock on darwin supports priority inheritance and is generally faster than Futex solutions.
+/// os_unfair_lock on darwin supports priority inheritance and is generally faster than Futex solutions.
 const DarwinImpl = struct {
     oul: Type = .{},
 

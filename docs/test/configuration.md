@@ -71,6 +71,26 @@ coverageThreshold = { lines = 0.9, functions = 0.8, statements = 0.85 }
 
 Setting any of these enables `fail_on_low_coverage`, causing the test run to fail if coverage is below the threshold.
 
+#### coveragePathIgnorePatterns
+
+Exclude specific files or file patterns from coverage reports using glob patterns:
+
+```toml
+[test]
+# Single pattern
+coveragePathIgnorePatterns = "**/*.spec.ts"
+
+# Multiple patterns
+coveragePathIgnorePatterns = [
+  "**/*.spec.ts",
+  "**/*.test.ts",
+  "src/utils/**",
+  "*.config.js"
+]
+```
+
+Files matching any of these patterns will be excluded from coverage calculation and reporting. See the [coverage documentation](./coverage.md) for more details and examples.
+
 #### coverageIgnoreSourcemaps
 
 Internally, Bun transpiles every file. That means code coverage must also go through sourcemaps before they can be reported. We expose this as a flag to allow you to opt out of this behavior, but it will be confusing because during the transpilation process, Bun may move code around and change variable names. This option is mostly useful for debugging coverage issues.

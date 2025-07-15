@@ -93,8 +93,8 @@ pub fn forManifest(
         }
 
         const tmp = bun.JSC.URL.join(
-            bun.String.fromUTF8(scope.url.href),
-            bun.String.fromUTF8(encoded_name),
+            bun.String.borrowUTF8(scope.url.href),
+            bun.String.borrowUTF8(encoded_name),
         );
         defer tmp.deref();
 

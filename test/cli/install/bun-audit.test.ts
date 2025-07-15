@@ -1,4 +1,4 @@
-import { readableStreamToText, spawn } from "bun";
+import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, DirectoryTree, gunzipJsonRequest, lazyPromiseLike, tempDirWithFiles } from "harness";
 import { join } from "node:path";
@@ -64,8 +64,8 @@ function doAuditTest(
       },
     });
 
-    const stdout = lazyPromiseLike(() => readableStreamToText(proc.stdout));
-    const stderr = lazyPromiseLike(() => readableStreamToText(proc.stderr));
+    const stdout = lazyPromiseLike(() => proc.stdout.text());
+    const stderr = lazyPromiseLike(() => proc.stderr.text());
 
     const exitCode = await proc.exited;
 

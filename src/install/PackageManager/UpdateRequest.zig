@@ -17,6 +17,21 @@ pub inline fn matches(this: PackageManager.UpdateRequest, dependency: Dependency
         dependency.name_hash;
 }
 
+pub fn getName(this: *const UpdateRequest) string {
+    return if (this.is_aliased)
+        this.name
+    else
+        this.version.literal.slice(this.version_buf);
+}
+
+/// If `this.package_id` is not `invalid_package_id`, it must be less than `lockfile.packages.len`.
+pub fn getNameInLockfile(this: *const UpdateRequest, lockfile: *const Lockfile) ?string {
+    return if (this.package_id == invalid_package_id)
+        null
+    else
+        lockfile.packages.items(.name)[this.package_id].slice(this.version_buf);
+}
+
 /// It is incorrect to call this function before Lockfile.cleanWithLogger() because
 /// resolved_name should be populated if possible.
 ///
@@ -25,10 +40,10 @@ pub inline fn matches(this: PackageManager.UpdateRequest, dependency: Dependency
 pub fn getResolvedName(this: *const UpdateRequest, lockfile: *const Lockfile) string {
     return if (this.is_aliased)
         this.name
-    else if (this.package_id == invalid_package_id)
-        this.version.literal.slice(this.version_buf)
+    else if (this.getNameInLockfile(lockfile)) |name|
+        name
     else
-        lockfile.packages.items(.name)[this.package_id].slice(this.version_buf);
+        this.version.literal.slice(this.version_buf);
 }
 
 pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) bun.JSError!JSC.JSValue {

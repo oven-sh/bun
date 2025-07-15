@@ -8,7 +8,7 @@ test {
 }
 
 test "basic string usage" {
-    var s = bun.String.createUTF8("hi");
+    var s = bun.String.cloneUTF8("hi");
     defer s.deref();
     try t.expect(s.tag != .Dead and s.tag != .Empty);
     try t.expectEqual(s.length(), 2);

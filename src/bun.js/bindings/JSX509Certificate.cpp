@@ -171,7 +171,7 @@ JSC_DEFINE_HOST_FUNCTION(x509CertificateConstructorConstruct, (JSGlobalObject * 
         scope.release();
     }
 
-    return JSValue::encode(createX509Certificate(vm, globalObject, structure, arg));
+    RELEASE_AND_RETURN(scope, JSValue::encode(createX509Certificate(vm, globalObject, structure, arg)));
 }
 
 const ClassInfo JSX509Certificate::s_info = { "X509Certificate"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSX509Certificate) };
@@ -271,9 +271,6 @@ JSX509Certificate* JSX509Certificate::create(JSC::VM& vm, JSC::Structure* struct
 
 String JSX509Certificate::toPEMString() const
 {
-    VM& vm = globalObject()->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
     auto bio = view().toPEM();
     if (!bio) {
         return String();

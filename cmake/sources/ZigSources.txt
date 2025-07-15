@@ -512,7 +512,6 @@ src/feature_flags.zig
 src/fmt.zig
 src/fs.zig
 src/fs/stat_hash.zig
-src/futex.zig
 src/generated_perf_trace_events.zig
 src/generated_versions_list.zig
 src/glob.zig
@@ -643,7 +642,6 @@ src/main_wasm.zig
 src/main.zig
 src/meta.zig
 src/multi_array_list.zig
-src/Mutex.zig
 src/napi/napi.zig
 src/node_fallbacks.zig
 src/open.zig
@@ -838,6 +836,10 @@ src/system_timer.zig
 src/test/fixtures.zig
 src/test/recover.zig
 src/thread_pool.zig
+src/threading.zig
+src/threading/Condition.zig
+src/threading/Futex.zig
+src/threading/Mutex.zig
 src/tmp.zig
 src/toml/toml_lexer.zig
 src/toml/toml_parser.zig

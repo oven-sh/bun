@@ -11,8 +11,8 @@ it("works with large utf-16 strings", async () => {
   });
 
   const exitCode = await proc.exited;
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
+  const stdout = await proc.stdout.text();
+  const stderr = await proc.stderr.text();
   expect(stderr).toBeEmpty();
   expect(exitCode).toBe(0);
 

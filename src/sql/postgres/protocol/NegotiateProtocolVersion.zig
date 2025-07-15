@@ -27,7 +27,7 @@ pub fn decodeInternal(
         if (option.slice().len == 0) break;
         defer option.deinit();
         this.unrecognized_options.appendAssumeCapacity(
-            String.fromUTF8(option),
+            String.borrowUTF8(option),
         );
     }
 }

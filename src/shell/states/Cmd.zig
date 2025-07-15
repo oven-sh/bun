@@ -420,7 +420,7 @@ fn initSubproc(this: *Cmd) Yield {
 
     var arena = &this.spawn_arena;
     // var arena_allocator = arena.allocator();
-    var spawn_args = Subprocess.SpawnArgs.default(arena, this.base.interpreter.event_loop, false);
+    var spawn_args = Subprocess.SpawnArgs.default(arena, this, this.base.interpreter.event_loop, false);
 
     spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
     spawn_args.cmd_parent = this;
@@ -502,7 +502,6 @@ fn initSubproc(this: *Cmd) Yield {
 
         break :args this.args;
     };
-    spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args.items, .capacity = args.capacity };
 
     // Fill the env from the export end and cmd local env
     {

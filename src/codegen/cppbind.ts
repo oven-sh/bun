@@ -288,7 +288,7 @@ function processFunction(ctx: ParseContext, node: SyntaxNode, tag: ExportTag): C
   };
 }
 
-type ExportTag = "check_slow" | "zero_is_throw" | "nothrow";
+type ExportTag = "check_slow" | "zero_is_throw" | "false_is_throw" | "nothrow";
 
 const sharedTypesText = await Bun.file("src/codegen/shared-types.ts").text();
 const sharedTypesLines = sharedTypesText.split("\n");
@@ -453,14 +453,22 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
 
       const tagStr = text(tagIdentifier, ctx);
       let tag: ExportTag | undefined;
-      if (tagStr === "nothrow" || tagStr === "zero_is_throw" || tagStr === "check_slow") {
+      if (
+        tagStr === "nothrow" ||
+        tagStr === "zero_is_throw" ||
+        tagStr === "check_slow" ||
+        tagStr === "false_is_throw"
+      ) {
         tag = tagStr;
       } else if (tagStr === "print") {
         console.log(prettyPrintLezerNode(fnNode, ctx.sourceCode));
         appendError(nodePosition(tagIdentifier, ctx), "'print' tags are only for debugging cppbind");
         tag = "nothrow";
       } else {
-        appendError(nodePosition(tagIdentifier, ctx), "tag must be nothrow, zero_is_throw, or check_slow");
+        appendError(
+          nodePosition(tagIdentifier, ctx),
+          "tag must be nothrow, zero_is_throw, check_slow, or false_is_throw: " + tagStr,
+        );
         tag = "nothrow";
       }
 
@@ -525,66 +533,76 @@ function generateZigFn(
     resultBindings.push(
       `    pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`,
     );
-  } else if (fn.tag === "check_slow" || fn.tag === "zero_is_throw") {
-    resultRaw.push(
-      `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`,
-    );
-    let globalThisArg: CppParameter | undefined;
-    for (const param of fn.parameters) {
-      const type = generateZigType(param.type);
-      if (type === "?*jsc.JSGlobalObject") {
-        globalThisArg = param;
-        break;
-      }
+    return;
+  }
+
+  resultRaw.push(`    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`);
+  let globalThisArg: CppParameter | undefined;
+  for (const param of fn.parameters) {
+    const type = generateZigType(param.type);
+    if (type === "?*jsc.JSGlobalObject") {
+      globalThisArg = param;
+      break;
     }
-    if (!globalThisArg) throwError(fn.position, "no globalThis argument found (required for " + fn.tag + ")");
-    if (fn.tag === "check_slow") {
-      if (returnType === "jsc.JSValue") {
-        appendError(
-          fn.position,
-          "Use ZIG_EXPORT(zero_is_throw) instead of ZIG_EXPORT(check_slow) for functions that return JSValue",
-        );
-      }
-      resultBindings.push(
-        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
-        `        if (comptime Environment.ci_assert) {`,
-        `            var scope: jsc.CatchScope = undefined;`,
-        `            scope.init(${formatZigName(globalThisArg.name)}, @src());`,
-        `            defer scope.deinit();`,
-        ``,
-        `            const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-        `            try scope.returnIfException();`,
-        `            return result;`,
-        `        } else {`,
-        `            const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-        `            if (Bun__RETURN_IF_EXCEPTION(${formatZigName(globalThisArg.name)})) return error.JSError;`,
-        `            return result;`,
-        `        }`,
-        `    }`,
+  }
+  if (!globalThisArg) throwError(fn.position, "no globalThis argument found (required for " + fn.tag + ")");
+  if (fn.tag === "check_slow") {
+    if (returnType === "jsc.JSValue") {
+      appendError(
+        fn.position,
+        "Use ZIG_EXPORT(zero_is_throw) instead of ZIG_EXPORT(check_slow) for functions that return JSValue",
       );
-    } else if (fn.tag === "zero_is_throw") {
-      if (returnType !== "jsc.JSValue") {
-        appendError(fn.position, "ZIG_EXPORT(zero_is_throw) is only allowed for functions that return JSValue");
-      }
-      resultBindings.push(
-        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
-        `        if (comptime Environment.ci_assert) {`,
-        `            var scope: jsc.ExceptionValidationScope = undefined;`,
-        `            scope.init(${formatZigName(globalThisArg.name)}, @src());`,
-        `            defer scope.deinit();`,
-        ``,
-        `            const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-        `            scope.assertExceptionPresenceMatches(value == .zero);`,
-        `            return if (value == .zero) error.JSError else value;`,
-        `        } else {`,
-        `            const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-        `            if (value == .zero) return error.JSError;`,
-        `            return value;`,
-        `        }`,
-        `    }`,
-      );
-    } else assertNever(fn.tag);
+    }
+    resultBindings.push(
+      `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
+      `        if (comptime Environment.ci_assert) {`,
+      `            var scope: jsc.CatchScope = undefined;`,
+      `            scope.init(${formatZigName(globalThisArg.name)}, @src());`,
+      `            defer scope.deinit();`,
+      ``,
+      `            const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+      `            try scope.returnIfException();`,
+      `            return result;`,
+      `        } else {`,
+      `            const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+      `            if (Bun__RETURN_IF_EXCEPTION(${formatZigName(globalThisArg.name)})) return error.JSError;`,
+      `            return result;`,
+      `        }`,
+      `    }`,
+    );
+    return;
+  }
+
+  let equalsValue: string;
+  if (fn.tag === "zero_is_throw") {
+    equalsValue = ".zero";
+    if (returnType !== "jsc.JSValue") {
+      appendError(fn.position, "ZIG_EXPORT(zero_is_throw) is only allowed for functions that return JSValue");
+    }
+  } else if (fn.tag === "false_is_throw") {
+    equalsValue = ".false";
+    if (returnType !== "bool") {
+      appendError(fn.position, "ZIG_EXPORT(false_is_throw) is only allowed for functions that return bool");
+    }
   } else assertNever(fn.tag);
+  resultBindings.push(
+    `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
+    `        if (comptime Environment.ci_assert) {`,
+    `            var scope: jsc.ExceptionValidationScope = undefined;`,
+    `            scope.init(${formatZigName(globalThisArg.name)}, @src());`,
+    `            defer scope.deinit();`,
+    ``,
+    `            const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+    `            scope.assertExceptionPresenceMatches(value == ${equalsValue});`,
+    `            return if (value == ${equalsValue}) error.JSError else value;`,
+    `        } else {`,
+    `            const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+    `            if (value == ${equalsValue}) return error.JSError;`,
+    `            return value;`,
+    `        }`,
+    `    }`,
+  );
+  return;
 }
 
 async function readFileOrEmpty(file: string): Promise<string> {

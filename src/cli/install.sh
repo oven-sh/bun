@@ -260,8 +260,8 @@ bash)
     )
 
     bash_configs=(
-        "$HOME/.bashrc"
         "$HOME/.bash_profile"
+        "$HOME/.bashrc"
     )
 
     if [[ ${XDG_CONFIG_HOME:-} ]]; then

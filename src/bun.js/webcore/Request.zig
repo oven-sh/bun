@@ -352,7 +352,9 @@ pub fn getRedirect(
     this: *Request,
     globalThis: *JSC.JSGlobalObject,
 ) JSC.JSValue {
-    return ZigString.static(@tagName(this.redirect)).toJS(globalThis);
+    return switch (this.redirect) {
+        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
+    };
 }
 pub fn getReferrer(
     this: *Request,

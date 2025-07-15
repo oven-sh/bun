@@ -1,11 +1,7 @@
 import { serve } from "bun";
-import { afterAll, describe, expect, it, test } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 
 describe("fetch Connection header", () => {
-  afterAll(() => {
-    // Cleanup in case any servers are left running
-  });
-
   // Helper function to capture headers from a request
   const captureHeadersFromRequest = async (fetchOptions: RequestInit): Promise<Record<string, string>> => {
     return new Promise((resolve, reject) => {

@@ -15,7 +15,12 @@ function tmpdirSync(pattern: string = "bun.test."): string {
 
 export default {
   fetch: req => Response.json(req.url),
-} satisfies Bun.Serve.Options;
+  websocket: {
+    message(ws) {
+      expectType(ws.data).is<{ name: string }>();
+    },
+  },
+} satisfies Bun.Serve.Options<{ name: string }>;
 
 function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) => T): asserts value is T {
   expect(value).toBeInstanceOf(constructor);
@@ -128,7 +133,7 @@ test("basic + websocket + upgrade", {
   },
 });
 
-test<{ name: string }, "/">("basic + websocket + upgrade + all handlers", {
+test("basic + websocket + upgrade + all handlers", {
   fetch(req, server) {
     expectType(server.upgrade).is<
       (
@@ -160,6 +165,8 @@ test<{ name: string }, "/">("basic + websocket + upgrade + all handlers", {
   },
 
   websocket: {
+    data: {} as { name: string },
+
     open(ws) {
       console.log("WebSocket opened");
       ws.subscribe("the-group-chat");

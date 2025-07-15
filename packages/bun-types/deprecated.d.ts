@@ -14,6 +14,11 @@ declare module "bun" {
     ): void;
   }
 
+  /**
+   * @deprecated Use {@link Serve.Options Bun.Serve.Options<T, R>} instead
+   */
+  type ServeOptions<T = undefined, R extends string = never> = Serve.Options<T, R>;
+
   /** @deprecated This type is unused in Bun's types and might be removed in the near future */
   type Platform =
     | "aix"

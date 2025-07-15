@@ -339,7 +339,9 @@ declare module "bun" {
    * });
    * ```
    */
-  interface WebSocketHandler<T = undefined> {
+  interface WebSocketHandler<T> {
+    data?: T;
+
     /**
      * Called when the server receives an incoming message.
      *
@@ -706,8 +708,7 @@ declare module "bun" {
        *
        * note: hostname should not include a {@link port}
        */
-      hostname?: string;
-      // hostname?: "0.0.0.0" | "127.0.0.1" | "localhost" | (string & {});
+      hostname?: "0.0.0.0" | "127.0.0.1" | "localhost" | (string & {});
 
       /**
        * What port should the server listen on?
@@ -748,16 +749,28 @@ declare module "bun" {
     }
 
     /**
-     * The type of options that can be passed to {@link serve}, with support for `routes` and a safer requirement for `fetch`
+     * The type of options that can be passed to {@link serve}, with support for
+     * `routes` and a safer requirement for `fetch`
+     *
+     * @example
+     * ```ts
+     * export default {
+     *   fetch: req => Response.json(req.url),
+     *
+     *   websocket: {
+     *     message(ws) {
+     *       ws.data.name; // string
+     *     },
+     *   },
+     * } satisfies Bun.Serve.Options<{ name: string }>;
+     * ```
      */
-    type Options<WebSocketData = undefined, R extends string = never> = XOR<
+    type Options<WebSocketData, R extends string = never> = XOR<
       HostnamePortServeOptions<WebSocketData>,
       UnixServeOptions<WebSocketData>
     > &
       XOR<FetchOrRoutes<WebSocketData, R>, FetchOrRoutesWithWebSocket<WebSocketData, R>>;
   }
-
-  type ServeOptions<T = undefined, R extends string = never> = Serve.Options<T, R>;
 
   interface BunRequest<T extends string = string> extends Request {
     readonly params: Serve.ExtractRouteParams<T>;
@@ -1224,5 +1237,7 @@ declare module "bun" {
    * });
    * ```
    */
-  function serve<WebSocketData, R extends string>(options: Serve.Options<WebSocketData, R>): Server<WebSocketData>;
+  function serve<WebSocketData = undefined, R extends string = never>(
+    options: Serve.Options<WebSocketData, R>,
+  ): Server<WebSocketData>;
 }

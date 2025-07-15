@@ -97,3 +97,73 @@ test("fetch with Request object respects redirect: 'manual' for external URLs", 
   expect(response.redirected).toBe(false);
   expect(response.headers.get("location")).toBeTruthy();
 });
+
+// Test edge case: fetch with options but no redirect should use Request's redirect
+test("fetch with Request respects redirect when fetch has other options but no redirect", async () => {
+  // Test server that redirects
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/redirect") {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "/target",
+          },
+        });
+      }
+      if (url.pathname === "/target") {
+        return new Response("Target reached", { 
+          status: 200,
+          headers: {
+            "X-Target": "true"
+          }
+        });
+      }
+      return new Response("Not found", { status: 404 });
+    },
+  });
+
+  // Create a Request with redirect: "manual"
+  const request = new Request(`${server.url}/redirect`, {
+    redirect: "manual",
+    headers: {
+      "X-Original": "request"
+    }
+  });
+
+  // Test 1: fetch with other options but NO redirect option
+  // Should use the Request's redirect: "manual"
+  const response1 = await fetch(request, {
+    headers: {
+      "X-Additional": "fetch-option"
+    },
+    // Note: no redirect option here
+  });
+  
+  expect(response1.status).toBe(302);
+  expect(response1.url).toBe(`${server.url}/redirect`);
+  expect(response1.redirected).toBe(false);
+  expect(response1.headers.get("location")).toBe("/target");
+
+  // Test 2: fetch with explicit redirect option should override Request's redirect
+  const response2 = await fetch(request, {
+    headers: {
+      "X-Additional": "fetch-option"
+    },
+    redirect: "follow" // Explicitly override
+  });
+  
+  expect(response2.status).toBe(200);
+  expect(response2.url).toBe(`${server.url}/target`);
+  expect(response2.redirected).toBe(true);
+  expect(response2.headers.get("X-Target")).toBe("true");
+
+  // Test 3: fetch with empty options object should use Request's redirect
+  const response3 = await fetch(request, {});
+  
+  expect(response3.status).toBe(302);
+  expect(response3.url).toBe(`${server.url}/redirect`);
+  expect(response3.redirected).toBe(false);
+});

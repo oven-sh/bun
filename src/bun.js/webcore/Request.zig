@@ -715,9 +715,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
 
         // Extract redirect option
         if (!fields.contains(.redirect)) {
-            if (value.getOptionalEnum(globalThis, "redirect", FetchRedirect) catch {
-                return error.JSError;
-            }) |redirect_value| {
+            if (try value.getOptionalEnum(globalThis, "redirect", FetchRedirect)) |redirect_value| {
                 req.redirect = redirect_value;
                 fields.insert(.redirect);
             }

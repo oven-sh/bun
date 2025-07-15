@@ -156,7 +156,7 @@ test("fetch with Request respects redirect when fetch has other options but no r
   });
   
   expect(response2.status).toBe(200);
-  expect(response2.url).toBe(`${server.url}/target`);
+  expect(response2.url).toBe(new URL("/target", server.url).href);
   expect(response2.redirected).toBe(true);
   expect(response2.headers.get("X-Target")).toBe("true");
 

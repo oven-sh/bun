@@ -887,7 +887,7 @@ describe("bun test", () => {
         const cases = [
           { a: 1, b: 2, expected: 3 },
           { a: 5, b: 5, expected: 10 },
-          { a: -1, b: 1, expected: 0 }
+          { a: -1, b: 1, expected: 0 },
         ];
 
         const stderr = runTest({
@@ -930,8 +930,8 @@ describe("bun test", () => {
 
       test("should work with describe.each", () => {
         const cases = [
-          { module: 'fs', method: 'readFile' },
-          { module: 'path', method: 'join' }
+          { module: "fs", method: "readFile" },
+          { module: "path", method: "join" },
         ];
 
         const stderr = runTest({
@@ -956,8 +956,8 @@ describe("bun test", () => {
 
       test("should work with complex property names", () => {
         const cases = [
-          { user_name: 'john_doe', age: 30, is_active: true },
-          { user_name: 'jane_smith', age: 25, is_active: false }
+          { user_name: "john_doe", age: 30, is_active: true },
+          { user_name: "jane_smith", age: 25, is_active: false },
         ];
 
         const stderr = runTest({
@@ -982,7 +982,7 @@ describe("bun test", () => {
       test("should coexist with % formatting for arrays", () => {
         const numbers = [
           [1, 2, 3],
-          [5, 5, 10]
+          [5, 5, 10],
         ];
 
         const stderr = runTest({
@@ -1003,14 +1003,14 @@ describe("bun test", () => {
 
       test("should support nested property access", () => {
         const cases = [
-          { 
-            user: { name: 'Alice', profile: { city: 'NYC' } }, 
-            expected: 'Alice from NYC' 
+          {
+            user: { name: "Alice", profile: { city: "NYC" } },
+            expected: "Alice from NYC",
           },
-          { 
-            user: { name: 'Bob', profile: { city: 'LA' } }, 
-            expected: 'Bob from LA' 
-          }
+          {
+            user: { name: "Bob", profile: { city: "LA" } },
+            expected: "Bob from LA",
+          },
         ];
 
         const stderr = runTest({
@@ -1032,14 +1032,14 @@ describe("bun test", () => {
 
       test("should support array indexing with dot notation", () => {
         const cases = [
-          { 
-            users: [{ name: 'Alice' }, { name: 'Bob' }],
-            first: 'Alice'
+          {
+            users: [{ name: "Alice" }, { name: "Bob" }],
+            first: "Alice",
           },
-          { 
-            users: [{ name: 'Carol' }, { name: 'Dave' }],
-            first: 'Carol'
-          }
+          {
+            users: [{ name: "Carol" }, { name: "Dave" }],
+            first: "Carol",
+          },
         ];
 
         const stderr = runTest({
@@ -1061,14 +1061,14 @@ describe("bun test", () => {
 
       test("handles edge cases with underscores and invalid identifiers", () => {
         const cases = [
-          { 
-            _valid: 'underscore',
-            $dollar: 'dollar',
-            _123mix: 'mix',
-            '123invalid': 'invalid',
-            'has-dash': 'dash',
-            'has space': 'space'
-          }
+          {
+            _valid: "underscore",
+            $dollar: "dollar",
+            _123mix: "mix",
+            "123invalid": "invalid",
+            "has-dash": "dash",
+            "has space": "space",
+          },
         ];
 
         const stderr = runTest({
@@ -1086,22 +1086,22 @@ describe("bun test", () => {
         expect(stderr).toContain('"underscore"');
         expect(stderr).toContain('"dollar"');
         expect(stderr).toContain('"mix"');
-        expect(stderr).toContain('$123invalid');
-        expect(stderr).toContain('$hasdash');
-        expect(stderr).toContain('$hasspace');
+        expect(stderr).toContain("$123invalid");
+        expect(stderr).toContain("$hasdash");
+        expect(stderr).toContain("$hasspace");
       });
 
       test("handles deeply nested properties with arrays", () => {
         const cases = [
-          { 
+          {
             data: {
               users: [
-                { name: 'Alice', tags: ['admin', 'user'] },
-                { name: 'Bob', tags: ['user'] }
+                { name: "Alice", tags: ["admin", "user"] },
+                { name: "Bob", tags: ["user"] },
               ],
-              count: 2
-            }
-          }
+              count: 2,
+            },
+          },
         ];
 
         const stderr = runTest({
@@ -1134,7 +1134,7 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain('1 | $missing| $a.b.c| 1');
+        expect(stderr).toContain("1 | $missing| $a.b.c| 1");
       });
     });
   });

@@ -534,6 +534,7 @@ test/js/web/fetch/headers.test.ts
 test/js/web/fetch/headers.undici.test.ts
 test/js/web/fetch/stream-fast-path.test.ts
 test/js/web/fetch/utf8-bom.test.ts
+test/regression/issue/test-21049.test.ts
 test/js/web/html/FormData.test.ts
 test/js/web/request/request-clone-leak.test.ts
 test/js/web/request/request-subclass.test.ts

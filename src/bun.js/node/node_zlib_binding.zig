@@ -149,7 +149,7 @@ pub fn CompressionStream(comptime T: type) type {
             this_value.ensureStillAlive();
 
             if (!(checkError(this, global, this_value) catch return global.reportActiveExceptionAsUnhandled(error.JSError))) {
-                return;
+                return; // TODO: properly propagate exception upwards
             }
 
             this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);

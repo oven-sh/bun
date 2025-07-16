@@ -1125,7 +1125,7 @@ pub const UpdateInteractiveCommand = struct {
             manager.flushNetworkQueue();
             _ = manager.scheduleTasks();
 
-            if (manager.pendingTaskCount() > 1) {
+            if (manager.pendingTaskCount() > 0) {
                 try manager.runTasks(
                     *PackageManager,
                     manager,
@@ -1146,11 +1146,11 @@ pub const UpdateInteractiveCommand = struct {
         manager.flushNetworkQueue();
         _ = manager.scheduleTasks();
 
-        const RunClosure = struct {
-            manager: *PackageManager,
-            err: ?anyerror = null,
-            pub fn isDone(closure: *@This()) bool {
-                if (closure.manager.pendingTaskCount() > 0) {
+        if (manager.pendingTaskCount() > 0) {
+            const RunClosure = struct {
+                manager: *PackageManager,
+                err: ?anyerror = null,
+                pub fn isDone(closure: *@This()) bool {
                     closure.manager.runTasks(
                         *PackageManager,
                         closure.manager,
@@ -1168,16 +1168,15 @@ pub const UpdateInteractiveCommand = struct {
                         closure.err = err;
                         return true;
                     };
-                    return false;
+                    return closure.manager.pendingTaskCount() == 0;
                 }
-                return true;
-            }
-        };
+            };
 
-        var run = RunClosure{ .manager = manager };
-        manager.sleepUntil(&run, &RunClosure.isDone);
-        if (run.err) |err| {
-            return err;
+            var run = RunClosure{ .manager = manager };
+            manager.sleepUntil(&run, &RunClosure.isDone);
+            if (run.err) |err| {
+                return err;
+            }
         }
     }
 };

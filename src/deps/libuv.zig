@@ -309,7 +309,6 @@ pub const uv_random_s = struct_uv_random_s;
 pub const uv_env_item_s = struct_uv_env_item_s;
 pub const uv_cpu_times_s = struct_uv_cpu_times_s;
 pub const uv_cpu_info_s = struct_uv_cpu_info_s;
-pub const uv_interface_address_s = uv_interface_address_s;
 pub const uv_passwd_s = struct_uv_passwd_s;
 pub const uv_group_s = struct_uv_group_s;
 pub const uv_utsname_s = struct_uv_utsname_s;

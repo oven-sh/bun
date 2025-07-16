@@ -4477,6 +4477,9 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGl
     // We were able to get the slice synchronously.
     if (readableStreamMaybe.isNull()) {
         compiler->finalize(globalObject);
+
+        // Apparently rejecting a Promise (done in JSC::Wasm::StreamingCompiler#fail) can throw
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return promise;
     }
 

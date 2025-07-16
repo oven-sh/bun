@@ -3176,7 +3176,7 @@ pub fn getRoughTickCount() timespec {
         const clocky = struct {
             pub var clock_id: std.os.linux.CLOCK = .REALTIME;
             pub fn get() void {
-                var res = timespec{};
+                var res: timespec = undefined;
                 std.posix.clock_getres(.MONOTONIC_COARSE, @ptrCast(&res)) catch {};
                 if (res.ms() <= 1) {
                     clock_id = .MONOTONIC_COARSE;

@@ -66,7 +66,7 @@ function parseDeclarations(
     const line = lines[i];
 
     if (line === "// @sortImports") {
-      lines[i] = "";
+      lines[i] = DELETED_LINE;
       continue;
     }
 
@@ -284,7 +284,7 @@ function generateSortedOutput(lines: string[], groups: Map<string, Group>, sorte
     // Add declarations to output and mark original lines for removal
     for (const declaration of groupDeclarations.declarations) {
       outputLines.push(declaration.whole);
-      outputLines[declaration.index] = "";
+      outputLines[declaration.index] = DELETED_LINE;
     }
   }
 
@@ -352,7 +352,7 @@ async function processFile(filePath: string): Promise<void> {
 
   // Remove deleted lines
   fileContents = fileContents.replaceAll(DELETED_LINE + "\n", "");
-  fileContents = fileContents.replaceAll(DELETED_LINE, ""); // any remaining lines
+  // fileContents = fileContents.replaceAll(DELETED_LINE, ""); // any remaining lines
 
   // Remove any leading newlines
   fileContents = fileContents.replace(/^\n+/, "");

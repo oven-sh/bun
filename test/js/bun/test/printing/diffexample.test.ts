@@ -25,6 +25,7 @@ test("example 3 - very long string with few changes", () => {
   expectedLines[499] = "line 500 - CHANGED"; // Change line 500
   expectedLines[750] = "line 751 - MODIFIED"; // Change line 751
   expectedLines[900] = "line 901 - DIFFERENT"; // Change line 901
+  expectedLines.splice(100, 0, "line 101 - INSERTED");
   const expectedString = expectedLines.join("\n");
 
   expect(originalString).toEqual(expectedString);

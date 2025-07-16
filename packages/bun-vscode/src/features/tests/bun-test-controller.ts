@@ -870,7 +870,7 @@ export class BunTestController implements vscode.Disposable {
       this.debugAdapter = null;
     }
 
-    this.debugAdapter ||= new NodeSocketDebugAdapter(socket);
+    this.debugAdapter = new NodeSocketDebugAdapter(socket);
 
     this.debugAdapter.on("TestReporter.found", event => {
       this.handleTestFound(event, run);

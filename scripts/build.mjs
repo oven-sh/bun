@@ -34,6 +34,7 @@ const buildFlags = [
   ["-j", "number", "same as --parallel"],
   ["--verbose", "boolean", "enable verbose output"],
   ["-v", "boolean", "same as --verbose"],
+  ["--quiet", "boolean", "enable quiet output (suppresses ninja progress)"],
 ];
 
 async function build(args) {
@@ -126,9 +127,26 @@ async function build(args) {
     }
   }
 
-  const buildArgs = Object.entries(buildOptions)
+  // Separate cmake build options from ninja options
+  const cmakeOptions = {};
+  const ninjaOptions = [];
+  
+  for (const [flag, value] of Object.entries(buildOptions)) {
+    if (flag === "--quiet") {
+      ninjaOptions.push("--quiet");
+    } else {
+      cmakeOptions[flag] = value;
+    }
+  }
+  
+  const buildArgs = Object.entries(cmakeOptions)
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
+  
+  // Add ninja options after --
+  if (ninjaOptions.length > 0) {
+    buildArgs.push("--", ...ninjaOptions);
+  }
 
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 

@@ -1111,6 +1111,21 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             Output.flush();
             Output.pretty("Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[...flags]<r>  \n", .{});
             Output.pretty("\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n", .{});
+
+            // Check if there's a "build" script in package.json
+            var path_buf: bun.PathBuffer = undefined;
+            const package_json_path = bun.path.joinAbsStringBufZ(cwd, &path_buf, &.{"package.json"}, .auto);
+
+            if (bun.sys.File.readFrom(bun.FD.cwd(), package_json_path, allocator).asValue()) |contents| {
+                defer allocator.free(contents);
+                if (std.mem.indexOf(u8, contents, "\"scripts\"")) |scripts_idx| {
+                    const scripts_section = contents[scripts_idx..];
+                    if (std.mem.indexOf(u8, scripts_section, "\"build\"")) |_| {
+                        Output.pretty("\n<blue><b>Tip:<r> You have a <b>build<r> script in package.json. Did you mean to run <b><green>bun run build<r>?<r>\n", .{});
+                    }
+                }
+            }
+
             Output.flush();
             Global.exit(1);
         }

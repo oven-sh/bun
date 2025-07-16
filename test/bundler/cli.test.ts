@@ -381,3 +381,25 @@ test("log case 2", () => {
     "
   `);
 });
+
+test("`bun build` shows tip when build script exists in package.json", () => {
+  const tmpdir = tmpdirSync();  
+  writeFileSync(join(tmpdir, "package.json"), JSON.stringify({
+    name: "test-project",
+    scripts: {
+      build: "bun build ./index.ts",
+    },
+  }));
+  
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "build"],
+    env: bunEnv,
+    cwd: tmpdir,
+    stdout: "pipe",
+  });
+    
+  expect(exitCode).toBe(1);
+  const output = stdout?.toString() || "";
+  expect(output).toContain("error: Missing entrypoints");
+  expect(output).toContain("Did you mean to run bun run build?");
+});

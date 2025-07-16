@@ -1778,7 +1778,7 @@ pub const js_bindings = struct {
             return global.throwError(err, "while formatting");
         };
 
-        return bun.String.createUTF8(buffer.list.items);
+        return bun.String.cloneUTF8(buffer.list.items);
     }
 };
 

@@ -1,0 +1,62 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`CSS calc with percentage and NaN - snapshot outputs 1`] = `
+"{
+  "calc(50% + NaN)": {
+    "success": true,
+    "output": ".test {/n  color: hsl(200, calc(50% + NaN), 50%);/n}/n"
+  },
+  "calc(50% - NaN)": {
+    "success": true,
+    "output": ".test {/n  color: hsl(200, calc(50% - NaN), 50%);/n}/n"
+  },
+  "calc(50% * NaN)": {
+    "success": true,
+    "output": ".test {/n  color: hsl(200, calc(50% * NaN), 50%);/n}/n"
+  },
+  "calc(50% / NaN)": {
+    "success": true,
+    "output": ".test {/n  color: hsl(200, calc(50% / NaN), 50%);/n}/n"
+  },
+  "calc(NaN + 50%)": {
+    "success": true,
+    "output": ".test {/n  color: hsl(200, calc(NaN + 50%), 50%);/n}/n"
+  },
+  "calc(NaN - 50%)": {
+    "success": true,
+    "output": ".test {/n  color: hsl(200, calc(NaN - 50%), 50%);/n}/n"
+  },
+  "calc(NaN * 50%)": {
+    "success": true,
+    "output": ".test {/n  color: hsl(200, calc(NaN * 50%), 50%);/n}/n"
+  },
+  "calc(NaN / 50%)": {
+    "success": true,
+    "output": ".test {/n  color: hsl(200, calc(NaN / 50%), 50%);/n}/n"
+  },
+  "calc(Infinity)": {
+    "success": true,
+    "output": ".test {/n  color: hsl(200, calc(Infinity), 50%);/n}/n"
+  },
+  "calc(-Infinity)": {
+    "success": true,
+    "output": ".test {/n  color: hsl(200, calc(-Infinity), 50%);/n}/n"
+  },
+  "calc(50% + Infinity)": {
+    "success": true,
+    "output": ".test {/n  color: hsl(200, calc(50% + Infinity), 50%);/n}/n"
+  },
+  "calc(50% - Infinity)": {
+    "success": true,
+    "output": ".test {/n  color: hsl(200, calc(50% - Infinity), 50%);/n}/n"
+  },
+  "calc(50% * Infinity)": {
+    "success": true,
+    "output": ".test {/n  color: #0af;/n}/n"
+  },
+  "calc(50% / Infinity)": {
+    "success": true,
+    "output": ".test {/n  color: gray;/n}/n"
+  }
+}"
+`;

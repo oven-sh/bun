@@ -209,7 +209,7 @@ pub const struct_hostent = extern struct {
             if (this.h_name == null) {
                 return try JSC.JSValue.createEmptyArray(globalThis, 0);
             }
-            return bun.String.toJSArray(globalThis, &[_]bun.String{bun.String.fromUTF8(this.h_name.?[0..bun.len(this.h_name.?)])});
+            return bun.String.toJSArray(globalThis, &[_]bun.String{bun.String.borrowUTF8(this.h_name.?[0..bun.len(this.h_name.?)])});
         }
 
         if (this.h_aliases == null) {
@@ -1701,7 +1701,7 @@ pub const Error = enum(i32) {
                     bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }) catch bun.outOfMemory()
                 else
                     bun.String.createFormat("{s} {s}", .{ this.syscall, this.errno.code()[4..] }) catch bun.outOfMemory(),
-                .syscall = bun.String.createUTF8(this.syscall),
+                .syscall = bun.String.cloneUTF8(this.syscall),
                 .hostname = this.hostname orelse bun.String.empty,
             };
 
@@ -1741,7 +1741,7 @@ pub const Error = enum(i32) {
 
     pub fn toDeferred(this: Error, syscall: []const u8, hostname: ?[]const u8, promise: *JSC.JSPromise.Strong) *Deferred {
         const host_string: ?bun.String = if (hostname) |host|
-            bun.String.createUTF8(host)
+            bun.String.cloneUTF8(host)
         else
             null;
         defer promise.* = .{};
@@ -1765,7 +1765,7 @@ pub const Error = enum(i32) {
             .code = bun.String.static(this.code()[4..]),
             .message = bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname }) catch bun.outOfMemory(),
             .syscall = bun.String.static(syscall),
-            .hostname = bun.String.createUTF8(hostname),
+            .hostname = bun.String.cloneUTF8(hostname),
         }).toErrorInstance(globalThis);
         instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
         return instance;

@@ -101,6 +101,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }
+    scope.assertNoException();
     return JSValue::encode(jsString(vm, WTFMove(str)));
 }
 

@@ -339,7 +339,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                                 .ansi_16 => {
                                     const ansi_16_color = Ansi256.get16(rgba.red, rgba.green, rgba.blue);
                                     // 16-color ansi, foreground text color
-                                    break :color bun.String.createLatin1(&[_]u8{
+                                    break :color bun.String.cloneLatin1(&[_]u8{
                                         // 0x1b is the escape character
                                         // 38 is the foreground color code
                                         // 5 is the 16-color mode
@@ -364,13 +364,13 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                                         rgba.blue,
                                     }) catch unreachable;
 
-                                    break :color bun.String.createLatin1(buf[0 .. 7 + additional.len]);
+                                    break :color bun.String.cloneLatin1(buf[0 .. 7 + additional.len]);
                                 },
                                 .ansi_256 => {
                                     // ANSI escape sequence
                                     var buf: Ansi256.Buffer = undefined;
                                     const val = Ansi256.from(rgba, &buf);
-                                    break :color bun.String.createLatin1(val);
+                                    break :color bun.String.cloneLatin1(val);
                                 },
                                 else => unreachable,
                             }

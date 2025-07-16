@@ -518,7 +518,7 @@ pub fn fromURLSearchParams(
     };
     search_params.toString(URLSearchParamsConverter, &converter, URLSearchParamsConverter.convert);
     var store = Blob.Store.init(converter.buf, allocator);
-    store.mime_type = MimeType.all.@"application/x-www-form-urlencoded";
+    store.mime_type = MimeType.Compact.from(.@"application/x-www-form-urlencoded").toMimeType();
 
     var blob = Blob.initWithStore(store, globalThis);
     blob.content_type = store.mime_type.value;
@@ -1031,7 +1031,7 @@ pub fn writeFileWithSourceDestination(ctx: *JSC.JSGlobalObject, source_blob: *Bl
         return file_copier.promise.value();
     } else if (destination_type == .file and source_type == .s3) {
         const s3 = &source_store.data.s3;
-        if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(
+        if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(
             ctx,
             source_blob,
             @truncate(s3.options.partSize),
@@ -1068,7 +1068,7 @@ pub fn writeFileWithSourceDestination(ctx: *JSC.JSGlobalObject, source_blob: *Bl
         switch (source_store.data) {
             .bytes => |bytes| {
                 if (bytes.len > S3.MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
-                    if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(
+                    if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(
                         ctx,
                         source_blob,
                         @truncate(s3.options.partSize),
@@ -1135,7 +1135,7 @@ pub fn writeFileWithSourceDestination(ctx: *JSC.JSGlobalObject, source_blob: *Bl
             },
             .file, .s3 => {
                 // stream
-                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(
+                if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(
                     ctx,
                     source_blob,
                     @truncate(s3.options.partSize),
@@ -1333,7 +1333,7 @@ pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOr
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        _ = response.body.value.toReadableStream(globalThis);
+                        _ = try response.body.value.toReadableStream(globalThis);
                         if (locked.readable.get(globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
@@ -1394,7 +1394,7 @@ pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOr
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        _ = request.body.value.toReadableStream(globalThis);
+                        _ = try request.body.value.toReadableStream(globalThis);
                         if (locked.readable.get(globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
@@ -1962,7 +1962,7 @@ pub fn getStream(
 
         recommended_chunk_size = @as(SizeType, @intCast(@max(0, @as(i52, @truncate(arguments[0].toInt64())))));
     }
-    const stream = JSC.WebCore.ReadableStream.fromBlobCopyRef(
+    const stream = try JSC.WebCore.ReadableStream.fromBlobCopyRef(
         globalThis,
         this,
         recommended_chunk_size,
@@ -2890,7 +2890,7 @@ pub fn getNameString(this: *Blob) ?bun.String {
     if (this.name.tag != .Dead) return this.name;
 
     if (this.getFileName()) |path| {
-        this.name = bun.String.createUTF8(path);
+        this.name = bun.String.cloneUTF8(path);
         return this.name;
     }
 
@@ -3410,7 +3410,7 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
 
     if (bom == .utf16_le) {
         defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
-        var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+        var out = bun.String.cloneUTF16(bun.reinterpretSlice(u16, buf));
         defer out.deref();
         return out.toJS(global);
     }
@@ -3466,7 +3466,7 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
             // if there was a UTF-8 BOM, we need to clone the buffer because
             // external doesn't support this case here yet.
             if (buf.len != raw_bytes.len) {
-                var out = bun.String.createLatin1(buf);
+                var out = bun.String.cloneLatin1(buf);
                 defer {
                     bun.default_allocator.free(raw_bytes);
                     out.deref();
@@ -3519,7 +3519,7 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
     if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
 
     if (bom == .utf16_le) {
-        var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+        var out = bun.String.cloneUTF16(bun.reinterpretSlice(u16, buf));
         defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
         defer if (lifetime == .transfer) this.detach();
         defer out.deref();
@@ -4366,7 +4366,7 @@ pub const Internal = struct {
         // If there was a UTF8 BOM, we clone it
         (bytes_without_bom.len != this.bytes.items.len) {
             defer this.deinit();
-            var out = bun.String.createLatin1(this.bytes.items[3..]);
+            var out = bun.String.cloneLatin1(this.bytes.items[3..]);
             defer out.deref();
             return out.toJS(globalThis);
         } else {

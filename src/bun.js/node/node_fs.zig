@@ -4496,7 +4496,7 @@ pub const NodeFS = struct {
                     JSC.Node.Dirent => {
                         dirent_path.ref();
                         entries.append(.{
-                            .name = bun.String.createUTF16(utf16_name),
+                            .name = bun.String.cloneUTF16(utf16_name),
                             .path = dirent_path,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
@@ -4505,7 +4505,7 @@ pub const NodeFS = struct {
                         .buffer => unreachable,
                         // in node.js, libuv converts to utf8 before node.js converts those bytes into other stuff
                         // all encodings besides hex, base64, and base64url are mis-interpreting filesystem bytes.
-                        .utf8 => entries.append(bun.String.createUTF16(utf16_name)) catch bun.outOfMemory(),
+                        .utf8 => entries.append(bun.String.cloneUTF16(utf16_name)) catch bun.outOfMemory(),
                         else => |enc| {
                             const utf8_path = bun.strings.fromWPath(re_encoding_buffer.?, utf16_name);
                             entries.append(JSC.WebCore.encoding.toBunString(utf8_path, enc)) catch bun.outOfMemory();
@@ -4632,12 +4632,12 @@ pub const NodeFS = struct {
                     const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
                     if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
                         dirent_path_prev.deref();
-                        dirent_path_prev = bun.String.createUTF8(path_u8);
+                        dirent_path_prev = bun.String.cloneUTF8(path_u8);
                     }
                     dirent_path_prev.ref();
 
                     entries.append(.{
-                        .name = bun.String.createUTF8(utf8_name),
+                        .name = bun.String.cloneUTF8(utf8_name),
                         .path = dirent_path_prev,
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
@@ -4646,7 +4646,7 @@ pub const NodeFS = struct {
                     entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                 },
                 bun.String => {
-                    entries.append(bun.String.createUTF8(name_to_copy)) catch bun.outOfMemory();
+                    entries.append(bun.String.cloneUTF8(name_to_copy)) catch bun.outOfMemory();
                 },
                 else => bun.outOfMemory(),
             }
@@ -5381,7 +5381,7 @@ pub const NodeFS = struct {
                     }
                 else
                     .{
-                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(link_path) },
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.cloneUTF8(link_path) },
                     },
             },
         };
@@ -5451,7 +5451,7 @@ pub const NodeFS = struct {
                             }
                         }
                         break :utf8 .{
-                            .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(buf) },
+                            .string = .{ .utf8 = .{}, .underlying = bun.String.cloneUTF8(buf) },
                         };
                     },
                     else => |enc| .{
@@ -5503,7 +5503,7 @@ pub const NodeFS = struct {
                         }
                     }
                     break :utf8 .{
-                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(buf) },
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.cloneUTF8(buf) },
                     };
                 },
                 else => |enc| .{

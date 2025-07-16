@@ -1007,6 +1007,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
+        // if you process.nextTick on a microtask we need this
         auto* globalObject = defaultGlobalObject();
         if (auto queue = globalObject->m_nextTickQueue.get()) {
             globalObject->resetOnEachMicrotaskTick();
@@ -4134,6 +4135,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     JSValue parameters,
     const SourceOrigin& sourceOrigin)
 {
+    printf("GlobalObject::moduleLoaderImportModule: %s, %s\n", moduleNameValue->getString(jsGlobalObject).utf8().data(), sourceOrigin.url().string().utf8().data());
     auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
 
     if (JSC::JSInternalPromise* result = NodeVM::importModule(globalObject, moduleNameValue, parameters, sourceOrigin)) {
@@ -4272,6 +4274,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     auto moduleKeyJS = key.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto moduleKey = moduleKeyJS->value(globalObject);
+    printf("GlobalObject::moduleLoaderFetch: %s\n", moduleKey->utf8().data());
     if (scope.exception()) [[unlikely]]
         return rejectedInternalPromise(globalObject, scope.exception()->value());
 

@@ -17,6 +17,10 @@ pub fn deinit(this: *StaticRouteVisitor) void {
 /// Investigate performance. It can have false negatives (it doesn't properly
 /// handle cycles), but that's okay as it's just used an optimization
 pub fn hasTransitiveUseClient(this: *StaticRouteVisitor, entry_point_source_index: u32) bool {
+    if (bun.Environment.isDebug and bun.getenvZ("BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR") != null) {
+        return false;
+    }
+
     const all_import_records: []const ImportRecord.List = this.c.parse_graph.ast.items(.import_records);
     const referenced_source_indices: []const u32 = this.c.parse_graph.server_component_boundaries.list.items(.reference_source_index);
     const use_directives: []const UseDirective = this.c.parse_graph.server_component_boundaries.list.items(.use_directive);

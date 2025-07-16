@@ -11,7 +11,7 @@ type FileIndex = number;
  * This layer is implemented in JavaScript to reduce Native <-> JS context switches,
  * as well as use the async primitives provided by the language.
  */
-export function renderRoutesForProdStatic(
+export async function renderRoutesForProdStatic(
   outBase: string,
   allServerFiles: string[],
   // Indexed by router type index
@@ -105,25 +105,29 @@ export function renderRoutesForProdStatic(
     return doGenerateRoute(type, noClient, i, layouts, pageModule, params);
   }
 
-  return Promise.all(
+  const modulesForFiles = await Promise.all(
     files.map(async (fileList, i) => {
-      const typeAndFlag = typeAndFlags[i];
-      const type = typeAndFlag & 0xff;
-      const noClient = (typeAndFlag & 0b100000000) !== 0;
-
-      var pageModule: any, layouts: any[];
       $assert(fileList.length > 0);
       if (fileList.length > 1) {
         let anyPromise = false;
         let loaded = fileList.map(
           x => loadedModules[x] ?? ((anyPromise = true), import(allServerFiles[x]).then(x => (loadedModules[x] = x))),
         );
-        [pageModule, ...layouts] = anyPromise ? await Promise.all(loaded) : loaded;
+        return anyPromise ? await Promise.all(loaded) : loaded;
       } else {
         const id = fileList[0];
-        pageModule = loadedModules[id] ?? (loadedModules[id] = await import(allServerFiles[id]));
-        layouts = [];
+        return [loadedModules[id] ?? (loadedModules[id] = await import(allServerFiles[id]))];
       }
+    }),
+  );
+
+  return Promise.all(
+    modulesForFiles.map(async (modules, i) => {
+      const typeAndFlag = typeAndFlags[i];
+      const type = typeAndFlag & 0xff;
+      const noClient = (typeAndFlag & 0b100000000) !== 0;
+
+      let [pageModule, ...layouts] = modules;
 
       if (paramInformation[i] != null) {
         const getParam = getParams[type];

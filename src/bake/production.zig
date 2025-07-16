@@ -302,7 +302,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     var source_maps: bun.StringArrayHashMapUnmanaged(OutputFile.Index) = .{};
     @memset(module_keys, bun.String.dead);
     for (bundled_outputs, 0..) |file, i| {
-        log("src_index={any} {s} - {s} : {s} - {?d}\n", .{
+        log("src_index={any} side={s} src={s} dest={s} - {?d}\n", .{
             file.source_index.unwrap(),
             if (file.side) |s| @tagName(s) else "null",
             file.src_path.text,
@@ -387,6 +387,8 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                                 module_keys[entry_point_index] = str;
                             }
                         }
+
+                        log("  adding module map entry: output_module_map(bake:/{s}) = {d}\n", .{ without_prefix, i });
 
                         try output_module_map.put(
                             allocator,
@@ -696,6 +698,7 @@ fn loadModule(vm: *VirtualMachine, global: *JSC.JSGlobalObject, key: JSValue) !J
     const promise = BakeLoadModuleByKey(global, key).asAnyPromise().?.internal;
     promise.setHandled(vm.jsc);
     vm.waitForPromise(.{ .internal = promise });
+    vm.eventLoop().drainMicrotasks() catch unreachable;
     switch (promise.unwrap(vm.jsc, .mark_handled)) {
         .pending => unreachable,
         .fulfilled => |val| {
@@ -983,7 +986,9 @@ pub export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
     const allocator = sfa.get();
     const utf8 = key.toUTF8(allocator);
     defer utf8.deinit();
+    log("BakeProdLoad: {s}\n", .{utf8.slice()});
     if (pt.module_map.get(utf8.slice())) |value| {
+        log("  found in module_map: {s}\n", .{utf8.slice()});
         return pt.bundled_outputs[value.get()].value.toBunString();
     }
     return bun.String.dead;

@@ -605,14 +605,14 @@ pub fn readableStream(
     size: ?usize,
     proxy_url: ?[]const u8,
     globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     var reader = JSC.WebCore.ByteStream.Source.new(.{
         .context = undefined,
         .globalThis = globalThis,
     });
 
     reader.context.setup();
-    const readable_value = reader.toReadableStream(globalThis);
+    const readable_value = try reader.toReadableStream(globalThis);
 
     const S3DownloadStreamWrapper = struct {
         pub const new = bun.TrivialNew(@This());

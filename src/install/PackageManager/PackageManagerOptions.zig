@@ -64,9 +64,13 @@ preid: string = "",
 message: ?string = null,
 force: bool = false,
 
+
 // `bun pm why` command options
 top_only: bool = false,
 depth: ?usize = null,
+
+/// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
+node_linker: NodeLinker = .auto,
 
 pub const PublishConfig = struct {
     access: ?Access = null,
@@ -120,6 +124,26 @@ pub const LogLevel = enum {
             .default, .verbose => true,
             else => false,
         };
+    }
+};
+
+pub const NodeLinker = enum(u8) {
+    // If workspaces are used: isolated
+    // If not: hoisted
+    // Used when nodeLinker is absent from package.json/bun.lock/bun.lockb
+    auto,
+
+    hoisted,
+    isolated,
+
+    pub fn fromStr(input: string) ?NodeLinker {
+        if (strings.eqlComptime(input, "hoisted")) {
+            return .hoisted;
+        }
+        if (strings.eqlComptime(input, "isolated")) {
+            return .isolated;
+        }
+        return null;
     }
 };
 
@@ -250,6 +274,10 @@ pub fn load(
                     this.ca = &.{ca_str};
                 },
             }
+        }
+
+        if (config.node_linker) |node_linker| {
+            this.node_linker = node_linker;
         }
 
         if (config.cafile) |cafile| {

@@ -208,7 +208,7 @@ pub const Installer = struct {
 
             const dep = this.lockfile.buffers.dependencies.items[dep_id];
 
-            if (dep.behavior.isWorkspaceOnly()) {
+            if (dep.behavior.isWorkspace()) {
                 return;
             }
 

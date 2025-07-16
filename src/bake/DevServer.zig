@@ -6595,19 +6595,14 @@ const c = struct {
     // BakeSourceProvider.cpp
     extern fn BakeGetDefaultExportFromModule(global: *JSC.JSGlobalObject, module: JSValue) JSValue;
 
-    fn BakeLoadServerHmrPatch(global: *JSC.JSGlobalObject, code: bun.String) !JSValue {
-        const f = @extern(
-            *const fn (*JSC.JSGlobalObject, bun.String) callconv(.c) JSValue.MaybeException,
-            .{ .name = "BakeLoadServerHmrPatch" },
-        );
-        return f(global, code).unwrap();
+    fn BakeLoadServerHmrPatch(global: *JSC.JSGlobalObject, code: bun.String) bun.JSError!JSValue {
+        const f = @extern(*const fn (*JSC.JSGlobalObject, bun.String) callconv(.c) JSValue, .{ .name = "BakeLoadServerHmrPatch" }).*;
+        return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code });
     }
 
     fn BakeLoadInitialServerCode(global: *JSC.JSGlobalObject, code: bun.String, separate_ssr_graph: bool) bun.JSError!JSValue {
-        const f = @extern(*const fn (*JSC.JSGlobalObject, bun.String, bool) callconv(.c) JSValue.MaybeException, .{
-            .name = "BakeLoadInitialServerCode",
-        });
-        return f(global, code, separate_ssr_graph).unwrap();
+        const f = @extern(*const fn (*JSC.JSGlobalObject, bun.String, bool) callconv(.c) JSValue, .{ .name = "BakeLoadInitialServerCode" }).*;
+        return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code, separate_ssr_graph });
     }
 };
 

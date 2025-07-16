@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { readFileSync, unlinkSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-describe("PE codesigning integrity", () => {
+describe.if(isWindows)("PE codesigning integrity", () => {
   let tempDir: string;
 
   beforeAll(() => {
@@ -24,7 +24,7 @@ describe("PE codesigning integrity", () => {
     private buffer: ArrayBuffer;
 
     constructor(data: Uint8Array) {
-      this.buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+      this.buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
       this.view = new DataView(this.buffer);
     }
 
@@ -74,7 +74,15 @@ describe("PE codesigning integrity", () => {
 
     // Parse section headers
     parseSectionHeaders(offset: number, count: number) {
-      const sections = [];
+      const sections: {
+        name: string;
+        virtualSize: number;
+        virtualAddress: number;
+        sizeOfRawData: number;
+        pointerToRawData: number;
+        characteristics: number;
+        isValid: boolean;
+      }[] = [];
 
       for (let i = 0; i < count; i++) {
         const sectionOffset = offset + i * 40; // Each section header is 40 bytes
@@ -180,11 +188,11 @@ console.log("Test data:", JSON.stringify(data));
 
     // Write test file
     const testFile = join(tempDir, "test-pe-simple.js");
-    Bun.write(testFile, testContent);
+    await Bun.write(testFile, testContent);
 
     // Compile to Windows PE executable
     const result = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--target=bun-v1.2.18-windows-x64", testFile],
+      cmd: [bunExe(), "build", "--compile", testFile],
       env: bunEnv,
       cwd: tempDir,
     });
@@ -253,10 +261,10 @@ console.log("Large data length:", JSON.stringify(largeData).length);
     `.trim();
 
     const testFile = join(tempDir, "test-pe-large.js");
-    Bun.write(testFile, largeContent);
+    await Bun.write(testFile, largeContent);
 
     const result = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--target=bun-v1.2.18-windows-x64", testFile],
+      cmd: [bunExe(), "build", "--compile", testFile],
       env: bunEnv,
       cwd: tempDir,
     });
@@ -289,10 +297,10 @@ console.log("Large data length:", JSON.stringify(largeData).length);
 
   it("should align sections properly", async () => {
     const testFile = join(tempDir, "test-pe-alignment.js");
-    Bun.write(testFile, 'console.log("Alignment test");');
+    await Bun.write(testFile, 'console.log("Alignment test");');
 
     const result = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--target=bun-v1.2.18-windows-x64", testFile],
+      cmd: [bunExe(), "build", "--compile", testFile],
       env: bunEnv,
       cwd: tempDir,
     });
@@ -330,10 +338,10 @@ console.log("Large data length:", JSON.stringify(largeData).length);
 
   it("should have correct section characteristics", async () => {
     const testFile = join(tempDir, "test-pe-characteristics.js");
-    Bun.write(testFile, 'console.log("Characteristics test");');
+    await Bun.write(testFile, 'console.log("Characteristics test");');
 
     const result = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--target=bun-v1.2.18-windows-x64", testFile],
+      cmd: [bunExe(), "build", "--compile", testFile],
       env: bunEnv,
       cwd: tempDir,
     });

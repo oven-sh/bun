@@ -199,8 +199,6 @@ pub fn installWithManager(
                     lockfile.catalogs.count(&lockfile, builder);
                     maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
-                    manager.lockfile.node_linker = lockfile.node_linker;
-
                     const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
                     const len = @as(u32, @truncate(new_dependencies.len));
                     var packages = manager.lockfile.packages.slice();
@@ -741,27 +739,27 @@ pub fn installWithManager(
             break :install_summary .{};
         }
 
-        if (manager.lockfile.node_linker == .hoisted or
+        switch (manager.options.node_linker) {
+            .hoisted,
             // TODO
-            manager.lockfile.node_linker == .auto)
-        {
-            break :install_summary try installHoistedPackages(
+            .auto,
+            => break :install_summary try installHoistedPackages(
                 manager,
                 ctx,
                 workspace_filters.items,
                 install_root_dependencies,
                 log_level,
-            );
-        }
+            ),
 
-        break :install_summary installIsolatedPackages(
-            manager,
-            ctx,
-            install_root_dependencies,
-            workspace_filters.items,
-        ) catch |err| switch (err) {
-            error.OutOfMemory => bun.outOfMemory(),
-        };
+            .isolated => break :install_summary installIsolatedPackages(
+                manager,
+                ctx,
+                install_root_dependencies,
+                workspace_filters.items,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+            },
+        }
     };
 
     if (log_level != .silent) {
@@ -867,6 +865,8 @@ fn printInstallSummary(
     did_meta_hash_change: bool,
     log_level: Options.LogLevel,
 ) !void {
+    defer Output.flush();
+
     var printed_timestamp = false;
     if (this.options.do.summary) {
         var printer = Lockfile.Printer{
@@ -876,10 +876,17 @@ fn printInstallSummary(
             .successfully_installed = install_summary.successfully_installed,
         };
 
-        switch (Output.enable_ansi_colors) {
-            inline else => |enable_ansi_colors| {
-                try Lockfile.Printer.Tree.print(&printer, this, Output.WriterType, Output.writer(), enable_ansi_colors, log_level);
-            },
+        {
+            Output.flush();
+            // Ensure at this point buffering is enabled.
+            // We deliberately do not disable it after this.
+            Output.enableBuffering();
+            const writer = Output.writerBuffered();
+            switch (Output.enable_ansi_colors) {
+                inline else => |enable_ansi_colors| {
+                    try Lockfile.Printer.Tree.print(&printer, this, @TypeOf(writer), writer, enable_ansi_colors, log_level);
+                },
+            }
         }
 
         if (!did_meta_hash_change) {

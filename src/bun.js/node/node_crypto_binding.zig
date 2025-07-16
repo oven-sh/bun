@@ -276,7 +276,7 @@ const random = struct {
         if (!callback.isUndefined()) {
             callback = callback.withAsyncContextIfNeeded(global);
 
-            callback.callNextTick(global, [2]JSValue{ .js_undefined, JSValue.jsNumber(res) });
+            try callback.callNextTick(global, [2]JSValue{ .js_undefined, JSValue.jsNumber(res) });
             return .js_undefined;
         }
 
@@ -450,11 +450,7 @@ fn pbkdf2(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSErro
 fn pbkdf2Sync(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     var data = try PBKDF2.fromJS(globalThis, callFrame, false);
     defer data.deinit();
-    var out_arraybuffer = JSC.JSValue.createBufferFromLength(globalThis, @intCast(data.length));
-    if (out_arraybuffer == .zero or globalThis.hasException()) {
-        data.deinit();
-        return .zero;
-    }
+    const out_arraybuffer = try JSC.JSValue.createBufferFromLength(globalThis, @intCast(data.length));
 
     const output = out_arraybuffer.asArrayBuffer(globalThis) orelse {
         data.deinit();

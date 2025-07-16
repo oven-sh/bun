@@ -1176,10 +1176,7 @@ pub const JSFrameworkRouter = struct {
                     }),
                 );
             }
-            return global.throwValue(global.createAggregateErrorWithArray(
-                bun.String.static("Errors scanning routes"),
-                arr,
-            ));
+            return global.throwValue(try global.createAggregateErrorWithArray(.static("Errors scanning routes"), arr));
         }
 
         return jsfr;

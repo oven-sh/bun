@@ -8,15 +8,70 @@ To create a tarball of the current workspace:
 $ bun pm pack
 ```
 
-Options for the `pack` command:
+This command creates a `.tgz` file containing all files that would be published to npm, following the same rules as `npm pack`.
 
-- `--dry-run`: Perform all tasks except writing the tarball to disk.
-- `--destination`: Specify the directory where the tarball will be saved.
-- `--filename`: Specify an exact file name for the tarball to be saved at.
+## Examples
+
+Basic usage:
+
+```bash
+$ bun pm pack
+# Creates my-package-1.0.0.tgz in current directory
+```
+
+Quiet mode for scripting:
+
+```bash
+$ TARBALL=$(bun pm pack --quiet)
+$ echo "Created: $TARBALL"
+# Output: Created: my-package-1.0.0.tgz
+```
+
+Custom destination:
+
+```bash
+$ bun pm pack --destination ./dist
+# Saves tarball in ./dist/ directory
+```
+
+## Options
+
+- `--dry-run`: Perform all tasks except writing the tarball to disk. Shows what would be included.
+- `--destination <dir>`: Specify the directory where the tarball will be saved.
+- `--filename <name>`: Specify an exact file name for the tarball to be saved at.
 - `--ignore-scripts`: Skip running pre/postpack and prepare scripts.
-- `--gzip-level`: Set a custom compression level for gzip, ranging from 0 to 9 (default is 9).
+- `--gzip-level <0-9>`: Set a custom compression level for gzip, ranging from 0 to 9 (default is 9).
+- `--quiet`: Only output the tarball filename, suppressing verbose output. Ideal for scripts and automation.
 
-> Note `--filename` and `--destination` cannot be used at the same time
+> **Note:** `--filename` and `--destination` cannot be used at the same time.
+
+## Output Modes
+
+**Default output:**
+
+```bash
+$ bun pm pack
+bun pack v1.2.19
+
+packed 131B package.json
+packed 40B index.js
+
+my-package-1.0.0.tgz
+
+Total files: 2
+Shasum: f2451d6eb1e818f500a791d9aace80b394258a90
+Unpacked size: 171B
+Packed size: 249B
+```
+
+**Quiet output:**
+
+```bash
+$ bun pm pack --quiet
+my-package-1.0.0.tgz
+```
+
+The `--quiet` flag is particularly useful for automation workflows where you need to capture the generated tarball filename for further processing.
 
 ## bin
 

@@ -934,6 +934,11 @@ pub fn hasQueryRunning(this: *PostgresSQLConnection) bool {
 }
 
 pub fn canPipeline(this: *PostgresSQLConnection) bool {
+    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING)) {
+        @branchHint(.unlikely);
+        return false;
+    }
+
     return this.nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
         !this.flags.use_unnamed_prepared_statements and // unnamed statements are not pipelinable
         !this.flags.waiting_to_prepare and // cannot pipeline when waiting prepare

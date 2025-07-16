@@ -11095,4 +11095,99 @@ CREATE TABLE ${table_name} (
       expect(item[0]).toBeGreaterThan(0);
     });
   });
+
+  describe("alignment issue regression tests", () => {
+    test("int4 array alignment issue fix - issue with misaligned memory", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      
+      // Create a table to test various array operations that could trigger alignment issues
+      await sql`CREATE TEMPORARY TABLE array_test (
+        id SERIAL PRIMARY KEY,
+        int_array INT[],
+        float_array FLOAT4[]
+      )`;
+      
+      // Insert data that could cause alignment issues
+      const testData = [
+        [1, 2, 3, 4, 5],
+        [10, 20, 30],
+        [100, 200, 300, 400, 500, 600, 700, 800], // Larger array
+        [42], // Single element
+        [] // Empty array (will be null in postgres)
+      ];
+      
+      const floatData = [
+        [1.1, 2.2, 3.3],
+        [10.5, 20.5],
+        [0.1, 0.2, 0.3, 0.4, 0.5, 0.6], // Larger float array
+        [42.42]
+      ];
+      
+      // Insert multiple arrays
+      for (let i = 0; i < testData.length - 1; i++) { // Skip empty array for now
+        await sql`INSERT INTO array_test (int_array, float_array) VALUES (${testData[i]}, ${floatData[i]})`;
+      }
+      
+      // Test reading back arrays in binary format - this should trigger the alignment issue
+      const result = await sql`SELECT id, int_array, float_array FROM array_test ORDER BY id`;
+      
+      expect(result).toHaveLength(4);
+      
+      // Verify the data integrity
+      result.forEach((row, index) => {
+        // Check int arrays - these should be Int32Array due to binary format
+        if (row.int_array instanceof Int32Array) {
+          expect(Array.from(row.int_array)).toEqual(testData[index]);
+        } else {
+          expect(row.int_array).toEqual(testData[index]);
+        }
+        
+        // Check float arrays
+        if (row.float_array instanceof Float32Array) {
+          expect(Array.from(row.float_array)).toEqual(floatData[index]);
+        } else {
+          expect(row.float_array).toEqual(floatData[index]);
+        }
+      });
+      
+      // Test with a more complex query that might cause multiple array operations
+      const complexResult = await sql`
+        SELECT 
+          int_array,
+          array_length(int_array, 1) as int_len,
+          float_array,
+          array_length(float_array, 1) as float_len
+        FROM array_test 
+        WHERE array_length(int_array, 1) > 3
+        ORDER BY array_length(int_array, 1) DESC
+      `;
+      
+      expect(complexResult).toHaveLength(1); // Only one array with length > 3
+      expect(complexResult[0].int_len).toBe(8);
+      expect(complexResult[0].float_len).toBe(6);
+    });
+    
+    test("stress test for array alignment - multiple concurrent queries", async () => {
+      await using sql = postgres({ ...options, max: 5 });
+      
+      // Create multiple concurrent queries that read arrays
+      const promises = [];
+      for (let i = 0; i < 10; i++) {
+        promises.push(
+          sql`SELECT ARRAY[${i}, ${i+1}, ${i+2}, ${i+3}]::int[] as test_array`
+        );
+      }
+      
+      const results = await Promise.all(promises);
+      
+      results.forEach((result, index) => {
+        const expectedArray = [index, index+1, index+2, index+3];
+        if (result[0].test_array instanceof Int32Array) {
+          expect(Array.from(result[0].test_array)).toEqual(expectedArray);
+        } else {
+          expect(result[0].test_array).toEqual(expectedArray);
+        }
+      });
+    });
+  });
 }

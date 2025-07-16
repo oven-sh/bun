@@ -228,12 +228,32 @@ pub const Tag = enum(short) {
             }
 
             pub fn init(bytes: []const u8) *@This() {
-                const this: *@This() = @alignCast(@ptrCast(@constCast(bytes.ptr)));
-                this.ndim = @byteSwap(this.ndim);
-                this.offset_for_data = @byteSwap(this.offset_for_data);
-                this.element_type = @byteSwap(this.element_type);
-                this.len = @byteSwap(this.len);
-                this.index = @byteSwap(this.index);
+                // Check if we have enough bytes for the struct header
+                if (bytes.len < 20) { // 5 * i32 = 20 bytes minimum
+                    @panic("Not enough bytes for PostgresBinarySingleDimensionArray header");
+                }
+                
+                // Instead of trying to cast potentially misaligned data, read the values safely
+                // and create a properly aligned copy
+                const ndim = @byteSwap(std.mem.readInt(i32, bytes[0..4], .big));
+                const offset_for_data = @byteSwap(std.mem.readInt(i32, bytes[4..8], .big));
+                const element_type = @byteSwap(std.mem.readInt(i32, bytes[8..12], .big));
+                const len = @byteSwap(std.mem.readInt(i32, bytes[12..16], .big));
+                const index = @byteSwap(std.mem.readInt(i32, bytes[16..20], .big));
+                
+                // Allocate properly aligned memory for the entire structure + data
+                const aligned_memory = bun.default_allocator.alignedAlloc(u8, @alignOf(@This()), bytes.len) catch @panic("Failed to allocate aligned memory");
+                @memcpy(aligned_memory, bytes);
+                
+                const this: *@This() = @ptrCast(@alignCast(aligned_memory.ptr));
+                
+                // Set the parsed values
+                this.ndim = ndim;
+                this.offset_for_data = offset_for_data;
+                this.element_type = element_type;
+                this.len = len;
+                this.index = index;
+                
                 return this;
             }
         };

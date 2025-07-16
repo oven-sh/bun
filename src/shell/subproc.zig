@@ -51,7 +51,7 @@ pub const ShellSubprocess = struct {
     pub const default_max_buffer_size = 1024 * 1024 * 4;
     pub const Process = bun.spawn.Process;
 
-    cmd_parent: ?*ShellCmd = null,
+    cmd_parent: *ShellCmd,
 
     process: *Process,
 
@@ -73,10 +73,8 @@ pub const ShellSubprocess = struct {
     pub const OutKind = util.OutKind;
 
     pub fn onStaticPipeWriterDone(this: *ShellSubprocess) void {
-        log("Subproc(0x{x}) onStaticPipeWriterDone(cmd=0x{x}))", .{ @intFromPtr(this), if (this.cmd_parent) |cmd| @intFromPtr(cmd) else 0 });
-        if (this.cmd_parent) |cmd| {
-            cmd.bufferedInputClose();
-        }
+        log("Subproc(0x{x}) onStaticPipeWriterDone(cmd=0x{x}))", .{ @intFromPtr(this), @intFromPtr(this.cmd_parent) });
+        this.cmd_parent.bufferedInputClose();
     }
 
     const Writable = union(enum) {
@@ -599,7 +597,7 @@ pub const ShellSubprocess = struct {
 
     pub const SpawnArgs = struct {
         arena: *bun.ArenaAllocator,
-        cmd_parent: ?*ShellCmd = null,
+        cmd_parent: *ShellCmd,
 
         override_env: bool = false,
         env_array: std.ArrayListUnmanaged(?[*:0]const u8) = .{
@@ -614,7 +612,6 @@ pub const ShellSubprocess = struct {
         },
         lazy: bool = false,
         PATH: []const u8,
-        argv: std.ArrayListUnmanaged(?[*:0]const u8),
         detached: bool,
         // ipc_mode: IPCMode,
         // ipc_callback: JSValue,
@@ -673,7 +670,7 @@ pub const ShellSubprocess = struct {
             }
         };
 
-        pub fn default(arena: *bun.ArenaAllocator, event_loop: JSC.EventLoopHandle, comptime is_sync: bool) SpawnArgs {
+        pub fn default(arena: *bun.ArenaAllocator, cmd_parent: *ShellCmd, event_loop: JSC.EventLoopHandle, comptime is_sync: bool) SpawnArgs {
             var out: SpawnArgs = .{
                 .arena = arena,
 
@@ -690,8 +687,8 @@ pub const ShellSubprocess = struct {
                 },
                 .lazy = false,
                 .PATH = event_loop.env().get("PATH") orelse "",
-                .argv = undefined,
                 .detached = false,
+                .cmd_parent = cmd_parent,
                 // .ipc_mode = IPCMode.none,
                 // .ipc_callback = .zero,
             };
@@ -841,7 +838,7 @@ pub const ShellSubprocess = struct {
             spawn_options.no_sigpipe = no_sigpipe;
         }
 
-        spawn_args.argv.append(allocator, null) catch {
+        spawn_args.cmd_parent.args.append(null) catch {
             return .{ .err = .{ .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
         };
 
@@ -851,7 +848,7 @@ pub const ShellSubprocess = struct {
 
         var spawn_result = switch (bun.spawn.spawnProcess(
             &spawn_options,
-            @ptrCast(spawn_args.argv.items.ptr),
+            @ptrCast(spawn_args.cmd_parent.args.items.ptr),
             @ptrCast(spawn_args.env_array.items.ptr),
         ) catch |err| {
             return .{ .err = .{ .custom = std.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)}) catch bun.outOfMemory() } };
@@ -945,10 +942,9 @@ pub const ShellSubprocess = struct {
         };
 
         if (exit_code) |code| {
-            if (this.cmd_parent) |cmd| {
-                if (cmd.exit_code == null) {
-                    cmd.onExit(code);
-                }
+            const cmd = this.cmd_parent;
+            if (cmd.exit_code == null) {
+                cmd.onExit(code);
             }
         }
     }
@@ -1218,22 +1214,21 @@ pub const PipeReader = struct {
         log("signalDoneToCmd ({x}: {s}) isDone={any}", .{ @intFromPtr(this), @tagName(this.out_type), this.isDone() });
         if (bun.Environment.allow_assert) assert(this.process != null);
         if (this.process) |proc| {
-            if (proc.cmd_parent) |cmd| {
-                if (this.captured_writer.err) |e| {
-                    if (this.state != .err) {
-                        this.state = .{ .err = e };
-                    }
+            const cmd = proc.cmd_parent;
+            if (this.captured_writer.err) |e| {
+                if (this.state != .err) {
+                    this.state = .{ .err = e };
                 }
-                const e: ?JSC.SystemError = brk: {
-                    if (this.state != .err) break :brk null;
-                    if (this.state.err) |*e| {
-                        e.ref();
-                        break :brk e.*;
-                    }
-                    break :brk null;
-                };
-                return cmd.bufferedOutputClose(this.out_type, e);
             }
+            const e: ?JSC.SystemError = brk: {
+                if (this.state != .err) break :brk null;
+                if (this.state.err) |*e| {
+                    e.ref();
+                    break :brk e.*;
+                }
+                break :brk null;
+            };
+            return cmd.bufferedOutputClose(this.out_type, e);
         }
         return .suspended;
     }
@@ -1298,7 +1293,7 @@ pub const PipeReader = struct {
             },
             .err => |err| {
                 _ = err; // autofix
-                const empty = JSC.WebCore.ReadableStream.empty(globalObject);
+                const empty = try JSC.WebCore.ReadableStream.empty(globalObject);
                 JSC.WebCore.ReadableStream.cancel(&JSC.WebCore.ReadableStream.fromJS(empty, globalObject).?, globalObject);
                 return empty;
             },

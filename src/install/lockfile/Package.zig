@@ -1958,8 +1958,19 @@ pub const Package = extern struct {
         // This function depends on package.dependencies being set, so it is done at the very end.
         if (comptime features.is_main) {
             try lockfile.overrides.parseAppend(pm, lockfile, package, log, source, json, &string_builder);
+            var found_any_catalog_or_catalog_object = false;
+            var has_workspaces = false;
             if (json.get("workspaces")) |workspaces_expr| {
-                try lockfile.catalogs.parseAppend(pm, lockfile, log, source, workspaces_expr, &string_builder);
+                found_any_catalog_or_catalog_object = try lockfile.catalogs.parseAppend(pm, lockfile, log, source, workspaces_expr, &string_builder);
+                has_workspaces = true;
+            }
+
+            // `"workspaces"` being an object instead of an array is sometimes
+            // unexpected to people. therefore if you also are using workspaces,
+            // allow "catalog" and "catalogs" in top-level "package.json"
+            // so it's easier to guess.
+            if (!found_any_catalog_or_catalog_object and has_workspaces) {
+                _ = try lockfile.catalogs.parseAppend(pm, lockfile, log, source, json, &string_builder);
             }
         }
 

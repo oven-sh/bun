@@ -1555,6 +1555,10 @@ export class VerdaccioRegistry {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
+      env: {
+        ...(bunEnv as any),
+        NODE_NO_WARNINGS: "1",
+      },
     });
 
     this.process.stderr?.on("data", data => {

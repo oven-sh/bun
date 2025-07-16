@@ -32,7 +32,6 @@ export default [
       flush: {
         fn: "doFlush",
       },
-
       queries: {
         getter: "getQueries",
         this: true,

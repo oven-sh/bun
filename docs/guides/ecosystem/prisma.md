@@ -40,6 +40,7 @@ Open `prisma/schema.prisma` and add a simple `User` model.
 ```prisma-diff#prisma/schema.prisma
   generator client {
     provider = "prisma-client-js"
+    output = "../generated/prisma"
   }
 
   datasource db {
@@ -78,7 +79,7 @@ migrations/
 
 Your database is now in sync with your schema.
 
-✔ Generated Prisma Client (v5.3.1) to ./node_modules/@prisma/client in 41ms
+✔ Generated Prisma Client (v6.11.1) to ./generated/prisma in 41ms
 ```
 
 ---

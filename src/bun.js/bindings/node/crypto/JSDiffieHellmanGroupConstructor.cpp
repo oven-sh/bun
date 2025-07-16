@@ -57,9 +57,8 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
 
         auto* functionGlobalObject = defaultGlobalObject(JSC::getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = JSC::InternalFunction::createSubclassStructure(
-            globalObject, newTarget.getObject(), functionGlobalObject->m_JSDiffieHellmanGroupClassStructure.get(functionGlobalObject));
-        scope.release();
+        structure = JSC::InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSDiffieHellmanGroupClassStructure.get(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSC::JSValue::encode(JSDiffieHellmanGroup::create(vm, structure, globalObject, WTFMove(dh)));

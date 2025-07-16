@@ -378,6 +378,7 @@ pub const Command = struct {
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,
         redis_preconnect: bool = false,
+        sql_preconnect: bool = false,
         eval: struct {
             script: []const u8 = "",
             eval_and_print: bool = false,

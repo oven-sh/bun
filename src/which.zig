@@ -3,14 +3,18 @@ const bun = @import("bun");
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
 fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
-    if (segment.len + 1 + bin.len > bun.MAX_PATH_BYTES) return null;
+    const prefix_len = segment.len + 1; // includes trailing path separator
+    const len = prefix_len + bin.len;
+    const len_z = len + 1; // includes null terminator
+    if (len_z > bun.MAX_PATH_BYTES) return null;
+
     bun.copy(u8, buf, segment);
     buf[segment.len] = std.fs.path.sep;
-    bun.copy(u8, buf[segment.len + 1 ..], bin);
-    buf[segment.len + 1 + bin.len ..][0] = 0;
-    const filepath = buf[0 .. segment.len + 1 + bin.len :0];
+    bun.copy(u8, buf[prefix_len..], bin);
+    buf[len] = 0;
+    const filepath = buf[0..len :0];
     if (!bun.sys.isExecutableFilePath(filepath)) return null;
-    return @as(u16, @intCast(filepath.len));
+    return @intCast(filepath.len);
 }
 
 // Like /usr/bin/which but without needing to exec a child process

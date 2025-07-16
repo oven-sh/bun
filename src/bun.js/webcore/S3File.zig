@@ -404,13 +404,13 @@ pub const S3BlobStatTask = struct {
         const globalThis = this.global;
         switch (result) {
             .success => |stat_result| {
-                this.promise.resolve(globalThis, S3Stat.init(
+                this.promise.resolve(globalThis, (S3Stat.init(
                     stat_result.size,
                     stat_result.etag,
                     stat_result.contentType,
                     stat_result.lastModified,
                     globalThis,
-                ).toJS(globalThis));
+                ) catch return).toJS(globalThis)); // TODO: properly propagate exception upwards
             },
             .not_found, .failure => |err| {
                 this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));

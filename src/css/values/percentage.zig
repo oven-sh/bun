@@ -13,8 +13,9 @@ pub const Percentage = struct {
     pub fn parse(input: *css.Parser) Result(Percentage) {
         if (input.tryParse(Calc(Percentage).parse, .{}).asValue()) |calc_value| {
             if (calc_value == .value) return .{ .result = calc_value.value.* };
-            // Percentages are always compatible, so they will always compute to a value.
-            bun.unreachablePanic("Percentages are always compatible, so they will always compute to a value.", .{});
+            // Handle calc() expressions that can't be reduced to a simple value (e.g., containing NaN, variables, etc.)
+            // Return an error since we can't determine the percentage value at parse time
+            return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
         }
 
         const percent = switch (input.expectPercentage()) {

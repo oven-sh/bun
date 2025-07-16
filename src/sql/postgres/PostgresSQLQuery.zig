@@ -13,8 +13,9 @@ flags: packed struct(u8) {
     binary: bool = false,
     bigint: bool = false,
     simple: bool = false,
+    pipelined: bool = false,
     result_mode: PostgresSQLQueryResultMode = .objects,
-    _padding: u2 = 0,
+    _padding: u1 = 0,
 } = .{},
 
 pub fn getTarget(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, clean_target: bool) JSC.JSValue {
@@ -312,6 +313,7 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callfra
                 return error.JSError;
             };
             connection.flags.is_ready_for_query = false;
+            connection.nonpipelinable_requests += 1;
             this.status = .running;
         } else {
             this.status = .pending;
@@ -369,7 +371,7 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callfra
                         return globalObject.throwValue(this.statement.?.error_response.?.toJS(globalObject));
                     },
                     .prepared => {
-                        if (!connection.hasQueryRunning()) {
+                        if (!connection.hasQueryRunning() or connection.canPipeline()) {
                             this.flags.binary = this.statement.?.fields.len > 0;
                             debug("bindAndExecute", .{});
 
@@ -381,6 +383,8 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callfra
                             };
                             connection.flags.is_ready_for_query = false;
                             this.status = .binding;
+                            this.flags.pipelined = true;
+                            connection.pipelined_requests += 1;
 
                             did_write = true;
                         }
@@ -407,6 +411,7 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callfra
                 connection.flags.is_ready_for_query = false;
                 this.status = .binding;
                 did_write = true;
+                connection.flags.waiting_to_prepare = true;
             } else {
                 debug("writeQuery", .{});
 
@@ -424,6 +429,7 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callfra
                 };
                 connection.flags.is_ready_for_query = false;
                 did_write = true;
+                connection.flags.waiting_to_prepare = true;
             }
         }
         {

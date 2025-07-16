@@ -921,4 +921,55 @@ extern "C" uint32_t* Bun__getStandaloneModuleGraphMachoLength()
 {
     return &BUN_COMPILED.size;
 }
+
+#elif defined(_WIN32)
+// Windows PE section handling
+#include <windows.h>
+#include <winnt.h>
+
+static uint32_t* pe_section_size = nullptr;
+static uint8_t* pe_section_data = nullptr;
+
+// Helper function to find and map the .bun section
+static bool initializePESection()
+{
+    if (pe_section_size != nullptr) return true;
+
+    HMODULE hModule = GetModuleHandleA(NULL);
+    if (!hModule) return false;
+
+    PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)hModule;
+    if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) return false;
+
+    PIMAGE_NT_HEADERS ntHeaders = (PIMAGE_NT_HEADERS)((BYTE*)hModule + dosHeader->e_lfanew);
+    if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) return false;
+
+    PIMAGE_SECTION_HEADER sectionHeader = IMAGE_FIRST_SECTION(ntHeaders);
+
+    for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
+        if (strncmp((char*)sectionHeader->Name, ".bun", 4) == 0) {
+            // Found the .bun section
+            BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;
+            pe_section_size = (uint32_t*)sectionData;
+            pe_section_data = sectionData + sizeof(uint32_t);
+            return true;
+        }
+        sectionHeader++;
+    }
+
+    return false;
+}
+
+extern "C" uint32_t Bun__getStandaloneModuleGraphPELength()
+{
+    if (!initializePESection()) return 0;
+    return pe_section_size ? *pe_section_size : 0;
+}
+
+extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
+{
+    if (!initializePESection()) return nullptr;
+    return pe_section_data;
+}
+
 #endif

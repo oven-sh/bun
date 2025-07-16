@@ -274,6 +274,23 @@ If no connection URL is provided, the system checks for the following individual
 | `PGPASSWORD`         | -                            | (empty)       | Database password |
 | `PGDATABASE`         | -                            | username      | Database name     |
 
+## Runtime Preconnection
+
+Bun can preconnect to PostgreSQL at startup to improve performance by establishing database connections before your application code runs. This is useful for reducing connection latency on the first database query.
+
+```bash
+# Enable PostgreSQL preconnection
+bun --sql-preconnect index.js
+
+# Works with DATABASE_URL environment variable
+DATABASE_URL=postgres://user:pass@localhost:5432/db bun --sql-preconnect index.js
+
+# Can be combined with other runtime flags
+bun --sql-preconnect --hot index.js
+```
+
+The `--sql-preconnect` flag will automatically establish a PostgreSQL connection using your configured environment variables at startup. If the connection fails, it won't crash your application - the error will be handled gracefully.
+
 ## Connection Options
 
 You can configure your database connection manually by passing options to the SQL constructor:

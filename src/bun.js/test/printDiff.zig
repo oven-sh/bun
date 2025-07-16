@@ -1,51 +1,154 @@
+// Added cyan for the hunk headers.
 const colors = struct {
     const red = "\x1b[31m";
     const green = "\x1b[32m";
+    const cyan = "\x1b[36m";
     const red_bg = "\x1b[41m";
     const green_bg = "\x1b[42m";
     const dim = "\x1b[2m";
     const reset = "\x1b[0m";
 };
 
-pub fn printDiff(arena: std.mem.Allocator, writer: anytype, segments: []const Diff, enable_ansi_colors: bool) !void {
-    var line_buffer = std.ArrayList(Diff).init(arena);
-    defer line_buffer.deinit();
+/// The number of "equal" lines to show before and after a change.
+const CONTEXT_LINES = 5;
 
-    var before_line_number: usize = 1;
-    var after_line_number: usize = 1;
+pub fn printDiff(
+    arena: std.mem.Allocator,
+    writer: anytype,
+    segments: []const Diff,
+    enable_ansi_colors: bool,
+) !void {
+    // A logical line in the diff, containing all its segments and its type.
+    const Line = struct {
+        mode: ModifiedMode,
+        segments: []const Diff,
+    };
+
+    // --- Pass 1: Group segments into logical lines ---
+    // We create a list of `Line` structs. Each line's segments are slices
+    // pointing into a single, flat `segment_store` buffer. This is memory-efficient.
+    var lines = std.ArrayList(Line).init(arena);
+
+    var line_buffer = std.ArrayList(Diff).init(arena);
 
     for (segments) |segment| {
         var text_iterator = std.mem.splitScalar(u8, segment.text, '\n');
 
-        // The first part of a split always belongs to the current line being built.
-        // It's safe to call next() because even for an empty string, it returns one empty slice.
         const first_part = text_iterator.next().?;
         if (first_part.len > 0) {
             try line_buffer.append(.{ .operation = segment.operation, .text = first_part });
         }
 
-        // Any subsequent parts mean we've crossed a newline.
-        // Each part (except the very last one in the stream) is a complete line.
         while (text_iterator.next()) |part| {
-            switch (segment.operation) {
-                .delete => before_line_number += 1,
-                .insert => after_line_number += 1,
-                .equal => {},
-            }
+            // A newline was crossed, so the line_buffer contains a complete line.
+            const line_segs_slice = try arena.alloc(Diff, line_buffer.items.len);
+            @memcpy(line_segs_slice, line_buffer.items);
 
-            // Process the completed line in the buffer.
-            try printLine(writer, line_buffer.items, enable_ansi_colors);
+            try lines.append(.{
+                .mode = getMode(line_segs_slice),
+                .segments = line_segs_slice,
+            });
             line_buffer.clearRetainingCapacity();
 
-            // The new part becomes the start of the next line.
             if (part.len > 0) {
                 try line_buffer.append(.{ .operation = segment.operation, .text = part });
             }
         }
     }
 
-    // After the loop, print the last line
-    try printLine(writer, line_buffer.items, enable_ansi_colors);
+    // Process the final line in the buffer.
+    if (line_buffer.items.len > 0) {
+        const line_segs_slice = try arena.alloc(Diff, line_buffer.items.len);
+        @memcpy(line_segs_slice, line_buffer.items);
+
+        try lines.append(.{
+            .mode = getMode(line_segs_slice),
+            .segments = line_segs_slice,
+        });
+    }
+
+    if (lines.items.len == 0) return;
+
+    // --- Pass 2: Mark which lines to print (changes + context) ---
+    var print_flags = try arena.alloc(bool, lines.items.len);
+    for (print_flags) |*flag| flag.* = false;
+
+    for (lines.items, 0..) |line, i| {
+        if (line.mode != .equal) {
+            // Mark the changed line itself.
+            print_flags[i] = true;
+            // Mark CONTEXT_LINES before.
+            var j: usize = 1;
+            while (j <= CONTEXT_LINES and i >= j) : (j += 1) {
+                print_flags[i - j] = true;
+            }
+            // Mark CONTEXT_LINES after.
+            j = 1;
+            while (j <= CONTEXT_LINES and i + j < lines.items.len) : (j += 1) {
+                print_flags[i + j] = true;
+            }
+        }
+    }
+
+    var line_a: usize = 1;
+    var line_b: usize = 1;
+    var i: usize = 0;
+
+    while (i < lines.items.len) {
+        // 1. Skip non-printed lines and update line counters
+        if (!print_flags[i]) {
+            const mode = lines.items[i].mode;
+            if (mode != .added) line_a += 1;
+            if (mode != .removed) line_b += 1;
+            i += 1;
+            continue;
+        }
+
+        // 2. We are at the start of a hunk. Calculate its stats.
+        const hunk_start_a = line_a;
+        const hunk_start_b = line_b;
+        var hunk_count_a: usize = 0;
+        var hunk_count_b: usize = 0;
+        const hunk_start_index = i;
+        var hunk_end_index = i;
+
+        var j = i;
+        while (j < lines.items.len and print_flags[j]) : (j += 1) {
+            hunk_end_index = j;
+            const mode = lines.items[j].mode;
+            if (mode != .added) hunk_count_a += 1;
+            if (mode != .removed) hunk_count_b += 1;
+        }
+
+        // 3. Print the hunk header
+        const header_color = if (enable_ansi_colors) colors.cyan else "";
+        const reset_color = if (enable_ansi_colors) colors.reset else "";
+        try writer.print("{s}@@", .{header_color});
+        if (hunk_count_a == 1) {
+            try writer.print(" -{d}", .{hunk_start_a});
+        } else {
+            try writer.print(" -{d},{d}", .{ hunk_start_a, hunk_count_a });
+        }
+        if (hunk_count_b == 1) {
+            try writer.print(" +{d}", .{hunk_start_b});
+        } else {
+            try writer.print(" +{d},{d}", .{ hunk_start_b, hunk_count_b });
+        }
+        try writer.print(" @@{s}\n", .{reset_color});
+
+        // 4. Print the lines within the hunk and update main line counters
+        j = hunk_start_index;
+        while (j <= hunk_end_index) : (j += 1) {
+            const line = lines.items[j];
+            try printLine(writer, line.segments, enable_ansi_colors);
+            const mode = line.mode;
+            if (mode != .added) line_a += 1;
+            if (mode != .removed) line_b += 1;
+        }
+
+        // 5. Move main index past the hunk we just printed
+        i = hunk_end_index + 1;
+    }
 }
 
 const ModifiedMode = enum {
@@ -74,6 +177,13 @@ fn getMode(line_segments: []const Diff) ModifiedMode {
 
 // Helper function to format and print a single logical line.
 fn printLine(writer: anytype, line_segments: []const Diff, enable_ansi_colors: bool) !void {
+    if (line_segments.len == 0) {
+        // This can happen for empty lines at the end of the file.
+        // We print a single newline to represent it correctly.
+        try writer.writeAll("\n");
+        return;
+    }
+
     const mode = getMode(line_segments);
     const insert_line = switch (enable_ansi_colors) {
         true => colors.green ++ "+" ++ colors.reset ++ " ",
@@ -122,25 +232,25 @@ fn printLine(writer: anytype, line_segments: []const Diff, enable_ansi_colors: b
         .added => {
             // Line added
             try writer.writeAll(insert_line);
-            try writer.writeAll(green_bg);
+            if (enable_ansi_colors) try writer.writeAll(green_bg);
             for (line_segments) |s| try writer.writeAll(s.text);
-            try writer.writeAll(reset);
+            if (enable_ansi_colors) try writer.writeAll(reset);
             try writer.writeAll("\n");
         },
         .removed => {
             // Line removed
             try writer.writeAll(delete_line);
-            try writer.writeAll(red_bg);
+            if (enable_ansi_colors) try writer.writeAll(red_bg);
             for (line_segments) |s| try writer.writeAll(s.text);
-            try writer.writeAll(reset);
+            if (enable_ansi_colors) try writer.writeAll(reset);
             try writer.writeAll("\n");
         },
         .equal => {
             // Equal-only line
             try writer.writeAll("  ");
-            try writer.writeAll(dim);
+            if (enable_ansi_colors) try writer.writeAll(dim);
             for (line_segments) |s| try writer.writeAll(s.text);
-            try writer.writeAll(reset);
+            if (enable_ansi_colors) try writer.writeAll(reset);
             try writer.writeAll("\n");
         },
     }

@@ -1,6 +1,9 @@
 import { test, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
+const expectedColor = ``;
+const expectedNoColor = expectedColor.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+
 test("color", async () => {
   const spawn = Bun.spawn({
     cmd: [bunExe(), import.meta.resolve("diffexample.fixture.ts")],

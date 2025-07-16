@@ -129,6 +129,18 @@ describe.each(dataAsConst)("test.each", (a, b, c) => {
   expectType<5 | "asdf">(c);
 });
 
+expect().pass();
+expect().fail();
+
+expectType(expect()).is<import("bun:test").Matchers<undefined>>();
+expectType(expect<string>()).is<import("bun:test").Matchers<string | undefined>>();
+expectType(expect("")).is<import("bun:test").Matchers<string>>();
+expectType(expect<string>("")).is<import("bun:test").Matchers<string>>();
+expectType(expect(undefined, "Fail message")).is<import("bun:test").Matchers<undefined>>();
+expectType(expect<string>(undefined, "Fail message")).is<import("bun:test").Matchers<string | undefined>>();
+expectType(expect("", "Fail message")).is<import("bun:test").Matchers<string>>();
+expectType(expect<string>("", "Fail message")).is<import("bun:test").Matchers<string>>();
+
 describe("Matcher Overload Type Tests", () => {
   const num = 1;
   const str = "hello";

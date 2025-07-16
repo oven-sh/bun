@@ -529,6 +529,7 @@ declare module "bun:test" {
      * @param customFailMessage an optional custom message to display if the test fails.
      * */
 
+    (actual?: never, customFailMessage?: string): Matchers<undefined>;
     <T = unknown>(actual: T, customFailMessage?: string): Matchers<T>;
     <T = unknown>(actual?: T, customFailMessage?: string): Matchers<T | undefined>;
 

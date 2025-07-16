@@ -306,8 +306,6 @@ async function processFile(filePath: string): Promise<void> {
   const originalFileContents = await Bun.file(filePath).text();
   let fileContents = originalFileContents;
 
-  console.log(`Processing: ${filePath}`);
-
   let needsRecurse = true;
   while (needsRecurse) {
     needsRecurse = false;
@@ -363,7 +361,6 @@ async function processFile(filePath: string): Promise<void> {
   if (fileContents === "\n") fileContents = "";
 
   if (fileContents === originalFileContents) {
-    console.log(`✓ No changes: ${filePath}`);
     return;
   }
 

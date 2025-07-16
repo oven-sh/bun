@@ -452,4 +452,3 @@ const RefImportData = bundler.RefImportData;
 const CrossChunkImport = bundler.CrossChunkImport;
 const StableRef = bundler.StableRef;
 const ChunkMeta = LinkerContext.ChunkMeta;
-const WaitGroup = bun.threading.WaitGroup;

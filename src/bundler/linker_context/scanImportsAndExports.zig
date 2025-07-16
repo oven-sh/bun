@@ -1243,4 +1243,3 @@ const ImportData = bun.bundle_v2.ImportData;
 const Dependency = js_ast.Dependency;
 const options = bun.options;
 const Symbol = bun.bundle_v2.Symbol;
-const WaitGroup = bun.threading.WaitGroup;

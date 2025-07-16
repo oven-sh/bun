@@ -550,7 +550,6 @@ pub const ThreadPool = bun.bundle_v2.ThreadPool;
 const Loc = Logger.Loc;
 const Chunk = bun.bundle_v2.Chunk;
 
-const sync = bun.threading;
 const GenerateChunkCtx = LinkerContext.GenerateChunkCtx;
 const CompileResult = LinkerContext.CompileResult;
 const PendingPartRange = LinkerContext.PendingPartRange;

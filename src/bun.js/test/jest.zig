@@ -2007,6 +2007,30 @@ fn consumeArg(
     args_idx.* += 1;
 }
 
+fn resolvePropertyPath(globalThis: *JSGlobalObject, obj: JSValue, path: []const u8) !?JSValue {
+    var current = obj;
+    var parts = std.mem.tokenizeScalar(u8, path, '.');
+
+    while (parts.next()) |part| {
+        if (current.isEmptyOrUndefinedOrNull()) return null;
+
+        if (std.fmt.parseInt(u32, part, 10)) |index| {
+            if (current.jsType().isArray()) {
+                if (index >= try current.getLength(globalThis)) return null;
+                current = try current.getIndex(globalThis, index);
+            } else {
+                return null;
+            }
+        } else |_| if (current.isObject()) {
+            current = try current.get(globalThis, part) orelse return null;
+        } else {
+            return null;
+        }
+    }
+
+    return if (current.isEmptyOrUndefinedOrNull()) null else current;
+}
+
 // Generate test label by positionally injecting parameters with printf formatting
 fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSValue, test_idx: usize) !string {
     const allocator = bun.default_allocator;
@@ -2016,7 +2040,50 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
 
     while (idx < label.len) {
         const char = label[idx];
-        if (char == '%' and (idx + 1 < label.len) and !(args_idx >= function_args.len)) {
+
+        if (char == '$' and idx + 1 < label.len and function_args.len > 0 and function_args[0].isObject()) {
+            const var_start = idx + 1;
+            var var_end = var_start;
+
+            if (std.ascii.isAlphabetic(label[var_end]) or label[var_end] == '_' or label[var_end] == '$') {
+                var_end += 1;
+
+                while (var_end < label.len) {
+                    const c = label[var_end];
+                    if (c == '.') {
+                        const next_char = label[var_end + 1];
+                        if (var_end + 1 < label.len and (std.ascii.isAlphanumeric(next_char) or next_char == '_' or next_char == '$')) {
+                            var_end += 1;
+                        } else {
+                            break;
+                        }
+                    } else if (std.ascii.isAlphanumeric(c) or c == '_' or c == '$') {
+                        var_end += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                const var_path = label[var_start..var_end];
+                if (try resolvePropertyPath(globalThis, function_args[0], var_path)) |value| {
+                    var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                    defer formatter.deinit();
+                    const value_str = std.fmt.allocPrint(allocator, "{}", .{value.toFmt(&formatter)}) catch bun.outOfMemory();
+                    defer allocator.free(value_str);
+                    list.appendSlice(allocator, value_str) catch bun.outOfMemory();
+                    idx = var_end;
+                    continue;
+                }
+            } else {
+                while (var_end < label.len and (std.ascii.isAlphanumeric(label[var_end]) or label[var_end] == '_')) {
+                    var_end += 1;
+                }
+            }
+
+            list.append(allocator, '$') catch bun.outOfMemory();
+            list.appendSlice(allocator, label[var_start..var_end]) catch bun.outOfMemory();
+            idx = var_end;
+        } else if (char == '%' and (idx + 1 < label.len) and !(args_idx >= function_args.len)) {
             const current_arg = function_args[args_idx];
 
             switch (label[idx + 1]) {

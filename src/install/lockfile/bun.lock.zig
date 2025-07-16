@@ -91,14 +91,6 @@ pub const Stringifier = struct {
             try writer.print("\"lockfileVersion\": {d},\n", .{@intFromEnum(Version.current)});
             try writeIndent(writer, indent);
 
-            if (lockfile.node_linker != .auto) {
-                try writer.print(
-                    \\"nodeLinker": "{s}",
-                    \\
-                , .{@tagName(lockfile.node_linker)});
-                try writeIndent(writer, indent);
-            }
-
             try writer.writeAll("\"workspaces\": {\n");
             try incIndent(writer, indent);
             {
@@ -1010,7 +1002,6 @@ const ParseError = OOM || error{
     InvalidOverridesObject,
     InvalidCatalogObject,
     InvalidCatalogsObject,
-    InvalidNodeLinkerValue,
     InvalidDependencyName,
     InvalidDependencyVersion,
     InvalidPackageResolution,
@@ -1403,21 +1394,6 @@ pub fn parseIntoBinaryLockfile(
         }
     }
 
-    if (root.get("nodeLinker")) |node_linker_expr| {
-        if (!node_linker_expr.isString()) {
-            try log.addError(source, node_linker_expr.loc, "Expected a string");
-            return error.InvalidNodeLinkerValue;
-        }
-
-        const node_linker_str = node_linker_expr.data.e_string.slice(allocator);
-        lockfile.node_linker = BinaryLockfile.NodeLinker.fromStr(node_linker_str) orelse {
-            try log.addError(source, node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
-            return error.InvalidNodeLinkerValue;
-        };
-    } else {
-        lockfile.node_linker = .auto;
-    }
-
     const workspaces_obj = root.getObject("workspaces") orelse {
         try log.addError(source, root.loc, "Missing a workspaces object property");
         return error.InvalidWorkspaceObject;
@@ -1497,7 +1473,20 @@ pub fn parseIntoBinaryLockfile(
             return error.InvalidWorkspaceObject;
         } else null;
 
-        const off, var len = try parseAppendDependencies(lockfile, allocator, &root_pkg_exr, &string_buf, log, source, &optional_peers_buf, false, {}, {});
+        const off, const len = try parseAppendDependencies(
+            lockfile,
+            allocator,
+            &root_pkg_exr,
+            &string_buf,
+            log,
+            source,
+            &optional_peers_buf,
+            false,
+            {},
+            {},
+            true,
+            &workspaces_obj,
+        );
 
         var root_pkg: BinaryLockfile.Package = .{};
 
@@ -1505,34 +1494,6 @@ pub fn parseIntoBinaryLockfile(
             const name_hash = String.Builder.stringHash(name);
             root_pkg.name = try string_buf.appendWithHash(name, name_hash);
             root_pkg.name_hash = name_hash;
-        }
-
-        workspaces: for (lockfile.workspace_paths.values()) |workspace_path| {
-            for (workspaces_obj.data.e_object.properties.slice()) |prop| {
-                const key = prop.key.?;
-                const value = prop.value.?;
-                const path = key.asString(allocator).?;
-                if (!strings.eqlLong(path, workspace_path.slice(string_buf.bytes.items), true)) continue;
-
-                const name = value.get("name").?.asString(allocator).?;
-                const name_hash = String.Builder.stringHash(name);
-
-                const dep: Dependency = .{
-                    .name = try string_buf.appendWithHash(name, name_hash),
-                    .name_hash = name_hash,
-                    .behavior = .{ .workspace = true },
-                    .version = .{
-                        .tag = .workspace,
-                        .value = .{
-                            .workspace = try string_buf.append(path),
-                        },
-                    },
-                };
-
-                try lockfile.buffers.dependencies.append(allocator, dep);
-                len += 1;
-                continue :workspaces;
-            }
         }
 
         root_pkg.dependencies = .{ .off = off, .len = len };
@@ -1571,7 +1532,20 @@ pub fn parseIntoBinaryLockfile(
                 pkg.name = try string_buf.appendWithHash(name, name_hash);
                 pkg.name_hash = name_hash;
 
-                const off, const len = try parseAppendDependencies(lockfile, allocator, &value, &string_buf, log, source, &optional_peers_buf, false, {}, {});
+                const off, const len = try parseAppendDependencies(
+                    lockfile,
+                    allocator,
+                    &value,
+                    &string_buf,
+                    log,
+                    source,
+                    &optional_peers_buf,
+                    false,
+                    {},
+                    {},
+                    false,
+                    {},
+                );
 
                 pkg.dependencies = .{ .off = off, .len = len };
                 pkg.resolutions = .{ .off = off, .len = len };
@@ -1804,6 +1778,8 @@ pub fn parseIntoBinaryLockfile(
                         true,
                         pkg_path,
                         &bundled_pkgs,
+                        false,
+                        {},
                     );
 
                     pkg.dependencies = .{ .off = off, .len = len };
@@ -1904,6 +1880,11 @@ pub fn parseIntoBinaryLockfile(
         lockfile.buffers.resolutions.expandToCapacity();
         @memset(lockfile.buffers.resolutions.items, invalid_package_id);
 
+        // a package can list the same dependency in each dependnecy group, but only the first
+        // is chosen (dev -> optional -> prod -> peer)
+        var seen_deps: bun.StringArrayHashMapUnmanaged(void) = .empty;
+        defer seen_deps.deinit(allocator);
+
         const pkgs = lockfile.packages.slice();
         const pkg_deps = pkgs.items(.dependencies);
         const pkg_names = pkgs.items(.name);
@@ -1927,6 +1908,13 @@ pub fn parseIntoBinaryLockfile(
                     return error.InvalidPackageInfo;
                 };
 
+                if (!dep.behavior.isWorkspace() and
+                    (try seen_deps.getOrPut(allocator, dep.name.slice(lockfile.buffers.string_bytes.items))).found_existing)
+                {
+                    lockfile.buffers.resolutions.items[dep_id] = res_id;
+                    continue;
+                }
+
                 mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
             }
         }
@@ -1938,6 +1926,8 @@ pub fn parseIntoBinaryLockfile(
             for (workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len) |_pkg_id| {
                 const pkg_id: PackageID = @intCast(_pkg_id);
                 const workspace_name = pkg_names[pkg_id].slice(lockfile.buffers.string_bytes.items);
+
+                seen_deps.clearRetainingCapacity();
 
                 const deps = pkg_deps[pkg_id];
                 for (deps.begin()..deps.end()) |_dep_id| {
@@ -1958,6 +1948,11 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     };
 
+                    if ((try seen_deps.getOrPut(allocator, dep_name)).found_existing) {
+                        lockfile.buffers.resolutions.items[dep_id] = res_id;
+                        continue;
+                    }
+
                     mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
                 }
             }
@@ -1972,6 +1967,13 @@ pub fn parseIntoBinaryLockfile(
             const pkg_id = pkg_map.get(pkg_path) orelse {
                 return error.InvalidPackagesObject;
             };
+
+            const res = pkg_resolutions[pkg_id];
+
+            if (res.tag == .workspace) {
+                // we've already resolved the workspace dependencies above
+                continue;
+            }
 
             // find resolutions. iterate up to root through the pkg path.
             const deps = pkg_deps[pkg_id];
@@ -2016,9 +2018,6 @@ fn mapDepToPkg(dep: *Dependency, dep_id: DependencyID, pkg_id: PackageID, lockfi
         if (res.tag == .workspace) {
             dep.version.tag = .workspace;
             dep.version.value = .{ .workspace = res.value.workspace };
-
-            // not sure what depends on this, but this is existing behavior
-            dep.behavior.workspace = true;
         }
     }
 }
@@ -2030,7 +2029,7 @@ fn dependencyResolutionFailure(dep: *const Dependency, pkg_path: ?string, alloca
         "optional"
     else if (dep.behavior.peer)
         "peer"
-    else if (dep.behavior.isWorkspaceOnly())
+    else if (dep.behavior.workspace)
         "workspace"
     else
         "prod";
@@ -2060,6 +2059,8 @@ fn parseAppendDependencies(
     comptime check_for_bundled: bool,
     pkg_path: if (check_for_bundled) string else void,
     bundled_pkgs: if (check_for_bundled) *const PkgPathSet else void,
+    comptime is_root: bool,
+    workspaces_obj: if (is_root) *const Expr else void,
 ) ParseError!struct { u32, u32 } {
     defer optional_peers_buf.clearRetainingCapacity();
 
@@ -2147,6 +2148,36 @@ fn parseAppendDependencies(
             }
         }
     }
+
+    if (is_root) {
+        workspaces: for (lockfile.workspace_paths.values()) |workspace_path| {
+            for (workspaces_obj.data.e_object.properties.slice()) |prop| {
+                const key = prop.key.?;
+                const value = prop.value.?;
+                const path = key.asString(allocator).?;
+                if (!strings.eqlLong(path, workspace_path.slice(buf.bytes.items), true)) continue;
+
+                const name = value.get("name").?.asString(allocator).?;
+                const name_hash = String.Builder.stringHash(name);
+
+                const dep: Dependency = .{
+                    .name = try buf.appendWithHash(name, name_hash),
+                    .name_hash = name_hash,
+                    .behavior = .{ .workspace = true },
+                    .version = .{
+                        .tag = .workspace,
+                        .value = .{
+                            .workspace = try buf.append(path),
+                        },
+                    },
+                };
+
+                try lockfile.buffers.dependencies.append(allocator, dep);
+                continue :workspaces;
+            }
+        }
+    }
+
     const end = lockfile.buffers.dependencies.items.len;
 
     std.sort.pdq(

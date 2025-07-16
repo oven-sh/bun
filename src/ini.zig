@@ -1049,6 +1049,34 @@ pub fn loadNpmrc(
         }
     }
 
+    if (out.get("install-strategy")) |install_strategy_expr| {
+        if (install_strategy_expr.asString(allocator)) |install_strategy_str| {
+            if (bun.strings.eqlComptime(install_strategy_str, "hoisted")) {
+                install.node_linker = .hoisted;
+            } else if (bun.strings.eqlComptime(install_strategy_str, "linked")) {
+                install.node_linker = .isolated;
+            } else if (bun.strings.eqlComptime(install_strategy_str, "nested")) {
+                // TODO
+            } else if (bun.strings.eqlComptime(install_strategy_str, "shallow")) {
+                // TODO
+            }
+        }
+    }
+
+    if (out.get("node-linker")) |node_linker_expr| {
+        if (node_linker_expr.asString(allocator)) |node_linker_str| {
+            install.node_linker = bun.install.PackageManager.Options.NodeLinker.fromStr(node_linker_str) orelse
+                if (bun.strings.eqlComptime(node_linker_str, "pnpm"))
+                    // yarn
+                    .isolated
+                else if (bun.strings.eqlComptime(node_linker_str, "node-modules"))
+                    // yarn
+                    .hoisted
+                else
+                    null;
+        }
+    }
+
     var registry_map = install.scoped orelse bun.Schema.Api.NpmRegistryMap{};
 
     // Process scopes

@@ -82,7 +82,7 @@ pub fn installIsolatedPackages(
             var skip_dependencies_of_workspace_node = false;
             if (entry.dep_id != invalid_dependency_id) {
                 const entry_dep = dependencies[entry.dep_id];
-                if (pkg_deps.len == 0 or entry_dep.isWorkspaceDep()) dont_dedupe: {
+                if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace) dont_dedupe: {
                     const dedupe_entry = try early_dedupe.getOrPut(lockfile.allocator, entry.pkg_id);
                     if (dedupe_entry.found_existing) {
                         const dedupe_node_id = dedupe_entry.value_ptr.*;
@@ -98,8 +98,8 @@ pub fn installIsolatedPackages(
                             break :dont_dedupe;
                         }
 
-                        if (dedupe_dep.isWorkspaceDep() and entry_dep.isWorkspaceDep()) {
-                            if (dedupe_dep.behavior.isWorkspaceOnly() != entry_dep.behavior.isWorkspaceOnly()) {
+                        if (dedupe_dep.version.tag == .workspace and entry_dep.version.tag == .workspace) {
+                            if (dedupe_dep.behavior.isWorkspace() != entry_dep.behavior.isWorkspace()) {
                                 // only attach the dependencies to one of the workspaces
                                 skip_dependencies_of_workspace_node = true;
                                 break :dont_dedupe;
@@ -374,8 +374,8 @@ pub fn installIsolatedPackages(
                         const curr_dep = dependencies[curr_dep_id];
                         const existing_dep = dependencies[info.dep_id];
 
-                        if (existing_dep.isWorkspaceDep() and curr_dep.isWorkspaceDep()) {
-                            if (existing_dep.behavior.isWorkspaceOnly() != curr_dep.behavior.isWorkspaceOnly()) {
+                        if (existing_dep.version.tag == .workspace and curr_dep.version.tag == .workspace) {
+                            if (existing_dep.behavior.isWorkspace() != curr_dep.behavior.isWorkspace()) {
                                 continue;
                             }
                         }
@@ -395,7 +395,7 @@ pub fn installIsolatedPackages(
 
                         var parents = &entry_parents[info.entry_id.get()];
 
-                        if (curr_dep_id != invalid_dependency_id and dependencies[curr_dep_id].behavior.isWorkspaceOnly()) {
+                        if (curr_dep_id != invalid_dependency_id and dependencies[curr_dep_id].behavior.isWorkspace()) {
                             try parents.append(lockfile.allocator, entry.entry_parent_id);
                             continue :next_entry;
                         }
@@ -436,7 +436,7 @@ pub fn installIsolatedPackages(
             const new_entry_dep_id = node_dep_ids[entry.node_id.get()];
 
             const new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
-            const new_entry_is_workspace = !new_entry_is_root and dependencies[new_entry_dep_id].isWorkspaceDep();
+            const new_entry_is_workspace = !new_entry_is_root and dependencies[new_entry_dep_id].version.tag == .workspace;
 
             const new_entry_dependencies: Store.Entry.Dependencies = if (dedupe_entry.found_existing and new_entry_is_workspace)
                 .empty
@@ -457,7 +457,7 @@ pub fn installIsolatedPackages(
             try store.append(lockfile.allocator, new_entry);
 
             if (entry.entry_parent_id.tryGet()) |entry_parent_id| skip_adding_dependency: {
-                if (new_entry_dep_id != invalid_dependency_id and dependencies[new_entry_dep_id].behavior.isWorkspaceOnly()) {
+                if (new_entry_dep_id != invalid_dependency_id and dependencies[new_entry_dep_id].behavior.isWorkspace()) {
                     // skip implicit workspace dependencies on the root.
                     break :skip_adding_dependency;
                 }

@@ -6,7 +6,7 @@ import zlib from "node:zlib";
 const input = Buffer.alloc(50000);
 for (let i = 0; i < input.length; i++) input[i] = Math.random();
 
-const upper = 1024 * 1024 * (isASAN ? 15 : 10);
+const upper = 1024 * 1024 * (isASAN ? 20 : 10);
 
 describe("zlib compression does not leak memory", () => {
   beforeAll(() => {

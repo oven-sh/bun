@@ -1423,7 +1423,7 @@ pub const PackageManifest = struct {
                     try writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)});
             }
 
-            var result = bun.String.fromUTF8(buf.items);
+            var result = bun.String.borrowUTF8(buf.items);
             defer result.deref();
 
             return result.toJSByParseJSON(global);
@@ -1572,7 +1572,14 @@ pub const PackageManifest = struct {
             source,
             log,
             arena.allocator(),
-        ) catch return null;
+        ) catch {
+            // don't use the arena memory!
+            var cloned_log: logger.Log = .init(bun.default_allocator);
+            try log.cloneToWithRecycled(&cloned_log, true);
+            log.* = cloned_log;
+
+            return null;
+        };
 
         if (json.asProperty("error")) |error_q| {
             if (error_q.expr.asString(allocator)) |err| {

@@ -58,6 +58,7 @@ pub const JSBundler = struct {
         throw_on_error: bool = true,
         env_behavior: Api.DotEnvBehavior = .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -184,7 +185,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
-                if (config.isBoolean()) {
+                if (source_map_js.isBoolean()) {
                     if (source_map_js == .true) {
                         this.source_map = if (has_out_dir)
                             .linked
@@ -529,6 +530,7 @@ pub const JSBundler = struct {
             self.banner.deinit();
             self.env_prefix.deinit();
             self.footer.deinit();
+            self.tsconfig_override.deinit();
         }
     };
 
@@ -936,8 +938,8 @@ pub const JSBundler = struct {
             const namespace_string = if (path.isFile())
                 bun.String.empty
             else
-                bun.String.createUTF8(path.namespace);
-            const path_string = bun.String.createUTF8(path.text);
+                bun.String.cloneUTF8(path.namespace);
+            const path_string = bun.String.cloneUTF8(path.text);
             defer namespace_string.deref();
             defer path_string.deref();
             return JSBundlerPlugin__anyMatches(this, &namespace_string, &path_string, is_onLoad);
@@ -958,8 +960,8 @@ pub const JSBundler = struct {
             const namespace_string = if (namespace.len == 0)
                 bun.String.static("file")
             else
-                bun.String.createUTF8(namespace);
-            const path_string = bun.String.createUTF8(path);
+                bun.String.cloneUTF8(namespace);
+            const path_string = bun.String.cloneUTF8(path);
             defer namespace_string.deref();
             defer path_string.deref();
             JSBundlerPlugin__matchOnLoad(this, &namespace_string, &path_string, context, @intFromEnum(default_loader), is_server_side);
@@ -979,9 +981,9 @@ pub const JSBundler = struct {
             const namespace_string = if (strings.eqlComptime(namespace, "file"))
                 bun.String.empty
             else
-                bun.String.createUTF8(namespace);
-            const path_string = bun.String.createUTF8(path);
-            const importer_string = bun.String.createUTF8(importer);
+                bun.String.cloneUTF8(namespace);
+            const path_string = bun.String.cloneUTF8(path);
+            const importer_string = bun.String.cloneUTF8(importer);
             defer namespace_string.deref();
             defer path_string.deref();
             defer importer_string.deref();

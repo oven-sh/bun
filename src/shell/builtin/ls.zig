@@ -323,7 +323,7 @@ pub const ShellLsTask = struct {
                 std.fmt.format(writer, "{s}:\n", .{this.path}) catch bun.outOfMemory();
             }
 
-            var iterator = DirIterator.iterate(fd.stdDir(), .u8);
+            var iterator = DirIterator.iterate(fd, .u8);
             var entry = iterator.next();
 
             // If `-a` is used, "." and ".." should show up as results. However,

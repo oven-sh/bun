@@ -269,7 +269,7 @@ pub const Async = struct {
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, @intFromEnum(req.result));
 
                 if (this.result == .err) {
-                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
+                    this.result.err = this.result.err.clone(bun.default_allocator);
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -283,7 +283,7 @@ pub const Async = struct {
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, req, @intFromEnum(req.result));
 
                 if (this.result == .err) {
-                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
+                    this.result.err = this.result.err.clone(bun.default_allocator);
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -382,7 +382,7 @@ pub const Async = struct {
                 this.result = function(&node_fs, this.args, .@"async");
 
                 if (this.result == .err) {
-                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
+                    this.result.err = this.result.err.clone(bun.default_allocator);
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -642,7 +642,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             this.result = result;
 
             if (this.result == .err) {
-                this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
+                this.result.err = this.result.err.clone(bun.default_allocator);
             }
 
             if (this.evtloop == .js) {
@@ -859,8 +859,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 },
             }
 
-            const dir = fd.stdDir();
-            var iterator = DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
+            var iterator = DirIterator.iterate(fd, if (Environment.isWindows) .u16 else .u8);
             var entry = iterator.next();
             while (switch (entry) {
                 .err => |err| {
@@ -3215,7 +3214,7 @@ const Return = struct {
             .bytesRead = JSC.ZigString.init("bytesRead"),
             .buffer = JSC.ZigString.init("buffer"),
         };
-        pub fn toJS(this: *const ReadPromise, ctx: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: *const ReadPromise, ctx: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
                 this.buffer_val.unprotect();
 
@@ -3238,7 +3237,7 @@ const Return = struct {
         };
 
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
-        pub fn toJS(this: *const WritePromise, globalObject: *JSC.JSGlobalObject) JSC.C.JSValueRef {
+        pub fn toJS(this: *const WritePromise, globalObject: *JSC.JSGlobalObject) bun.JSError!bun.jsc.JSValue {
             defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
                 this.buffer_val.unprotect();
 
@@ -3284,7 +3283,7 @@ const Return = struct {
                     var previous_jsstring: ?*JSC.JSString = null;
                     for (this.with_file_types, 0..) |*item, i| {
                         const res = try item.toJSNewlyCreated(globalObject, &previous_jsstring);
-                        array.putIndex(globalObject, @truncate(i), res);
+                        try array.putIndex(globalObject, @truncate(i), res);
                     }
                     return array;
                 },
@@ -3722,8 +3721,8 @@ pub const NodeFS = struct {
         }
 
         if (comptime Environment.isWindows) {
-            const dest_buf = bun.OSPathBufferPool.get();
-            defer bun.OSPathBufferPool.put(dest_buf);
+            const dest_buf = bun.os_path_buffer_pool.get();
+            defer bun.os_path_buffer_pool.put(dest_buf);
 
             const src = bun.strings.toKernel32Path(bun.reinterpretSlice(u16, &fs.sync_error_buf), args.src.slice());
             const dest = bun.strings.toKernel32Path(dest_buf, args.dest.slice());
@@ -3913,8 +3912,8 @@ pub const NodeFS = struct {
     }
 
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
-        const buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(buf);
+        const buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(buf);
         const path = args.path.osPathKernel32(buf);
 
         return switch (args.always_return_none) {
@@ -4425,7 +4424,6 @@ pub const NodeFS = struct {
         comptime ExpectedType: type,
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
-        const dir = fd.stdDir();
         const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == bun.JSC.Node.Dirent);
 
         var dirent_path: bun.String = bun.String.dead;
@@ -4433,15 +4431,15 @@ pub const NodeFS = struct {
             dirent_path.deref();
         }
 
-        var iterator = DirIterator.iterate(dir, comptime if (is_u16) .u16 else .u8);
+        var iterator = DirIterator.iterate(fd, comptime if (is_u16) .u16 else .u8);
         var entry = iterator.next();
 
         const re_encoding_buffer: ?*bun.PathBuffer = if (is_u16 and args.encoding != .utf8)
-            bun.PathBufferPool.get()
+            bun.path_buffer_pool.get()
         else
             null;
         defer if (is_u16 and args.encoding != .utf8)
-            bun.PathBufferPool.put(re_encoding_buffer.?);
+            bun.path_buffer_pool.put(re_encoding_buffer.?);
 
         while (switch (entry) {
             .err => |err| {
@@ -4498,7 +4496,7 @@ pub const NodeFS = struct {
                     JSC.Node.Dirent => {
                         dirent_path.ref();
                         entries.append(.{
-                            .name = bun.String.createUTF16(utf16_name),
+                            .name = bun.String.cloneUTF16(utf16_name),
                             .path = dirent_path,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
@@ -4507,7 +4505,7 @@ pub const NodeFS = struct {
                         .buffer => unreachable,
                         // in node.js, libuv converts to utf8 before node.js converts those bytes into other stuff
                         // all encodings besides hex, base64, and base64url are mis-interpreting filesystem bytes.
-                        .utf8 => entries.append(bun.String.createUTF16(utf16_name)) catch bun.outOfMemory(),
+                        .utf8 => entries.append(bun.String.cloneUTF16(utf16_name)) catch bun.outOfMemory(),
                         else => |enc| {
                             const utf8_path = bun.strings.fromWPath(re_encoding_buffer.?, utf16_name);
                             entries.append(JSC.WebCore.encoding.toBunString(utf8_path, enc)) catch bun.outOfMemory();
@@ -4573,7 +4571,7 @@ pub const NodeFS = struct {
             }
         }
 
-        var iterator = DirIterator.iterate(fd.stdDir(), .u8);
+        var iterator = DirIterator.iterate(fd, .u8);
         var entry = iterator.next();
         var dirent_path_prev: bun.String = bun.String.empty;
         defer {
@@ -4634,12 +4632,12 @@ pub const NodeFS = struct {
                     const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
                     if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
                         dirent_path_prev.deref();
-                        dirent_path_prev = bun.String.createUTF8(path_u8);
+                        dirent_path_prev = bun.String.cloneUTF8(path_u8);
                     }
                     dirent_path_prev.ref();
 
                     entries.append(.{
-                        .name = bun.String.createUTF8(utf8_name),
+                        .name = bun.String.cloneUTF8(utf8_name),
                         .path = dirent_path_prev,
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
@@ -4648,7 +4646,7 @@ pub const NodeFS = struct {
                     entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                 },
                 bun.String => {
-                    entries.append(bun.String.createUTF8(name_to_copy)) catch bun.outOfMemory();
+                    entries.append(bun.String.cloneUTF8(name_to_copy)) catch bun.outOfMemory();
                 },
                 else => bun.outOfMemory(),
             }
@@ -4727,7 +4725,7 @@ pub const NodeFS = struct {
                 }
             }
 
-            var iterator = DirIterator.iterate(fd.stdDir(), .u8);
+            var iterator = DirIterator.iterate(fd, .u8);
             var entry = iterator.next();
             var dirent_path_prev: bun.String = bun.String.dead;
             defer {
@@ -5383,7 +5381,7 @@ pub const NodeFS = struct {
                     }
                 else
                     .{
-                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(link_path) },
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.cloneUTF8(link_path) },
                     },
             },
         };
@@ -5453,7 +5451,7 @@ pub const NodeFS = struct {
                             }
                         }
                         break :utf8 .{
-                            .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(buf) },
+                            .string = .{ .utf8 = .{}, .underlying = bun.String.cloneUTF8(buf) },
                         };
                     },
                     else => |enc| .{
@@ -5505,7 +5503,7 @@ pub const NodeFS = struct {
                         }
                     }
                     break :utf8 .{
-                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(buf) },
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.cloneUTF8(buf) },
                     };
                 },
                 else => |enc| .{
@@ -5973,8 +5971,8 @@ pub const NodeFS = struct {
 
     pub fn osPathIntoSyncErrorBufOverlap(this: *NodeFS, slice: anytype) []const u8 {
         if (Environment.isWindows) {
-            const tmp = bun.OSPathBufferPool.get();
-            defer bun.OSPathBufferPool.put(tmp);
+            const tmp = bun.os_path_buffer_pool.get();
+            defer bun.os_path_buffer_pool.put(tmp);
             @memcpy(tmp[0..slice.len], slice);
             return bun.strings.fromWPath(&this.sync_error_buf, tmp[0..slice.len]);
         }
@@ -6088,10 +6086,7 @@ pub const NodeFS = struct {
             .result => {},
         }
 
-        var iterator = iterator: {
-            const dir = fd.stdDir();
-            break :iterator DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
-        };
+        var iterator = DirIterator.iterate(fd, if (Environment.isWindows) .u16 else .u8);
         var entry = iterator.next();
         while (switch (entry) {
             .err => |err| {
@@ -6483,8 +6478,8 @@ pub const NodeFS = struct {
                     .err => |err| return .{ .err = err },
                     .result => |src_fd| src_fd,
                 };
-                const wbuf = bun.OSPathBufferPool.get();
-                defer bun.OSPathBufferPool.put(wbuf);
+                const wbuf = bun.os_path_buffer_pool.get();
+                defer bun.os_path_buffer_pool.put(wbuf);
                 const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), wbuf, wbuf.len, 0);
                 if (len == 0) {
                     return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse dst_enoent_maybe;

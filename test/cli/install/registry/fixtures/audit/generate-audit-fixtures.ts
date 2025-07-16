@@ -59,7 +59,7 @@ for (const packageJsonPath of absolutes) {
 
   await exited;
 
-  const text = await readableStreamToText(stdout);
+  const text = await stdout.text();
 
   result[body] = JSON.parse(text);
 }

@@ -1102,8 +1102,7 @@ extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JS
     if (!obj.isObject()) return false;
 
     auto* object = JSC::jsCast<JSC::JSObject*>(obj);
-    const bool result = JSC::objectPrototypeHasOwnProperty(globalObject, object, vm.propertyNames->stack);
-    RELEASE_AND_RETURN(scope, result);
+    RELEASE_AND_RETURN(scope, JSC::objectPrototypeHasOwnProperty(globalObject, object, vm.propertyNames->stack));
 }
 
 extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason)
@@ -1145,25 +1144,23 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
     warning->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, "UnhandledPromiseRejectionWarning"_str), JSC::PropertyAttribute::DontEnum | 0);
 
     JSValue reasonStack {};
-    if (Bun__promises__isErrorLike(globalObject, JSValue::decode(reason))) {
+    auto is_errorlike = Bun__promises__isErrorLike(globalObject, JSValue::decode(reason));
+    CLEAR_IF_EXCEPTION(scope);
+    if (is_errorlike) {
         reasonStack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
-        if (scope.exception()) [[unlikely]]
-            scope.clearException();
+        CLEAR_IF_EXCEPTION(scope);
         warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {
         reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));
-        if (scope.exception()) [[unlikely]]
-            scope.clearException();
+        CLEAR_IF_EXCEPTION(scope);
     }
     if (!reasonStack) reasonStack = jsUndefined();
 
     Process::emitWarning(globalObject, reasonStack, jsString(globalObject->vm(), "UnhandledPromiseRejectionWarning"_str), jsUndefined(), jsUndefined());
-    if (scope.exception()) [[unlikely]]
-        scope.clearException();
+    CLEAR_IF_EXCEPTION(scope);
     Process::emitWarningErrorInstance(globalObject, warning);
-    if (scope.exception()) [[unlikely]]
-        scope.clearException();
+    CLEAR_IF_EXCEPTION(scope);
 }
 
 extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue reason, JSC::JSValue promise)
@@ -1200,6 +1197,7 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
 
     if (Bun__VM__allowRejectionHandledWarning(globalObject->bunVM())) {
         Process::emitWarning(globalObject, jsString(globalObject->vm(), String("Promise rejection was handled asynchronously"_s)), jsString(globalObject->vm(), String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
+        CLEAR_IF_EXCEPTION(scope);
     }
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
@@ -1413,6 +1411,8 @@ Process::~Process()
 {
 }
 
+extern "C" bool Bun__NODE_NO_WARNINGS();
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1427,11 +1427,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalG
         args.append(value);
         process->wrapped().emit(ident, args);
         return JSValue::encode(jsUndefined());
+    } else if (!Bun__NODE_NO_WARNINGS()) {
+        auto jsArgs = JSValue::encode(value);
+        Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log), static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
+        RETURN_IF_EXCEPTION(scope, {});
     }
-
-    auto jsArgs = JSValue::encode(value);
-    Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log), static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
-    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -1622,6 +1622,7 @@ bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* 
     if (!code.isUndefinedOrNull()) {
         if (code.isString() && !code.getString(lexicalGlobalObject).isEmpty()) {
             auto num = code.toNumber(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
             if (!std::isnan(num)) {
                 code = jsDoubleNumber(num);
             }
@@ -1645,7 +1646,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
     auto throwScope = DECLARE_THROW_SCOPE(process->vm());
     auto code = JSValue::decode(value);
 
-    return setProcessExitCodeInner(lexicalGlobalObject, process, code);
+    RELEASE_AND_RETURN(throwScope, setProcessExitCodeInner(lexicalGlobalObject, process, code));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(processConnected, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
@@ -2777,7 +2778,6 @@ inline JSValue processBindingConfig(Zig::GlobalObject* globalObject, JSC::VM& vm
 JSValue createCryptoX509Object(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto cryptoX509 = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
     cryptoX509->putDirect(vm, JSC::Identifier::fromString(vm, "isX509Certificate"_s), JSC::JSFunction::create(vm, globalObject, 1, String("isX509Certificate"_s), jsIsX509Certificate, ImplementationVisibility::Public), 0);
     return cryptoX509;
@@ -2818,7 +2818,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "tty_wrap"_s) return JSValue::encode(Bun::createNodeTTYWrapObject(globalObject));
     if (moduleName == "udp_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("udp_wrap");
     if (moduleName == "url"_s) PROCESS_BINDING_NOT_IMPLEMENTED("url");
-    if (moduleName == "util"_s) return JSValue::encode(processBindingUtil(globalObject, vm));
+    if (moduleName == "util"_s) RELEASE_AND_RETURN(throwScope, JSValue::encode(processBindingUtil(globalObject, vm)));
     if (moduleName == "uv"_s) return JSValue::encode(process->bindingUV());
     if (moduleName == "v8"_s) PROCESS_BINDING_NOT_IMPLEMENTED("v8");
     if (moduleName == "zlib"_s) PROCESS_BINDING_NOT_IMPLEMENTED("zlib");
@@ -3046,7 +3046,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
             RETURN_IF_EXCEPTION(throwScope, {});
 
             double userComparator = userValue.toNumber(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
             double systemComparator = systemValue.toNumber(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
 
             if (!(userComparator >= 0 && userComparator <= JSC::maxSafeInteger())) {
                 return Bun::ERR::INVALID_ARG_VALUE_RangeError(throwScope, globalObject, "prevValue.user"_s, userValue, "is invalid"_s);
@@ -3527,6 +3529,9 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     object->putDirect(vm, Identifier::fromString(vm, "tls_ocsp"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "tls"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "cached_builtins"_s), jsBoolean(true));
+    object->putDirect(vm, Identifier::fromString(vm, "openssl_is_boringssl"_s), jsBoolean(true));
+    object->putDirect(vm, Identifier::fromString(vm, "require_module"_s), jsBoolean(true));
+    object->putDirect(vm, Identifier::fromString(vm, "typescript"_s), jsString(vm, String("transform"_s)));
 
     return object;
 }
@@ -3660,7 +3665,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill, (JSC::JSGlobalObject * globalObje
     // this is mimicking `if (pid != (pid | 0)) {`
     int pid = pid_value.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!JSC::JSValue::equal(globalObject, pid_value, jsNumber(pid))) {
+    auto eql = JSC::JSValue::equal(globalObject, pid_value, jsNumber(pid));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!eql) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "pid"_s, "number"_s, pid_value);
     }
 
@@ -3700,6 +3707,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill, (JSC::JSGlobalObject * globalObje
     RETURN_IF_EXCEPTION(scope, {});
 
     auto err = result.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     if (err) {
         throwSystemError(scope, globalObject, "kill"_s, err);
         return {};

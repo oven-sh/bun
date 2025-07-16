@@ -7,6 +7,7 @@ _headers: ?*FetchHeaders = null,
 signal: ?*AbortSignal = null,
 body: *Body.Value.HiveRef,
 method: Method = Method.GET,
+redirect: FetchRedirect = .follow,
 request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
 https: bool = false,
 weak_ptr_data: WeakRef.Data = .empty,
@@ -348,10 +349,12 @@ pub fn finalize(this: *Request) void {
 }
 
 pub fn getRedirect(
-    _: *Request,
+    this: *Request,
     globalThis: *JSC.JSGlobalObject,
 ) JSC.JSValue {
-    return ZigString.init("follow").toJS(globalThis);
+    return switch (this.redirect) {
+        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
+    };
 }
 pub fn getReferrer(
     this: *Request,
@@ -440,14 +443,14 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
                     var href = bun.JSC.URL.hrefFromString(bun.String.fromBytes(url));
                     if (!href.isEmpty()) {
                         if (href.byteSlice().ptr == url.ptr) {
-                            this.url = bun.String.createLatin1(url[0..href.length()]);
+                            this.url = bun.String.cloneLatin1(url[0..href.length()]);
                             href.deref();
                         } else {
                             this.url = href;
                         }
                     } else {
                         // TODO: what is the right thing to do for invalid URLS?
-                        this.url = bun.String.createUTF8(url);
+                        this.url = bun.String.cloneUTF8(url);
                     }
 
                     return;
@@ -470,7 +473,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
                         req_url,
                     });
                     defer bun.default_allocator.free(temp_url);
-                    this.url = bun.String.createUTF8(temp_url);
+                    this.url = bun.String.cloneUTF8(temp_url);
                 }
 
                 const href = bun.JSC.URL.hrefFromString(this.url);
@@ -487,7 +490,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
         if (comptime Environment.allow_assert) {
             bun.assert(this.sizeOfURL() == req_url.len);
         }
-        this.url = bun.String.createUTF8(req_url);
+        this.url = bun.String.cloneUTF8(req_url);
     }
 }
 
@@ -499,7 +502,7 @@ const Fields = enum {
     // referrerPolicy,
     // mode,
     // credentials,
-    // redirect,
+    redirect,
     // integrity,
     // keepalive,
     signal,
@@ -576,6 +579,11 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
                 if (!fields.contains(.method)) {
                     req.method = request.method;
                     fields.insert(.method);
+                }
+
+                if (!fields.contains(.redirect)) {
+                    req.redirect = request.redirect;
+                    fields.insert(.redirect);
                 }
 
                 if (!fields.contains(.headers)) {
@@ -706,6 +714,14 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
 
             if (globalThis.hasException()) return error.JSError;
         }
+
+        // Extract redirect option
+        if (!fields.contains(.redirect)) {
+            if (try value.getOptionalEnum(globalThis, "redirect", FetchRedirect)) |redirect_value| {
+                req.redirect = redirect_value;
+                fields.insert(.redirect);
+            }
+        }
     }
 
     if (globalThis.hasException()) {
@@ -831,12 +847,18 @@ pub fn ensureFetchHeaders(
     } else {
         // we don't have a request context, so we need to create an empty headers object
         this._headers = FetchHeaders.createEmpty();
+        const content_type = switch (this.body.value) {
+            .Blob => |blob| blob.content_type,
+            .Locked => |locked| if (locked.readable.get(globalThis)) |*readable| switch (readable.ptr) {
+                .Blob => |blob| blob.content_type,
+                else => null,
+            } else null,
+            else => null,
+        };
 
-        if (this.body.value == .Blob) {
-            const content_type = this.body.value.Blob.content_type;
-            if (content_type.len > 0) {
-                this._headers.?.put(.ContentType, content_type, globalThis);
-            }
+        if (content_type) |content_type_| {
+            if (content_type_.len > 0)
+                this._headers.?.put(.ContentType, content_type_, globalThis);
         }
     }
 
@@ -915,6 +937,7 @@ pub fn cloneInto(
         .body = body,
         .url = if (preserve_url) original_url else this.url.dupeRef(),
         .method = this.method,
+        .redirect = this.redirect,
         ._headers = this.cloneHeaders(globalThis),
     };
 
@@ -942,6 +965,7 @@ const MimeType = bun.http.MimeType;
 const JSC = bun.JSC;
 
 const Method = @import("../../http/Method.zig").Method;
+const FetchRedirect = @import("../../http/FetchRedirect.zig").FetchRedirect;
 const FetchHeaders = bun.webcore.FetchHeaders;
 const AbortSignal = JSC.WebCore.AbortSignal;
 const Output = bun.Output;

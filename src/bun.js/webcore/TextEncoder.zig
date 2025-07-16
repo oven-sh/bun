@@ -28,7 +28,7 @@ pub export fn TextEncoder__encode8(
             return globalThis.throwOutOfMemoryValue();
         };
         bun.assert(bytes.len >= slice.len);
-        return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null) catch .zero;
+        return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis) catch .zero;
     }
 }
 
@@ -74,7 +74,7 @@ pub export fn TextEncoder__encode16(
         ) catch {
             return globalThis.toInvalidArguments("Out of memory", .{});
         };
-        return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null) catch .zero;
+        return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis) catch .zero;
     }
 }
 
@@ -120,7 +120,7 @@ pub export fn c(
         ) catch {
             return globalThis.throwOutOfMemoryValue();
         };
-        return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null) catch .zero;
+        return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis) catch .zero;
     }
 }
 

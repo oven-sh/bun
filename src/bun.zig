@@ -254,13 +254,22 @@ pub const stringZ = StringTypes.stringZ;
 pub const string = StringTypes.string;
 pub const CodePoint = StringTypes.CodePoint;
 
-pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.max_path_bytes;
-pub const PathBuffer = [MAX_PATH_BYTES]u8;
-pub const WPathBuffer = [std.os.windows.PATH_MAX_WIDE]u16;
-pub const OSPathChar = if (Environment.isWindows) u16 else u8;
-pub const OSPathSliceZ = [:0]const OSPathChar;
-pub const OSPathSlice = []const OSPathChar;
-pub const OSPathBuffer = if (Environment.isWindows) WPathBuffer else PathBuffer;
+pub const paths = @import("./paths.zig");
+pub const MAX_PATH_BYTES = paths.MAX_PATH_BYTES;
+pub const PathBuffer = paths.PathBuffer;
+pub const PATH_MAX_WIDE = paths.PATH_MAX_WIDE;
+pub const WPathBuffer = paths.WPathBuffer;
+pub const OSPathChar = paths.OSPathChar;
+pub const OSPathSliceZ = paths.OSPathSliceZ;
+pub const OSPathSlice = paths.OSPathSlice;
+pub const OSPathBuffer = paths.OSPathBuffer;
+pub const Path = paths.Path;
+pub const AbsPath = paths.AbsPath;
+pub const RelPath = paths.RelPath;
+pub const EnvPath = paths.EnvPath;
+pub const path_buffer_pool = paths.path_buffer_pool;
+pub const w_path_buffer_pool = paths.w_path_buffer_pool;
+pub const os_path_buffer_pool = paths.os_path_buffer_pool;
 
 pub inline fn cast(comptime To: type, value: anytype) To {
     if (@typeInfo(@TypeOf(value)) == .int) {
@@ -752,14 +761,18 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     }
 }
 
-pub fn openDirForIteration(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
+pub fn openDirForIteration(dir: FD, path_: []const u8) sys.Maybe(FD) {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(.fromStdDir(dir), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
-        return res.stdDir();
-    } else {
-        const fd = try sys.openatA(.fromStdDir(dir), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
-        return fd.stdDir();
+        return sys.openDirAtWindowsA(dir, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true });
     }
+    return sys.openatA(dir, path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0);
+}
+
+pub fn openDirForIterationOSPath(dir: FD, path_: []const OSPathChar) sys.Maybe(FD) {
+    if (comptime Environment.isWindows) {
+        return sys.openDirAtWindows(dir, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true });
+    }
+    return sys.openatA(dir, path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0);
 }
 
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
@@ -1834,7 +1847,9 @@ pub const Loader = bundle_v2.Loader;
 pub const BundleV2 = bundle_v2.BundleV2;
 pub const ParseTask = bundle_v2.ParseTask;
 
-pub const Mutex = @import("./Mutex.zig");
+pub const threading = @import("./threading.zig");
+pub const Mutex = threading.Mutex;
+pub const Futex = threading.Futex;
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 
 pub fn threadlocalAllocator() std.mem.Allocator {
@@ -2712,8 +2727,8 @@ pub fn exitThread() noreturn {
 pub fn deleteAllPoolsForThreadExit() void {
     const pools_to_delete = .{
         JSC.WebCore.ByteListPool,
-        bun.WPathBufferPool,
-        bun.PathBufferPool,
+        bun.w_path_buffer_pool,
+        bun.path_buffer_pool,
         bun.JSC.ConsoleObject.Formatter.Visited.Pool,
         bun.js_parser.StringVoidMap.Pool,
     };
@@ -2766,7 +2781,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
 
 pub const brotli = @import("./brotli.zig");
 
-pub fn iterateDir(dir: std.fs.Dir) DirIterator.Iterator {
+pub fn iterateDir(dir: FD) DirIterator.Iterator {
     return DirIterator.iterate(dir, .u8).iter;
 }
 
@@ -2961,8 +2976,6 @@ pub fn SliceIterator(comptime T: type) type {
         }
     };
 }
-
-pub const Futex = @import("./futex.zig");
 
 // TODO: migrate
 pub const ArenaAllocator = std.heap.ArenaAllocator;
@@ -3642,6 +3655,15 @@ pub inline fn clear(val: anytype, allocator: std.mem.Allocator) void {
     }
 }
 
+pub inline fn move(val: anytype) switch (@typeInfo(@TypeOf(val))) {
+    .pointer => |p| p.child,
+    else => @compileError("unexpected move type"),
+} {
+    const tmp = val.*;
+    @constCast(val).* = undefined;
+    return tmp;
+}
+
 pub inline fn wrappingNegation(val: anytype) @TypeOf(val) {
     return 0 -% val;
 }
@@ -3712,37 +3734,6 @@ pub noinline fn throwStackOverflow() StackOverflow!void {
 }
 const StackOverflow = error{StackOverflow};
 
-// This pool exists because on Windows, each path buffer costs 64 KB.
-// This makes the stack memory usage very unpredictable, which means we can't really know how much stack space we have left.
-// This pool is a workaround to make the stack memory usage more predictable.
-// We keep up to 4 path buffers alive per thread at a time.
-pub fn PathBufferPoolT(comptime T: type) type {
-    return struct {
-        const Pool = ObjectPool(T, null, true, 4);
-
-        pub fn get() *T {
-            // use a threadlocal allocator so mimalloc deletes it on thread deinit.
-            return &Pool.get(bun.threadlocalAllocator()).data;
-        }
-
-        pub fn put(buffer: *T) void {
-            var node: *Pool.Node = @alignCast(@fieldParentPtr("data", buffer));
-            node.release();
-        }
-
-        pub fn deleteAll() void {
-            Pool.deleteAll();
-        }
-    };
-}
-
-pub const PathBufferPool = PathBufferPoolT(bun.PathBuffer);
-pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPathBuffer) else struct {
-    // So it can be used in code that deletes all the pools.
-    pub fn deleteAll() void {}
-};
-pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;
-
 pub const S3 = @import("./s3/client.zig");
 pub const ptr = @import("ptr.zig");
 
@@ -3764,13 +3755,12 @@ pub const highway = @import("./highway.zig");
 
 pub const MemoryReportingAllocator = @import("allocators/MemoryReportingAllocator.zig");
 
-pub fn move(dest: []u8, src: []const u8) void {
-    if (comptime Environment.allow_assert) {
-        if (src.len != dest.len) {
-            bun.Output.panic("Move: src.len != dest.len, {d} != {d}", .{ src.len, dest.len });
-        }
-    }
-    _ = bun.c.memmove(dest.ptr, src.ptr, src.len);
-}
-
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
+
+pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item))) bool {
+    const T = @TypeOf(item);
+    return switch (T) {
+        u8 => strings.containsChar(list.items, item),
+        else => std.mem.indexOfScalar(T, list.items, item) != null,
+    };
+}

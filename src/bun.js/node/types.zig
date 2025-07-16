@@ -173,7 +173,7 @@ pub const StringOrBuffer = union(enum) {
         return result;
     }
 
-    pub fn toJS(this: *StringOrBuffer, ctx: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: *StringOrBuffer, ctx: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return switch (this.*) {
             inline .threadsafe_string, .string => |*str| {
                 return str.transferToJS(ctx);
@@ -569,8 +569,8 @@ pub const PathLike = union(enum) {
             if (std.fs.path.isAbsolute(sliced)) {
                 if (sliced.len > 2 and bun.path.isDriveLetter(sliced[0]) and sliced[1] == ':' and bun.path.isSepAny(sliced[2])) {
                     // Add the long path syntax. This affects most of node:fs
-                    const drive_resolve_buf = bun.PathBufferPool.get();
-                    defer bun.PathBufferPool.put(drive_resolve_buf);
+                    const drive_resolve_buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(drive_resolve_buf);
                     const rest = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(drive_resolve_buf, sliced) catch @panic("Error while resolving path.");
                     buf[0..4].* = bun.windows.long_path_prefix_u8;
                     // When long path syntax is used, the entire string should be normalized
@@ -619,8 +619,8 @@ pub const PathLike = union(enum) {
     pub fn osPathKernel32(this: PathLike, buf: *bun.PathBuffer) callconv(bun.callconv_inline) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             const s = this.slice();
-            const b = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(b);
+            const b = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(b);
             if (s.len > 0 and bun.path.isSepAny(s[0])) {
                 const resolve = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBuf(buf, s) catch @panic("Error while resolving path.");
                 const normal = path_handler.normalizeBuf(resolve, b, .windows);

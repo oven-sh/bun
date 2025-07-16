@@ -203,7 +203,7 @@ const FailReason = enum {
                     .InterpreterNotFoundBun =>
                     \\Please run the following command, or double check %PATH% is right.
                     \\
-                    \\    powershell -c "irm bun.sh/install.ps1|iex"
+                    \\    powershell -c "irm bun.com/install.ps1|iex"
                     \\
                     \\
                     ,

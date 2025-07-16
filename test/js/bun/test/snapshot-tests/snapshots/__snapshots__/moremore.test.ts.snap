@@ -1,4 +1,4 @@
-// Jest Snapshot v1, https://goo.gl/fbAQLP
+// Jest Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`test snapshots with Boolean and Number 1`] = `1`;
 

@@ -278,7 +278,7 @@ pub const RESPValue = union(RESPType) {
                 var js_array = try JSC.JSValue.createEmptyArray(globalObject, array.len);
                 for (array, 0..) |*item, i| {
                     const js_item = try item.toJSWithOptions(globalObject, options);
-                    js_array.putIndex(globalObject, @intCast(i), js_item);
+                    try js_array.putIndex(globalObject, @intCast(i), js_item);
                 }
                 return js_array;
             },
@@ -303,7 +303,7 @@ pub const RESPValue = union(RESPType) {
                 var js_array = try JSC.JSValue.createEmptyArray(globalObject, set.len);
                 for (set, 0..) |*item, i| {
                     const js_item = try item.toJSWithOptions(globalObject, options);
-                    js_array.putIndex(globalObject, @intCast(i), js_item);
+                    try js_array.putIndex(globalObject, @intCast(i), js_item);
                 }
                 return js_array;
             },
@@ -316,14 +316,14 @@ pub const RESPValue = union(RESPType) {
                 var js_obj = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
 
                 // Add the push type
-                const kind_str = bun.String.createUTF8ForJS(globalObject, push.kind);
+                const kind_str = try bun.String.createUTF8ForJS(globalObject, push.kind);
                 js_obj.put(globalObject, "type", kind_str);
 
                 // Add the data as an array
                 var data_array = try JSC.JSValue.createEmptyArray(globalObject, push.data.len);
                 for (push.data, 0..) |*item, i| {
                     const js_item = try item.toJSWithOptions(globalObject, options);
-                    data_array.putIndex(globalObject, @intCast(i), js_item);
+                    try data_array.putIndex(globalObject, @intCast(i), js_item);
                 }
                 js_obj.put(globalObject, "data", data_array);
 

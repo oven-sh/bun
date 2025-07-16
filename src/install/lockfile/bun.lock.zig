@@ -1908,7 +1908,7 @@ pub fn parseIntoBinaryLockfile(
                     return error.InvalidPackageInfo;
                 };
 
-                if (!dep.behavior.isWorkspaceOnly() and
+                if (!dep.behavior.isWorkspace() and
                     (try seen_deps.getOrPut(allocator, dep.name.slice(lockfile.buffers.string_bytes.items))).found_existing)
                 {
                     lockfile.buffers.resolutions.items[dep_id] = res_id;
@@ -1934,8 +1934,6 @@ pub fn parseIntoBinaryLockfile(
                     const dep_id: DependencyID = @intCast(_dep_id);
                     const dep = &lockfile.buffers.dependencies.items[dep_id];
                     const dep_name = dep.name.slice(lockfile.buffers.string_bytes.items);
-
-                    dep.behavior.workspace = true;
 
                     const workspace_node_modules = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ workspace_name, dep_name }) catch {
                         try log.addErrorFmt(source, root_pkg_exr.loc, allocator, "Workspace and dependency name too long: '{s}/{s}'", .{ workspace_name, dep_name });
@@ -2031,7 +2029,7 @@ fn dependencyResolutionFailure(dep: *const Dependency, pkg_path: ?string, alloca
         "optional"
     else if (dep.behavior.peer)
         "peer"
-    else if (dep.behavior.isWorkspaceOnly())
+    else if (dep.behavior.workspace)
         "workspace"
     else
         "prod";

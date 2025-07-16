@@ -571,7 +571,7 @@ pub fn getWorkspacePkgIfWorkspaceDep(this: *const Lockfile, id: DependencyID) Pa
 /// Does this tree id belong to a workspace (including workspace root)?
 /// TODO(dylan-conway) fix!
 pub fn isWorkspaceTreeId(this: *const Lockfile, id: Tree.Id) bool {
-    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspaceOnly();
+    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspace();
 }
 
 /// Returns the package id of the workspace the install is taking place in.

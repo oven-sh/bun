@@ -839,7 +839,7 @@ pub const Package = extern struct {
 
                     if (id_mapping) |mapping| {
                         const update_mapping = update_mapping: {
-                            if (!is_root or !from_dep.behavior.isWorkspaceOnly()) {
+                            if (!is_root or !from_dep.behavior.isWorkspace()) {
                                 break :update_mapping true;
                             }
 
@@ -987,7 +987,6 @@ pub const Package = extern struct {
         comptime features: Features,
         package_dependencies: []Dependency,
         dependencies_count: u32,
-        in_workspace: bool,
         comptime tag: ?Dependency.Version.Tag,
         workspace_ver: ?Semver.Version,
         external_alias: ExternalString,
@@ -1105,9 +1104,9 @@ pub const Package = extern struct {
                     } else {
                         // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
                         for (package_dependencies[0..dependencies_count]) |*dep| {
-                            if (dep.name_hash == name_hash and dep.behavior.isWorkspaceOnly()) {
+                            if (dep.name_hash == name_hash and dep.behavior.isWorkspace()) {
                                 dep.* = .{
-                                    .behavior = if (in_workspace) group.behavior.add(.workspace) else group.behavior,
+                                    .behavior = group.behavior,
                                     .name = external_alias.value,
                                     .name_hash = external_alias.hash,
                                     .version = dependency_version,
@@ -1219,7 +1218,7 @@ pub const Package = extern struct {
         }
 
         const this_dep = Dependency{
-            .behavior = if (in_workspace) group.behavior.add(.workspace) else group.behavior,
+            .behavior = group.behavior,
             .name = external_alias.value,
             .name_hash = external_alias.hash,
             .version = dependency_version,
@@ -1757,7 +1756,6 @@ pub const Package = extern struct {
         }
 
         total_dependencies_count = 0;
-        const in_workspace = lockfile.workspace_paths.contains(package.name_hash);
 
         inline for (dependency_groups) |group| {
             if (group.behavior.isWorkspace()) {
@@ -1846,7 +1844,6 @@ pub const Package = extern struct {
                         features,
                         package_dependencies,
                         total_dependencies_count,
-                        in_workspace,
                         .workspace,
                         workspace_version,
                         external_name,
@@ -1889,7 +1886,6 @@ pub const Package = extern struct {
                                     features,
                                     package_dependencies,
                                     total_dependencies_count,
-                                    in_workspace,
                                     null,
                                     null,
                                     external_name,

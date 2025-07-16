@@ -167,7 +167,7 @@ pub fn toExternal(this: Dependency) External {
 
 // Needed when a dependency uses workspace: protocol and isn't
 // marked with workspace behavior.
-pub fn isWorkspaceDep(this: *const Dependency) bool {
+pub fn isWorkspace(this: *const Dependency) bool {
     return this.behavior.isWorkspace() or this.version.tag == .workspace;
 }
 
@@ -1376,10 +1376,6 @@ pub const Behavior = packed struct(u8) {
         return this.bundled;
     }
 
-    pub inline fn isWorkspaceOnly(this: Behavior) bool {
-        return this.workspace and !this.dev and !this.prod and !this.optional and !this.peer;
-    }
-
     pub inline fn eq(lhs: Behavior, rhs: Behavior) bool {
         return @as(u8, @bitCast(lhs)) == @as(u8, @bitCast(rhs));
     }
@@ -1405,9 +1401,9 @@ pub const Behavior = packed struct(u8) {
             return .eq;
         }
 
-        if (lhs.isWorkspaceOnly() != rhs.isWorkspaceOnly()) {
-            // ensure isWorkspaceOnly deps are placed at the beginning
-            return if (lhs.isWorkspaceOnly())
+        if (lhs.isWorkspace() != rhs.isWorkspace()) {
+            // ensure workspaces are placed at the beginning
+            return if (lhs.isWorkspace())
                 .lt
             else
                 .gt;
@@ -1441,13 +1437,6 @@ pub const Behavior = packed struct(u8) {
                 .gt;
         }
 
-        if (lhs.isWorkspace() != rhs.isWorkspace()) {
-            return if (lhs.isWorkspace())
-                .gt
-            else
-                .lt;
-        }
-
         return .eq;
     }
 
@@ -1460,7 +1449,7 @@ pub const Behavior = packed struct(u8) {
             (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
-            (features.workspaces and this.isWorkspaceOnly());
+            (features.workspaces and this.isWorkspace());
     }
 
     comptime {

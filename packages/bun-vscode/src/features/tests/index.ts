@@ -14,7 +14,7 @@ export async function registerTests(context: vscode.ExtensionContext) {
   }
 
   try {
-    const controller = vscode.tests.createTestController("bun-tests", "Bun Tests");
+    const controller = vscode.tests.createTestController("bun", "Bun Tests");
     context.subscriptions.push(controller);
 
     const bunTestController = new BunTestController(controller, workspaceFolder);

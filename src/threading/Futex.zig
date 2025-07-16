@@ -1,4 +1,6 @@
 //! This is a copy-pasta of std.Thread.Futex, except without `unreachable`
+//! Synchronized with std as of Zig 0.14.1
+//!
 //! A mechanism used to block (`wait`) and unblock (`wake`) threads using a
 //! 32bit memory address as hints.
 //!
@@ -87,7 +89,8 @@ const UnsupportedImpl = struct {
         return unsupported(.{ ptr, max_waiters });
     }
 
-    fn unsupported(_: anytype) noreturn {
+    fn unsupported(unused: anytype) noreturn {
+        _ = unused;
         @compileError("Unsupported operating system " ++ @tagName(builtin.target.os.tag));
     }
 };
@@ -161,7 +164,10 @@ const DarwinImpl = struct {
         var timeout_overflowed = false;
 
         const addr: *const anyopaque = ptr;
-        const flags: c.UL = .{ .op = .COMPARE_AND_WAIT, .NO_ERRNO = true };
+        const flags: c.UL = .{
+            .op = .COMPARE_AND_WAIT,
+            .NO_ERRNO = true,
+        };
         const status = blk: {
             if (supports_ulock_wait2) {
                 break :blk c.__ulock_wait2(flags, addr, expect, timeout_ns, 0);
@@ -193,8 +199,11 @@ const DarwinImpl = struct {
     }
 
     fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
-        var flags: c.UL = .{ .op = .COMPARE_AND_WAIT, .NO_ERRNO = true };
-        if (max_waiters > 1) flags.WAKE_ALL = true;
+        const flags: c.UL = .{
+            .op = .COMPARE_AND_WAIT,
+            .NO_ERRNO = true,
+            .WAKE_ALL = max_waiters > 1,
+        };
 
         while (true) {
             const addr: *const anyopaque = ptr;
@@ -215,13 +224,11 @@ const DarwinImpl = struct {
 // https://man7.org/linux/man-pages/man2/futex.2.html
 const LinuxImpl = struct {
     fn wait(ptr: *const atomic.Value(u32), expect: u32, timeout: ?u64) error{Timeout}!void {
-        const ts: linux.timespec = if (timeout) |timeout_ns|
-            .{
-                .sec = @intCast(timeout_ns / std.time.ns_per_s),
-                .nsec = @intCast(timeout_ns % std.time.ns_per_s),
-            }
-        else
-            undefined;
+        var ts: linux.timespec = undefined;
+        if (timeout) |timeout_ns| {
+            ts.sec = @as(@TypeOf(ts.sec), @intCast(timeout_ns / std.time.ns_per_s));
+            ts.nsec = @as(@TypeOf(ts.nsec), @intCast(timeout_ns % std.time.ns_per_s));
+        }
 
         const rc = linux.futex_wait(
             @as(*const i32, @ptrCast(&ptr.raw)),
@@ -266,7 +273,7 @@ const WasmImpl = struct {
             @compileError("WASI target missing cpu feature 'atomics'");
         }
         const to: i64 = if (timeout) |to| @intCast(to) else -1;
-        const result = asm (
+        const result = asm volatile (
             \\local.get %[ptr]
             \\local.get %[expected]
             \\local.get %[timeout]
@@ -290,7 +297,7 @@ const WasmImpl = struct {
             @compileError("WASI target missing cpu feature 'atomics'");
         }
         assert(max_waiters != 0);
-        const woken_count = asm (
+        const woken_count = asm volatile (
             \\local.get %[ptr]
             \\local.get %[waiters]
             \\memory.atomic.notify 0
@@ -300,5 +307,53 @@ const WasmImpl = struct {
               [waiters] "r" (max_waiters),
         );
         _ = woken_count; // can be 0 when linker flag 'shared-memory' is not enabled
+    }
+};
+
+/// Deadline is used to wait efficiently for a pointer's value to change using Futex and a fixed timeout.
+///
+/// Futex's timedWait() api uses a relative duration which suffers from over-waiting
+/// when used in a loop which is often required due to the possibility of spurious wakeups.
+///
+/// Deadline instead converts the relative timeout to an absolute one so that multiple calls
+/// to Futex timedWait() can block for and report more accurate error.Timeouts.
+pub const Deadline = struct {
+    timeout: ?u64,
+    started: std.time.Timer,
+
+    /// Create the deadline to expire after the given amount of time in nanoseconds passes.
+    /// Pass in `null` to have the deadline call `Futex.wait()` and never expire.
+    pub fn init(expires_in_ns: ?u64) Deadline {
+        var deadline: Deadline = undefined;
+        deadline.timeout = expires_in_ns;
+
+        // std.time.Timer is required to be supported for somewhat accurate reportings of error.Timeout.
+        if (deadline.timeout != null) {
+            deadline.started = std.time.Timer.start() catch unreachable;
+        }
+
+        return deadline;
+    }
+
+    /// Wait until either:
+    /// - the `ptr`'s value changes from `expect`.
+    /// - `Futex.wake()` is called on the `ptr`.
+    /// - A spurious wake occurs.
+    /// - The deadline expires; In which case `error.Timeout` is returned.
+    pub fn wait(self: *Deadline, ptr: *const atomic.Value(u32), expect: u32) error{Timeout}!void {
+        @branchHint(.cold);
+
+        // Check if we actually have a timeout to wait until.
+        // If not just wait "forever".
+        const timeout_ns = self.timeout orelse {
+            return Futex.waitForever(ptr, expect);
+        };
+
+        // Get how much time has passed since we started waiting
+        // then subtract that from the init() timeout to get how much longer to wait.
+        // Use overflow to detect when we've been waiting longer than the init() timeout.
+        const elapsed_ns = self.started.read();
+        const until_timeout_ns = std.math.sub(u64, timeout_ns, elapsed_ns) catch 0;
+        return Futex.wait(ptr, expect, until_timeout_ns);
     }
 };

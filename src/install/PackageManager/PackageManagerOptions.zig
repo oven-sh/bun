@@ -103,6 +103,7 @@ pub const LogLevel = enum {
     default,
     verbose,
     silent,
+    quiet,
     default_no_progress,
     verbose_no_progress,
 
@@ -536,6 +537,9 @@ pub fn load(
             PackageManager.verbose_install = true;
         } else if (cli.silent) {
             this.log_level = .silent;
+            PackageManager.verbose_install = false;
+        } else if (cli.quiet) {
+            this.log_level = .quiet;
             PackageManager.verbose_install = false;
         } else {
             this.log_level = if (disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;

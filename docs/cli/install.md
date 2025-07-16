@@ -96,6 +96,7 @@ Bun supports "isolated installs" - a modern alternative to traditional hoisted i
 ```
 
 **Key benefits:**
+
 - **🚫 Eliminates phantom dependencies**: Each package can only access its explicitly declared dependencies
 - **🚀 Up to 8x faster on Windows**: Optimized file system operations and parallelization
 - **⚡ Parallel installation**: Dependencies install concurrently when their requirements are met

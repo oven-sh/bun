@@ -1176,10 +1176,7 @@ pub const JSFrameworkRouter = struct {
                     }),
                 );
             }
-            return global.throwValue(global.createAggregateErrorWithArray(
-                bun.String.static("Errors scanning routes"),
-                arr,
-            ));
+            return global.throwValue(try global.createAggregateErrorWithArray(.static("Errors scanning routes"), arr));
         }
 
         return jsfr;
@@ -1201,7 +1198,7 @@ pub const JSFrameworkRouter = struct {
                 .params = if (params_out.params.len > 0) params: {
                     const obj = JSValue.createEmptyObject(global, params_out.params.len);
                     for (params_out.params.slice()) |param| {
-                        const value = bun.String.createUTF8(param.value);
+                        const value = bun.String.cloneUTF8(param.value);
                         defer value.deref();
                         obj.put(global, param.key, value.toJS(global));
                     }
@@ -1307,7 +1304,7 @@ pub const JSFrameworkRouter = struct {
         defer rendered.deinit();
         var it = pattern.iterate();
         while (it.next()) |part| try part.toStringForInternalUse(rendered.writer());
-        var str = bun.String.createUTF8(rendered.items);
+        var str = bun.String.cloneUTF8(rendered.items);
         return str.transferToJS(global);
     }
 
@@ -1315,12 +1312,12 @@ pub const JSFrameworkRouter = struct {
         var rendered = std.ArrayList(u8).init(temp_allocator);
         defer rendered.deinit();
         try part.toStringForInternalUse(rendered.writer());
-        var str = bun.String.createUTF8(rendered.items);
+        var str = bun.String.cloneUTF8(rendered.items);
         return str.transferToJS(global);
     }
 
     pub fn getFileIdForRouter(jsfr: *JSFrameworkRouter, abs_path: []const u8, _: Route.Index, _: Route.FileKind) !OpaqueFileId {
-        try jsfr.files.append(bun.default_allocator, bun.String.createUTF8(abs_path));
+        try jsfr.files.append(bun.default_allocator, bun.String.cloneUTF8(abs_path));
         return OpaqueFileId.init(@intCast(jsfr.files.items.len - 1));
     }
 

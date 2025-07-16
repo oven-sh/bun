@@ -417,11 +417,11 @@ pub fn addressToString(address: *const std.net.Address) bun.OOM!bun.String {
             // TODO: this is a hack, fix it
             // This removes [.*]:port
             //              ^  ^^^^^^
-            return String.createLatin1(out[1 .. out.len - 1 - std.fmt.count("{d}", .{address.in6.getPort()}) - 1]);
+            return String.cloneLatin1(out[1 .. out.len - 1 - std.fmt.count("{d}", .{address.in6.getPort()}) - 1]);
         },
         std.posix.AF.UNIX => {
             if (comptime std.net.has_unix_sockets) {
-                return String.createLatin1(&address.un.path);
+                return String.cloneLatin1(&address.un.path);
             }
 
             return String.empty;

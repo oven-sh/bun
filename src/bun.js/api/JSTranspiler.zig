@@ -167,7 +167,7 @@ pub const TransformTask = struct {
         if (printed > 0) {
             buffer_writer = printer.ctx;
             buffer_writer.buffer.list.items = buffer_writer.written;
-            this.output_code = bun.String.createUTF8(buffer_writer.written);
+            this.output_code = bun.String.cloneUTF8(buffer_writer.written);
         } else {
             this.output_code = bun.String.empty;
         }
@@ -188,7 +188,7 @@ pub const TransformTask = struct {
                     }
                 }
 
-                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed");
+                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed") catch return; // TODO: properly propagate exception upwards
             };
 
             promise.reject(this.global, error_value);
@@ -1043,7 +1043,7 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
     });
     var i: usize = 0;
     while (named_exports_iter.next()) |entry| {
-        names[i] = bun.String.createUTF8(entry.key_ptr.*);
+        names[i] = bun.String.cloneUTF8(entry.key_ptr.*);
         i += 1;
     }
     return bun.String.toJSArray(global, names);

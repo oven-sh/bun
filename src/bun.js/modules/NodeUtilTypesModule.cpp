@@ -125,9 +125,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
         // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/doc/api/util.md#L2923
         // util.isError is deprecated and removed in node 23
         PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        if (object->getPropertySlot(globalObject,
-                vm.propertyNames->toStringTagSymbol, slot)) {
-            EXCEPTION_ASSERT(!scope.exception());
+        bool has = object->getPropertySlot(globalObject, vm.propertyNames->toStringTagSymbol, slot);
+        scope.assertNoException();
+        if (has) {
             if (slot.isValue()) {
                 JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
                 if (value.isString()) {
@@ -181,7 +181,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
     GET_FIRST_VALUE
 
     auto* function = jsDynamicCast<JSFunction*>(value);
-    if (!function)
+    if (!function || function->isHostFunction())
         return JSValue::encode(jsBoolean(false));
 
     auto* executable = function->jsExecutable();
@@ -207,7 +207,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorFunction,
 {
     GET_FIRST_VALUE
     auto* function = jsDynamicCast<JSFunction*>(value);
-    if (!function)
+    if (!function || function->isHostFunction())
         return JSValue::encode(jsBoolean(false));
 
     auto* executable = function->jsExecutable();

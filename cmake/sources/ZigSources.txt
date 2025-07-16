@@ -538,6 +538,7 @@ src/http/HTTPThread.zig
 src/http/InitError.zig
 src/http/InternalState.zig
 src/http/Method.zig
+src/http/mime_type_list_enum.zig
 src/http/MimeType.zig
 src/http/ProxyTunnel.zig
 src/http/SendFile.zig

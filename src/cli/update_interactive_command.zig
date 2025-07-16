@@ -589,6 +589,10 @@ pub const UpdateInteractiveCommand = struct {
         var max_target_len: usize = "Target".len;
         var max_latest_len: usize = "Latest".len;
 
+        // Set reasonable limits to prevent excessive column widths
+        const MAX_NAME_WIDTH = 60;
+        const MAX_VERSION_WIDTH = 20;
+
         for (packages) |pkg| {
             // Include dev tag length in max calculation
             var dev_tag_len: usize = 0;
@@ -599,17 +603,17 @@ pub const UpdateInteractiveCommand = struct {
             } else if (pkg.behavior.optional) {
                 dev_tag_len = 9; // " optional"
             }
-            const name_len = pkg.name.len + dev_tag_len;
+            const name_len = @min(pkg.name.len + dev_tag_len, MAX_NAME_WIDTH);
             max_name_len = @max(max_name_len, name_len);
 
             // For current version - it's always displayed without formatting
-            max_current_len = @max(max_current_len, pkg.current_version.len);
+            max_current_len = @max(max_current_len, @min(pkg.current_version.len, MAX_VERSION_WIDTH));
 
             // For max width calculation, just use the plain version string length
             // The diffFmt adds ANSI codes but doesn't change the visible width of the version
             // Version strings are always ASCII so we can use string length directly
-            max_target_len = @max(max_target_len, pkg.update_version.len);
-            max_latest_len = @max(max_latest_len, pkg.latest_version.len);
+            max_target_len = @max(max_target_len, @min(pkg.update_version.len, MAX_VERSION_WIDTH));
+            max_latest_len = @max(max_latest_len, @min(pkg.latest_version.len, MAX_VERSION_WIDTH));
         }
 
         var state = MultiSelectState{
@@ -744,7 +748,7 @@ pub const UpdateInteractiveCommand = struct {
                     // So we need to pad: 4 (cursor/space) + 2 (checkbox+space) + max_name_len - dep_type_text_len
                     // Use safe subtraction to prevent underflow when dep_type_text_len is longer than available space
                     const base_padding = 4 + 2 + state.max_name_len;
-                    const padding_to_current = if (dep_type_text_len >= base_padding) 0 else base_padding - dep_type_text_len;
+                    const padding_to_current = if (dep_type_text_len >= base_padding) 1 else base_padding - dep_type_text_len;
                     while (j < padding_to_current) : (j += 1) {
                         Output.print(" ", .{});
                     }
@@ -768,8 +772,17 @@ pub const UpdateInteractiveCommand = struct {
                 const is_cursor = i == state.cursor;
                 const checkbox = if (selected) "■" else "□";
 
-                // Calculate padding
-                const name_padding = state.max_name_len - pkg.name.len;
+                // Calculate padding - account for dev/peer/optional tags
+                var dev_tag_len: usize = 0;
+                if (pkg.behavior.dev) {
+                    dev_tag_len = 4; // " dev"
+                } else if (pkg.behavior.peer) {
+                    dev_tag_len = 5; // " peer"
+                } else if (pkg.behavior.optional) {
+                    dev_tag_len = 9; // " optional"
+                }
+                const total_name_len = pkg.name.len + dev_tag_len;
+                const name_padding = if (total_name_len >= state.max_name_len) 0 else state.max_name_len - total_name_len;
 
                 // Determine version change severity for checkbox color
                 const current_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.current_version, pkg.current_version));
@@ -856,7 +869,14 @@ pub const UpdateInteractiveCommand = struct {
                     "";
                 defer if (package_url.len > 0) bun.default_allocator.free(package_url);
 
-                const hyperlink = TerminalHyperlink.new(package_url, pkg.name, package_url.len > 0);
+                // Truncate package name if it's too long
+                const display_name = if (pkg.name.len > 60) 
+                    try std.fmt.allocPrint(bun.default_allocator, "{s}...", .{pkg.name[0..57]})
+                else
+                    pkg.name;
+                defer if (display_name.ptr != pkg.name.ptr) bun.default_allocator.free(display_name);
+
+                const hyperlink = TerminalHyperlink.new(package_url, display_name, package_url.len > 0);
 
                 if (selected) {
                     if (strings.eqlComptime(checkbox_color, "red")) {
@@ -870,17 +890,33 @@ pub const UpdateInteractiveCommand = struct {
                     Output.pretty("<r>{}<r>", .{hyperlink});
                 }
 
+                // Print dev/peer/optional tag if applicable
+                if (pkg.behavior.dev) {
+                    Output.pretty("<r><d> dev<r>", .{});
+                } else if (pkg.behavior.peer) {
+                    Output.pretty("<r><d> peer<r>", .{});
+                } else if (pkg.behavior.optional) {
+                    Output.pretty("<r><d> optional<r>", .{});
+                }
+
                 // Print padding after name
                 var j: usize = 0;
                 while (j < name_padding + 2) : (j += 1) {
                     Output.print(" ", .{});
                 }
 
-                // Current version
-                Output.pretty("<r>{s}<r>", .{pkg.current_version});
+                // Current version - truncate if too long
+                const display_current = if (pkg.current_version.len > 20)
+                    try std.fmt.allocPrint(bun.default_allocator, "{s}...", .{pkg.current_version[0..17]})
+                else
+                    pkg.current_version;
+                defer if (display_current.ptr != pkg.current_version.ptr) bun.default_allocator.free(display_current);
+                
+                Output.pretty("<r>{s}<r>", .{display_current});
 
                 // Print padding after current version
-                const current_padding = state.max_current_len - pkg.current_version.len;
+                const current_display_len = if (pkg.current_version.len > 20) 20 else pkg.current_version.len;
+                const current_padding = if (current_display_len >= state.max_current_len) 0 else state.max_current_len - current_display_len;
                 j = 0;
                 while (j < current_padding + 2) : (j += 1) {
                     Output.print(" ", .{});
@@ -930,7 +966,7 @@ pub const UpdateInteractiveCommand = struct {
                     }
                 }
 
-                const target_padding = state.max_update_len - target_width;
+                const target_padding = if (target_width >= state.max_update_len) 0 else state.max_update_len - target_width;
                 j = 0;
                 while (j < target_padding + 2) : (j += 1) {
                     Output.print(" ", .{});

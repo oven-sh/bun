@@ -486,7 +486,7 @@ it("should work when moving workspace packages", async () => {
 
   await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
 
-  await Bun.$ /* sh */ `
+  await Bun.$/* sh */ `
   mkdir config
 
   # change workspaces from "packages/*" to "config/*"
@@ -558,7 +558,7 @@ it("should work when renaming a single workspace package", async () => {
 
   await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
 
-  await Bun.$ /* sh */ `
+  await Bun.$/* sh */ `
   echo ${JSON.stringify({
     "name": "my-workspace",
     version: "0.0.1",
@@ -1155,8 +1155,8 @@ it("should handle installing the same peerDependency with different versions", a
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ peer@0.0.2",
     "+ boba@0.0.2",
+    "+ peer@0.0.2",
     "",
     "2 packages installed",
   ]);

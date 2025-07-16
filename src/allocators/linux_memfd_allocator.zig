@@ -184,4 +184,8 @@ pub const LinuxMemFdAllocator = struct {
             },
         }
     }
+
+    pub fn isInstance(allocator_: std.mem.Allocator) bool {
+        return allocator_.vtable == AllocatorInterface.VTable;
+    }
 };

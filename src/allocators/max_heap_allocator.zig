@@ -50,4 +50,8 @@ pub const MaxHeapAllocator = struct {
             .vtable = &vtable,
         };
     }
+
+    pub fn isInstance(allocator: std.mem.Allocator) bool {
+        return allocator.vtable == &vtable;
+    }
 };

@@ -2,7 +2,7 @@ const std = @import("std");
 const Environment = @import("./env.zig");
 const strings = @import("./string_immutable.zig");
 const bun = @import("bun");
-const DebugAllocPtr = @import("./debug.zig").AllocPtr;
+const CheckedAllocPtr = @import("./safety.zig").AllocPtr;
 
 /// This is like ArrayList except it stores the length and capacity as u32
 /// In practice, it is very unusual to have lengths above 4 GB
@@ -12,7 +12,7 @@ pub fn BabyList(comptime Type: type) type {
         ptr: [*]Type = &[_]Type{},
         len: u32 = 0,
         cap: u32 = 0,
-        alloc_ptr: DebugAllocPtr = .{},
+        alloc_ptr: CheckedAllocPtr = .{},
 
         pub const Elem = Type;
         pub fn parse(input: *bun.css.Parser) bun.css.Result(ListType) {
@@ -183,7 +183,7 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn initCapacity(allocator: std.mem.Allocator, len: usize) std.mem.Allocator.Error!ListType {
             var this = initWithBuffer(try allocator.alloc(Type, len));
-            this.alloc_ptr.set(allocator.ptr);
+            this.alloc_ptr.set(allocator);
             return this;
         }
 
@@ -232,7 +232,7 @@ pub fn BabyList(comptime Type: type) type {
                 .ptr = allocated.ptr,
                 .len = @as(u32, @truncate(allocated.len)),
                 .cap = @as(u32, @truncate(allocated.len)),
-                .alloc_ptr = .init(allocator.ptr),
+                .alloc_ptr = .init(allocator),
             };
         }
 
@@ -263,13 +263,13 @@ pub fn BabyList(comptime Type: type) type {
 
         /// This is like `listManaged`, but it also sets `alloc_ptr` for debugging.
         fn makeListManaged(this: *ListType, allocator: std.mem.Allocator) std.ArrayList(Type) {
-            this.alloc_ptr.set(allocator.ptr);
+            this.alloc_ptr.set(allocator);
             var list_ = this.list();
             return list_.toManaged(allocator);
         }
 
         pub fn listManaged(this: ListType, allocator: std.mem.Allocator) std.ArrayList(Type) {
-            this.alloc_ptr.assertEq(allocator.ptr);
+            this.alloc_ptr.assertEq(allocator);
             var list_ = this.list();
             return list_.toManaged(allocator);
         }
@@ -303,7 +303,7 @@ pub fn BabyList(comptime Type: type) type {
                 .ptr = @as([*]Type, @ptrCast(items.ptr)),
                 .len = 1,
                 .cap = 1,
-                .alloc_ptr = .init(allocator.ptr),
+                .alloc_ptr = .init(allocator),
             };
         }
 

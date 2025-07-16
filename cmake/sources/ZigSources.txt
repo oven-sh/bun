@@ -460,7 +460,6 @@ src/css/values/time.zig
 src/css/values/url.zig
 src/css/values/values.zig
 src/darwin.zig
-src/debug.zig
 src/defines-table.zig
 src/defines.zig
 src/deps/boringssl.translated.zig
@@ -681,6 +680,7 @@ src/s3/multipart_options.zig
 src/s3/multipart.zig
 src/s3/simple_request.zig
 src/s3/storage_class.zig
+src/safety.zig
 src/semver.zig
 src/semver/ExternalString.zig
 src/semver/SemverObject.zig

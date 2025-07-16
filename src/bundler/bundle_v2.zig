@@ -4109,6 +4109,12 @@ const ExternalFreeFunctionAllocator = struct {
     }
 };
 
+/// Returns true if `allocator` definitely has a valid `.ptr`.
+/// May return false even if `.ptr` is valid.
+pub fn allocatorHasPointer(allocator: std.mem.Allocator) bool {
+    return allocator.vtable == &ExternalFreeFunctionAllocator.vtable;
+}
+
 const Transpiler = bun.Transpiler;
 const bun = @import("bun");
 const string = bun.string;

@@ -1,15 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const MutableString = bun.MutableString;
-const Output = bun.Output;
-const default_allocator = bun.default_allocator;
-const string = bun.string;
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ConsoleObject = JSC.ConsoleObject;
-const DiffMatchPatch = @import("../../deps/diffz/DiffMatchPatch.zig");
-
 pub const DiffFormatter = struct {
     received_string: ?string = null,
     expected_string: ?string = null,
@@ -23,40 +11,7 @@ pub const DiffFormatter = struct {
             const received = this.received_string.?;
             const expected = this.expected_string.?;
 
-            var dmp = DiffMatchPatch.default;
-            dmp.diff_timeout = 200;
-            var diffs = try dmp.diff(default_allocator, received, expected, false);
-            defer diffs.deinit(default_allocator);
-
-            const equal_fmt = "<d> {s}<r>";
-            const delete_fmt = "<red>-{s}<r>";
-            const insert_fmt = "<green>+{s}<r>";
-
-            for (diffs.items) |df| {
-                switch (df.operation) {
-                    .delete => {
-                        if (Output.enable_ansi_colors) {
-                            try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
-                        } else {
-                            try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text});
-                        }
-                    },
-                    .insert => {
-                        if (Output.enable_ansi_colors) {
-                            try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
-                        } else {
-                            try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
-                        }
-                    },
-                    .equal => {
-                        if (Output.enable_ansi_colors) {
-                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
-                        } else {
-                            try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
-                        }
-                    },
-                }
-            }
+            try printDiff(this.not, received, expected, writer);
             return;
         }
 
@@ -115,72 +70,92 @@ pub const DiffFormatter = struct {
         const received_slice = received_buf.slice();
         const expected_slice = expected_buf.slice();
 
-        if (this.not) {
-            const not_fmt = "Expected: not <green>{s}<r>";
-            if (Output.enable_ansi_colors) {
-                try writer.print(Output.prettyFmt(not_fmt, true), .{expected_slice});
-            } else {
-                try writer.print(Output.prettyFmt(not_fmt, false), .{expected_slice});
-            }
-            return;
-        }
+        try printDiff(this.not, received_slice, expected_slice, writer);
+    }
+};
 
-        // Always use line-based diff for consistency
-        var dmp = DiffMatchPatch.default;
-        dmp.diff_timeout = 200;
-        var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
-        defer diffs.deinit(default_allocator);
-
-        const equal_fmt = "<d> {s}<r>";
-        const delete_fmt = "<red>-{s}<r>";
-        const insert_fmt = "<green>+{s}<r>";
-
-        for (diffs.items) |df| {
-            var prev: usize = 0;
-            var curr: usize = 0;
-            switch (df.operation) {
-                .equal => {
-                    while (curr < df.text.len) {
-                        if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                            if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text[prev .. curr + 1]});
-                            } else {
-                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text[prev .. curr + 1]});
-                            }
-                            prev = curr + 1;
-                        }
-                        curr += 1;
-                    }
-                },
-                .delete => {
-                    while (curr < df.text.len) {
-                        if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                            if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text[prev .. curr + 1]});
-                            } else {
-                                try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text[prev .. curr + 1]});
-                            }
-                            prev = curr + 1;
-                        }
-                        curr += 1;
-                    }
-                },
-                .insert => {
-                    while (curr < df.text.len) {
-                        if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                            if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text[prev .. curr + 1]});
-                            } else {
-                                try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text[prev .. curr + 1]});
-                            }
-                            prev = curr + 1;
-                        }
-                        curr += 1;
-                    }
-                },
-            }
-            if (df.text[df.text.len - 1] != '\n') try writer.writeAll("\n");
+fn printDiff(not: bool, received_slice: string, expected_slice: string, writer: anytype) !void {
+    if (not) {
+        const not_fmt = "Expected: not <green>{s}<r>";
+        if (Output.enable_ansi_colors) {
+            try writer.print(Output.prettyFmt(not_fmt, true), .{expected_slice});
+        } else {
+            try writer.print(Output.prettyFmt(not_fmt, false), .{expected_slice});
         }
         return;
     }
-};
+
+    // Always use line-based diff for consistency
+    var dmp = DiffMatchPatch.default;
+    dmp.diff_timeout = 200;
+    var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
+    defer diffs.deinit(default_allocator);
+
+    const equal_fmt = "<d> {s}<r>";
+    const delete_fmt = "<red>-{s}<r>";
+    const insert_fmt = "<green>+{s}<r>";
+
+    for (diffs.items) |df| {
+        var prev: usize = 0;
+        var curr: usize = 0;
+        switch (df.operation) {
+            .equal => {
+                while (curr < df.text.len) {
+                    if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                        if (Output.enable_ansi_colors) {
+                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text[prev .. curr + 1]});
+                        } else {
+                            try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text[prev .. curr + 1]});
+                        }
+                        prev = curr + 1;
+                    }
+                    curr += 1;
+                }
+            },
+            .delete => {
+                while (curr < df.text.len) {
+                    if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                        if (Output.enable_ansi_colors) {
+                            try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text[prev .. curr + 1]});
+                        } else {
+                            try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text[prev .. curr + 1]});
+                        }
+                        prev = curr + 1;
+                    }
+                    curr += 1;
+                }
+            },
+            .insert => {
+                while (curr < df.text.len) {
+                    if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                        if (Output.enable_ansi_colors) {
+                            try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text[prev .. curr + 1]});
+                        } else {
+                            try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text[prev .. curr + 1]});
+                        }
+                        prev = curr + 1;
+                    }
+                    curr += 1;
+                }
+            },
+        }
+        if (df.text[df.text.len - 1] != '\n') try writer.writeAll("\n");
+    }
+    return;
+}
+
+// @sortImports
+
+const DiffMatchPatch = @import("../../deps/diffz/DiffMatchPatch.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+
+const JSC = bun.JSC;
+const ConsoleObject = JSC.ConsoleObject;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

@@ -11,8 +11,9 @@ const mySecurityScanner: Bun.Install.Security.Provider = {
       throw new Error("Unable to fetch threat feed");
     }
 
-    // Would recommend using Zod or something to validate here.
-    // This code needs to be defensive...
+    // Would recommend using a schema library or something to validate here. You
+    // should throw if the parsing fails rather than returning no advisories,
+    // this code needs to be defensive...
     const myThreatFeed = (await response.json()) as Array<{
       package: string;
       version: string;

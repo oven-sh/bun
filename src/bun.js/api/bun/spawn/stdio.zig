@@ -323,12 +323,9 @@ pub const Stdio = union(enum) {
                     else => unreachable,
                 }
 
-                const stream_value = body.toReadableStream(globalThis);
-                if (globalThis.hasException()) {
-                    return error.JSError;
-                }
+                const stream_value = try body.toReadableStream(globalThis);
 
-                const stream = JSC.WebCore.ReadableStream.fromJS(stream_value, globalThis) orelse return globalThis.throwInvalidArguments("Failed to create ReadableStream", .{});
+                const stream = (try JSC.WebCore.ReadableStream.fromJS(stream_value, globalThis)) orelse return globalThis.throwInvalidArguments("Failed to create ReadableStream", .{});
 
                 if (stream.isDisturbed(globalThis)) {
                     return globalThis.ERR(.BODY_ALREADY_USED, "ReadableStream has already been used", .{}).throw();
@@ -409,7 +406,7 @@ pub const Stdio = union(enum) {
             return extractBodyValue(out_stdio, globalThis, i, res.getBodyValue(), is_sync);
         }
 
-        if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |stream_| {
+        if (try JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |stream_| {
             var stream = stream_;
             if (stream.toAnyBlob(globalThis)) |blob| {
                 return out_stdio.extractBlob(globalThis, blob, i);

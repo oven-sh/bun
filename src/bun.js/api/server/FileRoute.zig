@@ -15,12 +15,12 @@ pub const InitOptions = struct {
     headers: ?*JSC.WebCore.FetchHeaders = null,
 };
 
-pub fn lastModifiedDate(this: *const FileRoute) ?u64 {
+pub fn lastModifiedDate(this: *const FileRoute) bun.JSError!?u64 {
     if (this.has_last_modified_header) {
         if (this.headers.get("last-modified")) |last_modified| {
             var string = bun.String.init(last_modified);
             defer string.deref();
-            const date_f64 = bun.String.parseDate(&string, bun.JSC.VirtualMachine.get().global);
+            const date_f64 = try bun.String.parseDate(&string, bun.JSC.VirtualMachine.get().global);
             if (!std.math.isNan(date_f64) and std.math.isFinite(date_f64)) {
                 return @intFromFloat(date_f64);
             }
@@ -185,7 +185,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
 
     const fd = fd_result.result;
 
-    const input_if_modified_since_date: ?u64 = req.dateForHeader("if-modified-since");
+    const input_if_modified_since_date: ?u64 = req.dateForHeader("if-modified-since") catch return; // TODO: properly propagate exception upwards
 
     const can_serve_file: bool, const size: u64, const file_type: bun.io.FileType, const pollable: bool = brk: {
         const stat = switch (bun.sys.fstat(fd)) {
@@ -226,7 +226,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
         // ignored, unless the server doesn't support If-None-Match.
         if (input_if_modified_since_date) |requested_if_modified_since| {
             if (method == .HEAD or method == .GET) {
-                if (this.lastModifiedDate()) |actual_last_modified_at| {
+                if (this.lastModifiedDate() catch return) |actual_last_modified_at| { // TODO: properly propagate exception upwards
                     if (actual_last_modified_at <= requested_if_modified_since) {
                         break :brk 304;
                     }

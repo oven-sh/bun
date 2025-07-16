@@ -1825,7 +1825,7 @@ pub const TestCommand = struct {
 
         const file_start = reporter.jest.files.len;
         const resolution = try vm.transpiler.resolveEntryPoint(file_name);
-        vm.clearEntryPoint();
+        try vm.clearEntryPoint();
 
         const file_path = resolution.path_pair.primary.text;
         const file_title = bun.path.relative(FileSystem.instance.top_level_dir, file_path);
@@ -1925,9 +1925,9 @@ pub const TestCommand = struct {
 
             vm.global.handleRejectedPromises();
             if (repeat_index > 0) {
-                vm.clearEntryPoint();
+                try vm.clearEntryPoint();
                 var entry = JSC.ZigString.init(file_path);
-                vm.global.deleteModuleRegistryEntry(&entry);
+                try vm.global.deleteModuleRegistryEntry(&entry);
             }
 
             if (Output.is_github_action) {

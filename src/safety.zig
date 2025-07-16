@@ -83,6 +83,10 @@ pub const AllocPtr = struct {
     }
 
     fn assertPtrEq(self: Self, ptr: *anyopaque) void {
-        bun.assertf(ptr == self.ptr, "cannot use multiple allocators with same collection", .{});
+        if (self.ptr) |self_ptr| bun.assertf(
+            ptr == self_ptr,
+            "cannot use multiple allocators with the same collection",
+            .{},
+        );
     }
 };

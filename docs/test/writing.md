@@ -766,18 +766,6 @@ test("useful for dynamic data", () => {
 });
 ```
 
-### Supported Matchers with Type Parameters
-
-The following matchers support type parameters for relaxed type checking:
-
-- `toBe<T>(expected: T)` - Reference equality
-- `toEqual<T>(expected: T)` - Deep equality
-- `toStrictEqual<T>(expected: T)` - Strict deep equality
-- `toBeOneOf<T>(expected: T[])` - Value in array
-- `toContain<T>(expected: T)` - Array/string contains value
-- `toContainEqual<T>(expected: T)` - Array contains equal value
-- Object key matchers: `toContainKey<T>()`, `toContainKeys<T>()`, etc.
-
 ### Best Practices
 
 1. **Default to strict typing** - Use the enhanced type safety by default for better development experience.

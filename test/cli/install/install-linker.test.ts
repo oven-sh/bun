@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
 import { spawn } from "bun";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("bun install --linker isolated", async () => {
   const dir = tempDirWithFiles("linker-isolated", {
@@ -8,8 +8,8 @@ test("bun install --linker isolated", async () => {
       name: "test-linker",
       version: "1.0.0",
       dependencies: {
-        "is-number": "^7.0.0"
-      }
+        "is-number": "^7.0.0",
+      },
     }),
   });
 
@@ -37,8 +37,8 @@ test("bun install --linker hoisted", async () => {
       name: "test-linker",
       version: "1.0.0",
       dependencies: {
-        "is-number": "^7.0.0"
-      }
+        "is-number": "^7.0.0",
+      },
     }),
   });
 
@@ -82,7 +82,7 @@ test("bun install --linker invalid should fail", async () => {
   ]);
 
   expect(exitCode).toBe(1);
-  
+
   // Check both stdout and stderr for the error message
   const output = stdout + stderr;
   expect(output).toContain("Invalid --linker value");

@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
 import { spawn } from "bun";
+import { expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("bun install --linker isolated creates lockfile with correct node_linker", async () => {
   const dir = tempDirWithFiles("linker-isolated-lockfile", {
@@ -9,8 +9,8 @@ test("bun install --linker isolated creates lockfile with correct node_linker", 
       name: "test-linker",
       version: "1.0.0",
       dependencies: {
-        "is-number": "^7.0.0"
-      }
+        "is-number": "^7.0.0",
+      },
     }),
   });
 
@@ -29,13 +29,13 @@ test("bun install --linker isolated creates lockfile with correct node_linker", 
 
   const output = stdout + stderr;
   expect(output).not.toContain("Invalid --linker value");
-  
+
   // Check that lockfile was created
   const lockbExists = existsSync(`${dir}/bun.lockb`);
   const lockExists = existsSync(`${dir}/bun.lock`);
-  
+
   expect(lockbExists || lockExists).toBe(true);
-  
+
   // If text lockfile exists, check it contains the node_linker setting
   if (lockExists) {
     const lockContent = readFileSync(`${dir}/bun.lock`, "utf8");
@@ -49,8 +49,8 @@ test("bun install --linker hoisted creates lockfile with correct node_linker", a
       name: "test-linker",
       version: "1.0.0",
       dependencies: {
-        "is-number": "^7.0.0"
-      }
+        "is-number": "^7.0.0",
+      },
     }),
   });
 
@@ -69,13 +69,13 @@ test("bun install --linker hoisted creates lockfile with correct node_linker", a
 
   const output = stdout + stderr;
   expect(output).not.toContain("Invalid --linker value");
-  
+
   // Check that lockfile was created
   const lockbExists = existsSync(`${dir}/bun.lockb`);
   const lockExists = existsSync(`${dir}/bun.lock`);
-  
+
   expect(lockbExists || lockExists).toBe(true);
-  
+
   // If text lockfile exists, check it contains the node_linker setting
   if (lockExists) {
     const lockContent = readFileSync(`${dir}/bun.lock`, "utf8");

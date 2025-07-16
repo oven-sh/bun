@@ -1650,17 +1650,17 @@ export class VerdaccioRegistry {
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
     let bunfig = `
-    [install]
-    cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
-    `;
+[install]
+cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
+`;
     if ("saveTextLockfile" in opts) {
       bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
-      `;
+`;
     }
     if (!opts.npm) {
-      bunfig += `registry = "${this.registryUrl()}"`;
+      bunfig += `registry = "${this.registryUrl()}"\n`;
     }
-    bunfig += `node_modules = ${opts.isolated ? "isolated" : "hoisted"}`;
+    bunfig += `linker = "${opts.isolated ? "isolated" : "hoisted"}"\n`;
     await write(join(dir, "bunfig.toml"), bunfig);
   }
 }

@@ -507,7 +507,7 @@ pub const Bunfig = struct {
                         }
                     }
 
-                    if (install_obj.get("node_modules")) |node_linker_expr| {
+                    if (install_obj.get("linker")) |node_linker_expr| {
                         try this.expectString(node_linker_expr);
                         if (node_linker_expr.asString(this.allocator)) |node_linker_str| {
                             install.node_linker = PackageManager.Options.NodeLinker.fromStr(node_linker_str);

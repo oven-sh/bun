@@ -91,7 +91,8 @@ pub fn ResumableSink(
                             break :brk_err null;
                         };
 
-                        const bytes = byte_stream.drain().listManaged(bun.default_allocator);
+                        var byte_list = byte_stream.drain();
+                        const bytes = byte_list.listManaged(bun.default_allocator);
                         defer bytes.deinit();
                         log("onWrite {}", .{bytes.items.len});
                         _ = onWrite(this.context, bytes.items);
@@ -100,7 +101,8 @@ pub fn ResumableSink(
                         return this;
                     }
                     // We can pipe but we also wanna to drain as much as possible first
-                    const bytes = byte_stream.drain().listManaged(bun.default_allocator);
+                    var byte_list = byte_stream.drain();
+                    const bytes = byte_list.listManaged(bun.default_allocator);
                     defer bytes.deinit();
                     // lets write and see if we can still pipe or if we have backpressure
                     if (bytes.items.len > 0) {
@@ -284,14 +286,15 @@ pub fn ResumableSink(
             stream: bun.webcore.streams.Result,
             allocator: std.mem.Allocator,
         ) void {
+            var stream_ = stream;
             const stream_needs_deinit = stream == .owned or stream == .owned_and_done;
 
             defer {
                 if (stream_needs_deinit) {
-                    if (stream == .owned_and_done) {
-                        stream.owned_and_done.listManaged(allocator).deinit();
-                    } else {
-                        stream.owned.listManaged(allocator).deinit();
+                    switch (stream_) {
+                        .owned_and_done => |*owned| owned.listManaged(allocator).deinit(),
+                        .owned => |*owned| owned.listManaged(allocator).deinit(),
+                        else => unreachable,
                     }
                 }
             }

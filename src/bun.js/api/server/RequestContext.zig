@@ -1760,7 +1760,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 // If we've received the complete body by the time this function is called
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
-                                    this.blob = .fromArrayList(byte_stream.drain().listManaged(bun.default_allocator));
+                                    var byte_list = byte_stream.drain();
+                                    this.blob = .fromArrayList(byte_list.listManaged(bun.default_allocator));
                                     this.readable_stream_ref.deinit();
                                     this.doRenderBlob();
                                     return;
@@ -1809,15 +1810,16 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn onPipe(this: *RequestContext, stream: JSC.WebCore.streams.Result, allocator: std.mem.Allocator) void {
+            var stream_ = stream;
             const stream_needs_deinit = stream == .owned or stream == .owned_and_done;
             const is_done = stream.isDone();
             defer {
                 if (is_done) this.deref();
                 if (stream_needs_deinit) {
-                    if (is_done) {
-                        stream.owned_and_done.listManaged(allocator).deinit();
-                    } else {
-                        stream.owned.listManaged(allocator).deinit();
+                    switch (stream_) {
+                        .owned_and_done => |*owned| owned.listManaged(allocator).deinit(),
+                        .owned => |*owned| owned.listManaged(allocator).deinit(),
+                        else => unreachable,
                     }
                 }
             }

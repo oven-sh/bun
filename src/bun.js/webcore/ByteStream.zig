@@ -224,15 +224,16 @@ pub fn append(
     base_address: []const u8,
     allocator: std.mem.Allocator,
 ) !void {
+    var stream_ = stream;
     const chunk = stream.slice()[offset..];
 
     if (this.buffer.capacity == 0) {
-        switch (stream) {
-            .owned => |owned| {
+        switch (stream_) {
+            .owned => |*owned| {
                 this.buffer = owned.listManaged(allocator);
                 this.offset += offset;
             },
-            .owned_and_done => |owned| {
+            .owned_and_done => |*owned| {
                 this.buffer = owned.listManaged(allocator);
                 this.offset += offset;
             },

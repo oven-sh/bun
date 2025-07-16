@@ -48,12 +48,12 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn deinitWithAllocator(this: *@This(), allocator: std.mem.Allocator) void {
-            this.makeListManaged(allocator).deinit();
+            this.listManaged(allocator).deinit();
             this.* = .{};
         }
 
         pub fn shrinkAndFree(this: *@This(), allocator: std.mem.Allocator, size: usize) void {
-            var list_ = this.makeListManaged(allocator);
+            var list_ = this.listManaged(allocator);
             list_.shrinkAndFree(size);
             this.update(list_);
         }
@@ -91,7 +91,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn ensureUnusedCapacity(this: *@This(), allocator: std.mem.Allocator, count: usize) !void {
-            var list_ = this.makeListManaged(allocator);
+            var list_ = this.listManaged(allocator);
             try list_.ensureUnusedCapacity(count);
             this.update(list_);
         }
@@ -154,7 +154,7 @@ pub fn BabyList(comptime Type: type) type {
             len_: usize,
             new_items: []const Type,
         ) !void {
-            var list_ = this.makeListManaged(allocator);
+            var list_ = this.listManaged(allocator);
             try list_.replaceRange(start, len_, new_items);
         }
 
@@ -165,7 +165,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn writableSlice(this: *@This(), allocator: std.mem.Allocator, cap: usize) ![]Type {
-            var list_ = this.makeListManaged(allocator);
+            var list_ = this.listManaged(allocator);
             try list_.ensureUnusedCapacity(cap);
             const writable = list_.items.ptr[this.len .. this.len + @as(u32, @truncate(cap))];
             list_.items.len += cap;
@@ -261,15 +261,8 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
-        /// This is like `listManaged`, but it also sets `alloc_ptr` for debugging.
-        fn makeListManaged(this: *ListType, allocator: std.mem.Allocator) std.ArrayList(Type) {
+        pub fn listManaged(this: *ListType, allocator: std.mem.Allocator) std.ArrayList(Type) {
             this.alloc_ptr.set(allocator);
-            var list_ = this.list();
-            return list_.toManaged(allocator);
-        }
-
-        pub fn listManaged(this: ListType, allocator: std.mem.Allocator) std.ArrayList(Type) {
-            this.alloc_ptr.assertEq(allocator);
             var list_ = this.list();
             return list_.toManaged(allocator);
         }
@@ -313,13 +306,13 @@ pub fn BabyList(comptime Type: type) type {
         const OOM = error{OutOfMemory};
 
         pub fn push(this: *ListType, allocator: std.mem.Allocator, value: Type) OOM!void {
-            var list_ = this.makeListManaged(allocator);
+            var list_ = this.listManaged(allocator);
             try list_.append(value);
             this.update(list_);
         }
 
         pub fn appendFmt(this: *@This(), allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) !void {
-            var list_ = this.makeListManaged(allocator);
+            var list_ = this.listManaged(allocator);
             const writer = list_.writer();
             try writer.print(fmt, args);
 
@@ -327,19 +320,19 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn insert(this: *@This(), allocator: std.mem.Allocator, index: usize, val: Type) !void {
-            var list_ = this.makeListManaged(allocator);
+            var list_ = this.listManaged(allocator);
             try list_.insert(index, val);
             this.update(list_);
         }
 
         pub fn insertSlice(this: *@This(), allocator: std.mem.Allocator, index: usize, vals: []const Type) !void {
-            var list_ = this.makeListManaged(allocator);
+            var list_ = this.listManaged(allocator);
             try list_.insertSlice(index, vals);
             this.update(list_);
         }
 
         pub fn append(this: *@This(), allocator: std.mem.Allocator, value: []const Type) !void {
-            var list_ = this.makeListManaged(allocator);
+            var list_ = this.listManaged(allocator);
             try list_.appendSlice(value);
             this.update(list_);
         }
@@ -358,7 +351,7 @@ pub fn BabyList(comptime Type: type) type {
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
             const initial = this.len;
-            var list_ = this.makeListManaged(allocator);
+            var list_ = this.listManaged(allocator);
             try list_.appendSlice(str);
             this.update(list_);
             return this.len - initial;
@@ -368,7 +361,7 @@ pub fn BabyList(comptime Type: type) type {
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
             const initial = this.len;
-            const old = this.makeListManaged(allocator);
+            const old = this.listManaged(allocator);
             const new = try strings.allocateLatin1IntoUTF8WithList(old, old.items.len, []const u8, str);
             this.update(new);
             return this.len - initial;
@@ -378,7 +371,7 @@ pub fn BabyList(comptime Type: type) type {
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
 
-            var list_ = this.makeListManaged(allocator);
+            var list_ = this.listManaged(allocator);
             const initial = this.len;
             outer: {
                 defer this.update(list_);

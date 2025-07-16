@@ -372,3 +372,131 @@ it("bun pm migrate", async () => {
 
   expect(hash).toMatchSnapshot();
 });
+
+it("should work without package.json for global commands", async () => {
+  const test_dir = tmpdirSync();
+  const cache_dir = join(test_dir, ".cache");
+
+  // Test pm cache without package.json
+  const {
+    stdout: cacheOut,
+    stderr: cacheErr,
+    exitCode: cacheCode,
+  } = Bun.spawnSync({
+    cmd: [bunExe(), "pm", "cache"],
+    cwd: test_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: {
+      ...bunEnv,
+      BUN_INSTALL_CACHE_DIR: cache_dir,
+    },
+  });
+  expect(cacheCode).toBe(0);
+  expect(cacheErr.toString("utf-8")).toBe("");
+  expect(cacheOut.toString("utf-8")).toBe(cache_dir);
+
+  // Test pm whoami without package.json (will fail auth but shouldn't fail for missing package.json)
+  const {
+    stdout: whoamiOut,
+    stderr: whoamiErr,
+    exitCode: whoamiCode,
+  } = Bun.spawnSync({
+    cmd: [bunExe(), "pm", "whoami"],
+    cwd: test_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  expect(whoamiCode).toBe(1); // Expected to fail due to missing auth
+  expect(whoamiErr.toString("utf-8")).toContain("missing authentication");
+  expect(whoamiErr.toString("utf-8")).not.toContain("No package.json");
+
+  // Test pm bin -g without package.json
+  const {
+    stdout: binOut,
+    stderr: binErr,
+    exitCode: binCode,
+  } = Bun.spawnSync({
+    cmd: [bunExe(), "pm", "bin", "-g"],
+    cwd: test_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  expect(binCode).toBe(0);
+  expect(binErr.toString("utf-8")).toBe("");
+  expect(binOut.toString("utf-8")).toMatch(/bin/);
+
+  // Test pm default-trusted without package.json
+  const {
+    stdout: trustedOut,
+    stderr: trustedErr,
+    exitCode: trustedCode,
+  } = Bun.spawnSync({
+    cmd: [bunExe(), "pm", "default-trusted"],
+    cwd: test_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  expect(trustedCode).toBe(0);
+  expect(trustedErr.toString("utf-8")).toBe("");
+  expect(trustedOut.toString("utf-8")).toContain("esbuild");
+});
+
+it("should require package.json for project-specific commands", async () => {
+  const test_dir = tmpdirSync();
+
+  // Test pm ls without package.json (should fail)
+  const {
+    stdout: lsOut,
+    stderr: lsErr,
+    exitCode: lsCode,
+  } = Bun.spawnSync({
+    cmd: [bunExe(), "pm", "ls"],
+    cwd: test_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  expect(lsCode).toBe(1);
+  expect(lsErr.toString("utf-8")).toContain("No package.json");
+
+  // Test pm version without package.json (should fail)
+  const {
+    stdout: versionOut,
+    stderr: versionErr,
+    exitCode: versionCode,
+  } = Bun.spawnSync({
+    cmd: [bunExe(), "pm", "version"],
+    cwd: test_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  expect(versionCode).toBe(1);
+  expect(versionErr.toString("utf-8")).toContain("No package.json");
+
+  // Test pm bin (without -g) without package.json (should fail)
+  const {
+    stdout: binOut,
+    stderr: binErr,
+    exitCode: binCode,
+  } = Bun.spawnSync({
+    cmd: [bunExe(), "pm", "bin"],
+    cwd: test_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  expect(binCode).toBe(1);
+  expect(binErr.toString("utf-8")).toContain("No package.json");
+});

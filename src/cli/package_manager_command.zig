@@ -27,6 +27,7 @@ const PmWhyCommand = @import("./pm_why_command.zig").PmWhyCommand;
 const PmPkgCommand = @import("./pm_pkg_command.zig").PmPkgCommand;
 
 const File = bun.sys.File;
+const DotEnv = bun.DotEnv;
 
 const ByName = struct {
     dependencies: []const Dependency,
@@ -101,6 +102,211 @@ pub const PackageManagerCommand = struct {
         return subcommand;
     }
 
+    fn requiresPackageJson(subcommand: []const u8, global: bool) bool {
+        // Commands that work globally and don't need package.json
+        if (strings.eqlComptime(subcommand, "cache")) return false;
+        if (strings.eqlComptime(subcommand, "whoami")) return false;
+        if (strings.eqlComptime(subcommand, "default-trusted")) return false;
+        if (strings.eqlComptime(subcommand, "bin") and global) return false;
+
+        // All other commands require package.json
+        return true;
+    }
+
+    fn execWithoutPackageJson(ctx: Command.Context, cli: PackageManager.CommandLineArguments, subcommand: []const u8) !void {
+        if (strings.eqlComptime(subcommand, "whoami")) {
+            // Create a minimal environment for npm registry access
+            var env: *DotEnv.Loader = brk: {
+                const map = try ctx.allocator.create(DotEnv.Map);
+                map.* = DotEnv.Map.init(ctx.allocator);
+                const loader = try ctx.allocator.create(DotEnv.Loader);
+                loader.* = DotEnv.Loader.init(map, ctx.allocator);
+                break :brk loader;
+            };
+            env.loadProcess();
+
+            const pm = try createMinimalPackageManager(ctx, cli, env);
+
+            const username = Npm.whoami(ctx.allocator, pm) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                    error.NeedAuth => {
+                        Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
+                    },
+                    error.ProbablyInvalidAuth => {
+                        Output.errGeneric("failed to authenticate with registry '{}'", .{
+                            bun.fmt.redactedNpmUrl(pm.options.scope.url.href),
+                        });
+                    },
+                }
+                Global.crash();
+            };
+            Output.println("{s}", .{username});
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "cache")) {
+            const pm = try createMinimalPackageManager(ctx, cli, null);
+
+            var dir: bun.PathBuffer = undefined;
+            var fd = pm.getCacheDirectory();
+            const outpath = bun.getFdPath(.fromStdDir(fd), &dir) catch |err| {
+                Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
+                Global.crash();
+            };
+
+            if (cli.positionals.len > 1 and strings.eqlComptime(cli.positionals[1], "rm")) {
+                fd.close();
+
+                var had_err = false;
+
+                std.fs.deleteTreeAbsolute(outpath) catch |err| {
+                    Output.err(err, "Could not delete {s}", .{outpath});
+                    had_err = true;
+                };
+                Output.prettyln("Cleared 'bun install' cache", .{});
+
+                bunx: {
+                    const tmp = bun.fs.FileSystem.RealFS.platformTempDir();
+                    const tmp_dir = std.fs.openDirAbsolute(tmp, .{ .iterate = true }) catch |err| {
+                        Output.err(err, "Could not open {s}", .{tmp});
+                        had_err = true;
+                        break :bunx;
+                    };
+                    var iter = tmp_dir.iterate();
+
+                    // This is to match 'bunx_command.BunxCommand.exec's logic
+                    const prefix = try std.fmt.allocPrint(ctx.allocator, "bunx-{d}-", .{
+                        if (bun.Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId(),
+                    });
+
+                    var deleted: usize = 0;
+                    while (iter.next() catch |err| {
+                        Output.err(err, "Could not read {s}", .{tmp});
+                        had_err = true;
+                        break :bunx;
+                    }) |entry| {
+                        if (std.mem.startsWith(u8, entry.name, prefix)) {
+                            tmp_dir.deleteTree(entry.name) catch |err| {
+                                Output.err(err, "Could not delete {s}", .{entry.name});
+                                had_err = true;
+                                continue;
+                            };
+
+                            deleted += 1;
+                        }
+                    }
+
+                    Output.prettyln("Cleared {d} cached 'bunx' packages", .{deleted});
+                }
+
+                Global.exit(if (had_err) 1 else 0);
+            }
+
+            Output.writer().writeAll(outpath) catch {};
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "default-trusted")) {
+            try DefaultTrustedCommand.exec();
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "bin") and cli.global) {
+            const pm = try createMinimalPackageManager(ctx, cli, null);
+            const output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));
+            Output.prettyln("{s}", .{output_path});
+            if (Output.stdout_descriptor_type == .terminal) {
+                Output.prettyln("\n", .{});
+            }
+
+            warner: {
+                if (Output.enable_ansi_colors_stderr) {
+                    if (bun.getenvZ("PATH")) |path| {
+                        var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
+                        while (path_iter.next()) |entry| {
+                            if (strings.eql(entry, output_path)) {
+                                break :warner;
+                            }
+                        }
+
+                        Output.prettyErrorln("\n<r><yellow>warn<r>: not in $PATH\n", .{});
+                    }
+                }
+            }
+
+            Output.flush();
+            return;
+        }
+
+        // Unknown command or shouldn't reach here
+        Global.exit(1);
+    }
+
+    fn createMinimalPackageManager(ctx: Command.Context, cli: PackageManager.CommandLineArguments, env_loader: ?*DotEnv.Loader) !*PackageManager {
+        const env: *DotEnv.Loader = env_loader orelse brk: {
+            const map = try ctx.allocator.create(DotEnv.Map);
+            map.* = DotEnv.Map.init(ctx.allocator);
+            const loader = try ctx.allocator.create(DotEnv.Loader);
+            loader.* = DotEnv.Loader.init(map, ctx.allocator);
+            loader.loadProcess();
+            break :brk loader;
+        };
+
+        PackageManager.allocatePackageManager();
+        const manager = PackageManager.get();
+        const cpu_count = bun.getThreadCount();
+
+        const options = PackageManager.Options{
+            .global = cli.global,
+            .max_concurrent_lifecycle_scripts = cpu_count * 2,
+        };
+
+        // Get current directory
+        var cwd_buf: bun.PathBuffer = undefined;
+        const cwd = try bun.getcwd(&cwd_buf);
+        var entries = try Fs.FileSystem.init(null);
+        const entries_option = try entries.fs.readDirectory(cwd, null, 0, true);
+
+        manager.* = PackageManager{
+            .preallocated_network_tasks = .init(bun.default_allocator),
+            .preallocated_resolve_tasks = .init(bun.default_allocator),
+            .options = options,
+            .active_lifecycle_scripts = .{
+                .context = manager,
+            },
+            .network_task_fifo = std.fifo.LinearFifo(*Install.NetworkTask, .{ .Static = 32 }).init(),
+            .patch_task_fifo = std.fifo.LinearFifo(*Install.PatchTask, .{ .Static = 32 }).init(),
+            .allocator = ctx.allocator,
+            .log = ctx.log,
+            .root_dir = entries_option.entries,
+            .env = env,
+            .cpu_count = cpu_count,
+            .thread_pool = bun.ThreadPool.init(.{
+                .max_threads = cpu_count,
+            }),
+            .resolve_tasks = .{},
+            .lockfile = undefined,
+            .root_package_json_file = undefined,
+            .event_loop = .{
+                .mini = bun.JSC.MiniEventLoop.init(bun.default_allocator),
+            },
+            .original_package_json_path = try ctx.allocator.dupeZ(u8, cwd),
+            .workspace_package_json_cache = .{},
+            .workspace_name_hash = null,
+            .subcommand = .pm,
+            .root_package_json_name_at_time_of_init = "",
+        };
+
+        manager.lockfile = try ctx.allocator.create(Lockfile);
+        manager.lockfile.initEmpty(ctx.allocator);
+
+        try manager.options.load(
+            ctx.allocator,
+            ctx.log,
+            env,
+            cli,
+            ctx.install,
+            .pm,
+        );
+
+        return manager;
+    }
+
     pub fn printHelp() void {
 
         // the output of --help uses the following syntax highlighting
@@ -164,30 +370,41 @@ pub const PackageManagerCommand = struct {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
+
+        // Get subcommand early to determine if package.json is needed
+        var positionals_copy = cli.positionals;
+        const subcommand = getSubcommand(&positionals_copy);
+
         var pm, const cwd = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
             if (err == error.MissingPackageJSON) {
-                var cwd_buf: bun.PathBuffer = undefined;
-                if (bun.getcwd(&cwd_buf)) |cwd| {
-                    Output.errGeneric("No package.json was found for directory \"{s}\"", .{cwd});
-                } else |_| {
-                    Output.errGeneric("No package.json was found", .{});
+                if (requiresPackageJson(subcommand, cli.global)) {
+                    var cwd_buf: bun.PathBuffer = undefined;
+                    if (bun.getcwd(&cwd_buf)) |cwd| {
+                        Output.errGeneric("No package.json was found for directory \"{s}\"", .{cwd});
+                    } else |_| {
+                        Output.errGeneric("No package.json was found", .{});
+                    }
+                    Output.note("Run \"bun init\" to initialize a project", .{});
+                    Global.exit(1);
+                } else {
+                    // For commands that don't require package.json, create a minimal PackageManager
+                    return execWithoutPackageJson(ctx, cli, subcommand);
                 }
-                Output.note("Run \"bun init\" to initialize a project", .{});
-                Global.exit(1);
             }
             return err;
         };
         defer ctx.allocator.free(cwd);
 
-        const subcommand = getSubcommand(&pm.options.positionals);
+        // Get the subcommand for the normal flow
+        const subcommand_final = getSubcommand(&pm.options.positionals);
         if (pm.options.global) {
             try pm.setupGlobalDir(ctx);
         }
 
-        if (strings.eqlComptime(subcommand, "pack")) {
+        if (strings.eqlComptime(subcommand_final, "pack")) {
             try PackCommand.execWithManager(ctx, pm);
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "whoami")) {
+        } else if (strings.eqlComptime(subcommand_final, "whoami")) {
             const username = Npm.whoami(ctx.allocator, pm) catch |err| {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
@@ -204,11 +421,11 @@ pub const PackageManagerCommand = struct {
             };
             Output.println("{s}", .{username});
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "view")) {
+        } else if (strings.eqlComptime(subcommand_final, "view")) {
             const property_path = if (pm.options.positionals.len > 2) pm.options.positionals[2] else null;
             try PmViewCommand.view(ctx.allocator, pm, if (pm.options.positionals.len > 1) pm.options.positionals[1] else "", property_path, pm.options.json_output);
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "bin")) {
+        } else if (strings.eqlComptime(subcommand_final, "bin")) {
             const output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));
             Output.prettyln("{s}", .{output_path});
             if (Output.stdout_descriptor_type == .terminal) {
@@ -234,7 +451,7 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             return;
-        } else if (strings.eqlComptime(subcommand, "hash")) {
+        } else if (strings.eqlComptime(subcommand_final, "hash")) {
             const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
             handleLoadLockfileErrors(load_lockfile, pm);
 
@@ -245,7 +462,7 @@ pub const PackageManagerCommand = struct {
             try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "hash-print")) {
+        } else if (strings.eqlComptime(subcommand_final, "hash-print")) {
             const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
             handleLoadLockfileErrors(load_lockfile, pm);
 
@@ -254,13 +471,13 @@ pub const PackageManagerCommand = struct {
             try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "hash-string")) {
+        } else if (strings.eqlComptime(subcommand_final, "hash-string")) {
             const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
             handleLoadLockfileErrors(load_lockfile, pm);
 
             _ = try pm.lockfile.hasMetaHashChanged(true, pm.lockfile.packages.len);
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "cache")) {
+        } else if (strings.eqlComptime(subcommand_final, "cache")) {
             var dir: bun.PathBuffer = undefined;
             var fd = pm.getCacheDirectory();
             const outpath = bun.getFdPath(.fromStdDir(fd), &dir) catch |err| {
@@ -318,16 +535,16 @@ pub const PackageManagerCommand = struct {
 
             Output.writer().writeAll(outpath) catch {};
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "default-trusted")) {
+        } else if (strings.eqlComptime(subcommand_final, "default-trusted")) {
             try DefaultTrustedCommand.exec();
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "untrusted")) {
+        } else if (strings.eqlComptime(subcommand_final, "untrusted")) {
             try UntrustedCommand.exec(ctx, pm, args);
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "trust")) {
+        } else if (strings.eqlComptime(subcommand_final, "trust")) {
             try TrustCommand.exec(ctx, pm, args);
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "ls")) {
+        } else if (strings.eqlComptime(subcommand_final, "ls")) {
             const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
             handleLoadLockfileErrors(load_lockfile, pm);
 
@@ -405,7 +622,7 @@ pub const PackageManagerCommand = struct {
             }
 
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "migrate")) {
+        } else if (strings.eqlComptime(subcommand_final, "migrate")) {
             if (!pm.options.enable.force_save_lockfile) {
                 if (bun.sys.existsZ("bun.lock")) {
                     Output.prettyErrorln(
@@ -441,7 +658,7 @@ pub const PackageManagerCommand = struct {
 
             lockfile.saveToDisk(&load_lockfile, &pm.options);
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "version")) {
+        } else if (strings.eqlComptime(subcommand_final, "version")) {
             try PmVersionCommand.exec(ctx, pm, pm.options.positionals, cwd);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "why")) {
@@ -454,8 +671,8 @@ pub const PackageManagerCommand = struct {
 
         printHelp();
 
-        if (subcommand.len > 0) {
-            Output.prettyErrorln("\n<red>error<r>: \"{s}\" unknown command\n", .{subcommand});
+        if (subcommand_final.len > 0) {
+            Output.prettyErrorln("\n<red>error<r>: \"{s}\" unknown command\n", .{subcommand_final});
             Output.flush();
 
             Global.exit(1);

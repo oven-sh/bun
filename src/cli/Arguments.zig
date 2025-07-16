@@ -185,7 +185,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
     clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
     clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
-    clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
+    clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text', 'lcov', and/or 'html'. Defaults to 'text'.") catch unreachable,
     clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
     clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
     clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
@@ -405,12 +405,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
 
         if (args.options("--coverage-reporter").len > 0) {
-            ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
+            ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false, .html = false };
             for (args.options("--coverage-reporter")) |reporter| {
                 if (bun.strings.eqlComptime(reporter, "text")) {
                     ctx.test_options.coverage.reporters.text = true;
                 } else if (bun.strings.eqlComptime(reporter, "lcov")) {
                     ctx.test_options.coverage.reporters.lcov = true;
+                } else if (bun.strings.eqlComptime(reporter, "html")) {
+                    ctx.test_options.coverage.reporters.html = true;
                 } else {
                     Output.prettyErrorln("<r><red>error<r>: --coverage-reporter received invalid reporter: \"{s}\"", .{reporter});
                     Global.exit(1);

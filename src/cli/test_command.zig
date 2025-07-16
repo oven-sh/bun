@@ -959,7 +959,7 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn generateCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
-        if (comptime !reporters.text and !reporters.lcov) {
+        if (comptime !reporters.text and !reporters.lcov and !reporters.html) {
             return;
         }
 
@@ -993,18 +993,26 @@ pub const CommandLineReporter = struct {
         comptime reporters: TestCommand.Reporters,
         comptime enable_ansi_colors: bool,
     ) !void {
-        const trace = if (reporters.text and reporters.lcov)
+        const trace = if (reporters.text and reporters.lcov and reporters.html)
+            bun.perf.trace("TestCommand.printCodeCoverageAll")
+        else if (reporters.text and reporters.lcov)
             bun.perf.trace("TestCommand.printCodeCoverageLCovAndText")
+        else if (reporters.text and reporters.html)
+            bun.perf.trace("TestCommand.printCodeCoverageTextAndHtml")
+        else if (reporters.lcov and reporters.html)
+            bun.perf.trace("TestCommand.printCodeCoverageLCovAndHtml")
         else if (reporters.text)
             bun.perf.trace("TestCommand.printCodeCoverageText")
         else if (reporters.lcov)
             bun.perf.trace("TestCommand.printCodeCoverageLCov")
+        else if (reporters.html)
+            bun.perf.trace("TestCommand.printCodeCoverageHtml")
         else
             @compileError("No reporters enabled");
 
         defer trace.end();
 
-        if (comptime !reporters.text and !reporters.lcov) {
+        if (comptime !reporters.text and !reporters.lcov and !reporters.html) {
             @compileError("No reporters enabled");
         }
 
@@ -1069,6 +1077,7 @@ pub const CommandLineReporter = struct {
 
         // --- LCOV ---
         var lcov_name_buf: bun.PathBuffer = undefined;
+        var lcov_final_name_buf: bun.PathBuffer = undefined;
         const lcov_file, const lcov_name, const lcov_buffered_writer, const lcov_writer = brk: {
             if (comptime !reporters.lcov) break :brk .{ {}, {}, {}, {} };
 
@@ -1133,6 +1142,21 @@ pub const CommandLineReporter = struct {
         }
         // --- LCOV ---
 
+        // --- HTML ---
+        var html_reports = if (comptime reporters.html)
+            try std.ArrayList(*const CodeCoverageReport).initCapacity(bun.default_allocator, byte_ranges.len)
+        else
+            std.ArrayList(*const CodeCoverageReport).init(bun.default_allocator);
+        defer {
+            if (comptime reporters.html) {
+                for (html_reports.items) |_| {
+                    // Note: reports are heap-allocated and will be freed after HTML generation
+                }
+                html_reports.deinit();
+            }
+        }
+        // --- HTML ---
+
         for (byte_ranges) |*entry| {
             // Check if this file should be ignored based on coveragePathIgnorePatterns
             if (opts.ignore_patterns.len > 0) {
@@ -1153,7 +1177,6 @@ pub const CommandLineReporter = struct {
             }
 
             var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
-            defer report.deinit(bun.default_allocator);
 
             if (comptime reporters.text) {
                 var fraction = base_fraction;
@@ -1175,6 +1198,15 @@ pub const CommandLineReporter = struct {
                     relative_dir,
                     lcov_writer,
                 ) catch continue;
+            }
+
+            if (comptime reporters.html) {
+                // Heap-allocate the report so it survives beyond this scope
+                const heap_report = try bun.default_allocator.create(CodeCoverageReport);
+                heap_report.* = report;
+                html_reports.appendAssumeCapacity(heap_report);
+            } else {
+                report.deinit(bun.default_allocator);
             }
         }
 
@@ -1228,8 +1260,9 @@ pub const CommandLineReporter = struct {
                 cwd,
                 lcov_name,
                 cwd,
-                bun.path.joinAbsStringZ(
+                bun.path.joinAbsStringBufZ(
                     relative_dir,
+                    &lcov_final_name_buf,
                     &.{ opts.reports_directory, "lcov.info" },
                     .auto,
                 ),
@@ -1237,6 +1270,143 @@ pub const CommandLineReporter = struct {
                 Output.err(err, "Failed to save lcov.info file", .{});
                 Global.exit(1);
             };
+        }
+
+        if (comptime reporters.html) {
+            defer {
+                // Free heap-allocated reports
+                for (html_reports.items) |report| {
+                    var mutable_report: *CodeCoverageReport = @constCast(report);
+                    mutable_report.deinit(bun.default_allocator);
+                    bun.default_allocator.destroy(mutable_report);
+                }
+            }
+
+            {
+                // Ensure the directory exists
+                var fs = bun.JSC.Node.fs.NodeFS{};
+                _ = fs.mkdirRecursive(
+                    .{
+                        .path = bun.JSC.Node.PathLike{
+                            .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(opts.reports_directory),
+                        },
+                        .always_return_none = true,
+                    },
+                );
+            }
+
+            // Generate index.html file
+            {
+                const index_name_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(index_name_buf);
+                const index_path = bun.path.joinAbsStringBufZ(relative_dir, index_name_buf, &.{ opts.reports_directory, "index.html" }, .auto);
+
+                const index_file = bun.sys.File.openat(
+                    .cwd(),
+                    index_path,
+                    bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC,
+                    0o644,
+                );
+
+                switch (index_file) {
+                    .err => |err| {
+                        Output.err(.htmlCoverageError, "Failed to create HTML index file", .{});
+                        Output.printError("\n{s}", .{err});
+                        Global.exit(1);
+                    },
+                    .result => |f| {
+                        defer f.close();
+                        const writer = f.writer();
+
+                        // Calculate total averages for the index
+                        const total_avg = bun.sourcemap.coverage.Fraction{
+                            .functions = avg.functions,
+                            .lines = avg.lines,
+                            .stmts = avg.stmts,
+                        };
+
+                        CodeCoverageReport.Html.writeIndexFile(
+                            html_reports.items,
+                            relative_dir,
+                            total_avg,
+                            writer,
+                        ) catch |err| {
+                            Output.err(err, "Failed to write HTML index file", .{});
+                            Global.exit(1);
+                        };
+                    },
+                }
+            }
+
+            // Generate individual file reports
+            for (html_reports.items) |report| {
+                var filename = report.source_url.slice();
+                if (relative_dir.len > 0) {
+                    filename = bun.path.relative(relative_dir, filename);
+                }
+
+                // Generate safe HTML filename
+                const file_handle = file_handle: {
+                    const file_path_buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(file_path_buf);
+                    break :file_handle bun.sys.File.openat(
+                        .cwd(),
+                        brk: {
+                            const html_filename_buf = bun.path_buffer_pool.get();
+                            defer bun.path_buffer_pool.put(html_filename_buf);
+                            const safe_filename_buf = bun.path_buffer_pool.get();
+                            defer bun.path_buffer_pool.put(safe_filename_buf);
+                            const replacements_made = std.mem.replace(u8, filename, std.fs.path.sep_str, "_", safe_filename_buf);
+                            // Calculate the correct length: original length + (replacements * (replacement_length - original_length))
+                            const safe_filename_len = filename.len + replacements_made * ("_".len - std.fs.path.sep_str.len);
+                            const safe_filename = if (replacements_made > 0) safe_filename_buf[0..safe_filename_len] else filename;
+
+                            const html_filename = std.fmt.bufPrintZ(html_filename_buf, "{s}.html", .{safe_filename}) catch continue;
+
+                            break :brk bun.path.joinAbsStringBufZ(relative_dir, file_path_buf, &.{ opts.reports_directory, html_filename }, .auto);
+                        },
+                        bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC,
+                        0o644,
+                    );
+                };
+
+                switch (file_handle) {
+                    .err => |err| {
+                        Output.err(.htmlCoverageError, "Failed to create HTML file for {s}\n{}", .{ filename, err });
+                        continue;
+                    },
+                    .result => |f| {
+                        defer f.close();
+                        const unbuffered_writer = f.writer();
+                        var buffered_writer = std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer){
+                            .unbuffered_writer = unbuffered_writer,
+                            .end = 0,
+                        };
+                        defer buffered_writer.flush() catch {};
+                        const writer = buffered_writer.writer();
+
+                        const source_content = switch (bun.sys.File.readFromUserInput(
+                            bun.FD.cwd(),
+                            report.source_url.slice(),
+                            bun.default_allocator,
+                        )) {
+                            .err => &.{},
+                            .result => |content| content,
+                        };
+                        defer bun.default_allocator.free(source_content);
+
+                        CodeCoverageReport.Html.writeFileReport(
+                            report,
+                            source_content,
+                            relative_dir,
+                            writer,
+                        ) catch |err| {
+                            Output.err(err, "Failed to write HTML file for {s}", .{filename});
+                            continue;
+                        };
+                    },
+                }
+            }
         }
     }
 };
@@ -1283,7 +1453,7 @@ pub const TestCommand = struct {
     pub const name = "test";
     pub const CodeCoverageOptions = struct {
         skip_test_files: bool = !Environment.allow_assert,
-        reporters: Reporters = .{ .text = true, .lcov = false },
+        reporters: Reporters = .{ .text = true, .lcov = false, .html = false },
         reports_directory: string = "coverage",
         fractions: bun.sourcemap.coverage.Fraction = .{},
         ignore_sourcemap: bool = false,
@@ -1294,10 +1464,12 @@ pub const TestCommand = struct {
     pub const Reporter = enum {
         text,
         lcov,
+        html,
     };
     const Reporters = struct {
         text: bool,
         lcov: bool,
+        html: bool,
     };
 
     pub const FileReporter = enum {
@@ -1622,8 +1794,10 @@ pub const TestCommand = struct {
                 switch (Output.enable_ansi_colors_stderr) {
                     inline else => |colors| switch (coverage_options.reporters.text) {
                         inline else => |console| switch (coverage_options.reporters.lcov) {
-                            inline else => |lcov| {
-                                try reporter.generateCodeCoverage(vm, &coverage_options, .{ .text = console, .lcov = lcov }, colors);
+                            inline else => |lcov| switch (coverage_options.reporters.html) {
+                                inline else => |html| {
+                                    try reporter.generateCodeCoverage(vm, &coverage_options, .{ .text = console, .lcov = lcov, .html = html }, colors);
+                                },
                             },
                         },
                     },

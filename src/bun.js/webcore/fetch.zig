@@ -1865,6 +1865,12 @@ pub fn Bun__fetch_(
 
     // redirect: "follow" | "error" | "manual" | undefined;
     redirect_type = extract_redirect_type: {
+        // First, try to use the Request object's redirect if available
+        if (request) |req| {
+            redirect_type = req.redirect;
+        }
+
+        // Then check options/init objects which can override the Request's redirect
         const objects_to_try = [_]JSValue{
             options_object orelse .zero,
             request_init_object orelse .zero,

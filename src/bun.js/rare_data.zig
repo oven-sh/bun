@@ -135,7 +135,11 @@ pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []
         ) catch bun.outOfMemory();
     }
 
-    return this.mime_types.?.get(str);
+    if (this.mime_types.?.get(str)) |entry| {
+        return bun.http.MimeType.Compact.from(entry).toMimeType();
+    }
+
+    return null;
 }
 
 pub const HotMap = struct {

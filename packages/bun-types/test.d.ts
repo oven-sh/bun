@@ -1210,18 +1210,6 @@ declare module "bun:test" {
     toBeInstanceOf(value: unknown): void;
 
     /**
-<<<<<<< HEAD
-     * Asserts that the expected value is an instance of value
-     *
-     * @example
-     * expect([]).toBeInstanceOf(Array);
-     * expect(null).toBeInstanceOf(Array); // fail
-     */
-    toBeInstanceOf(value: unknown): void;
-
-    /**
-=======
->>>>>>> main
      * Asserts that a value is `undefined`.
      *
      * @example

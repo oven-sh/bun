@@ -1,25 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Output = bun.Output;
-const ConsoleObject = @This();
-const String = bun.String;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const strings = bun.strings;
-const ZigException = JSC.ZigException;
-const ZigString = JSC.ZigString;
-const VirtualMachine = JSC.VirtualMachine;
-const string = bun.string;
-const JSLexer = bun.js_lexer;
 const ScriptArguments = opaque {};
-const JSPrinter = bun.js_printer;
-const Environment = bun.Environment;
-const default_allocator = bun.default_allocator;
-const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
-const JSPromise = JSC.JSPromise;
-const CLI = @import("../cli.zig").Command;
-const EventType = JSC.EventType;
 
 /// Default depth for console.log object inspection
 /// Only --console-depth CLI flag and console.depth bunfig option should modify this
@@ -3747,3 +3726,29 @@ comptime {
     @export(&recordEnd, .{ .name = "Bun__ConsoleObject__recordEnd" });
     @export(&screenshot, .{ .name = "Bun__ConsoleObject__screenshot" });
 }
+
+// @sortImports
+
+const ConsoleObject = @This();
+const std = @import("std");
+const CLI = @import("../cli.zig").Command;
+const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSLexer = bun.js_lexer;
+const JSPrinter = bun.js_printer;
+const Output = bun.Output;
+const String = bun.String;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const EventType = JSC.EventType;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSPromise = JSC.JSPromise;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;
+const ZigException = JSC.ZigException;
+const ZigString = JSC.ZigString;

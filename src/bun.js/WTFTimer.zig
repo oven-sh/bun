@@ -62,9 +62,15 @@ pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
 pub fn cancel(this: *WTFTimer) void {
     this.lock.lock();
     defer this.lock.unlock();
-    this.imminent.store(null, .seq_cst);
-    if (this.event_loop_timer.state == .ACTIVE) {
-        this.vm.timer.remove(&this.event_loop_timer);
+
+    if (VirtualMachine.VMHolder.vm) |vm| {
+        if (vm == this.vm) {
+            this.imminent.store(null, .seq_cst);
+
+            if (this.event_loop_timer.state == .ACTIVE) {
+                this.vm.timer.remove(&this.event_loop_timer);
+            }
+        }
     }
 }
 

@@ -6,8 +6,6 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const cli = @import("../cli.zig");
@@ -162,12 +160,12 @@ pub const BunxCommand = struct {
         }
 
         const package_json_contents = package_json_read.bytes.items;
-        const source = bun.logger.Source.initPathString(bun.span(subpath_z), package_json_contents);
+        const source = &bun.logger.Source.initPathString(bun.span(subpath_z), package_json_contents);
 
         bun.JSAst.Expr.Data.Store.create();
         bun.JSAst.Stmt.Data.Store.create();
 
-        const expr = try bun.JSON.parsePackageJSONUTF8(&source, transpiler.log, transpiler.allocator);
+        const expr = try bun.JSON.parsePackageJSONUTF8(source, transpiler.log, transpiler.allocator);
 
         // choose the first package that fits
         if (expr.get("bin")) |bin_expr| {
@@ -198,8 +196,7 @@ pub const BunxCommand = struct {
                 if (bin_prop.expr.asString(transpiler.allocator)) |dir_name| {
                     const bin_dir = try bun.sys.openatA(dir_fd, dir_name, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap();
                     defer bin_dir.close();
-                    const dir = std.fs.Dir{ .fd = bin_dir.cast() };
-                    var iterator = bun.DirIterator.iterate(dir, .u8);
+                    var iterator = bun.DirIterator.iterate(bin_dir, .u8);
                     var entry = iterator.next();
                     while (true) : (entry = iterator.next()) {
                         const current = switch (entry) {

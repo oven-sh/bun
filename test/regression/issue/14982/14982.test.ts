@@ -1,6 +1,6 @@
-import { expect, it, describe } from "bun:test";
-import { bunEnv, bunExe } from "../../../harness";
+import { describe, expect, it } from "bun:test";
 import { join } from "path";
+import { bunEnv, bunExe } from "../../../harness";
 
 describe("issue 14982", () => {
   it("does not hang in commander", async () => {
@@ -13,6 +13,6 @@ describe("issue 14982", () => {
     });
     await process.exited;
     expect(process.exitCode).toBe(0);
-    expect(await new Response(process.stdout).text()).toBe("Test command\n");
+    expect(await process.stdout.text()).toBe("Test command\n");
   }, 15000);
 });

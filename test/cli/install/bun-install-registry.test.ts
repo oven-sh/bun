@@ -1,29 +1,28 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, mkdir, readlink, rm, writeFile, lstat } from "fs/promises";
+import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
   bunEnv as env,
+  isFlaky,
+  isMacOS,
   isWindows,
   mergeWindowEnvs,
+  readdirSorted,
   runBunInstall,
   runBunUpdate,
-  pack,
+  stderrForInstall,
   tempDirWithFiles,
+  tls,
   tmpdirSync,
   toBeValidBin,
   toHaveBins,
   toMatchNodeModulesAt,
-  writeShebangScript,
-  stderrForInstall,
-  tls,
-  isFlaky,
-  isMacOS,
-  readdirSorted,
   VerdaccioRegistry,
+  writeShebangScript,
 } from "harness";
 import { join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;
@@ -36,7 +35,7 @@ expect.extend({
   toMatchNodeModulesAt,
 });
 
-var verdaccio: VerdaccioRegistry;
+var registry: VerdaccioRegistry;
 var port: number;
 var packageDir: string;
 /** packageJson = join(packageDir, "package.json"); */
@@ -46,18 +45,18 @@ let users: Record<string, string> = {};
 
 beforeAll(async () => {
   setDefaultTimeout(1000 * 60 * 5);
-  verdaccio = new VerdaccioRegistry();
-  port = verdaccio.port;
-  await verdaccio.start();
+  registry = new VerdaccioRegistry();
+  port = registry.port;
+  await registry.start();
 });
 
 afterAll(async () => {
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
-  verdaccio.stop();
+  registry.stop();
 });
 
 beforeEach(async () => {
-  ({ packageDir, packageJson } = await verdaccio.createTestDir({ saveTextLockfile: false }));
+  ({ packageDir, packageJson } = await registry.createTestDir({ saveTextLockfile: false }));
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
   await Bun.$`rm -rf ${import.meta.dir}/packages/private-pkg-dont-touch`.throws(false);
   users = {};
@@ -66,7 +65,7 @@ beforeEach(async () => {
 });
 
 function registryUrl() {
-  return verdaccio.registryUrl();
+  return registry.registryUrl();
 }
 
 /**
@@ -100,385 +99,6 @@ async function generateRegistryUser(username: string, password: string): Promise
   }
 }
 
-describe("npmrc", async () => {
-  const isBase64Encoded = (opt: string) => opt === "_auth" || opt === "_password";
-
-  it("works with empty file", async () => {
-    console.log("package dir", packageDir);
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const ini = /* ini */ ``;
-
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {},
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
-  });
-
-  it("sets default registry", async () => {
-    console.log("package dir", packageDir);
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const ini = /* ini */ `
-registry = http://localhost:${port}/
-`;
-
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
-  });
-
-  it("sets scoped registry", async () => {
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const ini = /* ini */ `
-  @types:registry=http://localhost:${port}/
-  `;
-
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "@types/no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
-  });
-
-  it("works with home config", async () => {
-    console.log("package dir", packageDir);
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const homeDir = `${packageDir}/home_dir`;
-    await Bun.$`mkdir -p ${homeDir}`;
-    console.log("home dir", homeDir);
-
-    const ini = /* ini */ `
-  registry=http://localhost:${port}/
-  `;
-
-    await Bun.$`echo ${ini} > ${homeDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`
-      .env({
-        ...process.env,
-        XDG_CONFIG_HOME: `${homeDir}`,
-      })
-      .cwd(packageDir)
-      .throws(true);
-  });
-
-  it("works with two configs", async () => {
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    console.log("package dir", packageDir);
-    const packageIni = /* ini */ `
-  @types:registry=http://localhost:${port}/
-  `;
-    await Bun.$`echo ${packageIni} > ${packageDir}/.npmrc`;
-
-    const homeDir = `${packageDir}/home_dir`;
-    await Bun.$`mkdir -p ${homeDir}`;
-    console.log("home dir", homeDir);
-    const homeIni = /* ini */ `
-    registry = http://localhost:${port}/
-    `;
-    await Bun.$`echo ${homeIni} > ${homeDir}/.npmrc`;
-
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "no-deps": "1.0.0",
-        "@types/no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`
-      .env({
-        ...process.env,
-        XDG_CONFIG_HOME: `${homeDir}`,
-      })
-      .cwd(packageDir)
-      .throws(true);
-  });
-
-  it("package config overrides home config", async () => {
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    console.log("package dir", packageDir);
-    const packageIni = /* ini */ `
-  @types:registry=http://localhost:${port}/
-  `;
-    await Bun.$`echo ${packageIni} > ${packageDir}/.npmrc`;
-
-    const homeDir = `${packageDir}/home_dir`;
-    await Bun.$`mkdir -p ${homeDir}`;
-    console.log("home dir", homeDir);
-    const homeIni = /* ini */ "@types:registry=https://registry.npmjs.org/";
-    await Bun.$`echo ${homeIni} > ${homeDir}/.npmrc`;
-
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "@types/no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`
-      .env({
-        ...process.env,
-        XDG_CONFIG_HOME: `${homeDir}`,
-      })
-      .cwd(packageDir)
-      .throws(true);
-  });
-
-  it("default registry from env variable", async () => {
-    const ini = /* ini */ `
-registry=\${LOL}
-  `;
-
-    const result = loadNpmrc(ini, { LOL: `http://localhost:${port}/` });
-
-    expect(result.default_registry_url).toBe(`http://localhost:${port}/`);
-  });
-
-  it("default registry from env variable 2", async () => {
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const ini = /* ini */ `
-registry=http://localhost:\${PORT}/
-  `;
-
-    const result = loadNpmrc(ini, { ...env, PORT: port });
-
-    expect(result.default_registry_url).toEqual(`http://localhost:${port}/`);
-  });
-
-  async function makeTest(
-    options: [option: string, value: string][],
-    check: (result: {
-      default_registry_url: string;
-      default_registry_token: string;
-      default_registry_username: string;
-      default_registry_password: string;
-    }) => void,
-  ) {
-    const optionName = await Promise.all(options.map(async ([name, val]) => `${name} = ${val}`));
-    test(optionName.join(" "), async () => {
-      await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-      const iniInner = await Promise.all(
-        options.map(async ([option, value]) => {
-          let finalValue = value;
-          finalValue = isBase64Encoded(option) ? Buffer.from(finalValue).toString("base64") : finalValue;
-          return `//registry.npmjs.org/:${option}=${finalValue}`;
-        }),
-      );
-
-      const ini = /* ini */ `
-${iniInner.join("\n")}
-`;
-
-      await Bun.$`echo ${JSON.stringify({
-        name: "hello",
-        main: "index.js",
-        version: "1.0.0",
-        dependencies: {
-          "is-even": "1.0.0",
-        },
-      })} > package.json`.cwd(packageDir);
-
-      await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-
-      const result = loadNpmrc(ini);
-
-      check(result);
-    });
-  }
-
-  await makeTest([["_authToken", "skibidi"]], result => {
-    expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-    expect(result.default_registry_token).toEqual("skibidi");
-  });
-
-  await makeTest(
-    [
-      ["username", "zorp"],
-      ["_password", "skibidi"],
-    ],
-    result => {
-      expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-      expect(result.default_registry_username).toEqual("zorp");
-      expect(result.default_registry_password).toEqual("skibidi");
-    },
-  );
-
-  it("authentication works", async () => {
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const ini = /* ini */ `
-registry = http://localhost:${port}/
-@needs-auth:registry=http://localhost:${port}/
-//localhost:${port}/:_authToken=${await generateRegistryUser("bilbo_swaggins", "verysecure")}
-`;
-
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "hi",
-      main: "index.js",
-      version: "1.0.0",
-      dependencies: {
-        "no-deps": "1.0.0",
-        "@needs-auth/test-pkg": "1.0.0",
-      },
-      "publishConfig": {
-        "registry": `http://localhost:${port}`,
-      },
-    })} > package.json`.cwd(packageDir);
-
-    await Bun.$`${bunExe()} install`.env(env).cwd(packageDir).throws(true);
-  });
-
-  type EnvMap =
-    | Omit<
-        {
-          [key: string]: string;
-        },
-        "dotEnv"
-      >
-    | { dotEnv?: Record<string, string> };
-
-  function registryConfigOptionTest(
-    name: string,
-    _opts: Record<string, string> | (() => Promise<Record<string, string>>),
-    _env?: EnvMap | (() => Promise<EnvMap>),
-    check?: (stdout: string, stderr: string) => void,
-  ) {
-    it(`sets scoped registry option: ${name}`, async () => {
-      console.log("PACKAGE DIR", packageDir);
-      await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-      const { dotEnv, ...restOfEnv } = _env
-        ? typeof _env === "function"
-          ? await _env()
-          : _env
-        : { dotEnv: undefined };
-      const opts = _opts ? (typeof _opts === "function" ? await _opts() : _opts) : {};
-      const dotEnvInner = dotEnv
-        ? Object.entries(dotEnv)
-            .map(([k, v]) => `${k}=${k.includes("SECRET_") ? Buffer.from(v).toString("base64") : v}`)
-            .join("\n")
-        : "";
-
-      const ini = `
-registry = http://localhost:${port}/
-${Object.keys(opts)
-  .map(
-    k =>
-      `//localhost:${port}/:${k}=${isBase64Encoded(k) && !opts[k].includes("${") ? Buffer.from(opts[k]).toString("base64") : opts[k]}`,
-  )
-  .join("\n")}
-`;
-
-      if (dotEnvInner.length > 0) await Bun.$`echo ${dotEnvInner} > ${packageDir}/.env`;
-      await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-      await Bun.$`echo ${JSON.stringify({
-        name: "hi",
-        main: "index.js",
-        version: "1.0.0",
-        dependencies: {
-          "@needs-auth/test-pkg": "1.0.0",
-        },
-        "publishConfig": {
-          "registry": `http://localhost:${port}`,
-        },
-      })} > package.json`.cwd(packageDir);
-
-      const { stdout, stderr } = await Bun.$`${bunExe()} install`
-        .env({ ...env, ...restOfEnv })
-        .cwd(packageDir)
-        .throws(check === undefined);
-
-      if (check) check(stdout.toString(), stderr.toString());
-    });
-  }
-
-  registryConfigOptionTest("_authToken", async () => ({
-    "_authToken": await generateRegistryUser("bilbo_baggins", "verysecure"),
-  }));
-  registryConfigOptionTest(
-    "_authToken with env variable value",
-    async () => ({ _authToken: "${SUPER_SECRET_TOKEN}" }),
-    async () => ({ SUPER_SECRET_TOKEN: await generateRegistryUser("bilbo_baggins420", "verysecure") }),
-  );
-  registryConfigOptionTest("username and password", async () => {
-    await generateRegistryUser("gandalf429", "verysecure");
-    return { username: "gandalf429", _password: "verysecure" };
-  });
-  registryConfigOptionTest(
-    "username and password with env variable password",
-    async () => {
-      await generateRegistryUser("gandalf422", "verysecure");
-      return { username: "gandalf422", _password: "${SUPER_SECRET_PASSWORD}" };
-    },
-    {
-      SUPER_SECRET_PASSWORD: Buffer.from("verysecure").toString("base64"),
-    },
-  );
-  registryConfigOptionTest(
-    "username and password with .env variable password",
-    async () => {
-      await generateRegistryUser("gandalf421", "verysecure");
-      return { username: "gandalf421", _password: "${SUPER_SECRET_PASSWORD}" };
-    },
-    {
-      dotEnv: { SUPER_SECRET_PASSWORD: "verysecure" },
-    },
-  );
-
-  registryConfigOptionTest("_auth", async () => {
-    await generateRegistryUser("linus", "verysecure");
-    const _auth = "linus:verysecure";
-    return { _auth };
-  });
-
-  registryConfigOptionTest(
-    "_auth from .env variable",
-    async () => {
-      await generateRegistryUser("zack", "verysecure");
-      return { _auth: "${SECRET_AUTH}" };
-    },
-    {
-      dotEnv: { SECRET_AUTH: "zack:verysecure" },
-    },
-  );
-
-  registryConfigOptionTest(
-    "_auth from .env variable with no value",
-    async () => {
-      await generateRegistryUser("zack420", "verysecure");
-      return { _auth: "${SECRET_AUTH}" };
-    },
-    {
-      dotEnv: { SECRET_AUTH: "" },
-    },
-    (stdout: string, stderr: string) => {
-      expect(stderr).toContain("received an empty string");
-    },
-  );
-});
-
 describe("auto-install", () => {
   test("symlinks (and junctions) are created correctly in the install cache", async () => {
     const { stdout, stderr, exited } = spawn({
@@ -492,9 +112,9 @@ describe("auto-install", () => {
       },
     });
 
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).toMatchSnapshot();
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
 
@@ -547,9 +167,9 @@ describe("certificate authority", () => {
       stdout: "pipe",
       env,
     });
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).toContain("+ no-deps@");
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("ConnectionClosed");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
@@ -589,8 +209,8 @@ describe("certificate authority", () => {
       stdout: "pipe",
       env,
     });
-    let out = await Bun.readableStreamToText(stdout);
-    let err = stderrForInstall(await Bun.readableStreamToText(stderr));
+    let out = await stdout.text();
+    let err = stderrForInstall(await stderr.text());
     expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
     expect(await exited).toBe(1);
 
@@ -602,9 +222,9 @@ describe("certificate authority", () => {
       stdout: "pipe",
       env,
     }));
-    out = await Bun.readableStreamToText(stdout);
+    out = await stdout.text();
     expect(out).toContain("+ no-deps@");
-    err = await Bun.readableStreamToText(stderr);
+    err = await stderr.text();
     expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
@@ -619,9 +239,9 @@ describe("certificate authority", () => {
       stdout: "pipe",
       env,
     });
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).not.toContain("no-deps");
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).toContain(`HTTPThread: could not find CA file: '${join(packageDir, "does-not-exist")}'`);
     expect(await exited).toBe(1);
   });
@@ -635,9 +255,9 @@ describe("certificate authority", () => {
       stdout: "pipe",
       env,
     });
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).not.toContain("no-deps");
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).toContain(`HTTPThread: could not find CA file: '/does/not/exist'`);
     expect(await exited).toBe(1);
   });
@@ -672,9 +292,9 @@ describe("certificate authority", () => {
       env,
     });
 
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).not.toContain("no-deps");
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).toContain(`HTTPThread: could not find CA file: '${join(packageDir, "does-not-exist")}'`);
     expect(await exited).toBe(1);
   });
@@ -709,9 +329,9 @@ ljelkjwelkgjw;lekj;lkejflkj
       env,
     });
 
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).not.toContain("no-deps");
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).toContain(`HTTPThread: invalid CA file: '${join(packageDir, "invalid-cafile")}'`);
     expect(await exited).toBe(1);
   });
@@ -734,9 +354,9 @@ ljelkjwelkgjw;lekj;lkejflkj
       env,
     });
 
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).not.toContain("no-deps");
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).toContain("HTTPThread: the CA is invalid");
     expect(await exited).toBe(1);
   });
@@ -744,7 +364,7 @@ ljelkjwelkgjw;lekj;lkejflkj
 
 describe("whoami", async () => {
   test("can get username", async () => {
-    const bunfig = await verdaccio.authBunfig("whoami");
+    const bunfig = await registry.authBunfig("whoami");
     await Promise.all([
       write(
         packageJson,
@@ -764,9 +384,9 @@ describe("whoami", async () => {
       env,
     });
 
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).toBe("whoami\n");
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
@@ -794,9 +414,9 @@ describe("whoami", async () => {
       env,
     });
 
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).toBe("whoami-npmrc\n");
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
@@ -816,9 +436,9 @@ describe("whoami", async () => {
       stderr: "pipe",
       env,
     });
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).toBe("whoami-npmrc\n");
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
@@ -843,9 +463,9 @@ describe("whoami", async () => {
         XDG_CONFIG_HOME: `${homeDir}`,
       },
     });
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).toBe("whoami-two-npmrc\n");
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
@@ -858,9 +478,9 @@ describe("whoami", async () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).toBeEmpty();
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).toBe("error: missing authentication (run `bunx npm login`)\n");
     expect(await exited).toBe(1);
   });
@@ -883,9 +503,9 @@ describe("whoami", async () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).toBeEmpty();
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).toBe(`error: failed to authenticate with registry 'http://localhost:${port}/'\n`);
     expect(await exited).toBe(1);
   });
@@ -1052,7 +672,7 @@ describe("text lockfile", () => {
       env,
     });
 
-    let err = await Bun.readableStreamToText(stderr);
+    let err = await stderr.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
 
@@ -1072,7 +692,7 @@ describe("text lockfile", () => {
       env,
     }));
 
-    err = await Bun.readableStreamToText(stderr);
+    err = await stderr.text();
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
@@ -1109,7 +729,7 @@ describe("text lockfile", () => {
         env,
       });
 
-      let err = await Bun.readableStreamToText(stderr);
+      let err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("error:");
 
@@ -1132,7 +752,7 @@ describe("text lockfile", () => {
         env,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = await stderr.text();
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("error:");
       expect(await exited).toBe(0);
@@ -1274,8 +894,8 @@ test("--lockfile-only", async () => {
   });
 
   expect(await exited2).toBe(0);
-  const out = await Bun.readableStreamToText(stdout);
-  const err = await Bun.readableStreamToText(stderr);
+  const out = await stdout.text();
+  const err = await stderr.text();
   expect(out).toBe("");
   expect(err).toBe("");
 });
@@ -1676,8 +1296,8 @@ describe("optionalDependencies", () => {
       env,
     });
 
-    const err = await new Response(stderr).text();
-    const out = await new Response(stdout).text();
+    const err = await stderr.text();
+    const out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -2041,8 +1661,8 @@ test("hardlinks on windows dont fail with long paths", async () => {
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
-  const out = await Bun.readableStreamToText(stdout);
+  const err = await stderr.text();
+  const out = await stdout.text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -2076,8 +1696,8 @@ test("basic 1", async () => {
     stderr: "pipe",
     env,
   });
-  var err = await new Response(stderr).text();
-  var out = await new Response(stdout).text();
+  var err = await stderr.text();
+  var out = await stdout.text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -2107,8 +1727,8 @@ test("basic 1", async () => {
     env,
   }));
 
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
+  err = await stderr.text();
+  out = await stdout.text();
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -2148,7 +1768,7 @@ saveTextLockfile = false
     ),
   ]);
 
-  // first install this package from verdaccio
+  // first install this package from registry
   await runBunInstall(env, packageDir);
   const lockfile = await parseLockfile(packageDir);
   for (const pkg of Object.values(lockfile.packages) as any) {
@@ -2201,8 +1821,8 @@ test("dependency from root satisfies range from dependency", async () => {
     env,
   });
 
-  var err = await new Response(stderr).text();
-  var out = await new Response(stdout).text();
+  var err = await stderr.text();
+  var out = await stdout.text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -2232,8 +1852,8 @@ test("dependency from root satisfies range from dependency", async () => {
     env,
   }));
 
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
+  err = await stderr.text();
+  out = await stdout.text();
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -2439,8 +2059,8 @@ test("peerDependency in child npm dependency should not maintain old version whe
     env,
   });
 
-  var err = await new Response(stderr).text();
-  var out = await new Response(stdout).text();
+  var err = await stderr.text();
+  var out = await stdout.text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -2480,8 +2100,8 @@ test("peerDependency in child npm dependency should not maintain old version whe
     env,
   }));
 
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
+  err = await stderr.text();
+  out = await stdout.text();
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
@@ -2521,8 +2141,8 @@ test("package added after install", async () => {
     env,
   });
 
-  var err = await new Response(stderr).text();
-  var out = await new Response(stdout).text();
+  var err = await stderr.text();
+  var out = await stdout.text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -2563,8 +2183,8 @@ test("package added after install", async () => {
     env,
   }));
 
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
+  err = await stderr.text();
+  out = await stdout.text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -2599,8 +2219,8 @@ test("package added after install", async () => {
     env,
   }));
 
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
+  err = await stderr.text();
+  out = await stdout.text();
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -2733,8 +2353,8 @@ test("--production without a lockfile will install and not save lockfile", async
     env,
   });
 
-  const out = await Bun.readableStreamToText(stdout);
-  const err = await Bun.readableStreamToText(stderr);
+  const out = await stdout.text();
+  const err = await stderr.text();
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -2797,8 +2417,8 @@ describe("binaries", () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -2827,8 +2447,8 @@ describe("binaries", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -2921,8 +2541,8 @@ describe("binaries", () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -2962,8 +2582,8 @@ describe("binaries", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -3003,9 +2623,9 @@ describe("binaries", () => {
       env: { ...env, BUN_INSTALL: join(packageDir, "global-install-dir") },
     });
 
-    let err = await Bun.readableStreamToText(stderr);
+    let err = await stderr.text();
     expect(err).not.toContain("error:");
-    let out = await Bun.readableStreamToText(stdout);
+    let out = await stdout.text();
     expect(out).toContain("uses-what-bin@1.5.0");
     expect(await exited).toBe(0);
 
@@ -3019,9 +2639,9 @@ describe("binaries", () => {
       env: { ...env, BUN_INSTALL: join(packageDir, "global-install-dir") },
     }));
 
-    err = await Bun.readableStreamToText(stderr);
+    err = await stderr.text();
     expect(err).not.toContain("error:");
-    out = await Bun.readableStreamToText(stdout);
+    out = await stdout.text();
 
     expect(out).toContain("what-bin@1.5.0");
     expect(await exited).toBe(0);
@@ -3078,10 +2698,10 @@ describe("binaries", () => {
         env: global ? { ...env, BUN_INSTALL: join(packageDir, "global-install-dir") } : env,
       });
 
-      const err = await Bun.readableStreamToText(stderr);
+      const err = await stderr.text();
       expect(err).not.toContain("error:");
 
-      const out = await Bun.readableStreamToText(stdout);
+      const out = await stdout.text();
       expect(await exited).toBe(0);
 
       await runBin("dep-with-file-bin", "file-bin\n", global);
@@ -3163,7 +2783,7 @@ describe("binaries", () => {
       env,
     });
 
-    let err = await Bun.readableStreamToText(stderr);
+    let err = await stderr.text();
     expect(err).not.toContain("error:");
 
     expect(await exited).toBe(0);
@@ -3194,7 +2814,7 @@ describe("binaries", () => {
       env,
     }));
 
-    err = await Bun.readableStreamToText(stderr);
+    err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).not.toContain("Saved lockfile");
 
@@ -3248,7 +2868,7 @@ describe("binaries", () => {
       env,
     });
 
-    let err = await Bun.readableStreamToText(stderr);
+    let err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).toContain("Saved lockfile");
 
@@ -3286,7 +2906,7 @@ describe("binaries", () => {
       env,
     }));
 
-    err = await Bun.readableStreamToText(stderr);
+    err = await stderr.text();
     expect(err).not.toContain("error:");
 
     // it should save
@@ -3358,11 +2978,11 @@ describe("binaries", () => {
       env,
     });
 
-    let err = await Bun.readableStreamToText(stderr);
+    let err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).toContain("Saved lockfile");
 
-    let out = await Bun.readableStreamToText(stdout);
+    let out = await stdout.text();
     expect(out).toContain("no-deps@1.0.0");
 
     expect(await exited).toBe(0);
@@ -3384,11 +3004,11 @@ describe("binaries", () => {
       env,
     }));
 
-    err = await Bun.readableStreamToText(stderr);
+    err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).not.toContain("Saved lockfile");
 
-    out = await Bun.readableStreamToText(stdout);
+    out = await stdout.text();
     expect(out).not.toContain("no-deps@1.0.0");
 
     expect(await exited).toBe(0);
@@ -3411,9 +3031,9 @@ describe("binaries", () => {
       env,
     });
 
-    const out = await Bun.readableStreamToText(result.stdout);
+    const out = await result.stdout.text();
     expect(out).toEqual(expected);
-    const err = await Bun.readableStreamToText(result.stderr);
+    const err = await result.stderr.text();
     expect(err).toBeEmpty();
     expect(await result.exited).toBe(0);
   }
@@ -3439,7 +3059,7 @@ describe("binaries", () => {
       stderr: "pipe",
       env,
     });
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
@@ -3596,8 +3216,8 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     env,
   });
 
-  var err = await new Response(stderr).text();
-  var out = await new Response(stdout).text();
+  var err = await stderr.text();
+  var out = await stdout.text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -3640,7 +3260,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     env,
   }));
 
-  [err, out] = await Promise.all([new Response(stderr).text(), new Response(stdout).text()]);
+  [err, out] = await Promise.all([stderr.text(), stdout.text()]);
 
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
@@ -3697,7 +3317,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
       env,
     }));
 
-    [err, out] = await Promise.all([new Response(stderr).text(), new Response(stdout).text()]);
+    [err, out] = await Promise.all([stderr.text(), stdout.text()]);
 
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
@@ -3724,7 +3344,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     env,
   }));
 
-  [err, out] = await Promise.all([new Response(stderr).text(), new Response(stdout).text()]);
+  [err, out] = await Promise.all([stderr.text(), stdout.text()]);
 
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
@@ -3753,7 +3373,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   expect(await exited).toBe(0);
   assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-  [err, out] = await Promise.all([new Response(stderr).text(), new Response(stdout).text()]);
+  [err, out] = await Promise.all([stderr.text(), stdout.text()]);
 
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
@@ -3864,8 +3484,8 @@ describe("hoisting", async () => {
         env,
       });
 
-      var err = await new Response(stderr).text();
-      var out = await new Response(stdout).text();
+      var err = await stderr.text();
+      var out = await stdout.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -3888,8 +3508,8 @@ describe("hoisting", async () => {
         env,
       }));
 
-      err = await new Response(stderr).text();
-      out = await new Response(stdout).text();
+      err = await stderr.text();
+      out = await stdout.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -4026,8 +3646,8 @@ describe("hoisting", async () => {
             env,
           });
 
-          var err = await new Response(stderr).text();
-          var out = await new Response(stdout).text();
+          var err = await stderr.text();
+          var out = await stdout.text();
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -4050,8 +3670,8 @@ describe("hoisting", async () => {
             env,
           }));
 
-          err = await new Response(stderr).text();
-          out = await new Response(stdout).text();
+          err = await stderr.text();
+          out = await stdout.text();
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -4075,8 +3695,8 @@ describe("hoisting", async () => {
             env,
           }));
 
-          err = await new Response(stderr).text();
-          out = await new Response(stdout).text();
+          err = await stderr.text();
+          out = await stdout.text();
           expect(err).not.toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -4111,8 +3731,8 @@ describe("hoisting", async () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -4163,8 +3783,8 @@ describe("hoisting", async () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -4223,7 +3843,7 @@ describe("hoisting", async () => {
       env,
     });
 
-    let out = await Bun.readableStreamToText(stdout);
+    let out = await stdout.text();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
@@ -4251,7 +3871,7 @@ describe("hoisting", async () => {
       env,
     }));
 
-    out = await Bun.readableStreamToText(stdout);
+    out = await stdout.text();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
@@ -4287,8 +3907,8 @@ describe("hoisting", async () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -4339,8 +3959,8 @@ describe("hoisting", async () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -4400,7 +4020,7 @@ describe("hoisting", async () => {
         env,
       });
 
-      const err = await Bun.readableStreamToText(stderr);
+      const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -4463,7 +4083,7 @@ describe("hoisting", async () => {
         env,
       });
 
-      const err = await Bun.readableStreamToText(stderr);
+      const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -4524,7 +4144,7 @@ describe("hoisting", async () => {
         env,
       });
 
-      const err = await Bun.readableStreamToText(stderr);
+      const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -4576,7 +4196,7 @@ describe("hoisting", async () => {
         env,
       });
 
-      const err = await Bun.readableStreamToText(stderr);
+      const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -4621,7 +4241,7 @@ describe("hoisting", async () => {
       env,
     });
 
-    let err = await Bun.readableStreamToText(stderr);
+    let err = await stderr.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
 
@@ -4643,7 +4263,7 @@ describe("hoisting", async () => {
       env,
     }));
 
-    err = await Bun.readableStreamToText(stderr);
+    err = await stderr.text();
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("error:");
 
@@ -5092,8 +4712,8 @@ describe("transitive file dependencies", () => {
       env,
     });
 
-    var err = await Bun.readableStreamToText(stderr);
-    var out = await Bun.readableStreamToText(stdout);
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -5135,8 +4755,8 @@ describe("transitive file dependencies", () => {
       env,
     }));
 
-    err = await Bun.readableStreamToText(stderr);
-    out = await Bun.readableStreamToText(stdout);
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -5162,8 +4782,8 @@ describe("transitive file dependencies", () => {
       env,
     }));
 
-    err = await Bun.readableStreamToText(stderr);
-    out = await Bun.readableStreamToText(stdout);
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -5221,8 +4841,8 @@ describe("transitive file dependencies", () => {
       env,
     });
 
-    var err = await Bun.readableStreamToText(stderr);
-    var out = await Bun.readableStreamToText(stdout);
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -6244,8 +5864,8 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
     env,
   });
 
-  var err = await new Response(stderr).text();
-  var out = await new Response(stdout).text();
+  var err = await stderr.text();
+  var out = await stdout.text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -6281,8 +5901,8 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
     env,
   }));
 
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
+  err = await stderr.text();
+  out = await stdout.text();
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -6325,8 +5945,8 @@ test("one version with binary map", async () => {
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
-  const out = await Bun.readableStreamToText(stdout);
+  const err = await stderr.text();
+  const out = await stdout.text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -6365,8 +5985,8 @@ test("multiple versions with binary map", async () => {
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
-  const out = await Bun.readableStreamToText(stdout);
+  const err = await stderr.text();
+  const out = await stdout.text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -6421,7 +6041,7 @@ test("duplicate dependency in optionalDependencies maintains sort order", async 
     env,
   });
 
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
   expect(out.replaceAll(`${port}`, "4873")).toMatchSnapshot();
   expect(await exited).toBe(0);
 });
@@ -6457,8 +6077,8 @@ test("missing package on reinstall, some with binaries", async () => {
     env,
   });
 
-  var err = await new Response(stderr).text();
-  var out = await new Response(stdout).text();
+  var err = await stderr.text();
+  var out = await stdout.text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -6511,8 +6131,8 @@ test("missing package on reinstall, some with binaries", async () => {
     env,
   }));
 
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
+  err = await stderr.text();
+  out = await stdout.text();
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -6565,12 +6185,12 @@ describe("pm trust", async () => {
       env,
     });
 
-    let err = stderrForInstall(await Bun.readableStreamToText(stderr));
+    let err = stderrForInstall(await stderr.text());
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("warn:");
-    let out = await Bun.readableStreamToText(stdout);
+    let out = await stdout.text();
     expect(out).toContain("Default trusted dependencies");
     expect(await exited).toBe(0);
   });
@@ -6592,9 +6212,9 @@ describe("pm trust", async () => {
         env,
       });
 
-      let err = stderrForInstall(await Bun.readableStreamToText(stderr));
+      let err = stderrForInstall(await stderr.text());
       expect(err).toContain("error: Lockfile not found");
-      let out = await Bun.readableStreamToText(stdout);
+      let out = await stdout.text();
       expect(out).toBeEmpty();
       expect(await exited).toBe(1);
     });
@@ -6618,11 +6238,11 @@ describe("pm trust", async () => {
         env,
       });
 
-      let err = stderrForInstall(await Bun.readableStreamToText(stderr));
+      let err = stderrForInstall(await stderr.text());
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      let out = await Bun.readableStreamToText(stdout);
+      let out = await stdout.text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
@@ -6645,12 +6265,12 @@ describe("pm trust", async () => {
         env,
       }));
 
-      err = stderrForInstall(await Bun.readableStreamToText(stderr));
+      err = stderrForInstall(await stderr.text());
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
 
-      out = await Bun.readableStreamToText(stdout);
+      out = await stdout.text();
       expect(out).toContain("1 script ran across 1 package");
       expect(await exited).toBe(0);
 
@@ -6693,11 +6313,11 @@ test("it should be able to find binary in node_modules/.bin from parent director
     env,
   });
 
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
@@ -6832,8 +6452,8 @@ describe("semver", () => {
         env,
       });
 
-      var err = await new Response(stderr).text();
-      var out = await new Response(stdout).text();
+      var err = await stderr.text();
+      var out = await stdout.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -6870,8 +6490,8 @@ describe("semver", () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain('InvalidDependencyVersion parsing version "pre-1 || pre-2"');
     expect(await exited).toBe(1);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
@@ -7058,8 +6678,8 @@ for (let i = 0; i < prereleaseTests.length; i++) {
           env,
         });
 
-        const err = await new Response(stderr).text();
-        const out = await new Response(stdout).text();
+        const err = await stderr.text();
+        const out = await stdout.text();
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -7204,8 +6824,8 @@ for (let i = 0; i < prereleaseFailTests.length; i++) {
           env,
         });
 
-        const err = await new Response(stderr).text();
-        const out = await new Response(stdout).text();
+        const err = await stderr.text();
+        const out = await stdout.text();
         expect(out).toEqual(expect.stringContaining("bun install v1."));
         expect(err).toContain(`No version matching "${depVersion}" found for specifier "${depName}"`);
         expect(await exited).toBe(1);
@@ -7238,8 +6858,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    const err = await new Response(stderr).text();
-    const out = await new Response(stdout).text();
+    const err = await stderr.text();
+    const out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -7328,8 +6948,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    const err = await new Response(stderr).text();
-    const out = await new Response(stdout).text();
+    const err = await stderr.text();
+    const out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -7375,8 +6995,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    const err = await new Response(stderr).text();
-    const out = await new Response(stdout).text();
+    const err = await stderr.text();
+    const out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -7442,8 +7062,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    const err = await new Response(stderr).text();
-    const out = await new Response(stdout).text();
+    const err = await stderr.text();
+    const out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -7515,8 +7135,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    const err = await new Response(stderr).text();
-    const out = await new Response(stdout).text();
+    const err = await stderr.text();
+    const out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -7646,8 +7266,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    const err = await new Response(stderr).text();
-    const out = await new Response(stdout).text();
+    const err = await stderr.text();
+    const out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -7692,8 +7312,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -7724,8 +7344,8 @@ describe("yarn tests", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toBeEmpty();
     expect(out).toBe("1.0.0 1.0.0\n");
 
@@ -7775,8 +7395,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    const err = await new Response(stderr).text();
-    const out = await new Response(stdout).text();
+    const err = await stderr.text();
+    const out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -7816,8 +7436,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -7894,8 +7514,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    const out = await new Response(stdout).text();
-    const err = await new Response(stderr).text();
+    const out = await stdout.text();
+    const err = await stderr.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -7957,8 +7577,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    const out = await new Response(stdout).text();
-    const err = await new Response(stderr).text();
+    const out = await stdout.text();
+    const err = await stderr.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -8007,8 +7627,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    const out = await new Response(stdout).text();
-    const err = await new Response(stderr).text();
+    const out = await stdout.text();
+    const err = await stderr.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -8048,8 +7668,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    const out = await new Response(stdout).text();
-    const err = await new Response(stderr).text();
+    const out = await stdout.text();
+    const err = await stderr.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -8089,8 +7709,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -8167,8 +7787,8 @@ describe("yarn tests", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(out).toBe("true\ntrue\nfalse\n");
     expect(err).toBeEmpty();
     expect(await exited).toBe(0);
@@ -8197,8 +7817,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -8231,8 +7851,8 @@ describe("yarn tests", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(out).toBe("true\n");
     expect(err).toBeEmpty();
     expect(await exited).toBe(0);
@@ -8262,8 +7882,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -8297,8 +7917,8 @@ describe("yarn tests", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(out).toBe("true\n");
     expect(err).toBeEmpty();
     expect(await exited).toBe(0);
@@ -8328,8 +7948,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -8357,8 +7977,8 @@ describe("yarn tests", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(out).toBe("false\n");
     expect(err).toBeEmpty();
     expect(await exited).toBe(0);
@@ -8388,8 +8008,8 @@ describe("yarn tests", () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -8416,8 +8036,8 @@ describe("yarn tests", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -8588,10 +8208,10 @@ describe("outdated", () => {
 
       expect(await exited).toBe(0);
 
-      const err = await Bun.readableStreamToText(stderr);
+      const err = await stderr.text();
       expect(err).not.toContain("error:");
       expect(err).not.toContain("panic:");
-      const out = await Bun.readableStreamToText(stdout);
+      const out = await stdout.text();
       const first = out.slice(0, out.indexOf("\n"));
       expect(first).toEqual(expect.stringContaining("bun outdated "));
       expect(first).toEqual(expect.stringContaining("v1."));
@@ -8632,10 +8252,10 @@ describe("outdated", () => {
       env,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).not.toContain("panic:");
-    let out = await Bun.readableStreamToText(stdout);
+    let out = await stdout.text();
     expect(out).toContain("a-dep");
     expect(out).not.toContain("no-deps");
     expect(await exited).toBe(0);
@@ -8648,10 +8268,10 @@ describe("outdated", () => {
       env,
     }));
 
-    const err2 = await Bun.readableStreamToText(stderr);
+    const err2 = await stderr.text();
     expect(err2).not.toContain("error:");
     expect(err2).not.toContain("panic:");
-    let out2 = await Bun.readableStreamToText(stdout);
+    let out2 = await stdout.text();
     expect(out2).toContain("no-deps");
     expect(out2).not.toContain("a-dep");
     expect(await exited).toBe(0);
@@ -8679,11 +8299,11 @@ describe("outdated", () => {
       env: testEnv,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).not.toContain("panic:");
 
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).toContain("a-dep");
     const first = out.slice(0, out.indexOf("\n"));
     expect(first).toEqual(expect.stringContaining("bun outdated "));
@@ -8736,10 +8356,10 @@ describe("outdated", () => {
       env,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).not.toContain("panic:");
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     const exitCode = await exited;
     expect(exitCode).toBe(0);
     return out;
@@ -8824,9 +8444,49 @@ describe("outdated", () => {
     expect(out).not.toContain("@foo/bar");
     expect(out).toContain("@scope/pkg1");
   });
+
+  test("catalog dependencies", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "catalog-outdated-test",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: {
+              "no-deps": "1.0.0",
+            },
+            catalogs: {
+              dev: {
+                "a-dep": "1.0.1",
+              },
+            },
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "no-deps": "catalog:",
+          },
+          devDependencies: {
+            "a-dep": "catalog:dev",
+          },
+        }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const out = await runBunOutdated(env, packageDir, "--filter", "*");
+    expect(out).toContain("no-deps");
+    expect(out).toContain("a-dep");
+  });
 });
 
-// TODO: setup verdaccio to run across multiple test files, then move this and a few other describe
+// TODO: setup registry to run across multiple test files, then move this and a few other describe
 // scopes (update, hoisting, ...) to other files
 //
 // test/cli/install/registry/bun-install-windowsshim.test.ts:
@@ -8869,8 +8529,8 @@ registry = "http://localhost:${port}/"
     env,
   });
 
-  var err = await new Response(stderr).text();
-  var out = await new Response(stdout).text();
+  var err = await stderr.text();
+  var out = await stdout.text();
   console.log(err);
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
@@ -8922,9 +8582,9 @@ registry = "http://localhost:${port}/"
         env: mergeWindowEnvs([env, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
-      const err = await new Response(stderr).text();
+      const err = await stderr.text();
       expect(err.trim()).toBe("");
-      const out = await new Response(stdout).text();
+      const out = await stdout.text();
       expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
       expect(await exited).toBe(0);
     });
@@ -8941,9 +8601,9 @@ registry = "http://localhost:${port}/"
         env: mergeWindowEnvs([env, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
-      const err = await new Response(stderr).text();
+      const err = await stderr.text();
       expect(err.trim()).toBe("");
-      const out = await new Response(stdout).text();
+      const out = await stdout.text();
       expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
       expect(await exited).toBe(0);
     });
@@ -8960,9 +8620,9 @@ registry = "http://localhost:${port}/"
         env: mergeWindowEnvs([env, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
-      const err = await new Response(stderr).text();
+      const err = await stderr.text();
       expect(err.trim()).toBe("");
-      const out = await new Response(stdout).text();
+      const out = await stdout.text();
       expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
       expect(await exited).toBe(0);
     });
@@ -8979,9 +8639,9 @@ registry = "http://localhost:${port}/"
         env: mergeWindowEnvs([env, { PATH: PATH }]),
       });
       expect(stderr).toBeDefined();
-      const err = await new Response(stderr).text();
+      const err = await stderr.text();
       expect(err.trim()).toBe("");
-      const out = await new Response(stdout).text();
+      const out = await stdout.text();
       expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
       expect(await exited).toBe(0);
     });

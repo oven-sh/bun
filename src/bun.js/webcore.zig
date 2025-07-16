@@ -7,12 +7,14 @@ comptime {
     _ = &@import("webcore/TextEncoder.zig");
 }
 
+pub const DOMExceptionCode = @import("bindings/JSErrorCode.zig").DOMExceptionCode;
+
 // TODO: make this JSGlobalObject local for better security
 pub const ByteListPool = bun.ObjectPool(bun.ByteList, null, true, 8);
 
 pub const Crypto = @import("webcore/Crypto.zig");
 pub const AbortSignal = @import("bindings/AbortSignal.zig").AbortSignal;
-pub const WebWorker = @import("web_worker.zig").WebWorker;
+pub const WebWorker = @import("web_worker.zig");
 pub const AutoFlusher = @import("webcore/AutoFlusher.zig");
 pub const EncodingLabel = @import("webcore/EncodingLabel.zig").EncodingLabel;
 pub const Fetch = @import("webcore/fetch.zig");
@@ -24,6 +26,8 @@ pub const encoding = @import("webcore/encoding.zig");
 pub const ReadableStream = @import("webcore/ReadableStream.zig");
 pub const Blob = @import("webcore/Blob.zig");
 pub const S3Stat = @import("webcore/S3Stat.zig").S3Stat;
+pub const ResumableFetchSink = @import("webcore/ResumableSink.zig").ResumableFetchSink;
+pub const ResumableS3UploadSink = @import("webcore/ResumableSink.zig").ResumableS3UploadSink;
 pub const S3Client = @import("webcore/S3Client.zig").S3Client;
 pub const Request = @import("webcore/Request.zig");
 pub const Body = @import("webcore/Body.zig");
@@ -35,6 +39,7 @@ pub const FetchHeaders = @import("bindings/FetchHeaders.zig").FetchHeaders;
 pub const ByteBlobLoader = @import("webcore/ByteBlobLoader.zig");
 pub const ByteStream = @import("webcore/ByteStream.zig");
 pub const FileReader = @import("webcore/FileReader.zig");
+pub const ScriptExecutionContext = @import("webcore/ScriptExecutionContext.zig");
 
 pub const streams = @import("webcore/streams.zig");
 pub const NetworkSink = streams.NetworkSink;
@@ -65,6 +70,10 @@ pub const PathOrFileDescriptor = union(enum) {
 pub const Pipe = struct {
     ctx: ?*anyopaque = null,
     onPipe: ?Function = null,
+
+    pub inline fn isEmpty(this: *const Pipe) bool {
+        return this.ctx == null and this.onPipe == null;
+    }
 
     pub const Function = *const fn (
         ctx: *anyopaque,

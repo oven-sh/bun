@@ -1,13 +1,6 @@
-const bun = @import("bun");
-const std = @import("std");
-const PosixSpawn = bun.spawn;
-const Environment = bun.Environment;
-const JSC = bun.JSC;
-const Output = bun.Output;
-const uv = bun.windows.libuv;
 const pid_t = if (Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 const fd_t = if (Environment.isPosix) std.posix.fd_t else i32;
-const Maybe = JSC.Maybe;
+const log = bun.Output.scoped(.PROCESS, false);
 
 const win_rusage = struct {
     utime: struct {
@@ -78,10 +71,6 @@ pub fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
 }
 pub const Rusage = if (Environment.isWindows) win_rusage else std.posix.rusage;
 
-const Subprocess = JSC.Subprocess;
-const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
-const ShellSubprocess = bun.shell.ShellSubprocess;
-const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 // const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
 pub const ProcessExitHandler = struct {
     ptr: TaggedPointer = TaggedPointer.Null,
@@ -143,7 +132,7 @@ pub const PidFDType = if (Environment.isLinux) fd_t else u0;
 
 pub const Process = struct {
     const Self = @This();
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -374,11 +363,16 @@ pub const Process = struct {
         }
 
         if (this.poller == .fd) {
-            return this.poller.fd.register(
+            const maybe = this.poller.fd.register(
                 this.event_loop.loop(),
                 .process,
                 true,
             );
+            switch (maybe) {
+                .err => {},
+                .result => this.ref(),
+            }
+            return maybe;
         } else {
             @panic("Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.");
         }
@@ -979,12 +973,19 @@ pub const PosixSpawnOptions = struct {
     argv0: ?[*:0]const u8 = null,
     stream: bool = true,
     sync: bool = false,
-
+    can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool = false,
     /// Apple Extension: If this bit is set, rather
     /// than returning to the caller, posix_spawn(2)
     /// and posix_spawnp(2) will behave as a more
     /// featureful execve(2).
     use_execve_on_macos: bool = false,
+    /// If we need to call `socketpair()`, this
+    /// sets SO_NOSIGPIPE when true.
+    ///
+    /// If false, this avoids setting SO_NOSIGPIPE
+    /// for stdout. This is used to preserve
+    /// consistent shell semantics.
+    no_sigpipe: bool = true,
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -1052,7 +1053,7 @@ pub const WindowsSpawnOptions = struct {
     argv0: ?[*:0]const u8 = null,
     stream: bool = true,
     use_execve_on_macos: bool = false,
-
+    can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool = false,
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
@@ -1134,58 +1135,66 @@ pub const PosixSpawnResult = struct {
             return .{ .err = bun.sys.Error.fromCode(.NOSYS, .pidfd_open) };
         }
 
-        var pidfd_flags = pidfdFlagsForLinux();
+        const pidfd_flags = pidfdFlagsForLinux();
 
-        var rc = std.os.linux.pidfd_open(
-            @intCast(this.pid),
-            pidfd_flags,
-        );
         while (true) {
-            switch (bun.sys.getErrno(rc)) {
-                .SUCCESS => return JSC.Maybe(PidFDType){ .result = @intCast(rc) },
-                .INTR => {
-                    rc = std.os.linux.pidfd_open(
+            switch (brk: {
+                const rc = bun.sys.pidfd_open(
+                    @intCast(this.pid),
+                    pidfd_flags,
+                );
+                if (rc == .err and rc.getErrno() == .INVAL) {
+                    // Retry once, incase they don't support PIDFD_NONBLOCK.
+                    break :brk bun.sys.pidfd_open(
                         @intCast(this.pid),
-                        pidfd_flags,
+                        0,
                     );
-                    continue;
+                }
+                break :brk rc;
+            }) {
+                .err => |err| {
+                    switch (err.getErrno()) {
+                        // seccomp filters can be used to block this system call or pidfd's altogether
+                        // https://github.com/moby/moby/issues/42680
+                        // so let's treat a bunch of these as actually meaning we should use the waiter thread fallback instead.
+                        .NOSYS, .OPNOTSUPP, .PERM, .ACCES, .INVAL => {
+                            WaiterThread.setShouldUseWaiterThread();
+                            return .{ .err = err };
+                        },
+
+                        // No such process can happen if it exited between the time we got the pid and called pidfd_open
+                        // Until we switch to CLONE_PIDFD, this needs to be handled separately.
+                        .SRCH => {},
+
+                        // For all other cases, ensure we don't leak the child process on error
+                        // That would cause Zombie processes to accumulate.
+                        else => {
+                            while (true) {
+                                var status: u32 = 0;
+                                const rc = std.os.linux.wait4(this.pid, &status, 0, null);
+
+                                switch (bun.sys.getErrno(rc)) {
+                                    .SUCCESS => {},
+                                    .INTR => {
+                                        continue;
+                                    },
+                                    else => {},
+                                }
+
+                                break;
+                            }
+                        },
+                    }
+
+                    return .{ .err = err };
                 },
-                else => |err| {
-                    if (err == .INVAL) {
-                        if (pidfd_flags != 0) {
-                            rc = std.os.linux.pidfd_open(
-                                @intCast(this.pid),
-                                0,
-                            );
-                            pidfd_flags = 0;
-                            continue;
-                        }
-                    }
-
-                    // No such process can happen if it exited between the time we got the pid and called pidfd_open
-                    // Until we switch to clone3, this needs to be handled separately.
-                    if (err == .SRCH) {
-                        return .{ .err = bun.sys.Error.fromCode(err, .pidfd_open) };
-                    }
-
-                    // seccomp filters can be used to block this system call or pidfd's altogether
-                    // https://github.com/moby/moby/issues/42680
-                    // so let's treat a bunch of these as actually meaning we should use the waiter thread fallback instead.
-                    if (err == .NOSYS or err == .OPNOTSUPP or err == .PERM or err == .ACCES or err == .INVAL) {
-                        WaiterThread.setShouldUseWaiterThread();
-                        return .{ .err = bun.sys.Error.fromCode(err, .pidfd_open) };
-                    }
-
-                    var status: u32 = 0;
-                    // ensure we don't leak the child process on error
-                    _ = std.os.linux.wait4(this.pid, &status, 0, null);
-
-                    return .{ .err = bun.sys.Error.fromCode(err, .pidfd_open) };
+                .result => |rc| {
+                    return .{ .result = rc };
                 },
             }
-        }
 
-        unreachable;
+            unreachable;
+        }
     }
 };
 
@@ -1334,7 +1343,17 @@ pub fn spawnProcessPosix(
                 }
 
                 const fds: [2]bun.FileDescriptor = brk: {
-                    const pair = try bun.sys.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, .blocking).unwrap();
+                    const pair = if (!options.no_sigpipe) try bun.sys.socketpairForShell(
+                        std.posix.AF.UNIX,
+                        std.posix.SOCK.STREAM,
+                        0,
+                        .blocking,
+                    ).unwrap() else try bun.sys.socketpair(
+                        std.posix.AF.UNIX,
+                        std.posix.SOCK.STREAM,
+                        0,
+                        .blocking,
+                    ).unwrap();
                     break :brk .{ pair[if (i == 0) 1 else 0], pair[if (i == 0) 0 else 1] };
                 };
 
@@ -1468,22 +1487,29 @@ pub fn spawnProcessPosix(
             extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
 
             if (comptime Environment.isLinux) {
-                switch (spawned.pifdFromPid()) {
-                    .result => |pidfd| {
-                        spawned.pidfd = pidfd;
-                    },
-                    .err => |err| {
-                        // we intentionally do not clean up any of the file descriptors in this case
-                        // you could have data sitting in stdout, just waiting.
-                        if (err.getErrno() == .SRCH) {
-                            spawned.has_exited = true;
+                // If it's spawnSync and we want to block the entire thread
+                // don't even bother with pidfd. It's not necessary.
+                if (!options.can_block_entire_thread_to_reduce_cpu_usage_in_fast_path) {
 
-                            // a real error occurred. one we should not assume means pidfd_open is blocked.
-                        } else if (!WaiterThread.shouldUseWaiterThread()) {
-                            failed_after_spawn = true;
-                            return .{ .err = err };
-                        }
-                    },
+                    // Get a pidfd, which is a file descriptor that represents a process.
+                    // This lets us avoid a separate thread to wait on the process.
+                    switch (spawned.pifdFromPid()) {
+                        .result => |pidfd| {
+                            spawned.pidfd = pidfd;
+                        },
+                        .err => |err| {
+                            // we intentionally do not clean up any of the file descriptors in this case
+                            // you could have data sitting in stdout, just waiting.
+                            if (err.getErrno() == .SRCH) {
+                                spawned.has_exited = true;
+
+                                // a real error occurred. one we should not assume means pidfd_open is blocked.
+                            } else if (!WaiterThread.shouldUseWaiterThread()) {
+                                failed_after_spawn = true;
+                                return .{ .err = err };
+                            }
+                        },
+                    }
                 }
             }
 
@@ -2208,3 +2234,20 @@ pub const sync = struct {
         };
     }
 };
+
+// @sortImports
+
+const std = @import("std");
+const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const PosixSpawn = bun.spawn;
+const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const ShellSubprocess = bun.shell.ShellSubprocess;
+const uv = bun.windows.libuv;
+
+const JSC = bun.JSC;
+const Maybe = JSC.Maybe;
+const Subprocess = JSC.Subprocess;

@@ -22,6 +22,7 @@ JSC_DEFINE_HOST_FUNCTION(callDiffieHellmanGroup, (JSC::JSGlobalObject * lexicalG
     ArgList args = ArgList(callFrame);
     auto callData = JSC::getConstructData(constructor);
     JSC::JSValue result = JSC::construct(globalObject, constructor, callData, args);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(result);
 }
 
@@ -47,7 +48,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
     JSC::Structure* structure = zigGlobalObject->m_JSDiffieHellmanGroupClassStructure.get(zigGlobalObject);
     JSC::JSValue newTarget = callFrame->newTarget();
 
-    if (UNLIKELY(zigGlobalObject->m_JSDiffieHellmanGroupClassStructure.constructor(zigGlobalObject) != newTarget)) {
+    if (zigGlobalObject->m_JSDiffieHellmanGroupClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!newTarget) {
             throwError(globalObject, scope, ErrorCode::ERR_INVALID_THIS, "Class constructor DiffieHellmanGroup cannot be invoked without 'new'"_s);

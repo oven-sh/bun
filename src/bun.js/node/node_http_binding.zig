@@ -1,11 +1,5 @@
-const std = @import("std");
 const bun = @import("bun");
-const Environment = bun.Environment;
 const JSC = bun.JSC;
-const string = bun.string;
-const Output = bun.Output;
-const ZigString = JSC.ZigString;
-const uv = bun.windows.libuv;
 
 pub fn getBunServerAllClosedPromise(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1).slice();
@@ -41,7 +35,7 @@ pub fn setMaxHTTPHeaderSize(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
         return globalThis.throwNotEnoughArguments("setMaxHTTPHeaderSize", 1, arguments.len);
     }
     const value = arguments[0];
-    const num = value.coerceToInt64(globalThis);
+    const num = try value.coerceToInt64(globalThis);
     if (num <= 0) {
         return globalThis.throwInvalidArgumentTypeValue("maxHeaderSize", "non-negative integer", value);
     }

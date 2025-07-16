@@ -4,7 +4,6 @@ const Output = bun.Output;
 const strings = bun.strings;
 const string = bun.string;
 const js_lexer = bun.js_lexer;
-const ComptimeStringMap = bun.ComptimeStringMap;
 const fmt = std.fmt;
 const Environment = bun.Environment;
 const sha = bun.sha;
@@ -283,7 +282,7 @@ pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !vo
     var slice = slice_;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice, true);
+        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
         if (result.read == 0 or result.written == 0)
             break;
         try writer.writeAll(chunk[0..result.written]);
@@ -309,7 +308,7 @@ pub fn formatUTF16TypeWithPathOptions(comptime Slice: type, slice_: Slice, write
     var slice = slice_;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice, true);
+        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
         if (result.read == 0 or result.written == 0)
             break;
 
@@ -1781,7 +1780,7 @@ pub const js_bindings = struct {
             return global.throwError(err, "while formatting");
         };
 
-        return bun.String.createUTF8(buffer.list.items);
+        return bun.String.cloneUTF8(buffer.list.items);
     }
 };
 
@@ -1839,12 +1838,15 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
 const DoubleOutOfRangeFormatter = NewOutOfRangeFormatter(f64);
 const IntOutOfRangeFormatter = NewOutOfRangeFormatter(i64);
 const StringOutOfRangeFormatter = NewOutOfRangeFormatter([]const u8);
+const BunStringOutOfRangeFormatter = NewOutOfRangeFormatter(bun.String);
 
 fn OutOfRangeFormatter(comptime T: type) type {
     if (T == f64 or T == f32) {
         return DoubleOutOfRangeFormatter;
     } else if (T == []const u8) {
         return StringOutOfRangeFormatter;
+    } else if (T == bun.String) {
+        return BunStringOutOfRangeFormatter;
     }
 
     return IntOutOfRangeFormatter;

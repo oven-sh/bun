@@ -1,4 +1,3 @@
-const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -30,6 +29,12 @@ pub const VM = opaque {
         return JSC__VM__isJITEnabled();
     }
 
+    extern fn JSC__VM__hasExecutionTimeLimit(vm: *VM) bool;
+    pub fn hasExecutionTimeLimit(vm: *VM) bool {
+        return JSC__VM__hasExecutionTimeLimit(vm);
+    }
+
+    /// deprecated in favor of getAPILock to avoid an annoying callback wrapper
     extern fn JSC__VM__holdAPILock(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void;
     /// deprecated in favor of getAPILock to avoid an annoying callback wrapper
     pub fn holdAPILock(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
@@ -157,8 +162,14 @@ pub const VM = opaque {
     }
 
     extern fn JSC__VM__throwError(*VM, *JSGlobalObject, JSValue) void;
-    pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) void {
+    pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) error{JSError} {
+        var scope: bun.jsc.ExceptionValidationScope = undefined;
+        scope.init(global_object, @src());
+        defer scope.deinit();
+        scope.assertNoException();
         JSC__VM__throwError(vm, global_object, value);
+        scope.assertExceptionPresenceMatches(true);
+        return error.JSError;
     }
 
     extern fn JSC__VM__releaseWeakRefs(vm: *VM) void;

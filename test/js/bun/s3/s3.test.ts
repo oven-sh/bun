@@ -1,12 +1,12 @@
-import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import { bunExe, bunEnv, getSecret, tempDirWithFiles, isLinux } from "harness";
-import { randomUUID } from "crypto";
+import type { S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7, which } from "bun";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import child_process from "child_process";
+import { randomUUID } from "crypto";
+import { bunRun, getSecret, tempDirWithFiles } from "harness";
+import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
-import child_process from "child_process";
-import type { S3File, S3Options } from "bun";
-import path from "path";
 
 const dockerCLI = which("docker") as string;
 function isDockerEnabled(): boolean {
@@ -21,8 +21,11 @@ function isDockerEnabled(): boolean {
     return false;
   }
 }
-
-const allCredentials = [
+type S3Credentials = S3Options & {
+  service: string;
+};
+let minioCredentials: S3Credentials | undefined;
+const allCredentials: S3Credentials[] = [
   {
     accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
     secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
@@ -73,13 +76,14 @@ if (isDockerEnabled()) {
     stdio: "ignore",
   });
 
-  allCredentials.push({
+  minioCredentials = {
     endpoint: "http://localhost:9000", // MinIO endpoint
     accessKeyId: "minioadmin",
     secretAccessKey: "minioadmin",
     bucket: "buntest",
     service: "MinIO" as string,
-  });
+  };
+  allCredentials.push(minioCredentials);
 }
 
 describe("Virtual Hosted-Style", () => {
@@ -565,6 +569,26 @@ for (let credentials of allCredentials) {
               await writer.end();
               expect(await s3file.text()).toBe(mediumPayload.repeat(2));
             });
+            it("should be able to upload large files using flush and partSize", async () => {
+              const s3file = file(tmp_filename, options);
+
+              const writer = s3file.writer({
+                //@ts-ignore
+                partSize: mediumPayload.length,
+              });
+              writer.write(mediumPayload);
+              writer.write(mediumPayload);
+              let total = 0;
+              while (true) {
+                const flushed = await writer.flush();
+                if (flushed === 0) break;
+                expect(flushed).toBe(Buffer.byteLength(mediumPayload));
+                total += flushed;
+              }
+              expect(total).toBe(Buffer.byteLength(mediumPayload) * 2);
+              await writer.end();
+              expect(await s3file.text()).toBe(mediumPayload.repeat(2));
+            });
             it("should be able to upload large files in one go using Bun.write", async () => {
               {
                 await Bun.write(file(tmp_filename, options), bigPayload);
@@ -679,6 +703,26 @@ for (let credentials of allCredentials) {
                 await s3file.delete();
               }
             }, 10_000);
+
+            it("should be able to upload large files using flush and partSize", async () => {
+              const s3file = s3(tmp_filename, options);
+
+              const writer = s3file.writer({
+                partSize: mediumPayload.length,
+              });
+              writer.write(mediumPayload);
+              writer.write(mediumPayload);
+              let total = 0;
+              while (true) {
+                const flushed = await writer.flush();
+                if (flushed === 0) break;
+                expect(flushed).toBe(Buffer.byteLength(mediumPayload));
+                total += flushed;
+              }
+              expect(total).toBe(Buffer.byteLength(mediumPayload) * 2);
+              await writer.end();
+              expect(await s3file.text()).toBe(mediumPayload.repeat(2));
+            });
 
             it("should be able to upload large files in one go using S3File.write", async () => {
               {
@@ -1292,3 +1336,34 @@ for (let credentials of allCredentials) {
     });
   });
 }
+describe.skipIf(!minioCredentials)("http endpoint should work when using env variables", () => {
+  const testDir = tempDirWithFiles("minio-credential-test", {
+    "index.mjs": `
+      import { s3, randomUUIDv7 } from "bun";
+      import { expect } from "bun:test";
+      const name = randomUUIDv7("hex") + ".txt";
+      const s3file = s3.file(name);
+      await s3file.write("Hello Bun!");
+      try {
+        const text = await s3file.text();
+        expect(text).toBe("Hello Bun!");
+        process.stdout.write(text);
+      } finally {
+        await s3file.unlink();
+      }
+    `,
+  });
+  for (const endpoint of ["S3_ENDPOINT", "AWS_ENDPOINT"]) {
+    it(endpoint, async () => {
+      const { stdout, stderr } = await bunRun(path.join(testDir, "index.mjs"), {
+        // @ts-ignore
+        [endpoint]: minioCredentials!.endpoint as string,
+        "S3_BUCKET": minioCredentials!.bucket as string,
+        "S3_ACCESS_KEY_ID": minioCredentials!.accessKeyId as string,
+        "S3_SECRET_ACCESS_KEY": minioCredentials!.secretAccessKey as string,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("Hello Bun!");
+    });
+  }
+});

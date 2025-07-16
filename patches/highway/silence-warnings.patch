@@ -1,0 +1,23 @@
+--- a/hwy/base.h
++++ b/hwy/base.h
+@@ -332,8 +332,7 @@ HWY_DLLEXPORT HWY_NORETURN void HWY_FORMAT(3, 4)
+ 
+ #endif  // HWY_HEADER_ONLY
+ 
+-#define HWY_WARN(format, ...) \
+-  ::hwy::Warn(__FILE__, __LINE__, format, ##__VA_ARGS__)
++#define HWY_WARN(format, ...)
+ 
+ #define HWY_ABORT(format, ...) \
+   ::hwy::Abort(__FILE__, __LINE__, format, ##__VA_ARGS__)
+--- a/hwy/contrib/thread_pool/topology.cc
++++ b/hwy/contrib/thread_pool/topology.cc
+@@ -162,7 +162,7 @@ void ForeachBit(size_t num_groups, const GROUP_AFFINITY* affinity,
+       size_t lp = Num0BitsBelowLS1Bit_Nonzero64(bits);
+       bits &= bits - 1;  // clear LSB
+       if (HWY_UNLIKELY(lp >= lps.size())) {
+-        Warn(__FILE__, line, "Clamping lp %zu to lps.size() %zu, groups %zu\n",
++        HWY_WARN("Clamping lp %zu to lps.size() %zu, groups %zu\n",
+              lp, lps.size(), num_groups);
+         lp = lps.size() - 1;
+       }

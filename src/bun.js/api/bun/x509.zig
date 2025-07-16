@@ -1,7 +1,5 @@
 const BoringSSL = bun.BoringSSL.c;
 const bun = @import("bun");
-const ZigString = JSC.ZigString;
-const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -47,7 +45,7 @@ pub inline fn isSafeAltName(name: []const u8, utf8: bool) bool {
 }
 
 pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) bun.JSError!JSValue {
-    return Bun__X509__toJSLegacyEncoding(cert, globalObject);
+    return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__X509__toJSLegacyEncoding, .{ cert, globalObject });
 }
 
 pub fn toJSObject(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) bun.JSError!JSValue {

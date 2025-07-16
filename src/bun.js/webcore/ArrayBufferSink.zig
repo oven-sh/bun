@@ -45,8 +45,8 @@ pub fn flush(_: *ArrayBufferSink) JSC.Maybe(void) {
 pub fn flushFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, wait: bool) JSC.Maybe(JSValue) {
     if (this.streaming) {
         const value: JSValue = switch (this.as_uint8array) {
-            true => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array),
-            false => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .ArrayBuffer),
+            true => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array) catch .zero, // TODO: properly propagate exception upwards
+            false => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .ArrayBuffer) catch .zero, // TODO: properly propagate exception upwards
         };
         this.bytes.len = 0;
         if (wait) {}
@@ -57,23 +57,15 @@ pub fn flushFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, wait: bo
 }
 
 pub fn finalize(this: *ArrayBufferSink) void {
-    if (this.bytes.len > 0) {
-        this.bytes.listManaged(this.allocator).deinit();
-        this.bytes = bun.ByteList.init("");
-        this.done = true;
-    }
-
-    this.allocator.destroy(this);
+    this.destroy();
 }
 
 pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*ArrayBufferSink {
-    const this = try allocator.create(ArrayBufferSink);
-    this.* = ArrayBufferSink{
+    return bun.new(ArrayBufferSink, .{
         .bytes = bun.ByteList.init(&.{}),
         .allocator = allocator,
         .next = next,
-    };
-    return this;
+    });
 }
 
 pub fn construct(
@@ -129,7 +121,7 @@ pub fn end(this: *ArrayBufferSink, err: ?Syscall.Error) JSC.Maybe(void) {
 }
 pub fn destroy(this: *ArrayBufferSink) void {
     this.bytes.deinitWithAllocator(this.allocator);
-    this.allocator.destroy(this);
+    bun.destroy(this);
 }
 pub fn toJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, as_uint8array: bool) JSValue {
     if (this.streaming) {

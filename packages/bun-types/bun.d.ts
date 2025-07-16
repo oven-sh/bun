@@ -45,6 +45,7 @@ declare module "bun" {
   type DOMHighResTimeStamp = number;
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
+  type MaybePromise<T> = T | Promise<T>;
 
   namespace __internal {
     type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
@@ -852,6 +853,8 @@ declare module "bun" {
    *
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as a {@link Uint8Array}.
+   *
+   * @deprecated Use {@link ReadableStream.bytes}
    */
   function readableStreamToBytes(
     stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
@@ -864,6 +867,8 @@ declare module "bun" {
    *
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks as a {@link Blob}.
+   *
+   * @deprecated Use {@link ReadableStream.blob}
    */
   function readableStreamToBlob(stream: ReadableStream): Promise<Blob>;
 
@@ -906,6 +911,8 @@ declare module "bun" {
    *
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks as a {@link String}.
+   *
+   * @deprecated Use {@link ReadableStream.text}
    */
   function readableStreamToText(stream: ReadableStream): Promise<string>;
 
@@ -916,6 +923,8 @@ declare module "bun" {
    *
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks as a {@link String}.
+   *
+   * @deprecated Use {@link ReadableStream.json}
    */
   function readableStreamToJSON(stream: ReadableStream): Promise<any>;
 
@@ -991,11 +1000,9 @@ declare module "bun" {
   function fileURLToPath(url: URL | string): string;
 
   /**
-   * Fast incremental writer that becomes an `ArrayBuffer` on end().
+   * Fast incremental writer that becomes an {@link ArrayBuffer} on end().
    */
   class ArrayBufferSink {
-    constructor();
-
     start(options?: {
       asUint8Array?: boolean;
       /**
@@ -1128,6 +1135,7 @@ declare module "bun" {
      * This will be used by fetch() and Bun.connect() to avoid DNS lookups.
      *
      * @param hostname The hostname to prefetch
+     * @param port The port to prefetch. Default is 443. Port helps distinguish between IPv6 vs IPv4-only connections.
      *
      * @example
      * ```js
@@ -1137,7 +1145,7 @@ declare module "bun" {
      * await fetch('https://example.com');
      * ```
      */
-    function prefetch(hostname: string): void;
+    function prefetch(hostname: string, port?: number): void;
 
     /**
      * **Experimental API**
@@ -1243,9 +1251,9 @@ declare module "bun" {
      */
     writer(options?: { highWaterMark?: number }): FileSink;
 
-    readonly readable: ReadableStream;
-
-    // TODO: writable: WritableStream;
+    // TODO
+    // readonly readable: ReadableStream<Uint8Array>;
+    // readonly writable: WritableStream<Uint8Array>;
 
     /**
      * A UNIX timestamp indicating when the file was last modified.
@@ -1304,168 +1312,405 @@ declare module "bun" {
     stat(): Promise<import("node:fs").Stats>;
   }
 
-  /**
-   * Configuration options for SQL client connection and behavior
-   *  @example
-   * const config: SQLOptions = {
-   *   host: 'localhost',
-   *   port: 5432,
-   *   user: 'dbuser',
-   *   password: 'secretpass',
-   *   database: 'myapp',
-   *   idleTimeout: 30,
-   *   max: 20,
-   *   onconnect: (client) => {
-   *     console.log('Connected to database');
-   *   }
-   * };
-   */
-  type SQLOptions = {
-    /** Connection URL (can be string or URL object) */
-    url?: URL | string;
-    /** Database server hostname */
-    host?: string;
-    /** Database server hostname (alias for host) */
-    hostname?: string;
-    /** Database server port number */
-    port?: number | string;
-    /** Database user for authentication */
-    username?: string;
-    /** Database user for authentication (alias for username) */
-    user?: string;
-    /** Database password for authentication */
-    password?: string | (() => Promise<string>);
-    /** Database password for authentication (alias for password) */
-    pass?: string | (() => Promise<string>);
-    /** Name of the database to connect to */
-    database?: string;
-    /** Name of the database to connect to (alias for database) */
-    db?: string;
-    /** Database adapter/driver to use */
-    adapter?: string;
-    /** Maximum time in seconds to wait for connection to become available */
-    idleTimeout?: number;
-    /** Maximum time in seconds to wait for connection to become available (alias for idleTimeout) */
-    idle_timeout?: number;
-    /** Maximum time in seconds to wait when establishing a connection */
-    connectionTimeout?: number;
-    /** Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout) */
-    connection_timeout?: number;
-    /** Maximum lifetime in seconds of a connection */
-    maxLifetime?: number;
-    /** Maximum lifetime in seconds of a connection (alias for maxLifetime) */
-    max_lifetime?: number;
-    /** Whether to use TLS/SSL for the connection */
-    tls?: TLSOptions | boolean;
-    /** Whether to use TLS/SSL for the connection (alias for tls) */
-    ssl?: TLSOptions | boolean;
-    /** Callback function executed when a connection is established */
-    onconnect?: (client: SQL) => void;
-    /** Callback function executed when a connection is closed */
-    onclose?: (client: SQL) => void;
-    /** Maximum number of connections in the pool */
-    max?: number;
-    /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
-    bigint?: boolean;
-    /** Automatic creation of prepared statements, defaults to true */
-    prepare?: boolean;
-  };
+  namespace SQL {
+    type AwaitPromisesArray<T extends Array<PromiseLike<any>>> = {
+      [K in keyof T]: Awaited<T[K]>;
+    };
 
-  /**
-   * Represents a SQL query that can be executed, with additional control methods
-   * Extends Promise to allow for async/await usage
-   */
-  interface SQLQuery extends Promise<any> {
-    /** Indicates if the query is currently executing */
-    active: boolean;
-    /** Indicates if the query has been cancelled */
-    cancelled: boolean;
-    /** Cancels the executing query */
-    cancel(): SQLQuery;
-    /** Execute as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons */
-    simple(): SQLQuery;
-    /** Executes the query */
-    execute(): SQLQuery;
-    /** Returns the raw query result */
-    raw(): SQLQuery;
-    /** Returns only the values from the query result */
-    values(): SQLQuery;
+    type ContextCallbackResult<T> = T extends Array<PromiseLike<any>> ? AwaitPromisesArray<T> : Awaited<T>;
+    type ContextCallback<T, SQL> = (sql: SQL) => Promise<T>;
+
+    /**
+     * Configuration options for SQL client connection and behavior
+     *
+     * @example
+     * ```ts
+     * const config: Bun.SQL.Options = {
+     *   host: 'localhost',
+     *   port: 5432,
+     *   user: 'dbuser',
+     *   password: 'secretpass',
+     *   database: 'myapp',
+     *   idleTimeout: 30,
+     *   max: 20,
+     *   onconnect: (client) => {
+     *     console.log('Connected to database');
+     *   }
+     * };
+     * ```
+     */
+    interface Options {
+      /**
+       * Connection URL (can be string or URL object)
+       */
+      url?: URL | string | undefined;
+
+      /**
+       * Database server hostname
+       * @default "localhost"
+       */
+      host?: string | undefined;
+
+      /**
+       * Database server hostname (alias for host)
+       * @deprecated Prefer {@link host}
+       * @default "localhost"
+       */
+      hostname?: string | undefined;
+
+      /**
+       * Database server port number
+       * @default 5432
+       */
+      port?: number | string | undefined;
+
+      /**
+       * Database user for authentication
+       * @default "postgres"
+       */
+      username?: string | undefined;
+
+      /**
+       * Database user for authentication (alias for username)
+       * @deprecated Prefer {@link username}
+       * @default "postgres"
+       */
+      user?: string | undefined;
+
+      /**
+       * Database password for authentication
+       * @default ""
+       */
+      password?: string | (() => MaybePromise<string>) | undefined;
+
+      /**
+       * Database password for authentication (alias for password)
+       * @deprecated Prefer {@link password}
+       * @default ""
+       */
+      pass?: string | (() => MaybePromise<string>) | undefined;
+
+      /**
+       * Name of the database to connect to
+       * @default The username value
+       */
+      database?: string | undefined;
+
+      /**
+       * Name of the database to connect to (alias for database)
+       * @deprecated Prefer {@link database}
+       * @default The username value
+       */
+      db?: string | undefined;
+
+      /**
+       * Database adapter/driver to use
+       * @default "postgres"
+       */
+      adapter?: "postgres" /*| "sqlite" | "mysql"*/ | (string & {}) | undefined;
+
+      /**
+       * Maximum time in seconds to wait for connection to become available
+       * @default 0 (no timeout)
+       */
+      idleTimeout?: number | undefined;
+
+      /**
+       * Maximum time in seconds to wait for connection to become available (alias for idleTimeout)
+       * @deprecated Prefer {@link idleTimeout}
+       * @default 0 (no timeout)
+       */
+      idle_timeout?: number | undefined;
+
+      /**
+       * Maximum time in seconds to wait when establishing a connection
+       * @default 30
+       */
+      connectionTimeout?: number | undefined;
+
+      /**
+       * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
+       * @deprecated Prefer {@link connectionTimeout}
+       * @default 30
+       */
+      connection_timeout?: number | undefined;
+
+      /**
+       * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
+       * @deprecated Prefer {@link connectionTimeout}
+       * @default 30
+       */
+      connectTimeout?: number | undefined;
+
+      /**
+       * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
+       * @deprecated Prefer {@link connectionTimeout}
+       * @default 30
+       */
+      connect_timeout?: number | undefined;
+
+      /**
+       * Maximum lifetime in seconds of a connection
+       * @default 0 (no maximum lifetime)
+       */
+      maxLifetime?: number | undefined;
+
+      /**
+       * Maximum lifetime in seconds of a connection (alias for maxLifetime)
+       * @deprecated Prefer {@link maxLifetime}
+       * @default 0 (no maximum lifetime)
+       */
+      max_lifetime?: number | undefined;
+
+      /**
+       * Whether to use TLS/SSL for the connection
+       * @default false
+       */
+      tls?: TLSOptions | boolean | undefined;
+
+      /**
+       * Whether to use TLS/SSL for the connection (alias for tls)
+       * @default false
+       */
+      ssl?: TLSOptions | boolean | undefined;
+
+      // `.path` is currently unsupported in Bun, the implementation is incomplete.
+      //
+      // /**
+      //  * Unix domain socket path for connection
+      //  * @default ""
+      //  */
+      // path?: string | undefined;
+
+      /**
+       * Callback function executed when a connection is established
+       */
+      onconnect?: ((client: SQL) => void) | undefined;
+
+      /**
+       * Callback function executed when a connection is closed
+       */
+      onclose?: ((client: SQL) => void) | undefined;
+
+      /**
+       * Postgres client runtime configuration options
+       *
+       * @see https://www.postgresql.org/docs/current/runtime-config-client.html
+       */
+      connection?: Record<string, string | boolean | number> | undefined;
+
+      /**
+       * Maximum number of connections in the pool
+       * @default 10
+       */
+      max?: number | undefined;
+
+      /**
+       * By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts.
+       * @default false
+       */
+      bigint?: boolean | undefined;
+
+      /**
+       * Automatic creation of prepared statements
+       * @default true
+       */
+      prepare?: boolean | undefined;
+    }
+
+    /**
+     * Represents a SQL query that can be executed, with additional control methods
+     * Extends Promise to allow for async/await usage
+     */
+    interface Query<T> extends Promise<T> {
+      /**
+       * Indicates if the query is currently executing
+       */
+      active: boolean;
+
+      /**
+       * Indicates if the query has been cancelled
+       */
+      cancelled: boolean;
+
+      /**
+       * Cancels the executing query
+       */
+      cancel(): Query<T>;
+
+      /**
+       * Executes the query as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons
+       */
+      simple(): Query<T>;
+
+      /**
+       * Executes the query
+       */
+      execute(): Query<T>;
+
+      /**
+       * Returns the raw query result
+       */
+      raw(): Query<T>;
+
+      /**
+       * Returns only the values from the query result
+       */
+      values(): Query<T>;
+    }
+
+    /**
+     * Callback function type for transaction contexts
+     * @param sql Function to execute SQL queries within the transaction
+     */
+    type TransactionContextCallback<T> = ContextCallback<T, TransactionSQL>;
+
+    /**
+     * Callback function type for savepoint contexts
+     * @param sql Function to execute SQL queries within the savepoint
+     */
+    type SavepointContextCallback<T> = ContextCallback<T, SavepointSQL>;
+
+    /**
+     * SQL.Helper represents a parameter or serializable
+     * value inside of a query.
+     *
+     * @example
+     * ```ts
+     * const helper = sql(users, 'id');
+     * await sql`insert into users ${helper}`;
+     * ```
+     */
+    interface Helper<T> {
+      readonly value: T[];
+      readonly columns: (keyof T)[];
+    }
   }
-
-  /**
-   * Callback function type for transaction contexts
-   * @param sql Function to execute SQL queries within the transaction
-   */
-  type SQLTransactionContextCallback = (sql: TransactionSQL) => Promise<any> | Array<SQLQuery>;
-  /**
-   * Callback function type for savepoint contexts
-   * @param sql Function to execute SQL queries within the savepoint
-   */
-  type SQLSavepointContextCallback = (sql: SavepointSQL) => Promise<any> | Array<SQLQuery>;
 
   /**
    * Main SQL client interface providing connection and transaction management
    */
-  interface SQL {
-    /** Creates a new SQL client instance
-     * @example
-     * const sql = new SQL("postgres://localhost:5432/mydb");
-     * const sql = new SQL(new URL("postgres://localhost:5432/mydb"));
-     */
-    new (connectionString: string | URL): SQL;
-    /** Creates a new SQL client instance with options
-     * @example
-     * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
-     */
-    new (connectionString: string | URL, options: SQLOptions): SQL;
-    /** Creates a new SQL client instance with options
-     * @example
-     * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
-     */
-    new (options?: SQLOptions): SQL;
-    /** Executes a SQL query using template literals
-     * @example
-     * const [user] = await sql`select * from users where id = ${1}`;
-     */
-    (strings: string | TemplateStringsArray, ...values: any[]): SQLQuery;
+  interface SQL extends AsyncDisposable {
     /**
-     * Helper function to allow easy use to insert values into a query
+     * Executes a SQL query using template literals
      * @example
-     * const result = await sql`insert into users ${sql(users)} RETURNING *`;
+     * ```ts
+     * const [user] = await sql`select * from users where id = ${1}`;
+     * ```
      */
-    (obj: any): SQLQuery;
-    /** Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+    <T = any>(strings: TemplateStringsArray, ...values: unknown[]): SQL.Query<T>;
+
+    /**
+     * Execute a SQL query using a string
+     */
+    <T = any>(string: string): SQL.Query<T>;
+
+    /**
+     * Helper function for inserting an object into a query
+     *
      * @example
+     * ```ts
+     * // Insert an object
+     * const result = await sql`insert into users ${sql(users)} returning *`;
+     *
+     * // Or pick specific columns
+     * const result = await sql`insert into users ${sql(users, "id", "name")} returning *`;
+     *
+     * // Or a single object
+     * const result = await sql`insert into users ${sql(user)} returning *`;
+     * ```
+     */
+    <T extends { [Key in PropertyKey]: unknown }, Keys extends keyof T = keyof T>(
+      obj: T | T[] | readonly T[],
+      ...columns: readonly Keys[]
+    ): SQL.Helper<Pick<T, Keys>>;
+
+    /**
+     * Helper function for inserting any serializable value into a query
+     *
+     * @example
+     * ```ts
+     * const result = await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
+     * ```
+     */
+    <T>(value: T): SQL.Helper<T>;
+
+    /**
+     * Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+     *
+     * @param name - The name of the distributed transaction
+     *
+     * @example
+     * ```ts
      * await sql.commitDistributed("my_distributed_transaction");
+     * ```
      */
     commitDistributed(name: string): Promise<void>;
-    /** Rolls back a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+
+    /**
+     * Rolls back a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+     *
+     * @param name - The name of the distributed transaction
+     *
      * @example
+     * ```ts
      * await sql.rollbackDistributed("my_distributed_transaction");
+     * ```
      */
     rollbackDistributed(name: string): Promise<void>;
+
     /** Waits for the database connection to be established
+     *
      * @example
+     * ```ts
      * await sql.connect();
+     * ```
      */
     connect(): Promise<SQL>;
-    /** Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
+
+    /**
+     * Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
+     *
+     * @param options - The options for the close
+     *
      * @example
+     * ```ts
      * await sql.close({ timeout: 1 });
+     * ```
      */
     close(options?: { timeout?: number }): Promise<void>;
-    /** Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
-     * @alias close
+
+    /**
+     * Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
+     * This is an alias of {@link SQL.close}
+     *
+     * @param options - The options for the close
+     *
      * @example
+     * ```ts
      * await sql.end({ timeout: 1 });
+     * ```
      */
     end(options?: { timeout?: number }): Promise<void>;
-    /** Flushes any pending operations */
-    flush(): void;
-    /**  The reserve method pulls out a connection from the pool, and returns a client that wraps the single connection.
-     *   This can be used for running queries on an isolated connection.
-     *   Calling reserve in a reserved Sql will return a new reserved connection, not the same connection (behavior matches postgres package).
+
+    /**
+     * Flushes any pending operations
+     *
      * @example
+     * ```ts
+     * sql.flush();
+     * ```
+     */
+    flush(): void;
+
+    /**
+     * The reserve method pulls out a connection from the pool, and returns a client that wraps the single connection.
+     *
+     * This can be used for running queries on an isolated connection.
+     * Calling reserve in a reserved Sql will return a new reserved connection,  not the same connection (behavior matches postgres package).
+     *
+     * @example
+     * ```ts
      * const reserved = await sql.reserve();
      * await reserved`select * from users`;
      * await reserved.release();
@@ -1476,15 +1721,20 @@ declare module "bun" {
      * } finally {
      *   await reserved.release();
      * }
-     * //To make it simpler bun supportsSymbol.dispose and Symbol.asyncDispose
+     *
+     * // Bun supports Symbol.dispose and Symbol.asyncDispose
      * {
-     * // always release after context (safer)
-     * using reserved = await sql.reserve()
-     * await reserved`select * from users`
+     *  // always release after context (safer)
+     *  using reserved = await sql.reserve()
+     *  await reserved`select * from users`
      * }
+     * ```
      */
     reserve(): Promise<ReservedSQL>;
-    /** Begins a new transaction
+
+    /**
+     * Begins a new transaction.
+     *
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
      * @example
@@ -1508,8 +1758,11 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    begin(fn: SQLTransactionContextCallback): Promise<any>;
-    /** Begins a new transaction with options
+    begin<const T>(fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
+
+    /**
+     * Begins a new transaction with options.
+     *
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
      * @example
@@ -1533,8 +1786,11 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    begin(options: string, fn: SQLTransactionContextCallback): Promise<any>;
-    /** Alternative method to begin a transaction
+    begin<const T>(options: string, fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
+
+    /**
+     * Alternative method to begin a transaction.
+     *
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
      * @alias begin
@@ -1559,11 +1815,15 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    transaction(fn: SQLTransactionContextCallback): Promise<any>;
-    /** Alternative method to begin a transaction with options
+    transaction<const T>(fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
+
+    /**
+     * Alternative method to begin a transaction with options
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
-     * @alias begin
+     *
+     * @alias {@link begin}
+     *
      * @example
      * const [user, account] = await sql.transaction("read write", async sql => {
      *   const [user] = await sql`
@@ -1583,15 +1843,18 @@ declare module "bun" {
      *     returning *
      *   `
      *   return [user, account]
-     * })
+     * });
      */
-    transaction(options: string, fn: SQLTransactionContextCallback): Promise<any>;
-    /** Begins a distributed transaction
+    transaction<const T>(options: string, fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
+
+    /**
+     * Begins a distributed transaction
      * Also know as Two-Phase Commit, in a distributed transaction, Phase 1 involves the coordinator preparing nodes by ensuring data is written and ready to commit, while Phase 2 finalizes with nodes committing or rolling back based on the coordinator's decision, ensuring durability and releasing locks.
      * In PostgreSQL and MySQL distributed transactions persist beyond the original session, allowing privileged users or coordinators to commit/rollback them, ensuring support for distributed transactions, recovery, and administrative tasks.
      * beginDistributed will automatic rollback if any exception are not caught, and you can commit and rollback later if everything goes well.
      * PostgreSQL natively supports distributed transactions using PREPARE TRANSACTION, while MySQL uses XA Transactions, and MSSQL also supports distributed/XA transactions. However, in MSSQL, distributed transactions are tied to the original session, the DTC coordinator, and the specific connection.
      * These transactions are automatically committed or rolled back following the same rules as regular transactions, with no option for manual intervention from other sessions, in MSSQL distributed transactions are used to coordinate transactions using Linked Servers.
+     *
      * @example
      * await sql.beginDistributed("numbers", async sql => {
      *   await sql`create table if not exists numbers (a int)`;
@@ -1601,40 +1864,87 @@ declare module "bun" {
      * await sql.commitDistributed("numbers");
      * // or await sql.rollbackDistributed("numbers");
      */
-    beginDistributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
+    beginDistributed<const T>(
+      name: string,
+      fn: SQL.TransactionContextCallback<T>,
+    ): Promise<SQL.ContextCallbackResult<T>>;
+
     /** Alternative method to begin a distributed transaction
-     * @alias beginDistributed
+     * @alias {@link beginDistributed}
      */
-    distributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
+    distributed<const T>(name: string, fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
+
     /**If you know what you're doing, you can use unsafe to pass any string you'd like.
      * Please note that this can lead to SQL injection if you're not careful.
      * You can also nest sql.unsafe within a safe sql expression. This is useful if only part of your fraction has unsafe elements.
      * @example
      * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
      */
-    unsafe(string: string, values?: any[]): SQLQuery;
+    unsafe<T = any>(string: string, values?: any[]): SQL.Query<T>;
+
     /**
      * Reads a file and uses the contents as a query.
      * Optional parameters can be used if the file includes $1, $2, etc
      * @example
      * const result = await sql.file("query.sql", [1, 2, 3]);
      */
-    file(filename: string, values?: any[]): SQLQuery;
+    file<T = any>(filename: string, values?: any[]): SQL.Query<T>;
 
-    /** Current client options */
-    options: SQLOptions;
-
-    [Symbol.asyncDispose](): Promise<any>;
+    /**
+     * Current client options
+     */
+    options: SQL.Options;
   }
+
+  const SQL: {
+    /**
+     * Creates a new SQL client instance
+     *
+     * @param connectionString - The connection string for the SQL client
+     *
+     * @example
+     * ```ts
+     * const sql = new SQL("postgres://localhost:5432/mydb");
+     * const sql = new SQL(new URL("postgres://localhost:5432/mydb"));
+     * ```
+     */
+    new (connectionString: string | URL): SQL;
+
+    /**
+     * Creates a new SQL client instance with options
+     *
+     * @param connectionString - The connection string for the SQL client
+     * @param options - The options for the SQL client
+     *
+     * @example
+     * ```ts
+     * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
+     * ```
+     */
+    new (connectionString: string | URL, options: Omit<SQL.Options, "url">): SQL;
+
+    /**
+     * Creates a new SQL client instance with options
+     *
+     * @param options - The options for the SQL client
+     *
+     * @example
+     * ```ts
+     * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
+     * ```
+     */
+    new (options?: SQL.Options): SQL;
+  };
 
   /**
    * Represents a reserved connection from the connection pool
    * Extends SQL with additional release functionality
    */
-  interface ReservedSQL extends SQL {
-    /** Releases the client back to the connection pool */
+  interface ReservedSQL extends SQL, Disposable {
+    /**
+     * Releases the client back to the connection pool
+     */
     release(): void;
-    [Symbol.dispose](): void;
   }
 
   /**
@@ -1643,26 +1953,30 @@ declare module "bun" {
    */
   interface TransactionSQL extends SQL {
     /** Creates a savepoint within the current transaction */
-    savepoint(name: string, fn: SQLSavepointContextCallback): Promise<any>;
-    savepoint(fn: SQLSavepointContextCallback): Promise<any>;
+    savepoint<T>(name: string, fn: SQLSavepointContextCallback<T>): Promise<T>;
+    savepoint<T>(fn: SQLSavepointContextCallback<T>): Promise<T>;
   }
+
   /**
    * Represents a savepoint within a transaction
    */
   interface SavepointSQL extends SQL {}
 
   type CSRFAlgorithm = "blake2b256" | "blake2b512" | "sha256" | "sha384" | "sha512" | "sha512-256";
+
   interface CSRFGenerateOptions {
     /**
      * The number of milliseconds until the token expires. 0 means the token never expires.
      * @default 24 * 60 * 60 * 1000 (24 hours)
      */
     expiresIn?: number;
+
     /**
      * The encoding of the token.
      * @default "base64url"
      */
     encoding?: "base64" | "base64url" | "hex";
+
     /**
      * The algorithm to use for the token.
      * @default "sha256"
@@ -1675,16 +1989,19 @@ declare module "bun" {
      * The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
      */
     secret?: string;
+
     /**
      * The encoding of the token.
      * @default "base64url"
      */
     encoding?: "base64" | "base64url" | "hex";
+
     /**
      * The algorithm to use for the token.
      * @default "sha256"
      */
     algorithm?: CSRFAlgorithm;
+
     /**
      * The number of milliseconds until the token expires. 0 means the token never expires.
      * @default 24 * 60 * 60 * 1000 (24 hours)
@@ -1694,24 +2011,13 @@ declare module "bun" {
 
   /**
    * SQL client
-   *
-   * @category Database
    */
-  var sql: SQL;
+  const sql: SQL;
 
   /**
    * SQL client for PostgreSQL
-   *
-   * @category Database
    */
-  var postgres: SQL;
-
-  /**
-   * The SQL constructor
-   *
-   * @category Database
-   */
-  var SQL: SQL;
+  const postgres: SQL;
 
   /**
    * Generate and verify CSRF tokens
@@ -1774,6 +2080,7 @@ declare module "bun" {
     murmur32v3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur32v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur64v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    rapidhash: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
   }
 
   type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
@@ -2027,7 +2334,7 @@ declare module "bun" {
   }
 
   /**
-   * @see [Bun.build API docs](https://bun.sh/docs/bundler#api)
+   * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
   interface BuildConfig {
     entrypoints: string[]; // list of file path
@@ -2212,7 +2519,7 @@ declare module "bun" {
    *
    * These are fast APIs that can run in a worker thread if used asynchronously.
    *
-   * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
+   * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
    *
    * @category Security
    */
@@ -2248,7 +2555,7 @@ declare module "bun" {
    * Password hashing functions are necessarily slow, and this object will
    * automatically run in a worker thread.
    *
-   * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
+   * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
    *
    * The underlying implementation of these functions are provided by the Zig
    * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
@@ -3203,7 +3510,13 @@ declare module "bun" {
       [K in HTTPMethod]?: RouteHandlerWithWebSocketUpgrade<T>;
     };
 
-    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T>;
+    type RouteValue<T extends string> =
+      | Response
+      | false
+      | RouteHandler<T>
+      | RouteHandlerObject<T>
+      | HTMLBundle
+      | BunFile;
     type RouteValueWithWebSocketUpgrade<T extends string> =
       | RouteValue<T>
       | RouteHandlerWithWebSocketUpgrade<T>
@@ -3213,6 +3526,8 @@ declare module "bun" {
   interface BunRequest<T extends string = string> extends Request {
     params: RouterTypes.ExtractRouteParams<T>;
     readonly cookies: CookieMap;
+
+    clone(): BunRequest<T>;
   }
 
   interface GenericServeOptions {
@@ -3258,6 +3573,36 @@ declare module "bun" {
            *
            */
           hmr?: boolean;
+
+          /**
+           * Enable console log streaming from browser to server
+           * @default false
+           */
+          console?: boolean;
+
+          /**
+           * Enable automatic workspace folders for Chrome DevTools
+           *
+           * This lets you persistently edit files in the browser. It works by adding the following route to the server:
+           * `/.well-known/appspecific/com.chrome.devtools.json`
+           *
+           * The response is a JSON object with the following shape:
+           * ```json
+           * {
+           *   "workspace": {
+           *     "root": "<cwd>",
+           *     "uuid": "<uuid>"
+           *   }
+           * }
+           * ```
+           *
+           * The `root` field is the current working directory of the server.
+           * The `"uuid"` field is a hash of the file that started the server and a hash of the current working directory.
+           *
+           * For security reasons, if the remote socket address is not from localhost, 127.0.0.1, or ::1, the request is ignored.
+           * @default true
+           */
+          chromeDevToolsAutomaticWorkspaceFolders?: boolean;
         };
 
     error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | void | Promise<void>;
@@ -3563,7 +3908,7 @@ declare module "bun" {
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
-    ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    ca?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -3575,7 +3920,7 @@ declare module "bun" {
      *  intermediate certificates are not provided, the peer will not be
      *  able to validate the certificate, and the handshake will fail.
      */
-    cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    cert?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      * Private keys in PEM format. PEM allows the option of private keys
      * being encrypted. Encrypted keys will be decrypted with
@@ -3586,13 +3931,25 @@ declare module "bun" {
      * object.passphrase is optional. Encrypted keys will be decrypted with
      * object.passphrase if provided, or options.passphrase if it is not.
      */
-    key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    key?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      * Optionally affect the OpenSSL protocol behavior, which is not
      * usually necessary. This should be used carefully if at all! Value is
      * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
      */
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
+
+    keyFile?: string;
+
+    certFile?: string;
+
+    ALPNProtocols?: string | BufferSource;
+
+    ciphers?: string;
+
+    clientRenegotiationLimit?: number;
+
+    clientRenegotiationWindow?: number;
   }
 
   // Note for contributors: TLSOptionsAsDeprecated should be considered immutable
@@ -4787,7 +5144,7 @@ declare module "bun" {
    *
    * @param force Synchronously run the garbage collector
    */
-  function gc(force: boolean): void;
+  function gc(force?: boolean): void;
 
   /**
    * JavaScriptCore engine's internal heap snapshot
@@ -5306,6 +5663,42 @@ declare module "bun" {
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
   ): Uint8Array;
 
+  /**
+   * Compresses a chunk of data with the Zstandard (zstd) compression algorithm.
+   * @param data The buffer of data to compress
+   * @param options Compression options to use
+   * @returns The output buffer with the compressed data
+   */
+  function zstdCompressSync(
+    data: NodeJS.TypedArray | Buffer | string | ArrayBuffer,
+    options?: { level?: number },
+  ): Buffer;
+
+  /**
+   * Compresses a chunk of data with the Zstandard (zstd) compression algorithm.
+   * @param data The buffer of data to compress
+   * @param options Compression options to use
+   * @returns A promise that resolves to the output buffer with the compressed data
+   */
+  function zstdCompress(
+    data: NodeJS.TypedArray | Buffer | string | ArrayBuffer,
+    options?: { level?: number },
+  ): Promise<Buffer>;
+
+  /**
+   * Decompresses a chunk of data with the Zstandard (zstd) decompression algorithm.
+   * @param data The buffer of data to decompress
+   * @returns The output buffer with the decompressed data
+   */
+  function zstdDecompressSync(data: NodeJS.TypedArray | Buffer | string | ArrayBuffer): Buffer;
+
+  /**
+   * Decompresses a chunk of data with the Zstandard (zstd) decompression algorithm.
+   * @param data The buffer of data to decompress
+   * @returns A promise that resolves to the output buffer with the decompressed data
+   */
+  function zstdDecompress(data: NodeJS.TypedArray | Buffer | string | ArrayBuffer): Promise<Buffer>;
+
   type Target =
     /**
      * For generating bundles that are intended to be run by the Bun runtime. In many cases,
@@ -5326,7 +5719,7 @@ declare module "bun" {
      */
     | "browser";
 
-  /** https://bun.sh/docs/bundler/loaders */
+  /** https://bun.com/docs/bundler/loaders */
   type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
 
   interface PluginConstraints {
@@ -5686,7 +6079,7 @@ declare module "bun" {
   const isMainThread: boolean;
 
   /**
-   * Used when importing an HTML file at runtime.
+   * Used when importing an HTML file at runtime or at build time.
    *
    * @example
    *
@@ -5694,37 +6087,106 @@ declare module "bun" {
    * import app from "./index.html";
    * ```
    *
-   * Bun.build support for this isn't imlpemented yet.
    */
+
   interface HTMLBundle {
     index: string;
+
+    /** Array of generated output files with metadata. This only exists when built ahead of time with `Bun.build` or `bun build` */
+    files?: Array<{
+      /** Original source file path. */
+      input?: string;
+      /** Generated output file path (with content hash, if included in naming) */
+      path: string;
+      /** File type/loader used (js, css, html, file, etc.) */
+      loader: Loader;
+      /** Whether this file is an entry point */
+      isEntry: boolean;
+      /** HTTP headers including ETag and Content-Type */
+      headers: {
+        /** ETag for caching */
+        etag: string;
+        /** MIME type with charset */
+        "content-type": string;
+
+        /**
+         * Additional headers may be added in the future.
+         */
+        [key: string]: string;
+      };
+    }>;
   }
 
+  /**
+   * Represents a TCP or TLS socket connection used for network communication.
+   * This interface provides methods for reading, writing, managing the connection state,
+   * and handling TLS-specific features if applicable.
+   *
+   * Sockets are created using `Bun.connect()` or accepted by a `Bun.listen()` server.
+   *
+   * @category HTTP & Networking
+   */
   interface Socket<Data = undefined> extends Disposable {
     /**
-     * Write `data` to the socket
+     * Writes `data` to the socket. This method is unbuffered and non-blocking. This uses the `sendto(2)` syscall internally.
      *
-     * @param data The data to write to the socket
-     * @param byteOffset The offset in the buffer to start writing from (defaults to 0)
-     * @param byteLength The number of bytes to write (defaults to the length of the buffer)
+     * For optimal performance with multiple small writes, consider batching multiple
+     * writes together into a single `socket.write()` call.
      *
-     * When passed a string, `byteOffset` and `byteLength` refer to the UTF-8 offset, not the string character offset.
+     * @param data The data to write. Can be a string (encoded as UTF-8), `ArrayBuffer`, `TypedArray`, or `DataView`.
+     * @param byteOffset The offset in bytes within the buffer to start writing from. Defaults to 0. Ignored for strings.
+     * @param byteLength The number of bytes to write from the buffer. Defaults to the remaining length of the buffer from the offset. Ignored for strings.
+     * @returns The number of bytes written. Returns `-1` if the socket is closed or shutting down. Can return less than the input size if the socket's buffer is full (backpressure).
+     * @example
+     * ```ts
+     * // Send a string
+     * const bytesWritten = socket.write("Hello, world!\n");
      *
-     * This is unbuffered as of Bun v0.2.2. That means individual write() calls
-     * will be slow. In the future, Bun will buffer writes and flush them at the
-     * end of the tick, when the event loop is idle, or sooner if the buffer is full.
+     * // Send binary data
+     * const buffer = new Uint8Array([0x01, 0x02, 0x03]);
+     * socket.write(buffer);
+     *
+     * // Send part of a buffer
+     * const largeBuffer = new Uint8Array(1024);
+     * // ... fill largeBuffer ...
+     * socket.write(largeBuffer, 100, 50); // Write 50 bytes starting from index 100
+     * ```
      */
     write(data: string | BufferSource, byteOffset?: number, byteLength?: number): number;
 
     /**
-     * The data context for the socket.
+     * The user-defined data associated with this socket instance.
+     * This can be set when the socket is created via `Bun.connect({ data: ... })`.
+     * It can be read or updated at any time.
+     *
+     * @example
+     * ```ts
+     * // In a socket handler
+     * function open(socket: Socket<{ userId: string }>) {
+     *   console.log(`Socket opened for user: ${socket.data.userId}`);
+     *   socket.data.lastActivity = Date.now(); // Update data
+     * }
+     * ```
      */
     data: Data;
 
     /**
-     * Like {@link Socket.write} except it includes a TCP FIN packet
+     * Sends the final data chunk and initiates a graceful shutdown of the socket's write side.
+     * After calling `end()`, no more data can be written using `write()` or `end()`.
+     * The socket remains readable until the remote end also closes its write side or the connection is terminated.
+     * This sends a TCP FIN packet after writing the data.
      *
-     * Use it to send your last message and close the connection.
+     * @param data Optional final data to write before closing. Same types as `write()`.
+     * @param byteOffset Optional offset for buffer data.
+     * @param byteLength Optional length for buffer data.
+     * @returns The number of bytes written for the final chunk. Returns `-1` if the socket was already closed or shutting down.
+     * @example
+     * ```ts
+     * // send some data and close the write side
+     * socket.end("Goodbye!");
+     * // or close write side without sending final data
+     * socket.end();
+     * ```
      */
     end(data?: string | BufferSource, byteOffset?: number, byteLength?: number): number;
 
@@ -5751,20 +6213,33 @@ declare module "bun" {
     timeout(seconds: number): void;
 
     /**
-     * Forcefully close the socket. The other end may not receive all data, and
-     * the socket will be closed immediately.
+     * Forcefully closes the socket connection immediately. This is an abrupt termination, unlike the graceful shutdown initiated by `end()`.
+     * It uses `SO_LINGER` with `l_onoff=1` and `l_linger=0` before calling `close(2)`.
+     * Consider using {@link close close()} or {@link end end()} for graceful shutdowns.
      *
-     * This passes `SO_LINGER` with `l_onoff` set to `1` and `l_linger` set to
-     * `0` and then calls `close(2)`.
+     * @example
+     * ```ts
+     * socket.terminate();
+     * ```
      */
     terminate(): void;
 
     /**
-     * Shutdown writes to a socket
+     * Shuts down the write-half or both halves of the connection.
+     * This allows the socket to enter a half-closed state where it can still receive data
+     * but can no longer send data (`halfClose = true`), or close both read and write
+     * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
+     * Calls `shutdown(2)` syscall internally.
      *
-     * This makes the socket a half-closed socket. It can still receive data.
+     * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * @example
+     * ```ts
+     * // Stop sending data, but allow receiving
+     * socket.shutdown(true);
      *
-     * This calls [shutdown(2)](https://man7.org/linux/man-pages/man2/shutdown.2.html) internally
+     * // Shutdown both reading and writing
+     * socket.shutdown();
+     * ```
      */
     shutdown(halfClose?: boolean): void;
 
@@ -5790,6 +6265,11 @@ declare module "bun" {
 
     /**
      * Flush any buffered data to the socket
+     * This attempts to send the data immediately, but success depends on the network conditions
+     * and the receiving end.
+     * It might be necessary after several `write` calls if immediate sending is critical,
+     * though often the OS handles flushing efficiently. Note that `write` calls outside
+     * `open`/`data`/`drain` might benefit from manual `cork`/`flush`.
      */
     flush(): void;
 
@@ -5811,17 +6291,31 @@ declare module "bun" {
 
     /**
      * Remote IP address connected to the socket
+     * @example "192.168.1.100" | "2001:db8::1"
      */
     readonly remoteAddress: string;
 
+    /**
+     * Remote port connected to the socket
+     * @example 8080
+     */
     readonly remotePort: number;
 
+    /**
+     * IP protocol family used for the local endpoint of the socket
+     * @example "IPv4" | "IPv6"
+     */
     readonly localFamily: "IPv4" | "IPv6";
 
+    /**
+     * Local IP address connected to the socket
+     * @example "192.168.1.100" | "2001:db8::1"
+     */
     readonly localAddress: string;
 
     /**
      * local port connected to the socket
+     * @example 8080
      */
     readonly localPort: number;
 
@@ -5925,7 +6419,7 @@ declare module "bun" {
      * certificate.
      * @return A certificate object.
      */
-    getPeerCertificate(): import("tls").PeerCertificate;
+    getPeerCertificate(): import("node:tls").PeerCertificate;
     getPeerX509Certificate(): import("node:crypto").X509Certificate;
 
     /**
@@ -5985,6 +6479,8 @@ declare module "bun" {
     /**
      * See `Session Resumption` for more information.
      * @return `true` if the session was reused, `false` otherwise.
+     * **TLS Only:** Checks if the current TLS session was resumed from a previous session.
+     * Returns `true` if the session was resumed, `false` otherwise.
      */
     isSessionReused(): boolean;
 
@@ -6027,9 +6523,98 @@ declare module "bun" {
     setKeepAlive(enable?: boolean, initialDelay?: number): boolean;
 
     /**
-     * The number of bytes written to the socket.
+     * The total number of bytes successfully written to the socket since it was established.
+     * This includes data currently buffered by the OS but not yet acknowledged by the remote peer.
      */
     readonly bytesWritten: number;
+
+    /**
+     * Alias for `socket.end()`. Allows the socket to be used with `using` declarations
+     * for automatic resource management.
+     * @example
+     * ```ts
+     * async function processSocket() {
+     *   using socket = await Bun.connect({ ... });
+     *   socket.write("Data");
+     *   // socket.end() is called automatically when exiting the scope
+     * }
+     * ```
+     */
+    [Symbol.dispose](): void;
+
+    resume(): void;
+
+    pause(): void;
+
+    /**
+     * If this is a TLS Socket
+     */
+    renegotiate(): void;
+
+    /**
+     * Sets the verify mode of the socket.
+     *
+     * @param requestCert Whether to request a certificate.
+     * @param rejectUnauthorized Whether to reject unauthorized certificates.
+     */
+    setVerifyMode(requestCert: boolean, rejectUnauthorized: boolean): void;
+
+    getSession(): void;
+
+    /**
+     * Sets the session of the socket.
+     *
+     * @param session The session to set.
+     */
+    setSession(session: string | Buffer | BufferSource): void;
+
+    /**
+     * Exports the keying material of the socket.
+     *
+     * @param length The length of the keying material to export.
+     * @param label The label of the keying material to export.
+     * @param context The context of the keying material to export.
+     */
+    exportKeyingMaterial(length: number, label: string, context?: string | BufferSource): void;
+
+    /**
+     * Upgrades the socket to a TLS socket.
+     *
+     * @param options The options for the upgrade.
+     * @returns A tuple containing the raw socket and the TLS socket.
+     * @see {@link TLSUpgradeOptions}
+     */
+    upgradeTLS<Data>(options: TLSUpgradeOptions<Data>): [raw: Socket<Data>, tls: Socket<Data>];
+
+    /**
+     * Closes the socket.
+     *
+     * This is a wrapper around `end()` and `shutdown()`.
+     *
+     * @see {@link end}
+     * @see {@link shutdown}
+     */
+    close(): void;
+
+    /**
+     * Returns the servername of the socket.
+     *
+     * @see {@link setServername}
+     */
+    getServername(): string;
+
+    /**
+     * Sets the servername of the socket.
+     *
+     * @see {@link getServername}
+     */
+    setServername(name: string): void;
+  }
+
+  interface TLSUpgradeOptions<Data> {
+    data?: Data;
+    tls: TLSOptions | boolean;
+    socket: SocketHandler<Data>;
   }
 
   interface SocketListener<Data = undefined> extends Disposable {
@@ -6130,6 +6715,22 @@ declare module "bun" {
      * The per-instance data context
      */
     data?: Data;
+    /**
+     * Whether to allow half-open connections.
+     *
+     * A half-open connection occurs when one end of the connection has called `close()`
+     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     *
+     * - The socket won't automatically send FIN when the remote side closes its end
+     * - The local side can continue sending data even after the remote side has closed
+     * - The application must explicitly call `end()` to fully close the connection
+     *
+     * When `false`, the socket automatically closes both ends of the connection when
+     * either side closes.
+     *
+     * @default false
+     */
+    allowHalfOpen?: boolean;
   }
 
   interface TCPSocketListenOptions<Data = undefined> extends SocketOptions<Data> {
@@ -6144,7 +6745,7 @@ declare module "bun" {
     /**
      * The TLS configuration object with which to create the server
      */
-    tls?: TLSOptions;
+    tls?: TLSOptions | boolean;
     /**
      * Whether to use exclusive mode.
      *
@@ -6190,7 +6791,7 @@ declare module "bun" {
     /**
      * TLS Configuration with which to create the socket
      */
-    tls?: boolean;
+    tls?: TLSOptions | boolean;
     /**
      * Whether to use exclusive mode.
      *
@@ -6206,22 +6807,8 @@ declare module "bun" {
      * @default false
      */
     exclusive?: boolean;
-    /**
-     * Whether to allow half-open connections.
-     *
-     * A half-open connection occurs when one end of the connection has called `close()`
-     * or sent a FIN packet, while the other end remains open. When set to `true`:
-     *
-     * - The socket won't automatically send FIN when the remote side closes its end
-     * - The local side can continue sending data even after the remote side has closed
-     * - The application must explicitly call `end()` to fully close the connection
-     *
-     * When `false` (default), the socket automatically closes both ends of the connection
-     * when either side closes.
-     *
-     * @default false
-     */
-    allowHalfOpen?: boolean;
+    reusePort?: boolean;
+    ipv6Only?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
@@ -6232,14 +6819,14 @@ declare module "bun" {
     /**
      * TLS Configuration with which to create the socket
      */
-    tls?: TLSOptions;
+    tls?: TLSOptions | boolean;
   }
 
   interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
     /**
      * TLS Configuration with which to create the socket
      */
-    tls?: TLSOptions;
+    tls?: TLSOptions | boolean;
     /**
      * The file descriptor to connect to
      */
@@ -6393,11 +6980,7 @@ declare module "bun" {
       | Response
       | Request;
 
-    interface OptionsObject<
-      In extends Writable = Writable,
-      Out extends Readable = Readable,
-      Err extends Readable = Readable,
-    > {
+    interface OptionsObject<In extends Writable, Out extends Readable, Err extends Readable> {
       /**
        * The current working directory of the process
        *
@@ -6437,7 +7020,8 @@ declare module "bun" {
        * @default ["ignore", "pipe", "inherit"] for `spawn`
        * ["ignore", "pipe", "pipe"] for `spawnSync`
        */
-      stdio?: [In, Out, Err];
+      stdio?: [In, Out, Err, ...Readable[]];
+
       /**
        * The file descriptor for the standard input. It may be:
        *
@@ -6511,7 +7095,7 @@ declare module "bun" {
        * incoming messages, and `subprocess.send` can send messages to the subprocess. Messages are serialized
        * using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
        *
-       * The subprocess can send and recieve messages by using `process.send` and `process.on("message")`,
+       * The subprocess can send and receive messages by using `process.send` and `process.on("message")`,
        * respectively. This is the same API as what Node.js exposes when `child_process.fork()` is used.
        *
        * Currently, this is only compatible with processes that are other `bun` instances.
@@ -6519,9 +7103,10 @@ declare module "bun" {
       ipc?(
         message: any,
         /**
-         * The {@link Subprocess} that sent the message
+         * The {@link Subprocess} that received the message
          */
         subprocess: Subprocess<In, Out, Err>,
+        handle?: unknown,
       ): void;
 
       /**
@@ -6623,24 +7208,6 @@ declare module "bun" {
        */
       maxBuffer?: number;
     }
-
-    type OptionsToSubprocess<Opts extends OptionsObject> =
-      Opts extends OptionsObject<infer In, infer Out, infer Err>
-        ? Subprocess<
-            // "Writable extends In" means "if In === Writable",
-            // aka if true that means the user didn't specify anything
-            Writable extends In ? "ignore" : In,
-            Readable extends Out ? "pipe" : Out,
-            Readable extends Err ? "inherit" : Err
-          >
-        : Subprocess<Writable, Readable, Readable>;
-
-    type OptionsToSyncSubprocess<Opts extends OptionsObject> =
-      Opts extends OptionsObject<any, infer Out, infer Err>
-        ? SyncSubprocess<Readable extends Out ? "pipe" : Out, Readable extends Err ? "pipe" : Err>
-        : SyncSubprocess<Readable, Readable>;
-
-    type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
       ? ReadableStream<Uint8Array>
@@ -6755,6 +7322,11 @@ declare module "bun" {
     readonly stderr: SpawnOptions.ReadableToIO<Err>;
 
     /**
+     * Access extra file descriptors passed to the `stdio` option in the options object.
+     */
+    readonly stdio: [null, null, null, ...number[]];
+
+    /**
      * This returns the same value as {@link Subprocess.stdout}
      *
      * It exists for compatibility with {@link ReadableStream.pipeThrough}
@@ -6770,6 +7342,7 @@ declare module "bun" {
      * ```
      */
     readonly pid: number;
+
     /**
      * The exit code of the process
      *
@@ -6888,8 +7461,12 @@ declare module "bun" {
    *
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
-  function spawn<Opts extends SpawnOptions.OptionsObject>(
-    options: Opts & {
+  function spawn<
+    const In extends SpawnOptions.Writable = "ignore",
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "inherit",
+  >(
+    options: SpawnOptions.OptionsObject<In, Out, Err> & {
       /**
        * The command to run
        *
@@ -6906,7 +7483,7 @@ declare module "bun" {
        */
       cmd: string[]; // to support dynamically constructed commands
     },
-  ): SpawnOptions.OptionsToSubprocess<Opts>;
+  ): Subprocess<In, Out, Err>;
 
   /**
    * Spawn a new process
@@ -6919,7 +7496,11 @@ declare module "bun" {
    *
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
-  function spawn<Opts extends SpawnOptions.OptionsObject>(
+  function spawn<
+    const In extends SpawnOptions.Writable = "ignore",
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "inherit",
+  >(
     /**
      * The command to run
      *
@@ -6935,8 +7516,8 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: Opts,
-  ): SpawnOptions.OptionsToSubprocess<Opts>;
+    options?: SpawnOptions.OptionsObject<In, Out, Err>,
+  ): Subprocess<In, Out, Err>;
 
   /**
    * Spawn a new process
@@ -6952,8 +7533,11 @@ declare module "bun" {
    *
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
-  function spawnSync<Opts extends SpawnOptions.OptionsObject>(
-    options: Opts & {
+  function spawnSync<
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "inherit",
+  >(
+    options: SpawnOptions.OptionsObject<"ignore", Out, Err> & {
       /**
        * The command to run
        *
@@ -6972,7 +7556,7 @@ declare module "bun" {
 
       onExit?: never;
     },
-  ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
+  ): SyncSubprocess<Out, Err>;
 
   /**
    * Synchronously spawn a new process
@@ -6984,7 +7568,10 @@ declare module "bun" {
    *
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
-  function spawnSync<Opts extends SpawnOptions.OptionsObject>(
+  function spawnSync<
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "inherit",
+  >(
     /**
      * The command to run
      *
@@ -7000,8 +7587,8 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: Opts,
-  ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
+    options?: SpawnOptions.OptionsObject<"ignore", Out, Err>,
+  ): SyncSubprocess<Out, Err>;
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
   type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;
@@ -7337,6 +7924,56 @@ declare module "bun" {
   ): Buffer;
 
   /**
+   * Generate a UUIDv5, which is a name-based UUID based on the SHA-1 hash of a namespace UUID and a name.
+   *
+   * @param name The name to use for the UUID
+   * @param namespace The namespace to use for the UUID
+   * @param encoding The encoding to use for the UUID
+   *
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "dns");
+   * console.log(uuid); // "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+   * ```
+   *
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "url");
+   * console.log(uuid); // "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+   * ```
+   */
+  function randomUUIDv5(
+    name: string | BufferSource,
+    namespace: string | BufferSource | "dns" | "url" | "oid" | "x500",
+    /**
+     * @default "hex"
+     */
+    encoding?: "hex" | "base64" | "base64url",
+  ): string;
+
+  /**
+   * Generate a UUIDv5 as a Buffer
+   *
+   * @param name The name to use for the UUID
+   * @param namespace The namespace to use for the UUID
+   * @param encoding The encoding to use for the UUID
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "url", "buffer");
+   * console.log(uuid); // <Buffer 6b a7 b8 11 9d ad 11 d1 80 b4 00 c0 4f d4 30 c8>
+   * ```
+   */
+  function randomUUIDv5(
+    name: string | BufferSource,
+    namespace: string | BufferSource | "dns" | "url" | "oid" | "x500",
+    encoding: "buffer",
+  ): Buffer;
+
+  /**
    * Types for `bun.lock`
    */
   type BunLockFile = {
@@ -7344,9 +7981,16 @@ declare module "bun" {
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };
+    /** @see https://bun.com/docs/install/overrides */
     overrides?: Record<string, string>;
+    /** @see https://bun.com/docs/install/patch */
     patchedDependencies?: Record<string, string>;
+    /** @see https://bun.com/docs/install/lifecycle#trusteddependencies */
     trustedDependencies?: string[];
+    /** @see https://bun.com/docs/install/catalogs */
+    catalog?: Record<string, string>;
+    /** @see https://bun.com/docs/install/catalogs */
+    catalogs?: Record<string, Record<string, string>>;
 
     /**
      * ```

@@ -1,14 +1,14 @@
-import { spawn, write, file } from "bun";
-import { expect, it, beforeAll, afterAll } from "bun:test";
-import { access, copyFile, open, writeFile, exists, cp, rm } from "fs/promises";
+import { file, spawn, write } from "bun";
+import { afterAll, beforeAll, expect, it } from "bun:test";
+import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
   isWindows,
-  VerdaccioRegistry,
+  readdirSorted,
   runBunInstall,
   toBeValidBin,
-  readdirSorted,
+  VerdaccioRegistry,
 } from "harness";
 import { join } from "path";
 
@@ -191,7 +191,7 @@ it("should convert a binary lockfile with invalid optional peers", async () => {
     stderr: "pipe",
   });
 
-  let [out, err] = await Promise.all([Bun.readableStreamToText(stdout), Bun.readableStreamToText(stderr)]);
+  let [out, err] = await Promise.all([stdout.text(), stderr.text()]);
   expect(err).toContain("Saved lockfile");
   expect(out).toContain("Saved bun.lock (69 packages)");
 
@@ -214,7 +214,7 @@ it("should convert a binary lockfile with invalid optional peers", async () => {
     stderr: "pipe",
   }));
 
-  [out, err] = await Promise.all([Bun.readableStreamToText(stdout), Bun.readableStreamToText(stderr)]);
+  [out, err] = await Promise.all([stdout.text(), stderr.text()]);
   expect(err).toContain("Saved lockfile");
   expect(out).toContain("Saved bun.lock (69 packages)");
 
@@ -254,7 +254,7 @@ it("should not deduplicate bundled packages with un-bundled packages", async () 
 
   await checkModules();
 
-  const out1 = (await Bun.readableStreamToText(stdout))
+  const out1 = (await stdout.text())
     .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
     .split(/\r?\n/)
     .slice(1);
@@ -274,7 +274,7 @@ it("should not deduplicate bundled packages with un-bundled packages", async () 
   expect(await exited).toBe(0);
 
   await checkModules();
-  const out2 = (await Bun.readableStreamToText(stdout))
+  const out2 = (await stdout.text())
     .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
     .split(/\r?\n/)
     .slice(1);
@@ -292,7 +292,7 @@ it("should not deduplicate bundled packages with un-bundled packages", async () 
   expect(await exited).toBe(0);
 
   await checkModules();
-  const out3 = (await Bun.readableStreamToText(stdout))
+  const out3 = (await stdout.text())
     .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
     .split(/\r?\n/)
     .slice(1);
@@ -308,7 +308,7 @@ it("should not deduplicate bundled packages with un-bundled packages", async () 
   expect(await exited).toBe(0);
   await checkModules();
 
-  const out4 = (await Bun.readableStreamToText(stdout))
+  const out4 = (await stdout.text())
     .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
     .split(/\r?\n/)
     .slice(1);
@@ -468,7 +468,7 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
   });
 
   expect(await exited).toBe(0);
-  const out1 = (await Bun.readableStreamToText(stdout))
+  const out1 = (await stdout.text())
     .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
     .split(/\r?\n/)
     .slice(1);
@@ -490,7 +490,7 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
   }));
 
   expect(await exited).toBe(0);
-  const out2 = (await Bun.readableStreamToText(stdout))
+  const out2 = (await stdout.text())
     .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
     .split(/\r?\n/)
     .slice(1);

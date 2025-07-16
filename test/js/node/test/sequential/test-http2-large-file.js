@@ -20,7 +20,7 @@ server.listen(0, common.mustCall(() => {
   let remaining = 1e8;
   const chunkLength = 1e6;
   const chunk = Buffer.alloc(chunkLength, 'a');
-  const client = http2.connect(`http://127.0.0.1:${server.address().port}`,
+  const client = http2.connect(`http://localhost:${server.address().port}`,
                                { settings: { initialWindowSize: 6553500 } });
   const request = client.request({ ':method': 'POST' });
   function writeChunk() {

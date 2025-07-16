@@ -26,6 +26,7 @@ The bundler is a key piece of infrastructure in the JavaScript ecosystem. As a b
 - **Reducing HTTP requests.** A single package in `node_modules` may consist of hundreds of files, and large applications may have dozens of such dependencies. Loading each of these files with a separate HTTP request becomes untenable very quickly, so bundlers are used to convert our application source code into a smaller number of self-contained "bundles" that can be loaded with a single request.
 - **Code transforms.** Modern apps are commonly built with languages or tools like TypeScript, JSX, and CSS modules, all of which must be converted into plain JavaScript and CSS before they can be consumed by a browser. The bundler is the natural place to configure these transformations.
 - **Framework features.** Frameworks rely on bundler plugins & code transformations to implement common patterns like file-system routing, client-server code co-location (think `getServerSideProps` or Remix loaders), and server components.
+- **Full-stack Applications.** Bun's bundler can handle both server and client code in a single command, enabling optimized production builds and single-file executables. With build-time HTML imports, you can bundle your entire application — frontend assets and backend server — into a single deployable unit.
 
 Let's jump into the bundler API.
 
@@ -146,7 +147,7 @@ $ bun build ./index.tsx --outdir ./out --watch
 
 ## Content types
 
-Like the Bun runtime, the bundler supports an array of file types out of the box. The following table breaks down the bundler's set of standard "loaders". Refer to [Bundler > File types](https://bun.sh/docs/runtime/loaders) for full documentation.
+Like the Bun runtime, the bundler supports an array of file types out of the box. The following table breaks down the bundler's set of standard "loaders". Refer to [Bundler > File types](https://bun.com/docs/runtime/loaders) for full documentation.
 
 {% table %}
 
@@ -219,11 +220,11 @@ console.log(logo);
 The exact behavior of the file loader is also impacted by [`naming`](#naming) and [`publicPath`](#publicpath).
 {% /callout %}
 
-Refer to the [Bundler > Loaders](https://bun.sh/docs/bundler/loaders#file) page for more complete documentation on the file loader.
+Refer to the [Bundler > Loaders](https://bun.com/docs/bundler/loaders#file) page for more complete documentation on the file loader.
 
 ### Plugins
 
-The behavior described in this table can be overridden or extended with [plugins](https://bun.sh/docs/bundler/plugins). Refer to the [Bundler > Loaders](https://bun.sh/docs/bundler/plugins) page for complete documentation.
+The behavior described in this table can be overridden or extended with [plugins](https://bun.com/docs/bundler/plugins). Refer to the [Bundler > Loaders](https://bun.com/docs/bundler/plugins) page for complete documentation.
 
 ## API
 
@@ -324,7 +325,7 @@ Depending on the target, Bun will apply different module resolution rules and op
 ---
 
 - `bun`
-- For generating bundles that are intended to be run by the Bun runtime. In many cases, it isn't necessary to bundle server-side code; you can directly execute the source code without modification. However, bundling your server code can reduce startup times and improve running performance.
+- For generating bundles that are intended to be run by the Bun runtime. In many cases, it isn't necessary to bundle server-side code; you can directly execute the source code without modification. However, bundling your server code can reduce startup times and improve running performance. This is the target to use for building full-stack applications with build-time HTML imports, where both server and client code are bundled together.
 
   All bundles generated with `target: "bun"` are marked with a special `// @bun` pragma, which indicates to the Bun runtime that there's no need to re-transpile the file before execution.
 
@@ -483,7 +484,7 @@ n/a
 
 {% /codetabs %}
 
-Bun implements a universal plugin system for both Bun's runtime and bundler. Refer to the [plugin documentation](https://bun.sh/docs/bundler/plugins) for complete documentation.
+Bun implements a universal plugin system for both Bun's runtime and bundler. Refer to the [plugin documentation](https://bun.com/docs/bundler/plugins) for complete documentation.
 
 <!-- ### `manifest`
 
@@ -1101,7 +1102,7 @@ A prefix to be appended to any import paths in bundled code.
 
 In many cases, generated bundles will contain no `import` statements. After all, the goal of bundling is to combine all of the code into a single file. However there are a number of cases with the generated bundles will contain `import` statements.
 
-- **Asset imports** — When importing an unrecognized file type like `*.svg`, the bundler defers to the [`file` loader](https://bun.sh/docs/bundler/loaders#file), which copies the file into `outdir` as is. The import is converted into a variable
+- **Asset imports** — When importing an unrecognized file type like `*.svg`, the bundler defers to the [`file` loader](https://bun.com/docs/bundler/loaders#file), which copies the file into `outdir` as is. The import is converted into a variable
 - **External modules** — Files and modules can be marked as [`external`](#external), in which case they will not be included in the bundle. Instead, the `import` statement will be left in the final bundle.
 - **Chunking**. When [`splitting`](#splitting) is enabled, the bundler may generate separate "chunk" files that represent code that is shared among multiple entrypoints.
 
@@ -1177,7 +1178,7 @@ $ bun build ./index.tsx --outdir ./out --define 'STRING="value"' --define "neste
 
 ### `loader`
 
-A map of file extensions to [built-in loader names](https://bun.sh/docs/bundler/loaders#built-in-loaders). This can be used to quickly customize how certain files are loaded.
+A map of file extensions to [built-in loader names](https://bun.com/docs/bundler/loaders#built-in-loaders). This can be used to quickly customize how certain files are loaded.
 
 {% codetabs %}
 
@@ -1309,7 +1310,7 @@ Each artifact also contains the following properties:
 ---
 
 - `loader`
-- The loader was used to interpret the file. See [Bundler > Loaders](https://bun.sh/docs/bundler/loaders) to see how Bun maps file extensions to the appropriate built-in loader.
+- The loader was used to interpret the file. See [Bundler > Loaders](https://bun.com/docs/bundler/loaders) to see how Bun maps file extensions to the appropriate built-in loader.
 
 ---
 
@@ -1393,7 +1394,7 @@ $ bun build ./cli.tsx --outfile mycli --compile
 $ ./mycli
 ```
 
-Refer to [Bundler > Executables](https://bun.sh/docs/bundler/executables) for complete documentation.
+Refer to [Bundler > Executables](https://bun.com/docs/bundler/executables) for complete documentation.
 
 ## Logs and errors
 

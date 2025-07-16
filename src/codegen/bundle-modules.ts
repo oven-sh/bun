@@ -12,14 +12,13 @@ import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
 import path from "path";
-import ErrorCode from "../bun.js/bindings/ErrorCode";
+import jsclasses from "./../bun.js/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
 import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
-import jsclasses from "./../bun.js/bindings/js_classes";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
@@ -496,6 +495,10 @@ declare module "module" {
       interface Require {
 
 `;
+
+    dts += `        (id: "bun"): typeof import("bun");\n`;
+    dts += `        (id: "bun:test"): typeof import("bun:test");\n`;
+    dts += `        (id: "bun:jsc"): typeof import("bun:jsc");\n`;
 
     for (let i = 0; i < nativeStartIndex; i++) {
       const id = moduleList[i];

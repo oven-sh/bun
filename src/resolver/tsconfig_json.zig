@@ -1,12 +1,7 @@
 const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 
 const std = @import("std");
 const options = @import("../options.zig");
@@ -151,7 +146,7 @@ pub const TSConfigJSON = struct {
     pub fn parse(
         allocator: std.mem.Allocator,
         log: *logger.Log,
-        source: logger.Source,
+        source: *const logger.Source,
         json_cache: *cache.Json,
     ) anyerror!?*TSConfigJSON {
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
@@ -183,7 +178,7 @@ pub const TSConfigJSON = struct {
             // Parse "baseUrl"
             if (compiler_opts.expr.asProperty("baseUrl")) |base_url_prop| {
                 if ((base_url_prop.expr.asString(allocator))) |base_url| {
-                    result.base_url = strReplacingTemplates(allocator, base_url, &source) catch return null;
+                    result.base_url = strReplacingTemplates(allocator, base_url, source) catch return null;
                     has_base_url = true;
                 }
             }
@@ -198,7 +193,7 @@ pub const TSConfigJSON = struct {
             // Parse "jsxFactory"
             if (compiler_opts.expr.asProperty("jsxFactory")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
-                    result.jsx.factory = try parseMemberExpressionForJSX(log, &source, jsx_prop.loc, str, allocator);
+                    result.jsx.factory = try parseMemberExpressionForJSX(log, source, jsx_prop.loc, str, allocator);
                     result.jsx_flags.insert(.factory);
                 }
             }
@@ -206,7 +201,7 @@ pub const TSConfigJSON = struct {
             // Parse "jsxFragmentFactory"
             if (compiler_opts.expr.asProperty("jsxFragmentFactory")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
-                    result.jsx.fragment = try parseMemberExpressionForJSX(log, &source, jsx_prop.loc, str, allocator);
+                    result.jsx.fragment = try parseMemberExpressionForJSX(log, source, jsx_prop.loc, str, allocator);
                     result.jsx_flags.insert(.fragment);
                 }
             }
@@ -261,7 +256,7 @@ pub const TSConfigJSON = struct {
                         },
                         .remove => {},
                         else => {
-                            log.addRangeWarningFmt(&source, source.rangeOfString(jsx_prop.loc), allocator, "Invalid value \"{s}\" for \"importsNotUsedAsValues\"", .{str}) catch {};
+                            log.addRangeWarningFmt(source, source.rangeOfString(jsx_prop.loc), allocator, "Invalid value \"{s}\" for \"importsNotUsedAsValues\"", .{str}) catch {};
                         },
                     }
                 }
@@ -275,7 +270,7 @@ pub const TSConfigJSON = struct {
                             if (str.len > 0) {
                                 // Only warn when there is actually content
                                 // Sometimes, people do "moduleSuffixes": [""]
-                                log.addWarning(&source, prefixes.loc, "moduleSuffixes is not supported yet") catch {};
+                                log.addWarning(source, prefixes.loc, "moduleSuffixes is not supported yet") catch {};
                                 break :handle_module_prefixes;
                             }
                         }
@@ -297,7 +292,7 @@ pub const TSConfigJSON = struct {
                             const key_prop = property.key orelse continue;
                             const key = (key_prop.asString(allocator)) orelse continue;
 
-                            if (!TSConfigJSON.isValidTSConfigPathPattern(key, log, &source, key_prop.loc, allocator)) {
+                            if (!TSConfigJSON.isValidTSConfigPathPattern(key, log, source, key_prop.loc, allocator)) {
                                 continue;
                             }
 
@@ -334,12 +329,12 @@ pub const TSConfigJSON = struct {
                                         var count: usize = 0;
                                         for (array) |expr| {
                                             if ((expr.asString(allocator))) |str_| {
-                                                const str = strReplacingTemplates(allocator, str_, &source) catch return null;
+                                                const str = strReplacingTemplates(allocator, str_, source) catch return null;
                                                 errdefer allocator.free(str);
                                                 if (TSConfigJSON.isValidTSConfigPathPattern(
                                                     str,
                                                     log,
-                                                    &source,
+                                                    source,
                                                     expr.loc,
                                                     allocator,
                                                 ) and
@@ -347,7 +342,7 @@ pub const TSConfigJSON = struct {
                                                         TSConfigJSON.isValidTSConfigPathNoBaseURLPattern(
                                                             str,
                                                             log,
-                                                            &source,
+                                                            source,
                                                             allocator,
                                                             expr.loc,
                                                         )))
@@ -367,7 +362,7 @@ pub const TSConfigJSON = struct {
                                 },
                                 else => {
                                     log.addRangeWarningFmt(
-                                        &source,
+                                        source,
                                         source.rangeOfString(key_prop.loc),
                                         allocator,
                                         "Substitutions for pattern \"{s}\" should be an array",

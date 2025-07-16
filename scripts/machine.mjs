@@ -1,48 +1,47 @@
 #!/usr/bin/env node
 
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { basename, extname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
+import { docker } from "./docker.mjs";
+import { google } from "./google.mjs";
+import { orbstack } from "./orbstack.mjs";
+import { tart } from "./tart.mjs";
 import {
   $,
+  copyFile,
+  curlSafe,
+  escapePowershell,
   getBootstrapVersion,
   getBuildNumber,
+  getGithubApiUrl,
+  getGithubUrl,
   getSecret,
+  getUsernameForDistro,
+  homedir,
   isCI,
+  isMacOS,
+  isWindows,
+  mkdir,
+  mkdtemp,
   parseArch,
   parseOs,
   readFile,
+  rm,
+  setupUserData,
+  sha256,
   spawn,
   spawnSafe,
+  spawnSsh,
+  spawnSshSafe,
   spawnSyncSafe,
   startGroup,
-  spawnSshSafe,
-  spawnSsh,
   tmpdir,
   waitForPort,
   which,
-  escapePowershell,
-  getGithubUrl,
-  getGithubApiUrl,
-  curlSafe,
-  mkdtemp,
   writeFile,
-  copyFile,
-  isMacOS,
-  mkdir,
-  rm,
-  homedir,
-  isWindows,
-  setupUserData,
-  sha256,
-  isPrivileged,
-  getUsernameForDistro,
 } from "./utils.mjs";
-import { basename, extname, join, relative, resolve } from "node:path";
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { orbstack } from "./orbstack.mjs";
-import { docker } from "./docker.mjs";
-import { google } from "./google.mjs";
-import { tart } from "./tart.mjs";
 
 const aws = {
   get name() {
@@ -800,7 +799,7 @@ export function getDiskSize(options) {
     return 60;
   }
 
-  return 30;
+  return 40;
 }
 
 /**
@@ -859,7 +858,8 @@ function getSshKeys() {
     const sshFiles = readdirSync(sshPath, { withFileTypes: true, encoding: "utf-8" });
     const publicPaths = sshFiles
       .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
-      .map(({ name }) => join(sshPath, name));
+      .map(({ name }) => join(sshPath, name))
+      .filter(path => !readFile(path, { cache: true }).startsWith("ssh-ed25519"));
 
     sshKeys.push(
       ...publicPaths.map(publicPath => ({
@@ -1192,7 +1192,7 @@ async function main() {
     tags,
     cpuCount: parseInt(args["cpu-count"]) || undefined,
     memoryGb: parseInt(args["memory-gb"]) || undefined,
-    diskSizeGb: parseInt(args["disk-size-gb"]) || undefined,
+    diskSizeGb: parseInt(args["disk-size-gb"]) || void 0,
     preemptible: !!args["preemptible"] || !!args["spot"],
     detached: !!args["detached"],
     bootstrap: args["no-bootstrap"] !== true,

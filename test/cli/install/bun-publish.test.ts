@@ -1,17 +1,17 @@
-import { describe, expect, test, beforeAll, afterAll, it } from "bun:test";
-import { spawn, file, write } from "bun";
-import { rm, exists } from "fs/promises";
-import { join } from "path";
+import { file, spawn, write } from "bun";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { exists, rm } from "fs/promises";
 import {
   VerdaccioRegistry,
   bunExe,
   bunEnv as env,
-  stderrForInstall,
-  runBunInstall,
-  pack,
-  tmpdirSync,
   isWindows,
+  pack,
+  runBunInstall,
+  stderrForInstall,
+  tmpdirSync,
 } from "harness";
+import { join } from "path";
 
 const registry = new VerdaccioRegistry();
 
@@ -36,8 +36,8 @@ export async function publish(
     env,
   });
 
-  const out = await Bun.readableStreamToText(stdout);
-  const err = stderrForInstall(await Bun.readableStreamToText(stderr));
+  const out = await stdout.text();
+  const err = stderrForInstall(await stderr.text());
   const exitCode = await exited;
   return { out, err, exitCode };
 }

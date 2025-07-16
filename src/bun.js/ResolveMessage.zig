@@ -45,6 +45,7 @@ pub const ResolveMessage = struct {
                         else
                             break :brk "ERR_MODULE_NOT_FOUND",
 
+                        .html_manifest,
                         .entry_point_run,
                         .entry_point_build,
                         .at,
@@ -60,7 +61,7 @@ pub const ResolveMessage = struct {
                 defer atom.deref();
                 return atom.toJS(globalObject);
             },
-            else => return .undefined,
+            else => return .js_undefined,
         }
     }
 
@@ -179,10 +180,10 @@ pub const ResolveMessage = struct {
         allocator: std.mem.Allocator,
         msg: logger.Msg,
         referrer: string,
-    ) JSC.JSValue {
-        var resolve_error = allocator.create(ResolveMessage) catch unreachable;
+    ) bun.OOM!JSC.JSValue {
+        var resolve_error = try allocator.create(ResolveMessage);
         resolve_error.* = ResolveMessage{
-            .msg = msg.clone(allocator) catch unreachable,
+            .msg = try msg.clone(allocator),
             .allocator = allocator,
             .referrer = Fs.Path.init(referrer),
         };

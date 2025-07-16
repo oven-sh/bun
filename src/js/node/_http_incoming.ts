@@ -328,7 +328,7 @@ const IncomingMessagePrototype = {
         stream?.cancel?.().catch(nop);
       }
 
-      const socket = this[fakeSocketSymbol];
+      const socket = this.socket;
       if (socket && !socket.destroyed && shouldEmitAborted) {
         socket.destroy(err);
       }
@@ -345,7 +345,7 @@ const IncomingMessagePrototype = {
     this[abortedSymbol] = value;
   },
   get connection() {
-    return (this[fakeSocketSymbol] ??= new FakeSocket());
+    return (this[fakeSocketSymbol] ??= new FakeSocket(this));
   },
   get statusCode() {
     return this[statusCodeSymbol];
@@ -403,7 +403,7 @@ const IncomingMessagePrototype = {
     return this;
   },
   get socket() {
-    return (this[fakeSocketSymbol] ??= new FakeSocket());
+    return (this[fakeSocketSymbol] ??= new FakeSocket(this));
   },
   set socket(value) {
     this[fakeSocketSymbol] = value;
@@ -460,6 +460,16 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
   }
 }
 
-export default {
-  IncomingMessage,
-};
+function readStart(socket) {
+  if (socket && !socket._paused && socket.readable) {
+    socket.resume();
+  }
+}
+
+function readStop(socket) {
+  if (socket) {
+    socket.pause();
+  }
+}
+
+export { IncomingMessage, readStart, readStop };

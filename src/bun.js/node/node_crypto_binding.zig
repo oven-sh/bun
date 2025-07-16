@@ -1,13 +1,9 @@
 const std = @import("std");
 const bun = @import("bun");
-const Environment = bun.Environment;
 const JSC = bun.JSC;
 const string = bun.string;
-const Output = bun.Output;
-const ZigString = JSC.ZigString;
 const Crypto = JSC.API.Bun.Crypto;
 const BoringSSL = bun.BoringSSL.c;
-const assert = bun.assert;
 const EVP = Crypto.EVP;
 const PBKDF2 = EVP.PBKDF2;
 const JSValue = JSC.JSValue;
@@ -18,7 +14,6 @@ const String = bun.String;
 const UUID = bun.UUID;
 const Async = bun.Async;
 const Node = JSC.Node;
-const OOM = bun.OOM;
 
 fn ExternCryptoJob(comptime name: []const u8) type {
     return struct {
@@ -32,8 +27,14 @@ fn ExternCryptoJob(comptime name: []const u8) type {
 
         const Ctx = opaque {
             const ctx_name = name ++ "Ctx";
+
             pub const runTask = @extern(*const fn (*Ctx, *JSGlobalObject) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__runTask" }).*;
-            pub const runFromJS = @extern(*const fn (*Ctx, *JSGlobalObject, JSValue) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__runFromJS" }).*;
+
+            pub fn runFromJS(self: *Ctx, global: *JSGlobalObject, callback: JSValue) bun.JSError!void {
+                const __runFromJS = @extern(*const fn (*Ctx, *JSGlobalObject, JSValue) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__runFromJS" }).*;
+                return bun.jsc.fromJSHostCallGeneric(global, @src(), __runFromJS, .{ self, global, callback });
+            }
+
             pub const deinit = @extern(*const fn (*Ctx) callconv(.c) void, .{ .name = "Bun__" ++ ctx_name ++ "__deinit" }).*;
         };
 
@@ -53,7 +54,7 @@ fn ExternCryptoJob(comptime name: []const u8) type {
         }
 
         pub fn createAndSchedule(global: *JSGlobalObject, ctx: *Ctx, callback: JSValue) callconv(.c) void {
-            var job = create(global, ctx, callback);
+            var job = create(global, ctx, callback.withAsyncContextIfNeeded(global));
             job.schedule();
         }
 
@@ -77,7 +78,9 @@ fn ExternCryptoJob(comptime name: []const u8) type {
                 return;
             };
 
-            this.ctx.runFromJS(vm.global, callback);
+            this.ctx.runFromJS(vm.global, callback) catch |err| {
+                _ = vm.global.reportUncaughtException(vm.global.takeException(err).asException(vm.global.vm()).?);
+            };
         }
 
         fn deinit(this: *@This()) void {
@@ -147,7 +150,7 @@ fn CryptoJob(comptime Ctx: type) type {
                 },
                 .any_task = undefined,
                 .ctx = ctx.*,
-                .callback = .create(callback, global),
+                .callback = .create(callback.withAsyncContextIfNeeded(global), global),
             });
             errdefer bun.destroy(job);
             try job.ctx.init(global);
@@ -216,7 +219,7 @@ const random = struct {
 
         fn runFromJS(this: *JobCtx, global: *JSGlobalObject, callback: JSValue) void {
             const vm = global.bunVM();
-            vm.eventLoop().runCallback(callback, global, .undefined, &.{ .null, this.value });
+            vm.eventLoop().runCallback(callback, global, .js_undefined, &.{ .null, this.value });
         }
 
         fn deinit(this: *JobCtx) void {
@@ -271,8 +274,10 @@ const random = struct {
         const res = std.crypto.random.intRangeLessThan(i64, min, max);
 
         if (!callback.isUndefined()) {
-            callback.callNextTick(global, [2]JSValue{ .undefined, JSValue.jsNumber(res) });
-            return JSValue.jsUndefined();
+            callback = callback.withAsyncContextIfNeeded(global);
+
+            callback.callNextTick(global, [2]JSValue{ .js_undefined, JSValue.jsNumber(res) });
+            return .js_undefined;
         }
 
         return JSValue.jsNumber(res);
@@ -284,7 +289,7 @@ const random = struct {
         var disable_entropy_cache = false;
         if (args.len > 0) {
             const options = args[0];
-            if (options != .undefined) {
+            if (!options.isUndefined()) {
                 try validators.validateObject(global, options, "options", .{}, .{});
                 if (try options.get(global, "disableEntropyCache")) |disable_entropy_cache_value| {
                     disable_entropy_cache = try validators.validateBoolean(global, disable_entropy_cache_value, "options.disableEntropyCache", .{});
@@ -356,7 +361,7 @@ const random = struct {
         };
         try Job.initAndSchedule(global, callback, &ctx);
 
-        return .undefined;
+        return .js_undefined;
     }
 
     fn randomFillSync(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
@@ -419,8 +424,8 @@ const random = struct {
             try assertSize(global, size_value, element_size, offset, buf.byte_len);
 
         if (size == 0) {
-            _ = try callback.call(global, .undefined, &.{ .null, JSValue.jsNumber(0) });
-            return .undefined;
+            _ = try callback.call(global, .js_undefined, &.{ .null, JSValue.jsNumber(0) });
+            return .js_undefined;
         }
 
         const ctx: JobCtx = .{
@@ -431,7 +436,7 @@ const random = struct {
         };
         try Job.initAndSchedule(global, callback, &ctx);
 
-        return .undefined;
+        return .js_undefined;
     }
 };
 
@@ -486,7 +491,7 @@ pub fn timingSafeEqual(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSErr
 }
 
 pub fn secureHeapUsed(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn getFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
@@ -494,7 +499,7 @@ pub fn getFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
 }
 
 pub fn setFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn setEngine(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
@@ -514,11 +519,11 @@ fn getHashes(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
     // TODO(dylan-conway): cache the names
     BoringSSL.EVP_MD_do_all_sorted(&forEachHash, @alignCast(@ptrCast(&hashes)));
 
-    const array = JSValue.createEmptyArray(global, hashes.count());
+    const array = try JSValue.createEmptyArray(global, hashes.count());
 
     for (hashes.keys(), 0..) |hash, i| {
-        const str = String.createUTF8ForJS(global, hash);
-        array.putIndex(global, @intCast(i), str);
+        const str = try String.createUTF8ForJS(global, hash);
+        try array.putIndex(global, @intCast(i), str);
     }
 
     return array;
@@ -545,7 +550,7 @@ const Scrypt = struct {
             callFrame.argumentsAsArray(5);
 
         if (is_async) {
-            if (callback == .undefined) {
+            if (callback.isUndefined()) {
                 callback = maybe_options_value.?;
                 maybe_options_value = null;
             }
@@ -723,17 +728,17 @@ const Scrypt = struct {
                 var buf: [256]u8 = undefined;
                 const msg = BoringSSL.ERR_error_string_n(err, &buf, buf.len);
                 const exception = global.ERR(.CRYPTO_OPERATION_FAILED, "Scrypt failed: {s}", .{msg}).toJS();
-                vm.eventLoop().runCallback(callback, global, .undefined, &.{exception});
+                vm.eventLoop().runCallback(callback, global, .js_undefined, &.{exception});
                 return;
             }
 
             const exception = global.ERR(.CRYPTO_OPERATION_FAILED, "Scrypt failed", .{}).toJS();
-            vm.eventLoop().runCallback(callback, global, .undefined, &.{exception});
+            vm.eventLoop().runCallback(callback, global, .js_undefined, &.{exception});
             return;
         }
 
         const buf = this.buf.swap();
-        vm.eventLoop().runCallback(callback, global, .undefined, &.{ .undefined, buf });
+        vm.eventLoop().runCallback(callback, global, .js_undefined, &.{ .js_undefined, buf });
     }
 
     fn deinit(this: *Scrypt) void {
@@ -744,7 +749,7 @@ const Scrypt = struct {
 fn scrypt(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
     const ctx, const callback = try Scrypt.fromJS(global, callFrame, true);
     try Scrypt.Job.initAndSchedule(global, callback, &ctx);
-    return .undefined;
+    return .js_undefined;
 }
 
 fn scryptSync(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {

@@ -38,7 +38,7 @@ BUN_DECLARE_HOST_FUNCTION(JSMock__jsSpyOn);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsMockFn);
 
 #define CHECK_IS_MOCK_FUNCTION(thisValue)                                                              \
-    if (UNLIKELY(!thisObject)) {                                                                       \
+    if (!thisObject) [[unlikely]] {                                                                    \
         scope.throwException(globalObject, createInvalidThisError(globalObject, thisValue, "Mock"_s)); \
         return {};                                                                                     \
     }
@@ -59,9 +59,9 @@ namespace Bun {
 template<typename To>
 inline To tryJSDynamicCast(JSValue from)
 {
-    if (UNLIKELY(!from))
+    if (!from) [[unlikely]]
         return nullptr;
-    if (UNLIKELY(!from.isCell()))
+    if (!from.isCell()) [[unlikely]]
         return nullptr;
     return jsDynamicCast<To>(from.asCell());
 }
@@ -80,7 +80,7 @@ inline To tryJSDynamicCast(JSValue from)
 template<typename To, typename WriteBarrierT>
 inline To tryJSDynamicCast(JSC::WriteBarrier<WriteBarrierT>& from)
 {
-    if (UNLIKELY(!from))
+    if (!from) [[unlikely]]
         return nullptr;
 
     return jsDynamicCast<To>(from.get());
@@ -387,6 +387,7 @@ public:
         JSArray* val = calls.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->calls.set(vm(), this, val);
         }
         return val;
@@ -396,6 +397,7 @@ public:
         JSArray* val = contexts.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->contexts.set(vm(), this, val);
         }
         return val;
@@ -405,6 +407,7 @@ public:
         JSArray* val = instances.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->instances.set(vm(), this, val);
         }
         return val;
@@ -414,6 +417,7 @@ public:
         JSArray* val = returnValues.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->returnValues.set(vm(), this, val);
         }
         return val;
@@ -423,6 +427,7 @@ public:
         JSArray* val = invocationCallOrder.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->invocationCallOrder.set(vm(), this, val);
         }
         return val;
@@ -812,7 +817,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     auto& vm = JSC::getVM(globalObject);
     JSMockFunction* fn = jsDynamicCast<JSMockFunction*>(callframe->jsCallee());
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (UNLIKELY(!fn)) {
+    if (!fn) [[unlikely]] {
         throwTypeError(globalObject, scope, "Expected callee to be mock function"_s);
         return {};
     }
@@ -900,7 +905,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
         case JSMockImplementation::Kind::Call: {
             JSValue result = impl->underlyingValue.get();
             JSC::CallData callData = JSC::getCallData(result);
-            if (UNLIKELY(callData.type == JSC::CallData::Type::None)) {
+            if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
                 throwTypeError(globalObject, scope, "Expected mock implementation to be callable"_s);
                 return {};
             }
@@ -921,7 +926,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
                 }
             }
 
-            if (UNLIKELY(!returnValue)) {
+            if (!returnValue) [[unlikely]] {
                 returnValue = jsUndefined();
             }
 
@@ -1011,7 +1016,7 @@ extern "C" JSC::EncodedJSValue JSMockFunction__getCalls(EncodedJSValue encodedVa
         return JSValue::encode(mock->getCalls());
     }
 
-    return JSValue::encode({});
+    return {};
 }
 extern "C" JSC::EncodedJSValue JSMockFunction__getReturns(EncodedJSValue encodedValue)
 {
@@ -1020,7 +1025,7 @@ extern "C" JSC::EncodedJSValue JSMockFunction__getReturns(EncodedJSValue encoded
         return JSValue::encode(mock->getReturnValues());
     }
 
-    return JSValue::encode({});
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -1238,7 +1243,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetter_mockGetLastCall, (JSC::JSGlobalObj
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSValue thisObject = callframe->thisValue();
-    if (UNLIKELY(!thisObject.isObject())) {
+    if (!thisObject.isObject()) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
     JSValue callsValue = thisObject.get(globalObject, Identifier::fromString(vm, "calls"_s));
@@ -1336,7 +1341,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
     JSValue tempImplValue = callframe->argument(0);
     JSValue callback = callframe->argument(1);
     JSC::CallData callData = JSC::getCallData(callback);
-    if (UNLIKELY(callData.type == JSC::CallData::Type::None)) {
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
         throwTypeError(globalObject, scope, "Expected mock implementation to be callable"_s);
         return {};
     }
@@ -1440,7 +1445,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    if (UNLIKELY(!globalObject)) {
+    if (!globalObject) [[unlikely]] {
         throwVMError(globalObject, scope, "Cannot run spyOn from a different global context"_s);
         return {};
     }
@@ -1472,7 +1477,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     if (!hasValue || slot.isValue()) {
         JSValue value = jsUndefined();
         if (hasValue) {
-            if (UNLIKELY(slot.isTaintedByOpaqueObject())) {
+            if (slot.isTaintedByOpaqueObject()) [[unlikely]] {
                 // if it's a Proxy or JSModuleNamespaceObject
                 value = object->get(globalObject, propertyKey);
             } else {
@@ -1564,7 +1569,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsMockFn, (JSC::JSGlobalObject * lexicalGlobalO
         globalObject,
         globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject));
 
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }

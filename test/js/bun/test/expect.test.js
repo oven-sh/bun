@@ -1706,6 +1706,12 @@ describe("expect()", () => {
     expect(array2).not.toEqual(expect.arrayContaining([{ a: 2, b: 3 }]));
   });
 
+  test("toEqual ArrayBuffer with SharedArrayBuffer", () => {
+    const ab1 = new SharedArrayBuffer(1);
+    expect(ab1).toEqual(new SharedArrayBuffer(1));
+    expect(ab1).not.toEqual(new ArrayBuffer(1));
+  });
+
   test("symbol based keys in arrays are processed correctly", () => {
     const mySymbol = Symbol("test");
 
@@ -4151,13 +4157,13 @@ describe("expect()", () => {
       expect(expect.objectContaining({ first: { second: {} } })).not.toEqual({
         first: { second: {}, third: {} },
       });
-      expect(
+      (expect(
         expect.objectContaining({
           answer: 42,
           foo: { bar: "baz", foobar: "qux" },
         }),
       ).not.toEqual({ foo: { bar: "baz" } }),
-        expect(expect.objectContaining({ [foo]: "foo" })).not.toEqual({ [bar]: "bar" });
+        expect(expect.objectContaining({ [foo]: "foo" })).not.toEqual({ [bar]: "bar" }));
     });
 
     test("ObjectContaining matches defined properties", () => {

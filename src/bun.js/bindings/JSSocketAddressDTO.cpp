@@ -67,10 +67,8 @@ Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
 } // namespace JSSocketAddress
 } // namespace Bun
 
-extern "C" JSC__JSValue JSSocketAddressDTO__create(JSGlobalObject* globalObject, EncodedJSValue address, int32_t port, bool isIPv6)
+extern "C" JSC::EncodedJSValue JSSocketAddressDTO__create(JSGlobalObject* globalObject, EncodedJSValue address, uint16_t port, bool isIPv6)
 {
-    ASSERT(port < std::numeric_limits<uint16_t>::max());
-
     VM& vm = globalObject->vm();
     auto* global = jsCast<Zig::GlobalObject*>(globalObject);
 

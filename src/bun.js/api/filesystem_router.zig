@@ -1,5 +1,4 @@
 const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("bun");
@@ -7,7 +6,6 @@ const string = bun.string;
 const JSC = bun.JSC;
 const WebCore = JSC.WebCore;
 const Transpiler = bun.transpiler;
-const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
 const JSObject = JSC.JSObject;
@@ -16,7 +14,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
 const Request = WebCore.Request;
 const Environment = bun.Environment;
-const URLPath = @import("../../http/url_path.zig");
+const URLPath = @import("../../http/URLPath.zig");
 const URL = @import("../../url.zig").URL;
 const Log = bun.logger;
 const Resolver = @import("../../resolver/resolver.zig").Resolver;
@@ -101,16 +99,16 @@ pub const FileSystemRouter = struct {
                 return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array", .{});
             }
 
-            var iter = file_extensions.arrayIterator(globalThis);
+            var iter = try file_extensions.arrayIterator(globalThis);
             extensions.ensureTotalCapacityPrecise(iter.len) catch unreachable;
-            while (iter.next()) |val| {
+            while (try iter.next()) |val| {
                 if (!val.isString()) {
                     origin_str.deinit();
                     arena.deinit();
                     globalThis.allocator().destroy(arena);
                     return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array of strings", .{});
                 }
-                if (val.getLength(globalThis) == 0) continue;
+                if (try val.getLength(globalThis) == 0) continue;
                 extensions.appendAssumeCapacity(((try val.toSlice(globalThis, allocator)).clone(allocator) catch unreachable).slice()[1..]);
             }
         }
@@ -136,7 +134,7 @@ pub const FileSystemRouter = struct {
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
+            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
         } orelse {
             origin_str.deinit();
             arena.deinit();
@@ -154,7 +152,7 @@ pub const FileSystemRouter = struct {
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
+            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         };
 
         if (try argument.get(globalThis, "origin")) |origin| {
@@ -170,7 +168,7 @@ pub const FileSystemRouter = struct {
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
+            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         }
 
         var fs_router = globalThis.allocator().create(FileSystemRouter) catch unreachable;
@@ -253,7 +251,7 @@ pub const FileSystemRouter = struct {
         bustDirCache(this, globalThis);
 
         const root_dir_info = vm.transpiler.resolver.readDirInfo(this.router.config.dir) catch {
-            return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
+            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
         } orelse {
             arena.deinit();
             globalThis.allocator().destroy(arena);
@@ -268,7 +266,7 @@ pub const FileSystemRouter = struct {
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.transpiler.resolver, router.config.dir) catch {
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
+            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         };
 
         this.arena.deinit();
@@ -354,10 +352,10 @@ pub const FileSystemRouter = struct {
         return JSValue.jsNull();
     }
 
-    pub fn getRoutes(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) JSValue {
-        const paths = this.router.getEntryPoints() catch unreachable;
-        const names = this.router.getNames() catch unreachable;
-        var name_strings = bun.default_allocator.alloc(ZigString, names.len * 2) catch unreachable;
+    pub fn getRoutes(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) bun.JSError!JSValue {
+        const paths = this.router.getEntryPoints();
+        const names = this.router.getNames();
+        var name_strings = try bun.default_allocator.alloc(ZigString, names.len * 2);
         defer bun.default_allocator.free(name_strings);
         var paths_strings = name_strings[names.len..];
         for (names, 0..) |name, i| {
@@ -619,12 +617,12 @@ pub const MatchedRoute = struct {
     pub fn getParams(
         this: *MatchedRoute,
         globalThis: *JSC.JSGlobalObject,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         if (this.route.params.len == 0)
             return JSValue.createEmptyObject(globalThis, 0);
 
         if (this.param_map == null) {
-            this.param_map = QueryStringMap.initWithScanner(
+            this.param_map = try QueryStringMap.initWithScanner(
                 globalThis.allocator(),
                 CombinedScanner.init(
                     "",
@@ -632,8 +630,7 @@ pub const MatchedRoute = struct {
                     this.route.name,
                     this.route.params,
                 ),
-            ) catch
-                unreachable;
+            );
         }
 
         return createQueryObject(globalThis, &this.param_map.?);
@@ -642,7 +639,7 @@ pub const MatchedRoute = struct {
     pub fn getQuery(
         this: *MatchedRoute,
         globalThis: *JSC.JSGlobalObject,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         if (this.route.query_string.len == 0 and this.route.params.len == 0) {
             return JSValue.createEmptyObject(globalThis, 0);
         } else if (this.route.query_string.len == 0) {
@@ -651,19 +648,15 @@ pub const MatchedRoute = struct {
 
         if (this.query_string_map == null) {
             if (this.route.params.len > 0) {
-                if (QueryStringMap.initWithScanner(globalThis.allocator(), CombinedScanner.init(
+                this.query_string_map = try QueryStringMap.initWithScanner(globalThis.allocator(), CombinedScanner.init(
                     this.route.query_string,
                     this.route.pathnameWithoutLeadingSlash(),
                     this.route.name,
 
                     this.route.params,
-                ))) |map| {
-                    this.query_string_map = map;
-                } else |_| {}
+                ));
             } else {
-                if (QueryStringMap.init(globalThis.allocator(), this.route.query_string)) |map| {
-                    this.query_string_map = map;
-                } else |_| {}
+                this.query_string_map = try QueryStringMap.init(globalThis.allocator(), this.route.query_string);
             }
         }
 

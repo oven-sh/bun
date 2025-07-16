@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { access, readFile, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, readdirSorted } from "harness";
+import { bunExe, bunEnv as env, readdirSorted, toBeValidBin, toHaveBins } from "harness";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -323,10 +323,10 @@ it("lockfile should not be modified when there are no version changes, issue#588
     env,
   });
   expect(await exited).toBe(0);
-  const err1 = await new Response(stderr).text();
+  const err1 = await stderr.text();
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
-  const out1 = await new Response(stdout).text();
+  const out1 = await stdout.text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",

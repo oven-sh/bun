@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
-import { isWindows } from "harness";
 
 describe("bun build", () => {
   test("warnings dont return exit code 1", () => {
@@ -64,7 +63,7 @@ describe("bun build", () => {
     const tmpdir = tmpdirSync();
     const baseDir = `${tmpdir}/bun-build-dirname-filename-${Date.now()}`;
     fs.mkdirSync(baseDir, { recursive: true });
-    fs.mkdirSync(path.join(baseDir, "我")), { recursive: true };
+    (fs.mkdirSync(path.join(baseDir, "我")), { recursive: true });
     fs.writeFileSync(path.join(baseDir, "我", "我.ts"), "console.log(__dirname); console.log(__filename);");
     const { exitCode } = Bun.spawnSync({
       cmd: [bunExe(), "build", path.join(baseDir, "我/我.ts"), "--compile", "--outfile", path.join(baseDir, "exe.exe")],
@@ -202,7 +201,14 @@ test("you can use --outfile=... and --sourcemap", () => {
   const outputContent = fs.readFileSync(outFile, "utf8");
   expect(outputContent).toContain("//# sourceMappingURL=out.js.map");
 
-  expect(stdout.toString()).toMatchInlineSnapshot();
+  expect(stdout.toString().replace(/\d{1,}ms/, "0.000000001ms")).toMatchInlineSnapshot(`
+    "Bundled 1 module in 0.000000001ms
+
+      out.js      120 bytes  (entry point)
+      out.js.map  213 bytes  (source map)
+
+    "
+  `);
 });
 
 test("some log cases", () => {
@@ -238,7 +244,7 @@ test("log case 1", () => {
   writeFileSync(inputFile2, 'console.log("Hello, world!");');
 
   const { exitCode, stdout } = Bun.spawnSync({
-    cmd: [bunExe(), "build", "--outdir=" + tmpdir + '/out', inputFile, inputFile2],
+    cmd: [bunExe(), "build", "--outdir=" + tmpdir + "/out", inputFile, inputFile2],
     env: bunEnv,
     cwd: tmpdir,
   });
@@ -260,7 +266,7 @@ test("log case 2", () => {
   writeFileSync(inputFile, 'console.log("Hello, world!");');
 
   const { exitCode, stdout } = Bun.spawnSync({
-    cmd: [bunExe(), "build", "--outdir=" + tmpdir + '/out', inputFile],
+    cmd: [bunExe(), "build", "--outdir=" + tmpdir + "/out", inputFile],
     env: bunEnv,
     cwd: tmpdir,
   });

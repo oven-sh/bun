@@ -4,12 +4,8 @@ const Global = bun.Global;
 const Output = bun.Output;
 const Command = bun.CLI.Command;
 const Install = bun.install;
-const Bin = Install.Bin;
 const PackageManager = Install.PackageManager;
 const Lockfile = Install.Lockfile;
-const PackageID = Install.PackageID;
-const DependencyID = Install.DependencyID;
-const Behavior = Install.Dependency.Behavior;
 const string = bun.string;
 const stringZ = bun.stringZ;
 const libarchive = @import("../libarchive/libarchive.zig").lib;
@@ -24,13 +20,11 @@ const PathBuffer = bun.PathBuffer;
 const DirIterator = bun.DirIterator;
 const Environment = bun.Environment;
 const RunCommand = bun.RunCommand;
-const FileSystem = bun.fs.FileSystem;
 const OOM = bun.OOM;
 const js_printer = bun.js_printer;
 const E = bun.js_parser.E;
 const Progress = bun.Progress;
 const JSON = bun.JSON;
-const BoringSSL = bun.BoringSSL;
 const sha = bun.sha;
 const LogLevel = PackageManager.Options.LogLevel;
 const FileDescriptor = bun.FileDescriptor;
@@ -303,7 +297,7 @@ pub const PackCommand = struct {
                 }
             }
 
-            var dir_iter = DirIterator.iterate(dir, .u8);
+            var dir_iter = DirIterator.iterate(.fromStdDir(dir), .u8);
             while (dir_iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -457,7 +451,7 @@ pub const PackCommand = struct {
                 }
             }
 
-            var iter = DirIterator.iterate(dir, .u8);
+            var iter = DirIterator.iterate(.fromStdDir(dir), .u8);
             while (iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -571,7 +565,7 @@ pub const PackCommand = struct {
         var additional_bundled_deps: std.ArrayListUnmanaged(DirInfo) = .{};
         defer additional_bundled_deps.deinit(ctx.allocator);
 
-        var iter = DirIterator.iterate(dir, .u8);
+        var iter = DirIterator.iterate(.fromStdDir(dir), .u8);
         while (iter.next().unwrap() catch null) |entry| {
             if (entry.kind != .directory) continue;
 
@@ -585,7 +579,7 @@ pub const PackCommand = struct {
                 };
                 defer scoped_dir.close();
 
-                var scoped_iter = DirIterator.iterate(scoped_dir, .u8);
+                var scoped_iter = DirIterator.iterate(.fromStdDir(scoped_dir), .u8);
                 while (scoped_iter.next().unwrap() catch null) |sub_entry| {
                     const entry_name = try entrySubpath(ctx.allocator, _entry_name, sub_entry.name.slice());
 
@@ -695,7 +689,7 @@ pub const PackCommand = struct {
             var dir, const dir_subpath, const dir_depth = dir_info;
             defer dir.close();
 
-            var iter = DirIterator.iterate(dir, .u8);
+            var iter = DirIterator.iterate(.fromStdDir(dir), .u8);
             while (iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -706,12 +700,12 @@ pub const PackCommand = struct {
                     if (strings.eqlComptime(entry_name, "package.json")) {
                         if (entry.kind != .file) break :root_depth;
                         // find more dependencies to bundle
-                        const source = File.toSourceAt(dir, entryNameZ(entry_name, entry_subpath), ctx.allocator).unwrap() catch |err| {
+                        const source = &(File.toSourceAt(dir, entryNameZ(entry_name, entry_subpath), ctx.allocator, .{}).unwrap() catch |err| {
                             Output.err(err, "failed to read package.json: \"{s}\"", .{entry_subpath});
                             Global.crash();
-                        };
+                        });
 
-                        const json = JSON.parsePackageJSONUTF8(&source, ctx.manager.log, ctx.allocator) catch
+                        const json = JSON.parsePackageJSONUTF8(source, ctx.manager.log, ctx.allocator) catch
                             break :root_depth;
 
                         // for each dependency in `dependencies` find the closest node_modules folder
@@ -855,7 +849,7 @@ pub const PackCommand = struct {
                 }
             }
 
-            var dir_iter = DirIterator.iterate(dir, .u8);
+            var dir_iter = DirIterator.iterate(.fromStdDir(dir), .u8);
             while (dir_iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -1767,7 +1761,7 @@ pub const PackCommand = struct {
                 package_name,
                 package_version,
                 &json.root,
-                json.source,
+                &json.source,
                 shasum,
                 integrity,
             );
@@ -2035,7 +2029,7 @@ pub const PackCommand = struct {
         return entry.clear();
     }
 
-    /// Strip workspace protocols from dependency versions then
+    /// Strips workspace and catalog protocols from dependency versions then
     /// returns the printed json
     fn editRootPackageJSON(
         allocator: std.mem.Allocator,
@@ -2123,6 +2117,48 @@ pub const PackCommand = struct {
                                     E.String,
                                     .{
                                         .data = try allocator.dupe(u8, without_workspace_protocol),
+                                    },
+                                    .{},
+                                );
+                            } else if (strings.withoutPrefixIfPossibleComptime(package_spec, "catalog:")) |catalog_name_str| {
+                                const dep_name_str = dependency.key.?.asString(allocator).?;
+
+                                const lockfile = maybe_lockfile orelse {
+                                    Output.errGeneric("Failed to resolve catalog version for \"{s}\" in `{s}` (catalogs require a lockfile).", .{
+                                        dep_name_str,
+                                        dependency_group,
+                                    });
+                                    Global.crash();
+                                };
+
+                                const catalog_name = Semver.String.init(catalog_name_str, catalog_name_str);
+
+                                const catalog = lockfile.catalogs.getGroup(lockfile.buffers.string_bytes.items, catalog_name, catalog_name_str) orelse {
+                                    Output.errGeneric("Failed to resolve catalog version for \"{s}\" in `{s}` (no matching catalog).", .{
+                                        dep_name_str,
+                                        dependency_group,
+                                    });
+                                    Global.crash();
+                                };
+
+                                const dep_name = Semver.String.init(dep_name_str, dep_name_str);
+
+                                const dep = catalog.getContext(dep_name, Semver.String.ArrayHashContext{
+                                    .arg_buf = dep_name_str,
+                                    .existing_buf = lockfile.buffers.string_bytes.items,
+                                }) orelse {
+                                    Output.errGeneric("Failed to resolve catalog version for \"{s}\" in `{s}` (no matching catalog dependency).", .{
+                                        dep_name_str,
+                                        dependency_group,
+                                    });
+                                    Global.crash();
+                                };
+
+                                dependency.value = Expr.allocate(
+                                    allocator,
+                                    E.String,
+                                    .{
+                                        .data = try allocator.dupe(u8, dep.version.literal.slice(lockfile.buffers.string_bytes.items)),
                                     },
                                     .{},
                                 );
@@ -2375,7 +2411,7 @@ pub const PackCommand = struct {
         }
 
         pub fn deinit(this: *const IgnorePatterns, allocator: std.mem.Allocator) void {
-            for (this.list) |pattern_info| {
+            for (this.list) |*pattern_info| {
                 pattern_info.glob.deinit(allocator);
             }
             allocator.free(this.list);
@@ -2523,7 +2559,7 @@ pub const bindings = struct {
         sha512.final(&sha512_digest);
         var base64_buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
         const encode_count = bun.simdutf.base64.encode(&sha512_digest, &base64_buf, false);
-        const integrity_str = String.createUTF8(base64_buf[0..encode_count]);
+        const integrity_str = String.cloneUTF8(base64_buf[0..encode_count]);
 
         const EntryInfo = struct {
             pathname: String,
@@ -2589,7 +2625,7 @@ pub const bindings = struct {
                     const perm = archive_entry.perm();
 
                     var entry_info: EntryInfo = .{
-                        .pathname = String.createUTF8(pathname),
+                        .pathname = String.cloneUTF8(pathname),
                         .kind = String.static(@tagName(kind)),
                         .perm = perm,
                     };
@@ -2607,7 +2643,7 @@ pub const bindings = struct {
                             });
                         }
                         read_buf.items.len = @intCast(read);
-                        entry_info.contents = String.createUTF8(read_buf.items);
+                        entry_info.contents = String.cloneUTF8(read_buf.items);
                     }
 
                     entries_info.append(entry_info) catch bun.outOfMemory();
@@ -2628,7 +2664,7 @@ pub const bindings = struct {
             else => {},
         }
 
-        const entries = JSArray.createEmpty(global, entries_info.items.len);
+        const entries = try JSArray.createEmpty(global, entries_info.items.len);
 
         for (entries_info.items, 0..) |entry, i| {
             const obj = JSValue.createEmptyObject(global, 4);
@@ -2638,7 +2674,7 @@ pub const bindings = struct {
             if (entry.contents) |contents| {
                 obj.put(global, "contents", contents.toJS(global));
             }
-            entries.putIndex(global, @intCast(i), obj);
+            try entries.putIndex(global, @intCast(i), obj);
         }
 
         const result = JSValue.createEmptyObject(global, 2);

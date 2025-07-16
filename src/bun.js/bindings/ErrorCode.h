@@ -9,6 +9,18 @@
 #include "ErrorCode+List.h"
 #include "CryptoKeyType.h"
 
+#define RELEASE_RETURN_IF_EXCEPTION(scope__, value__)                                                              \
+    do {                                                                                                           \
+        SUPPRESS_UNCOUNTED_LOCAL JSC::VM& vm = (scope__).vm();                                                     \
+        EXCEPTION_ASSERT(!!(scope__).exception() == vm.traps().needHandling(JSC::VMTraps::NeedExceptionHandling)); \
+        if (vm.traps().maybeNeedHandling()) [[unlikely]] {                                                         \
+            if (vm.hasExceptionsAfterHandlingTraps()) {                                                            \
+                scope__.release();                                                                                 \
+                return value__;                                                                                    \
+            }                                                                                                      \
+        }                                                                                                          \
+    } while (false)
+
 namespace Bun {
 
 class ErrorCodeCache : public JSC::JSInternalFieldObjectImpl<NODE_ERROR_COUNT> {
@@ -40,7 +52,7 @@ public:
     static ErrorCodeCache* create(VM& vm, Structure* structure);
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject);
 
-    JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options, bool isDOMExceptionPrototype);
+    JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options);
 
 private:
     JS_EXPORT_PRIVATE ErrorCodeCache(VM&, Structure*);
@@ -49,10 +61,10 @@ private:
 };
 
 JSC::EncodedJSValue throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ErrorCode code, const WTF::String& message);
-JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const WTF::String& message, bool isDOMExceptionPrototype = false);
-JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message, bool isDOMExceptionPrototype = false);
-JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC::JSValue message, bool isDOMExceptionPrototype = false);
-JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options, bool isDOMExceptionPrototype = false);
+JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const WTF::String& message);
+JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message);
+JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC::JSValue message);
+JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options);
 JSC::JSValue toJS(JSC::JSGlobalObject*, ErrorCode);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, JSValue thisValue, const ASCIILiteral typeName);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
@@ -131,7 +143,10 @@ JSC::EncodedJSValue OSSL_EVP_INVALID_DIGEST(JSC::ThrowScope&, JSC::JSGlobalObjec
 JSC::EncodedJSValue KEY_GENERATION_JOB_FAILED(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue INCOMPATIBLE_OPTION_PAIR(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral opt1, ASCIILiteral opt2);
 JSC::EncodedJSValue MISSING_OPTION(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral message);
+JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope&, JSC::JSGlobalObject*, const String& part, const String& input, int position);
 JSC::EncodedJSValue CLOSED_MESSAGE_PORT(JSC::ThrowScope&, JSC::JSGlobalObject*);
+JSC::EncodedJSValue INVALID_THIS(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral expectedType);
+JSC::EncodedJSValue DLOPEN_DISABLED(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral message);
 
 // URL
 
@@ -144,7 +159,7 @@ JSC::EncodedJSValue INVALID_FILE_URL_PATH(JSC::ThrowScope& throwScope, JSC::JSGl
 
 }
 
-void throwBoringSSLError(JSC::VM& vm, JSC::ThrowScope& scope, JSGlobalObject* globalObject, int errorCode);
+void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode);
 void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope);
 
 }

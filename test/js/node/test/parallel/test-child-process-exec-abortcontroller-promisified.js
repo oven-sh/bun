@@ -1,3 +1,5 @@
+// Modified to allow the abort error to have a 'stack' property
+
 'use strict';
 const common = require('../common');
 const assert = require('assert');
@@ -15,15 +17,27 @@ const waitCommand = common.isWindows ?
   `"${process.execPath}" -e "setInterval(()=>{}, 99)"` :
   'sleep 2m';
 
-{
+if(typeof Bun !== "undefined") {
   const ac = new AbortController();
   const signal = ac.signal;
   const promise = execPromisifed(waitCommand, { signal });
+  promise.catch(common.mustCall(e => {
+    assert.equal(e.name, 'AbortError');
+    assert.ok(e.cause instanceof DOMException);
+    assert.equal(e.cause.name, 'AbortError');
+    assert.equal(e.cause.message, 'The operation was aborted.');
+    assert.equal(e.cause.code, 20);
+  }));
   ac.abort();
+}else{
+  const ac = new AbortController();
+  const signal = ac.signal;
+  const promise = execPromisifed(waitCommand, { signal });
   assert.rejects(promise, {
     name: 'AbortError',
-    cause: ac.signal.reason,
+    cause: new DOMException('This operation was aborted', 'AbortError'),
   }).then(common.mustCall());
+  ac.abort();
 }
 
 {

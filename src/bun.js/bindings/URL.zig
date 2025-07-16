@@ -59,7 +59,7 @@ pub const URL = opaque {
     }
 
     pub fn fromUTF8(input: []const u8) ?*URL {
-        return fromString(String.fromUTF8(input));
+        return fromString(String.borrowUTF8(input));
     }
     pub fn fromString(str: bun.String) ?*URL {
         JSC.markBinding(@src());
@@ -107,6 +107,19 @@ pub const URL = opaque {
     pub fn pathname(url: *URL) String {
         JSC.markBinding(@src());
         return URL__pathname(url);
+    }
+
+    extern fn URL__originLength(latin1_slice: [*]const u8, len: usize) u32;
+    pub fn originFromSlice(slice: []const u8) ?[]const u8 {
+        JSC.markBinding(@src());
+        // a valid URL will not have ascii in the origin.
+        const first_non_ascii = bun.strings.firstNonASCII(slice) orelse slice.len;
+        const len = URL__originLength(
+            slice[0..first_non_ascii].ptr,
+            first_non_ascii,
+        );
+        if (len == 0) return null;
+        return slice[0..len];
     }
 };
 

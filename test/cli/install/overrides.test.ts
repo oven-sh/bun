@@ -1,8 +1,8 @@
+import { write } from "bun";
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
-import { write } from "bun";
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
@@ -220,7 +220,7 @@ test("overrides do not apply to workspaces", async () => {
   });
 
   expect(await exited).toBe(0);
-  expect(await Bun.readableStreamToText(stderr)).toContain("Saved lockfile");
+  expect(await stderr.text()).toContain("Saved lockfile");
 
   // --frozen-lockfile works
   ({ exited, stderr } = Bun.spawn({
@@ -232,7 +232,7 @@ test("overrides do not apply to workspaces", async () => {
   }));
 
   expect(await exited).toBe(0);
-  expect(await Bun.readableStreamToText(stderr)).not.toContain("Frozen lockfile");
+  expect(await stderr.text()).not.toContain("Frozen lockfile");
 
   // lockfile is not changed
 
@@ -245,5 +245,5 @@ test("overrides do not apply to workspaces", async () => {
   }));
 
   expect(await exited).toBe(0);
-  expect(await Bun.readableStreamToText(stderr)).not.toContain("Saved lockfile");
+  expect(await stderr.text()).not.toContain("Saved lockfile");
 });

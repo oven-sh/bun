@@ -1,10 +1,9 @@
 // MSVC doesn't support C11 stdatomic.h propertly yet.
 // so we use C++ std::atomic instead.
 #include "./root_certs.h"
+#include "./root_certs_header.h"
 #include "./internal/internal.h"
 #include <atomic>
-#include <openssl/pem.h>
-#include <openssl/x509.h>
 #include <string.h>
 static const int root_certs_size = sizeof(root_certs) / sizeof(root_certs[0]);
 
@@ -134,6 +133,23 @@ extern "C" int us_internal_raw_root_certs(struct us_cert_string_t **out) {
   return root_certs_size;
 }
 
+struct us_default_ca_certificates {
+  X509 *root_cert_instances[root_certs_size];
+  STACK_OF(X509) *root_extra_cert_instances;
+};
+
+us_default_ca_certificates* us_get_default_ca_certificates() {
+  static us_default_ca_certificates default_ca_certificates = {{NULL}, NULL};
+
+  us_internal_init_root_certs(default_ca_certificates.root_cert_instances, default_ca_certificates.root_extra_cert_instances);
+
+  return &default_ca_certificates;
+}
+
+STACK_OF(X509) *us_get_root_extra_cert_instances() {
+  return us_get_default_ca_certificates()->root_extra_cert_instances;
+}
+
 extern "C" X509_STORE *us_get_default_ca_store() {
   X509_STORE *store = X509_STORE_new();
   if (store == NULL) {
@@ -145,10 +161,9 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     return NULL;
   }
 
-  static X509 *root_cert_instances[root_certs_size] = {NULL};
-  static STACK_OF(X509) *root_extra_cert_instances = NULL;
-
-  us_internal_init_root_certs(root_cert_instances, root_extra_cert_instances);
+  us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();
+  X509** root_cert_instances = default_ca_certificates->root_cert_instances;
+  STACK_OF(X509) *root_extra_cert_instances = default_ca_certificates->root_extra_cert_instances;
 
   // load all root_cert_instances on the default ca store
   for (size_t i = 0; i < root_certs_size; i++) {

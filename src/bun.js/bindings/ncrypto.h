@@ -273,11 +273,11 @@ public:
     inline operator const EVP_MD*() const { return md_; }
     inline operator bool() const { return md_ != nullptr; }
 
-    static const Digest MD5;
-    static const Digest SHA1;
-    static const Digest SHA256;
-    static const Digest SHA384;
-    static const Digest SHA512;
+    static const Digest& MD5();
+    static const Digest& SHA1();
+    static const Digest& SHA256();
+    static const Digest& SHA384();
+    static const Digest& SHA512();
 
     static const Digest FromName(WTF::StringView name);
 
@@ -349,19 +349,19 @@ public:
     // the result will be an empty Cipher object whose bool operator
     // will return false.
 
-    static const Cipher EMPTY;
-    static const Cipher AES_128_CBC;
-    static const Cipher AES_192_CBC;
-    static const Cipher AES_256_CBC;
-    static const Cipher AES_128_CTR;
-    static const Cipher AES_192_CTR;
-    static const Cipher AES_256_CTR;
-    static const Cipher AES_128_GCM;
-    static const Cipher AES_192_GCM;
-    static const Cipher AES_256_GCM;
-    static const Cipher AES_128_KW;
-    static const Cipher AES_192_KW;
-    static const Cipher AES_256_KW;
+    static const Cipher& EMPTY();
+    static const Cipher& AES_128_CBC();
+    static const Cipher& AES_192_CBC();
+    static const Cipher& AES_256_CBC();
+    static const Cipher& AES_128_CTR();
+    static const Cipher& AES_192_CTR();
+    static const Cipher& AES_256_CTR();
+    static const Cipher& AES_128_GCM();
+    static const Cipher& AES_192_GCM();
+    static const Cipher& AES_256_GCM();
+    static const Cipher& AES_128_KW();
+    static const Cipher& AES_192_KW();
+    static const Cipher& AES_256_KW();
 
     struct CipherParams {
         int padding;

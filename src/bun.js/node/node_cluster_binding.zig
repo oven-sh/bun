@@ -7,7 +7,6 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const JSC = bun.JSC;
-const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const log = Output.scoped(.IPC, false);
@@ -61,13 +60,13 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
             const arguments_ = callframe_.arguments_old(1).slice();
             const ex = arguments_[0];
             Process__emitErrorEvent(globalThis_, ex.toError() orelse ex);
-            return .undefined;
+            return .js_undefined;
         }
     };
 
-    const good = ipc_instance.data.serializeAndSendInternal(globalThis, message);
+    const good = ipc_instance.data.serializeAndSend(globalThis, message, .internal, .null, null);
 
-    if (!good) {
+    if (good == .failure) {
         const ex = globalThis.createTypeErrorInstance("sendInternal() failed", .{});
         ex.put(globalThis, ZigString.static("syscall"), bun.String.static("write").toJS(globalThis));
         const fnvalue = JSC.JSFunction.create(globalThis, "", S.impl, 1, .{});
@@ -75,7 +74,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         return .false;
     }
 
-    return .true;
+    return if (good == .success) .true else .false;
 }
 
 pub fn onInternalMessageChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -85,7 +84,7 @@ pub fn onInternalMessageChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.C
     child_singleton.worker = .create(arguments[0], globalThis);
     child_singleton.cb = .create(arguments[1], globalThis);
     try child_singleton.flush(globalThis);
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.JSValue) bun.JSError!void {
@@ -97,7 +96,7 @@ pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.
 // TODO: rewrite this code.
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
 /// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
-/// when a message is recieved with an 'ack' property of the same sequence number.
+/// when a message is received with an 'ack' property of the same sequence number.
 pub const InternalMsgHolder = struct {
     seq: i32 = 0,
 
@@ -210,20 +209,18 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     if (Environment.isDebug) log("primary: {}", .{message.toFmt(&formatter)});
 
     _ = handle;
-    const success = ipc_data.serializeAndSendInternal(globalThis, message);
-    if (!success) return .false;
-
-    return .true;
+    const success = ipc_data.serializeAndSend(globalThis, message, .internal, .null, null);
+    return if (success == .success) .true else .false;
 }
 
 pub fn onInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(3).ptr;
     const subprocess = arguments[0].as(bun.JSC.Subprocess).?;
-    const ipc_data = subprocess.ipc() orelse return .undefined;
+    const ipc_data = subprocess.ipc() orelse return .js_undefined;
     // TODO: remove these strongs.
     ipc_data.internal_msg_queue.worker = .create(arguments[1], globalThis);
     ipc_data.internal_msg_queue.cb = .create(arguments[2], globalThis);
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess: *JSC.Subprocess, message: JSC.JSValue) bun.JSError!void {
@@ -278,7 +275,7 @@ pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     } else {
         vm.channel_ref.unref(vm);
     }
-    return .undefined;
+    return .js_undefined;
 }
 
 export fn Bun__refChannelUnlessOverridden(globalObject: *JSC.JSGlobalObject) void {

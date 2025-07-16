@@ -46,7 +46,7 @@ pub const HashType = u32;
 const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 
 /// Initializes a watcher. Each watcher is tied to some context type, which
-/// recieves watch callbacks on the watcher thread. This function does not
+/// receives watch callbacks on the watcher thread. This function does not
 /// actually start the watcher thread.
 ///
 ///     const watcher = try Watcher.init(T, instance_of_t, fs, bun.default_allocator)
@@ -164,12 +164,13 @@ pub const WatchEvent = struct {
         };
     }
 
-    pub const Op = packed struct {
+    pub const Op = packed struct(u8) {
         delete: bool = false,
         metadata: bool = false,
         rename: bool = false,
         write: bool = false,
         move_to: bool = false,
+        _padding: u3 = 0,
 
         pub fn merge(before: Op, after: Op) Op {
             return .{
@@ -185,6 +186,7 @@ pub const WatchEvent = struct {
             try w.writeAll("{");
             var first = true;
             inline for (comptime std.meta.fieldNames(Op)) |name| {
+                if (comptime std.mem.eql(u8, name, "_padding")) continue;
                 if (@field(op, name)) {
                     if (!first) {
                         try w.writeAll(",");
@@ -305,7 +307,7 @@ fn appendFileAssumeCapacity(
     loader: options.Loader,
     parent_hash: HashType,
     package_json: ?*PackageJSON,
-    comptime copy_file_path: bool,
+    comptime clone_file_path: bool,
 ) bun.JSC.Maybe(void) {
     if (comptime Environment.isWindows) {
         // on windows we can only watch items that are in the directory tree of the top level dir
@@ -318,7 +320,7 @@ fn appendFileAssumeCapacity(
 
     const watchlist_id = this.watchlist.len;
 
-    const file_path_: string = if (comptime copy_file_path)
+    const file_path_: string = if (comptime clone_file_path)
         bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch bun.outOfMemory())
     else
         file_path;
@@ -381,13 +383,12 @@ fn appendFileAssumeCapacity(
     this.watchlist.appendAssumeCapacity(item);
     return .{ .result = {} };
 }
-
 fn appendDirectoryAssumeCapacity(
     this: *Watcher,
     stored_fd: bun.FileDescriptor,
     file_path: string,
     hash: HashType,
-    comptime copy_file_path: bool,
+    comptime clone_file_path: bool,
 ) bun.JSC.Maybe(WatchItemIndex) {
     if (comptime Environment.isWindows) {
         // on windows we can only watch items that are in the directory tree of the top level dir
@@ -406,12 +407,12 @@ fn appendDirectoryAssumeCapacity(
         };
     };
 
-    const parent_hash = getHash(bun.fs.PathName.init(file_path).dirWithTrailingSlash());
-
-    const file_path_: string = if (comptime copy_file_path)
+    const file_path_: string = if (comptime clone_file_path)
         bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch bun.outOfMemory())
     else
         file_path;
+
+    const parent_hash = getHash(bun.fs.PathName.init(file_path_).dirWithTrailingSlash());
 
     const watchlist_id = this.watchlist.len;
 
@@ -462,13 +463,21 @@ fn appendDirectoryAssumeCapacity(
             null,
         );
     } else if (Environment.isLinux) {
-        const file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
-        var buf: bun.PathBuffer = undefined;
-        bun.copy(u8, &buf, file_path_to_use_);
-        buf[file_path_to_use_.len] = 0;
-        const slice: [:0]u8 = buf[0..file_path_to_use_.len :0];
-        item.eventlist_index = switch (this.platform.watchDir(slice)) {
-            .err => |err| return .{ .err = err },
+        const buf = bun.path_buffer_pool.get();
+        defer {
+            bun.path_buffer_pool.put(buf);
+        }
+        const path: [:0]const u8 = if (clone_file_path and file_path_.len > 0 and file_path_[file_path_.len - 1] == 0)
+            file_path_[0 .. file_path_.len - 1 :0]
+        else brk: {
+            const trailing_slash = if (file_path_.len > 1) std.mem.trimRight(u8, file_path_, &.{ 0, '/' }) else file_path_;
+            @memcpy(buf[0..trailing_slash.len], trailing_slash);
+            buf[trailing_slash.len] = 0;
+            break :brk buf[0..trailing_slash.len :0];
+        };
+
+        item.eventlist_index = switch (this.platform.watchDir(path)) {
+            .err => |err| return .{ .err = err.withPath(file_path) },
             .result => |r| r,
         };
     }
@@ -489,7 +498,7 @@ pub fn appendFileMaybeLock(
     loader: options.Loader,
     dir_fd: bun.FileDescriptor,
     package_json: ?*PackageJSON,
-    comptime copy_file_path: bool,
+    comptime clone_file_path: bool,
     comptime lock: bool,
 ) bun.JSC.Maybe(void) {
     if (comptime lock) this.mutex.lock();
@@ -522,8 +531,8 @@ pub fn appendFileMaybeLock(
     this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @as(usize, @intCast(@intFromBool(parent_watch_item == null)))) catch bun.outOfMemory();
 
     if (autowatch_parent_dir) {
-        parent_watch_item = parent_watch_item orelse switch (this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash, copy_file_path)) {
-            .err => |err| return .{ .err = err },
+        parent_watch_item = parent_watch_item orelse switch (this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash, clone_file_path)) {
+            .err => |err| return .{ .err = err.withPath(parent_dir) },
             .result => |r| r,
         };
     }
@@ -535,9 +544,9 @@ pub fn appendFileMaybeLock(
         loader,
         parent_dir_hash,
         package_json,
-        copy_file_path,
+        clone_file_path,
     )) {
-        .err => |err| return .{ .err = err },
+        .err => |err| return .{ .err = err.withPath(file_path) },
         .result => {},
     }
 
@@ -566,9 +575,9 @@ pub fn appendFile(
     loader: options.Loader,
     dir_fd: bun.FileDescriptor,
     package_json: ?*PackageJSON,
-    comptime copy_file_path: bool,
+    comptime clone_file_path: bool,
 ) bun.JSC.Maybe(void) {
-    return appendFileMaybeLock(this, fd, file_path, hash, loader, dir_fd, package_json, copy_file_path, true);
+    return appendFileMaybeLock(this, fd, file_path, hash, loader, dir_fd, package_json, clone_file_path, true);
 }
 
 pub fn addDirectory(
@@ -576,7 +585,7 @@ pub fn addDirectory(
     fd: bun.FileDescriptor,
     file_path: string,
     hash: HashType,
-    comptime copy_file_path: bool,
+    comptime clone_file_path: bool,
 ) bun.JSC.Maybe(WatchItemIndex) {
     this.mutex.lock();
     defer this.mutex.unlock();
@@ -587,7 +596,7 @@ pub fn addDirectory(
 
     this.watchlist.ensureUnusedCapacity(this.allocator, 1) catch bun.outOfMemory();
 
-    return this.appendDirectoryAssumeCapacity(fd, file_path, hash, copy_file_path);
+    return this.appendDirectoryAssumeCapacity(fd, file_path, hash, clone_file_path);
 }
 
 pub fn addFile(
@@ -598,7 +607,7 @@ pub fn addFile(
     loader: options.Loader,
     dir_fd: bun.FileDescriptor,
     package_json: ?*PackageJSON,
-    comptime copy_file_path: bool,
+    comptime clone_file_path: bool,
 ) bun.JSC.Maybe(void) {
     // This must lock due to concurrent transpiler
     this.mutex.lock();
@@ -615,7 +624,7 @@ pub fn addFile(
         return .{ .result = {} };
     }
 
-    return this.appendFileMaybeLock(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path, false);
+    return this.appendFileMaybeLock(fd, file_path, hash, loader, dir_fd, package_json, clone_file_path, false);
 }
 
 pub fn indexOf(this: *Watcher, hash: HashType) ?u32 {
@@ -668,12 +677,9 @@ const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const stringZ = bun.stringZ;
 const FeatureFlags = bun.FeatureFlags;
 const options = @import("./options.zig");
 const Mutex = bun.Mutex;
-const Futex = @import("./futex.zig");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;

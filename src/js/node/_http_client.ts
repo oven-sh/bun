@@ -3,6 +3,8 @@ const { isIP, isIPv6 } = require("node:net");
 const { checkIsHttpToken, validateFunction, validateInteger, validateBoolean } = require("internal/validators");
 const { urlToHttpOptions } = require("internal/url");
 const { isValidTLSArray } = require("internal/tls");
+const { validateHeaderName } = require("node:_http_common");
+const { getTimerDuration } = require("internal/timers");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -39,7 +41,6 @@ const {
   reqSymbol,
   callCloseCallback,
   emitCloseNTAndComplete,
-  validateMsecs,
   ConnResetException,
 } = require("internal/http");
 
@@ -58,6 +59,13 @@ const { URL } = globalThis;
 const ObjectAssign = Object.assign;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
+
+function emitErrorEventNT(self, err) {
+  if (self.destroyed) return;
+  if (self.listenerCount("error") > 0) {
+    self.emit("error", err);
+  }
+}
 
 function ClientRequest(input, options, cb) {
   if (!(this instanceof ClientRequest)) {
@@ -174,6 +182,16 @@ function ClientRequest(input, options, cb) {
     return this;
   };
 
+  this.flushHeaders = function () {
+    if (!fetching) {
+      this[kAbortController] ??= new AbortController();
+      this[kAbortController].signal.addEventListener("abort", onAbort, {
+        once: true,
+      });
+      startFetch();
+    }
+  };
+
   this.destroy = function (err?: Error) {
     if (this.destroyed) return this;
     this.destroyed = true;
@@ -216,6 +234,7 @@ function ClientRequest(input, options, cb) {
         this._closed = true;
         callCloseCallback(this);
         this.emit("close");
+        this.socket?.emit?.("close");
       }
       if (!res.aborted && res.readable) {
         res.push(null);
@@ -224,6 +243,7 @@ function ClientRequest(input, options, cb) {
       this._closed = true;
       callCloseCallback(this);
       this.emit("close");
+      this.socket?.emit?.("close");
     }
   };
 
@@ -367,6 +387,7 @@ function ClientRequest(input, options, cb) {
           this[kFetchRequest] = null;
           this[kClearTimeout]();
           handleResponse = undefined;
+
           const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
           setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
           var res = (this.res = new IncomingMessage(response, {
@@ -393,19 +414,30 @@ function ClientRequest(input, options, cb) {
               // If the user did not listen for the 'response' event, then they
               // can't possibly read the data, so we ._dump() it into the void
               // so that the socket doesn't hang there in a paused state.
-              if (self.aborted || !self.emit("response", res)) {
-                res._dump();
+              const contentLength = res.headers["content-length"];
+              if (contentLength && isNaN(Number(contentLength))) {
+                emitErrorEventNT(self, $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error"));
+
+                res.complete = true;
+                maybeEmitClose();
+                return;
+              }
+              try {
+                if (self.aborted || !self.emit("response", res)) {
+                  res._dump();
+                }
+              } finally {
+                maybeEmitClose();
+                if (res.statusCode === 304) {
+                  res.complete = true;
+                  maybeEmitClose();
+                  return;
+                }
               }
             },
             this,
             res,
           );
-          maybeEmitClose();
-          if (res.statusCode === 304) {
-            res.complete = true;
-            maybeEmitClose();
-            return;
-          }
         };
 
         if (!keepOpen) {
@@ -420,6 +452,10 @@ function ClientRequest(input, options, cb) {
         // This is for the happy eyeballs implementation.
         this[kFetchRequest]
           .catch(err => {
+            if (err.code === "ConnectionRefused") {
+              err = new Error("ECONNREFUSED");
+              err.code = "ECONNREFUSED";
+            }
             // Node treats AbortError separately.
             // The "abort" listener on the abort controller should have called this
             if (isAbortError(err)) {
@@ -513,7 +549,7 @@ function ClientRequest(input, options, cb) {
 
   const send = () => {
     this.finished = true;
-    this[kAbortController] = new AbortController();
+    this[kAbortController] ??= new AbortController();
     this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
 
     var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
@@ -533,6 +569,7 @@ function ClientRequest(input, options, cb) {
 
   // --- For faking the events in the right order ---
   const maybeEmitSocket = () => {
+    if (this.destroyed) return;
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.socket))) {
       this[kEmitState] |= 1 << ClientRequestEmitState.socket;
       this.emit("socket", this.socket);
@@ -768,8 +805,9 @@ function ClientRequest(input, options, cb) {
   this[kHost] = host;
   this[kProtocol] = protocol;
 
-  const timeout = options.timeout;
-  if (timeout !== undefined && timeout !== 0) {
+  if (options.timeout !== undefined) {
+    const timeout = getTimerDuration(options.timeout, "timeout");
+    this.timeout = timeout;
     this.setTimeout(timeout, undefined);
   }
 
@@ -777,16 +815,43 @@ function ClientRequest(input, options, cb) {
   const headersArray = $isJSArray(headers);
   if (headersArray) {
     const length = headers.length;
-    if (length % 2 !== 0) {
-      throw $ERR_INVALID_ARG_VALUE("options.headers", "headers");
-    }
-    for (let i = 0; i < length; ) {
-      this.appendHeader(headers[i++], headers[i++]);
+    if ($isJSArray(headers[0])) {
+      // [[key, value], [key, value], ...]
+      for (let i = 0; i < length; i++) {
+        const actualHeader = headers[i];
+        if (actualHeader.length !== 2) {
+          throw $ERR_INVALID_ARG_VALUE("options.headers", "expected array of [key, value]");
+        }
+        const key = actualHeader[0];
+        validateHeaderName(key);
+        const lowerKey = key?.toLowerCase();
+        if (lowerKey === "host") {
+          if (!this.getHeader(key)) {
+            this.setHeader(key, actualHeader[1]);
+          }
+        } else {
+          this.appendHeader(key, actualHeader[1]);
+        }
+      }
+    } else {
+      // [key, value, key, value, ...]
+      if (length % 2 !== 0) {
+        throw $ERR_INVALID_ARG_VALUE("options.headers", "expected [key, value, key, value, ...]");
+      }
+      for (let i = 0; i < length; ) {
+        this.appendHeader(headers[i++], headers[i++]);
+      }
     }
   } else {
     if (headers) {
       for (let key in headers) {
-        this.setHeader(key, headers[key]);
+        const value = headers[key];
+        if (key === "host" || key === "hostname") {
+          if (value !== null && value !== undefined && typeof value !== "string") {
+            throw $ERR_INVALID_ARG_TYPE(`options.${key}`, ["string", "undefined", "null"], value);
+          }
+        }
+        this.setHeader(key, value);
       }
     }
 
@@ -860,17 +925,18 @@ function ClientRequest(input, options, cb) {
       this.removeAllListeners("timeout");
     }
   };
+}
 
-  const onTimeout = () => {
-    this[kTimeoutTimer] = undefined;
-    this[kAbortController]?.abort();
-    this.emit("timeout");
-  };
+const ClientRequestPrototype = {
+  constructor: ClientRequest,
+  __proto__: OutgoingMessage.prototype,
 
-  this.setTimeout = (msecs, callback) => {
-    if (this.destroyed) return this;
+  setTimeout(msecs, callback) {
+    if (this.destroyed) {
+      return this;
+    }
 
-    this.timeout = msecs = validateMsecs(msecs, "timeout");
+    this.timeout = msecs = getTimerDuration(msecs, "msecs");
 
     // Attempt to clear an existing timer in both cases -
     //  even if it will be rescheduled we don't want to leak an existing timer.
@@ -884,7 +950,11 @@ function ClientRequest(input, options, cb) {
 
       this[kTimeoutTimer] = undefined;
     } else {
-      this[kTimeoutTimer] = setTimeout(onTimeout, msecs).unref();
+      this[kTimeoutTimer] = setTimeout(() => {
+        this[kTimeoutTimer] = undefined;
+        this[kAbortController]?.abort();
+        this.emit("timeout");
+      }, msecs).unref();
 
       if (callback !== undefined) {
         validateFunction(callback, "callback");
@@ -893,12 +963,11 @@ function ClientRequest(input, options, cb) {
     }
 
     return this;
-  };
-}
+  },
 
-const ClientRequestPrototype = {
-  constructor: ClientRequest,
-  __proto__: OutgoingMessage.prototype,
+  clearTimeout(cb) {
+    this.setTimeout(0, cb);
+  },
 
   get path() {
     return this[kPath];

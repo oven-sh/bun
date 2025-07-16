@@ -19,8 +19,6 @@ pub const LinkerContext = struct {
 
     options: LinkerOptions = .{},
 
-    wait_group: sync.WaitGroup = .init(),
-
     ambiguous_result_pool: std.ArrayList(MatchImport) = undefined,
 
     loop: EventLoop,
@@ -207,7 +205,6 @@ pub const LinkerContext = struct {
 
         try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys());
         bundle.dynamic_import_entry_points.deinit();
-        this.wait_group = .init();
         this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
 
         var runtime_named_exports = &this.graph.ast.items(.named_exports)[Index.runtime.get()];

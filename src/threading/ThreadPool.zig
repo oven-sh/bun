@@ -216,10 +216,12 @@ pub fn runner(
 
 /// Loop over an array of tasks and invoke `Run` on each one in a different thread
 /// **Blocks the calling thread** until all tasks are completed.
+///
+/// `wg` must not be used concurrently by other threads when calling this function.
 pub fn do(
     this: *ThreadPool,
     allocator: std.mem.Allocator,
-    wg: ?*WaitGroup,
+    wg: *WaitGroup,
     ctx: anytype,
     comptime Run: anytype,
     values: anytype,
@@ -227,10 +229,11 @@ pub fn do(
     return try do_impl(this, allocator, wg, @TypeOf(ctx), ctx, Run, @TypeOf(values), values, false);
 }
 
+/// `wg` must not be used concurrently by other threads when calling this function.
 pub fn doPtr(
     this: *ThreadPool,
     allocator: std.mem.Allocator,
-    wg: ?*WaitGroup,
+    wg: *WaitGroup,
     ctx: anytype,
     comptime Run: anytype,
     values: anytype,
@@ -241,7 +244,7 @@ pub fn doPtr(
 fn do_impl(
     this: *ThreadPool,
     allocator: std.mem.Allocator,
-    wg: ?*WaitGroup,
+    wg: *WaitGroup,
     comptime Context: type,
     ctx: Context,
     comptime Function: anytype,
@@ -251,11 +254,6 @@ fn do_impl(
 ) !void {
     if (values.len == 0)
         return;
-    var local_wait_group: ?WaitGroup = null;
-    const wait_group = wg orelse brk: {
-        local_wait_group = .{};
-        break :brk &local_wait_group.?;
-    };
     const WaitContext = struct {
         wait_group: *WaitGroup = undefined,
         ctx: Context,
@@ -282,7 +280,7 @@ fn do_impl(
     const wait_context = allocator.create(WaitContext) catch unreachable;
     wait_context.* = .{
         .ctx = ctx,
-        .wait_group = wait_group,
+        .wait_group = wg,
         .values = values,
     };
     defer allocator.destroy(wait_context);
@@ -301,13 +299,9 @@ fn do_impl(
         batch.push(Batch.from(&runner_task.task));
     }
 
-    if (local_wait_group) |*local_wg| {
-        local_wg.addUnsynchronized(values.len);
-    } else {
-        wait_group.add(values.len);
-    }
+    wg.addUnsynchronized(values.len);
     this.schedule(batch);
-    wait_group.wait();
+    wg.wait();
 }
 
 /// Schedule a batch of tasks to be executed by some thread on the thread pool.

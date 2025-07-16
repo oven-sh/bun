@@ -41,9 +41,10 @@ pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
             .symbols = &c.graph.symbols,
         };
 
+        var wait_group = WaitGroup.init();
         c.parse_graph.pool.worker_pool.doPtr(
             c.allocator,
-            &c.wait_group,
+            &wait_group,
             cross_chunk_dependencies,
             CrossChunkDependencies.walk,
             chunks,
@@ -453,3 +454,4 @@ const RefImportData = bundler.RefImportData;
 const CrossChunkImport = bundler.CrossChunkImport;
 const StableRef = bundler.StableRef;
 const ChunkMeta = LinkerContext.ChunkMeta;
+const WaitGroup = bun.threading.WaitGroup;

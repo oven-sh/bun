@@ -370,7 +370,14 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
         // for CommonJS files, and is also necessary for other files if they are
         // imported using an import star statement.
         // Note: `do` will wait for all to finish before moving forward
-        try this.parse_graph.pool.worker_pool.do(this.allocator, &this.wait_group, this, LinkerContext.doStep5, this.graph.reachable_files);
+        var wait_group = WaitGroup.init();
+        try this.parse_graph.pool.worker_pool.do(
+            this.allocator,
+            &wait_group,
+            this,
+            LinkerContext.doStep5,
+            this.graph.reachable_files,
+        );
     }
 
     if (comptime FeatureFlags.help_catch_memory_issues) {
@@ -1238,3 +1245,4 @@ const ImportData = bun.bundle_v2.ImportData;
 const Dependency = js_ast.Dependency;
 const options = bun.options;
 const Symbol = bun.bundle_v2.Symbol;
+const WaitGroup = bun.threading.WaitGroup;

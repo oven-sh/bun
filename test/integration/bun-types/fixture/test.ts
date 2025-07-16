@@ -49,6 +49,7 @@ describe("bun:test", () => {
     expect(new Uint8Array()).toHaveProperty("byteLength", 0);
     expect([]).toHaveLength(0);
     expect(["bun"]).toContain("bun");
+    expect("hello").toContain("bun");
     expect(true).toBeTruthy();
     expect(false).toBeFalsy();
     expect(Math.PI).toBeGreaterThan(3.14);
@@ -225,7 +226,12 @@ describe("Matcher Overload Type Tests", () => {
   });
 
   test("toContainAnyKeys", () => {
+    expect(obj).toContainAnyKeys(["a", "b", 10]);
+    // @ts-expect-error - 11 is not a key
+    expect(obj).toContainAnyKeys(["a", "b", 11]);
+    // @ts-expect-error - c is not a key
     expect(obj).toContainAnyKeys(["a", "c"]); // c doesn't exist, but 'a' does
+    // @ts-expect-error d is not a key
     expect(obj).toContainAnyKeys([10, "d"]);
     // @ts-expect-error - Type '"c"' is not assignable to type 'number | "a" | "b"'. Type '"d"' is not assignable to type 'number | "a" | "b"'.
     expect(obj).toContainAnyKeys<(keyof typeof obj)[]>(["c", "d"]);

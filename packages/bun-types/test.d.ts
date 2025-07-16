@@ -874,10 +874,13 @@ declare module "bun:test" {
      * expect([123]).toBe([123]); // fail, use toEqual()
      * expect(3 + 0.14).toBe(3.14); // fail, use toBeCloseTo()
      *
+     * // TypeScript errors:
+     * expect("hello").toBe(3.14); // typescript error + fail
+     * expect("hello").toBe<number>(3.14); // no typescript error, but still fails
+     *
      * @param expected the expected value
      */
-    toBe<X extends T>(expected: NoInfer<X>): void;
-    toBe(expected: unknown): void;
+    toBe<X = T>(expected: NoInfer<X>): void;
 
     /**
      * Asserts that a number is odd.
@@ -929,8 +932,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toEqual<X extends T>(expected: NoInfer<X>): void;
-    toEqual(expected: unknown): void;
+    toEqual<X = T>(expected: NoInfer<X>): void;
 
     /**
      * Asserts that a value is deeply and strictly equal to
@@ -955,8 +957,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toStrictEqual<X extends T>(expected: NoInfer<X>): void;
-    toStrictEqual(expected: unknown): void;
+    toStrictEqual<X = T>(expected: NoInfer<X>): void;
 
     /**
      * Asserts that the value is deep equal to an element in the expected array.
@@ -970,8 +971,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBeOneOf<X extends Iterable<T>>(expected: NoInfer<X>): void;
-    toBeOneOf(expected: Iterable<unknown>): void;
+    toBeOneOf<X = T>(expected: NoInfer<Iterable<X>>): void;
 
     /**
      * Asserts that a value contains what is expected.
@@ -986,8 +986,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContain<X extends Iterable<T>>(expected: NoInfer<X>): void;
-    toContain(expected: unknown): void;
+    toContain<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): void;
 
     /**
      * Asserts that an `object` contains a key.
@@ -1002,8 +1001,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKey<X extends keyof T>(expected: NoInfer<X>): void;
-    toContainKey(expected: unknown): void;
+    toContainKey<X = T>(expected: NoInfer<keyof X>): void;
 
     /**
      * Asserts that an `object` contains all the provided keys.
@@ -1019,8 +1017,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainAllKeys<X extends Array<keyof T>>(expected: NoInfer<X>): void;
-    toContainAllKeys(expected: unknown): void;
+    toContainAllKeys<X = T>(expected: NoInfer<Array<keyof X>>): void;
 
     /**
      * Asserts that an `object` contains at least one of the provided keys.
@@ -1036,13 +1033,15 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainAnyKeys<X extends Array<keyof T>>(expected: NoInfer<X>): void;
-    toContainAnyKeys(expected: unknown): void;
+    toContainAnyKeys<X = T>(expected: NoInfer<Array<keyof X>>): void;
 
     /**
      * Asserts that an `object` contain the provided value.
      *
-     * The value must be an object
+     * This method is deep and will look through child properties to find the
+     * expected value.
+     *
+     * The input value must be an object.
      *
      * @example
      * const shallow = { hello: "world" };
@@ -1066,10 +1065,15 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
+    // Contributor note: In theory we could type this better but it would be a
+    // slow union to compute...
     toContainValue(expected: unknown): void;
 
     /**
      * Asserts that an `object` contain the provided value.
+     *
+     * This is the same as {@link toContainValue}, but accepts an array of
+     * values instead.
      *
      * The value must be an object
      *
@@ -1080,7 +1084,7 @@ declare module "bun:test" {
      * expect(o).not.toContainValues(['qux', 'foo']);
      * @param expected the expected value
      */
-    toContainValues(expected: unknown): void;
+    toContainValues(expected: Array<unknown>): void;
 
     /**
      * Asserts that an `object` contain all the provided values.
@@ -1094,7 +1098,7 @@ declare module "bun:test" {
      * expect(o).not.toContainAllValues(['bar', 'foo']);
      * @param expected the expected value
      */
-    toContainAllValues(expected: unknown): void;
+    toContainAllValues(expected: Array<unknown>): void;
 
     /**
      * Asserts that an `object` contain any provided value.
@@ -1109,7 +1113,7 @@ declare module "bun:test" {
      * expect(o).not.toContainAnyValues(['qux']);
      * @param expected the expected value
      */
-    toContainAnyValues(expected: unknown): void;
+    toContainAnyValues(expected: Array<unknown>): void;
 
     /**
      * Asserts that an `object` contains all the provided keys.
@@ -1121,8 +1125,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKeys<X extends Array<keyof T>>(expected: NoInfer<X>): void;
-    toContainKeys(expected: unknown): void;
+    toContainKeys<X = T>(expected: NoInfer<Array<keyof X>>): void;
 
     /**
      * Asserts that a value contains and equals what is expected.
@@ -1136,8 +1139,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainEqual<X extends T extends Iterable<infer U> ? U : T>(expected: NoInfer<X>): void;
-    toContainEqual(expected: unknown): void;
+    toContainEqual<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): void;
 
     /**
      * Asserts that a value has a `.length` property
@@ -1150,6 +1152,7 @@ declare module "bun:test" {
      * @param length the expected length
      */
     toHaveLength(length: number): void;
+
     /**
      * Asserts that a value has a property with the
      * expected name, and value if provided.

@@ -165,7 +165,7 @@ console.log(utils());`,
     const tmpdir = tmpdirSync();
     const baseDir = `${tmpdir}/bun-build-dirname-filename-${Date.now()}`;
     fs.mkdirSync(baseDir, { recursive: true });
-    (fs.mkdirSync(path.join(baseDir, "我")), { recursive: true });
+    fs.mkdirSync(path.join(baseDir, "我")), { recursive: true };
     fs.writeFileSync(path.join(baseDir, "我", "我.ts"), "console.log(__dirname); console.log(__filename);");
     const { exitCode } = Bun.spawnSync({
       cmd: [bunExe(), "build", path.join(baseDir, "我/我.ts"), "--compile", "--outfile", path.join(baseDir, "exe.exe")],
@@ -383,21 +383,24 @@ test("log case 2", () => {
 });
 
 test("`bun build` shows tip when build script exists in package.json", () => {
-  const tmpdir = tmpdirSync();  
-  writeFileSync(join(tmpdir, "package.json"), JSON.stringify({
-    name: "test-project",
-    scripts: {
-      build: "bun build ./index.ts",
-    },
-  }));
-  
+  const tmpdir = tmpdirSync();
+  writeFileSync(
+    join(tmpdir, "package.json"),
+    JSON.stringify({
+      name: "test-project",
+      scripts: {
+        build: "bun build ./index.ts",
+      },
+    }),
+  );
+
   const { exitCode, stdout } = Bun.spawnSync({
     cmd: [bunExe(), "build"],
     env: bunEnv,
     cwd: tmpdir,
     stdout: "pipe",
   });
-    
+
   expect(exitCode).toBe(1);
   const output = stdout?.toString() || "";
   expect(output).toContain("error: Missing entrypoints");

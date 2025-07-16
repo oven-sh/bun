@@ -23,8 +23,15 @@ fn printInstalledWorkspaceSection(
     var printed_section_header = false;
     var printed_update = false;
 
+    // It's possible to have duplicate dependencies with the same version and resolution.
+    // While both are technically installed, only one was chosen and should be printed.
+    var dep_dedupe: std.AutoHashMap(install.PackageNameHash, void) = .init(manager.allocator);
+    defer dep_dedupe.deinit();
+
     // find the updated packages
-    for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
+    for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |_dep_id| {
+        const dep_id: DependencyID = @intCast(_dep_id);
+
         switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map, pkg_metas)) {
             .yes, .no, .@"return" => {},
             .update => |update_info| {
@@ -46,7 +53,9 @@ fn printInstalledWorkspaceSection(
         }
     }
 
-    for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
+    for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |_dep_id| {
+        const dep_id: DependencyID = @intCast(_dep_id);
+
         switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map, pkg_metas)) {
             .@"return" => return,
             .yes => {},
@@ -55,6 +64,10 @@ fn printInstalledWorkspaceSection(
 
         const dep = dependencies[dep_id];
         const package_id = resolutions[dep_id];
+
+        if ((try dep_dedupe.getOrPut(dep.name_hash)).found_existing) {
+            continue;
+        }
 
         printed_new_install.* = true;
 

@@ -107,40 +107,7 @@ fn printDiff(allocator: std.mem.Allocator, not: bool, received_slice: string, ex
         inline else => |enable_ansi_colors| try writer.print(Output.prettyFmt("Difference:\n\n<red>- Received<r>\n<green>+ Expected<r>\n\n", enable_ansi_colors), .{}),
     }
 
-    const equal_fmt = "<d>  {s}<r>";
-    const delete_fmt = "<red>- {s}<r>";
-    const insert_fmt = "<green>+ {s}<r>";
-
-    for (diffs.items) |diff| {
-        const text = diff.text;
-        if (text.len == 0) continue;
-
-        switch (diff.operation) {
-            inline else => |operation| {
-                const fmt: []const u8 = comptime switch (operation) {
-                    .equal => equal_fmt,
-                    .insert => insert_fmt,
-                    .delete => delete_fmt,
-                };
-
-                var rest = text;
-                while (std.mem.indexOfScalar(u8, rest, '\n')) |i| {
-                    const line = rest[0..i];
-                    switch (Output.enable_ansi_colors) {
-                        inline else => |enable_ansi_colors| try writer.print(Output.prettyFmt(fmt, enable_ansi_colors), .{line}),
-                    }
-                    try writer.print("\n", .{});
-                    rest = rest[i + 1 ..];
-                }
-
-                if (rest.len > 0) {
-                    switch (Output.enable_ansi_colors) {
-                        inline else => |enable_ansi_colors| try writer.print(Output.prettyFmt(fmt, enable_ansi_colors), .{rest}),
-                    }
-                }
-            },
-        }
-    }
+    try @import("printDiff.zig").printDiff(allocator, writer, diffs.items, Output.enable_ansi_colors);
 }
 
 // @sortImports

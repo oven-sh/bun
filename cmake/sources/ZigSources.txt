@@ -240,6 +240,7 @@ src/bun.js/test/diff_format.zig
 src/bun.js/test/expect.zig
 src/bun.js/test/jest.zig
 src/bun.js/test/pretty_format.zig
+src/bun.js/test/printDiff.zig
 src/bun.js/test/snapshot.zig
 src/bun.js/test/test.zig
 src/bun.js/unbounded_queue.zig

@@ -28,40 +28,24 @@ pub const DiffFormatter = struct {
             var diffs = try dmp.diff(default_allocator, received, expected, false);
             defer diffs.deinit(default_allocator);
 
-            const equal_fmt = "<d>{s}<r>";
-            const delete_fmt = "<red>{s}<r>";
-            const insert_fmt = "<green>{s}<r>";
+            const equal_fmt = "<d> {s}<r>";
+            const delete_fmt = "<red>-{s}<r>";
+            const insert_fmt = "<green>+{s}<r>";
 
-            try writer.writeAll("Expected: ");
             for (diffs.items) |df| {
                 switch (df.operation) {
-                    .delete => continue,
-                    .insert => {
-                        if (Output.enable_ansi_colors) {
-                            try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
-                        } else {
-                            try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
-                        }
-                    },
-                    .equal => {
-                        if (Output.enable_ansi_colors) {
-                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
-                        } else {
-                            try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
-                        }
-                    },
-                }
-            }
-
-            try writer.writeAll("\nReceived: ");
-            for (diffs.items) |df| {
-                switch (df.operation) {
-                    .insert => continue,
                     .delete => {
                         if (Output.enable_ansi_colors) {
                             try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
                         } else {
                             try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text});
+                        }
+                    },
+                    .insert => {
+                        if (Output.enable_ansi_colors) {
+                            try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
+                        } else {
+                            try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
                         }
                     },
                     .equal => {
@@ -79,7 +63,6 @@ pub const DiffFormatter = struct {
         if (this.received == null or this.expected == null) return;
 
         const received = this.received.?;
-        const expected = this.expected.?;
         var received_buf = MutableString.init(default_allocator, 0) catch unreachable;
         var expected_buf = MutableString.init(default_allocator, 0) catch unreachable;
         defer {
@@ -142,153 +125,61 @@ pub const DiffFormatter = struct {
             return;
         }
 
-        switch (received.determineDiffMethod(expected, this.globalThis)) {
-            .none => {
-                const fmt = "Expected: <green>{any}<r>\nReceived: <red>{any}<r>";
-                var formatter = ConsoleObject.Formatter{ .globalThis = this.globalThis, .quote_strings = true };
-                defer formatter.deinit();
-                if (Output.enable_ansi_colors) {
-                    try writer.print(Output.prettyFmt(fmt, true), .{
-                        expected.toFmt(&formatter),
-                        received.toFmt(&formatter),
-                    });
-                    return;
-                }
+        // Always use line-based diff for consistency
+        var dmp = DiffMatchPatch.default;
+        dmp.diff_timeout = 200;
+        var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
+        defer diffs.deinit(default_allocator);
 
-                try writer.print(Output.prettyFmt(fmt, true), .{
-                    expected.toFmt(&formatter),
-                    received.toFmt(&formatter),
-                });
-                return;
-            },
-            .character => {
-                var dmp = DiffMatchPatch.default;
-                dmp.diff_timeout = 200;
-                var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, false);
-                defer diffs.deinit(default_allocator);
+        const equal_fmt = "<d> {s}<r>";
+        const delete_fmt = "<red>-{s}<r>";
+        const insert_fmt = "<green>+{s}<r>";
 
-                const equal_fmt = "<d>{s}<r>";
-                const delete_fmt = "<red>{s}<r>";
-                const insert_fmt = "<green>{s}<r>";
-
-                try writer.writeAll("Expected: ");
-                for (diffs.items) |df| {
-                    switch (df.operation) {
-                        .delete => continue,
-                        .insert => {
+        for (diffs.items) |df| {
+            var prev: usize = 0;
+            var curr: usize = 0;
+            switch (df.operation) {
+                .equal => {
+                    while (curr < df.text.len) {
+                        if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
                             if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
+                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text[prev .. curr + 1]});
                             } else {
-                                try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
+                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text[prev .. curr + 1]});
                             }
-                        },
-                        .equal => {
-                            if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
-                            } else {
-                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
-                            }
-                        },
+                            prev = curr + 1;
+                        }
+                        curr += 1;
                     }
-                }
-
-                try writer.writeAll("\nReceived: ");
-                for (diffs.items) |df| {
-                    switch (df.operation) {
-                        .insert => continue,
-                        .delete => {
+                },
+                .delete => {
+                    while (curr < df.text.len) {
+                        if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
                             if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
+                                try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text[prev .. curr + 1]});
                             } else {
-                                try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text});
+                                try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text[prev .. curr + 1]});
                             }
-                        },
-                        .equal => {
+                            prev = curr + 1;
+                        }
+                        curr += 1;
+                    }
+                },
+                .insert => {
+                    while (curr < df.text.len) {
+                        if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
                             if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                                try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text[prev .. curr + 1]});
                             } else {
-                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
+                                try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text[prev .. curr + 1]});
                             }
-                        },
+                            prev = curr + 1;
+                        }
+                        curr += 1;
                     }
-                }
-                return;
-            },
-            .line => {
-                var dmp = DiffMatchPatch.default;
-                dmp.diff_timeout = 200;
-                var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
-                defer diffs.deinit(default_allocator);
-
-                const equal_fmt = "<d>  {s}<r>";
-                const delete_fmt = "<red>+ {s}<r>";
-                const insert_fmt = "<green>- {s}<r>";
-
-                var insert_count: usize = 0;
-                var delete_count: usize = 0;
-
-                for (diffs.items) |df| {
-                    var prev: usize = 0;
-                    var curr: usize = 0;
-                    switch (df.operation) {
-                        .equal => {
-                            while (curr < df.text.len) {
-                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                                    if (Output.enable_ansi_colors) {
-                                        try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text[prev .. curr + 1]});
-                                    } else {
-                                        try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text[prev .. curr + 1]});
-                                    }
-                                    prev = curr + 1;
-                                }
-                                curr += 1;
-                            }
-                        },
-                        .insert => {
-                            while (curr < df.text.len) {
-                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                                    insert_count += 1;
-                                    if (Output.enable_ansi_colors) {
-                                        try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text[prev .. curr + 1]});
-                                    } else {
-                                        try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text[prev .. curr + 1]});
-                                    }
-                                    prev = curr + 1;
-                                }
-                                curr += 1;
-                            }
-                        },
-                        .delete => {
-                            while (curr < df.text.len) {
-                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                                    delete_count += 1;
-                                    if (Output.enable_ansi_colors) {
-                                        try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text[prev .. curr + 1]});
-                                    } else {
-                                        try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text[prev .. curr + 1]});
-                                    }
-                                    prev = curr + 1;
-                                }
-                                curr += 1;
-                            }
-                        },
-                    }
-                    if (df.text[df.text.len - 1] != '\n') try writer.writeAll("\n");
-                }
-
-                if (Output.enable_ansi_colors) {
-                    try writer.print(Output.prettyFmt("\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
-                    try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
-                    return;
-                }
-                try writer.print("\n- Expected  - {d}\n", .{insert_count});
-                try writer.print("+ Received  + {d}", .{delete_count});
-                return;
-            },
-            .word => {
-                // not implemented
-                // https://github.com/google/diff-match-patch/wiki/Line-or-Word-Diffs#word-mode
-            },
+                },
+            }
+            if (df.text[df.text.len - 1] != '\n') try writer.writeAll("\n");
         }
         return;
     }

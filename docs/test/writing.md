@@ -766,36 +766,6 @@ test("useful for dynamic data", () => {
 });
 ```
 
-### Best Practices
-
-1. **Default to strict typing** - Use the enhanced type safety by default for better development experience.
-
-2. **Use type parameters sparingly** - Only use them when you genuinely need to bypass type checking for valid reasons.
-
-3. **Add runtime checks when using relaxed types**:
-
-   ```ts
-   test("safe relaxed typing", () => {
-     const value: unknown = getData();
-
-     // Add a type guard for extra safety
-     if (typeof value === "string") {
-       expect(value).toBe<string>("expected");
-     }
-   });
-   ```
-
-4. **Consider refactoring over relaxing** - If you frequently need relaxed typing, consider if your code structure could be improved:
-
-   ```ts
-   // Instead of this:
-   expect(someAnyValue).toBe<string>("hello");
-
-   // Consider this:
-   expect(someAnyValue).toBeTypeOf("string");
-   expect(someAnyValue).toBe("hello");
-   ```
-
 ### Migration from Looser Type Systems
 
 If migrating from a test framework with looser TypeScript integration, you can use type parameters as a stepping stone:

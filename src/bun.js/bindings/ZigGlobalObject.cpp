@@ -4449,7 +4449,6 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     return result;
 }
 
-extern "C" JSC::EncodedJSValue Zig__GlobalObject__validateResponseForWasmStreaming(JSGlobalObject*, EncodedJSValue response);
 extern "C" JSC::EncodedJSValue Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(JSGlobalObject*, EncodedJSValue response, JSC::Wasm::StreamingCompiler* compiler);
 
 extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompiler* compiler, const uint8_t* spanPtr, size_t spanSize)
@@ -4464,16 +4463,16 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGl
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSLockHolder locker(vm);
 
-    // validateResponseForWasmStreaming throws the proper exception. Since this is being
-    // executed in a .then(...) callback, throwing is perfectly fine.
-    Zig__GlobalObject__validateResponseForWasmStreaming(globalObject, JSC::JSValue::encode(source));
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
     auto promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject);
 
+    // getBodyStreamOrBytesForWasmStreaming throws the proper exception. Since this is being
+    // executed in a .then(...) callback, throwing is perfectly fine.
+
     auto readableStreamMaybe = JSC::JSValue::decode(Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
         globalObject, JSC::JSValue::encode(source), compiler.ptr()));
+
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     // We were able to get the slice synchronously.
     if (readableStreamMaybe.isNull()) {

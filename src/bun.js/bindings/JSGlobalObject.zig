@@ -819,7 +819,13 @@ pub const JSGlobalObject = opaque {
         @panic("A C++ exception occurred");
     }
 
-    fn validateResponseForWasmStreaming(this: *JSC.JSGlobalObject, response_value: JSC.JSValue) bun.JSError!JSC.JSValue {
+    extern fn JSC__Wasm__StreamingCompiler__addBytes(streaming_compiler: *anyopaque, bytes_ptr: [*]const u8, bytes_len: usize) void;
+
+    fn getBodyStreamOrBytesForWasmStreaming(
+        this: *JSC.JSGlobalObject,
+        response_value: JSC.JSValue,
+        streaming_compiler: *anyopaque,
+    ) bun.JSError!JSC.JSValue {
         const response = JSC.WebCore.Response.fromJS(response_value) orelse return this.throwInvalidArgumentTypeValue2(
             "source",
             "an instance of Response or an Promise resolving to Response",
@@ -848,19 +854,7 @@ pub const JSGlobalObject = opaque {
             return this.throwValue(body.Error.toJS(this));
         }
 
-        return .js_undefined;
-    }
-
-    extern fn JSC__Wasm__StreamingCompiler__addBytes(streaming_compiler: *anyopaque, bytes_ptr: [*]const u8, bytes_len: usize) void;
-
-    fn getBodyStreamOrBytesForWasmStreaming(
-        this: *JSC.JSGlobalObject,
-        response_value: JSC.JSValue,
-        streaming_compiler: *anyopaque,
-    ) callconv(.C) JSC.JSValue {
-        // This function should only be called (by C++) when the Response is validated by validateResponseForWasmStreaming
-        const response = JSC.WebCore.Response.fromJS(response_value) orelse @panic("getBodyStreamOrBytesForWasmStreaming should only be called on a valid Response");
-        const body = response.getBodyValue();
+        // We're done validating. From now on, deal with extracting the body.
         body.toBlobIfPossible();
 
         var any_blob = switch (body.*) {
@@ -948,8 +942,7 @@ pub const JSGlobalObject = opaque {
         @export(&resolve, .{ .name = "Zig__GlobalObject__resolve" });
         @export(&reportUncaughtException, .{ .name = "Zig__GlobalObject__reportUncaughtException" });
         @export(&onCrash, .{ .name = "Zig__GlobalObject__onCrash" });
-        @export(&JSC.host_fn.wrap2(validateResponseForWasmStreaming), .{ .name = "Zig__GlobalObject__validateResponseForWasmStreaming" });
-        @export(&getBodyStreamOrBytesForWasmStreaming, .{ .name = "Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming" });
+        @export(&JSC.host_fn.wrap3(getBodyStreamOrBytesForWasmStreaming), .{ .name = "Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming" });
     }
 };
 

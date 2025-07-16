@@ -35,7 +35,7 @@ fn hasPtr(alloc: Allocator) bool {
     return alloc.vtable == arena_vtable or
         bun.AllocationScope.downcast(alloc) != null or
         bun.MemoryReportingAllocator.isInstance(alloc) or
-        bun.linux.memfd_allocator.isInstance(alloc) or
+        ((comptime bun.Environment.isLinux) and bun.linux.memfd_allocator.isInstance(alloc)) or
         bun.MaxHeapAllocator.isInstance(alloc) or
         alloc.vtable == c_allocator.vtable or
         alloc.vtable == z_allocator.vtable or

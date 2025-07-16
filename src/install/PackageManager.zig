@@ -1103,6 +1103,11 @@ pub fn initWithRuntimeOnce(
     } else {
         manager.lockfile.initEmpty(allocator);
     }
+
+    // Apply CLI node_linker override if specified
+    if (cli.node_linker) |cli_node_linker| {
+        manager.lockfile.node_linker = cli_node_linker;
+    }
 }
 var cwd_buf: bun.PathBuffer = undefined;
 pub var package_json_cwd_buf: bun.PathBuffer = undefined;

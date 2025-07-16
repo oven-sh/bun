@@ -47,6 +47,8 @@ min_simultaneous_requests: usize = 4,
 
 max_concurrent_lifecycle_scripts: usize,
 
+cli_node_linker: ?NodeLinker = null,
+
 publish_config: PublishConfig = .{},
 
 ca: []const string = &.{},
@@ -627,6 +629,9 @@ pub fn load(
             this.ca_file_name = cli.ca_file_name;
         }
 
+        // Store CLI node_linker override for use in lockfile initialization
+        this.cli_node_linker = cli.node_linker;
+
         // `bun pm version` command options
         this.git_tag_version = cli.git_tag_version;
         this.allow_same_version = cli.allow_same_version;
@@ -710,3 +715,4 @@ const CommandLineArguments = @import("./CommandLineArguments.zig");
 const Subcommand = bun.install.PackageManager.Subcommand;
 const PackageManager = bun.install.PackageManager;
 const PackageInstall = bun.install.PackageInstall;
+const NodeLinker = @import("../lockfile.zig").NodeLinker;

@@ -151,6 +151,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, jsCast<JSC::JSObject*>(functionValue) });
 
     global->requireMap()->remove(globalObject, moduleIdValue);
+    RETURN_IF_EXCEPTION(scope, {});
     global->esmRegistryMap()->remove(globalObject, moduleIdValue);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -612,7 +613,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     bool removeFromESM = false;
     bool removeFromCJS = false;
 
-    if (JSValue entryValue = esm->get(globalObject, specifierString)) {
+    JSValue entryValue = esm->get(globalObject, specifierString);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (entryValue) {
         removeFromESM = true;
         JSObject* entry = entryValue ? entryValue.getObject() : nullptr;
         if (entry) {
@@ -642,14 +645,14 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                     value = jsUndefined();
                                 }
                                 moduleNamespaceObject->overrideExportValue(globalObject, name, value);
+                                RETURN_IF_EXCEPTION(scope, {});
                             }
 
                         } else {
                             // if it's not an object, I guess we just set the default export?
                             moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
+                            RETURN_IF_EXCEPTION(scope, {});
                         }
-
-                        RETURN_IF_EXCEPTION(scope, {});
 
                         // TODO: do we need to handle intermediate loading state here?
                         // entry->putDirect(vm, Identifier::fromString(vm, String("evaluated"_s)), jsBoolean(true), 0);
@@ -660,7 +663,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         }
     }
 
-    if (auto entryValue = globalObject->requireMap()->get(globalObject, specifierString)) {
+    entryValue = globalObject->requireMap()->get(globalObject, specifierString);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (entryValue) {
         removeFromCJS = true;
         if (auto* moduleObject = entryValue ? jsDynamicCast<Bun::JSCommonJSModule*>(entryValue) : nullptr) {
             JSValue exportsValue = getJSValue();
@@ -674,6 +679,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     if (removeFromESM) {
         esm->remove(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (removeFromCJS) {

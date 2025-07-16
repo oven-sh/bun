@@ -136,6 +136,7 @@ Maybe<void> Array::Iterate(Local<Context> context, IterationCallback callback, v
 
         Local<Value> localElement = handleScope.createLocal<Value>(vm, element);
         CallbackResult result = callback(index, localElement, callback_data);
+        RETURN_IF_EXCEPTION(scope, Nothing<void>());
 
         switch (result) {
         case CallbackResult::kException:

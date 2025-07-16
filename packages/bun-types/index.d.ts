@@ -22,6 +22,7 @@
 /// <reference path="./shell.d.ts" />
 /// <reference path="./experimental.d.ts" />
 /// <reference path="./sql.d.ts" />
+/// <reference path="./install.d.ts" />
 
 /// <reference path="./bun.ns.d.ts" />
 

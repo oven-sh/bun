@@ -892,10 +892,6 @@ pub const Package = extern struct {
                             );
 
                             if (pm.options.log_level.isVerbose() and (diff.add + diff.remove + diff.update) > 0) {
-                                std.debug.print("from_dep: {s}@{s}\n", .{
-                                    from_dep.name.slice(from_lockfile.buffers.string_bytes.items),
-                                    from_dep.version.literal.slice(from_lockfile.buffers.string_bytes.items),
-                                });
                                 Output.prettyErrorln("Workspace package \"{s}\" has added <green>{d}<r> dependencies, removed <red>{d}<r> dependencies, and updated <cyan>{d}<r> dependencies", .{
                                     workspace_path.slice(to_lockfile.buffers.string_bytes.items),
                                     diff.add,

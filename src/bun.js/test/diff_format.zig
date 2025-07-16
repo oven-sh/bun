@@ -88,7 +88,7 @@ fn printDiff(not: bool, received_slice: string, expected_slice: string, writer: 
     // Always use line-based diff for consistency
     var dmp = DiffMatchPatch.default;
     dmp.diff_timeout = 200;
-    var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
+    var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, received_slice.len > 300 or expected_slice.len > 300);
     defer diffs.deinit(default_allocator);
 
     const equal_fmt = "<d> {s}<r>";

@@ -346,13 +346,14 @@ function getZigAgent(platform, options) {
  * @returns {Agent}
  */
 function getTestAgent(platform, options) {
-  const { os, arch } = platform;
+  const { os, arch, release } = platform;
 
   if (os === "darwin") {
     return {
       queue: `test-${os}`,
       os,
       arch,
+      release,
     };
   }
 

@@ -582,7 +582,6 @@ pub const LinkerContext = struct {
     pub const computeCrossChunkDependencies = @import("linker_context/computeCrossChunkDependencies.zig").computeCrossChunkDependencies;
 
     pub const GenerateChunkCtx = struct {
-        wg: *sync.WaitGroup,
         c: *LinkerContext,
         chunks: []Chunk,
         chunk: *Chunk,
@@ -592,7 +591,6 @@ pub const LinkerContext = struct {
     pub const postProcessCSSChunk = @import("linker_context/postProcessCSSChunk.zig").postProcessCSSChunk;
     pub const postProcessHTMLChunk = @import("linker_context/postProcessHTMLChunk.zig").postProcessHTMLChunk;
     pub fn generateChunk(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
-        defer ctx.wg.finish();
         const worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
         switch (chunk.content) {
@@ -605,7 +603,6 @@ pub const LinkerContext = struct {
     pub const renameSymbolsInChunk = @import("linker_context/renameSymbolsInChunk.zig").renameSymbolsInChunk;
 
     pub fn generateJSRenamer(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
-        defer ctx.wg.finish();
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
         switch (chunk.content) {

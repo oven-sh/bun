@@ -13,9 +13,8 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
         // TODO(@paperclover/bake): instead of running a renamer per chunk, run it per file
         debug(" START {d} renamers", .{chunks.len});
         defer debug("  DONE {d} renamers", .{chunks.len});
-        var wait_group = sync.WaitGroup.init();
-        const ctx = GenerateChunkCtx{ .chunk = &chunks[0], .wg = &wait_group, .c = c, .chunks = chunks };
-        try c.parse_graph.pool.worker_pool.doPtr(c.allocator, &wait_group, ctx, LinkerContext.generateJSRenamer, chunks);
+        const ctx = GenerateChunkCtx{ .chunk = &chunks[0], .c = c, .chunks = chunks };
+        try c.parse_graph.pool.worker_pool.eachPtr(c.allocator, ctx, LinkerContext.generateJSRenamer, chunks);
     }
 
     if (c.source_maps.line_offset_tasks.len > 0) {
@@ -38,9 +37,6 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                 }
                 break :total_count total_count;
             };
-            const wait_group = try c.allocator.create(sync.WaitGroup);
-            defer c.allocator.destroy(wait_group);
-            wait_group.* = .initWithCount(total_count);
 
             debug(" START {d} prepare CSS ast (total count)", .{total_count});
             defer debug("  DONE {d} prepare CSS ast (total count)", .{total_count});
@@ -56,14 +52,13 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                         },
                         .chunk = chunk,
                         .linker = c,
-                        .wg = wait_group,
                     };
                     batch.push(.from(&tasks[i].task));
                     i += 1;
                 }
             }
             c.parse_graph.pool.worker_pool.schedule(batch);
-            wait_group.wait();
+            c.parse_graph.pool.worker_pool.waitForAll();
         } else if (Environment.isDebug) {
             for (chunks) |*chunk| {
                 bun.assert(chunk.content != .css);
@@ -74,29 +69,27 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
     {
         const chunk_contexts = c.allocator.alloc(GenerateChunkCtx, chunks.len) catch unreachable;
         defer c.allocator.free(chunk_contexts);
-        var wait_group = sync.WaitGroup.init();
 
-        errdefer wait_group.wait();
         {
             var total_count: usize = 0;
             for (chunks, chunk_contexts) |*chunk, *chunk_ctx| {
                 switch (chunk.content) {
                     .javascript => {
-                        chunk_ctx.* = .{ .wg = &wait_group, .c = c, .chunks = chunks, .chunk = chunk };
+                        chunk_ctx.* = .{ .c = c, .chunks = chunks, .chunk = chunk };
                         total_count += chunk.content.javascript.parts_in_chunk_in_order.len;
                         chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len) catch bun.outOfMemory();
                         has_js_chunk = true;
                     },
                     .css => {
                         has_css_chunk = true;
-                        chunk_ctx.* = .{ .wg = &wait_group, .c = c, .chunks = chunks, .chunk = chunk };
+                        chunk_ctx.* = .{ .c = c, .chunks = chunks, .chunk = chunk };
                         total_count += chunk.content.css.imports_in_chunk_in_order.len;
                         chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.css.imports_in_chunk_in_order.len) catch bun.outOfMemory();
                     },
                     .html => {
                         has_html_chunk = true;
                         // HTML gets only one chunk.
-                        chunk_ctx.* = .{ .wg = &wait_group, .c = c, .chunks = chunks, .chunk = chunk };
+                        chunk_ctx.* = .{ .c = c, .chunks = chunks, .chunk = chunk };
                         total_count += 1;
                         chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, 1) catch bun.outOfMemory();
                     },
@@ -168,9 +161,8 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                     },
                 }
             }
-            wait_group.addUnsynchronized(total_count);
             c.parse_graph.pool.worker_pool.schedule(batch);
-            wait_group.wait();
+            c.parse_graph.pool.worker_pool.waitForAll();
         }
 
         if (c.source_maps.quoted_contents_tasks.len > 0) {
@@ -187,11 +179,9 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
             bun.assert(chunks_to_do.len > 0);
             debug(" START {d} postprocess chunks", .{chunks_to_do.len});
             defer debug("  DONE {d} postprocess chunks", .{chunks_to_do.len});
-            wait_group = .init();
 
-            try c.parse_graph.pool.worker_pool.doPtr(
+            try c.parse_graph.pool.worker_pool.eachPtr(
                 c.allocator,
-                &wait_group,
                 chunk_contexts[0],
                 generateChunk,
                 chunks_to_do,

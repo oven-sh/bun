@@ -2,12 +2,10 @@ pub const PrepareCssAstTask = struct {
     task: ThreadPoolLib.Task,
     chunk: *Chunk,
     linker: *LinkerContext,
-    wg: *sync.WaitGroup,
 };
 
 pub fn prepareCssAstsForChunk(task: *ThreadPoolLib.Task) void {
     const prepare_css_asts: *const PrepareCssAstTask = @fieldParentPtr("task", task);
-    defer prepare_css_asts.wg.finish();
     var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", prepare_css_asts.linker));
     defer worker.unget();
 

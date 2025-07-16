@@ -870,7 +870,7 @@ pub const UpdateInteractiveCommand = struct {
                 defer if (package_url.len > 0) bun.default_allocator.free(package_url);
 
                 // Truncate package name if it's too long
-                const display_name = if (pkg.name.len > 60) 
+                const display_name = if (pkg.name.len > 60)
                     try std.fmt.allocPrint(bun.default_allocator, "{s}...", .{pkg.name[0..57]})
                 else
                     pkg.name;
@@ -911,7 +911,7 @@ pub const UpdateInteractiveCommand = struct {
                 else
                     pkg.current_version;
                 defer if (display_current.ptr != pkg.current_version.ptr) bun.default_allocator.free(display_current);
-                
+
                 Output.pretty("<r>{s}<r>", .{display_current});
 
                 // Print padding after current version

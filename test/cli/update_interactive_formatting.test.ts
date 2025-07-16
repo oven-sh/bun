@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("bun update --interactive formatting", () => {
@@ -81,14 +81,17 @@ describe("bun update --interactive formatting", () => {
 
     // Mock outdated packages by creating fake manifests
     const manifestsDir = join(dir, ".bun", "manifests");
-    await Bun.write(join(manifestsDir, "a.json"), JSON.stringify({
-      name: "a",
-      "dist-tags": { latest: "2.0.0" },
-      versions: {
-        "1.0.0": { version: "1.0.0" },
-        "2.0.0": { version: "2.0.0" },
-      },
-    }));
+    await Bun.write(
+      join(manifestsDir, "a.json"),
+      JSON.stringify({
+        name: "a",
+        "dist-tags": { latest: "2.0.0" },
+        versions: {
+          "1.0.0": { version: "1.0.0" },
+          "2.0.0": { version: "2.0.0" },
+        },
+      }),
+    );
 
     // Test that the command doesn't crash with unusual package name lengths
     const result = await Bun.spawn({

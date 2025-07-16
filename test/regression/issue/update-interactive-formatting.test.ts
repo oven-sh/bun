@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 describe("bun update --interactive formatting regression", () => {
   it("should not underflow when dependency type text is longer than available space", async () => {
@@ -34,7 +34,7 @@ describe("bun update --interactive formatting regression", () => {
     });
 
     const stderr = await new Response(result.stderr).text();
-    
+
     // Verify no underflow errors occur
     expect(stderr).not.toContain("underflow");
     expect(stderr).not.toContain("panic");
@@ -82,7 +82,7 @@ describe("bun update --interactive formatting regression", () => {
     });
 
     const stderr = await new Response(result.stderr).text();
-    
+
     // Verify no formatting errors occur with dev tags
     expect(stderr).not.toContain("underflow");
     expect(stderr).not.toContain("panic");
@@ -121,7 +121,7 @@ describe("bun update --interactive formatting regression", () => {
     });
 
     const stderr = await new Response(result.stderr).text();
-    
+
     // Verify no crashes occur with extremely long package names
     expect(stderr).not.toContain("underflow");
     expect(stderr).not.toContain("panic");
@@ -161,7 +161,7 @@ describe("bun update --interactive formatting regression", () => {
     });
 
     const stderr = await new Response(result.stderr).text();
-    
+
     // Verify no crashes occur with extremely long version strings
     expect(stderr).not.toContain("underflow");
     expect(stderr).not.toContain("panic");
@@ -173,7 +173,7 @@ describe("bun update --interactive formatting regression", () => {
     // This test verifies edge cases where padding calculations might fail
     const maxWidthPackage = "a".repeat(60); // MAX_NAME_WIDTH
     const maxWidthVersion = "1.0.0-" + "a".repeat(15); // MAX_VERSION_WIDTH
-    
+
     const dir = tempDirWithFiles("max-width-test", {
       "package.json": JSON.stringify({
         name: "test-project",
@@ -212,7 +212,7 @@ describe("bun update --interactive formatting regression", () => {
     });
 
     const stderr = await new Response(result.stderr).text();
-    
+
     // Verify no crashes occur at maximum width values
     expect(stderr).not.toContain("underflow");
     expect(stderr).not.toContain("panic");

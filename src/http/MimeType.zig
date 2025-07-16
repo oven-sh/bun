@@ -103,10 +103,28 @@ pub const Category = enum {
 
     pub fn fromTable(entry: Table) Category {
         return switch (entry) {
-            Table.@"text/javascript", Table.@"application/javascript", Table.@"application/javascript; charset=utf-8" => .javascript,
-            Table.@"text/css", Table.@"text/css;charset=utf-8", Table.@"text/css; charset=utf-8", Table.@"text/css; charset=utf8", Table.@"text/css;charset=utf8" => .css,
-            Table.@"text/html", Table.@"text/html;charset=utf-8", Table.@"text/html; charset=utf-8", Table.@"text/html; charset=utf8", Table.@"text/html;charset=utf8" => .html,
-            Table.@"application/json", Table.@"application/json;charset=utf-8", Table.@"application/json; charset=utf-8", Table.@"application/json; charset=utf8", Table.@"application/json;charset=utf8" => .json,
+            .@"text/javascript",
+            .@"application/javascript",
+            .@"application/javascript; charset=utf-8",
+            => .javascript,
+            .@"text/css",
+            .@"text/css;charset=utf-8",
+            .@"text/css; charset=utf-8",
+            .@"text/css; charset=utf8",
+            .@"text/css;charset=utf8",
+            => .css,
+            .@"text/html",
+            .@"text/html;charset=utf-8",
+            .@"text/html; charset=utf-8",
+            .@"text/html; charset=utf8",
+            .@"text/html;charset=utf8",
+            => .html,
+            .@"application/json",
+            .@"application/json;charset=utf-8",
+            .@"application/json; charset=utf-8",
+            .@"application/json; charset=utf8",
+            .@"application/json;charset=utf8",
+            => .json,
             else => Category.init(entry.slice()),
         };
     }

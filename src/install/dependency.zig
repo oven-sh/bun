@@ -165,12 +165,6 @@ pub fn toExternal(this: Dependency) External {
     return bytes;
 }
 
-// Needed when a dependency uses workspace: protocol and isn't
-// marked with workspace behavior.
-pub fn isWorkspace(this: *const Dependency) bool {
-    return this.behavior.isWorkspace() or this.version.tag == .workspace;
-}
-
 pub inline fn isSCPLikePath(dependency: string) bool {
     // Shortest valid expression: h:p
     if (dependency.len < 3) return false;

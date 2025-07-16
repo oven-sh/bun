@@ -567,7 +567,9 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
                 error.JSExecutionTerminated => {}, // we are returning anyway
             };
             _ = Bun__handleUnhandledRejection(globalObject, reason, promise);
-            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
             return;
         },
         .warn_with_error_code => {
@@ -575,7 +577,9 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
                 error.JSExecutionTerminated => {}, // we are returning anyway
             };
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
-            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
             this.exit_handler.exit_code = 1;
             return;
         },
@@ -586,7 +590,9 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             _ = this.uncaughtException(globalObject, wrapped_reason, true);
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
-            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
             return;
         },
         .throw => {
@@ -1707,7 +1713,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
             else
                 specifier_utf8.slice()[namespace.len + 1 .. specifier_utf8.len];
 
-            if (try plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.fromUTF8(after_namespace), source, .bun)) |resolved_path| {
+            if (try plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.borrowUTF8(after_namespace), source, .bun)) |resolved_path| {
                 res.* = resolved_path;
                 return;
             }
@@ -1870,7 +1876,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                             specifier,
                         }) catch unreachable,
                     ),
-                ),
+                ) catch |e| globalThis.takeException(e),
             );
         },
     }
@@ -1966,15 +1972,13 @@ export fn Bun__logUnhandledException(exception: JSValue) void {
     get().runErrorHandler(exception, null);
 }
 
-pub fn clearEntryPoint(
-    this: *VirtualMachine,
-) void {
+pub fn clearEntryPoint(this: *VirtualMachine) bun.JSError!void {
     if (this.main.len == 0) {
         return;
     }
 
     var str = ZigString.init(main_file_name);
-    this.global.deleteModuleRegistryEntry(&str);
+    try this.global.deleteModuleRegistryEntry(&str);
 }
 
 fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
@@ -2107,7 +2111,7 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
         const promise = if (!this.main_is_html_entrypoint)
             JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name)) orelse return error.JSError
         else
-            Bun__loadHTMLEntryPoint(this.global);
+            try bun.jsc.fromJSHostCallGeneric(this.global, @src(), Bun__loadHTMLEntryPoint, .{this.global});
 
         this.pending_internal_promise = promise;
         JSValue.fromCell(promise).ensureStillAlive();
@@ -2355,16 +2359,16 @@ pub fn printErrorlikeObject(
             pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                 iterator(vm, globalObject, nextValue, ctx.?, false);
             }
-            inline fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+            fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                 const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
                 VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
             }
         };
         var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list, .formatter = formatter };
         if (comptime allow_ansi_color) {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor);
+            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor) catch return; // TODO: properly propagate exception upwards
         } else {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor);
+            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return; // TODO: properly propagate exception upwards
         }
         return;
     }
@@ -3318,7 +3322,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
         while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
             cursor = i + 1;
             if (msg[i] == '\n') {
-                const first_line = bun.String.fromUTF8(msg[0..i]);
+                const first_line = bun.String.borrowUTF8(msg[0..i]);
                 writer.print(": {s}::", .{first_line.githubAction()}) catch {};
                 break;
             }

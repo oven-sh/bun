@@ -201,7 +201,7 @@ const json = struct {
                     return IPCDecodeError.OutOfMemory;
                 }
                 break :ascii s;
-            } else bun.String.fromUTF8(json_data);
+            } else bun.String.borrowUTF8(json_data);
 
             defer {
                 str.deref();
@@ -354,14 +354,14 @@ pub const CallbackList = union(enum) {
             .ack_nack => {},
             .none => {},
             .callback => {
-                self.callback.callNextTick(global, .{.null});
+                try self.callback.callNextTick(global, .{.null});
                 self.callback.unprotect();
                 self.* = .none;
             },
             .callback_array => {
                 var iter = try self.callback_array.arrayIterator(global);
                 while (try iter.next()) |item| {
-                    item.callNextTick(global, .{.null});
+                    try item.callNextTick(global, .{.null});
                 }
                 self.callback_array.unprotect();
                 self.* = .none;
@@ -925,12 +925,12 @@ fn emitProcessErrorEvent(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame)
 const FromEnum = enum { subprocess_exited, subprocess, process };
 fn doSendErr(globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, ex: JSC.JSValue, from: FromEnum) bun.JSError!JSC.JSValue {
     if (callback.isCallable()) {
-        callback.callNextTick(globalObject, .{ex});
+        try callback.callNextTick(globalObject, .{ex});
         return .false;
     }
     if (from == .process) {
         const target = JSC.JSFunction.create(globalObject, bun.String.empty, emitProcessErrorEvent, 1, .{});
-        target.callNextTick(globalObject, .{ex});
+        try target.callNextTick(globalObject, .{ex});
         return .false;
     }
     // Bun.spawn().send() should throw an error (unless callback is passed)

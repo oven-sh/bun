@@ -661,7 +661,7 @@ describe("bun test", () => {
         `,
       });
       numbers.forEach(numbers => {
-        expect(stderr).not.toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+        expect(stderr).not.toContain(`(pass) ${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
       });
     });
     test("should allow tests run with test.each to be matched", () => {
@@ -683,9 +683,9 @@ describe("bun test", () => {
       });
       numbers.forEach(numbers => {
         if (numbers[0] === 1) {
-          expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+          expect(stderr).toContain(`(pass) ${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
         } else {
-          expect(stderr).not.toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+          expect(stderr).not.toContain(`(pass) ${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
         }
       });
     });
@@ -973,6 +973,196 @@ describe("bun test", () => {
     });
     expect(stderr).not.toContain("test #1");
     expect(stderr).toContain("index.ts");
+  });
+
+  test("Skipped and todo tests are filtered out when not matching -t filter", () => {
+    const stderr = runTest({
+      args: ["-t", "should match"],
+      input: `
+        import { test, describe } from "bun:test";
+
+        describe("group 1", () => {
+          test("should match filter", () => {
+            console.log("this test should run");
+          });
+
+          test("should not match filter", () => {
+            console.log("this test should be filtered out");
+          });
+
+          test.skip("skipped test that should not match", () => {
+            console.log("this skipped test should be filtered out");
+          });
+
+          test.todo("todo test that should not match", () => {
+            console.log("this todo test should be filtered out");
+          });
+        });
+
+        describe("group 2", () => {
+          test("another test that should match filter", () => {
+            console.log("this test should run");
+          });
+
+          test.skip("another skipped test", () => {
+            console.log("this skipped test should be filtered out");
+          });
+
+          test.todo("another todo test", () => {
+            console.log("this todo test should be filtered out");
+          });
+        });
+      `,
+    });
+    expect(
+      stderr
+        .replace(/bun-test-(.*)\.test\.ts/, "bun-test-*.test.ts")
+        .replace(/ \[[\d.]+ms\]/g, "") // Remove all timings
+        .replace(/Ran \d+ tests across \d+ files?\.\s*$/, "Ran 2 tests across 1 file.") // Normalize test counts
+        .trim(),
+    ).toMatchInlineSnapshot(`
+      "bun-test-*.test.ts:
+      (pass) group 1 > should match filter
+      (pass) group 2 > another test that should match filter
+
+       2 pass
+       5 filtered out
+       0 fail
+      Ran 2 tests across 1 file."
+    `);
+  });
+
+  test("--tsconfig-override works", () => {
+    const dir = tempDirWithFiles("test-tsconfig-override", {
+      "math.test.ts": `
+        import { describe, test, expect } from "bun:test";
+        import { add } from "@utils/math";
+        
+        describe("math", () => {
+          test("addition", () => {
+            expect(add(2, 3)).toBe(5);
+          });
+        });
+      `,
+      "src/math.ts": `
+        export function add(a: number, b: number) {
+          return a + b;
+        }
+      `,
+      "tsconfig.json": `
+        {
+          "compilerOptions": {
+            "paths": {
+              "@utils/*": ["./wrong/*"]
+            }
+          }
+        }
+      `,
+      "test-tsconfig.json": `
+        {
+          "compilerOptions": {
+            "paths": {
+              "@utils/*": ["./src/*"]
+            }
+          }
+        }
+      `,
+    });
+
+    // Test without --tsconfig-override (should fail)
+    const failResult = spawnSync({
+      cmd: [bunExe(), "test", "math.test.ts"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(failResult.exitCode).not.toBe(0);
+    expect(failResult.stderr?.toString() || "").toContain("Cannot find module");
+
+    // Test with --tsconfig-override (should succeed)
+    const successResult = spawnSync({
+      cmd: [bunExe(), "test", "--tsconfig-override", "test-tsconfig.json", "math.test.ts"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(successResult.exitCode).toBe(0);
+    const stdout = successResult.stdout?.toString() || "";
+    const stderr = successResult.stderr?.toString() || "";
+    const output = stdout + stderr;
+    expect(output).toContain("1 pass");
+    expect(output).toContain("addition");
+  });
+
+  test("--tsconfig-override works with monorepo spec tsconfig", () => {
+    const dir = tempDirWithFiles("test-tsconfig-monorepo", {
+      "packages/app/src/index.ts": `
+        export function getMessage() {
+          return "Hello from app";
+        }
+      `,
+      "packages/app/src/index.test.ts": `
+        import { test, expect } from "bun:test";
+        import { getMessage } from "@app/index";
+        import { formatMessage } from "@shared/utils";
+        
+        test("app message", () => {
+          expect(getMessage()).toBe("Hello from app");
+          expect(formatMessage("test")).toBe("Formatted: test");
+        });
+      `,
+      "packages/shared/utils.ts": `
+        export function formatMessage(msg: string) {
+          return "Formatted: " + msg;
+        }
+      `,
+      "packages/app/tsconfig.json": `
+        {
+          "compilerOptions": {
+            "paths": {
+              "@app/*": ["./src/*"]
+            }
+          }
+        }
+      `,
+      "packages/app/tsconfig.spec.json": `
+        {
+          "extends": "./tsconfig.json",
+          "compilerOptions": {
+            "baseUrl": "../..",
+            "paths": {
+              "@app/*": ["packages/app/src/*"],
+              "@shared/*": ["packages/shared/*"]
+            }
+          }
+        }
+      `,
+    });
+
+    const result = spawnSync({
+      cmd: [
+        bunExe(),
+        "test",
+        "--tsconfig-override",
+        "./packages/app/tsconfig.spec.json",
+        "./packages/app/src/index.test.ts",
+      ],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.exitCode).toBe(0);
+    const stdout = result.stdout?.toString() || "";
+    const stderr = result.stderr?.toString() || "";
+    const output = stdout + stderr;
+    expect(output).toContain("1 pass");
+    expect(output).toContain("app message");
   });
 });
 

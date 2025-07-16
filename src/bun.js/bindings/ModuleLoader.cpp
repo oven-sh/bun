@@ -228,7 +228,6 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     JSC::JSObject* object = objectValue.getObject();
     if (!object) [[unlikely]] {
         scope.throwException(globalObject, JSC::createError(globalObject, "Expected module mock to return an object"_s));
-
         result.value.error = scope.exception();
         scope.clearException();
         result.type = OnLoadResultTypeError;
@@ -246,12 +245,18 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
             // If a loader is passed, we must validate it
             loader = BunLoaderTypeNone;
 
-            if (JSC::JSString* loaderJSString = loaderValue.toStringOrNull(globalObject)) {
+            JSC::JSString* loaderJSString = loaderValue.toStringOrNull(globalObject);
+            if (auto ex = scope.exception()) [[unlikely]] {
+                result.value.error = ex;
+                scope.clearException();
+                return result;
+            }
+            if (loaderJSString) {
                 WTF::String loaderString = loaderJSString->value(globalObject);
                 if (loaderString == "js"_s) {
                     loader = BunLoaderTypeJS;
                 } else if (loaderString == "object"_s) {
-                    return handleOnLoadObjectResult(globalObject, object);
+                    RELEASE_AND_RETURN(scope, handleOnLoadObjectResult(globalObject, object));
                 } else if (loaderString == "jsx"_s) {
                     loader = BunLoaderTypeJSX;
                 } else if (loaderString == "ts"_s) {
@@ -330,9 +335,10 @@ static JSValue handleVirtualModuleResult(
     bool wasModuleMock = false,
     JSCommonJSModule* commonJSModule = nullptr)
 {
-    auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, wasModuleMock);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, wasModuleMock);
+    RETURN_IF_EXCEPTION(scope, {});
     ResolvedSourceCodeHolder sourceCodeHolder(res);
 
     const auto reject = [&](JSC::JSValue exception) -> JSValue {
@@ -378,14 +384,14 @@ static JSValue handleVirtualModuleResult(
     case OnLoadResultTypeCode: {
         Bun__transpileVirtualModule(globalObject, specifier, referrer, &onLoadResult.value.sourceText.string, onLoadResult.value.sourceText.loader, res);
         if (!res->success) {
-            return reject(JSValue::decode(res->result.err.value));
+            RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err.value)));
         }
 
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
         return resolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
     }
     case OnLoadResultTypeError: {
-        return reject(onLoadResult.value.error);
+        RELEASE_AND_RETURN(scope, reject(onLoadResult.value.error));
     }
 
     case OnLoadResultTypeObject: {
@@ -394,12 +400,12 @@ static JSValue handleVirtualModuleResult(
             const auto& __esModuleIdentifier = vm.propertyNames->__esModule;
             auto esModuleValue = object->getIfPropertyExists(globalObject, __esModuleIdentifier);
             if (scope.exception()) [[unlikely]] {
-                return reject(scope.exception());
+                RELEASE_AND_RETURN(scope, reject(scope.exception()));
             }
             if (esModuleValue && esModuleValue.toBoolean(globalObject)) {
                 auto defaultValue = object->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
                 if (scope.exception()) [[unlikely]] {
-                    return reject(scope.exception());
+                    RELEASE_AND_RETURN(scope, reject(scope.exception()));
                 }
                 if (defaultValue && !defaultValue.isUndefined()) {
                     commonJSModule->setExportsObject(defaultValue);
@@ -437,6 +443,7 @@ static JSValue handleVirtualModuleResult(
         arguments.append(pendingModule);
         ASSERT(!arguments.hasOverflowed());
         JSC::profiledCall(globalObject, ProfilingReason::Microtask, performPromiseThenFunction, callData, jsUndefined(), arguments);
+        RETURN_IF_EXCEPTION(scope, {});
         return internalPromise;
     }
     default: {
@@ -458,7 +465,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     JSC::JSInternalPromise* promise = jsCast<JSC::JSInternalPromise*>(JSC::JSValue::decode(encodedPromiseValue));
 
     if (!res->success) {
-        return promise->reject(globalObject, JSValue::decode(res->result.err.value));
+        RELEASE_AND_RETURN(scope, promise->reject(globalObject, JSValue::decode(res->result.err.value)));
     }
 
     auto specifierValue = Bun::toJS(globalObject, *specifier);
@@ -495,6 +502,7 @@ extern "C" void Bun__onFulfillAsyncModule(
                 if (!vm.isTerminationException(exception)) {
                     scope.clearException();
                     promise->reject(globalObject, exception);
+                    scope.assertNoExceptionExceptTermination();
                 }
             }
         } else {
@@ -655,7 +663,9 @@ JSValue fetchCommonJSModule(
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
-        if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock)) {
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (virtualModuleResult) {
             JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, &specifier, referrer, wasModuleMock, target);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -704,7 +714,9 @@ JSValue fetchCommonJSModule(
 
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
     if (!isBunTest) {
-        if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock)) {
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (virtualModuleResult) {
             JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, &specifier, referrer, wasModuleMock, target);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -922,8 +934,10 @@ static JSValue fetchESMSourceCode(
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
-        if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock)) {
-            return handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (virtualModuleResult) {
+            RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));
         }
     }
 
@@ -932,7 +946,7 @@ static JSValue fetchESMSourceCode(
             throwException(scope, res->result.err, globalObject);
             auto* exception = scope.exception();
             scope.clearException();
-            return reject(exception);
+            RELEASE_AND_RETURN(scope, reject(exception));
         }
 
         // This can happen if it's a `bun build --compile`'d CommonJS file
@@ -986,8 +1000,10 @@ static JSValue fetchESMSourceCode(
 
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
     if (!isBunTest) {
-        if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock)) {
-            return handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (virtualModuleResult) {
+            RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));
         }
     }
 
@@ -1021,7 +1037,7 @@ static JSValue fetchESMSourceCode(
         throwException(scope, res->result.err, globalObject);
         auto* exception = scope.exception();
         scope.clearException();
-        return reject(exception);
+        RELEASE_AND_RETURN(scope, reject(exception));
     }
 
     // The JSONForObjectLoader tag is source code returned from Bun that needs
@@ -1041,7 +1057,7 @@ static JSValue fetchESMSourceCode(
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
             scope.clearException();
-            return reject(exception);
+            RELEASE_AND_RETURN(scope, reject(exception));
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
@@ -1058,7 +1074,7 @@ static JSValue fetchESMSourceCode(
     else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {
-            return reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s));
+            RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
@@ -1073,7 +1089,7 @@ static JSValue fetchESMSourceCode(
     } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {
-            return reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s));
+            RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
@@ -1136,12 +1152,12 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
     bool wasModuleMock = pendingModule->wasModuleMock;
 
     JSC::JSValue result = handleVirtualModuleResult<false>(reinterpret_cast<Zig::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer, wasModuleMock);
+    if (scope.exception()) [[unlikely]] {
+        auto retValue = JSValue::encode(promise->rejectWithCaughtException(globalObject, scope));
+        pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
+        return retValue;
+    }
     if (res.success) {
-        if (scope.exception()) [[unlikely]] {
-            auto retValue = JSValue::encode(promise->rejectWithCaughtException(globalObject, scope));
-            pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
-            return retValue;
-        }
         scope.release();
         promise->resolve(globalObject, result);
         pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());

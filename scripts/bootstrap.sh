@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 15
+# Version: 16
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -676,9 +676,15 @@ install_brew() {
 install_common_software() {
 	case "$pm" in
 	apt)
-		install_packages \
-			apt-transport-https \
-			software-properties-common
+		# software-properties-common is not available in Debian Trixie
+		if [ "$distro" = "debian" ] && [ "$release" = "13" ]; then
+			install_packages \
+				apt-transport-https
+		else
+			install_packages \
+				apt-transport-https \
+				software-properties-common
+		fi
 		;;
 	dnf)
 		install_packages \
@@ -1532,6 +1538,17 @@ clean_system() {
 	done
 }
 
+ensure_no_tmpfs() {
+	if ! [ "$os" = "linux" ]; then
+		return
+	fi
+	if ! [ "$distro" = "ubuntu" ]; then
+		return
+	fi
+
+	execute_sudo systemctl mask tmp.mount
+}
+
 main() {
 	check_features "$@"
 	check_operating_system
@@ -1545,8 +1562,11 @@ main() {
 	install_chromium
 	install_fuse_python
 	install_age
-	configure_core_dumps
+	if [ "${BUN_NO_CORE_DUMP:-0}" != "1" ]; then
+		configure_core_dumps
+	fi
 	clean_system
+	ensure_no_tmpfs
 }
 
 main "$@"

@@ -1166,7 +1166,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = stderrForInstall(await new Response(stderr).text());
+  let err = stderrForInstall(await stderr.text());
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -1177,7 +1177,7 @@ export async function runBunInstall(
   if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
-  let out = await new Response(stdout).text();
+  let out = await stdout.text();
   expect(await exited).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
 }
@@ -1201,8 +1201,8 @@ export async function runBunUpdate(
     env,
   });
 
-  let err = await Bun.readableStreamToText(stderr);
-  let out = await Bun.readableStreamToText(stdout);
+  let err = await stderr.text();
+  let out = await stdout.text();
   let exitCode = await exited;
   if (exitCode !== 0) {
     console.log("stdout:", out);
@@ -1223,13 +1223,13 @@ export async function pack(cwd: string, env: NodeJS.Dict<string>, ...args: strin
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).not.toContain("warning:");
   expect(err).not.toContain("failed");
   expect(err).not.toContain("panic:");
 
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
 
   const exitCode = await exited;
   expect(exitCode).toBe(0);
@@ -1555,6 +1555,10 @@ export class VerdaccioRegistry {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
+      env: {
+        ...(bunEnv as any),
+        NODE_NO_WARNINGS: "1",
+      },
     });
 
     this.process.stderr?.on("data", data => {
@@ -1712,4 +1716,34 @@ export async function gunzipJsonRequest(req: Request) {
   const inflated = Bun.gunzipSync(buf);
   const body = JSON.parse(Buffer.from(inflated).toString("utf-8"));
   return body;
+}
+
+export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
+  if (optionalDir) {
+    snapshot = snapshot
+      .replaceAll(fs.realpathSync.native(optionalDir).replaceAll("\\", "/"), "<dir>")
+      .replaceAll(optionalDir, "<dir>");
+  }
+
+  // Remove timestamps from test result lines that start with (pass), (fail), (skip), or (todo)
+  snapshot = snapshot.replace(/^((?:pass|fail|skip|todo)\) .+) \[[\d.]+\s?m?s\]$/gm, "$1");
+
+  return (
+    snapshot
+      .replaceAll("\r\n", "\n")
+      .replaceAll("\\", "/")
+      .replaceAll(fs.realpathSync.native(process.cwd()).replaceAll("\\", "/"), "<cwd>")
+      .replaceAll(fs.realpathSync.native(os.tmpdir()).replaceAll("\\", "/"), "<tmp>")
+      .replaceAll(fs.realpathSync.native(os.homedir()).replaceAll("\\", "/"), "<home>")
+      // look for [\d\d ms] or [\d\d s] with optional periods
+      .replace(/\s\[[\d.]+\s?m?s\]/gm, "")
+      .replace(/^\[[\d.]+\s?m?s\]/gm, "")
+      // line numbers in stack traces like at FunctionName (NN:NN)
+      // it must specifically look at the stacktrace format
+      .replace(/^\s+at (.*?)\(.*?:\d+(?::\d+)?\)/gm, "    at $1(file:NN:NN)")
+      .replaceAll(Bun.version_with_sha, "<version> (<revision>)")
+      .replaceAll(Bun.version, "<bun-version>")
+      .replaceAll(Bun.revision, "<revision>")
+      .trim()
+  );
 }

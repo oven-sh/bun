@@ -1423,7 +1423,7 @@ pub const PackageManifest = struct {
                     try writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)});
             }
 
-            var result = bun.String.fromUTF8(buf.items);
+            var result = bun.String.borrowUTF8(buf.items);
             defer result.deref();
 
             return result.toJSByParseJSON(global);

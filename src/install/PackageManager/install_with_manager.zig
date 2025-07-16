@@ -398,6 +398,11 @@ pub fn installWithManager(
         root = .{};
         manager.lockfile.initEmpty(manager.allocator);
 
+        // Apply CLI node_linker override if specified
+        if (manager.options.cli_node_linker) |cli_node_linker| {
+            manager.lockfile.node_linker = cli_node_linker;
+        }
+
         if (manager.options.enable.frozen_lockfile and load_result != .not_found) {
             if (log_level != .silent) {
                 Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});

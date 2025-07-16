@@ -47,6 +47,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
     clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
+    clap.parseParam("--linker <isolated|hoisted>           Set the node linker strategy") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
 };
 
@@ -205,6 +206,8 @@ save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
 
+node_linker: ?NodeLinker = null,
+
 // `bun pm version` options
 git_tag_version: bool = true,
 allow_same_version: bool = false,
@@ -253,6 +256,12 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\
                 \\  <d>Skip devDependencies<r>
                 \\  <b><green>bun install<r> <cyan>--production<r>
+                \\
+                \\  <d>Use isolated node linker<r>
+                \\  <b><green>bun install<r> <cyan>--linker isolated<r>
+                \\
+                \\  <d>Use hoisted node linker<r>
+                \\  <b><green>bun install<r> <cyan>--linker hoisted<r>
                 \\
                 \\Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
                 \\
@@ -864,6 +873,13 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         cli.registry = registry;
     }
 
+    if (args.option("--linker")) |linker| {
+        cli.node_linker = NodeLinker.fromStr(linker) orelse {
+            Output.errGeneric("Invalid --linker value: '{}'. Expected 'isolated' or 'hoisted'.\n", .{bun.fmt.quote(linker)});
+            Global.crash();
+        };
+    }
+
     cli.positionals = args.positionals();
 
     if (subcommand == .patch and cli.positionals.len < 2) {
@@ -925,6 +941,7 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const std = @import("std");
+const NodeLinker = @import("../lockfile.zig").NodeLinker;
 
 const JSON = bun.JSON;
 

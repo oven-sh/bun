@@ -31,6 +31,7 @@ const arena_vtable = blk: {
     break :blk arena.allocator().vtable;
 };
 
+/// Returns true if `alloc` definitely has a valid `.ptr`.
 fn hasPtr(alloc: Allocator) bool {
     return alloc.vtable == arena_vtable or
         bun.AllocationScope.downcast(alloc) != null or

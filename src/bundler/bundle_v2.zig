@@ -4111,6 +4111,10 @@ const ExternalFreeFunctionAllocator = struct {
 
 /// Returns true if `allocator` definitely has a valid `.ptr`.
 /// May return false even if `.ptr` is valid.
+///
+/// This function should check whether `allocator` matches any internal allocator types known to
+/// have valid pointers. Allocators defined outside of this file, like `std.heap.ArenaAllocator`,
+/// don't need to be checked.
 pub fn allocatorHasPointer(allocator: std.mem.Allocator) bool {
     return allocator.vtable == &ExternalFreeFunctionAllocator.vtable;
 }

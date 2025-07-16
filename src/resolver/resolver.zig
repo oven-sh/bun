@@ -978,12 +978,14 @@ pub const Resolver = struct {
                 // if we don't have it here, they might put it in a sideEfffects
                 // map of the parent package.json
                 // TODO: check if webpack also does this parent lookup
-                needs_side_effects = existing.side_effects == .unspecified;
+                needs_side_effects = existing.side_effects == .unspecified or existing.side_effects == .glob or existing.side_effects == .mixed;
 
                 result.primary_side_effects_data = switch (existing.side_effects) {
                     .unspecified => .has_side_effects,
                     .false => .no_side_effects__package_json,
                     .map => |map| if (map.contains(bun.StringHashMapUnowned.Key.init(path.text))) .has_side_effects else .no_side_effects__package_json,
+                    .glob => if (existing.side_effects.hasSideEffects(path.text)) .has_side_effects else .no_side_effects__package_json,
+                    .mixed => if (existing.side_effects.hasSideEffects(path.text)) .has_side_effects else .no_side_effects__package_json,
                 };
 
                 if (existing.name.len == 0 or r.care_about_bin_folder) result.package_json = null;
@@ -997,6 +999,8 @@ pub const Resolver = struct {
                         .unspecified => .has_side_effects,
                         .false => .no_side_effects__package_json,
                         .map => |map| if (map.contains(bun.StringHashMapUnowned.Key.init(path.text))) .has_side_effects else .no_side_effects__package_json,
+                        .glob => if (package_json.side_effects.hasSideEffects(path.text)) .has_side_effects else .no_side_effects__package_json,
+                        .mixed => if (package_json.side_effects.hasSideEffects(path.text)) .has_side_effects else .no_side_effects__package_json,
                     };
                 }
             }

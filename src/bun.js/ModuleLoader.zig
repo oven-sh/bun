@@ -2142,11 +2142,8 @@ pub const RuntimeTranspilerStore = struct {
         };
     }
 
-    pub fn runFromJSThread(this: *RuntimeTranspilerStore) void {
+    pub fn runFromJSThread(this: *RuntimeTranspilerStore, event_loop: *JSC.EventLoop, global: *JSC.JSGlobalObject, vm: *JSC.VirtualMachine) void {
         var batch = this.queue.popBatch();
-        var vm: *VirtualMachine = @fieldParentPtr("transpiler_store", this);
-        const event_loop = vm.eventLoop();
-        const global = vm.global;
         const jsc_vm = vm.jsc;
         var iter = batch.iterator();
         if (iter.next()) |job| {

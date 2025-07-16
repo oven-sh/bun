@@ -466,7 +466,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             },
             @field(Task.Tag, @typeName(RuntimeTranspilerStore)) => {
                 var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
-                any.runFromJSThread();
+                any.runFromJSThread(this, global, virtual_machine);
             },
             @field(Task.Tag, @typeName(ServerAllConnectionsClosedTask)) => {
                 var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;

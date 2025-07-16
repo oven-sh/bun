@@ -2172,6 +2172,9 @@ fn parseAppendDependencies(
                     },
                 };
 
+                // after parseAppendDependencies has been called for each package the
+                // size of lockfile.buffers.resolutions is set to the length of dependencies
+                // and values set to invalid_package_id before mapping.
                 try lockfile.buffers.dependencies.append(allocator, dep);
                 continue :workspaces;
             }

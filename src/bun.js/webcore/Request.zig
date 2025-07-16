@@ -7,6 +7,7 @@ _headers: ?*FetchHeaders = null,
 signal: ?*AbortSignal = null,
 body: *Body.Value.HiveRef,
 method: Method = Method.GET,
+redirect: FetchRedirect = .follow,
 request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
 https: bool = false,
 weak_ptr_data: WeakRef.Data = .empty,
@@ -348,10 +349,12 @@ pub fn finalize(this: *Request) void {
 }
 
 pub fn getRedirect(
-    _: *Request,
+    this: *Request,
     globalThis: *JSC.JSGlobalObject,
 ) JSC.JSValue {
-    return ZigString.init("follow").toJS(globalThis);
+    return switch (this.redirect) {
+        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
+    };
 }
 pub fn getReferrer(
     this: *Request,
@@ -499,7 +502,7 @@ const Fields = enum {
     // referrerPolicy,
     // mode,
     // credentials,
-    // redirect,
+    redirect,
     // integrity,
     // keepalive,
     signal,
@@ -576,6 +579,11 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
                 if (!fields.contains(.method)) {
                     req.method = request.method;
                     fields.insert(.method);
+                }
+
+                if (!fields.contains(.redirect)) {
+                    req.redirect = request.redirect;
+                    fields.insert(.redirect);
                 }
 
                 if (!fields.contains(.headers)) {
@@ -705,6 +713,14 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
             }
 
             if (globalThis.hasException()) return error.JSError;
+        }
+
+        // Extract redirect option
+        if (!fields.contains(.redirect)) {
+            if (try value.getOptionalEnum(globalThis, "redirect", FetchRedirect)) |redirect_value| {
+                req.redirect = redirect_value;
+                fields.insert(.redirect);
+            }
         }
     }
 
@@ -921,6 +937,7 @@ pub fn cloneInto(
         .body = body,
         .url = if (preserve_url) original_url else this.url.dupeRef(),
         .method = this.method,
+        .redirect = this.redirect,
         ._headers = this.cloneHeaders(globalThis),
     };
 
@@ -948,6 +965,7 @@ const MimeType = bun.http.MimeType;
 const JSC = bun.JSC;
 
 const Method = @import("../../http/Method.zig").Method;
+const FetchRedirect = @import("../../http/FetchRedirect.zig").FetchRedirect;
 const FetchHeaders = bun.webcore.FetchHeaders;
 const AbortSignal = JSC.WebCore.AbortSignal;
 const Output = bun.Output;

@@ -740,7 +740,8 @@ pub const PmPkgCommand = struct {
             }
             new_props.appendAssumeCapacity(prop);
         }
-        const new_list = js_ast.G.Property.List.fromList(new_props);        obj.data.e_object.properties = new_list;
+        const new_list = js_ast.G.Property.List.fromList(new_props);
+        obj.data.e_object.properties = new_list;
 
         return true;
     }

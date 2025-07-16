@@ -19,7 +19,6 @@ Options:
   --help                   Show this help message
   --no-include-pub         Exclude pub imports from sorting
   --no-remove-unused       Don't remove unused imports
-  --include-unsorted       Process files even if they don't have @sortImports marker
 
 Examples:
   bun scripts/sortImports src
@@ -36,7 +35,6 @@ if (filePaths.length === 0) {
 const config = {
   includePub: !args.includes("--no-include-pub"),
   removeUnused: !args.includes("--no-remove-unused"),
-  includeUnsorted: args.includes("--include-unsorted"),
 };
 
 // Type definitions
@@ -275,8 +273,6 @@ function sortGroupsAndDeclarations(groups: Map<string, Group>): string[] {
 // Generate the sorted output
 function generateSortedOutput(lines: string[], groups: Map<string, Group>, sortedGroupKeys: string[]): string[] {
   const outputLines = [...lines];
-  outputLines.push("");
-  outputLines.push("// @sortImports");
 
   for (const groupKey of sortedGroupKeys) {
     const groupDeclarations = groups.get(groupKey)!;
@@ -300,9 +296,6 @@ async function processFile(filePath: string): Promise<void> {
   const originalFileContents = await Bun.file(filePath).text();
   let fileContents = originalFileContents;
 
-  if (!config.includeUnsorted && !originalFileContents.includes("// @sortImports")) {
-    return;
-  }
   console.log(`Processing: ${filePath}`);
 
   let needsRecurse = true;

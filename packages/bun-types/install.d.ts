@@ -49,13 +49,13 @@ declare module "bun" {
          * Bun behaves differently depending on the values returned from the
          * {@link Provider.onInstall `onInstall`} hook:
          *
-         * > In any case, Bun **always** pretty prints *all* the advisories,
+         * > In any case, Bun *always* pretty prints *all* the advisories,
          * > but...
          * >
          * > → if any **fatal**, Bun will immediately cancel the installation
          * > and quit with a non-zero exit code
          * >
-         * > → else, if any **warn**, Bun will ask the user if they'd like to
+         * > → else if any **warn**, Bun will ask the user if they'd like to
          * > continue with the install
          */
         level: "fatal" | "warn";

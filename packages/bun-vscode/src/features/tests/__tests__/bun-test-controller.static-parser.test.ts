@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { MockLocation, MockPosition, MockTestController, MockUri, MockWorkspaceFolder } from "./vscode-types.mock";
+import { describe, expect, test } from "bun:test";
+import { MockTestController, MockWorkspaceFolder } from "./vscode-types.mock";
 import "./vscode.mock";
 import { makeTestController, makeWorkspaceFolder } from "./vscode.mock";
 

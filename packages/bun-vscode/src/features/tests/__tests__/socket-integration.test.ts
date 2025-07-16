@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { EventEmitter } from "node:events";
-import * as net from "node:net";
-import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import * as fs from "node:fs/promises";
-import * as path from "node:path";
+import * as net from "node:net";
 import * as os from "node:os";
+import * as path from "node:path";
+import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import {
   NodeSocketDebugAdapter,
   TCPSocketSignal,

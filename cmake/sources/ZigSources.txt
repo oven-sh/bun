@@ -652,6 +652,7 @@ src/paths.zig
 src/paths/EnvPath.zig
 src/paths/path_buffer_pool.zig
 src/paths/Path.zig
+src/pe.zig
 src/perf.zig
 src/pool.zig
 src/Progress.zig

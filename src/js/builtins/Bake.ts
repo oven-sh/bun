@@ -105,21 +105,39 @@ export async function renderRoutesForProdStatic(
     return doGenerateRoute(type, noClient, i, layouts, pageModule, params);
   }
 
-  const modulesForFiles = await Promise.all(
-    files.map(async (fileList, i) => {
-      $assert(fileList.length > 0);
-      if (fileList.length > 1) {
-        let anyPromise = false;
-        let loaded = fileList.map(
-          x => loadedModules[x] ?? ((anyPromise = true), import(allServerFiles[x]).then(x => (loadedModules[x] = x))),
-        );
-        return anyPromise ? await Promise.all(loaded) : loaded;
-      } else {
-        const id = fileList[0];
-        return [loadedModules[id] ?? (loadedModules[id] = await import(allServerFiles[id]))];
-      }
-    }),
-  );
+  console.time("modulesForFiles");
+  // const modulesForFiles = await Promise.all(
+  //   files.map(async (fileList, i) => {
+  //     $assert(fileList.length > 0);
+  //     if (fileList.length > 1) {
+  //       let anyPromise = false;
+  //       // let loaded = fileList.map(
+  //       //   x => loadedModules[x] ?? ((anyPromise = true), import(allServerFiles[x]).then(x => (loadedModules[x] = x))),
+  //       // );
+  //       anyPromise = true;
+  //       let loaded = fileList.map(x => import(allServerFiles[x]).then(x => (loadedModules[x] = x)));
+  //       return anyPromise ? await Promise.all(loaded) : loaded;
+  //     } else {
+  //       const id = fileList[0];
+  //       return [loadedModules[id] ?? (loadedModules[id] = await import(allServerFiles[id]))];
+  //     }
+  //   }),
+  // );
+  let modulesForFiles = [];
+  for (const fileList of files) {
+    $assert(fileList.length > 0);
+    if (fileList.length > 1) {
+      let anyPromise = false;
+      let loaded = fileList.map(
+        x => loadedModules[x] ?? ((anyPromise = true), import(allServerFiles[x]).then(x => (loadedModules[x] = x))),
+      );
+      modulesForFiles.push(anyPromise ? await Promise.all(loaded) : loaded);
+    } else {
+      const id = fileList[0];
+      modulesForFiles.push([loadedModules[id] ?? (loadedModules[id] = await import(allServerFiles[id]))]);
+    }
+  }
+  console.timeEnd("modulesForFiles");
 
   return Promise.all(
     modulesForFiles.map(async (modules, i) => {

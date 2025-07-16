@@ -130,7 +130,7 @@ async function build(args) {
   // Separate cmake build options from ninja options
   const cmakeOptions = {};
   const ninjaOptions = [];
-  
+
   for (const [flag, value] of Object.entries(buildOptions)) {
     if (flag === "--quiet") {
       ninjaOptions.push("--quiet");
@@ -138,11 +138,11 @@ async function build(args) {
       cmakeOptions[flag] = value;
     }
   }
-  
+
   const buildArgs = Object.entries(cmakeOptions)
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
-  
+
   // Add ninja options after --
   if (ninjaOptions.length > 0) {
     buildArgs.push("--", ...ninjaOptions);

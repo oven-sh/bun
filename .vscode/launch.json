@@ -339,6 +339,50 @@
         "set print asm-demangle",
       ],
     },
+    // Remote debugging configurations
+    {
+      "type": "bun",
+      "request": "attach",
+      "name": "[Remote] Attach to WSL",
+      "address": "localhost",
+      "port": 6499,
+      "localRoot": "${workspaceFolder}",
+      "remoteRoot": "/mnt/c/path/to/project",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "type": "bun",
+      "request": "attach", 
+      "name": "[Remote] Attach to Docker Container",
+      "address": "localhost",
+      "port": 6499,
+      "localRoot": "${workspaceFolder}",
+      "remoteRoot": "/workspace",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "type": "bun",
+      "request": "attach",
+      "name": "[Remote] Attach to SSH Remote",
+      "address": "remote.server.com",
+      "port": 6499,
+      "localRoot": "${workspaceFolder}",
+      "remoteRoot": "/home/user/project",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "type": "bun",
+      "request": "launch",
+      "name": "[Remote] Launch with Path Mapping",
+      "program": "${file}",
+      "cwd": "${workspaceFolder}",
+      "localRoot": "${workspaceFolder}",
+      "remoteRoot": "/workspace",
+      "runtime": "bun",
+      "env": {
+        "NODE_ENV": "development"
+      }
+    },
   ],
   "inputs": [
     {

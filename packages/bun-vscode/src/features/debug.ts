@@ -1,6 +1,7 @@
 import { DebugSession, OutputEvent } from "@vscode/debugadapter";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import {
   type DAP,
@@ -40,6 +41,18 @@ const ATTACH_CONFIGURATION: vscode.DebugConfiguration = {
   request: "attach",
   name: "Attach Bun",
   url: "ws://localhost:6499/",
+  stopOnEntry: false,
+};
+
+const REMOTE_ATTACH_CONFIGURATION: vscode.DebugConfiguration = {
+  type: "bun",
+  internalConsoleOptions: "neverOpen",
+  request: "attach",
+  name: "Attach to Remote",
+  address: "localhost",
+  port: 6499,
+  localRoot: "${workspaceFolder}",
+  remoteRoot: "",
   stopOnEntry: false,
 };
 
@@ -174,7 +187,13 @@ async function injectDebugTerminal2() {
 
 class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
   provideDebugConfigurations(folder?: vscode.WorkspaceFolder): vscode.ProviderResult<vscode.DebugConfiguration[]> {
-    return [DEBUG_CONFIGURATION, RUN_CONFIGURATION, ATTACH_CONFIGURATION];
+    const configs = [DEBUG_CONFIGURATION, RUN_CONFIGURATION, ATTACH_CONFIGURATION];
+    
+    if (getConfig("remote.enabled")) {
+      configs.push(REMOTE_ATTACH_CONFIGURATION);
+    }
+    
+    return configs;
   }
 
   resolveDebugConfiguration(
@@ -186,9 +205,33 @@ class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
 
     const { request } = config;
     if (request === "attach") {
-      target = ATTACH_CONFIGURATION;
+      // Check if this is a remote attach configuration
+      if (config.address || config.port || config.localRoot || config.remoteRoot) {
+        target = REMOTE_ATTACH_CONFIGURATION;
+        
+        // Handle remote attach URL construction
+        if (!config.url && config.address && config.port) {
+          config.url = `ws://${config.address}:${config.port}/`;
+        }
+        
+        // Auto-detect path mapping for common remote scenarios
+        if (getConfig("remote.autoDetectPaths") && !config.remoteRoot) {
+          config.remoteRoot = this.detectRemoteRoot(folder, config);
+        }
+      } else {
+        target = ATTACH_CONFIGURATION;
+      }
     } else {
       target = DEBUG_CONFIGURATION;
+      
+      // Handle remote launch configurations
+      if (config.address || config.localRoot || config.remoteRoot) {
+        config.port = config.port || getConfig("remote.defaultPort");
+        
+        if (getConfig("remote.autoDetectPaths") && !config.remoteRoot) {
+          config.remoteRoot = this.detectRemoteRoot(folder, config);
+        }
+      }
     }
 
     if (config.program === "-" && config.__code) {
@@ -213,6 +256,26 @@ class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
 
     return config;
   }
+
+  private detectRemoteRoot(folder: vscode.WorkspaceFolder | undefined, config: vscode.DebugConfiguration): string {
+    const localRoot = config.localRoot || folder?.uri.fsPath || "";
+    
+    // WSL path detection
+    if (process.platform === "win32" && localRoot.includes("\\")) {
+      // Convert Windows path to WSL path
+      const wslPath = localRoot.replace(/^([A-Z]):\\/, "/mnt/$1/").replace(/\\/g, "/").toLowerCase();
+      return wslPath;
+    }
+    
+    // Docker container path detection  
+    if (config.address && config.address !== "localhost" && config.address !== "127.0.0.1") {
+      // Assume container has source mounted at /workspace
+      return "/workspace";
+    }
+    
+    // SSH remote path - use same path structure
+    return localRoot.replace(/\\/g, "/");
+  }
 }
 
 class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
@@ -230,7 +293,7 @@ class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory 
       }
     }
 
-    const adapter = new FileDebugSession(session.id, __untitledName);
+    const adapter = new FileDebugSession(session.id, __untitledName, configuration);
     await adapter.initialize();
     return new vscode.DebugAdapterInlineImplementation(adapter);
   }
@@ -283,8 +346,11 @@ class FileDebugSession extends DebugSession {
   sessionId?: string;
   untitledDocPath?: string;
   bunEvalPath?: string;
+  localRoot?: string;
+  remoteRoot?: string;
+  pathMappings: Array<{ localRoot: string; remoteRoot: string }> = [];
 
-  constructor(sessionId?: string, untitledDocPath?: string) {
+  constructor(sessionId?: string, untitledDocPath?: string, config?: vscode.DebugConfiguration) {
     super();
     this.sessionId = sessionId;
     this.untitledDocPath = untitledDocPath;
@@ -293,6 +359,50 @@ class FileDebugSession extends DebugSession {
       const cwd = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath ?? process.cwd();
       this.bunEvalPath = join(cwd, "[eval]");
     }
+
+    // Set up path mappings for remote debugging
+    if (config) {
+      this.localRoot = config.localRoot;
+      this.remoteRoot = config.remoteRoot;
+      
+      if (this.localRoot && this.remoteRoot) {
+        this.pathMappings.push({
+          localRoot: this.localRoot,
+          remoteRoot: this.remoteRoot
+        });
+      }
+    }
+  }
+
+  private mapRemoteToLocal(remotePath: string): string {
+    if (!remotePath || this.pathMappings.length === 0) {
+      return remotePath;
+    }
+
+    for (const mapping of this.pathMappings) {
+      if (remotePath.startsWith(mapping.remoteRoot)) {
+        return remotePath.replace(mapping.remoteRoot, mapping.localRoot).replace(/\//g, path.sep);
+      }
+    }
+
+    return remotePath;
+  }
+
+  private mapLocalToRemote(localPath: string): string {
+    if (!localPath || this.pathMappings.length === 0) {
+      return localPath;
+    }
+
+    const normalizedLocalPath = localPath.replace(/\\/g, "/");
+    
+    for (const mapping of this.pathMappings) {
+      const normalizedLocalRoot = mapping.localRoot.replace(/\\/g, "/");
+      if (normalizedLocalPath.startsWith(normalizedLocalRoot)) {
+        return normalizedLocalPath.replace(normalizedLocalRoot, mapping.remoteRoot);
+      }
+    }
+
+    return localPath;
   }
 
   async initialize() {
@@ -328,8 +438,28 @@ class FileDebugSession extends DebugSession {
         this.sendEvent(event);
       });
     } else {
-      this.adapter.on("Adapter.response", response => this.sendResponse(response));
-      this.adapter.on("Adapter.event", event => this.sendEvent(event));
+      this.adapter.on("Adapter.response", (response: DebugProtocolResponse) => {
+        // Apply path mapping for remote debugging
+        if (response.body?.source?.path) {
+          response.body.source.path = this.mapRemoteToLocal(response.body.source.path);
+        }
+        if (Array.isArray(response.body?.breakpoints)) {
+          for (const bp of response.body.breakpoints) {
+            if (bp.source?.path) {
+              bp.source.path = this.mapRemoteToLocal(bp.source.path);
+            }
+          }
+        }
+        this.sendResponse(response);
+      });
+      
+      this.adapter.on("Adapter.event", (event: DebugProtocolEvent) => {
+        // Apply path mapping for remote debugging
+        if (event.body?.source?.path) {
+          event.body.source.path = this.mapRemoteToLocal(event.body.source.path);
+        }
+        this.sendEvent(event);
+      });
     }
 
     this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
@@ -345,10 +475,17 @@ class FileDebugSession extends DebugSession {
     if (type === "request") {
       const { untitledDocPath, bunEvalPath } = this;
       const { command } = message;
+      
       if (untitledDocPath && (command === "setBreakpoints" || command === "breakpointLocations")) {
         const args = message.arguments as any;
         if (args.source?.path === untitledDocPath) {
           args.source.path = bunEvalPath;
+        }
+      } else if (command === "setBreakpoints" || command === "breakpointLocations") {
+        // Apply path mapping for remote debugging
+        const args = message.arguments as any;
+        if (args.source?.path) {
+          args.source.path = this.mapLocalToRemote(args.source.path);
         }
       }
 

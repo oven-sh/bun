@@ -9,7 +9,7 @@ buildSync({
   entryPoints: ["src/extension.ts", "src/web-extension.ts"],
   outdir: "dist",
   bundle: true,
-  external: ["vscode"],
+  external: ["vscode", "@vscode/debugadapter", "ws"],
   platform: "node",
   format: "cjs",
   // The following settings are required to allow for extension debugging

@@ -23,7 +23,7 @@ At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-i
 
 - Live in-editor error messages (gif below)
 - Test runner codelens
-- Debugger support
+- Debugger support with **remote debugging** for WSL, Docker, and SSH
 - Run scripts from package.json
 - Visual lockfile viewer for old binary lockfiles (`bun.lockb`)
 
@@ -120,5 +120,44 @@ You can use the following configurations to customize the behavior of the Bun ex
 
   // The custom script to call for testing instead of `bun test`
   "bun.test.customScript": "bun test",
+
+  // Remote debugging settings
+  "bun.remote.enabled": true,           // Enable remote debugging
+  "bun.remote.autoDetectPaths": true,   // Auto-detect path mappings  
+  "bun.remote.defaultPort": 6499        // Default debug port
 }
 ```
+
+## Remote Debugging
+
+The Bun extension supports remote debugging for applications running in WSL, Docker containers, and SSH remote environments. This allows you to debug Bun applications running in different environments while developing locally in VSCode.
+
+### Quick Setup
+
+1. **Start your Bun application with debugging enabled:**
+   ```bash
+   bun --inspect=0.0.0.0:6499 your-script.js
+   ```
+
+2. **Add a remote attach configuration to your `launch.json`:**
+   ```json
+   {
+     "type": "bun",
+     "request": "attach",
+     "name": "Attach to Remote",
+     "address": "localhost",
+     "port": 6499,
+     "localRoot": "${workspaceFolder}",
+     "remoteRoot": "/workspace"
+   }
+   ```
+
+3. **Start debugging** by selecting your remote configuration and pressing F5.
+
+### Supported Remote Environments
+
+- **WSL (Windows Subsystem for Linux)**: Debug Bun apps running in WSL from Windows VSCode
+- **Docker Containers**: Debug containerized Bun applications with automatic path mapping
+- **SSH Remote**: Debug Bun applications running on remote servers
+
+For detailed setup instructions and configuration examples, see [REMOTE-DEBUGGING.md](./REMOTE-DEBUGGING.md).

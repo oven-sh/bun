@@ -1,6 +1,6 @@
 {
   "name": "bun-vscode",
-  "version": "0.0.29",
+  "version": "0.0.30",
   "author": "oven",
   "repository": {
     "type": "git",
@@ -85,6 +85,24 @@
           "type": "string",
           "default": "",
           "description": "Custom script to use instead of `bun test`, for example script from `package.json`"
+        },
+        "bun.remote.enabled": {
+          "type": "boolean",
+          "description": "Enable remote debugging capabilities for WSL, SSH, and Docker environments.",
+          "scope": "window",
+          "default": true
+        },
+        "bun.remote.autoDetectPaths": {
+          "type": "boolean",
+          "description": "Automatically detect and map local and remote paths for debugging.",
+          "scope": "window",
+          "default": true
+        },
+        "bun.remote.defaultPort": {
+          "type": "number",
+          "description": "Default port to use for remote debugging connections.",
+          "scope": "window",
+          "default": 6499
         }
       }
     },
@@ -261,6 +279,33 @@
                   "hot"
                 ],
                 "default": false
+              },
+              "localRoot": {
+                "type": "string",
+                "description": "Path to the local directory containing the program being debugged.",
+                "default": "${workspaceFolder}"
+              },
+              "remoteRoot": {
+                "type": "string",
+                "description": "Path to the remote directory containing the program being debugged."
+              },
+              "address": {
+                "type": "string",
+                "description": "TCP/IP address of remote debugger. Default is localhost.",
+                "default": "localhost"
+              },
+              "port": {
+                "type": "number",
+                "description": "Debug port to attach to. Default is 6499.",
+                "default": 6499
+              },
+              "skipFiles": {
+                "type": "array",
+                "description": "Array of glob patterns to skip while debugging.",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
               }
             }
           },
@@ -269,6 +314,33 @@
               "url": {
                 "type": "string",
                 "description": "The URL of the WebSocket inspector to attach to."
+              },
+              "address": {
+                "type": "string",
+                "description": "TCP/IP address of remote debugger. Default is localhost.",
+                "default": "localhost"
+              },
+              "port": {
+                "type": "number",
+                "description": "Debug port to attach to. Default is 6499.",
+                "default": 6499
+              },
+              "localRoot": {
+                "type": "string",
+                "description": "Path to the local directory containing the program being debugged.",
+                "default": "${workspaceFolder}"
+              },
+              "remoteRoot": {
+                "type": "string",
+                "description": "Path to the remote directory containing the program being debugged."
+              },
+              "skipFiles": {
+                "type": "array",
+                "description": "Array of glob patterns to skip while debugging.",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
               },
               "noDebug": {
                 "type": "boolean",

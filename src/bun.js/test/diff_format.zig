@@ -81,10 +81,8 @@ pub const DiffFormatter = struct {
 fn printDiff(allocator: std.mem.Allocator, not: bool, received_slice: string, expected_slice: string, writer: anytype) !void {
     if (not) {
         const not_fmt = "Expected: not <green>{s}<r>";
-        if (Output.enable_ansi_colors) {
-            try writer.print(Output.prettyFmt(not_fmt, true), .{expected_slice});
-        } else {
-            try writer.print(Output.prettyFmt(not_fmt, false), .{expected_slice});
+        switch (Output.enable_ansi_colors) {
+            inline else => |enable_ansi_colors| try writer.print(Output.prettyFmt(not_fmt, enable_ansi_colors), .{expected_slice}),
         }
         return;
     }
@@ -95,57 +93,54 @@ fn printDiff(allocator: std.mem.Allocator, not: bool, received_slice: string, ex
     var diffs = try dmp.diff(allocator, received_slice, expected_slice, received_slice.len > 300 or expected_slice.len > 300);
     defer diffs.deinit(allocator);
 
-    const equal_fmt = "<d> {s}<r>";
-    const delete_fmt = "<red>-{s}<r>";
-    const insert_fmt = "<green>+{s}<r>";
+    var has_changes = false;
+    for (diffs.items) |diff| {
+        if (diff.operation != .equal) {
+            has_changes = true;
+            break;
+        }
+    }
 
-    for (diffs.items) |df| {
-        var prev: usize = 0;
-        var curr: usize = 0;
-        switch (df.operation) {
-            .equal => {
-                while (curr < df.text.len) {
-                    if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                        if (Output.enable_ansi_colors) {
-                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text[prev .. curr + 1]});
-                        } else {
-                            try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text[prev .. curr + 1]});
-                        }
-                        prev = curr + 1;
+    if (!has_changes) return;
+
+    switch (Output.enable_ansi_colors) {
+        inline else => |enable_ansi_colors| try writer.print(Output.prettyFmt("Difference:\n\n<red>- Received<r>\n<green>+ Expected<r>\n\n", enable_ansi_colors), .{}),
+    }
+
+    const equal_fmt = "<d>  {s}<r>";
+    const delete_fmt = "<red>- {s}<r>";
+    const insert_fmt = "<green>+ {s}<r>";
+
+    for (diffs.items) |diff| {
+        const text = diff.text;
+        if (text.len == 0) continue;
+
+        switch (diff.operation) {
+            inline else => |operation| {
+                const fmt: []const u8 = comptime switch (operation) {
+                    .equal => equal_fmt,
+                    .insert => insert_fmt,
+                    .delete => delete_fmt,
+                };
+
+                var rest = text;
+                while (std.mem.indexOfScalar(u8, rest, '\n')) |i| {
+                    const line = rest[0..i];
+                    switch (Output.enable_ansi_colors) {
+                        inline else => |enable_ansi_colors| try writer.print(Output.prettyFmt(fmt, enable_ansi_colors), .{line}),
                     }
-                    curr += 1;
+                    try writer.print("\n", .{});
+                    rest = rest[i + 1 ..];
                 }
-            },
-            .delete => {
-                while (curr < df.text.len) {
-                    if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                        if (Output.enable_ansi_colors) {
-                            try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text[prev .. curr + 1]});
-                        } else {
-                            try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text[prev .. curr + 1]});
-                        }
-                        prev = curr + 1;
+
+                if (rest.len > 0) {
+                    switch (Output.enable_ansi_colors) {
+                        inline else => |enable_ansi_colors| try writer.print(Output.prettyFmt(fmt, enable_ansi_colors), .{rest}),
                     }
-                    curr += 1;
-                }
-            },
-            .insert => {
-                while (curr < df.text.len) {
-                    if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                        if (Output.enable_ansi_colors) {
-                            try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text[prev .. curr + 1]});
-                        } else {
-                            try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text[prev .. curr + 1]});
-                        }
-                        prev = curr + 1;
-                    }
-                    curr += 1;
                 }
             },
         }
-        if (df.text[df.text.len - 1] != '\n') try writer.writeAll("\n");
     }
-    return;
 }
 
 // @sortImports

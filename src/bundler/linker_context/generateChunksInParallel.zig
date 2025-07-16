@@ -15,7 +15,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
         defer debug("  DONE {d} renamers", .{chunks.len});
         const wait_group = try c.allocator.create(sync.WaitGroup);
         defer c.allocator.destroy(wait_group);
-        wait_group.* = .initWithCount(@as(u32, @intCast(chunks.len)));
+        wait_group.* = .initWithCount(chunks.len);
         const ctx = GenerateChunkCtx{ .chunk = &chunks[0], .wg = wait_group, .c = c, .chunks = chunks };
         try c.parse_graph.pool.worker_pool.doPtr(c.allocator, wait_group, ctx, LinkerContext.generateJSRenamer, chunks);
     }

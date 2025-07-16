@@ -309,7 +309,7 @@ fn do_impl(
         batch.push(Batch.from(&runner_task.task));
     }
 
-    wait_group.add(@as(u32, @intCast(values.len)));
+    wait_group.add(values.len);
     this.schedule(batch);
     wait_group.wait();
 }

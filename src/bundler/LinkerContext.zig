@@ -252,8 +252,8 @@ pub const LinkerContext = struct {
         reachable: []const Index.Int,
     ) void {
         bun.assert(this.options.source_maps != .none);
-        this.source_maps.line_offset_wait_group = .initWithCount(@as(u32, @intCast(reachable.len)));
-        this.source_maps.quoted_contents_wait_group = .initWithCount(@as(u32, @intCast(reachable.len)));
+        this.source_maps.line_offset_wait_group = .initWithCount(reachable.len);
+        this.source_maps.quoted_contents_wait_group = .initWithCount(reachable.len);
         this.source_maps.line_offset_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
         this.source_maps.quoted_contents_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
 

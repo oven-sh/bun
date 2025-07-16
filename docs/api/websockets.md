@@ -114,8 +114,7 @@ type WebSocketData = {
   authToken: string;
 };
 
-// TypeScript: specify the type of `data`
-Bun.serve<WebSocketData>({
+Bun.serve({
   fetch(req, server) {
     const cookies = new Bun.CookieMap(req.headers.get("cookie")!);
 
@@ -131,8 +130,12 @@ Bun.serve<WebSocketData>({
     return undefined;
   },
   websocket: {
+    // TypeScript: specify the type of ws.data like this
+    data: {} as WebSocketData,
+
     // handler called when a message is received
     async message(ws, message) {
+      // ws.data is now properly typed as WebSocketData
       const user = getUserFromToken(ws.data.authToken);
 
       await saveMessageToDatabase({
@@ -164,7 +167,7 @@ socket.addEventListener("message", event => {
 Bun's `ServerWebSocket` implementation implements a native publish-subscribe API for topic-based broadcasting. Individual sockets can `.subscribe()` to a topic (specified with a string identifier) and `.publish()` messages to all other subscribers to that topic (excluding itself). This topic-based broadcast API is similar to [MQTT](https://en.wikipedia.org/wiki/MQTT) and [Redis Pub/Sub](https://redis.io/topics/pubsub).
 
 ```ts
-const server = Bun.serve<{ username: string }>({
+const server = Bun.serve({
   fetch(req, server) {
     const url = new URL(req.url);
     if (url.pathname === "/chat") {
@@ -179,6 +182,9 @@ const server = Bun.serve<{ username: string }>({
     return new Response("Hello world");
   },
   websocket: {
+    // TypeScript: specify the type of ws.data like this
+    data: {} as { username: string },
+
     open(ws) {
       const msg = `${ws.data.username} has entered the chat`;
       ws.subscribe("the-group-chat");

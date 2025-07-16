@@ -291,6 +291,16 @@ function generateSortedOutput(lines: string[], groups: Map<string, Group>, sorte
   return outputLines;
 }
 
+function extractThisDeclaration(declarations: Map<string, Declaration>): Declaration | null {
+  for (const declaration of declarations.values()) {
+    if (declaration.value === "@This()") {
+      declarations.delete(declaration.key);
+      return declaration;
+    }
+  }
+  return null;
+}
+
 // Main execution function for a single file
 async function processFile(filePath: string): Promise<void> {
   const originalFileContents = await Bun.file(filePath).text();
@@ -305,6 +315,7 @@ async function processFile(filePath: string): Promise<void> {
     const lines = fileContents.split("\n");
 
     const { declarations, unusedLineIndices } = parseDeclarations(lines, fileContents);
+    const thisDeclaration = extractThisDeclaration(declarations);
     const groups = groupDeclarationsByImportPath(declarations);
 
     promoteItemsWithChildGroups(groups);
@@ -319,6 +330,22 @@ async function processFile(filePath: string): Promise<void> {
         sortedLines[line] = "";
         needsRecurse = true;
       }
+    }
+    if (thisDeclaration) {
+      sortedLines[thisDeclaration.index] = "";
+    }
+    if (thisDeclaration) {
+      let firstNonFileCommentLine = 0;
+      for (const line of sortedLines) {
+        if (line.startsWith("//!")) {
+          firstNonFileCommentLine++;
+        } else {
+          break;
+        }
+      }
+      const insert = [thisDeclaration.whole, ""];
+      if (firstNonFileCommentLine > 0) insert.unshift("");
+      sortedLines.splice(firstNonFileCommentLine, 0, ...insert);
     }
     fileContents = sortedLines.join("\n");
   }
@@ -362,7 +389,7 @@ async function main() {
           successCount++;
         } catch (error) {
           errorCount++;
-          console.error(`Failed to process ${filePath}`);
+          console.error(`Failed to process ${path.join(filePath, file)}:\n`, error);
         }
       }
       continue;
@@ -373,7 +400,7 @@ async function main() {
       successCount++;
     } catch (error) {
       errorCount++;
-      console.error(`Failed to process ${filePath}`);
+      console.error(`Failed to process ${filePath}:\n`, error);
     }
   }
 

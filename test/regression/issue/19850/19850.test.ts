@@ -13,8 +13,12 @@ describe("when beforeEach callback throws", () => {
     expect(proc.exitCode).toBe(1);
     let err = await new Response(proc.stderr).text();
     // delete working directory and timing info from the actual output since that is unstable
+    // and normalize paths to forward slash
     // the important part is not printing some gibberish in place of the second "test 1"
-    err = err.replaceAll(import.meta.dir, "").replaceAll(/ \[[\d\.]+ms\]/g, "");
+    err = err
+      .replaceAll(import.meta.dir, "")
+      .replaceAll(/ \[[\d\.]+ms\]/g, "")
+      .replaceAll("\\", "/");
     expect(err).toBe(`
 err-in-hook-and-multiple-tests.ts:
 1 | import { beforeEach, test } from "bun:test";

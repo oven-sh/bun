@@ -685,7 +685,7 @@ const LinesToCharsResult = struct {
 /// @return Three element Object array, containing the encoded text1, the
 ///     encoded text2 and the List of unique strings.  The zeroth element
 ///     of the List of unique strings is intentionally blank.
-fn diffLinesToChars(
+pub fn diffLinesToChars(
     allocator: std.mem.Allocator,
     text1: []const u8,
     text2: []const u8,
@@ -754,7 +754,7 @@ fn diffLinesToCharsMunge(
 /// of text.
 /// @param diffs List of Diff objects.
 /// @param lineArray List of unique strings.
-fn diffCharsToLines(
+pub fn diffCharsToLines(
     allocator: std.mem.Allocator,
     diffs: []Diff,
     line_array: []const []const u8,

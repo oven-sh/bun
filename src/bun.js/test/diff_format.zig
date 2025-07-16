@@ -7,19 +7,23 @@ pub const DiffFormatter = struct {
     not: bool = false,
 
     pub fn format(this: DiffFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var scope = bun.AllocationScope.init(default_allocator);
+        // defer scope.deinit(); // TODO: fix leaks
+        const allocator = scope.allocator();
+
         if (this.expected_string != null and this.received_string != null) {
             const received = this.received_string.?;
             const expected = this.expected_string.?;
 
-            try printDiff(this.not, received, expected, writer);
+            try printDiff(allocator, this.not, received, expected, writer);
             return;
         }
 
         if (this.received == null or this.expected == null) return;
 
         const received = this.received.?;
-        var received_buf = MutableString.init(default_allocator, 0) catch unreachable;
-        var expected_buf = MutableString.init(default_allocator, 0) catch unreachable;
+        var received_buf = MutableString.init(allocator, 0) catch unreachable;
+        var expected_buf = MutableString.init(allocator, 0) catch unreachable;
         defer {
             received_buf.deinit();
             expected_buf.deinit();
@@ -70,11 +74,11 @@ pub const DiffFormatter = struct {
         const received_slice = received_buf.slice();
         const expected_slice = expected_buf.slice();
 
-        try printDiff(this.not, received_slice, expected_slice, writer);
+        try printDiff(allocator, this.not, received_slice, expected_slice, writer);
     }
 };
 
-fn printDiff(not: bool, received_slice: string, expected_slice: string, writer: anytype) !void {
+fn printDiff(allocator: std.mem.Allocator, not: bool, received_slice: string, expected_slice: string, writer: anytype) !void {
     if (not) {
         const not_fmt = "Expected: not <green>{s}<r>";
         if (Output.enable_ansi_colors) {
@@ -88,8 +92,8 @@ fn printDiff(not: bool, received_slice: string, expected_slice: string, writer: 
     // Always use line-based diff for consistency
     var dmp = DiffMatchPatch.default;
     dmp.diff_timeout = 200;
-    var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, received_slice.len > 300 or expected_slice.len > 300);
-    defer diffs.deinit(default_allocator);
+    var diffs = try dmp.diff(allocator, received_slice, expected_slice, received_slice.len > 300 or expected_slice.len > 300);
+    defer diffs.deinit(allocator);
 
     const equal_fmt = "<d> {s}<r>";
     const delete_fmt = "<red>-{s}<r>";

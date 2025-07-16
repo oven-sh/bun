@@ -2064,6 +2064,10 @@ pub const BundleOptions = struct {
 
         opts.polyfill_node_globals = opts.target == .browser;
 
+        if (transform.tsconfig_override) |tsconfig| {
+            opts.tsconfig_override = tsconfig;
+        }
+
         Analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
         Analytics.Features.external += @as(usize, @intFromBool(transform.external.len > 0));
         return opts;

@@ -515,6 +515,11 @@ pub fn writer() WriterType {
     return source.stream.quietWriter();
 }
 
+pub fn writerBuffered() Source.BufferedStream.Writer {
+    bun.debugAssert(source_set);
+    return source.buffered_stream.writer();
+}
+
 pub fn resetTerminal() void {
     if (!enable_ansi_colors) {
         return;

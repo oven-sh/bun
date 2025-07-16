@@ -70,7 +70,7 @@ function parseDeclarations(
       continue;
     }
 
-    const inlineDeclPattern = /^(?:pub )?const ([a-zA-Z0-9_]+) = (.+);$/;
+    const inlineDeclPattern = /^(?:pub )?const ([a-zA-Z0-9_]+) = (.+);(\s*\/\/[^\n]*)?$/;
     const match = line.match(inlineDeclPattern);
 
     if (!match) continue;
@@ -301,6 +301,8 @@ function extractThisDeclaration(declarations: Map<string, Declaration>): Declara
   return null;
 }
 
+const DELETED_LINE = "%DELETED_LINE%";
+
 // Main execution function for a single file
 async function processFile(filePath: string): Promise<void> {
   const originalFileContents = await Bun.file(filePath).text();
@@ -325,12 +327,12 @@ async function processFile(filePath: string): Promise<void> {
     // Remove unused declarations
     if (config.removeUnused) {
       for (const line of unusedLineIndices) {
-        sortedLines[line] = "";
+        sortedLines[line] = DELETED_LINE;
         needsRecurse = true;
       }
     }
     if (thisDeclaration) {
-      sortedLines[thisDeclaration.index] = "";
+      sortedLines[thisDeclaration.index] = DELETED_LINE;
     }
     if (thisDeclaration) {
       let firstNonFileCommentLine = 0;
@@ -347,6 +349,10 @@ async function processFile(filePath: string): Promise<void> {
     }
     fileContents = sortedLines.join("\n");
   }
+
+  // Remove deleted lines
+  fileContents = fileContents.replaceAll(DELETED_LINE + "\n", "");
+  fileContents = fileContents.replaceAll(DELETED_LINE, ""); // any remaining lines
 
   // Remove any leading newlines
   fileContents = fileContents.replace(/^\n+/, "");

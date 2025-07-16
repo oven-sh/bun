@@ -46,7 +46,6 @@ jobs:
           version: 0.14.0
       - name: Zig Format
         run: |
-          bun scripts/zig-remove-unreferenced-top-level-decls.ts src/
           zig fmt src
           bun scripts/sortImports src
           zig fmt src

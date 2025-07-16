@@ -691,6 +691,11 @@ pub fn installIsolatedPackages(
                             var store_path: bun.AbsPath(.{}) = .initTopLevelDir();
                             defer store_path.deinit();
                             installer.appendStorePath(&store_path, entry_id);
+                            const scope_for_patch_tag_path = store_path.save();
+                            if (pkg_res_tag == .npm)
+                                // if it's from npm, it should always have a package.json.
+                                // in other cases, probably yes but i'm less confident.
+                                store_path.append("package.json");
                             const exists = sys.existsZ(store_path.sliceZ());
 
                             break :needs_install switch (patch_info) {
@@ -700,11 +705,9 @@ pub fn installIsolatedPackages(
                                 .patch => |patch| {
                                     var hash_buf: install.BuntagHashBuf = undefined;
                                     const hash = install.buntaghashbuf_make(&hash_buf, patch.contents_hash);
-                                    var patch_tag_path: bun.AbsPath(.{}) = .initTopLevelDir();
-                                    defer patch_tag_path.deinit();
-                                    installer.appendStorePath(&patch_tag_path, entry_id);
-                                    patch_tag_path.append(hash);
-                                    break :needs_install !sys.existsZ(patch_tag_path.sliceZ());
+                                    scope_for_patch_tag_path.restore();
+                                    store_path.append(hash);
+                                    break :needs_install !sys.existsZ(store_path.sliceZ());
                                 },
                             };
                         };

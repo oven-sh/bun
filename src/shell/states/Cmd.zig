@@ -420,13 +420,12 @@ fn initSubproc(this: *Cmd) Yield {
 
     var arena = &this.spawn_arena;
     // var arena_allocator = arena.allocator();
-    var spawn_args = Subprocess.SpawnArgs.default(arena, this.base.interpreter.event_loop, false);
+    var spawn_args = Subprocess.SpawnArgs.default(arena, this, this.base.interpreter.event_loop, false);
 
-    spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
     spawn_args.cmd_parent = this;
     spawn_args.cwd = this.base.shell.cwdZ();
 
-    const args = args: {
+    {
         this.args.append(null) catch bun.outOfMemory();
 
         log("Cmd(0x{x}, {s}) IO: {}", .{ @intFromPtr(this), if (this.args.items.len > 0) this.args.items[0] orelse "<no args>" else "<no args>", this.io });
@@ -499,10 +498,7 @@ fn initSubproc(this: *Cmd) Yield {
         this.base.allocator().free(first_arg_real);
         const duped = this.base.allocator().dupeZ(u8, bun.span(resolved)) catch bun.outOfMemory();
         this.args.items[0] = duped;
-
-        break :args this.args;
-    };
-    spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args.items, .capacity = args.capacity };
+    }
 
     // Fill the env from the export end and cmd local env
     {
@@ -601,7 +597,7 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) ?Yield {
             },
             .atom => {
                 if (this.redirection_file.items.len == 0) {
-                    return this.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{spawn_args.argv.items[0] orelse "<unknown>"});
+                    return this.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{spawn_args.cmd_parent.args.items[0] orelse "<unknown>"});
                 }
                 const path = this.redirection_file.items[0..this.redirection_file.items.len -| 1 :0];
                 log("Expanded Redirect: {s}\n", .{this.redirection_file.items[0..]});

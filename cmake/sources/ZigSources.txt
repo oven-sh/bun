@@ -343,6 +343,7 @@ src/cli/pack_command.zig
 src/cli/package_manager_command.zig
 src/cli/patch_command.zig
 src/cli/patch_commit_command.zig
+src/cli/pm_pkg_command.zig
 src/cli/pm_trusted_command.zig
 src/cli/pm_version_command.zig
 src/cli/pm_view_command.zig
@@ -537,6 +538,7 @@ src/http/HTTPThread.zig
 src/http/InitError.zig
 src/http/InternalState.zig
 src/http/Method.zig
+src/http/mime_type_list_enum.zig
 src/http/MimeType.zig
 src/http/ProxyTunnel.zig
 src/http/SendFile.zig
@@ -651,6 +653,7 @@ src/paths.zig
 src/paths/EnvPath.zig
 src/paths/path_buffer_pool.zig
 src/paths/Path.zig
+src/pe.zig
 src/perf.zig
 src/pool.zig
 src/Progress.zig

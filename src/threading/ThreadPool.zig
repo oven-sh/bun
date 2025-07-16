@@ -251,18 +251,10 @@ fn do_impl(
 ) !void {
     if (values.len == 0)
         return;
-    var allocated_wait_group: ?*WaitGroup = null;
-    defer {
-        if (allocated_wait_group) |group| {
-            allocator.destroy(group);
-        }
-    }
-
-    var wait_group = wg orelse brk: {
-        const new_wg = try allocator.create(WaitGroup);
-        new_wg.* = .{};
-        allocated_wait_group = new_wg;
-        break :brk new_wg;
+    var local_wait_group: ?WaitGroup = null;
+    const wait_group = wg orelse brk: {
+        local_wait_group = .{};
+        break :brk &local_wait_group.?;
     };
     const WaitContext = struct {
         wait_group: *WaitGroup = undefined,
@@ -309,7 +301,11 @@ fn do_impl(
         batch.push(Batch.from(&runner_task.task));
     }
 
-    wait_group.add(values.len);
+    if (local_wait_group) |*local_wg| {
+        local_wg.addUnsynchronized(values.len);
+    } else {
+        wait_group.add(values.len);
+    }
     this.schedule(batch);
     wait_group.wait();
 }

@@ -81,6 +81,28 @@ Bun supports `"workspaces"` in package.json. For complete documentation refer to
 }
 ```
 
+## Isolated Installs
+
+Bun supports "isolated installs" - a modern alternative to traditional hoisted installations that eliminates phantom dependencies and significantly improves performance. This feature uses symlinks to create isolated dependency trees while sharing identical packages across your project.
+
+```json#package.json
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "workspaces": {
+    "nodeLinker": "isolated"
+  }
+}
+```
+
+**Key benefits:**
+- **🚫 Eliminates phantom dependencies**: Each package can only access its explicitly declared dependencies
+- **🚀 Up to 8x faster on Windows**: Optimized file system operations and parallelization
+- **⚡ Parallel installation**: Dependencies install concurrently when their requirements are met
+- **💾 Disk space savings**: Symlinks prevent duplicate installations of identical packages
+
+For complete documentation, refer to [Isolated Installs](./isolated-installs.md).
+
 ## Installing dependencies for specific packages
 
 In a monorepo, you can install the dependencies for a subset of packages using the `--filter` flag.

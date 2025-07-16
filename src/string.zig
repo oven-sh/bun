@@ -598,7 +598,12 @@ pub const String = extern struct {
             return self.value.WTFStringImpl.latin1Slice();
         }
 
-        return self.toZigString().slice();
+        const zigstr = self.toZigString();
+        if (zigstr.is16Bit()) {
+            // UTF-16 strings cannot be treated as latin1
+            return &[_]u8{};
+        }
+        return zigstr.slice();
     }
 
     pub fn isUTF8(self: String) bool {
@@ -618,12 +623,13 @@ pub const String = extern struct {
         }
 
         if (self.tag == .ZigString or self.tag == .StaticZigString) {
-            if (self.value.ZigString.isUTF8()) {
-                return self.value.ZigString.slice();
+            const zigstr = self.value.ZigString;
+            if (zigstr.isUTF8() and !zigstr.is16Bit()) {
+                return zigstr.slice();
             }
 
-            if (bun.strings.isAllASCII(self.toZigString().slice())) {
-                return self.value.ZigString.slice();
+            if (!zigstr.is16Bit() and bun.strings.isAllASCII(zigstr.slice())) {
+                return zigstr.slice();
             }
 
             return null;
@@ -693,7 +699,11 @@ pub const String = extern struct {
             bun.assert(self.tag == .ZigString or self.tag == .StaticZigString);
             bun.assert(self.canBeUTF8());
         }
-        return self.value.ZigString.slice();
+        const zigstr = self.value.ZigString;
+        if (comptime bun.Environment.allow_assert) {
+            bun.assert(!zigstr.is16Bit());
+        }
+        return zigstr.slice();
     }
 
     pub fn canBeUTF8(self: String) bool {
@@ -701,11 +711,16 @@ pub const String = extern struct {
             return self.value.WTFStringImpl.is8Bit() and bun.strings.isAllASCII(self.value.WTFStringImpl.latin1Slice());
 
         if (self.tag == .ZigString or self.tag == .StaticZigString) {
-            if (self.value.ZigString.isUTF8()) {
+            const zigstr = self.value.ZigString;
+            if (zigstr.isUTF8()) {
                 return true;
             }
 
-            return bun.strings.isAllASCII(self.toZigString().slice());
+            if (zigstr.is16Bit()) {
+                return false;
+            }
+
+            return bun.strings.isAllASCII(zigstr.slice());
         }
 
         return self.tag == .Empty;

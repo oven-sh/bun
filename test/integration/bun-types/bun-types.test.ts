@@ -1,10 +1,6 @@
 import { fileURLToPath, $ as Shell } from "bun";
-<<<<<<< HEAD
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-=======
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
->>>>>>> main
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -77,23 +73,6 @@ beforeAll(async () => {
   }
 });
 
-<<<<<<< HEAD
-beforeEach(async () => {
-  await $`
-    cd ${FIXTURE_DIR}
-    cp ${TSCONFIG_SOURCE_PATH} tsconfig.json
-    sed -i 's/"skipLibCheck": true/"skipLibCheck": false/' tsconfig.json
-    sed -i 's/"noPropertyAccessFromIndexSignature": false/"noPropertyAccessFromIndexSignature": false,\n    "exactOptionalPropertyTypes": true/' tsconfig.json
-  `;
-});
-
-afterEach(async () => {
-  await $`
-    cd ${FIXTURE_DIR}
-    cat tsconfig.json
-  `;
-});
-=======
 async function diagnose(
   fixtureDir: string,
   config: {
@@ -240,7 +219,6 @@ function checkForEmptyInterfaces(program: ts.Program, fixtureDir: string) {
 
   return empties;
 }
->>>>>>> main
 
 afterAll(async () => {
   if (TEMP_DIR) {

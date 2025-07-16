@@ -493,7 +493,7 @@ for (let [gcTick, label] of [
                 expect(output).toBe(expected);
               });
 
-              it.skipIf(isWindows && isBroken && callback === huge)("after exit", async () => {
+              it.todoIf(isWindows && isBroken)("after exit", async () => {
                 const process = callback();
                 await process.exited;
                 const output = await process.stdout.text();

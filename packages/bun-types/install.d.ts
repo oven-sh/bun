@@ -87,8 +87,13 @@ declare module "bun" {
 
       export type Provider = {
         /**
-         * Since provider packages are not related to Bun versions, we require a
-         * version number
+         * This is the version of the provider implementation. It may change in
+         * future versions, so we will use this version to discriminate between
+         * such versions. It's entirely possible this API changes in the future
+         * so much that version 1 would no longer be supported.
+         *
+         * The version is required because third-party provider package versions
+         * are inherently unrelated to Bun versions
          */
         version: "1";
 

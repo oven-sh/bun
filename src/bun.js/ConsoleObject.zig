@@ -2109,12 +2109,31 @@ pub const Formatter = struct {
                     defer if (comptime enable_ansi_colors)
                         writer.writeAll(Output.prettyFmt("<r>", true));
 
-                    if (str.isUTF16()) {
-                        try this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
-                        return;
-                    }
+                    switch (str.isUTF16()) {
+                        inline else => |isUTF16| {
+                            const encoding: bun.strings.Encoding = comptime if (isUTF16) .utf16 else .latin1;
+                            const slice = if (isUTF16) str.utf16() else str.latin1();
 
-                    JSPrinter.writeJSONString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
+                            if (std.mem.indexOfScalar(encoding.Unit(), slice, '\n') == null) {
+                                JSPrinter.writePreQuotedString(encoding, @ptrCast(slice), Writer, writer_, '"', false, true) catch unreachable;
+                            } else {
+                                writer.writeAll("\"");
+                                var lines = std.mem.splitScalar(encoding.Unit(), slice, '\n');
+
+                                if (lines.next()) |line| {
+                                    JSPrinter.writePreQuotedString(encoding, line, Writer, writer_, '"', false, true) catch unreachable;
+                                }
+
+                                while (lines.next()) |line| {
+                                    writer.writeAll("\n");
+                                    this.writeIndent(Writer, writer_) catch {};
+                                    writer.writeAll(" ");
+                                    JSPrinter.writePreQuotedString(encoding, line, Writer, writer_, '"', false, true) catch unreachable;
+                                }
+                                writer.writeAll("\"");
+                            }
+                        },
+                    }
 
                     return;
                 }

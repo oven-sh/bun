@@ -191,8 +191,7 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     return bytes;
 }
 
-pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
-    const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
+pub fn writePreQuotedString(comptime encoding: strings.Encoding, text: []const encoding.Unit(), comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool) !void {
     if (comptime json and quote_char != '"') @compileError("for json, quote_char must be '\"'");
     var i: usize = 0;
     const n: usize = text.len;
@@ -217,14 +216,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 i32,
                 0,
             ),
-            .ascii => brk: {
-                std.debug.assert(text[i] <= 0x7F);
-                break :brk text[i];
-            },
-            .latin1 => brk: {
-                if (text[i] <= 0x7F) break :brk text[i];
-                break :brk strings.latin1ToCodepointAssumeNotASCII(text[i], i32);
-            },
+            .ascii, .latin1 => text[i],
             .utf16 => brk: {
                 // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
                 // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
@@ -392,13 +384,13 @@ pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime asci
 
     try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
     try bytes.appendChar('"');
-    try writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, true, .utf8);
+    try writePreQuotedString(.utf8, text, @TypeOf(writer), writer, '"', ascii_only, true);
     bytes.appendChar('"') catch unreachable;
 }
 
 pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
     try writer.writeAll("\"");
-    try writePreQuotedString(input, Writer, writer, '"', false, true, encoding);
+    try writePreQuotedString(encoding, input, Writer, writer, '"', false, true);
     try writer.writeAll("\"");
 }
 
@@ -1593,20 +1585,18 @@ fn NewPrinter(
         pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', ascii_only, false, .utf8),
-                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, false, .utf8),
-                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', ascii_only, false, .utf8),
+                '\'' => writePreQuotedString(.utf8, text, @TypeOf(writer), writer, '\'', ascii_only, false),
+                '"' => writePreQuotedString(.utf8, text, @TypeOf(writer), writer, '"', ascii_only, false),
+                '`' => writePreQuotedString(.utf8, text, @TypeOf(writer), writer, '`', ascii_only, false),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
         pub fn printStringCharactersUTF16(e: *Printer, text: []const u16, quote: u8) void {
-            const slice = std.mem.sliceAsBytes(text);
-
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', ascii_only, false, .utf16),
-                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', ascii_only, false, .utf16),
-                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', ascii_only, false, .utf16),
+                '\'' => writePreQuotedString(.utf16, text, @TypeOf(writer), writer, '\'', ascii_only, false),
+                '"' => writePreQuotedString(.utf16, text, @TypeOf(writer), writer, '"', ascii_only, false),
+                '`' => writePreQuotedString(.utf16, text, @TypeOf(writer), writer, '`', ascii_only, false),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }

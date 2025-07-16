@@ -6,6 +6,15 @@ pub const Encoding = enum {
     utf8,
     latin1,
     utf16,
+
+    pub fn Unit(comptime self: @This()) type {
+        return switch (self) {
+            .ascii => u8,
+            .utf8 => u8,
+            .latin1 => u8,
+            .utf16 => u16,
+        };
+    }
 };
 
 /// Returned by classification functions that do not discriminate between utf8 and ascii.
@@ -2117,7 +2126,7 @@ fn QuoteEscapeFormat(comptime flags: QuoteEscapeFormatFlags) type {
         data: []const u8,
 
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            try bun.js_printer.writePreQuotedString(self.data, @TypeOf(writer), writer, flags.quote_char, false, flags.json, flags.str_encoding);
+            try bun.js_printer.writePreQuotedString(flags.str_encoding, self.data, @TypeOf(writer), writer, flags.quote_char, false, flags.json);
         }
     };
 }
@@ -2264,7 +2273,6 @@ pub const eqlUtf16 = unicode.eqlUtf16;
 pub const isAllASCII = unicode.isAllASCII;
 pub const isValidUTF8 = unicode.isValidUTF8;
 pub const isValidUTF8WithoutSIMD = unicode.isValidUTF8WithoutSIMD;
-pub const latin1ToCodepointAssumeNotASCII = unicode.latin1ToCodepointAssumeNotASCII;
 pub const latin1ToCodepointBytesAssumeNotASCII = unicode.latin1ToCodepointBytesAssumeNotASCII;
 pub const latin1ToCodepointBytesAssumeNotASCII16 = unicode.latin1ToCodepointBytesAssumeNotASCII16;
 pub const literal = unicode.literal;

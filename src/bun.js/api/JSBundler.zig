@@ -58,6 +58,7 @@ pub const JSBundler = struct {
         throw_on_error: bool = true,
         env_behavior: Api.DotEnvBehavior = .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -529,6 +530,7 @@ pub const JSBundler = struct {
             self.banner.deinit();
             self.env_prefix.deinit();
             self.footer.deinit();
+            self.tsconfig_override.deinit();
         }
     };
 

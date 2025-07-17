@@ -1726,6 +1726,22 @@ describe("rm", () => {
     expect(existsSync(path)).toBe(false);
   });
 
+  it.only("returns the right error when removing a dir without recursive", () => {
+    const path = `${tmpdir()}/${Date.now()}.rm.dir`;
+    try {
+      mkdirSync(path);
+    } catch (e) {}
+    expect(existsSync(path)).toBe(true);
+    let error;
+    try {
+      rmSync(path, { force: true });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect(error.errno).toBe(21);
+  });
+
   it("removes a dir recursively", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {

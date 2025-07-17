@@ -5678,6 +5678,7 @@ pub const NodeFS = struct {
                     error.InvalidUtf8 => .INVAL,
                     error.InvalidWtf8 => .INVAL,
                     error.BadPathName => .INVAL,
+                    error.IsDir => .ISDIR,
                     error.FileNotFound => brk: {
                         if (args.force) {
                             return Maybe(Return.Rm).success;

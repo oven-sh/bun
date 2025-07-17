@@ -566,6 +566,7 @@ src/install/install_binding.zig
 src/install/install.zig
 src/install/integrity.zig
 src/install/isolated_install.zig
+src/install/isolated_install/FileCopier.zig
 src/install/isolated_install/Hardlinker.zig
 src/install/isolated_install/Installer.zig
 src/install/isolated_install/Store.zig

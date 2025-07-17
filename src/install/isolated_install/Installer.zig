@@ -455,7 +455,7 @@ pub const Installer = struct {
                                         const src_path_len = bun.windows.GetFinalPathNameByHandleW(
                                             folder_dir.cast(),
                                             src_path.buf().ptr,
-                                            src_path.buf().len,
+                                            @intCast(src_path.buf().len),
                                             0,
                                         );
 

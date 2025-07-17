@@ -1,4 +1,4 @@
-import { file } from "bun";
+import { file, Glob } from "bun";
 import path from "path";
 
 // prettier-ignore
@@ -57,30 +57,32 @@ const sources: Array<{ output: string; paths: string[]; excludes?: string[] }> =
 
 let counts: Record<string, [number, string][]> = {};
 
-const zigSources = await Bun.file(import.meta.dir + "/../../cmake/sources/ZigSources.txt").text();
-const zigSourcesLines = zigSources
-  .split("\n")
-  .map(line => line.trim())
-  .filter(line => line.length > 0 && !line.startsWith("#"));
+for (const source of sources) {
+  const { paths, excludes } = source;
 
-for (const source of zigSourcesLines) {
-  if (!source.endsWith(".zig")) continue;
-  if (source.startsWith("src" + path.sep + "deps")) continue;
-  if (source.startsWith("src" + path.sep + "codegen")) continue;
-  const content = await file(source).text();
-  for (const word of words_keys) {
-    let regex = words[word].regex ? new RegExp(word, "g") : undefined;
-    const did_match = regex ? regex.test(content) : content.includes(word);
-    if (regex) regex.lastIndex = 0;
-    if (did_match) {
-      counts[word] ??= [];
-      const lines = content.split("\n");
-      for (let line_i = 0; line_i < lines.length; line_i++) {
-        const trim = lines[line_i].trim();
-        if (trim.startsWith("//") || trim.startsWith("\\\\")) continue;
-        const count = regex ? [...lines[line_i].matchAll(regex)].length : lines[line_i].split(word).length - 1;
-        for (let count_i = 0; count_i < count; count_i++) {
-          counts[word].push([line_i + 1, source]);
+  for (const pattern of paths) {
+    const glob = new Glob(pattern);
+
+    for await (const source of glob.scan()) {
+      if (!source.endsWith(".zig")) continue;
+      if (source.startsWith("src" + path.sep + "deps")) continue;
+      if (source.startsWith("src" + path.sep + "codegen")) continue;
+      const content = await file(source).text();
+      for (const word of words_keys) {
+        let regex = words[word].regex ? new RegExp(word, "g") : undefined;
+        const did_match = regex ? regex.test(content) : content.includes(word);
+        if (regex) regex.lastIndex = 0;
+        if (did_match) {
+          counts[word] ??= [];
+          const lines = content.split("\n");
+          for (let line_i = 0; line_i < lines.length; line_i++) {
+            const trim = lines[line_i].trim();
+            if (trim.startsWith("//") || trim.startsWith("\\\\")) continue;
+            const count = regex ? [...lines[line_i].matchAll(regex)].length : lines[line_i].split(word).length - 1;
+            for (let count_i = 0; count_i < count; count_i++) {
+              counts[word].push([line_i + 1, source]);
+            }
+          }
         }
       }
     }

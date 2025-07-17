@@ -348,20 +348,33 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   test(`isolated install with backend: ${backend}`, async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
-    await write(
-      packageJson,
-      JSON.stringify({
-        name: "test-pkg-backend",
-        dependencies: {
-          "no-deps": "1.0.0",
-          "alias-loop-2": "1.0.0",
-          "alias-loop-1": "1.0.0",
-          "1-peer-dep-a": "1.0.0",
-          "basic-1": "1.0.0",
-          "is-number": "1.0.0",
-        },
-      }),
-    );
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "test-pkg-backend",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "alias-loop-2": "1.0.0",
+            "alias-loop-1": "1.0.0",
+            "1-peer-dep-a": "1.0.0",
+            "basic-1": "1.0.0",
+            "is-number": "1.0.0",
+            "file-dep": "file:./file-dep",
+            "@scoped/file-dep": "file:./scoped-file-dep",
+          },
+        }),
+      ),
+      write(join(packageDir, "file-dep", "package.json"), JSON.stringify({ name: "file-dep", version: "1.0.0" })),
+      write(
+        join(packageDir, "file-dep", "dir1", "dir2", "dir3", "dir4", "dir5", "index.js"),
+        "module.exports = 'hello from file-dep';",
+      ),
+      write(
+        join(packageDir, "scoped-file-dep", "package.json"),
+        JSON.stringify({ name: "@scoped/file-dep", version: "1.0.0" }),
+      ),
+    ]);
 
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--backend", backend],
@@ -384,6 +397,60 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
       ).json(),
     ).toEqual({
       name: "no-deps",
+      version: "1.0.0",
+    });
+
+    expect(readlinkSync(join(packageDir, "node_modules", "file-dep"))).toBe(
+      join(".bun", "file-dep@file+file-dep", "node_modules", "file-dep"),
+    );
+
+    expect(
+      await file(
+        join(packageDir, "node_modules", ".bun", "file-dep@file+file-dep", "node_modules", "file-dep", "package.json"),
+      ).json(),
+    ).toEqual({
+      name: "file-dep",
+      version: "1.0.0",
+    });
+
+    expect(
+      await file(
+        join(
+          packageDir,
+          "node_modules",
+          ".bun",
+          "file-dep@file+file-dep",
+          "node_modules",
+          "file-dep",
+          "dir1",
+          "dir2",
+          "dir3",
+          "dir4",
+          "dir5",
+          "index.js",
+        ),
+      ).text(),
+    ).toBe("module.exports = 'hello from file-dep';");
+
+    expect(readlinkSync(join(packageDir, "node_modules", "@scoped", "file-dep"))).toBe(
+      join("..", ".bun", "@scoped+file-dep@file+scoped-file-dep", "node_modules", "@scoped", "file-dep"),
+    );
+
+    expect(
+      await file(
+        join(
+          packageDir,
+          "node_modules",
+          ".bun",
+          "@scoped+file-dep@file+scoped-file-dep",
+          "node_modules",
+          "@scoped",
+          "file-dep",
+          "package.json",
+        ),
+      ).json(),
+    ).toEqual({
+      name: "@scoped/file-dep",
       version: "1.0.0",
     });
   });

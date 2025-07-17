@@ -9,7 +9,6 @@
   "devDependencies": {
     "esbuild": "^0.21.4",
     "mitata": "^0.1.11",
-    "p-limit": "^6.2.0",
     "peechy": "0.4.34",
     "prettier": "^3.5.3",
     "prettier-plugin-organize-imports": "^4.0.0",

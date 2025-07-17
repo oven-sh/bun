@@ -31,7 +31,7 @@ import { readFile } from "node:fs/promises";
 import { availableParallelism, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
-import pLimit from "p-limit";
+import pLimit from "./p-limit.mjs";
 import {
   getAbi,
   getAbiVersion,

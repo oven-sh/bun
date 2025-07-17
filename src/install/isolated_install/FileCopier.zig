@@ -5,8 +5,42 @@ pub const FileCopier = struct {
     dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }),
 
     pub fn copy(this: *FileCopier, skip_dirnames: []const bun.OSPathSlice) OOM!sys.Maybe(void) {
-        var dest_dir = bun.MakePath.makeOpenPath(FD.cwd().stdDir(), this.dest_subpath.sliceZ(), .{}) catch {
-            unreachable;
+        var dest_dir = bun.MakePath.makeOpenPath(FD.cwd().stdDir(), this.dest_subpath.sliceZ(), .{}) catch |err| {
+            // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
+            var errno: bun.sys.E = switch (@as(anyerror, err)) {
+                error.AccessDenied => .PERM,
+                error.FileTooBig => .FBIG,
+                error.SymLinkLoop => .LOOP,
+                error.ProcessFdQuotaExceeded => .NFILE,
+                error.NameTooLong => .NAMETOOLONG,
+                error.SystemFdQuotaExceeded => .MFILE,
+                error.SystemResources => .NOMEM,
+                error.ReadOnlyFileSystem => .ROFS,
+                error.FileSystem => .IO,
+                error.FileBusy => .BUSY,
+                error.DeviceBusy => .BUSY,
+
+                // One of the path components was not a directory.
+                // This error is unreachable if `sub_path` does not contain a path separator.
+                error.NotDir => .NOTDIR,
+                // On Windows, file paths must be valid Unicode.
+                error.InvalidUtf8 => .INVAL,
+                error.InvalidWtf8 => .INVAL,
+
+                // On Windows, file paths cannot contain these characters:
+                // '/', '*', '?', '"', '<', '>', '|'
+                error.BadPathName => .INVAL,
+
+                error.FileNotFound => .NOENT,
+                error.IsDir => .ISDIR,
+
+                else => .FAULT,
+            };
+            if (Environment.isWindows and errno == .NOTDIR) {
+                errno = .NOENT;
+            }
+
+            return .{ .err = bun.sys.Error.fromCode(errno, .copyfile) };
         };
         defer dest_dir.close();
 

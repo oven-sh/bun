@@ -145,7 +145,7 @@ test("no color", async () => {
     31 |   expect(originalString).toEqual(expectedString);
     32 | });
     33 | 
-    34 | test("example 4 - ansi colors", () => {
+    34 | test("example 4 - ansi colors don't get printed to console", () => {
     35 |   expect("\\x1b[31mhello\\x1b[0m").toEqual("\\x1b[32mhello\\x1b[0m");
                                           ^
     error: expect(received).toEqual(expected)
@@ -161,7 +161,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 4 - ansi colors [DURATION]
+    (fail) example 4 - ansi colors don't get printed to console [DURATION]
 
      0 pass
      4 fail
@@ -175,3 +175,43 @@ test("no color", async () => {
     "
   `);
 });
+
+test("color", async () => {
+  const spawn = Bun.spawn({
+    cmd: [bunExe(), import.meta.dir + "/diffexample-color.fixture.ts"],
+    stdio: ["inherit", "pipe", "pipe"],
+    env: {
+      ...bunEnv,
+      FORCE_COLOR: "1",
+    },
+  });
+  await spawn.exited;
+  let stderr = await spawn.stderr.text();
+  stderr = stderr.split("Difference:")[1];
+  const split = stderr.split("\n\n");
+  split.pop();
+  stderr = split.join("\n\n");
+
+  expect(stderr).toMatchInlineSnapshot(`
+    "
+
+    \x1B[31m- Received\x1B[0m
+    \x1B[32m+ Expected\x1B[0m
+
+    \x1B[36m@@ -1,5 +1,5 @@\x1B[0m
+      \x1B[2m"a\x1B[0m
+    \x1B[31m-\x1B[0m \x1B[2m \x1B[0m\x1B[41mb\x1B[0m
+    \x1B[32m+\x1B[0m \x1B[2m \x1B[0m\x1B[42md\x1B[0m
+      \x1B[2m c\x1B[0m
+    \x1B[31m-\x1B[0m \x1B[41m \x1B[0m\x1B[2m d\x1B[0m
+    \x1B[32m+\x1B[0m \x1B[2m d\x1B[0m
+      \x1B[2m e"\x1B[0m"
+  `);
+  expect(await spawn.stdout.text()).toMatchInlineSnapshot(`""`);
+  expect(spawn.exitCode).toBe(1);
+});
+
+/*
+issue:
+in inline snapshot diffing, it is printing the color codes
+*/

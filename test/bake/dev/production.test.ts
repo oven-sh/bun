@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { devTest, minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
+import { existsSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
-import { existsSync } from "fs";
+import { tempDirWithBakeDeps } from "../bake-harness";
 
 /**
  * Production build tests
@@ -471,7 +471,7 @@ export default function Counter() {
     // Also check for component-specific bundle by looking for all JS files
     const bundles = await Bun.$`ls ${path.join(dir, "dist", "_bun")}/*.js`.cwd(dir).text();
     const bundleFiles = bundles.trim().split("\n").filter(Boolean);
-    
+
     // Read all bundles to find the one with our component code
     let foundCounterBundle = false;
     for (const bundleFile of bundleFiles) {
@@ -481,7 +481,7 @@ export default function Counter() {
         break;
       }
     }
-    
+
     expect(foundCounterBundle).toBe(true);
   });
 

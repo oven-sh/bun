@@ -27,14 +27,14 @@ test("import.meta properties are NOT inlined without bake framework", async () =
 
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");
-  
+
   // When not bundled, these properties should resolve to actual values
   expect(stdout).toContain("dir:");
   expect(stdout).toContain("dirname:");
   expect(stdout).toContain("file:");
   expect(stdout).toContain("path:");
   expect(stdout).toContain("url:");
-  
+
   // The values should NOT be inlined - they should be the actual runtime values
   expect(stdout).not.toContain("undefined");
 });

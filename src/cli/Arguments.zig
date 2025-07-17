@@ -1,5 +1,3 @@
-const Arguments = @This();
-
 pub fn loader_resolver(in: string) !Api.Loader {
     const option_loader = options.Loader.fromString(in) orelse return error.InvalidLoader;
     return option_loader.toAPI();
@@ -519,7 +517,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     }
 
     opts.tsconfig_override = if (args.option("--tsconfig-override")) |ts|
-        (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, Output.errorStream(), ts, "tsconfig.json"))
+        resolve_path.joinAbsString(cwd, &[_]string{ts}, .auto)
     else
         null;
 

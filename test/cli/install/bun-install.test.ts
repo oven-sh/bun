@@ -1155,8 +1155,8 @@ it("should handle installing the same peerDependency with different versions", a
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ peer@0.0.2",
     "+ boba@0.0.2",
+    "+ peer@0.0.2",
     "",
     "2 packages installed",
   ]);

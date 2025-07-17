@@ -17,15 +17,12 @@ afterAll(() => {
 
 describe("basic", () => {
   test("single dependency", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir();
+    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
     await write(
       packageJson,
       JSON.stringify({
         name: "test-pkg-1",
-        workspaces: {
-          nodeLinker: "isolated",
-        },
         dependencies: {
           "no-deps": "1.0.0",
         },
@@ -51,15 +48,12 @@ describe("basic", () => {
   });
 
   test("scope package", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir();
+    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
     await write(
       packageJson,
       JSON.stringify({
         name: "test-pkg-2",
-        workspaces: {
-          nodeLinker: "isolated",
-        },
         dependencies: {
           "@types/is-number": "1.0.0",
         },
@@ -94,15 +88,12 @@ describe("basic", () => {
   });
 
   test("transitive dependencies", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir();
+    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
     await write(
       packageJson,
       JSON.stringify({
         name: "test-pkg-3",
-        workspaces: {
-          nodeLinker: "isolated",
-        },
         dependencies: {
           "two-range-deps": "1.0.0",
         },
@@ -184,15 +175,12 @@ describe("basic", () => {
 });
 
 test("handles cyclic dependencies", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir();
+  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
   await write(
     packageJson,
     JSON.stringify({
       name: "test-pkg-cyclic",
-      workspaces: {
-        nodeLinker: "isolated",
-      },
       dependencies: {
         "a-dep-b": "1.0.0",
       },
@@ -239,15 +227,12 @@ test("handles cyclic dependencies", async () => {
 });
 
 test("can install folder dependencies", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir();
+  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
   await write(
     packageJson,
     JSON.stringify({
       name: "test-pkg-folder-deps",
-      workspaces: {
-        nodeLinker: "isolated",
-      },
       dependencies: {
         "folder-dep": "file:./pkg-1",
       },
@@ -285,7 +270,7 @@ test("can install folder dependencies", async () => {
 
 describe("isolated workspaces", () => {
   test("basic", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir();
+    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
     await Promise.all([
       write(
@@ -293,7 +278,6 @@ describe("isolated workspaces", () => {
         JSON.stringify({
           name: "test-pkg-workspaces",
           workspaces: {
-            nodeLinker: "isolated",
             packages: ["pkg-1", "pkg-2"],
           },
           dependencies: {
@@ -360,15 +344,12 @@ describe("isolated workspaces", () => {
 });
 
 test("many transitive dependencies", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir();
+  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
   await write(
     packageJson,
     JSON.stringify({
       name: "test-pkg-many-transitive-deps",
-      workspaces: {
-        nodeLinker: "isolated",
-      },
       dependencies: {
         "alias-loop-1": "1.0.0",
         "alias-loop-2": "1.0.0",

@@ -554,7 +554,7 @@ pub const TablePrinter = struct {
         {
             if (this.is_iterable) {
                 var ctx_: struct { this: *TablePrinter, columns: *@TypeOf(columns), idx: u32 = 0, err: bool = false } = .{ .this = this, .columns = &columns };
-                this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
+                try this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
                     fn callback(_: *JSC.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.C) void {
                         updateColumnsForRow(ctx.this, ctx.columns, .{ .num = ctx.idx }, value) catch {
                             ctx.err = true;
@@ -628,7 +628,7 @@ pub const TablePrinter = struct {
         {
             if (this.is_iterable) {
                 var ctx_: struct { this: *TablePrinter, columns: *@TypeOf(columns), writer: Writer, idx: u32 = 0, err: bool = false } = .{ .this = this, .columns = &columns, .writer = writer };
-                this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
+                try this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
                     fn callback(_: *JSC.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.C) void {
                         printRow(ctx.this, Writer, ctx.writer, enable_ansi_colors, ctx.columns, .{ .num = ctx.idx }, value) catch {
                             ctx.err = true;
@@ -1882,7 +1882,7 @@ pub const Formatter = struct {
             always_newline: bool = false,
             parent: JSValue,
             const enable_ansi_colors = enable_ansi_colors_;
-            pub fn handleFirstProperty(this: *@This(), globalThis: *JSC.JSGlobalObject, value: JSValue) void {
+            pub fn handleFirstProperty(this: *@This(), globalThis: *JSC.JSGlobalObject, value: JSValue) bun.JSError!void {
                 if (value.isCell() and !value.jsType().isFunction()) {
                     var writer = WrappedWriter(Writer){
                         .ctx = this.writer,
@@ -1890,7 +1890,7 @@ pub const Formatter = struct {
                         .estimated_line_length = &this.formatter.estimated_line_length,
                     };
 
-                    if (getObjectName(globalThis, value)) |name_str| {
+                    if (try getObjectName(globalThis, value)) |name_str| {
                         writer.print("{} ", .{name_str});
                     }
                 }
@@ -1936,7 +1936,7 @@ pub const Formatter = struct {
 
                 if (tag.cell.isHidden()) return;
                 if (ctx.i == 0) {
-                    handleFirstProperty(ctx, globalThis, ctx.parent);
+                    handleFirstProperty(ctx, globalThis, ctx.parent) catch return;
                 } else {
                     this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                 }
@@ -2034,9 +2034,9 @@ pub const Formatter = struct {
         };
     }
 
-    fn getObjectName(globalThis: *JSC.JSGlobalObject, value: JSValue) ?ZigString {
+    fn getObjectName(globalThis: *JSC.JSGlobalObject, value: JSValue) bun.JSError!?ZigString {
         var name_str = ZigString.init("");
-        value.getClassName(globalThis, &name_str);
+        try value.getClassName(globalThis, &name_str);
         if (!name_str.eqlComptime("Object")) {
             return name_str;
         } else if (value.getPrototype(globalThis).eqlValue(JSValue.null)) {
@@ -2209,7 +2209,7 @@ pub const Formatter = struct {
             .Double => {
                 if (value.isCell()) {
                     var number_name = ZigString.Empty;
-                    value.getClassName(this.globalThis, &number_name);
+                    try value.getClassName(this.globalThis, &number_name);
 
                     var number_value = ZigString.Empty;
                     try value.toZigString(&number_value, this.globalThis);
@@ -2300,12 +2300,12 @@ pub const Formatter = struct {
             },
             .Class => {
                 var printable = ZigString.init(&name_buf);
-                value.getClassName(this.globalThis, &printable);
+                try value.getClassName(this.globalThis, &printable);
                 this.addForNewLine(printable.len);
 
                 const proto = value.getPrototype(this.globalThis);
                 var printable_proto = ZigString.init(&name_buf);
-                proto.getClassName(this.globalThis, &printable_proto);
+                try proto.getClassName(this.globalThis, &printable_proto);
                 this.addForNewLine(printable_proto.len);
 
                 if (printable.len == 0) {
@@ -2633,7 +2633,7 @@ pub const Formatter = struct {
                 } else if (value.as(bun.api.ResolveMessage)) |resolve_log| {
                     resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                     return;
-                } else if (JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
+                } else if (try JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
                     return;
                 } else if (jsType != .DOMWrapper) {
                     if (value.isCallable()) {
@@ -2674,7 +2674,7 @@ pub const Formatter = struct {
             .Boolean => {
                 if (value.isCell()) {
                     var bool_name = ZigString.Empty;
-                    value.getClassName(this.globalThis, &bool_name);
+                    try value.getClassName(this.globalThis, &bool_name);
                     var bool_value = ZigString.Empty;
                     try value.toZigString(&bool_value, this.globalThis);
 
@@ -2733,7 +2733,7 @@ pub const Formatter = struct {
                                 .formatter = this,
                                 .writer = writer_,
                             };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                            try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                             if (this.failed) return;
                             if (single_line and iter.count > 0) {
                                 writer.writeAll(" ");
@@ -2763,7 +2763,7 @@ pub const Formatter = struct {
                                 .formatter = this,
                                 .writer = writer_,
                             };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                            try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                             if (this.failed) return;
                             if (iter.count > 0) {
                                 if (single_line) {
@@ -2797,7 +2797,7 @@ pub const Formatter = struct {
                                 .formatter = this,
                                 .writer = writer_,
                             };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                            try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                             if (this.failed) return;
                             if (iter.count > 0 and !single_line) {
                                 writer.writeAll("\n");
@@ -2840,7 +2840,7 @@ pub const Formatter = struct {
                                 .formatter = this,
                                 .writer = writer_,
                             };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                            try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                             if (this.failed) return;
                             if (single_line and !iter.is_first) {
                                 writer.writeAll(" ");
@@ -3038,7 +3038,7 @@ pub const Formatter = struct {
                         try type_value.toZigString(&tag_name_str, this.globalThis);
                         is_tag_kind_primitive = true;
                     } else if (_tag.cell.isObject() or type_value.isCallable()) {
-                        type_value.getNameProperty(this.globalThis, &tag_name_str);
+                        try type_value.getNameProperty(this.globalThis, &tag_name_str);
                         if (tag_name_str.len == 0) {
                             tag_name_str = ZigString.init("NoName");
                         }
@@ -3316,7 +3316,7 @@ pub const Formatter = struct {
                     else if (value.isCallable())
                         try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
                     else {
-                        if (getObjectName(this.globalThis, value)) |name_str| {
+                        if (try getObjectName(this.globalThis, value)) |name_str| {
                             writer.print("{} ", .{name_str});
                         }
                         writer.writeAll("{}");

@@ -30,3 +30,7 @@ test("example 3 - very long string with few changes", () => {
 
   expect(originalString).toEqual(expectedString);
 });
+
+test("example 4 - ansi colors don't get printed to console", () => {
+  expect("\x1b[31mhello\x1b[0m").toEqual("\x1b[32mhello\x1b[0m");
+});

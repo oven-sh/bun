@@ -141,11 +141,32 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 3 - very long string with few changes [DURATION]
+    30 | 
+    31 |   expect(originalString).toEqual(expectedString);
+    32 | });
+    33 | 
+    34 | test("example 4 - ansi colors", () => {
+    35 |   expect("\\x1b[31mhello\\x1b[0m").toEqual("\\x1b[32mhello\\x1b[0m");
+                                          ^
+    error: expect(received).toEqual(expected)
+
+    Difference:
+
+    - Received
+    + Expected
+
+    @@ -1 +1 @@
+    - \\u001B[31mhello\\u001B[0m
+    + \\u001B[32mhello\\u001B[0m
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 4 - ansi colors [DURATION]
 
      0 pass
-     3 fail
-     3 expect() calls
-    Ran 3 tests across 1 file. [DURATION]
+     4 fail
+     4 expect() calls
+    Ran 4 tests across 1 file. [DURATION]
     "
   `);
   expect(spawn.exitCode).toBe(1);

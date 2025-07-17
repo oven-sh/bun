@@ -224,7 +224,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
     auto values = impl.getSetCookieHeaders();
     unsigned count = values.size();
     if (!count) {
-        return JSValue::encode(JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0)));
     }
 
     MarkedArgumentBuffer strings;
@@ -270,7 +270,7 @@ JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalO
     unsigned count = values.size();
 
     if (!count) {
-        return JSValue::encode(JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0)));
     }
 
     JSC::JSArray* array = constructEmptyArray(lexicalGlobalObject, nullptr, count);

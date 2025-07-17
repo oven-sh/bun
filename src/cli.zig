@@ -118,6 +118,7 @@ pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
 pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
+pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
 
 const PackageManager = Install.PackageManager;
 const PmViewCommand = @import("./cli/pm_view_command.zig");
@@ -222,8 +223,8 @@ pub const HelpCommand = struct {
     ;
     const cli_helptext_footer =
         \\
-        \\Learn more about Bun:            <magenta>https://bun.sh/docs<r>
-        \\Join our Discord community:      <blue>https://bun.sh/discord<r>
+        \\Learn more about Bun:            <magenta>https://bun.com/docs<r>
+        \\Join our Discord community:      <blue>https://bun.com/discord<r>
         \\
     ;
 
@@ -378,6 +379,7 @@ pub const Command = struct {
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,
         redis_preconnect: bool = false,
+        sql_preconnect: bool = false,
         eval: struct {
             script: []const u8 = "",
             eval_and_print: bool = false,
@@ -388,6 +390,7 @@ pub const Command = struct {
         /// compatibility.
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
+        console_depth: ?u16 = null,
     };
 
     var global_cli_ctx: Context = undefined;
@@ -615,7 +618,7 @@ pub const Command = struct {
             RootCommandMatcher.case("whoami") => .ReservedCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
-            RootCommandMatcher.case("why") => .ReservedCommand,
+            RootCommandMatcher.case("why") => .WhyCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
 
@@ -795,9 +798,12 @@ pub const Command = struct {
             .AuditCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AuditCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .AuditCommand);
-
                 try AuditCommand.exec(ctx);
-                unreachable;
+            },
+            .WhyCommand => {
+                const ctx = try Command.init(allocator, log, .WhyCommand);
+                try WhyCommand.exec(ctx);
+                return;
             },
             .BunxCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
@@ -1228,6 +1234,7 @@ pub const Command = struct {
         OutdatedCommand,
         PublishCommand,
         AuditCommand,
+        WhyCommand,
 
         /// Used by crash reports.
         ///
@@ -1263,6 +1270,7 @@ pub const Command = struct {
                 .OutdatedCommand => 'o',
                 .PublishCommand => 'k',
                 .AuditCommand => 'A',
+                .WhyCommand => 'W',
             };
         }
 
@@ -1363,10 +1371,10 @@ pub const Command = struct {
                         \\  <d>Bundle code to be run in Bun (reduces server startup time)<r>
                         \\  <b><green>bun build<r> <cyan>--target=bun --outfile=server.js<r> <blue>./server.ts<r>
                         \\
-                        \\  <d>Creating a standalone executable (see https://bun.sh/docs/bundler/executables)<r>
+                        \\  <d>Creating a standalone executable (see https://bun.com/docs/bundler/executables)<r>
                         \\  <b><green>bun build<r> <cyan>--compile --outfile=my-app<r> <blue>./cli.ts<r>
                         \\
-                        \\A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
+                        \\A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
                         \\
                     ;
 
@@ -1394,7 +1402,7 @@ pub const Command = struct {
                         \\  <d>Run all test files, only including tests whose names includes "baz"<r>
                         \\  <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/test<r>
+                        \\Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
                         \\
                     ;
 
@@ -1434,7 +1442,7 @@ pub const Command = struct {
                         \\  • GitHub: Downloads repository contents as template
                         \\  • Local: Uses templates from $HOME/.bun-create/\<name\> or ./.bun-create/\<name\>
                         \\
-                        \\Learn more: <magenta>https://bun.sh/docs/cli/bun-create<r>
+                        \\Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
                         \\
                     ;
 
@@ -1459,7 +1467,7 @@ pub const Command = struct {
                         \\  <d>{s}<r>
                         \\  <b><green>bun upgrade<r> <cyan>--{s}<r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/installation#upgrading<r>
+                        \\Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>
                         \\
                     ;
 
@@ -1538,7 +1546,31 @@ pub const Command = struct {
                         \\  <b><green>bun info<r> <blue>react<r> dependencies
                         \\  <b><green>bun info<r> <blue>react<r> versions
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/info<r>
+                        \\Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
+                        \\
+                    ;
+
+                    Output.pretty(intro_text, .{});
+                    Output.flush();
+                },
+                .WhyCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r> <blue>[property path]<r>
+                        \\Explain why a package is installed
+                        \\
+                        \\<b>Arguments:<r>
+                        \\  <blue>\<package\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>
+                        \\
+                        \\<b>Options:<r>
+                        \\  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>
+                        \\  <cyan>--depth<r> <blue>\<NUM\><r> <d>Maximum depth of the dependency tree to display<r>
+                        \\
+                        \\<b>Examples:<r>
+                        \\  <d>$<r> <b><green>bun why<r> <blue>react<r>
+                        \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
+                        \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/why<r>
                         \\
                     ;
 

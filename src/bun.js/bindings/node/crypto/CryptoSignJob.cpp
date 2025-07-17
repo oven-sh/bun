@@ -199,8 +199,8 @@ extern "C" void Bun__SignJobCtx__runFromJS(SignJobCtx* ctx, JSGlobalObject* glob
 }
 void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
 {
-    VM& vm = lexicalGlobalObject->vm();
-    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     switch (m_mode) {
     case Mode::Sign: {

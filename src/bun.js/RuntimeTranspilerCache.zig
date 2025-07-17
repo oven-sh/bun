@@ -11,7 +11,8 @@
 /// Version 12: "use strict"; makes it CommonJS if we otherwise don't know which one to pick.
 /// Version 13: Hoist `import.meta.require` definition, see #15738
 /// Version 14: Updated global defines table list.
-const expected_version = 14;
+/// Version 15: Updated global defines table list.
+const expected_version = 15;
 
 const bun = @import("bun");
 const std = @import("std");
@@ -633,7 +634,7 @@ pub const RuntimeTranspilerCache = struct {
             return;
         }
         bun.assert(this.entry == null);
-        const output_code = bun.String.createLatin1(output_code_bytes);
+        const output_code = bun.String.cloneLatin1(output_code_bytes);
         this.output_code = output_code;
 
         toFile(this.input_byte_length.?, this.input_hash.?, this.features_hash.?, sourcemap, output_code, this.exports_kind) catch |err| {

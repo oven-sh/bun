@@ -168,7 +168,7 @@ pub const HTMLRewriter = struct {
         this.builder.deinit();
     }
 
-    pub fn beginTransform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
+    pub fn beginTransform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) bun.JSError!JSValue {
         const new_context = this.context;
         new_context.ref();
         return BufferOutputSink.init(new_context, global, response, this.builder);
@@ -179,15 +179,8 @@ pub const HTMLRewriter = struct {
             if (response.body.value == .Used) {
                 return global.throwInvalidArguments("Response body already used", .{});
             }
-
-            const out = this.beginTransform(global, response);
-
-            if (out != .zero) {
-                if (out.toError()) |err| {
-                    return global.throwValue(err);
-                }
-            }
-
+            const out = try this.beginTransform(global, response);
+            if (out.toError()) |err| return global.throwValue(err);
             return out;
         }
 
@@ -203,7 +196,7 @@ pub const HTMLRewriter = struct {
 
         if (kind != .other) {
             {
-                const body_value = JSC.WebCore.Body.extract(global, response_value) catch return .zero;
+                const body_value = try JSC.WebCore.Body.extract(global, response_value);
                 const resp = bun.new(Response, Response{
                     .init = .{
                         .status_code = 200,
@@ -211,7 +204,7 @@ pub const HTMLRewriter = struct {
                     .body = body_value,
                 });
                 defer resp.finalize();
-                const out_response_value = this.beginTransform(global, resp);
+                const out_response_value = try this.beginTransform(global, resp);
                 out_response_value.ensureStillAlive();
                 var out_response = out_response_value.as(Response) orelse return out_response_value;
                 var blob = out_response.body.value.useAsAnyBlobAllowNonUTF8String();
@@ -407,7 +400,7 @@ pub const HTMLRewriter = struct {
         tmp_sync_error: ?*JSC.JSValue = null,
 
         // const log = bun.Output.scoped(.BufferOutputSink, false);
-        pub fn init(context: *LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSC.JSValue {
+        pub fn init(context: *LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) bun.JSError!JSC.JSValue {
             var sink = bun.new(BufferOutputSink, .{
                 .ref_count = .init(),
                 .global = global,
@@ -475,7 +468,7 @@ pub const HTMLRewriter = struct {
 
             // https://github.com/oven-sh/bun/issues/3334
             if (original.init.headers) |headers| {
-                result.init.headers = headers.cloneThis(global);
+                result.init.headers = try headers.cloneThis(global);
             }
 
             // Hold off on cloning until we're actually done.
@@ -1064,7 +1057,7 @@ fn createLOLHTMLStringError() bun.String {
     // We must clone this string.
     const err = LOLHTML.HTMLString.lastError();
     defer err.deinit();
-    return bun.String.createUTF8(err.slice());
+    return bun.String.cloneUTF8(err.slice());
 }
 
 fn htmlStringValue(input: LOLHTML.HTMLString, globalObject: *JSGlobalObject) JSValue {
@@ -1856,11 +1849,7 @@ pub const Element = struct {
     pub const setInnerContent = host_fn.wrapInstanceMethod(Element, "setInnerContent_", false);
 
     ///  Removes the element with all its content.
-    pub fn remove(
-        this: *Element,
-        _: *JSGlobalObject,
-        callFrame: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
+    pub fn remove(this: *Element, _: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
         if (this.element == null)
             return .js_undefined;
 
@@ -1869,17 +1858,14 @@ pub const Element = struct {
     }
 
     ///  Removes the start tag and end tag of the element but keeps its inner content intact.
-    pub fn removeAndKeepContent(
-        this: *Element,
-        _: *JSGlobalObject,
-        callFrame: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
+    pub fn removeAndKeepContent(this: *Element, _: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
         if (this.element == null)
             return .js_undefined;
 
         this.element.?.removeAndKeepContent();
         return callFrame.this();
     }
+
     pub fn getTagName(this: *Element, globalObject: *JSGlobalObject) JSValue {
         if (this.element == null)
             return .js_undefined;
@@ -1887,11 +1873,7 @@ pub const Element = struct {
         return htmlStringValue(this.element.?.tagName(), globalObject);
     }
 
-    pub fn setTagName(
-        this: *Element,
-        global: *JSGlobalObject,
-        value: JSValue,
-    ) JSError!void {
+    pub fn setTagName(this: *Element, global: *JSGlobalObject, value: JSValue) JSError!void {
         if (this.element == null)
             return;
         var text = try value.toSlice(global, bun.default_allocator);
@@ -1902,46 +1884,31 @@ pub const Element = struct {
         };
     }
 
-    pub fn getRemoved(
-        this: *Element,
-        _: *JSGlobalObject,
-    ) JSValue {
+    pub fn getRemoved(this: *Element, _: *JSGlobalObject) JSValue {
         if (this.element == null)
             return .js_undefined;
         return JSValue.jsBoolean(this.element.?.isRemoved());
     }
 
-    pub fn getSelfClosing(
-        this: *Element,
-        _: *JSGlobalObject,
-    ) JSValue {
+    pub fn getSelfClosing(this: *Element, _: *JSGlobalObject) JSValue {
         if (this.element == null)
             return .js_undefined;
         return JSValue.jsBoolean(this.element.?.isSelfClosing());
     }
 
-    pub fn getCanHaveContent(
-        this: *Element,
-        _: *JSGlobalObject,
-    ) JSValue {
+    pub fn getCanHaveContent(this: *Element, _: *JSGlobalObject) JSValue {
         if (this.element == null)
             return .js_undefined;
         return JSValue.jsBoolean(this.element.?.canHaveContent());
     }
 
-    pub fn getNamespaceURI(
-        this: *Element,
-        globalObject: *JSGlobalObject,
-    ) JSValue {
+    pub fn getNamespaceURI(this: *Element, globalObject: *JSGlobalObject) JSError!JSValue {
         if (this.element == null)
             return .js_undefined;
         return bun.String.createUTF8ForJS(globalObject, std.mem.span(this.element.?.namespaceURI()));
     }
 
-    pub fn getAttributes(
-        this: *Element,
-        globalObject: *JSGlobalObject,
-    ) JSValue {
+    pub fn getAttributes(this: *Element, globalObject: *JSGlobalObject) JSValue {
         if (this.element == null)
             return .js_undefined;
 

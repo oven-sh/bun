@@ -96,10 +96,12 @@ extern "C" JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* g
     }
 
     auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(ptr), length });
+    EXCEPTION_ASSERT(str.isNull() == !!scope.exception());
     if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
-        return JSC::EncodedJSValue();
+        return {};
     }
+    scope.assertNoException();
     return JSValue::encode(jsString(vm, WTFMove(str)));
 }
 

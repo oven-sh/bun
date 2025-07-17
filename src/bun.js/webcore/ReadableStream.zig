@@ -26,7 +26,7 @@ pub const Strong = struct {
 
     pub fn get(this: *const Strong, global: *JSC.JSGlobalObject) ?ReadableStream {
         if (this.held.get()) |value| {
-            return ReadableStream.fromJS(value, global);
+            return ReadableStream.fromJS(value, global) catch null; // TODO: properly propagate exception upwards
         }
         return null;
     }
@@ -38,9 +38,9 @@ pub const Strong = struct {
         this.held.deinit();
     }
 
-    pub fn tee(this: *Strong, global: *JSGlobalObject) ?ReadableStream {
+    pub fn tee(this: *Strong, global: *JSGlobalObject) bun.JSError!?ReadableStream {
         if (this.get(global)) |stream| {
-            const first, const second = stream.tee(global) orelse return null;
+            const first, const second = (try stream.tee(global)) orelse return null;
             this.held.set(global, first.value);
             return second;
         }
@@ -49,14 +49,14 @@ pub const Strong = struct {
 };
 
 extern fn ReadableStream__tee(stream: JSValue, globalThis: *JSGlobalObject, out1: *JSC.JSValue, out2: *JSC.JSValue) bool;
-pub fn tee(this: *const ReadableStream, globalThis: *JSGlobalObject) ?struct { ReadableStream, ReadableStream } {
+pub fn tee(this: *const ReadableStream, globalThis: *JSGlobalObject) bun.JSError!?struct { ReadableStream, ReadableStream } {
     var out1: JSC.JSValue = .zero;
     var out2: JSC.JSValue = .zero;
-    if (!ReadableStream__tee(this.value, globalThis, &out1, &out2)) {
+    if (!try bun.jsc.fromJSHostCallGeneric(globalThis, @src(), ReadableStream__tee, .{ this.value, globalThis, &out1, &out2 })) {
         return null;
     }
-    const out_stream2 = ReadableStream.fromJS(out2, globalThis) orelse return null;
-    const out_stream1 = ReadableStream.fromJS(out1, globalThis) orelse return null;
+    const out_stream2 = try ReadableStream.fromJS(out2, globalThis) orelse return null;
+    const out_stream1 = try ReadableStream.fromJS(out1, globalThis) orelse return null;
     return .{ out_stream1, out_stream2 };
 }
 
@@ -64,8 +64,8 @@ pub fn toJS(this: *const ReadableStream) JSValue {
     return this.value;
 }
 
-pub fn reloadTag(this: *ReadableStream, globalThis: *JSC.JSGlobalObject) void {
-    if (ReadableStream.fromJS(this.value, globalThis)) |stream| {
+pub fn reloadTag(this: *ReadableStream, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
+    if (try ReadableStream.fromJS(this.value, globalThis)) |stream| {
         this.* = stream;
     } else {
         this.* = .{ .ptr = .{ .Invalid = {} }, .value = .zero };
@@ -80,7 +80,7 @@ pub fn toAnyBlob(
         return null;
     }
 
-    stream.reloadTag(globalThis);
+    stream.reloadTag(globalThis) catch {}; // TODO: properly propagate exception upwards
 
     switch (stream.ptr) {
         .Blob => |blobby| {
@@ -234,13 +234,13 @@ pub fn isLocked(this: *const ReadableStream, globalObject: *JSGlobalObject) bool
     return ReadableStream__isLocked(this.value, globalObject);
 }
 
-pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {
+pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) bun.JSError!?ReadableStream {
     JSC.markBinding(@src());
     value.ensureStillAlive();
     var out = value;
 
     var ptr: ?*anyopaque = null;
-    return switch (ReadableStreamTag__tagged(globalThis, &out, &ptr)) {
+    return switch (try bun.jsc.fromJSHostCallGeneric(globalThis, @src(), ReadableStreamTag__tagged, .{ globalThis, &out, &ptr })) {
         .JavaScript => ReadableStream{
             .value = out,
             .ptr = .{
@@ -285,18 +285,18 @@ pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {
 
 extern fn ZigGlobalObject__createNativeReadableStream(*JSGlobalObject, nativePtr: JSValue) JSValue;
 
-pub fn fromNative(globalThis: *JSGlobalObject, native: JSC.JSValue) JSC.JSValue {
+pub fn fromNative(globalThis: *JSGlobalObject, native: JSC.JSValue) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
-    return ZigGlobalObject__createNativeReadableStream(globalThis, native);
+    return bun.jsc.fromJSHostCall(globalThis, @src(), ZigGlobalObject__createNativeReadableStream, .{ globalThis, native });
 }
 
-pub fn fromOwnedSlice(globalThis: *JSGlobalObject, bytes: []u8, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
+pub fn fromOwnedSlice(globalThis: *JSGlobalObject, bytes: []u8, recommended_chunk_size: Blob.SizeType) bun.JSError!JSC.JSValue {
     var blob = Blob.init(bytes, bun.default_allocator, globalThis);
     defer blob.deinit();
     return fromBlobCopyRef(globalThis, &blob, recommended_chunk_size);
 }
 
-pub fn fromBlobCopyRef(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
+pub fn fromBlobCopyRef(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
     var store = blob.store orelse {
         return ReadableStream.empty(globalThis);
@@ -375,7 +375,7 @@ pub fn fromPipe(
     globalThis: *JSGlobalObject,
     parent: anytype,
     buffered_reader: anytype,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     _ = parent; // autofix
     JSC.markBinding(@src());
     var source = webcore.FileReader.Source.new(.{
@@ -389,10 +389,9 @@ pub fn fromPipe(
     return source.toReadableStream(globalThis);
 }
 
-pub fn empty(globalThis: *JSGlobalObject) JSC.JSValue {
+pub fn empty(globalThis: *JSGlobalObject) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
-
-    return ReadableStream__empty(globalThis);
+    return bun.jsc.fromJSHostCall(globalThis, @src(), ReadableStream__empty, .{globalThis});
 }
 
 pub fn used(globalThis: *JSGlobalObject) JSC.JSValue {
@@ -550,7 +549,7 @@ pub fn NewSource(
             return .{};
         }
 
-        pub fn toReadableStream(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject) JSC.JSValue {
+        pub fn toReadableStream(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject) bun.JSError!JSC.JSValue {
             const out_value = brk: {
                 if (this.this_jsvalue != .zero) {
                     break :brk this.this_jsvalue;
@@ -766,7 +765,7 @@ pub fn NewSource(
                 this.this_jsvalue = callFrame.this();
                 var list = this.drain();
                 if (list.len > 0) {
-                    return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
+                    return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
                 }
                 return .js_undefined;
             }

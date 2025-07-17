@@ -44,12 +44,12 @@ test("basic", async () => {
   await write("package.json", {
     name: "my-app",
     version: "1.0.0",
-    dependencies: {
-      "baz": "0.0.5",
-    },
+    dependencies: {},
   });
 
-  const { out } = await runBunInstall(bunEnv, package_dir);
+  const { out } = await runBunInstall(bunEnv, package_dir, {
+    packages: ["baz"],
+  });
 
   expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.5.tgz`]);
 

@@ -5,19 +5,8 @@ pub const FileCopier = struct {
     dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }),
 
     pub fn copy(this: *FileCopier, skip_dirnames: []const bun.OSPathSlice) OOM!sys.Maybe(void) {
-        var dest_dir = dest_dir: {
-            if (comptime Environment.isWindows) {
-                break :dest_dir FD.cwd().stdDir().openDirW(this.dest_subpath.sliceZ(), .{}) catch {
-                    FD.cwd().makePath(u16, this.dest_subpath.slice()) catch {};
-                    break :dest_dir FD.cwd().stdDir().openDirW(this.dest_subpath.sliceZ(), .{}) catch {
-                        unreachable;
-                    };
-                };
-            }
-
-            break :dest_dir FD.cwd().stdDir().makeOpenPath(this.dest_subpath.slice(), .{}) catch {
-                unreachable;
-            };
+        var dest_dir = bun.MakePath.makeOpenPath(FD.cwd().stdDir(), this.dest_subpath.sliceZ(), .{}) catch {
+            unreachable;
         };
         defer dest_dir.close();
 

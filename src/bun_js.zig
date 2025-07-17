@@ -451,7 +451,10 @@ pub const Run = struct {
 
                                     break :brk result;
                                 },
-                                else => break :brk promise.result(vm.jsc),
+                                else => {
+                                    vm.drainMicrotasks();
+                                    break :brk promise.result(vm.jsc);
+                                },
                             }
                         }
 

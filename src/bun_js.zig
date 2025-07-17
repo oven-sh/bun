@@ -179,12 +179,12 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
-        var arena = try Arena.init();
+        const arena = try Arena.init();
 
         run = .{
             .vm = try VirtualMachine.init(
                 .{
-                    .allocator = arena.allocator(),
+                    .allocator = bun.default_allocator,
                     .log = ctx.log,
                     .args = ctx.args,
                     .store_fd = ctx.debug.hot_reload != .none,
@@ -206,7 +206,7 @@ pub const Run = struct {
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
-        vm.allocator = arena.allocator();
+        vm.allocator = bun.default_allocator;
 
         if (ctx.runtime_options.eval.script.len > 0) {
             const script_source = try bun.default_allocator.create(logger.Source);

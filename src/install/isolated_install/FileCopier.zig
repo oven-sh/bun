@@ -117,14 +117,12 @@ pub const FileCopier = struct {
 
 // @sortImports
 
-const std = @import("std");
-
 const Walker = @import("../../walker_skippable.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
-const OOM = bun.OOM;
-const sys = bun.sys;
-const Output = bun.Output;
 const Global = bun.Global;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const sys = bun.sys;

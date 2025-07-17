@@ -1184,9 +1184,9 @@ pub const Installer = struct {
 // @sortImports
 
 const std = @import("std");
+const FileCopier = @import("./FileCopier.zig").FileCopier;
 const Hardlinker = @import("./Hardlinker.zig").Hardlinker;
 const Symlinker = @import("./Symlinker.zig").Symlinker;
-const FileCopier = @import("./FileCopier.zig").FileCopier;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -1215,4 +1215,3 @@ const invalid_dependency_id = install.invalid_dependency_id;
 
 const Lockfile = install.Lockfile;
 const Package = Lockfile.Package;
-const Walker = @import("../../walker_skippable.zig");

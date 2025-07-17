@@ -1,8 +1,8 @@
-import { file, write, spawn } from "bun";
+import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readlinkSync, lstatSync } from "fs";
+import { existsSync, lstatSync, readlinkSync } from "fs";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, readdirSorted, runBunInstall, bunExe } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();

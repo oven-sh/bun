@@ -844,6 +844,7 @@ src/thread_pool.zig
 src/threading.zig
 src/threading/Condition.zig
 src/threading/Futex.zig
+src/threading/guarded_value.zig
 src/threading/Mutex.zig
 src/tmp.zig
 src/toml/toml_lexer.zig

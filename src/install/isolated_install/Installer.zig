@@ -1,5 +1,5 @@
 pub const Installer = struct {
-    trusted_dependencies_mutex: bun.Mutex,
+    trusted_dependencies_mutex: Mutex,
     // this is not const for `lockfile.trusted_dependencies`
     lockfile: *Lockfile,
 
@@ -14,7 +14,7 @@ pub const Installer = struct {
     store: *const Store,
 
     tasks: bun.UnboundedQueue(Task, .next) = .{},
-    preallocated_tasks: Task.Preallocated,
+    preallocated_tasks: GuardedValue(Task.Preallocated, Mutex),
 
     supported_backend: std.atomic.Value(PackageInstall.Method),
 
@@ -25,7 +25,11 @@ pub const Installer = struct {
     }
 
     pub fn startTask(this: *Installer, entry_id: Store.Entry.Id) void {
-        const task = this.preallocated_tasks.get();
+        const task = blk: {
+            const preallocated_tasks = this.preallocated_tasks.lock();
+            defer this.preallocated_tasks.unlock();
+            break :blk preallocated_tasks.get();
+        };
 
         task.* = .{
             .entry_id = entry_id,
@@ -616,9 +620,7 @@ pub const Installer = struct {
                     const dependencies = lockfile.buffers.dependencies.items;
 
                     for (entry_dependencies[this.entry_id.get()].slice()) |dep| {
-                        const dep_node_id = entry_node_ids[dep.entry_id.get()];
-                        const dep_dep_id = node_dep_ids[dep_node_id.get()];
-                        const dep_name = dependencies[dep_dep_id].name;
+                        const dep_name = dependencies[dep.dep_id].name;
 
                         var dest: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
                         defer dest.deinit();
@@ -935,7 +937,11 @@ pub const Installer = struct {
             };
 
             switch (res) {
-                .yield => {},
+                .yield => {
+                    const preallocated_tasks = this.installer.preallocated_tasks.lock();
+                    defer this.installer.preallocated_tasks.unlock();
+                    preallocated_tasks.put(this);
+                },
                 .done => {
                     if (comptime Environment.ci_assert) {
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .done, @src());
@@ -1218,3 +1224,6 @@ const invalid_dependency_id = install.invalid_dependency_id;
 
 const Lockfile = install.Lockfile;
 const Package = Lockfile.Package;
+
+const GuardedValue = bun.threading.GuardedValue;
+const Mutex = bun.threading.Mutex;

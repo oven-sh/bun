@@ -2821,6 +2821,7 @@ pub fn unlinkW(from: [:0]const u16) Maybe(void) {
         return err;
     }
 
+    log("DeleteFileW({s}) = 0", .{bun.fmt.fmtPath(u16, from, .{})});
     return Maybe(void).success;
 }
 
@@ -2841,6 +2842,10 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
         log("unlink({s}) = 0", .{from});
         return Maybe(void).success;
     }
+}
+
+pub fn rmdir(to: anytype) Maybe(void) {
+    return rmdirat(FD.cwd(), to);
 }
 
 pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {

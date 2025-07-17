@@ -38,7 +38,15 @@ pub const Hardlinker = struct {
                                 .UV_EEXIST,
                                 .EXIST,
                                 => {
-                                    _ = sys.unlinkW(this.dest.sliceZ());
+                                    try_delete: {
+                                        const delete_tree_buf = bun.path_buffer_pool.get();
+                                        defer bun.path_buffer_pool.put(delete_tree_buf);
+
+                                        const delete_tree_path = bun.strings.convertUTF16toUTF8InBuffer(delete_tree_buf, this.dest.slice()) catch {
+                                            break :try_delete;
+                                        };
+                                        FD.cwd().deleteTree(delete_tree_path) catch {};
+                                    }
                                     switch (sys.link(u16, this.src.sliceZ(), this.dest.sliceZ())) {
                                         .result => {},
                                         .err => |link_err2| return .initErr(link_err2),

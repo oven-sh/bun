@@ -567,7 +567,7 @@ pub fn installIsolatedPackages(
 
     {
         var root_node: *Progress.Node = undefined;
-        // var download_node: Progress.Node = undefined;
+        var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
         var scripts_node: Progress.Node = undefined;
         var progress = &manager.progress;
@@ -575,12 +575,13 @@ pub fn installIsolatedPackages(
         if (manager.options.log_level.showProgress()) {
             progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             root_node = progress.start("", 0);
-            // download_node = root_node.start(ProgressStrings.download(), 0);
+            download_node = root_node.start(ProgressStrings.download(), 0);
             install_node = root_node.start(ProgressStrings.install(), store.entries.len);
             scripts_node = root_node.start(ProgressStrings.script(), 0);
 
             manager.downloads_node = null;
             manager.scripts_node = &scripts_node;
+            manager.downloads_node = &download_node;
         }
 
         const nodes_slice = store.nodes.slice();
@@ -890,6 +891,15 @@ pub fn installIsolatedPackages(
                         wait.err = err;
                         return true;
                     };
+
+                    if (wait.manager.scripts_node) |node| {
+                        // if we're just waiting for scripts, make it known. -1 because the root task needs to wait for everything
+                        const pending_lifecycle_scripts = wait.manager.pending_lifecycle_script_tasks.load(.monotonic);
+                        if (pending_lifecycle_scripts > 0 and pending_lifecycle_scripts == wait.manager.pendingTaskCount() -| 1) {
+                            node.activate();
+                            wait.manager.progress.refresh();
+                        }
+                    }
 
                     return wait.manager.pendingTaskCount() == 0;
                 }

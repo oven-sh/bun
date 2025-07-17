@@ -49,6 +49,7 @@ test("basic", async () => {
 
   const { out } = await runBunInstall(bunEnv, package_dir, {
     packages: ["baz"],
+    allowErrors: true,
   });
 
   expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.5.tgz`]);

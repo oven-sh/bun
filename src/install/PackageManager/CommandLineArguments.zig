@@ -654,7 +654,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.positionals = args.positionals();
     cli.yarn = args.flag("--yarn");
     cli.production = args.flag("--production");
-    cli.frozen_lockfile = args.flag("--frozen-lockfile") or strings.eqlComptime(cli.positionals[0], "ci");
+    cli.frozen_lockfile = args.flag("--frozen-lockfile") or (cli.positionals.len > 0 and strings.eqlComptime(cli.positionals[0], "ci"));
     cli.no_progress = args.flag("--no-progress");
     cli.dry_run = args.flag("--dry-run");
     cli.global = args.flag("--global");

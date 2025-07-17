@@ -580,7 +580,7 @@ function generateZigFn(
       appendError(fn.position, "ZIG_EXPORT(zero_is_throw) is only allowed for functions that return JSValue");
     }
   } else if (fn.tag === "false_is_throw") {
-    equalsValue = ".false";
+    equalsValue = "false";
     if (returnType !== "bool") {
       appendError(fn.position, "ZIG_EXPORT(false_is_throw) is only allowed for functions that return bool");
     }

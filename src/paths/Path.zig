@@ -406,7 +406,7 @@ pub fn Path(comptime opts: Options) type {
             }
         }
 
-        pub fn setLength(this: *const @This(), new_length: usize) void {
+        pub fn setLength(this: *@This(), new_length: usize) void {
             this._buf.setLength(new_length);
 
             const trimmed = switch (comptime opts.kind) {

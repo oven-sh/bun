@@ -7,9 +7,9 @@ pub const FileCopier = struct {
     pub fn copy(this: *FileCopier, skip_dirnames: []const bun.OSPathSlice) OOM!sys.Maybe(void) {
         var dest_dir = dest_dir: {
             if (comptime Environment.isWindows) {
-                break :dest_dir FD.cwd().stdDir().openDirW(this.dest_subpath.slice(), .{}) catch {
+                break :dest_dir FD.cwd().stdDir().openDirW(this.dest_subpath.sliceZ(), .{}) catch {
                     FD.cwd().makePath(u16, this.dest_subpath.slice()) catch {};
-                    break :dest_dir FD.cwd().stdDir().openDirW(this.dest_subpath.slice(), .{}) catch {
+                    break :dest_dir FD.cwd().stdDir().openDirW(this.dest_subpath.sliceZ(), .{}) catch {
                         unreachable;
                     };
                 };
@@ -53,7 +53,7 @@ pub const FileCopier = struct {
 
                 switch (entry.kind) {
                     .directory => {
-                        if (bun.windows.CreateDirectoryExW(this.src_path.sliceZ(), this.dest_subpath.sliceZ(), null) == null) {
+                        if (bun.windows.CreateDirectoryExW(this.src_path.sliceZ(), this.dest_subpath.sliceZ(), null) == 0) {
                             bun.MakePath.makePath(u16, dest_dir, entry.path) catch {};
                         }
                     },

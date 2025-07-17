@@ -221,7 +221,7 @@ pub const UpdateInteractiveCommand = struct {
                 };
                 defer bun.default_allocator.free(workspace_pkg_ids);
 
-                try updateManifestsIfNecessary(manager, workspace_pkg_ids);
+                try OutdatedCommand.updateManifestsIfNecessary(manager, workspace_pkg_ids);
 
                 // Get outdated packages
                 const outdated_packages = try getOutdatedPackages(bun.default_allocator, manager, workspace_pkg_ids);
@@ -1100,121 +1100,6 @@ pub const UpdateInteractiveCommand = struct {
             }
         }
     }
-
-    fn updateManifestsIfNecessary(
-        manager: *PackageManager,
-        workspace_pkg_ids: []const PackageID,
-    ) !void {
-        const log_level = manager.options.log_level;
-        const lockfile = manager.lockfile;
-        const resolutions = lockfile.buffers.resolutions.items;
-        const dependencies = lockfile.buffers.dependencies.items;
-        const string_buf = lockfile.buffers.string_bytes.items;
-        const packages = lockfile.packages.slice();
-        const pkg_resolutions = packages.items(.resolution);
-        const pkg_names = packages.items(.name);
-        const pkg_dependencies = packages.items(.dependencies);
-
-        for (workspace_pkg_ids) |workspace_pkg_id| {
-            const pkg_deps = pkg_dependencies[workspace_pkg_id];
-            for (pkg_deps.begin()..pkg_deps.end()) |dep_id| {
-                if (dep_id >= dependencies.len) continue;
-                const package_id = resolutions[dep_id];
-                if (package_id == invalid_package_id) continue;
-                const dep = dependencies[dep_id];
-                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
-                if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
-                const resolution: Install.Resolution = pkg_resolutions[package_id];
-                if (resolution.tag != .npm) continue;
-
-                const package_name = pkg_names[package_id].slice(string_buf);
-                _ = manager.manifests.byName(
-                    manager,
-                    manager.scopeForPackageName(package_name),
-                    package_name,
-                    .load_from_memory_fallback_to_disk,
-                ) orelse {
-                    const task_id = Install.Task.Id.forManifest(package_name);
-                    if (manager.hasCreatedNetworkTask(task_id, dep.behavior.optional)) continue;
-
-                    manager.startProgressBarIfNone();
-
-                    var task = manager.getNetworkTask();
-                    task.* = .{
-                        .package_manager = manager,
-                        .callback = undefined,
-                        .task_id = task_id,
-                        .allocator = manager.allocator,
-                    };
-                    try task.forManifest(
-                        package_name,
-                        manager.allocator,
-                        manager.scopeForPackageName(package_name),
-                        null,
-                        dep.behavior.optional,
-                    );
-
-                    manager.enqueueNetworkTask(task);
-                };
-            }
-
-            manager.flushNetworkQueue();
-            _ = manager.scheduleTasks();
-
-            if (manager.pendingTaskCount() > 0) {
-                try manager.runTasks(
-                    *PackageManager,
-                    manager,
-                    .{
-                        .onExtract = {},
-                        .onResolve = {},
-                        .onPackageManifestError = {},
-                        .onPackageDownloadError = {},
-                        .progress_bar = true,
-                        .manifests_only = true,
-                    },
-                    true,
-                    log_level,
-                );
-            }
-        }
-
-        manager.flushNetworkQueue();
-        _ = manager.scheduleTasks();
-
-        if (manager.pendingTaskCount() > 0) {
-            const RunClosure = struct {
-                manager: *PackageManager,
-                err: ?anyerror = null,
-                pub fn isDone(closure: *@This()) bool {
-                    closure.manager.runTasks(
-                        *PackageManager,
-                        closure.manager,
-                        .{
-                            .onExtract = {},
-                            .onResolve = {},
-                            .onPackageManifestError = {},
-                            .onPackageDownloadError = {},
-                            .progress_bar = true,
-                            .manifests_only = true,
-                        },
-                        true,
-                        closure.manager.options.log_level,
-                    ) catch |err| {
-                        closure.err = err;
-                        return true;
-                    };
-                    return closure.manager.pendingTaskCount() == 0;
-                }
-            };
-
-            var run = RunClosure{ .manager = manager };
-            manager.sleepUntil(&run, &RunClosure.isDone);
-            if (run.err) |err| {
-                return err;
-            }
-        }
-    }
 };
 
 extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
@@ -1251,3 +1136,4 @@ const PackageManager = Install.PackageManager;
 const PackageJSONEditor = PackageManager.PackageJSONEditor;
 const UpdateRequest = PackageManager.UpdateRequest;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
+const OutdatedCommand = bun.CLI.OutdatedCommand;

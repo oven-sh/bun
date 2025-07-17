@@ -3787,7 +3787,7 @@ JSC::EncodedJSValue JSC__JSValue__jsBoolean(bool arg0)
     return JSC::JSValue::encode(JSC::jsBoolean(arg0));
 }
 
-JSC::EncodedJSValue JSC__JSValue__jsEmptyString(JSC::JSGlobalObject* _Nonnull arg0)
+JSC::EncodedJSValue JSC__JSValue__jsEmptyString(JSC::JSGlobalObject* arg0)
 {
     return JSC::JSValue::encode(JSC::jsEmptyString(arg0->vm()));
 }

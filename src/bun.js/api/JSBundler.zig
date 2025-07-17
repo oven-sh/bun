@@ -58,6 +58,7 @@ pub const JSBundler = struct {
         throw_on_error: bool = true,
         env_behavior: Api.DotEnvBehavior = .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -184,7 +185,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
-                if (config.isBoolean()) {
+                if (source_map_js.isBoolean()) {
                     if (source_map_js == .true) {
                         this.source_map = if (has_out_dir)
                             .linked
@@ -529,6 +530,7 @@ pub const JSBundler = struct {
             self.banner.deinit();
             self.env_prefix.deinit();
             self.footer.deinit();
+            self.tsconfig_override.deinit();
         }
     };
 
@@ -999,18 +1001,18 @@ pub const JSBundler = struct {
             JSC.markBinding(@src());
             const tracer = bun.perf.trace("JSBundler.addPlugin");
             defer tracer.end();
-            return JSBundlerPlugin__runSetupFunction(
+            return bun.jsc.fromJSHostCall(globalObject(this), @src(), JSBundlerPlugin__runSetupFunction, .{
                 this,
                 object,
                 config,
                 onstart_promises_array,
                 JSValue.jsBoolean(is_last),
                 JSValue.jsBoolean(is_bake),
-            ).unwrap();
+            });
         }
 
-        pub fn drainDeferred(this: *Plugin, rejected: bool) void {
-            JSBundlerPlugin__drainDeferred(this, rejected);
+        pub fn drainDeferred(this: *Plugin, rejected: bool) bun.JSError!void {
+            return bun.jsc.fromJSHostCallGeneric(this.globalObject(), @src(), JSBundlerPlugin__drainDeferred, .{ this, rejected });
         }
 
         pub fn setConfig(this: *Plugin, config: *anyopaque) void {
@@ -1027,7 +1029,7 @@ pub const JSBundler = struct {
             JSC.JSValue,
             JSC.JSValue,
             JSC.JSValue,
-        ) JSValue.MaybeException;
+        ) JSValue;
 
         pub export fn JSBundlerPlugin__addError(
             ctx: *anyopaque,

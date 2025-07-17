@@ -1,7 +1,8 @@
-import { file, write } from "bun";
+import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readlinkSync } from "fs";
-import { VerdaccioRegistry, bunEnv, readdirSorted, runBunInstall } from "harness";
+import { existsSync, lstatSync, readlinkSync } from "fs";
+import { rm } from "fs/promises";
+import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -17,15 +18,12 @@ afterAll(() => {
 
 describe("basic", () => {
   test("single dependency", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir();
+    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
     await write(
       packageJson,
       JSON.stringify({
         name: "test-pkg-1",
-        workspaces: {
-          nodeLinker: "isolated",
-        },
         dependencies: {
           "no-deps": "1.0.0",
         },
@@ -51,15 +49,12 @@ describe("basic", () => {
   });
 
   test("scope package", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir();
+    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
     await write(
       packageJson,
       JSON.stringify({
         name: "test-pkg-2",
-        workspaces: {
-          nodeLinker: "isolated",
-        },
         dependencies: {
           "@types/is-number": "1.0.0",
         },
@@ -94,15 +89,12 @@ describe("basic", () => {
   });
 
   test("transitive dependencies", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir();
+    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
     await write(
       packageJson,
       JSON.stringify({
         name: "test-pkg-3",
-        workspaces: {
-          nodeLinker: "isolated",
-        },
         dependencies: {
           "two-range-deps": "1.0.0",
         },
@@ -184,15 +176,12 @@ describe("basic", () => {
 });
 
 test("handles cyclic dependencies", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir();
+  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
   await write(
     packageJson,
     JSON.stringify({
       name: "test-pkg-cyclic",
-      workspaces: {
-        nodeLinker: "isolated",
-      },
       dependencies: {
         "a-dep-b": "1.0.0",
       },
@@ -239,15 +228,12 @@ test("handles cyclic dependencies", async () => {
 });
 
 test("can install folder dependencies", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir();
+  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
   await write(
     packageJson,
     JSON.stringify({
       name: "test-pkg-folder-deps",
-      workspaces: {
-        nodeLinker: "isolated",
-      },
       dependencies: {
         "folder-dep": "file:./pkg-1",
       },
@@ -285,7 +271,7 @@ test("can install folder dependencies", async () => {
 
 describe("isolated workspaces", () => {
   test("basic", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir();
+    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
     await Promise.all([
       write(
@@ -293,7 +279,6 @@ describe("isolated workspaces", () => {
         JSON.stringify({
           name: "test-pkg-workspaces",
           workspaces: {
-            nodeLinker: "isolated",
             packages: ["pkg-1", "pkg-2"],
           },
           dependencies: {
@@ -359,16 +344,248 @@ describe("isolated workspaces", () => {
   });
 });
 
+for (const backend of ["clonefile", "hardlink", "copyfile"]) {
+  test(`isolated install with backend: ${backend}`, async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "test-pkg-backend",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "alias-loop-2": "1.0.0",
+            "alias-loop-1": "1.0.0",
+            "1-peer-dep-a": "1.0.0",
+            "basic-1": "1.0.0",
+            "is-number": "1.0.0",
+            "file-dep": "file:./file-dep",
+            "@scoped/file-dep": "file:./scoped-file-dep",
+          },
+        }),
+      ),
+      write(join(packageDir, "file-dep", "package.json"), JSON.stringify({ name: "file-dep", version: "1.0.0" })),
+      write(
+        join(packageDir, "file-dep", "dir1", "dir2", "dir3", "dir4", "dir5", "index.js"),
+        "module.exports = 'hello from file-dep';",
+      ),
+      write(
+        join(packageDir, "scoped-file-dep", "package.json"),
+        JSON.stringify({ name: "@scoped/file-dep", version: "1.0.0" }),
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--backend", backend],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(await exited).toBe(0);
+    const out = await stdout.text();
+    const err = await stderr.text();
+
+    expect(err).not.toContain("error");
+    expect(err).not.toContain("warning");
+
+    expect(
+      await file(
+        join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps", "package.json"),
+      ).json(),
+    ).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+
+    expect(readlinkSync(join(packageDir, "node_modules", "file-dep"))).toBe(
+      join(".bun", "file-dep@file+file-dep", "node_modules", "file-dep"),
+    );
+
+    expect(
+      await file(
+        join(packageDir, "node_modules", ".bun", "file-dep@file+file-dep", "node_modules", "file-dep", "package.json"),
+      ).json(),
+    ).toEqual({
+      name: "file-dep",
+      version: "1.0.0",
+    });
+
+    expect(
+      await file(
+        join(
+          packageDir,
+          "node_modules",
+          ".bun",
+          "file-dep@file+file-dep",
+          "node_modules",
+          "file-dep",
+          "dir1",
+          "dir2",
+          "dir3",
+          "dir4",
+          "dir5",
+          "index.js",
+        ),
+      ).text(),
+    ).toBe("module.exports = 'hello from file-dep';");
+
+    expect(readlinkSync(join(packageDir, "node_modules", "@scoped", "file-dep"))).toBe(
+      join("..", ".bun", "@scoped+file-dep@file+scoped-file-dep", "node_modules", "@scoped", "file-dep"),
+    );
+
+    expect(
+      await file(
+        join(
+          packageDir,
+          "node_modules",
+          ".bun",
+          "@scoped+file-dep@file+scoped-file-dep",
+          "node_modules",
+          "@scoped",
+          "file-dep",
+          "package.json",
+        ),
+      ).json(),
+    ).toEqual({
+      name: "@scoped/file-dep",
+      version: "1.0.0",
+    });
+  });
+}
+
+describe("--linker flag", () => {
+  test("can override linker from bunfig", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-linker",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    let { exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    expect(await exited).toBe(0);
+
+    expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBeTrue();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--linker", "hoisted"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    }));
+
+    expect(await exited).toBe(0);
+
+    expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBeFalse();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--linker", "isolated"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    }));
+
+    expect(await exited).toBe(0);
+
+    expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBeTrue();
+  });
+
+  test("works as the only config option", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir();
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-linker",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    let { exited } = spawn({
+      cmd: [bunExe(), "install", "--linker", "isolated"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    expect(await exited).toBe(0);
+
+    expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBeTrue();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--linker", "hoisted"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    }));
+
+    expect(await exited).toBe(0);
+
+    expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBeFalse();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    }));
+
+    expect(await exited).toBe(0);
+
+    expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBeFalse();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--linker", "isolated"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    }));
+
+    expect(await exited).toBe(0);
+
+    expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBeTrue();
+  });
+});
 test("many transitive dependencies", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir();
+  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
 
   await write(
     packageJson,
     JSON.stringify({
       name: "test-pkg-many-transitive-deps",
-      workspaces: {
-        nodeLinker: "isolated",
-      },
       dependencies: {
         "alias-loop-1": "1.0.0",
         "alias-loop-2": "1.0.0",

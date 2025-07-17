@@ -542,6 +542,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var override_accept_encoding = false;
     var override_accept_header = false;
     var override_host_header = false;
+    var override_connection_header = false;
     var override_user_agent = false;
     var add_transfer_encoding = true;
     var original_content_length: ?string = null;
@@ -560,8 +561,10 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 continue;
             },
             hashHeaderConst("Connection") => {
-                if (!this.flags.disable_keepalive) {
-                    continue;
+                override_connection_header = true;
+                const connection_value = this.headerStr(header_values[i]);
+                if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
+                    this.flags.disable_keepalive = true;
                 }
             },
             hashHeaderConst("if-modified-since") => {
@@ -609,7 +612,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    if (!this.flags.disable_keepalive) {
+    if (!override_connection_header and !this.flags.disable_keepalive) {
         request_headers_buf[header_count] = connection_header;
         header_count += 1;
     }

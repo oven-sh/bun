@@ -247,6 +247,16 @@ const skipArray = (() => {
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
 
+const skipArrayLeaks = (() => {
+  const path = join(cwd, "test/no-validate-leaksan.txt");
+  if (!existsSync(path)) {
+    return [];
+  }
+  return readFileSync(path, "utf-8")
+    .split("\n")
+    .filter(line => !line.startsWith("#") && line.length > 0);
+})();
+
 /**
  * Returns whether we should validate exception checks running the given test
  * @param {string} test
@@ -254,6 +264,15 @@ const skipArray = (() => {
  */
 const shouldValidateExceptions = test => {
   return !(skipArray.includes(test) || skipArray.includes("test/" + test));
+};
+
+/**
+ * Returns whether we should validate exception checks running the given test
+ * @param {string} test
+ * @returns {boolean}
+ */
+const shouldValidateLeakSan = test => {
+  return !(skipArrayLeaks.includes(test) || skipArrayLeaks.includes("test/" + test));
 };
 
 /**
@@ -449,6 +468,10 @@ async function runTests() {
         };
         if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
           env.BUN_JSC_validateExceptionChecks = "1";
+        }
+        if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
+          env["BUN_DESTRUCT_VM_ON_EXIT"] = "1";
+          env["ASAN_OPTIONS=detect_leaks"] = "1";
         }
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
@@ -1059,8 +1082,12 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   const env = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
   };
-  if (basename(execPath).includes("asan") && shouldValidateExceptions(relative(cwd, absPath))) {
+  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
+  }
+  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
+    env["BUN_DESTRUCT_VM_ON_EXIT"] = "1";
+    env["ASAN_OPTIONS=detect_leaks"] = "1";
   }
 
   const { ok, error, stdout } = await spawnBun(execPath, {

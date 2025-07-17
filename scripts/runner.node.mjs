@@ -171,6 +171,23 @@ if (options["quiet"]) {
   isQuiet = true;
 }
 
+let coresDir;
+
+if (options["coredump-upload"]) {
+  // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
+  const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
+  coresDir = sysctl.stdout;
+  if (sysctl.ok) {
+    if (coresDir.startsWith("|")) {
+      throw new Error("cores are being piped not saved");
+    }
+    // change /foo/bar/%e-%p.core to /foo/bar
+    coresDir = dirname(sysctl.stdout);
+  } else {
+    throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
+  }
+}
+
 /**
  * @typedef {Object} TestExpectation
  * @property {string} filename
@@ -612,19 +629,6 @@ async function runTests() {
 
   if (options["coredump-upload"]) {
     try {
-      // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
-      const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
-      let coresDir = sysctl.stdout;
-      if (sysctl.ok) {
-        if (coresDir.startsWith("|")) {
-          throw new Error("cores are being piped not saved");
-        }
-        // change /foo/bar/%e-%p.core to /foo/bar
-        coresDir = dirname(sysctl.stdout);
-      } else {
-        throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
-      }
-
       const coresDirBase = dirname(coresDir);
       const coresDirName = basename(coresDir);
       const coreFileNames = readdirSync(coresDir);
@@ -730,6 +734,7 @@ async function runTests() {
  * @property {number} timestamp
  * @property {number} duration
  * @property {string} stdout
+ * @property {number} [pid]
  */
 
 /**
@@ -891,6 +896,7 @@ async function spawnSafe(options) {
     stdout: buffer,
     timestamp: timestamp || Date.now(),
     duration: duration || 0,
+    pid: subprocess?.pid,
   };
 }
 
@@ -969,7 +975,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     bunEnv["TEMP"] = tmpdirPath;
   }
   try {
-    return await spawnSafe({
+    const result = await spawnSafe({
       command: execPath,
       args,
       cwd,
@@ -978,6 +984,30 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       stdout,
       stderr,
     });
+    if (result.signalCode !== undefined) {
+      const corePath = join(coresDir, `${basename(execPath)}-${result.pid}.core`);
+      if (existsSync(corePath)) {
+        let out = "";
+        const lldb = await spawnSafe({
+          command: "lldb",
+          args: ["-c", corePath, "--batch", "-o", "thread backtrace all", "-o", "quit"],
+          timeout: 60_000,
+          stderr: () => {},
+          stdout(text) {
+            out += text;
+          },
+        });
+        if (!lldb.ok) {
+          console.warn(`failed to get backtrace from LLDB: ${lldb.error}`);
+        } else {
+          console.log("======== Stack traces from LLDB: ========");
+          console.log(out);
+        }
+      } else {
+        console.warn(`process killed by ${result.signalCode} but no core file found at ${corePath}`);
+      }
+    }
+    return result;
   } finally {
     try {
       rmSync(tmpdirPath, { recursive: true, force: true });

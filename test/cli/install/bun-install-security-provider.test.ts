@@ -7,6 +7,7 @@ import {
   dummyRegistry,
   package_dir,
   read,
+  root_url,
   setHandler,
   write,
 } from "./dummy.registry.js";
@@ -50,5 +51,7 @@ test("basic", async () => {
 
   const { out } = await runBunInstall(bunEnv, package_dir);
 
-  expect(out).toContain("Installation cancelled due to fatal security advisories"); // TODO: Error message is TBA
+  expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.5.tgz`]);
+
+  expect(out).toContain("Installation cancelled because of fatal security advisories"); // TODO: Error message is TBA
 });

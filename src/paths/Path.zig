@@ -398,13 +398,31 @@ pub fn Path(comptime opts: Options) type {
             }
         }
 
-        // pub fn buf(this: *const @This()) []opts.pathUnit() {
-        //     switch (comptime opts.buf_type) {
-        //         .pool => {
-        //             return this._buf.pooled;
-        //         },
-        //     }
-        // }
+        pub fn buf(this: *const @This()) []opts.pathUnit() {
+            switch (comptime opts.buf_type) {
+                .pool => {
+                    return this._buf.pooled;
+                },
+            }
+        }
+
+        pub fn setLength(this: *@This(), new_length: usize) void {
+            this._buf.setLength(new_length);
+
+            const trimmed = switch (comptime opts.kind) {
+                .abs => trimInput(.abs, this.slice()),
+                .rel => trimInput(.rel, this.slice()),
+                .any => trimmed: {
+                    if (this.isAbsolute()) {
+                        break :trimmed trimInput(.abs, this.slice());
+                    }
+
+                    break :trimmed trimInput(.rel, this.slice());
+                },
+            };
+
+            this._buf.setLength(trimmed.len);
+        }
 
         pub fn len(this: *const @This()) usize {
             switch (comptime opts.buf_type) {

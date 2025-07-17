@@ -9,7 +9,7 @@ heap: bun.io.heap.IntrusiveField(EventLoopTimer) = .{},
 
 pub fn initPaused(tag: Tag) EventLoopTimer {
     return .{
-        .next = .{},
+        .next = .epoch,
         .tag = tag,
     };
 }

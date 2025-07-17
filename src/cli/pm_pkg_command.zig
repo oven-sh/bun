@@ -539,7 +539,7 @@ pub const PmPkgCommand = struct {
         };
         defer {
             for (path_parts.items) |part| {
-                if (part.len > 0) allocator.free(part);
+                allocator.free(part);
             }
             path_parts.deinit();
         }
@@ -726,9 +726,7 @@ pub const PmPkgCommand = struct {
         }
 
         if (!found) return false;
-        var new_props = try allocator.alloc(js_ast.G.Property, old_props.len - 1);
-        var new_index: usize = 0;
-
+        var new_props: std.ArrayList(js_ast.G.Property) = try .initCapacity(allocator, old_props.len - 1);
         for (old_props) |prop| {
             if (prop.key) |k| {
                 switch (k.data) {
@@ -740,10 +738,9 @@ pub const PmPkgCommand = struct {
                     else => {},
                 }
             }
-            new_props[new_index] = prop;
-            new_index += 1;
+            new_props.appendAssumeCapacity(prop);
         }
-        const new_list = js_ast.G.Property.List.init(new_props);
+        const new_list = js_ast.G.Property.List.fromList(new_props);
         obj.data.e_object.properties = new_list;
 
         return true;

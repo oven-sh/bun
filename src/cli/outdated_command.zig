@@ -529,7 +529,7 @@ pub const OutdatedCommand = struct {
         table.printBottomLineSeparator();
     }
 
-    fn updateManifestsIfNecessary(
+    pub fn updateManifestsIfNecessary(
         manager: *PackageManager,
         workspace_pkg_ids: []const PackageID,
     ) !void {

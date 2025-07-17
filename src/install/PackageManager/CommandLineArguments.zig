@@ -48,6 +48,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
     clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
+    clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
 };
 
@@ -65,6 +66,7 @@ pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
 
 pub const update_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
+    clap.parseParam("-i, --interactive                     Show an interactive list of outdated packages to select for update") catch unreachable,
     clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
 });
 
@@ -185,6 +187,7 @@ ignore_scripts: bool = false,
 trusted: bool = false,
 no_summary: bool = false,
 latest: bool = false,
+interactive: bool = false,
 json_output: bool = false,
 filters: []const string = &.{},
 
@@ -214,6 +217,8 @@ ca_file_name: string = "",
 save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
+
+node_linker: ?Options.NodeLinker = null,
 
 // `bun pm version` options
 git_tag_version: bool = true,
@@ -294,6 +299,9 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\
                 \\  <d>Update all dependencies to latest:<r>
                 \\  <b><green>bun update<r> <cyan>--latest<r>
+                \\
+                \\  <d>Interactive update (select packages to update):<r>
+                \\  <b><green>bun update<r> <cyan>-i<r>
                 \\
                 \\  <d>Update specific packages:<r>
                 \\  <b><green>bun update<r> <blue>zod jquery@3<r>
@@ -704,9 +712,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     }
 
     var cli = CommandLineArguments{};
+    cli.positionals = args.positionals();
     cli.yarn = args.flag("--yarn");
     cli.production = args.flag("--production");
-    cli.frozen_lockfile = args.flag("--frozen-lockfile");
+    cli.frozen_lockfile = args.flag("--frozen-lockfile") or (cli.positionals.len > 0 and strings.eqlComptime(cli.positionals[0], "ci"));
     cli.no_progress = args.flag("--no-progress");
     cli.dry_run = args.flag("--dry-run");
     cli.global = args.flag("--global");
@@ -721,6 +730,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.no_summary = args.flag("--no-summary");
     cli.ca = args.options("--ca");
     cli.lockfile_only = args.flag("--lockfile-only");
+
+    if (args.option("--linker")) |linker| {
+        cli.node_linker = .fromStr(linker);
+    }
 
     if (args.option("--cache-dir")) |cache_dir| {
         cli.cache_dir = cache_dir;
@@ -884,6 +897,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
     if (comptime subcommand == .update) {
         cli.latest = args.flag("--latest");
+        cli.interactive = args.flag("--interactive");
     }
 
     const specified_backend: ?PackageInstall.Method = brk: {
@@ -906,8 +920,6 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         }
         cli.registry = registry;
     }
-
-    cli.positionals = args.positionals();
 
     if (subcommand == .patch and cli.positionals.len < 2) {
         Output.errGeneric("Missing pkg to patch\n", .{});

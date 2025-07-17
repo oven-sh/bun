@@ -24,7 +24,7 @@ onEndCallback: JSC.Strong.Optional = .empty,
 onWritableCallback: JSC.Strong.Optional = .empty,
 onCloseCallback: JSC.Strong.Optional = .empty,
 event_loop_timer: EventLoopTimer = .{
-    .next = .{},
+    .next = .epoch,
     .tag = .UpgradedDuplex,
 },
 current_timeout: u32 = 0,

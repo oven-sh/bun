@@ -42,7 +42,7 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
-        var arena = try Arena.init();
+        const arena = try Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
@@ -50,7 +50,7 @@ pub const Run = struct {
 
         run = .{
             .vm = try VirtualMachine.initWithModuleGraph(.{
-                .allocator = arena.allocator(),
+                .allocator = bun.default_allocator,
                 .log = ctx.log,
                 .args = ctx.args,
                 .graph = graph_ptr,
@@ -67,7 +67,7 @@ pub const Run = struct {
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
-        vm.allocator = arena.allocator();
+        vm.allocator = bun.default_allocator;
 
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;

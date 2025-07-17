@@ -17,4 +17,8 @@ pub const Identifier = enum(u32) {
         // concurrently because we expect these identifiers are mostly used by off-thread tasks
         return (self.globalObject() orelse return null).bunVMConcurrently();
     }
+
+    pub fn valid(self: Identifier) bool {
+        return self.globalObject() != null;
+    }
 };

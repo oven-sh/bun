@@ -95,7 +95,7 @@ if(LINUX)
   optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)
 endif()
 
-if(DEBUG AND APPLE AND ARCH STREQUAL "aarch64")
+if(DEBUG AND ((APPLE AND ARCH STREQUAL "aarch64") OR LINUX))
   set(DEFAULT_ASAN ON)
 else()
   set(DEFAULT_ASAN OFF)

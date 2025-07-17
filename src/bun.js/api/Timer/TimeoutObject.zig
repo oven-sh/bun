@@ -11,7 +11,7 @@ pub const fromJSDirect = js.fromJSDirect;
 
 ref_count: RefCount,
 event_loop_timer: EventLoopTimer = .{
-    .next = .{},
+    .next = .epoch,
     .tag = .TimeoutObject,
 },
 internals: TimerObjectInternals,

@@ -36,7 +36,7 @@ handlers: Handlers,
 connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
 
 event_loop_timer: EventLoopTimer = .{
-    .next = .{},
+    .next = .epoch,
     .tag = .WindowsNamedPipe,
 },
 current_timeout: u32 = 0,

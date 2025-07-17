@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles, normalizeBunSnapshot } from "harness";
 import { spawnSync } from "bun";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
 
 test("CLAUDECODE=0 shows normal test output", async () => {
   const dir = tempDirWithFiles("claudecode-test-normal", {
@@ -29,10 +29,7 @@ test("CLAUDECODE=0 shows normal test output", async () => {
     cwd: dir,
   });
 
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
+  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
 
   const output = stderr + stdout;
   const normalized = normalizeBunSnapshot(output, dir);
@@ -67,10 +64,7 @@ test("CLAUDECODE=1 shows quiet test output (only failures)", async () => {
     cwd: dir,
   });
 
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
+  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
 
   const output = stderr + stdout;
   const normalized = normalizeBunSnapshot(output, dir);
@@ -120,10 +114,9 @@ test("CLAUDECODE=1 vs CLAUDECODE=0 comparison", async () => {
   const normalOutput = result1.stderr.toString() + result1.stdout.toString();
   const quietOutput = result2.stderr.toString() + result2.stdout.toString();
 
-
   // Normal output should contain pass/skip/todo indicators
   expect(normalOutput).toContain("(pass)"); // pass indicator
-  expect(normalOutput).toContain("(skip)"); // skip indicator  
+  expect(normalOutput).toContain("(skip)"); // skip indicator
   expect(normalOutput).toContain("(todo)"); // todo indicator
 
   // Quiet output should NOT contain pass/skip/todo indicators (only failures)
@@ -135,7 +128,7 @@ test("CLAUDECODE=1 vs CLAUDECODE=0 comparison", async () => {
   expect(normalOutput).toContain("2 pass");
   expect(normalOutput).toContain("1 skip");
   expect(normalOutput).toContain("1 todo");
-  
+
   expect(quietOutput).toContain("2 pass");
   expect(quietOutput).toContain("1 skip");
   expect(quietOutput).toContain("1 todo");

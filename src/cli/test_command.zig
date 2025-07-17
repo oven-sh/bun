@@ -101,7 +101,7 @@ fn writeTestStatusLine(comptime status: @Type(.enum_literal), writer: anytype) v
     if (bun.getRuntimeFeatureFlag(.CLAUDECODE) and status != .fail) {
         return;
     }
-    
+
     if (Output.enable_ansi_colors_stderr)
         writer.print(fmtStatusTextLine(status, true), .{}) catch unreachable
     else
@@ -619,7 +619,7 @@ pub const CommandLineReporter = struct {
     todos_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
 
     file_reporter: ?FileReporter = null,
-    
+
     // Track current file info for CLAUDECODE mode
     current_file_title: ?string = null,
     current_file_prefix: ?string = null,
@@ -668,55 +668,54 @@ pub const CommandLineReporter = struct {
 
         const scopes: []*jest.DescribeScope = scopes_stack.slice();
         const display_label = if (label.len > 0) label else "test";
-        
+
         // In quiet mode (CLAUDECODE=1), only print failures to console
         // but still handle JUnit reporting normally below
         if (bun.getRuntimeFeatureFlag(.CLAUDECODE) and status != .fail) {
             // Skip console output but continue to JUnit reporting
         } else {
+            const color_code = comptime if (skip) "<d>" else "";
 
-        const color_code = comptime if (skip) "<d>" else "";
+            if (Output.enable_ansi_colors_stderr) {
+                for (scopes, 0..) |_, i| {
+                    const index = (scopes.len - 1) - i;
+                    const scope = scopes[index];
+                    if (scope.label.len == 0) continue;
+                    writer.writeAll(" ") catch unreachable;
 
-        if (Output.enable_ansi_colors_stderr) {
-            for (scopes, 0..) |_, i| {
-                const index = (scopes.len - 1) - i;
-                const scope = scopes[index];
-                if (scope.label.len == 0) continue;
-                writer.writeAll(" ") catch unreachable;
-
-                writer.print(comptime Output.prettyFmt("<r>" ++ color_code, true), .{}) catch unreachable;
-                writer.writeAll(scope.label) catch unreachable;
-                writer.print(comptime Output.prettyFmt("<d>", true), .{}) catch unreachable;
-                writer.writeAll(" >") catch unreachable;
+                    writer.print(comptime Output.prettyFmt("<r>" ++ color_code, true), .{}) catch unreachable;
+                    writer.writeAll(scope.label) catch unreachable;
+                    writer.print(comptime Output.prettyFmt("<d>", true), .{}) catch unreachable;
+                    writer.writeAll(" >") catch unreachable;
+                }
+            } else {
+                for (scopes, 0..) |_, i| {
+                    const index = (scopes.len - 1) - i;
+                    const scope = scopes[index];
+                    if (scope.label.len == 0) continue;
+                    writer.writeAll(" ") catch unreachable;
+                    writer.writeAll(scope.label) catch unreachable;
+                    writer.writeAll(" >") catch unreachable;
+                }
             }
-        } else {
-            for (scopes, 0..) |_, i| {
-                const index = (scopes.len - 1) - i;
-                const scope = scopes[index];
-                if (scope.label.len == 0) continue;
-                writer.writeAll(" ") catch unreachable;
-                writer.writeAll(scope.label) catch unreachable;
-                writer.writeAll(" >") catch unreachable;
+
+            const line_color_code = if (comptime skip) "<r><d>" else "<r><b>";
+
+            if (Output.enable_ansi_colors_stderr)
+                writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
+            else
+                writer.print(comptime Output.prettyFmt(" {s}", false), .{display_label}) catch unreachable;
+
+            if (elapsed_ns > (std.time.ns_per_us * 10)) {
+                writer.print(" {any}", .{
+                    Output.ElapsedFormatter{
+                        .colors = Output.enable_ansi_colors_stderr,
+                        .duration_ns = elapsed_ns,
+                    },
+                }) catch unreachable;
             }
-        }
 
-        const line_color_code = if (comptime skip) "<r><d>" else "<r><b>";
-
-        if (Output.enable_ansi_colors_stderr)
-            writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
-        else
-            writer.print(comptime Output.prettyFmt(" {s}", false), .{display_label}) catch unreachable;
-
-        if (elapsed_ns > (std.time.ns_per_us * 10)) {
-            writer.print(" {any}", .{
-                Output.ElapsedFormatter{
-                    .colors = Output.enable_ansi_colors_stderr,
-                    .duration_ns = elapsed_ns,
-                },
-            }) catch unreachable;
-        }
-
-        writer.writeAll("\n") catch unreachable;
+            writer.writeAll("\n") catch unreachable;
         }
 
         if (file_reporter) |reporter| {
@@ -842,13 +841,13 @@ pub const CommandLineReporter = struct {
     pub inline fn summary(this: *CommandLineReporter) *TestRunner.Summary {
         return &this.jest.summary;
     }
-    
+
     pub fn printFilenameIfNeeded(this: *CommandLineReporter) void {
         if (this.filename_printed_for_current_file) return;
-        
+
         if (this.current_file_title) |file_title| {
             const file_prefix = this.current_file_prefix orelse "";
-            
+
             if (this.current_repeat_info) |repeat_info| {
                 if (repeat_info.count > 1) {
                     Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_info.index + 1 });
@@ -858,7 +857,7 @@ pub const CommandLineReporter = struct {
             } else {
                 Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
             }
-            
+
             Output.flush();
             this.filename_printed_for_current_file = true;
         }
@@ -1892,7 +1891,7 @@ pub const TestCommand = struct {
             reporter.current_file_prefix = file_prefix;
             reporter.current_repeat_info = if (repeat_count > 1) .{ .count = repeat_count, .index = repeat_index } else null;
             reporter.filename_printed_for_current_file = false;
-            
+
             if (bun.getRuntimeFeatureFlag(.CLAUDECODE)) {
                 // In CLAUDECODE mode, don't print filename immediately
                 // It will be printed by printFilenameIfNeeded when first failure occurs

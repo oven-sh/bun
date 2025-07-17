@@ -9049,7 +9049,9 @@ fn NewParser_(
                     }) catch unreachable;
                 }
 
-                // No need to add this to `item_refs` because `.scanImportsAndExports` special cases this
+                // No need to add the `default_name` to `item_refs` because
+                // `.scanImportsAndExports(...)` special cases and handles
+                // `default_name` separately
             }
             var end: usize = 0;
 
@@ -17543,7 +17545,7 @@ fn NewParser_(
                                     expr.loc,
                                     std.fmt.allocPrint(
                                         p.allocator,
-                                        "\"useState\" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component.",
+                                        "\"useState\" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding `\"use client\";` to the top of the file).",
                                         .{},
                                     ) catch bun.outOfMemory(),
                                 ) catch bun.outOfMemory();

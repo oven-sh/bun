@@ -110,6 +110,33 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     };
 }
 
+pub fn writeSourcemapToDisk(
+    allocator: std.mem.Allocator,
+    file: *const OutputFile,
+    bundled_outputs: []const OutputFile,
+    source_maps: *bun.StringArrayHashMapUnmanaged(OutputFile.Index),
+) !void {
+    // don't call this if the file does not have sourcemaps!
+    bun.assert(file.source_map_index != std.math.maxInt(u32));
+
+    // TODO: should we just write the sourcemaps to disk?
+    const source_map_index = file.source_map_index;
+    const source_map_file: *const OutputFile = &bundled_outputs[source_map_index];
+    bun.assert(source_map_file.output_kind == .sourcemap);
+
+    const without_prefix = if (bun.strings.hasPrefixComptime(file.dest_path, "./") or
+        (Environment.isWindows and bun.strings.hasPrefixComptime(file.dest_path, ".\\")))
+        file.dest_path[2..]
+    else
+        file.dest_path;
+
+    try source_maps.put(
+        allocator,
+        try std.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
+        OutputFile.Index.init(@intCast(source_map_index)),
+    );
+}
+
 pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMachine, pt: *PerThread) !void {
     // Load and evaluate the configuration module
     const global = vm.global;
@@ -355,21 +382,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 // `PerThread` so we can provide sourcemapped stacktraces for
                 // server components.
                 if (file.source_map_index != std.math.maxInt(u32)) {
-                    const source_map_index = file.source_map_index;
-                    const source_map_file: *const OutputFile = &bundled_outputs[source_map_index];
-                    bun.assert(source_map_file.output_kind == .sourcemap);
-
-                    const without_prefix = if (bun.strings.hasPrefixComptime(file.dest_path, "./") or
-                        (Environment.isWindows and bun.strings.hasPrefixComptime(file.dest_path, ".\\")))
-                        file.dest_path[2..]
-                    else
-                        file.dest_path;
-
-                    try source_maps.put(
-                        allocator,
-                        try std.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
-                        OutputFile.Index.init(@intCast(source_map_index)),
-                    );
+                    try writeSourcemapToDisk(allocator, &file, bundled_outputs, &source_maps);
                 }
 
                 switch (file.output_kind) {
@@ -405,21 +418,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
 
         // TODO: should we just write the sourcemaps to disk?
         if (file.source_map_index != std.math.maxInt(u32)) {
-            const source_map_index = file.source_map_index;
-            const source_map_file: *const OutputFile = &bundled_outputs[source_map_index];
-            bun.assert(source_map_file.output_kind == .sourcemap);
-
-            const without_prefix = if (bun.strings.hasPrefixComptime(file.dest_path, "./") or
-                (Environment.isWindows and bun.strings.hasPrefixComptime(file.dest_path, ".\\")))
-                file.dest_path[2..]
-            else
-                file.dest_path;
-
-            try source_maps.put(
-                allocator,
-                try std.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
-                OutputFile.Index.init(@intCast(source_map_index)),
-            );
+            try writeSourcemapToDisk(allocator, &file, bundled_outputs, &source_maps);
         }
     }
     // Write the runtime file to disk if there are any client chunks
@@ -698,7 +697,12 @@ fn loadModule(vm: *VirtualMachine, global: *JSC.JSGlobalObject, key: JSValue) !J
     const promise = BakeLoadModuleByKey(global, key).asAnyPromise().?.internal;
     promise.setHandled(vm.jsc);
     vm.waitForPromise(.{ .internal = promise });
-    vm.eventLoop().drainMicrotasks() catch unreachable;
+    // TODO: Specially draining microtasks here because `waitForPromise` has a
+    //       bug which forgets to do it, but I don't want to fix it right now as it
+    //       could affect a lot of the codebase. This should be removed.
+    vm.eventLoop().drainMicrotasks() catch {
+        bun.Global.crash();
+    };
     switch (promise.unwrap(vm.jsc, .mark_handled)) {
         .pending => unreachable,
         .fulfilled => |val| {
@@ -951,7 +955,7 @@ pub const PerThread = struct {
     }
 
     // Must be run at the top of the event loop
-    pub fn loadBundledModule(pt: *PerThread, id: OpaqueFileId) bun.JSError!JSValue {
+    pub fn loadBundledModule(pt: *PerThread, id: OpaqueFileId) !JSValue {
         return try loadModule(
             pt.vm,
             pt.vm.global,

@@ -305,9 +305,10 @@ bool JSEnvironmentVariableMap::defineOwnProperty(JSC::JSObject* object, JSC::JSG
     value = value ? value : jsUndefined();
     if (propertyName.publicName()->length() == 0) return false;
     auto string = value.toStringOrNull(globalObject);
-    if (UNLIKELY(!string)) return false;
+    EXCEPTION_ASSERT(!!string == !scope.exception());
+    RETURN_IF_EXCEPTION(scope, {});
     descriptor.value() = string;
-    return Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
+    RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
 }
 
 bool JSEnvironmentVariableMap::put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::JSValue value, JSC::PutPropertySlot& slot)
@@ -320,8 +321,9 @@ bool JSEnvironmentVariableMap::put(JSC::JSCell* cell, JSC::JSGlobalObject* globa
     }
     if (propertyName.publicName()->length() == 0) return false;
     auto string = value.toStringOrNull(globalObject);
-    if (UNLIKELY(!string)) return false;
-    return Base::put(cell, globalObject, propertyName, string, slot);
+    EXCEPTION_ASSERT(!!string == !scope.exception());
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, slot));
 }
 
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)

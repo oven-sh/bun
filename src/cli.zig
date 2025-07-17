@@ -653,6 +653,11 @@ pub const Command = struct {
         "help",
     };
 
+    /// Keep the stack space usage of this function small. This function is
+    /// kept alive for the entire duration of the process
+    ///
+    /// So do not add any path buffers or anything that is large in this
+    /// function or that stack space is used up forever.
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
         if (comptime Environment.allow_assert) {
             if (bun.getenvZ("MI_VERBOSE") == null) {

@@ -756,10 +756,11 @@ pub const UpdateInteractiveCommand = struct {
                     // The padding should align with the first character of package names
                     // Package names start at: "    " (4 spaces) + "□ " (2 chars) = 6 chars from left
                     // Headers start at: "  " (2 spaces) + dep_type_text
-                    // So we need to pad: 4 (cursor/space) + 2 (checkbox+space) + max_name_len + 4 (name padding) - dep_type_text_len
-                    // Use safe subtraction to prevent underflow when dep_type_text_len is longer than available space
-                    const base_padding = 4 + 2 + state.max_name_len + 4;
-                    const padding_to_current = if (dep_type_text_len >= base_padding) 1 else base_padding - dep_type_text_len;
+                    // We need the headers to align where the current version column starts
+                    // That's at: 6 (start of names) + max_name_len + 2 (spacing after names) - 2 (header indent) - dep_type_text_len
+                    const total_offset = 6 + state.max_name_len + 2;
+                    const header_start = 2 + dep_type_text_len;
+                    const padding_to_current = if (header_start >= total_offset) 1 else total_offset - header_start;
                     while (j < padding_to_current) : (j += 1) {
                         Output.print(" ", .{});
                     }
@@ -767,7 +768,7 @@ pub const UpdateInteractiveCommand = struct {
                     // Column headers aligned with their columns
                     Output.print("Current", .{});
                     j = 0;
-                    while (j < state.max_current_len - "Current".len + 4) : (j += 1) {
+                    while (j < state.max_current_len - "Current".len + 2) : (j += 1) {
                         Output.print(" ", .{});
                     }
                     Output.print("Target", .{});
@@ -903,19 +904,19 @@ pub const UpdateInteractiveCommand = struct {
                     Output.pretty("<r><d> optional<r>", .{});
                 }
 
-                // Print padding after name (4 spaces as requested)
+                // Print padding after name (2 spaces)
                 var j: usize = 0;
-                while (j < name_padding + 4) : (j += 1) {
+                while (j < name_padding + 2) : (j += 1) {
                     Output.print(" ", .{});
                 }
 
                 // Current version
                 Output.pretty("<r>{s}<r>", .{pkg.current_version});
 
-                // Print padding after current version (4 spaces as requested)
+                // Print padding after current version (2 spaces)
                 const current_padding = if (pkg.current_version.len >= state.max_current_len) 0 else state.max_current_len - pkg.current_version.len;
                 j = 0;
-                while (j < current_padding + 4) : (j += 1) {
+                while (j < current_padding + 2) : (j += 1) {
                     Output.print(" ", .{});
                 }
 

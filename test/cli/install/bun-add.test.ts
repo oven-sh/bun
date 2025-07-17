@@ -2272,8 +2272,8 @@ it("should add local tarball dependency", async () => {
   const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
   expect(package_json.name).toBe("baz");
   expect(package_json.version).toBe("0.0.3");
-  (expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
-    await access(join(package_dir, "bun.lockb")));
+  expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
+    await access(join(package_dir, "bun.lockb"));
 });
 
 it("should add multiple dependencies specified on command line", async () => {

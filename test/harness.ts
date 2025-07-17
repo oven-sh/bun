@@ -1165,20 +1165,20 @@ export function tmpdirSync(pattern: string = "bun.test."): string {
 export async function runBunInstall(
   env: NodeJS.Dict<string>,
   cwd: string,
-  options?: {
+  options: {
     allowWarnings?: boolean;
     allowErrors?: boolean;
-    expectedExitCode?: number;
+    expectedExitCode?: number | null;
     savesLockfile?: boolean;
     production?: boolean;
     frozenLockfile?: boolean;
     saveTextLockfile?: boolean;
     packages?: string[];
     verbose?: boolean;
-  },
+  } = {},
 ) {
   const production = options?.production ?? false;
-  const args = production ? [bunExe(), "install", "--production"] : [bunExe(), "install"];
+  const args = [bunExe(), "install"];
   if (options?.packages) {
     args.push(...options.packages);
   }
@@ -1204,7 +1204,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = stderrForInstall(await stderr.text());
+  let err: string = stderrForInstall(await stderr.text());
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -1215,7 +1215,7 @@ export async function runBunInstall(
   if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
-  let out = await stdout.text();
+  let out: string = await stdout.text();
   expect(await exited).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
 }

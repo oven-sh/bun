@@ -571,6 +571,7 @@ pub const LifecycleScriptSubprocess = struct {
                 Lockfile.Scripts.names[list.first_index],
                 @errorName(err),
             });
+            Global.exit(1);
         };
     }
 };

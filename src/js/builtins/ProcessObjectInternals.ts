@@ -379,7 +379,14 @@ export function windowsEnv(
   for (const key in internalEnv) {
     keyStore.set(key.toUpperCase(), key);
   }
-  for (const key of ['hasOwnProperty','isPrototypeOf','propertyIsEnumerable','toLocaleString','toString','valueOf']) {
+  for (const key of [
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+    "toString",
+    "valueOf",
+  ]) {
     const k = key.toUpperCase();
     if (!keyStore.has(k)) keyStore.set(k, key);
   }
@@ -438,11 +445,26 @@ export function windowsEnv(
       return typeof p !== "symbol" ? delete internalEnv[p] : false;
     },
     defineProperty(_, p, attributes) {
-      if (attributes.get) throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(`'process.env' does not accept an accessor(getter/setter) descriptor`);
-      if (attributes.set) throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(`'process.env' does not accept an accessor(getter/setter) descriptor`);
-      if (!attributes.writable) throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(`'process.env' only accepts a configurable, writable, and enumerable data descriptor`);
-      if (!attributes.enumerable) throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(`'process.env' only accepts a configurable, writable, and enumerable data descriptor`);
-      if (!attributes.configurable) throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(`'process.env' only accepts a configurable, writable, and enumerable data descriptor`);
+      if (attributes.get)
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          `'process.env' does not accept an accessor(getter/setter) descriptor`,
+        );
+      if (attributes.set)
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          `'process.env' does not accept an accessor(getter/setter) descriptor`,
+        );
+      if (!attributes.writable)
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          `'process.env' only accepts a configurable, writable, and enumerable data descriptor`,
+        );
+      if (!attributes.enumerable)
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          `'process.env' only accepts a configurable, writable, and enumerable data descriptor`,
+        );
+      if (!attributes.configurable)
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          `'process.env' only accepts a configurable, writable, and enumerable data descriptor`,
+        );
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
       if (keyStore.has(k)) {

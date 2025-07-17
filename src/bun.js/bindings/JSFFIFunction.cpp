@@ -39,8 +39,6 @@
 
 class FFICallbackFunctionWrapper {
 
-    WTF_MAKE_FAST_ALLOCATED;
-
 public:
     JSC::Strong<JSC::JSFunction> m_function;
     JSC::Strong<Zig::GlobalObject> globalObject;

@@ -35,13 +35,13 @@ void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent
 {
     auto str = name->toWTFString(BunString::ZeroCopy);
 
-    Protocol::TestReporter::TestType type;
+    String type;
     switch (item_type) {
     case BunTestType::Test:
-        type = Protocol::TestReporter::TestType::Test;
+        type = "test"_s;
         break;
     case BunTestType::Describe:
-        type = Protocol::TestReporter::TestType::Describe;
+        type = "describe"_s;
         break;
     default:
         ASSERT_NOT_REACHED();
@@ -84,7 +84,7 @@ void Bun__TestReporterAgentReportTestEnd(Inspector::InspectorTestReporterAgent* 
         status = Protocol::TestReporter::TestStatus::Todo;
         break;
     case BunTestStatus::SkippedBecauseLabel:
-        status = Protocol::TestReporter::TestStatus::Skipped_because_label;
+        status = Protocol::TestReporter::TestStatus::Skip;
         break;
     default:
         ASSERT_NOT_REACHED();
@@ -109,7 +109,7 @@ InspectorTestReporterAgent::~InspectorTestReporterAgent()
     }
 }
 
-void InspectorTestReporterAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
+void InspectorTestReporterAgent::didCreateFrontendAndBackend()
 {
 }
 
@@ -138,7 +138,7 @@ Protocol::ErrorStringOr<void> InspectorTestReporterAgent::disable()
     return {};
 }
 
-void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, const String& name, Protocol::TestReporter::TestType type, int parentId)
+void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, const String& name, const String& type, int parentId)
 {
     if (!m_enabled)
         return;
@@ -205,9 +205,7 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
         sourceID > 0 ? String::number(sourceID) : String(),
         sourceURL,
         lineColumn.line,
-        name,
-        type,
-        parentId > 0 ? parentId : std::optional<int>());
+        name);
 }
 
 void InspectorTestReporterAgent::reportTestStart(int testId)

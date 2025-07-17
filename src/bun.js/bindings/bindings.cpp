@@ -1723,9 +1723,8 @@ bool WebCore__FetchHeaders__isEmpty(WebCore::FetchHeaders* arg0)
 
 WebCore::FetchHeaders* WebCore__FetchHeaders__createEmpty()
 {
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    headers->relaxAdoptionRequirement();
-    return headers;
+    auto headers = WebCore::FetchHeaders::create(WebCore::FetchHeaders::Guard::None, {});
+    return &headers.leakRef();
 }
 void WebCore__FetchHeaders__append(WebCore::FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2,
     JSC::JSGlobalObject* lexicalGlobalObject)
@@ -1775,8 +1774,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* 
         }
     }
 
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    headers->relaxAdoptionRequirement();
+    auto headers = WebCore::FetchHeaders::create(WebCore::FetchHeaders::Guard::None, {});
 
     // `fill` doesn't set an exception on the VM if it fails, it returns an
     //  ExceptionOr<void>.  So we need to check for the exception and, if set,
@@ -1784,13 +1782,12 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* 
     WebCore::propagateException(*lexicalGlobalObject, throwScope, headers->fill(WTFMove(init.value())));
 
     // If there's an exception, it will be thrown by the above call to fill().
-    // in that case, let's also free the headers to make memory leaks harder.
+    // in that case, the headers should not be leaked.
     if (throwScope.exception()) {
-        headers->deref();
         return nullptr;
     }
 
-    return headers;
+    return &headers.leakRef();
 }
 
 JSC::EncodedJSValue WebCore__FetchHeaders__toJS(WebCore::FetchHeaders* headers, JSC::JSGlobalObject* lexicalGlobalObject)
@@ -1798,14 +1795,9 @@ JSC::EncodedJSValue WebCore__FetchHeaders__toJS(WebCore::FetchHeaders* headers, 
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
 
-    bool needsMemoryCost = headers->hasOneRef();
-
+    // Since we're passing raw pointers, we can't easily check ref count
+    // The memory cost will be computed when needed
     JSValue value = WebCore::toJS(lexicalGlobalObject, globalObject, headers);
-
-    if (needsMemoryCost) {
-        JSFetchHeaders* jsHeaders = jsCast<JSFetchHeaders*>(value);
-        jsHeaders->computeMemoryCost();
-    }
 
     return JSC::JSValue::encode(value);
 }
@@ -1814,7 +1806,7 @@ JSC::EncodedJSValue WebCore__FetchHeaders__clone(WebCore::FetchHeaders* headers,
 {
     auto throwScope = DECLARE_THROW_SCOPE(arg1->vm());
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg1);
-    auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto clone = WebCore::FetchHeaders::create(WebCore::FetchHeaders::Guard::None, {});
     WebCore::propagateException(*arg1, throwScope, clone->fill(*headers));
     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg1, globalObject, WTFMove(clone)));
 }
@@ -1822,10 +1814,9 @@ JSC::EncodedJSValue WebCore__FetchHeaders__clone(WebCore::FetchHeaders* headers,
 WebCore::FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore::FetchHeaders* headers, JSC::JSGlobalObject* lexicalGlobalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-    auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    clone->relaxAdoptionRequirement();
+    auto clone = WebCore::FetchHeaders::create(WebCore::FetchHeaders::Guard::None, {});
     WebCore::propagateException(*lexicalGlobalObject, throwScope, clone->fill(*headers));
-    return clone;
+    return &clone.leakRef();
 }
 
 bool WebCore__FetchHeaders__fastHas_(WebCore::FetchHeaders* arg0, unsigned char HTTPHeaderName1)
@@ -1913,8 +1904,7 @@ typedef struct PicoHTTPHeaders {
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg1)
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    headers->relaxAdoptionRequirement(); // This prevents an assertion later, but may not be the proper approach.
+    auto headers = WebCore::FetchHeaders::create(WebCore::FetchHeaders::Guard::None, {});
 
     if (pico_headers.len > 0) {
         HTTPHeaderMap map = HTTPHeaderMap();
@@ -1949,14 +1939,13 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 
         headers->setInternalHeaders(WTFMove(map));
     }
-    return headers;
+    return &headers.leakRef();
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 {
     uWS::HttpRequest req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
 
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    headers->relaxAdoptionRequirement(); // This prevents an assertion later, but may not be the proper approach.
+    auto headers = WebCore::FetchHeaders::create(WebCore::FetchHeaders::Guard::None, {});
 
     HTTPHeaderMap map = HTTPHeaderMap();
 
@@ -1976,7 +1965,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
         }
     }
     headers->setInternalHeaders(WTFMove(map));
-    return headers;
+    return &headers.leakRef();
 }
 void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
 {

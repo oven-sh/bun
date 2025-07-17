@@ -39,7 +39,7 @@ JSHeapData::JSHeapData(Heap& heap)
     , m_domBuiltinConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMBuiltinConstructorBase)
     , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
     , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
-    , m_subspaces(makeUnique<ExtendedDOMIsoSubspaces>())
+    , m_subspaces(makeUniqueWithoutFastMallocCheck<ExtendedDOMIsoSubspaces>())
 
 {
 }
@@ -53,7 +53,7 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<SourceProvider> sourceProvider)
     , CLIENT_ISO_SUBSPACE_INIT(m_domBuiltinConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
-    , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
+    , m_clientSubspaces(makeUniqueWithoutFastMallocCheck<ExtendedDOMClientIsoSubspaces>())
 {
 }
 
@@ -97,7 +97,7 @@ void JSVMClientData::create(VM* vm, void* bunVM)
     vm->clientData = clientData; // ~VM deletes this pointer.
     clientData->m_normalWorld = DOMWrapperWorld::create(*vm, DOMWrapperWorld::Type::Normal);
 
-    vm->heap.addMarkingConstraint(makeUnique<WebCore::DOMGCOutputConstraint>(*vm, clientData->heapData()));
+    vm->heap.addMarkingConstraint(makeUniqueWithoutFastMallocCheck<WebCore::DOMGCOutputConstraint>(*vm, clientData->heapData()));
     vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(true));
     clientData->builtinFunctions().exportNames();
 }

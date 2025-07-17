@@ -11,7 +11,6 @@ using namespace JSC;
 
 class DOMIsoSubspaces {
     WTF_MAKE_NONCOPYABLE(DOMIsoSubspaces);
-    WTF_MAKE_FAST_ALLOCATED(DOMIsoSubspaces);
 
 public:
     DOMIsoSubspaces() = default;

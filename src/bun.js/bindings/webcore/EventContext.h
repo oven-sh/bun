@@ -35,7 +35,6 @@
 namespace WebCore {
 
 class EventContext {
-    WTF_MAKE_FAST_ALLOCATED;
 
 public:
     using EventInvokePhase = EventTarget::EventInvokePhase;

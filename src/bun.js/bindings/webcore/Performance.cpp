@@ -369,7 +369,7 @@ bool Performance::isResourceTimingBufferFull() const
 ExceptionOr<Ref<PerformanceMark>> Performance::mark(JSC::JSGlobalObject& globalObject, const String& markName, std::optional<PerformanceMarkOptions>&& markOptions)
 {
     if (!m_userTiming)
-        m_userTiming = makeUnique<PerformanceUserTiming>(*this);
+        m_userTiming = makeUniqueWithoutFastMallocCheck<PerformanceUserTiming>(*this);
 
     auto mark = m_userTiming->mark(globalObject, markName, WTFMove(markOptions));
     if (mark.hasException())
@@ -382,14 +382,14 @@ ExceptionOr<Ref<PerformanceMark>> Performance::mark(JSC::JSGlobalObject& globalO
 void Performance::clearMarks(const String& markName)
 {
     if (!m_userTiming)
-        m_userTiming = makeUnique<PerformanceUserTiming>(*this);
+        m_userTiming = makeUniqueWithoutFastMallocCheck<PerformanceUserTiming>(*this);
     m_userTiming->clearMarks(markName);
 }
 
 ExceptionOr<Ref<PerformanceMeasure>> Performance::measure(JSC::JSGlobalObject& globalObject, const String& measureName, std::optional<StartOrMeasureOptions>&& startOrMeasureOptions, const String& endMark)
 {
     if (!m_userTiming)
-        m_userTiming = makeUnique<PerformanceUserTiming>(*this);
+        m_userTiming = makeUniqueWithoutFastMallocCheck<PerformanceUserTiming>(*this);
 
     auto measure = m_userTiming->measure(globalObject, measureName, WTFMove(startOrMeasureOptions), endMark);
     if (measure.hasException())
@@ -402,7 +402,7 @@ ExceptionOr<Ref<PerformanceMeasure>> Performance::measure(JSC::JSGlobalObject& g
 void Performance::clearMeasures(const String& measureName)
 {
     if (!m_userTiming)
-        m_userTiming = makeUnique<PerformanceUserTiming>(*this);
+        m_userTiming = makeUniqueWithoutFastMallocCheck<PerformanceUserTiming>(*this);
     m_userTiming->clearMeasures(measureName);
 }
 

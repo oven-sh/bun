@@ -202,7 +202,6 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
 
 class VersionSqlite3 {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(VersionSqlite3);
 
 public:
     explicit VersionSqlite3(sqlite3* db)

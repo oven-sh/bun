@@ -25,7 +25,7 @@ public:
     virtual ~InspectorTestReporterAgent();
 
     // InspectorAgentBase
-    virtual void didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*) final;
+    virtual void didCreateFrontendAndBackend() final;
     virtual void willDestroyFrontendAndBackend(DisconnectReason) final;
 
     // TestReporterBackendDispatcherHandler
@@ -33,7 +33,7 @@ public:
     virtual Protocol::ErrorStringOr<void> disable() final;
 
     // Public API for reporting test events
-    void reportTestFound(JSC::CallFrame*, int testId, const String& name, Protocol::TestReporter::TestType type = Protocol::TestReporter::TestType::Test, int parentId = -1);
+    void reportTestFound(JSC::CallFrame*, int testId, const String& name, const String& type = "test"_s, int parentId = -1);
     void reportTestStart(int testId);
     void reportTestEnd(int testId, Protocol::TestReporter::TestStatus status, double elapsed);
 

@@ -987,6 +987,10 @@ export class Client extends EventEmitter {
         // Create unique message ID for this evaluation
         const messageId = Math.random().toString(36).slice(2);
 
+        if (this.exited) {
+          throw new Error("Client exited while waiting for error overlay");
+        }
+
         // Send the evaluation request and wait for response
         this.#proc.send({
           type: "get-errors",
@@ -1005,6 +1009,10 @@ export class Client extends EventEmitter {
         if (hasVisibleModal) {
           // Create unique message ID for this evaluation
           const messageId = Math.random().toString(36).slice(2);
+
+          if (this.exited) {
+            throw new Error("Client exited while waiting for error overlay with visible modal");
+          }
 
           // Send the evaluation request and wait for response
           this.#proc.send({
@@ -1073,6 +1081,10 @@ export class Client extends EventEmitter {
         };
 
         this.once(`js-result-${messageId}`, handler);
+
+        if (this.exited) {
+          throw new Error("Client exited while waiting for js");
+        }
 
         // Send the evaluation request
         this.#proc.send({

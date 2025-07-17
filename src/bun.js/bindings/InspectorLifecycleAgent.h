@@ -1,13 +1,13 @@
 #pragma once
 
 #include "root.h"
-#include <JavaScriptCore/AlternateDispatchableAgent.h>
 #include <JavaScriptCore/InspectorAgentBase.h>
 #include <JavaScriptCore/InspectorBackendDispatchers.h>
 #include <JavaScriptCore/InspectorFrontendDispatchers.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
+#include <JavaScriptCore/AlternateDispatchableAgent.h>
 #include "headers-handwritten.h"
 namespace Inspector {
 
@@ -25,7 +25,7 @@ public:
     virtual ~InspectorLifecycleAgent();
 
     // InspectorAgentBase
-    virtual void didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*) final;
+    virtual void didCreateFrontendAndBackend() final;
     virtual void willDestroyFrontendAndBackend(DisconnectReason) final;
 
     // LifecycleReporterBackendDispatcherHandler

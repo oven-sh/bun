@@ -1119,8 +1119,10 @@ const glob = bun.glob;
 const path = bun.path;
 const string = bun.string;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
 const FileSystem = bun.fs.FileSystem;
+
+const Command = bun.CLI.Command;
+const OutdatedCommand = bun.CLI.OutdatedCommand;
 
 const Semver = bun.Semver;
 const SlicedString = Semver.SlicedString;
@@ -1128,7 +1130,6 @@ const SlicedString = Semver.SlicedString;
 const Install = bun.install;
 const DependencyID = Install.DependencyID;
 const PackageID = Install.PackageID;
-const Resolution = Install.Resolution;
 const invalid_package_id = Install.invalid_package_id;
 const Behavior = Install.Dependency.Behavior;
 
@@ -1136,4 +1137,3 @@ const PackageManager = Install.PackageManager;
 const PackageJSONEditor = PackageManager.PackageJSONEditor;
 const UpdateRequest = PackageManager.UpdateRequest;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const OutdatedCommand = bun.CLI.OutdatedCommand;

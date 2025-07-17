@@ -194,7 +194,7 @@ template<typename T> struct Converter<IDLAtomStringAdaptor<T>> : DefaultConverte
     {
         static_assert(std::is_same<T, IDLDOMString>::value, "This adaptor is only supported for IDLDOMString at the moment.");
 
-        return value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject);
+        return value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject).data;
     }
 };
 
@@ -267,7 +267,7 @@ template<typename T> struct Converter<IDLRequiresExistingAtomStringAdaptor<T>> :
     {
         static_assert(std::is_same<T, IDLDOMString>::value, "This adaptor is only supported for IDLDOMString at the moment.");
 
-        return value.toString(&lexicalGlobalObject)->toExistingAtomString(&lexicalGlobalObject);
+        return value.toString(&lexicalGlobalObject)->toExistingAtomString(&lexicalGlobalObject).data;
     }
 };
 

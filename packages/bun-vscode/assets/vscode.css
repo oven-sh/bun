@@ -1,69 +1,129 @@
-.mtk1 { color: #cccccc; }
-.mtk2 { color: #1f1f1f; }
-.mtk3 { color: #d4d4d4; }
-.mtk4 { color: #000080; }
-.mtk5 { color: #6a9955; }
-.mtk6 { color: #569cd6; }
-.mtk7 { color: #b5cea8; }
-.mtk8 { color: #646695; }
-.mtk9 { color: #d7ba7d; }
-.mtk10 { color: #9cdcfe; }
-.mtk11 { color: #f44747; }
-.mtk12 { color: #ce9178; }
-.mtk13 { color: #6796e6; }
-.mtk14 { color: #808080; }
-.mtk15 { color: #d16969; }
-.mtk16 { color: #dcdcaa; }
-.mtk17 { color: #4ec9b0; }
-.mtk18 { color: #c586c0; }
-.mtk19 { color: #4fc1ff; }
-.mtk20 { color: #c8c8c8; }
-.mtk21 { color: #606060; }
-.mtk22 { color: #ffffff; }
-.mtk23 { color: #cd9731; }
-.mtk24 { color: #b267e6; }
-.mtki { font-style: italic; }
-.mtkb { font-weight: bold; }
-.mtku { text-decoration: underline; text-underline-position: under; }
-.mtks { text-decoration: line-through; }
-.mtks.mtku { text-decoration: underline line-through; text-underline-position: under; }
+.mtk1 {
+  color: #cccccc;
+}
+.mtk2 {
+  color: #1f1f1f;
+}
+.mtk3 {
+  color: #d4d4d4;
+}
+.mtk4 {
+  color: #000080;
+}
+.mtk5 {
+  color: #6a9955;
+}
+.mtk6 {
+  color: #569cd6;
+}
+.mtk7 {
+  color: #b5cea8;
+}
+.mtk8 {
+  color: #646695;
+}
+.mtk9 {
+  color: #d7ba7d;
+}
+.mtk10 {
+  color: #9cdcfe;
+}
+.mtk11 {
+  color: #f44747;
+}
+.mtk12 {
+  color: #ce9178;
+}
+.mtk13 {
+  color: #6796e6;
+}
+.mtk14 {
+  color: #808080;
+}
+.mtk15 {
+  color: #d16969;
+}
+.mtk16 {
+  color: #dcdcaa;
+}
+.mtk17 {
+  color: #4ec9b0;
+}
+.mtk18 {
+  color: #c586c0;
+}
+.mtk19 {
+  color: #4fc1ff;
+}
+.mtk20 {
+  color: #c8c8c8;
+}
+.mtk21 {
+  color: #606060;
+}
+.mtk22 {
+  color: #ffffff;
+}
+.mtk23 {
+  color: #cd9731;
+}
+.mtk24 {
+  color: #b267e6;
+}
+.mtki {
+  font-style: italic;
+}
+.mtkb {
+  font-weight: bold;
+}
+.mtku {
+  text-decoration: underline;
+  text-underline-position: under;
+}
+.mtks {
+  text-decoration: line-through;
+}
+.mtks.mtku {
+  text-decoration: underline line-through;
+  text-underline-position: under;
+}
 
 .bunlock {
-    display: flex;
-    flex-direction: row;
+  display: flex;
+  flex-direction: row;
 }
 
 .lines {
-    display: flex;
-    flex-direction: column;
-    width: 30px;
-    margin-right: 15px;
-    text-align: right;
-    opacity: 0.5;
+  display: flex;
+  flex-direction: column;
+  width: 30px;
+  margin-right: 15px;
+  text-align: right;
+  opacity: 0.5;
 
-	font-size: var(--vscode-editor-font-size);
-	font-weight: var(--vscode-editor-font-weight);
-	font-family: var(--vscode-editor-font-family);
-	background-color: var(--vscode-editor-background);
+  font-size: var(--vscode-editor-font-size);
+  font-weight: var(--vscode-editor-font-weight);
+  font-family: var(--vscode-editor-font-family);
+  background-color: var(--vscode-editor-background);
 }
 
 .lines > span {
-    margin-top: 1px;
-    margin-bottom: 1px;
+  margin-top: 1px;
+  margin-bottom: 1px;
 }
 
 code {
-    white-space: pre;
+  white-space: pre;
 
-	font-size: var(--vscode-editor-font-size);
-	font-weight: var(--vscode-editor-font-weight);
-	font-family: var(--vscode-editor-font-family);
-	background-color: var(--vscode-editor-background);
+  font-size: var(--vscode-editor-font-size);
+  font-weight: var(--vscode-editor-font-weight);
+  font-family: var(--vscode-editor-font-family);
+  background-color: var(--vscode-editor-background);
 }
 
 code > span {
-    display: inline-block;
-    width: 100%;
-    margin-top: 1px;
-    margin-bottom: 1px;
+  display: inline-block;
+  width: 100%;
+  margin-top: 1px;
+  margin-bottom: 1px;
 }

@@ -13,13 +13,13 @@ export default [
     overridesToJS: true,
     memoryCost: true,
     proto: {
-      text: { fn: "getText" },
-      json: { fn: "getJSON" },
-      bytes: { fn: "getBytes" },
+      text: { fn: "getText", async: true },
+      json: { fn: "getJSON", async: true },
+      bytes: { fn: "getBytes", async: true },
       body: { getter: "getBody", cache: true },
-      arrayBuffer: { fn: "getArrayBuffer" },
-      formData: { fn: "getFormData" },
-      blob: { fn: "getBlob" },
+      arrayBuffer: { fn: "getArrayBuffer", async: true },
+      formData: { fn: "getFormData", async: true },
+      blob: { fn: "getBlob", async: true },
       clone: { fn: "doClone", length: 1 },
       cache: {
         getter: "getCache",
@@ -91,13 +91,14 @@ export default [
       },
       body: { getter: "getBody", cache: true },
 
-      text: { fn: "getText" },
-      json: { fn: "getJSON" },
-      bytes: { fn: "getBytes" },
-      arrayBuffer: { fn: "getArrayBuffer" },
-      blob: { fn: "getBlob" },
+      text: { fn: "getText", async: true },
+      json: { fn: "getJSON", async: true },
+      bytes: { fn: "getBytes", async: true },
+      arrayBuffer: { fn: "getArrayBuffer", async: true },
+      blob: { fn: "getBlob", async: true },
+      formData: { fn: "getFormData", async: true },
+
       clone: { fn: "doClone", length: 1 },
-      formData: { fn: "getFormData" },
 
       type: {
         getter: "getResponseType",
@@ -137,16 +138,16 @@ export default [
     values: ["stream"],
     overridesToJS: true,
     proto: {
-      text: { fn: "getText" },
-      json: { fn: "getJSON" },
-      arrayBuffer: { fn: "getArrayBuffer" },
+      text: { fn: "getText", async: true },
+      json: { fn: "getJSON", async: true },
+      arrayBuffer: { fn: "getArrayBuffer", async: true },
       slice: { fn: "getSlice", length: 2 },
       stream: { fn: "getStream", length: 1 },
-      formData: { fn: "getFormData" },
+      formData: { fn: "getFormData", async: true },
       exists: { fn: "getExists", length: 0 },
 
       // Non-standard, but consistent!
-      bytes: { fn: "getBytes" },
+      bytes: { fn: "getBytes", async: true },
 
       type: {
         getter: "getType",

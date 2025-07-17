@@ -1,8 +1,5 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
 
 pub const css = @import("../css_parser.zig");
 pub const css_values = @import("../values/values.zig");

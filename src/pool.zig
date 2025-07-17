@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 fn SinglyLinkedList(comptime T: type, comptime Parent: type) type {
     return struct {

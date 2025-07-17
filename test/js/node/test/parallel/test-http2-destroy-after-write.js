@@ -23,7 +23,7 @@ server.on('session', common.mustCall(function(session) {
 }));
 
 server.listen(0, function() {
-  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  const client = http2.connect(`http://localhost:${server.address().port}`);
   const stream = client.request({ ':method': 'POST' });
   stream.on('response', common.mustCall(function(headers) {
     assert.strictEqual(headers[':status'], 200);

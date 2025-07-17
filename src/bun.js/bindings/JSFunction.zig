@@ -1,9 +1,6 @@
-const std = @import("std");
-const bun = @import("root").bun;
-const string = bun.string;
-const Output = bun.Output;
+const bun = @import("bun");
 const JSC = bun.JSC;
-const JSHostFunctionType = JSC.JSHostFunctionType;
+const JSHostFn = JSC.JSHostFn;
 const ZigString = JSC.ZigString;
 const String = bun.String;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -25,23 +22,23 @@ pub const JSFunction = opaque {
     const CreateJSFunctionOptions = struct {
         implementation_visibility: ImplementationVisibility = .public,
         intrinsic: Intrinsic = .none,
-        constructor: ?*const JSHostFunctionType = null,
+        constructor: ?*const JSHostFn = null,
     };
 
     extern fn JSFunction__createFromZig(
         global: *JSGlobalObject,
         fn_name: bun.String,
-        implementation: *const JSHostFunctionType,
+        implementation: *const JSHostFn,
         arg_count: u32,
         implementation_visibility: ImplementationVisibility,
         intrinsic: Intrinsic,
-        constructor: ?*const JSHostFunctionType,
+        constructor: ?*const JSHostFn,
     ) JSValue;
 
     pub fn create(
         global: *JSGlobalObject,
         fn_name: anytype,
-        comptime implementation: JSC.JSHostZigFunction,
+        comptime implementation: JSC.JSHostFnZig,
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) JSValue {
@@ -51,7 +48,7 @@ pub const JSFunction = opaque {
                 bun.String => fn_name,
                 else => bun.String.init(fn_name),
             },
-            JSC.toJSHostFunction(implementation),
+            JSC.toJSHostFn(implementation),
             function_length,
             options.implementation_visibility,
             options.intrinsic,

@@ -1,4 +1,18 @@
+import { env } from "bun";
+import { hasNonReifiedStatic } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
+test("hasNonReifiedStatic", () => {
+  expect(hasNonReifiedStatic(Bun), "do not eagerly initialize the Bun object. This will make Bun much slower.").toBe(
+    true,
+  );
+  expect(env.a).toBeUndefined();
+  expect(hasNonReifiedStatic(Bun), "do not eagerly initialize the Bun object. This will make Bun much slower.").toBe(
+    true,
+  );
+  const a = { ...Bun };
+  globalThis.a = a;
+  expect(hasNonReifiedStatic(Bun)).toBe(false);
+});
 
 test("require('bun')", () => {
   const str = eval("'bun'");

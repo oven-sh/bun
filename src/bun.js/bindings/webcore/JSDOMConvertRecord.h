@@ -186,7 +186,7 @@ private:
 
                 // 2. Let value be ? Get(O, key).
                 JSC::JSValue subValue;
-                if (LIKELY(!slot.isTaintedByOpaqueObject()))
+                if (!slot.isTaintedByOpaqueObject()) [[likely]]
                     subValue = slot.getValue(&lexicalGlobalObject, key);
                 else
                     subValue = object->get(&lexicalGlobalObject, key);

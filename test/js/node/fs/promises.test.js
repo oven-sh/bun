@@ -1,5 +1,5 @@
-import { join } from "path";
 import { tempDirWithFiles } from "harness";
+import { join } from "path";
 const assert = require("assert");
 const os = require("os");
 const fs = require("fs");

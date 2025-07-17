@@ -37,6 +37,37 @@ nativeTests.test_napi_handle_scope_finalizer = async () => {
   await gcUntil(() => nativeTests.was_finalize_called());
 };
 
+nativeTests.test_napi_async_work_execute_null_check = () => {
+  const res = nativeTests.create_async_work_with_null_execute();
+  if (res) {
+    console.log("success!");
+  } else {
+    console.log("failure!");
+  }
+};
+
+nativeTests.test_napi_async_work_complete_null_check = async () => {
+  nativeTests.create_async_work_with_null_complete();
+  await gcUntil(() => true);
+};
+
+nativeTests.test_napi_async_work_cancel = () => {
+  // UV_THREADPOOL_SIZE is set to 2, create two blocking tasks,
+  // then create another and cancel it, ensuring the work is not
+  // scheduled before `napi_cancel_async_work` is called
+  const res = nativeTests.test_cancel_async_work(result => {
+    if (result) {
+      console.log("success!");
+    } else {
+      console.log("failure!");
+    }
+  });
+
+  if (!res) {
+    console.log("failure!");
+  }
+};
+
 nativeTests.test_promise_with_threadsafe_function = async () => {
   await new Promise(resolve => setTimeout(resolve, 1));
   // create_promise_with_threadsafe_function returns a promise that calls our function from another
@@ -366,6 +397,51 @@ nativeTests.test_reflect_construct_napi_class = () => {
   instance = Reflect.construct(NapiClass, [], Foo);
   console.log("reflect constructed foo =", instance.foo);
   console.log("reflect constructed data =", instance.getData?.());
+};
+
+nativeTests.test_reflect_construct_no_prototype_crash = () => {
+  // This test verifies the fix for jsDynamicCast being called on JSValue(0)
+  // when a NAPI class constructor is called via Reflect.construct with a
+  // newTarget that has no prototype property.
+
+  const NapiClass = nativeTests.get_class_with_constructor();
+
+  // Test 1: Constructor function with deleted prototype property
+  // This case should work without crashing
+  function ConstructorWithoutPrototype() {}
+  delete ConstructorWithoutPrototype.prototype;
+
+  try {
+    const instance1 = Reflect.construct(NapiClass, [], ConstructorWithoutPrototype);
+    console.log("constructor without prototype: success - no crash");
+  } catch (e) {
+    console.log("constructor without prototype error:", e.message);
+  }
+
+  // Test 2: Regular constructor (control test)
+  // This should always work
+  function NormalConstructor() {}
+
+  try {
+    const instance2 = Reflect.construct(NapiClass, [], NormalConstructor);
+    console.log("normal constructor: success - no crash");
+  } catch (e) {
+    console.log("normal constructor error:", e.message);
+  }
+
+  // Test 3: Reflect.construct with Proxy newTarget (prototype returns undefined)
+  function ProxyObject() {}
+
+  const proxyTarget = new Proxy(ProxyObject, {
+    get(target, prop) {
+      if (prop === "prototype") {
+        return undefined;
+      }
+      return target[prop];
+    },
+  });
+  const instance3 = Reflect.construct(NapiClass, [], proxyTarget);
+  console.log("✓ Success - no crash!");
 };
 
 nativeTests.test_napi_wrap = () => {

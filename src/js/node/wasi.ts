@@ -12,7 +12,7 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 
 var __commonJS = (cb, mod: typeof module | undefined = undefined) =>
   function __require2() {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+    return (mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports);
   };
 
 // node_modules/wasi-js/dist/types.js
@@ -1216,7 +1216,7 @@ var require_wasi = __commonJS({
                     }
                     try {
                       rr = fs.readSync(stats.real, iov, r, length, position);
-                    } catch (_err) {}
+                    } catch {}
                     if (rr == 0) {
                       this.shortPause();
                     } else {
@@ -1437,7 +1437,7 @@ var require_wasi = __commonJS({
           path_open: wrap(
             (dirfd, _dirflags, pathPtr, pathLen, oflags, fsRightsBase, fsRightsInheriting, fsFlags, fdPtr) => {
               try {
-                const stats = CHECK_FD(dirfd, constants_1.WASI_RIGHT_PATH_OPEN);
+                CHECK_FD(dirfd, constants_1.WASI_RIGHT_PATH_OPEN);
                 fsRightsBase = BigInt(fsRightsBase);
                 fsRightsInheriting = BigInt(fsRightsInheriting);
                 const read =
@@ -1527,7 +1527,7 @@ var require_wasi = __commonJS({
                 if (write) {
                   try {
                     isDirectory = fs.statSync(full).isDirectory();
-                  } catch (_err) {}
+                  } catch {}
                 }
                 let realfd;
                 if (!write && isDirectory) {
@@ -1616,7 +1616,6 @@ var require_wasi = __commonJS({
             let fd = -1;
             let fd_type = "read";
             let fd_timeout_ms = 0;
-            const startNs = BigInt(bindings.hrtime());
             this.refreshMemory();
             let last_sin = sin;
             for (let i = 0; i < nsubscriptions; i += 1) {
@@ -1797,7 +1796,7 @@ var require_wasi = __commonJS({
         if (real_fd <= 2) {
           try {
             return fs.fstatSync(real_fd);
-          } catch (_) {
+          } catch {
             const now = new Date();
             return {
               dev: 0,
@@ -1910,7 +1909,7 @@ var require_wasi = __commonJS({
             const real = fdInfo[wasi_fd];
             try {
               this.fstatSync(real);
-            } catch (_err) {
+            } catch {
               console.log("discarding ", { wasi_fd, real });
               continue;
             }

@@ -1,6 +1,6 @@
 Use `bun publish` to publish a package to the npm registry.
 
-`bun publish` will automatically pack your package into a tarball, strip workspace protocols from the `package.json` (resolving versions if necessary), and publish to the registry specified in your configuration files. Both `bunfig.toml` and `.npmrc` files are supported.
+`bun publish` will automatically pack your package into a tarball, strip catalog and workspace protocols from the `package.json` (resolving versions if necessary), and publish to the registry specified in your configuration files. Both `bunfig.toml` and `.npmrc` files are supported.
 
 ```sh
 ## Publishing the package from the current working directory

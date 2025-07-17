@@ -1,4 +1,5 @@
 // Hardcoded module "sqlite"
+import type * as SqliteTypes from "bun:sqlite";
 
 const kSafeIntegersFlag = 1 << 1;
 const kStrictFlag = 1 << 2;
@@ -123,11 +124,11 @@ class Statement {
 
   #raw;
 
-  get;
-  all;
-  iterate;
-  values;
-  run;
+  get: SqliteTypes.Statement["get"];
+  all: SqliteTypes.Statement["all"];
+  iterate: SqliteTypes.Statement["iterate"];
+  values: SqliteTypes.Statement["values"];
+  run: SqliteTypes.Statement["run"];
   isFinalized = false;
 
   toJSON() {
@@ -190,6 +191,7 @@ class Statement {
     return this;
   }
 
+  // eslint-disable-next-line no-unused-private-class-members
   #get(...args) {
     if (args.length === 0) return this.#getNoArgs();
     var arg0 = args[0];
@@ -202,6 +204,7 @@ class Statement {
       : this.#raw.get(...args);
   }
 
+  // eslint-disable-next-line no-unused-private-class-members
   #all(...args) {
     if (args.length === 0) return this.#allNoArgs();
     var arg0 = args[0];
@@ -214,6 +217,7 @@ class Statement {
       : this.#raw.all(...args);
   }
 
+  // eslint-disable-next-line no-unused-private-class-members
   *#iterate(...args) {
     if (args.length === 0) return yield* this.#iterateNoArgs();
     var arg0 = args[0];
@@ -230,6 +234,7 @@ class Statement {
     }
   }
 
+  // eslint-disable-next-line no-unused-private-class-members
   #values(...args) {
     if (args.length === 0) return this.#valuesNoArgs();
     var arg0 = args[0];
@@ -242,11 +247,13 @@ class Statement {
       : this.#raw.values(...args);
   }
 
+  // eslint-disable-next-line no-unused-private-class-members
   #run(...args) {
     if (args.length === 0) {
       this.#runNoArgs();
       return createChangesObject();
     }
+
     var arg0 = args[0];
 
     !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
@@ -258,6 +265,14 @@ class Statement {
 
   get columnNames() {
     return this.#raw.columns;
+  }
+
+  get columnTypes() {
+    return this.#raw.columnTypes;
+  }
+
+  get declaredTypes() {
+    return this.#raw.declaredTypes;
   }
 
   get paramsCount() {
@@ -296,17 +311,12 @@ class Database {
             this.#internalFlags |= kSafeIntegersFlag;
           }
 
-          if (options.readonly) { 
+          if (options.readonly) {
             deserializeFlags |= constants.SQLITE_DESERIALIZE_READONLY;
           }
         }
 
-        this.#handle = Database.#deserialize(
-          filenameGiven,
-          this.#internalFlags,
-          deserializeFlags
-
-        );
+        this.#handle = Database.#deserialize(filenameGiven, this.#internalFlags, deserializeFlags);
         this.filename = ":memory:";
 
         return;
@@ -367,9 +377,9 @@ class Database {
 
   #internalFlags = 0;
   #handle;
-  #cachedQueriesKeys = [];
-  #cachedQueriesLengths = [];
-  #cachedQueriesValues = [];
+  #cachedQueriesKeys: string[] = [];
+  #cachedQueriesLengths: number[] = [];
+  #cachedQueriesValues: Statement[] = [];
   filename;
   #hasClosed = false;
   get handle() {
@@ -400,7 +410,10 @@ class Database {
     return SQL.deserialize(serialized, openFlags, deserializeFlags);
   }
 
-  static deserialize(serialized, options: boolean | { readonly?: boolean; strict?: boolean; safeIntegers?: boolean } = false) {
+  static deserialize(
+    serialized,
+    options: boolean | { readonly?: boolean; strict?: boolean; safeIntegers?: boolean } = false,
+  ) {
     if (typeof options === "boolean") {
       // Maintain backward compatibility with existing API
       return new Database(serialized, { readonly: options });
@@ -425,7 +438,7 @@ class Database {
     return SQL.setCustomSQLite(path);
   }
 
-  fileControl(cmd, arg) {
+  fileControl(_cmd, _arg) {
     const handle = this.#handle;
 
     if (arguments.length <= 2) {
@@ -485,14 +498,14 @@ class Database {
     const willCache = this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
 
     // this list should be pretty small
-    var index = this.#cachedQueriesLengths.indexOf(query.length);
+    let index = this.#cachedQueriesLengths.indexOf(query.length);
     while (index !== -1) {
       if (this.#cachedQueriesKeys[index] !== query) {
         index = this.#cachedQueriesLengths.indexOf(query.length, index + 1);
         continue;
       }
 
-      var stmt = this.#cachedQueriesValues[index];
+      const stmt = this.#cachedQueriesValues[index];
       if (stmt.isFinalized) {
         return (this.#cachedQueriesValues[index] = this.prepare(
           query,
@@ -550,7 +563,7 @@ class Database {
 Database.prototype.exec = Database.prototype.run;
 
 // Return the database's cached transaction controller, or create a new one
-const getController = (db, self) => {
+const getController = (db, _self) => {
   let controller = (controllers ||= new WeakMap()).get(db);
   if (!controller) {
     const shared = {

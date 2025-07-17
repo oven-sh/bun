@@ -174,4 +174,37 @@ describe("bundler", async () => {
       },
     });
   }
+
+  describe("handles empty files", () => {
+    for (const target of ["bun", "node", "browser"] as const) {
+      itBundled(`${target}/loader-empty-text-file`, {
+        target: target,
+        files: {
+          "/entry.ts": /* js */ `
+          import empty from './empty.txt' with {type: "text"};
+          console.write(JSON.stringify(empty));
+        `,
+          "/empty.txt": "",
+        },
+        run: { stdout: '""' },
+      });
+
+      itBundled(`${target}/loader-empty-file-loader`, {
+        target: target,
+        outdir: "/out",
+        files: {
+          "/entry.ts": /* js */ `
+          import empty from './empty.txt' with {type: "file"};
+          export default empty;
+        `,
+          "/empty.txt": "",
+        },
+        onAfterBundle(api) {
+          const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
+          const module = require(join(api.outdir, jsFile));
+          api.assertFileExists(join("out", module.default));
+        },
+      });
+    }
+  });
 });

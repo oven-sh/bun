@@ -30,8 +30,13 @@ const enum BunProcessStdinFdType {
   socket = 2,
 }
 
-export function getStdioWriteStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
-  $assert(typeof fd === "number", `Expected fd to be a number, got ${typeof fd}`);
+export function getStdioWriteStream(
+  process: typeof globalThis.process,
+  fd: number,
+  isTTY: boolean,
+  _fdType: BunProcessStdinFdType,
+) {
+  $assert(fd === 1 || fd === 2, `Expected fd to be 1 or 2, got ${fd}`);
 
   let stream;
   if (isTTY) {
@@ -74,9 +79,14 @@ export function getStdioWriteStream(fd, isTTY: boolean, fdType: BunProcessStdinF
   return [stream, underlyingSink];
 }
 
-export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
+export function getStdinStream(
+  process: typeof globalThis.process,
+  fd: number,
+  isTTY: boolean,
+  fdType: BunProcessStdinFdType,
+) {
+  $assert(fd === 0);
   const native = Bun.stdin.stream();
-  // @ts-expect-error
   const source = native.$bunNativePtr;
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -179,7 +189,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
     $debug("internalRead();");
     try {
       $assert(reader);
-      const { done, value } = await reader.read();
+      const { value } = await reader.read();
 
       if (value) {
         stream.push(value);
@@ -208,7 +218,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
     }
   }
 
-  function triggerRead(size) {
+  function triggerRead(_size) {
     $debug("_read();", reader);
 
     if (reader && !shouldDisown) {
@@ -251,7 +261,12 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
 
   return stream;
 }
-export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksFn, reportUncaughtExceptionFn) {
+export function initializeNextTickQueue(
+  process: typeof globalThis.process,
+  nextTickQueue,
+  drainMicrotasksFn,
+  reportUncaughtExceptionFn,
+) {
   var queue;
   var process;
   var nextTickQueue = nextTickQueue;

@@ -1,10 +1,10 @@
 import { PGlite } from "@electric-sql/pglite";
 import { SQL, randomUUIDv7 } from "bun";
-import net, { AddressInfo } from "node:net";
-import { fromNodeSocket } from "pg-gateway/node";
 import { expect, test } from "bun:test";
 import { once } from "events";
 import { isCI, isLinux } from "harness";
+import net, { AddressInfo } from "node:net";
+import { fromNodeSocket } from "pg-gateway/node";
 
 // TODO(@190n) linux-x64 sometimes fails due to JavaScriptCore bug
 // https://github.com/oven-sh/bun/issues/17841#issuecomment-2695792567

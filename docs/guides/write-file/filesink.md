@@ -49,4 +49,4 @@ writer.end();
 
 ---
 
-Full documentation: [FileSink](https://bun.sh/docs/api/file-io#incremental-writing-with-filesink).
+Full documentation: [FileSink](https://bun.com/docs/api/file-io#incremental-writing-with-filesink).

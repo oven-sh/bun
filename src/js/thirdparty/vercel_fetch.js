@@ -16,14 +16,10 @@ export default (wrapper = Bun.fetch) => {
 
     try {
       return await wrapper(url, opts);
-    } catch (err) {
-      if (typeof err === "string") {
-        err = new Error(err);
-      }
-
-      err.url = url;
-      err.opts = opts;
-      throw err;
+    } catch (error) {
+      error.url = url;
+      error.opts = opts;
+      throw error;
     }
   }
 

@@ -1,5 +1,8 @@
+// Hardcoded module "node:tty"
+
 // Note: please keep this module's loading constrants light, as some users
 // import it just to call `isatty`. In that case, `node:stream` is not needed.
+
 const {
   setRawMode: ttySetMode,
   isatty,
@@ -7,19 +10,21 @@ const {
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 const { validateInteger } = require("internal/validators");
+const fs = require("internal/fs/streams");
 
 function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd);
   }
-  require("node:fs").ReadStream.$apply(this, ["", { fd }]);
+  fs.ReadStream.$apply(this, ["", { fd }]);
   this.isRaw = false;
   this.isTTY = true;
 }
+$toClass(ReadStream, "ReadStream", fs.ReadStream);
 
 Object.defineProperty(ReadStream, "prototype", {
   get() {
-    const Prototype = Object.create(require("node:fs").ReadStream.prototype);
+    const Prototype = Object.create(fs.ReadStream.prototype);
 
     Prototype.setRawMode = function (flag) {
       flag = !!flag;
@@ -80,7 +85,7 @@ Object.defineProperty(ReadStream, "prototype", {
 function WriteStream(fd): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
 
-  const stream = require("node:fs").WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
+  const stream = fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
   stream.columns = undefined;
   stream.rows = undefined;
   stream.isTTY = isatty(stream.fd);
@@ -98,7 +103,7 @@ function WriteStream(fd): void {
 
 Object.defineProperty(WriteStream, "prototype", {
   get() {
-    const Real = require("node:fs").WriteStream.prototype;
+    const Real = fs.WriteStream.prototype;
     Object.defineProperty(WriteStream, "prototype", { value: Real });
 
     WriteStream.prototype._refreshSize = function () {

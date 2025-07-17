@@ -1,5 +1,4 @@
-import type { Subprocess } from "bun";
-import { afterEach, beforeEach, expect, it } from "bun:test";
+import { expect, it } from "bun:test";
 import { bunEnv, bunExe, isCI, isDebug, isFlaky, isLinux, isWindows } from "harness";
 import { join } from "path";
 
@@ -164,7 +163,7 @@ for (const test_info of [
   ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],
 ] as const) {
   const [testName, fn, skip, maxMemoryGrowth] = test_info;
-  it.todoIf(skip || isFlaky && isWindows)(
+  it.todoIf(skip || (isFlaky && isWindows))(
     testName,
     async () => {
       const { url, process } = await getURL();

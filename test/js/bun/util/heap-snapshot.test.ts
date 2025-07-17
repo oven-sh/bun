@@ -1,6 +1,6 @@
-import { describe, it, expect } from "bun:test";
-import { parseHeapSnapshot, summarizeByType } from "./heap";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
+import { describe, expect, it } from "bun:test";
+import { parseHeapSnapshot, summarizeByType } from "./heap";
 
 describe("Native types report their size correctly", () => {
   it("FormData", () => {

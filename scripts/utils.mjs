@@ -15,8 +15,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { connect } from "node:net";
-import { hostname, tmpdir as nodeTmpdir, homedir as nodeHomedir, userInfo, release } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { hostname, homedir as nodeHomedir, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
 export const isWindows = process.platform === "win32";
@@ -290,7 +290,7 @@ export async function spawn(command, options = {}) {
   if (exitCode !== 0 && isWindows) {
     const exitReason = getWindowsExitReason(exitCode);
     if (exitReason) {
-      exitCode = exitReason;
+      signalCode = exitReason;
     }
   }
 
@@ -386,7 +386,7 @@ export function spawnSync(command, options = {}) {
   if (exitCode !== 0 && isWindows) {
     const exitReason = getWindowsExitReason(exitCode);
     if (exitReason) {
-      exitCode = exitReason;
+      signalCode = exitReason;
     }
   }
 
@@ -442,9 +442,37 @@ export function spawnSyncSafe(command, options = {}) {
  * @returns {string | undefined}
  */
 export function getWindowsExitReason(exitCode) {
-  const ntStatusPath = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared\\ntstatus.h";
-  const nthStatus = readFile(ntStatusPath, { cache: true });
+  const windowsKitPath = "C:\\Program Files (x86)\\Windows Kits";
+  if (!existsSync(windowsKitPath)) {
+    return;
+  }
 
+  const windowsKitPaths = readdirSync(windowsKitPath)
+    .filter(filename => isFinite(parseInt(filename)))
+    .sort((a, b) => parseInt(b) - parseInt(a));
+
+  let ntStatusPath;
+  for (const windowsKitPath of windowsKitPaths) {
+    const includePath = `${windowsKitPath}\\Include`;
+    if (!existsSync(includePath)) {
+      continue;
+    }
+
+    const windowsSdkPaths = readdirSync(includePath).sort();
+    for (const windowsSdkPath of windowsSdkPaths) {
+      const statusPath = `${includePath}\\${windowsSdkPath}\\shared\\ntstatus.h`;
+      if (existsSync(statusPath)) {
+        ntStatusPath = statusPath;
+        break;
+      }
+    }
+  }
+
+  if (!ntStatusPath) {
+    return;
+  }
+
+  const nthStatus = readFile(ntStatusPath, { cache: true });
   const match = nthStatus.match(new RegExp(`(STATUS_\\w+).*0x${exitCode?.toString(16)}`, "i"));
   if (match) {
     const [, exitReason] = match;
@@ -1342,13 +1370,16 @@ export async function getLastSuccessfulBuild() {
 }
 
 /**
- * @param {string} filename
- * @param {string} [cwd]
+ * @param {string} filename Absolute path to file to upload
  */
-export async function uploadArtifact(filename, cwd) {
+export async function uploadArtifact(filename) {
   if (isBuildkite) {
-    const relativePath = relative(cwd ?? process.cwd(), filename);
-    await spawnSafe(["buildkite-agent", "artifact", "upload", relativePath], { cwd, stdio: "inherit" });
+    await spawnSafe(["buildkite-agent", "artifact", "upload", basename(filename)], {
+      cwd: dirname(filename),
+      stdio: "inherit",
+    });
+  } else {
+    console.warn(`not in buildkite. artifact ${filename} not uploaded.`);
   }
 }
 
@@ -2332,10 +2363,11 @@ function parseLevel(level) {
  * @returns {Annotation}
  */
 export function parseAnnotation(options, context) {
+  const cwd = (context?.["cwd"] || process.cwd()).replace(/\\/g, "/");
   const source = options["source"];
   const level = parseLevel(options["level"]);
   const title = options["title"] || (source ? `${source} ${level}` : level);
-  const filename = options["filename"];
+  const path = options["filename"]?.replace(/\\/g, "/");
   const line = parseInt(options["line"]) || undefined;
   const column = parseInt(options["column"]) || undefined;
   const content = options["content"];
@@ -2354,6 +2386,13 @@ export function parseAnnotation(options, context) {
     relevantLines.push(line);
   }
 
+  let filename;
+  if (path?.startsWith(cwd)) {
+    filename = path.slice(cwd.length + 1);
+  } else {
+    filename = path;
+  }
+
   return {
     source,
     title,
@@ -2364,6 +2403,81 @@ export function parseAnnotation(options, context) {
     content: relevantLines.join("\n"),
     metadata,
   };
+}
+
+/**
+ * @typedef {Object} AnnotationFormatOptions
+ * @property {boolean} [concise]
+ * @property {boolean} [buildkite]
+ */
+
+/**
+ * @param {Annotation} annotation
+ * @param {AnnotationFormatOptions} [options]
+ * @returns {string}
+ */
+export function formatAnnotationToHtml(annotation, options = {}) {
+  const { title, content, source, level, filename, line } = annotation;
+  const { concise, buildkite = isBuildkite } = options;
+
+  let html;
+  if (concise) {
+    html = "<li>";
+  } else {
+    html = "<details><summary>";
+  }
+
+  if (filename) {
+    const filePath = filename.replace(/\\/g, "/");
+    const fileUrl = getFileUrl(filePath, line);
+    if (fileUrl) {
+      html += `<a href="${fileUrl}"><code>${filePath}</code></a>`;
+    } else {
+      html += `<code>${filePath}</code>`;
+    }
+    html += " - ";
+  }
+
+  if (title) {
+    html += title;
+  } else if (source) {
+    if (level) {
+      html += `${source} ${level}`;
+    } else {
+      html += source;
+    }
+  } else if (level) {
+    html += level;
+  } else {
+    html += "unknown error";
+  }
+
+  const buildLabel = getBuildLabel();
+  if (buildLabel) {
+    html += " on ";
+    const buildUrl = getBuildUrl();
+    if (buildUrl) {
+      html += `<a href="${buildUrl}">${buildLabel}</a>`;
+    } else {
+      html += buildLabel;
+    }
+  }
+
+  if (concise) {
+    html += "</li>\n";
+  } else {
+    html += "</summary>\n\n";
+    if (buildkite) {
+      const preview = escapeCodeBlock(content);
+      html += `\`\`\`terminal\n${preview}\n\`\`\`\n`;
+    } else {
+      const preview = escapeHtml(stripAnsi(content));
+      html += `<pre><code>${preview}</code></pre>\n`;
+    }
+    html += "\n\n</details>\n\n";
+  }
+
+  return html;
 }
 
 /**
@@ -2399,7 +2513,7 @@ export function parseAnnotations(content, options = {}) {
       let length = 0;
       let match;
 
-      while (i + length <= originalLines.length && length < maxLength) {
+      while (i + length < originalLines.length && length < maxLength) {
         const originalLine = originalLines[i + length++];
         const line = stripAnsi(originalLine).trim();
         const patternMatch = pattern.exec(line);
@@ -2549,6 +2663,49 @@ export function parseAnnotations(content, options = {}) {
 }
 
 /**
+ * @typedef {object} BuildkiteAnnotation
+ * @property {string} [context]
+ * @property {string} label
+ * @property {string} content
+ * @property {"error" | "warning" | "info"} [style]
+ * @property {number} [priority]
+ * @property {number} [attempt]
+ */
+
+/**
+ * @param {BuildkiteAnnotation} annotation
+ */
+export function reportAnnotationToBuildKite({ context, label, content, style = "error", priority = 3, attempt = 0 }) {
+  if (!isBuildkite) {
+    return;
+  }
+  const { error, status, signal, stderr } = nodeSpawnSync(
+    "buildkite-agent",
+    ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],
+    {
+      input: content,
+      stdio: ["pipe", "ignore", "pipe"],
+      encoding: "utf-8",
+      timeout: 5_000,
+    },
+  );
+  if (status === 0) {
+    return;
+  }
+  if (attempt > 0) {
+    const cause = error ?? signal ?? `code ${status}`;
+    throw new Error(`Failed to create annotation: ${label}`, { cause });
+  }
+  const errorContent = formatAnnotationToHtml({
+    title: "annotation error",
+    content: stderr || "",
+    source: "buildkite",
+    level: "error",
+  });
+  reportAnnotationToBuildKite({ label: `${label}-error`, content: errorContent, attempt: attempt + 1 });
+}
+
+/**
  * @param {object} obj
  * @param {number} indent
  * @returns {string}
@@ -2686,6 +2843,20 @@ export function printEnvironment() {
           spawnSync([shell, "-c", "ulimit -a"], { stdio: "inherit" });
         }
       });
+      startGroup("Disk (df)", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "df"], { stdio: "inherit" });
+        }
+      });
+    }
+    if (isWindows) {
+      startGroup("Disk (win)", () => {
+        const shell = which(["pwsh"]);
+        if (shell) {
+          spawnSync([shell, "-c", "get-psdrive"], { stdio: "inherit" });
+        }
+      });
     }
   }
 
@@ -2776,6 +2947,7 @@ const emojiMap = {
   true: ["✅", "white_check_mark"],
   false: ["❌", "x"],
   debug: ["🐞", "bug"],
+  asan: ["🐛", "bug"],
   assert: ["🔍", "mag"],
   release: ["🏆", "trophy"],
   gear: ["⚙️", "gear"],

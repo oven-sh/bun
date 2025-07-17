@@ -7,21 +7,15 @@ const Fs = @import("fs.zig");
 const resolver = @import("./resolver/resolver.zig");
 const api = @import("./api/schema.zig");
 const Api = api.Api;
-const resolve_path = @import("./resolver/resolve_path.zig");
 const URL = @import("./url.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const FileDescriptorType = bun.FileDescriptor;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+
 const JSC = bun.JSC;
 const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
@@ -90,7 +84,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn isNodeBuiltin(str: string) bool {
-        return bun.JSC.HardcodedModule.Alias.has(str, .node);
+        return bun.JSC.ModuleLoader.HardcodedModule.Alias.has(str, .node);
     }
 
     const default_wildcard_patterns = &[_]WildcardPattern{
@@ -649,6 +643,14 @@ pub const Loader = enum(u8) {
     sqlite_embedded,
     html,
 
+    pub const Optional = enum(u8) {
+        none = 254,
+        _,
+        pub fn unwrap(opt: Optional) ?Loader {
+            return if (opt == .none) null else @enumFromInt(@intFromEnum(opt));
+        }
+    };
+
     pub fn isCSS(this: Loader) bool {
         return this == .css;
     }
@@ -685,6 +687,13 @@ pub const Loader = enum(u8) {
             => true,
             .css => false,
             .html => false,
+            else => false,
+        };
+    }
+
+    pub fn handlesEmptyFile(this: Loader) bool {
+        return switch (this) {
+            .wasm, .file, .text => true,
             else => false,
         };
     }
@@ -1107,7 +1116,7 @@ pub const ESMConditions = struct {
     require: ConditionsMap,
     style: ConditionsMap,
 
-    pub fn init(allocator: std.mem.Allocator, defaults: []const string) !ESMConditions {
+    pub fn init(allocator: std.mem.Allocator, defaults: []const string) bun.OOM!ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
 
         var import_condition_map = ConditionsMap.init(allocator);
@@ -1161,7 +1170,7 @@ pub const ESMConditions = struct {
         };
     }
 
-    pub fn appendSlice(self: *ESMConditions, conditions: []const string) !void {
+    pub fn appendSlice(self: *ESMConditions, conditions: []const string) bun.OOM!void {
         try self.default.ensureUnusedCapacity(conditions.len);
         try self.import.ensureUnusedCapacity(conditions.len);
         try self.require.ensureUnusedCapacity(conditions.len);
@@ -1173,6 +1182,13 @@ pub const ESMConditions = struct {
             self.require.putAssumeCapacity(condition, {});
             self.style.putAssumeCapacity(condition, {});
         }
+    }
+
+    pub fn append(self: *ESMConditions, condition: string) bun.OOM!void {
+        try self.default.put(condition, {});
+        try self.import.put(condition, {});
+        try self.require.put(condition, {});
+        try self.style.put(condition, {});
     }
 };
 
@@ -1385,6 +1401,7 @@ pub fn definesFromTransformOptions(
     framework_env: ?*const Env,
     NODE_ENV: ?string,
     drop: []const []const u8,
+    omit_unused_global_calls: bool,
 ) !*defines.Define {
     const input_user_define = maybe_input_define orelse std.mem.zeroes(Api.StringMap);
 
@@ -1467,11 +1484,11 @@ pub fn definesFromTransformOptions(
 
     if (target.isBun()) {
         if (!user_defines.contains("window")) {
-            _ = try environment_defines.getOrPutValue("window", .{
+            _ = try environment_defines.getOrPutValue("window", .init(.{
                 .valueless = true,
                 .original_name = "window",
                 .value = .{ .e_undefined = .{} },
-            });
+            }));
         }
     }
 
@@ -1486,6 +1503,7 @@ pub fn definesFromTransformOptions(
         resolved_defines,
         environment_defines,
         drop_debugger,
+        omit_unused_global_calls,
     );
 }
 
@@ -1847,6 +1865,7 @@ pub const BundleOptions = struct {
                 break :node_env "\"development\"";
             },
             this.drop,
+            this.dead_code_elimination and this.minify_syntax,
         );
         this.defines_loaded = true;
     }
@@ -1978,10 +1997,26 @@ pub const BundleOptions = struct {
             opts.main_fields = Target.DefaultMainFields.get(opts.target);
         }
 
-        opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
+        {
+            // conditions:
+            // 1. defaults
+            // 2. node-addons
+            // 3. user conditions
+            opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
 
-        if (transform.conditions.len > 0) {
-            opts.conditions.appendSlice(transform.conditions) catch bun.outOfMemory();
+            dont_append_node_addons: {
+                if (transform.allow_addons) |allow_addons| {
+                    if (!allow_addons) {
+                        break :dont_append_node_addons;
+                    }
+                }
+
+                try opts.conditions.append("node-addons");
+            }
+
+            if (transform.conditions.len > 0) {
+                try opts.conditions.appendSlice(transform.conditions);
+            }
         }
 
         switch (opts.target) {
@@ -2024,10 +2059,14 @@ pub const BundleOptions = struct {
 
         if (opts.write and opts.output_dir.len > 0) {
             opts.output_dir_handle = try openOutputDir(opts.output_dir);
-            opts.output_dir = try fs.getFdPath(bun.toFD(opts.output_dir_handle.?.fd));
+            opts.output_dir = try fs.getFdPath(.fromStdDir(opts.output_dir_handle.?));
         }
 
         opts.polyfill_node_globals = opts.target == .browser;
+
+        if (transform.tsconfig_override) |tsconfig| {
+            opts.tsconfig_override = tsconfig;
+        }
 
         Analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
         Analytics.Features.external += @as(usize, @intFromBool(transform.external.len > 0));
@@ -2343,12 +2382,6 @@ pub const RouteConfig = struct {
     extensions: []const string = &[_]string{},
     routes_enabled: bool = false,
 
-    static_dir: string = "",
-    static_dir_handle: ?std.fs.Dir = null,
-    static_dir_enabled: bool = false,
-    single_page_app_routing: bool = false,
-    single_page_app_fd: StoredFileDescriptorType = .zero,
-
     pub fn toAPI(this: *const RouteConfig) Api.LoadedRouteConfig {
         return .{
             .asset_prefix = this.asset_prefix_path,
@@ -2515,6 +2548,7 @@ pub const PathTemplate = struct {
                         try writer.print("{any}", .{bun.fmt.truncatedHash32(hash)});
                     }
                 },
+                .target => try writeReplacingSlashesOnWindows(writer, self.placeholder.target),
             }
             remain = remain[end_len + 1 ..];
         }
@@ -2527,12 +2561,14 @@ pub const PathTemplate = struct {
         name: []const u8 = "",
         ext: []const u8 = "",
         hash: ?u64 = null,
+        target: []const u8 = "",
 
         pub const map = bun.ComptimeStringMap(std.meta.FieldEnum(Placeholder), .{
             .{ "dir", .dir },
             .{ "name", .name },
             .{ "ext", .ext },
             .{ "hash", .hash },
+            .{ "target", .target },
         });
     };
 
@@ -2545,13 +2581,32 @@ pub const PathTemplate = struct {
         },
     };
 
+    pub const chunkWithTarget = PathTemplate{
+        .data = "[dir]/[target]/chunk-[hash].[ext]",
+        .placeholder = .{
+            .name = "chunk",
+            .ext = "js",
+            .dir = "",
+        },
+    };
+
     pub const file = PathTemplate{
         .data = "[dir]/[name].[ext]",
         .placeholder = .{},
     };
 
+    pub const fileWithTarget = PathTemplate{
+        .data = "[dir]/[target]/[name].[ext]",
+        .placeholder = .{},
+    };
+
     pub const asset = PathTemplate{
         .data = "./[name]-[hash].[ext]",
+        .placeholder = .{},
+    };
+
+    pub const assetWithTarget = PathTemplate{
+        .data = "[dir]/[target]/[name]-[hash].[ext]",
         .placeholder = .{},
     };
 };

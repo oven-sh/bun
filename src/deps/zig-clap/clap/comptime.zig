@@ -1,11 +1,9 @@
 const clap = @import("../clap.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 
 const debug = std.debug;
-const heap = std.heap;
 const mem = std.mem;
-const testing = std.testing;
 
 /// Deprecated: Use `parseEx` instead
 pub fn ComptimeClap(

@@ -41,7 +41,7 @@ pub const PasswordObject = struct {
                                         return globalObject.throwInvalidArgumentType("hash", "cost", "number");
                                     }
 
-                                    const rounds = rounds_value.coerce(i32, globalObject);
+                                    const rounds = try rounds_value.coerce(i32, globalObject);
 
                                     if (rounds < 4 or rounds > 31) {
                                         return globalObject.throwInvalidArguments("Rounds must be between 4 and 31", .{});
@@ -60,7 +60,7 @@ pub const PasswordObject = struct {
                                         return globalObject.throwInvalidArgumentType("hash", "timeCost", "number");
                                     }
 
-                                    const time_cost = time_value.coerce(i32, globalObject);
+                                    const time_cost = try time_value.coerce(i32, globalObject);
 
                                     if (time_cost < 1) {
                                         return globalObject.throwInvalidArguments("Time cost must be greater than 0", .{});
@@ -74,7 +74,7 @@ pub const PasswordObject = struct {
                                         return globalObject.throwInvalidArgumentType("hash", "memoryCost", "number");
                                     }
 
-                                    const memory_cost = memory_value.coerce(i32, globalObject);
+                                    const memory_cost = try memory_value.coerce(i32, globalObject);
 
                                     if (memory_cost < 1) {
                                         return globalObject.throwInvalidArguments("Memory cost must be greater than 0", .{});
@@ -356,7 +356,7 @@ pub const JSPasswordObject = struct {
         ref: Async.KeepAlive = .{},
         task: JSC.WorkPoolTask = .{ .callback = &run },
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub const Result = struct {
             value: Value,
@@ -366,7 +366,7 @@ pub const JSPasswordObject = struct {
             promise: JSC.JSPromise.Strong,
             global: *JSC.JSGlobalObject,
 
-            pub usingnamespace bun.New(@This());
+            pub const new = bun.TrivialNew(@This());
 
             pub const Value = union(enum) {
                 err: PasswordObject.HashError,
@@ -390,12 +390,12 @@ pub const JSPasswordObject = struct {
                 switch (this.value) {
                     .err => {
                         const error_instance = this.value.toErrorInstance(global);
-                        this.destroy();
+                        bun.destroy(this);
                         promise.reject(global, error_instance);
                     },
                     .hash => |value| {
                         const js_string = JSC.ZigString.init(value).toJS(global);
-                        this.destroy();
+                        bun.destroy(this);
                         promise.resolve(global, js_string);
                     },
                 }
@@ -405,7 +405,7 @@ pub const JSPasswordObject = struct {
         pub fn deinit(this: *HashJob) void {
             this.promise.deinit();
             bun.freeSensitive(bun.default_allocator, this.password);
-            this.destroy();
+            bun.destroy(this);
         }
 
         pub fn getValue(password: []const u8, algorithm: PasswordObject.Algorithm.Value) Result.Value {
@@ -568,7 +568,7 @@ pub const JSPasswordObject = struct {
         ref: Async.KeepAlive = .{},
         task: JSC.WorkPoolTask = .{ .callback = &run },
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub const Result = struct {
             value: Value,
@@ -578,7 +578,7 @@ pub const JSPasswordObject = struct {
             promise: JSC.JSPromise.Strong,
             global: *JSC.JSGlobalObject,
 
-            pub usingnamespace bun.New(@This());
+            pub const new = bun.TrivialNew(@This());
 
             pub const Value = union(enum) {
                 err: PasswordObject.HashError,
@@ -602,11 +602,11 @@ pub const JSPasswordObject = struct {
                 switch (this.value) {
                     .err => {
                         const error_instance = this.value.toErrorInstance(global);
-                        this.destroy();
+                        bun.destroy(this);
                         promise.reject(global, error_instance);
                     },
                     .pass => |pass| {
-                        this.destroy();
+                        bun.destroy(this);
                         promise.resolve(global, JSC.JSValue.jsBoolean(pass));
                     },
                 }
@@ -619,7 +619,7 @@ pub const JSPasswordObject = struct {
             bun.freeSensitive(bun.default_allocator, this.password);
             bun.freeSensitive(bun.default_allocator, this.prev_hash);
 
-            this.destroy();
+            bun.destroy(this);
         }
 
         pub fn getValue(password: []const u8, prev_hash: []const u8, algorithm: ?PasswordObject.Algorithm) Result.Value {
@@ -755,11 +755,9 @@ pub const JSPasswordObject = struct {
 };
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const JSC = bun.JSC;
 const Async = bun.Async;

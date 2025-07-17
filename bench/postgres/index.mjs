@@ -28,9 +28,7 @@ if (+(existingUsers?.[0]?.count ?? existingUsers?.count) < 100) {
   }));
 
   // Insert all users
-  await sql`
-      INSERT INTO users_bun_bench (first_name, last_name, email, dob) ${sql(users)}
-    `;
+  await sql`INSERT INTO users_bun_bench ${sql(users)}`;
 }
 
 const type = isBun ? "Bun.sql" : "postgres";

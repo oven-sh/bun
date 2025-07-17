@@ -1,37 +1,13 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
 
 pub const css = @import("../css_parser.zig");
 const Property = css.Property;
-const PropertyId = css.PropertyId;
 const PropertyIdTag = css.PropertyIdTag;
 const PropertyCategory = css.logical.PropertyCategory;
 
-const SmallList = css.SmallList;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Error = css.Error;
-
-const ContainerName = css.css_rules.container.ContainerName;
-
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const CSSNumber = css.css_values.number.CSSNumber;
 const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Image = css.css_values.image.Image;
-const CssColor = css.css_values.color.CssColor;
-const Ratio = css.css_values.ratio.Ratio;
-const Length = css.css_values.length.LengthValue;
-const Rect = css.css_values.rect.Rect;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
-const Angle = css.css_values.angle.Angle;
-const Url = css.css_values.url.Url;
 
 /// A value for the [inset](https://drafts.csswg.org/css-logical/#propdef-inset) shorthand property.
 pub const Inset = struct {
@@ -41,8 +17,10 @@ pub const Inset = struct {
     left: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.inset);
-    pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.inset);
+    const css_impl = css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .top = css.PropertyIdTag.top,
@@ -68,8 +46,10 @@ pub const InsetBlock = struct {
     block_end: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-block");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-block");
+    const css_impl = css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .block_start = css.PropertyIdTag.@"inset-block-start",
@@ -98,8 +78,10 @@ pub const InsetInline = struct {
     };
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-inline");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-inline");
+    const css_impl = css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
@@ -118,8 +100,10 @@ pub const MarginBlock = struct {
     block_end: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-block");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-block");
+    const css_impl = css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .block_start = css.PropertyIdTag.@"margin-block-start",
@@ -143,8 +127,10 @@ pub const MarginInline = struct {
     inline_end: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-inline");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-inline");
+    const css_impl = css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .inline_start = css.PropertyIdTag.@"margin-inline-start",
@@ -168,8 +154,10 @@ pub const Margin = struct {
     left: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.margin);
-    pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.margin);
+    const css_impl = css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .top = css.PropertyIdTag.@"margin-top",
@@ -195,8 +183,10 @@ pub const PaddingBlock = struct {
     block_end: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-block");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-block");
+    const css_impl = css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .block_start = css.PropertyIdTag.@"padding-block-start",
@@ -220,8 +210,10 @@ pub const PaddingInline = struct {
     inline_end: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-inline");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-inline");
+    const css_impl = css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .inline_start = css.PropertyIdTag.@"padding-inline-start",
@@ -245,8 +237,10 @@ pub const Padding = struct {
     left: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.padding);
-    pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.padding);
+    const css_impl = css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .top = css.PropertyIdTag.@"padding-top",
@@ -272,8 +266,10 @@ pub const ScrollMarginBlock = struct {
     block_end: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-block");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-block");
+    const css_impl = css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .block_start = css.PropertyIdTag.@"scroll-margin-block-start",
@@ -297,8 +293,10 @@ pub const ScrollMarginInline = struct {
     inline_end: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-inline");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-inline");
+    const css_impl = css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .inline_start = css.PropertyIdTag.@"scroll-margin-inline-start",
@@ -322,8 +320,10 @@ pub const ScrollMargin = struct {
     left: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin");
-    pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin");
+    const css_impl = css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .top = css.PropertyIdTag.@"scroll-margin-top",
@@ -349,8 +349,10 @@ pub const ScrollPaddingBlock = struct {
     block_end: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-block");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-block");
+    const css_impl = css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .block_start = css.PropertyIdTag.@"scroll-padding-block-start",
@@ -374,8 +376,10 @@ pub const ScrollPaddingInline = struct {
     inline_end: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-inline");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-inline");
+    const css_impl = css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .inline_start = css.PropertyIdTag.@"scroll-padding-inline-start",
@@ -399,8 +403,10 @@ pub const ScrollPadding = struct {
     left: LengthPercentageOrAuto,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding");
-    pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding");
+    const css_impl = css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .top = css.PropertyIdTag.@"scroll-padding-top",

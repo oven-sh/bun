@@ -1,5 +1,5 @@
-import type { Subprocess, Server } from "bun";
-import { describe, test, expect } from "bun:test";
+import type { Server, Subprocess } from "bun";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -770,6 +770,55 @@ test("serve html with JSX runtime in production mode", async () => {
   //    children: "Click me"
   //  }, undefined, false, undefined, this)
   expect(js).toContain(`("h1",{children:"Hello from JSX"})`);
+});
+
+test("you can have HTML imports apply to only specific methods outside of the dev server", async () => {
+  const dir = join(import.meta.dir, "jsx-runtime");
+  const { default: html } = await import(join(dir, "index.html"));
+
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    static: {
+      "/boop": html,
+
+      "/": {
+        GET: html,
+        POST: html,
+        async PATCH() {
+          return new Response("PATCH!", { status: 200 });
+        },
+      },
+    },
+    fetch(req) {
+      return new Response("Not found", { status: 404 });
+    },
+  });
+
+  const response = await fetch(server.url);
+  expect(response.status).toBe(200);
+  const htmlText = await response.text();
+  const jsSrc = htmlText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1]!;
+  const js = await (await fetch(new URL(jsSrc, server.url))).text();
+  // jsxDEV looks like this:
+  //  jsxDEV("button", {
+  //    children: "Click me"
+  //  }, undefined, false, undefined, this)
+  expect(js).toContain(`("h1",{children:"Hello from JSX"})`);
+  const response2 = await fetch(server.url, {
+    method: "POST",
+  });
+  expect(response2.status).toBe(200);
+  expect(await response2.text()).toEqual(htmlText);
+  const response3 = await fetch(server.url, {
+    method: "PATCH",
+  });
+  expect(response3.status).toBe(200);
+  expect(await response3.text()).toBe("PATCH!");
+
+  expect(await (await fetch(server.url + "/boop")).text()).toEqual(htmlText);
+  expect(await (await fetch(server.url + "/boop", { method: "POST" })).text()).toEqual(htmlText);
+  expect(await (await fetch(server.url + "/boop", { method: "PATCH" })).text()).toBe(htmlText);
 });
 
 for (let development of [true, false, { hmr: false }]) {

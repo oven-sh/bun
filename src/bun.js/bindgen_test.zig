@@ -1,11 +1,11 @@
 //! This namespace is used to test binding generator
 const gen = bun.gen.bindgen_test;
 
-pub fn getBindgenTestFunctions(global: *JSC.JSGlobalObject) JSC.JSValue {
-    return JSC.JSObject.create(.{
+pub fn getBindgenTestFunctions(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    return (try JSC.JSObject.create(.{
         .add = gen.createAddCallback(global),
         .requiredAndOptionalArg = gen.createRequiredAndOptionalArgCallback(global),
-    }, global).toJS();
+    }, global)).toJS();
 }
 
 // This example should be kept in sync with bindgen's documentation
@@ -32,5 +32,5 @@ pub fn requiredAndOptionalArg(a: bool, b: ?usize, c: i32, d: ?u8) i32 {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;

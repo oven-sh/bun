@@ -104,17 +104,20 @@ public:
 
         /* In some cases, such as when refusing huge data we want to close the connection when drained */
         if (closeConnection) {
+            /* We can only write the header once */
+            if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
 
-            /* HTTP 1.1 must send this back unless the client already sent it to us.
-             * It is a connection close when either of the two parties say so but the
-             * one party must tell the other one so.
-             *
-             * This check also serves to limit writing the header only once. */
-            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0) {
-                writeHeader("Connection", "close");
+                /* HTTP 1.1 must send this back unless the client already sent it to us.
+                * It is a connection close when either of the two parties say so but the
+                * one party must tell the other one so.
+                *
+                * This check also serves to limit writing the header only once. */
+                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
+                    writeHeader("Connection", "close");
+                }
+
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
             }
-
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
         }
 
         /* if write was called and there was previously no Content-Length header set */
@@ -122,14 +125,13 @@ public:
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
-            
+
             /* Write the chunked data if there is any (this will not send zero chunks) */
             this->write(data, nullptr);
-            
+
 
             /* Terminating 0 chunk */
-            Super::write("\r\n0\r\n\r\n", 7);
-
+            Super::write("0\r\n\r\n", 5);
             httpResponseData->markDone();
 
             /* We need to check if we should close this socket here now */
@@ -331,7 +333,7 @@ public:
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
-        if (httpContextData->isParsingHttp) {
+        if (httpContextData->flags.isParsingHttp) {
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;
         }
@@ -453,6 +455,7 @@ public:
             writeMark();
 
             writeHeader("Transfer-Encoding", "chunked");
+            Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
 
@@ -462,6 +465,28 @@ public:
         return internalEnd({nullptr, 0}, 0, false, false, closeConnection);
     }
 
+    void flushHeaders() {
+
+        writeStatus(HTTP_200_OK);
+
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
+            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+                /* Write mark on first call to write */
+                writeMark();
+
+                writeHeader("Transfer-Encoding", "chunked");
+                Super::write("\r\n", 2);
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+            }
+
+         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+            writeMark();
+            Super::write("\r\n", 2);
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+        }
+    }
     /* Write parts of the response in chunking fashion. Starts timeout if failed. */
     bool write(std::string_view data, size_t *writtenPtr = nullptr) {
         writeStatus(HTTP_200_OK);
@@ -507,7 +532,7 @@ public:
             }
             return !has_failed;
         }
-        
+
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
@@ -517,10 +542,10 @@ public:
                 writeMark();
 
                 writeHeader("Transfer-Encoding", "chunked");
+                Super::write("\r\n", 2);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
 
-            Super::write("\r\n", 2);
             writeUnsignedHex((unsigned int) data.length());
             Super::write("\r\n", 2);
         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
@@ -548,14 +573,18 @@ public:
             has_failed = has_failed || failed;
             total_written += written;
         }
-        
+
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
+            // Write End of Chunked Encoding after data has been written
+            Super::write("\r\n", 2);
+        }
+
         /* Reset timeout on each sended chunk */
         this->resetTimeout();
 
         if (writtenPtr) {
             *writtenPtr = total_written;
         }
-
         /* If we did not fail the write, accept more */
         return !has_failed;
     }

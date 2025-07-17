@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 const OOM = bun.OOM;
@@ -117,7 +117,7 @@ pub const String = extern struct {
             }
         }
 
-        return createUTF8(utf8_slice);
+        return cloneUTF8(utf8_slice);
     }
 
     fn createUninitializedLatin1(len: usize) struct { String, []u8 } {
@@ -172,7 +172,7 @@ pub const String = extern struct {
         };
     }
 
-    pub fn createLatin1(bytes: []const u8) String {
+    pub fn cloneLatin1(bytes: []const u8) String {
         JSC.markBinding(@src());
         if (bytes.len == 0) return String.empty;
         return validateRefCount(BunString__fromLatin1(bytes.ptr, bytes.len));
@@ -190,11 +190,11 @@ pub const String = extern struct {
         return this;
     }
 
-    pub fn createUTF8(bytes: []const u8) String {
-        return JSC.WebCore.Encoder.toBunStringComptime(bytes, .utf8);
+    pub fn cloneUTF8(bytes: []const u8) String {
+        return JSC.WebCore.encoding.toBunStringComptime(bytes, .utf8);
     }
 
-    pub fn createUTF16(bytes: []const u16) String {
+    pub fn cloneUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
         if (bun.strings.firstNonASCII16([]const u16, bytes) == null) {
             return validateRefCount(BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len));
@@ -211,13 +211,13 @@ pub const String = extern struct {
         const alloc = sba.get();
         const buf = try std.fmt.allocPrint(alloc, fmt, args);
         defer alloc.free(buf);
-        return createUTF8(buf);
+        return cloneUTF8(buf);
     }
 
     pub fn createFromOSPath(os_path: bun.OSPathSlice) String {
         return switch (@TypeOf(os_path)) {
-            []const u8 => createUTF8(os_path),
-            []const u16 => createUTF16(os_path),
+            []const u8 => cloneUTF8(os_path),
+            []const u16 => cloneUTF16(os_path),
             else => @compileError("unreachable"),
         };
     }
@@ -248,7 +248,7 @@ pub const String = extern struct {
             return new;
         }
 
-        return createUTF8(this.byteSlice());
+        return cloneUTF8(this.byteSlice());
     }
 
     extern fn BunString__createAtom(bytes: [*]const u8, len: usize) String;
@@ -279,7 +279,7 @@ pub const String = extern struct {
             }
         }
 
-        return createUTF8(bytes);
+        return cloneUTF8(bytes);
     }
 
     pub fn utf8ByteLength(this: String) usize {
@@ -386,18 +386,42 @@ pub const String = extern struct {
     /// ctx is the pointer passed into `createExternal`
     /// buffer is the pointer to the buffer, either [*]u8 or [*]u16
     /// len is the number of characters in that buffer.
-    pub const ExternalStringImplFreeFunction = fn (ctx: *anyopaque, buffer: *anyopaque, len: u32) callconv(.C) void;
+    pub fn ExternalStringImplFreeFunction(comptime Ctx: type) type {
+        return fn (ctx: Ctx, buffer: *anyopaque, len: u32) callconv(.C) void;
+    }
 
-    pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: *anyopaque, callback: ?*const ExternalStringImplFreeFunction) String {
-        JSC.markBinding(@src());
+    /// Creates a `String` backed by a `WTF::ExternalStringImpl`.
+    ///
+    /// External strings are WTF strings with bytes allocated somewhere else.
+    /// When destroyed, they call `callback`, which should free the allocation
+    /// as needed.
+    ///
+    ///
+    /// If `bytes` is too long (longer than `max_length()`), `callback` gets
+    /// called and a `dead` string is returned. `bytes` cannot be empty. Passing
+    /// an empty slice is safety-checked Illegal Behavior.
+    ///
+    /// ### Memory Characteristics
+    /// - Allocates memory for backing `WTF::ExternalStringImpl` struct. Does
+    ///   not allocate for actual string bytes.
+    /// - `bytes` is borrowed.
+    pub fn createExternal(
+        comptime Ctx: type,
+        bytes: []const u8,
+        isLatin1: bool,
+        ctx: Ctx,
+        callback: ?*const ExternalStringImplFreeFunction(Ctx),
+    ) String {
+        comptime if (@typeInfo(Ctx) != .pointer) @compileError("context must be a pointer");
         bun.assert(bytes.len > 0);
+        JSC.markBinding(@src());
         if (bytes.len > max_length()) {
             if (callback) |cb| {
                 cb(ctx, @ptrCast(@constCast(bytes.ptr)), @truncate(bytes.len));
             }
             return dead;
         }
-        return validateRefCount(BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback));
+        return validateRefCount(BunString__createExternal(@ptrCast(bytes.ptr), bytes.len, isLatin1, ctx, @ptrCast(callback)));
     }
 
     /// This should rarely be used. The WTF::StringImpl* will never be freed.
@@ -423,7 +447,7 @@ pub const String = extern struct {
     /// Max WTFStringImpl length.
     /// **Not** in bytes. In characters.
     pub inline fn max_length() usize {
-        return JSC.string_allocation_limit;
+        return JSC.VirtualMachine.string_allocation_limit;
     }
 
     /// If the allocation fails, this will free the bytes and return a dead string.
@@ -442,14 +466,45 @@ pub const String = extern struct {
         };
     }
 
-    pub fn fromUTF8(value: []const u8) String {
+    /// Create a `String` from a UTF-8 slice.
+    ///
+    /// No checks are performed to ensure `value` is valid UTF-8. Caller is
+    /// responsible for ensuring `value` is valid.
+    ///
+    /// ### Memory Characteristics
+    /// - `value` is borrowed.
+    /// - Never allocates or copies any memory
+    /// - Does not increment reference counts
+    pub fn borrowUTF8(value: []const u8) String {
         return String.init(ZigString.initUTF8(value));
     }
 
-    pub fn fromUTF16(value: []const u16) String {
+    /// Create a `String` from a UTF-16 slice.
+    ///
+    /// No checks are performed to ensure `value` is valid UTF-16. Caller is
+    /// responsible for ensuring `value` is valid.
+    ///
+    /// ### Memory Characteristics
+    /// - `value` is borrowed.
+    /// - Never allocates or copies any memory
+    /// - Does not increment reference counts
+    pub fn borrowUTF16(value: []const u16) String {
         return String.init(ZigString.initUTF16(value));
     }
 
+    pub fn initLatin1OrASCIIView(value: []const u8) String {
+        return String.init(ZigString.init(value));
+    }
+
+    /// Create a `String` from a byte slice.
+    ///
+    /// Checks if `value` is ASCII (using `strings.isAllASCII`) and, if so,
+    /// the returned `String` is marked as UTF-8. Otherwise, no encoding is assumed.
+    ///
+    /// ### Memory Characteristics
+    /// - `value` is borrowed.
+    /// - Never allocates or copies any memory
+    /// - Does not increment reference counts
     pub fn fromBytes(value: []const u8) String {
         return String.init(ZigString.fromBytes(value));
     }
@@ -459,18 +514,22 @@ pub const String = extern struct {
     }
 
     pub fn fromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
+        var scope: JSC.ExceptionValidationScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
         var out: String = String.dead;
-        if (BunString__fromJS(globalObject, value, &out)) {
-            if (comptime bun.Environment.isDebug) {
-                bun.assert(out.tag != .Dead);
-            }
-            return out;
+        const ok = BunString__fromJS(globalObject, value, &out);
+
+        // If there is a pending exception, but stringifying succeeds, we don't return JSError.
+        // We do need to always call hasException() to satisfy the need for an exception check.
+        const has_exception = scope.hasExceptionOrFalseWhenAssertionsAreDisabled();
+        if (ok) {
+            bun.debugAssert(out.tag != .Dead);
+        } else {
+            bun.debugAssert(has_exception);
         }
 
-        if (comptime bun.Environment.isDebug) {
-            bun.assert(globalObject.hasException());
-        }
-        return error.JSError;
+        return if (ok) out else error.JSError;
     }
 
     pub fn toJS(this: *const String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
@@ -492,10 +551,9 @@ pub const String = extern struct {
     ) JSC.JSValue;
 
     /// calls toJS on all elements of `array`.
-    pub fn toJSArray(globalObject: *bun.JSC.JSGlobalObject, array: []const bun.String) JSC.JSValue {
+    pub fn toJSArray(globalObject: *bun.JSC.JSGlobalObject, array: []const bun.String) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-
-        return BunString__createArray(globalObject, array.ptr, array.len);
+        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createArray, .{ globalObject, array.ptr, array.len });
     }
 
     pub fn toZigString(this: String) ZigString {
@@ -608,28 +666,22 @@ pub const String = extern struct {
         return false;
     }
 
-    extern fn BunString__toJSON(
-        globalObject: *bun.JSC.JSGlobalObject,
-        this: *String,
-    ) JSC.JSValue;
+    extern fn BunString__toJSON(globalObject: *bun.JSC.JSGlobalObject, this: *String) JSC.JSValue;
 
     pub fn toJSByParseJSON(self: *String, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-        JSC.markBinding(@src());
-        const result = BunString__toJSON(globalObject, self);
-        if (result == .zero) return error.JSError;
-        return result;
+        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__toJSON, .{ globalObject, self });
     }
 
     pub fn encodeInto(self: String, out: []u8, comptime enc: JSC.Node.Encoding) !usize {
         if (self.isUTF16()) {
-            return JSC.WebCore.Encoder.encodeIntoFrom16(self.utf16(), out, enc, true);
+            return JSC.WebCore.encoding.encodeIntoFrom16(self.utf16(), out, enc, true);
         }
 
         if (self.isUTF8()) {
             @panic("TODO");
         }
 
-        return JSC.WebCore.Encoder.encodeIntoFrom8(self.latin1(), out, enc);
+        return JSC.WebCore.encoding.encodeIntoFrom8(self.latin1(), out, enc);
     }
 
     pub fn encode(self: String, enc: JSC.Node.Encoding) []u8 {
@@ -789,14 +841,22 @@ pub const String = extern struct {
     extern fn BunString__toWTFString(this: *String) void;
     extern fn BunString__createUTF8ForJS(globalObject: *JSC.JSGlobalObject, ptr: [*]const u8, len: usize) JSC.JSValue;
 
-    pub fn createUTF8ForJS(globalObject: *JSC.JSGlobalObject, utf8_slice: []const u8) JSC.JSValue {
+    pub fn createUTF8ForJS(globalObject: *JSC.JSGlobalObject, utf8_slice: []const u8) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        return BunString__createUTF8ForJS(globalObject, utf8_slice.ptr, utf8_slice.len);
+        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createUTF8ForJS, .{ globalObject, utf8_slice.ptr, utf8_slice.len });
     }
 
-    pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {
+    pub fn createFormatForJS(globalObject: *JSC.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        return Bun__parseDate(globalObject, this);
+        var builder = std.ArrayList(u8).init(bun.default_allocator);
+        defer builder.deinit();
+        builder.writer().print(fmt, args) catch bun.outOfMemory();
+        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createUTF8ForJS, .{ globalObject, builder.items.ptr, builder.items.len });
+    }
+
+    pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) bun.JSError!f64 {
+        JSC.markBinding(@src());
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__parseDate, .{ globalObject, this });
     }
 
     pub fn ref(this: String) void {
@@ -1067,10 +1127,10 @@ pub const SliceWithUnderlyingString = struct {
     utf8: ZigString.Slice = ZigString.Slice.empty,
     underlying: String = String.dead,
 
-    did_report_extra_memory_debug: bun.DebugOnly(bool) = if (bun.Environment.allow_assert) false,
+    did_report_extra_memory_debug: bun.DebugOnly(bool) = if (bun.Environment.isDebug) false,
 
     pub inline fn reportExtraMemory(this: *SliceWithUnderlyingString, vm: *JSC.VM) void {
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.isDebug) {
             bun.assert(!this.did_report_extra_memory_debug);
             this.did_report_extra_memory_debug = true;
         }
@@ -1106,7 +1166,7 @@ pub const SliceWithUnderlyingString = struct {
         }
 
         return .{
-            .underlying = JSC.WebCore.Encoder.toBunStringFromOwnedSlice(owned_input_bytes, encoding),
+            .underlying = JSC.WebCore.encoding.toBunStringFromOwnedSlice(owned_input_bytes, encoding),
         };
     }
 
@@ -1157,15 +1217,15 @@ pub const SliceWithUnderlyingString = struct {
         try writer.writeAll(self.utf8.slice());
     }
 
-    pub fn toJS(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return this.toJSWithOptions(globalObject, false);
     }
 
-    pub fn transferToJS(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn transferToJS(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return this.toJSWithOptions(globalObject, true);
     }
 
-    fn toJSWithOptions(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject, transfer: bool) JSC.JSValue {
+    fn toJSWithOptions(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject, transfer: bool) bun.JSError!JSC.JSValue {
         if ((this.underlying.tag == .Dead or this.underlying.tag == .Empty) and this.utf8.length() > 0) {
             if (comptime bun.Environment.allow_assert) {
                 if (this.utf8.allocator.get()) |allocator| {

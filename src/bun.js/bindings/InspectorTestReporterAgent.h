@@ -33,7 +33,7 @@ public:
     virtual Protocol::ErrorStringOr<void> disable() final;
 
     // Public API for reporting test events
-    void reportTestFound(JSC::CallFrame*, int testId, const String& name);
+    void reportTestFound(JSC::CallFrame*, int testId, const String& name, Protocol::TestReporter::TestType type = Protocol::TestReporter::TestType::Test, int parentId = -1);
     void reportTestStart(int testId);
     void reportTestEnd(int testId, Protocol::TestReporter::TestStatus status, double elapsed);
 

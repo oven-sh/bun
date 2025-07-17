@@ -37,7 +37,7 @@ export function cancel(this, reason) {
   if (!$isReadableStreamDefaultReader(this)) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamDefaultReader"));
 
   if (!$getByIdDirectPrivate(this, "ownerReadableStream"))
-    return Promise.$reject(new TypeError("cancel() called on a reader owned by no readable stream"));
+    return Promise.$reject($ERR_INVALID_STATE_TypeError("The reader is not attached to a stream"));
 
   return $readableStreamReaderGenericCancel(this, reason);
 }
@@ -47,7 +47,7 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
     throw new TypeError("ReadableStreamDefaultReader.readMany() should not be called directly");
 
   const stream = $getByIdDirectPrivate(this, "ownerReadableStream");
-  if (!stream) throw new TypeError("readMany() called on a reader owned by no readable stream");
+  if (!stream) throw $ERR_INVALID_STATE_TypeError("The reader is not attached to a stream");
 
   const state = $getByIdDirectPrivate(stream, "state");
   stream.$disturbed = true;
@@ -172,7 +172,7 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
 export function read(this) {
   if (!$isReadableStreamDefaultReader(this)) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamDefaultReader"));
   if (!$getByIdDirectPrivate(this, "ownerReadableStream"))
-    return Promise.$reject(new TypeError("read() called on a reader owned by no readable stream"));
+    return Promise.$reject($ERR_INVALID_STATE_TypeError("The reader is not attached to a stream"));
 
   return $readableStreamDefaultReaderRead(this);
 }

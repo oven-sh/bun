@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "fs";
 import "harness";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { tmpdirSync } from "harness";
 import path from "path";
 describe("doesnt_crash", async () => {
   let files: string[] = [];

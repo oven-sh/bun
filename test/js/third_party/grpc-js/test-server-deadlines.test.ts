@@ -25,7 +25,7 @@ import { Server, ServerCredentials } from "@grpc/grpc-js/build/src";
 import { ServiceError } from "@grpc/grpc-js/build/src/call";
 import { ServiceClient, ServiceClientConstructor } from "@grpc/grpc-js/build/src/make-client";
 import { sendUnaryData, ServerUnaryCall, ServerWritableStream } from "@grpc/grpc-js/build/src/server-call";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
+import { afterAll as after, beforeAll as before, describe, it } from "bun:test";
 
 import { loadProtoFile } from "./common";
 
@@ -90,7 +90,7 @@ describe("Server deadlines", () => {
   });
 });
 
-describe.todo("Cancellation", () => {
+describe("Cancellation", () => {
   let server: Server;
   let client: ServiceClient;
   let inHandler = false;

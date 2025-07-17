@@ -1,8 +1,6 @@
-const bun = @import("root").bun;
-const std = @import("std");
+const bun = @import("bun");
 const ZigErrorType = @import("ZigErrorType.zig").ZigErrorType;
 const ErrorCode = @import("ErrorCode.zig").ErrorCode;
-const typeBaseName = @import("../../meta.zig").typeBaseName;
 
 pub fn Errorable(comptime Type: type) type {
     return extern struct {
@@ -30,12 +28,12 @@ pub fn Errorable(comptime Type: type) type {
             return @This(){ .result = .{ .value = val }, .success = true };
         }
 
-        pub fn err(code: anyerror, ptr: *anyopaque) @This() {
+        pub fn err(code: anyerror, err_value: bun.jsc.JSValue) @This() {
             return @This(){
                 .result = .{
                     .err = .{
                         .code = ErrorCode.from(code),
-                        .ptr = ptr,
+                        .value = err_value,
                     },
                 },
                 .success = false,

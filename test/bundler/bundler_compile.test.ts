@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import { rmSync } from "fs";
+import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
-import { isFlaky, isWindows } from "harness";
 
 describe("bundler", () => {
   itBundled("compile/HelloWorld", {
@@ -263,17 +263,23 @@ describe("bundler", () => {
     run: { stdout: "ok" },
   });
 
-  for (const additionalOptions of [
+  const additionalOptionsIters: Array<{
+    bytecode?: boolean;
+    minify?: boolean;
+    format: "cjs" | "esm";
+  }> = [
     { bytecode: true, minify: true, format: "cjs" },
     { format: "cjs" },
     { format: "cjs", minify: true },
     { format: "esm" },
     { format: "esm", minify: true },
-  ]) {
+  ];
+
+  for (const additionalOptions of additionalOptionsIters) {
     const { bytecode = false, format, minify = false } = additionalOptions;
     const NODE_ENV = minify ? "'production'" : undefined;
     itBundled("compile/ReactSSR" + (bytecode ? "+bytecode" : "") + "+" + format + (minify ? "+minify" : ""), {
-      install: ["react@next", "react-dom@next"],
+      install: ["react@19.2.0-canary-b94603b9-20250513", "react-dom@19.2.0-canary-b94603b9-20250513"],
       format,
       minifySyntax: minify,
       minifyIdentifiers: minify,
@@ -600,5 +606,24 @@ error: Hello World`,
         expect(stderr).toInclude("entry.ts:8:19");
       },
     },
+  });
+  itBundled("compile/BunBeBunEnvVar", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("This is compiled code");
+      `,
+    },
+    run: [
+      {
+        stdout: "This is compiled code",
+      },
+      {
+        env: { BUN_BE_BUN: "1" },
+        validate({ stdout }) {
+          expect(stdout).not.toContain("This is compiled code");
+        },
+      },
+    ],
   });
 });

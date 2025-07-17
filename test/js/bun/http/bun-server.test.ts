@@ -1255,3 +1255,33 @@ describe("websocket and routes test", () => {
     });
   }
 });
+
+test("should be able to redirect when using empty streams #15320", async () => {
+  using server = Bun.serve({
+    port: 0,
+    websocket: void 0,
+    async fetch(req, server2) {
+      const url = new URL(req.url);
+      if (url.pathname === "/redirect") {
+        const emptyStream = new ReadableStream({
+          start(controller) {
+            // Immediately close the stream to make it empty
+            controller.close();
+          },
+        });
+
+        return new Response(emptyStream, {
+          status: 307,
+          headers: {
+            location: "/",
+          },
+        });
+      }
+
+      return new Response("Hello, World");
+    },
+  });
+
+  const response = await fetch(`http://localhost:${server.port}/redirect`);
+  expect(await response.text()).toBe("Hello, World");
+});

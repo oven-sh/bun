@@ -1,0 +1,44 @@
+{
+	"name": "b-dep-a",
+	"versions": {
+		"1.0.0": {
+			"name": "b-dep-a",
+			"version": "1.0.0",
+			"dependencies": {
+				"a-dep-b": "1.0.0"
+			},
+			"_id": "b-dep-a@1.0.0",
+			"_integrity": "sha512-1owp4Wy5QE893BGgjDQGZm9Oayk38MA++fXmPTQA1WY/NFQv7CcCVpK2Ht/4mU4KejDeHOxaAj7qbzv1dSQA2w==",
+			"_nodeVersion": "22.6.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-1owp4Wy5QE893BGgjDQGZm9Oayk38MA++fXmPTQA1WY/NFQv7CcCVpK2Ht/4mU4KejDeHOxaAj7qbzv1dSQA2w==",
+			"shasum": "3d94682ad5231596f47745e03ef3d59af5945e1d",
+			"dist": {
+				"integrity": "sha512-1owp4Wy5QE893BGgjDQGZm9Oayk38MA++fXmPTQA1WY/NFQv7CcCVpK2Ht/4mU4KejDeHOxaAj7qbzv1dSQA2w==",
+				"shasum": "3d94682ad5231596f47745e03ef3d59af5945e1d",
+				"tarball": "http://http://localhost:4873/b-dep-a/-/b-dep-a-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-06-01T20:45:23.481Z",
+		"created": "2025-06-01T20:45:23.481Z",
+		"1.0.0": "2025-06-01T20:45:23.481Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"b-dep-a-1.0.0.tgz": {
+			"shasum": "3d94682ad5231596f47745e03ef3d59af5945e1d",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "b-dep-a",
+	"readme": ""
+}

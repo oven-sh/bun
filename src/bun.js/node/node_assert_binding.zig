@@ -1,8 +1,7 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const assert = @import("./node_assert.zig");
 const DiffList = @import("./assert/myers_diff.zig").DiffList;
-const Allocator = std.mem.Allocator;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
@@ -60,12 +59,12 @@ pub fn myersDiff(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 const StrDiffList = DiffList([]const u8);
 fn diffListToJS(global: *JSC.JSGlobalObject, diff_list: StrDiffList) bun.JSError!JSC.JSValue {
     // todo: replace with toJS
-    var array = JSC.JSValue.createEmptyArray(global, diff_list.items.len);
+    var array = try JSC.JSValue.createEmptyArray(global, diff_list.items.len);
     for (diff_list.items, 0..) |*line, i| {
         var obj = JSC.JSValue.createEmptyObjectWithNullPrototype(global);
         if (obj == .zero) return global.throwOutOfMemory();
         obj.put(global, bun.String.static("kind"), JSC.JSValue.jsNumber(@as(u32, @intFromEnum(line.kind))));
-        obj.put(global, bun.String.static("value"), JSC.toJS(global, []const u8, line.value, .allocated));
+        obj.put(global, bun.String.static("value"), JSC.toJS(global, []const u8, line.value));
         array.putIndex(global, @truncate(i), obj);
     }
     return array;

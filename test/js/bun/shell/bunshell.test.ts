@@ -5,9 +5,9 @@
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
 import { $ } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -582,7 +582,7 @@ bar\n`,
   describe("escaped_newline", () => {
     const printArgs = /* ts */ `console.log(JSON.stringify(process.argv))`;
 
-    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
+    TestBuilder.command /* sh */ `${BUN} run ./code.ts hi hello \
     on a newline!
   `
       .ensureTempDir()
@@ -590,7 +590,7 @@ bar\n`,
       .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!"]))
       .runAsTest("single");
 
-    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
+    TestBuilder.command /* sh */ `${BUN} run ./code.ts hi hello \
     on a newline! \
     and \
     a few \
@@ -603,7 +603,7 @@ bar\n`,
       )
       .runAsTest("many");
 
-    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
+    TestBuilder.command /* sh */ `${BUN} run ./code.ts hi hello \
     on a newline! \
     ooga"
 booga"
@@ -974,6 +974,132 @@ describe("deno_task", () => {
     TestBuilder.command`echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stderr)' 2> output.txt`
       .fileEquals("output.txt", "1\n")
       .runAsTest("pipe with redirect stderr to file");
+
+    if (isPosix) {
+      TestBuilder.command`ls . | echo hi`.exitCode(0).stdout("hi\n").runAsTest("broken pipe builtin");
+      TestBuilder.command`grep hi src/js_parser.zig | echo hi`
+        .exitCode(0)
+        .stdout("hi\n")
+        .stderr("")
+        .runAsTest("broken pipe subproc");
+    }
+
+    TestBuilder.command`${BUN} -e 'process.exit(1)' | ${BUN} -e 'console.log("hi")'`
+      .exitCode(0)
+      .stdout("hi\n")
+      .runAsTest("last exit code");
+
+    TestBuilder.command`ls sldkfjlskdjflksdjflksjdf | ${BUN} -e 'console.log("hi")'`
+      .exitCode(0)
+      .stdout("hi\n")
+      .stderr("ls: sldkfjlskdjflksdjflksjdf: No such file or directory\n")
+      .runAsTest("last exit code");
+
+    TestBuilder.command`ksldfjsdflsdfjskdfjlskdjflksdf | ${BUN} -e 'console.log("hi")'`
+      .exitCode(0)
+      .stdout("hi\n")
+      .stderr("bun: command not found: ksldfjsdflsdfjskdfjlskdjflksdf\n")
+      .runAsTest("last exit code 2");
+
+    TestBuilder.command`echo hi | ${BUN} -e 'process.exit(69)'`.exitCode(69).stdout("").runAsTest("last exit code 3");
+
+    describe("pipeline stack behavior", () => {
+      // Test deep pipeline chains to stress the stack implementation
+      TestBuilder.command`echo 1 | echo 2 | echo 3 | echo 4 | echo 5 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("5\n")
+        .runAsTest("deep pipeline chain");
+
+      // Test very deep chains that could overflow a recursion-based implementation
+      TestBuilder.command`echo start | echo 1 | echo 2 | echo 3 | echo 4 | echo 5 | echo 6 | echo 7 | echo 8 | echo 9 | echo 10 | echo 11 | echo 12 | echo 13 | echo 14 | echo 15 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("15\n")
+        .runAsTest("very deep pipeline chain");
+
+      // Test nested pipelines in subshells
+      TestBuilder.command`echo outer | (echo inner1 | echo inner2) | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("inner2\n")
+        .runAsTest("nested pipeline in subshell");
+
+      // Test nested pipelines with command substitution
+      TestBuilder.command`echo $(echo nested | echo pipe) | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("pipe\n")
+        .runAsTest("nested pipeline in command substitution");
+
+      // Test multiple nested pipelines
+      TestBuilder.command`(echo a | echo b) | (echo c | echo d) | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("d\n")
+        .runAsTest("multiple nested pipelines");
+
+      // Test pipeline with conditional that contains another pipeline
+      TestBuilder.command`echo test | (echo inner | echo nested && echo after) | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("nested\nafter\n")
+        .runAsTest("pipeline with conditional containing pipeline");
+
+      // Test deeply nested subshells with pipelines
+      TestBuilder.command`echo start | (echo l1 | (echo l2 | (echo l3 | echo final))) | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("final\n")
+        .runAsTest("deeply nested subshells with pipelines");
+
+      // Test pipeline stack unwinding with early termination
+      TestBuilder.command`echo 1 | echo 2 | echo 3 | false | echo 4 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("4\n")
+        .runAsTest("pipeline with failing command");
+
+      // Test interleaved pipelines and conditionals
+      TestBuilder.command`echo a | echo b && echo c | echo d | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("b\nd\n")
+        .runAsTest("interleaved pipelines and conditionals");
+
+      // Test pipeline with background process (when supported)
+      TestBuilder.command`echo foreground | echo pipe && (echo background &) | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("pipe\n")
+        .todo("background processes not fully supported")
+        .runAsTest("pipeline with background process");
+
+      // Test rapid pipeline creation and destruction
+      TestBuilder.command`echo 1 | echo 2; echo 3 | echo 4; echo 5 | echo 6 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("2\n4\n6\n")
+        .runAsTest("rapid pipeline creation");
+
+      // Test pipeline stack with error propagation
+      TestBuilder.command`echo start | nonexistent_command | echo after || echo fallback`
+        .stdout("after\n")
+        .stderr("bun: command not found: nonexistent_command\n")
+        .runAsTest("pipeline error propagation");
+
+      // Test nested pipeline with mixed success/failure
+      TestBuilder.command`(echo success | echo works) | (nonexistent | echo backup) || echo final_fallback`
+        .stdout("backup\n")
+        .stderr(s => s.includes("command not found"))
+        .runAsTest("nested pipeline mixed success failure");
+
+      TestBuilder.command`echo 0 | echo 1 | echo 2 | echo 3 | echo 4 | echo 5 | echo 6 | echo 7 | echo 8 | echo 9 | echo 10 | echo 11 | echo 12 | echo 13 | echo 14 | echo 15 | echo 16 | echo 17 | echo 18 | echo 19 | echo 20 | echo 21 | echo 22 | echo 23 | echo 24 | echo 25 | echo 26 | echo 27 | echo 28 | echo 29 | echo 30 | echo 31 | echo 32 | echo 33 | echo 34 | echo 35 | echo 36 | echo 37 | echo 38 | echo 39 | echo 40 | echo 41 | echo 42 | echo 43 | echo 44 | echo 45 | echo 46 | echo 47 | echo 48 | echo 49 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("49\n")
+        .runAsTest("long pipeline builtin");
+
+      TestBuilder.command`echo 0 | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("0\n")
+        .runAsTest("long pipeline");
+
+      // Test pipeline stack consistency with complex nesting
+      TestBuilder.command`echo outer | (echo inner1 | echo inner2 | (echo deep1 | echo deep2) | echo inner3) | echo final | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("final\n")
+        .runAsTest("complex nested pipeline consistency");
+
+      // Test pipeline interruption and resumption
+      TestBuilder.command`echo start | (echo pause; echo resume) | echo end | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("end\n")
+        .runAsTest("pipeline interruption resumption");
+
+      // Test extremely deep nested pipeline - this would cause stack overflow with recursion
+      TestBuilder.command`echo level0 | (echo level1 | (echo level2 | (echo level3 | (echo level4 | (echo level5 | (echo level6 | (echo level7 | (echo level8 | (echo level9 | (echo level10 | (echo level11 | (echo level12 | (echo level13 | (echo level14 | (echo level15 | (echo level16 | (echo level17 | (echo level18 | (echo level19 | echo deep_final))))))))))))))))))) | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("deep_final\n")
+        .runAsTest("extremely deep nested pipeline");
+
+      // Test pathological case: deep nesting + long chains
+      TestBuilder.command`echo start | (echo n1 | echo n2 | echo n3 | (echo deep1 | echo deep2 | echo deep3 | (echo deeper1 | echo deeper2 | echo deeper3 | (echo deepest1 | echo deepest2 | echo deepest_final)))) | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+        .stdout("deepest_final\n")
+        .runAsTest("pathological deep nesting with long chains");
+    });
   });
 
   describe("redirects", async function igodf() {
@@ -1190,14 +1316,17 @@ describe("deno_task", () => {
     const expected = [
       '\\x1b[B',
       '\\x0D'
-    ]
+    ].join("")
     let i = 0
+    let buf = ""
     const writer = Bun.stdout.writer();
     process.stdin.on("data", async chunk => {
       const input = chunk.toString();
-      expect(input).toEqual(expected[i++])
-      writer.write(input)
-      await writer.flush()
+      buf += input;
+      if (buf === expected) {
+        writer.write(buf);
+        await writer.flush();
+      }
     });
     `;
 
@@ -1211,7 +1340,7 @@ describe("deno_task", () => {
 });
 
 describe("if_clause", () => {
-  TestBuilder.command/* sh */ `
+  TestBuilder.command /* sh */ `
 # The name of the package we're interested in
 package_name=react
 
@@ -2070,7 +2199,7 @@ describe("subshell", () => {
     }
   }`;
 
-  TestBuilder.command/* sh */ `
+  TestBuilder.command /* sh */ `
   mkdir sharp-test
   cd sharp-test
   echo ${sharppkgjson} > package.json
@@ -2083,16 +2212,16 @@ describe("subshell", () => {
     .env(bunEnv)
     .runAsTest("sharp");
 
-  TestBuilder.command/* sh */ `( ( ( ( echo HI! ) ) ) )`.stdout("HI!\n").runAsTest("multiple levels");
-  TestBuilder.command/* sh */ `(
+  TestBuilder.command /* sh */ `( ( ( ( echo HI! ) ) ) )`.stdout("HI!\n").runAsTest("multiple levels");
+  TestBuilder.command /* sh */ `(
     echo HELLO! ;
     echo HELLO AGAIN!
     )`
     .stdout("HELLO!\nHELLO AGAIN!\n")
     .runAsTest("multiline");
-  TestBuilder.command/* sh */ `(exit 42)`.exitCode(42).runAsTest("exit code");
-  TestBuilder.command/* sh */ `(exit 42); echo hi`.exitCode(0).stdout("hi\n").runAsTest("exit code 2");
-  TestBuilder.command/* sh */ `
+  TestBuilder.command /* sh */ `(exit 42)`.exitCode(42).runAsTest("exit code");
+  TestBuilder.command /* sh */ `(exit 42); echo hi`.exitCode(0).stdout("hi\n").runAsTest("exit code 2");
+  TestBuilder.command /* sh */ `
   VAR1=VALUE1
   VAR2=VALUE2
   VAR3=VALUE3
@@ -2108,7 +2237,7 @@ describe("subshell", () => {
     .stdout("VALUE1 VALUE2 VALUE3\nyou cant see me my time is now\nVALUE1 VALUE2 VALUE3\n")
     .runAsTest("copy of environment");
 
-  TestBuilder.command/* sh */ `
+  TestBuilder.command /* sh */ `
   mkdir foo
   (
     echo $PWD
@@ -2138,7 +2267,7 @@ describe("subshell", () => {
   TestBuilder.command`\(echo hi \)`.stderr("bun: command not found: (echo\n").exitCode(1).runAsTest("escaped subshell");
   TestBuilder.command`echo \\\(hi\\\)`.stdout("\\(hi\\)\n").runAsTest("escaped subshell 2");
 
-  TestBuilder.command/* sh */ `
+  TestBuilder.command /* sh */ `
   mkdir dir
   (
     cd dir
@@ -2150,7 +2279,7 @@ describe("subshell", () => {
     .stdout(`$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
     .runAsTest("pipeline in subshell");
 
-  TestBuilder.command/* sh */ `
+  TestBuilder.command /* sh */ `
   mkdir dir
   (pwd) | cat
   (cd dir; pwd) | cat
@@ -2160,7 +2289,7 @@ describe("subshell", () => {
     .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
     .runAsTest("subshell in pipeline");
 
-  TestBuilder.command/* sh */ `
+  TestBuilder.command /* sh */ `
   mkdir dir
   (pwd) | cat
   (cd dir; pwd) | cat
@@ -2170,7 +2299,7 @@ describe("subshell", () => {
     .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
     .runAsTest("subshell in pipeline");
 
-  TestBuilder.command/* sh */ `
+  TestBuilder.command /* sh */ `
   mkdir foo
   ( ( (cd foo ; pwd) | cat) ) | ( ( (cat) ) | cat )
 
@@ -2179,7 +2308,7 @@ describe("subshell", () => {
     .stdout(`$TEMP_DIR${sep}foo\n`)
     .runAsTest("imbricated subshells and pipelines");
 
-  TestBuilder.command/* sh */ `
+  TestBuilder.command /* sh */ `
   echo (echo)
   `
     .error("Unexpected token: `(`")
@@ -2187,7 +2316,7 @@ describe("subshell", () => {
 
   describe("ported", () => {
     // test_oE 'effect of subshell'
-    TestBuilder.command/* sh */ `
+    TestBuilder.command /* sh */ `
   a=1
   # (a=2; echo $a; exit; echo not reached)
   # NOTE: We actually implemented exit wrong so changing this for now until we fix it
@@ -2198,14 +2327,14 @@ describe("subshell", () => {
       .runAsTest("effect of subshell");
 
     // test_x -e 23 'exit status of subshell'
-    TestBuilder.command/* sh */ `
+    TestBuilder.command /* sh */ `
   (true; exit 23)
   `
       .exitCode(23)
       .runAsTest("exit status of subshell");
 
     // test_oE 'redirection on subshell'
-    TestBuilder.command/* sh */ `
+    TestBuilder.command /* sh */ `
   (echo 1; echo 2; echo 3; echo 4) >sub_out
   # (tail -n 2) <sub_out
   cat sub_out
@@ -2215,14 +2344,14 @@ describe("subshell", () => {
       .runAsTest("redirection on subshell");
 
     // test_oE 'subshell ending with semicolon'
-    TestBuilder.command/* sh */ `
+    TestBuilder.command /* sh */ `
 (echo foo;)
 `
       .stdout("foo\n")
       .runAsTest("subshell ending with semicolon");
 
     // test_oE 'subshell ending with asynchronous list'
-    TestBuilder.command/* sh */ `
+    TestBuilder.command /* sh */ `
 mkfifo fifo1
 (echo foo >fifo1&)
 cat fifo1
@@ -2232,7 +2361,7 @@ cat fifo1
       .runAsTest("subshell ending with asynchronous list");
 
     // test_oE 'newlines in subshell'
-    TestBuilder.command/* sh */ `
+    TestBuilder.command /* sh */ `
 (
 echo foo
 )
@@ -2241,7 +2370,7 @@ echo foo
       .runAsTest("newlines in subshell");
 
     // test_oE 'effect of brace grouping'
-    TestBuilder.command/* sh */ `
+    TestBuilder.command /* sh */ `
 a=1
 { a=2; echo $a; exit; echo not reached; }
 echo $a
@@ -2251,7 +2380,7 @@ echo $a
       .runAsTest("effect of brace grouping");
 
     // test_x -e 29 'exit status of brace grouping'
-    TestBuilder.command/* sh */ `
+    TestBuilder.command /* sh */ `
 { true; sh -c 'exit 29'; }
 `
       .exitCode(29)
@@ -2259,7 +2388,7 @@ echo $a
       .runAsTest("exit status of brace grouping");
 
     // test_oE 'redirection on brace grouping'
-    TestBuilder.command/* sh */ `
+    TestBuilder.command /* sh */ `
 { echo 1; echo 2; echo 3; echo 4; } >brace_out
 { tail -n 2; } <brace_out
 `
@@ -2268,7 +2397,7 @@ echo $a
       .runAsTest("redirection on brace grouping");
 
     // test_oE 'brace grouping ending with semicolon'
-    TestBuilder.command/* sh */ `
+    TestBuilder.command /* sh */ `
 { echo foo; }
 `
       .stdout("foo\n")
@@ -2276,7 +2405,7 @@ echo $a
       .runAsTest("brace grouping ending with semicolon");
 
     // test_oE 'brace grouping ending with asynchronous list'
-    TestBuilder.command/* sh */ `
+    TestBuilder.command /* sh */ `
 mkfifo fifo1
 { echo foo >fifo1& }
 cat fifo1
@@ -2286,7 +2415,7 @@ cat fifo1
       .runAsTest("brace grouping ending with asynchronous list");
 
     // test_oE 'newlines in brace grouping'
-    TestBuilder.command/* sh */ `
+    TestBuilder.command /* sh */ `
 {
 echo foo
 }
@@ -2294,6 +2423,39 @@ echo foo
       .stdout("foo\n")
       .todo("brace grouping not implemented")
       .runAsTest("newlines in brace grouping");
+  });
+});
+
+describe("when a command fails", () => {
+  let e: Bun.$.ShellError;
+
+  beforeAll(async () => {
+    $.throws(true);
+    try {
+      await Bun.$`false`;
+    } catch (err) {
+      e = err as Bun.$.ShellError;
+    } finally {
+      $.nothrow();
+    }
+  });
+
+  it("is an Error instance", () => expect(e).toBeInstanceOf(Error));
+  it("is a ShellError instance", () => expect(e).toBeInstanceOf(Bun.$.ShellError));
+  it("has a stdout buffer", () => expect(e.stdout).toBeInstanceOf(Uint8Array));
+  it("has a stderr buffer", () => expect(e.stderr).toBeInstanceOf(Uint8Array));
+  it("has an exit code of 1", () => expect(e.exitCode).toBe(1));
+  it("is named ShellError", () => expect(e.name).toBe("ShellError"));
+});
+
+describe("ShellError constructor", () => {
+  test.failing("new $.ShellError()", () => {
+    const e = new Bun.$.ShellError();
+    expect(e).toBeInstanceOf(Bun.$.ShellError);
+    expect(e).toBeInstanceOf(Error);
+
+    // TODO(@DonIsaac) fix constructor
+    expect(e.name).toBe("ShellError");
   });
 });
 

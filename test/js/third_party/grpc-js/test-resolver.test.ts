@@ -17,23 +17,23 @@
 
 // Allow `any` data type for testing runtime type checking.
 // tslint:disable no-any
-import assert from "assert";
+import { StatusObject } from "@grpc/grpc-js/build/src/call-interface";
+import { GRPC_NODE_USE_ALTERNATIVE_RESOLVER } from "@grpc/grpc-js/build/src/environment";
 import * as resolverManager from "@grpc/grpc-js/build/src/resolver";
 import * as resolver_dns from "@grpc/grpc-js/build/src/resolver-dns";
-import * as resolver_uds from "@grpc/grpc-js/build/src/resolver-uds";
 import * as resolver_ip from "@grpc/grpc-js/build/src/resolver-ip";
+import * as resolver_uds from "@grpc/grpc-js/build/src/resolver-uds";
 import { ServiceConfig } from "@grpc/grpc-js/build/src/service-config";
-import { StatusObject } from "@grpc/grpc-js/build/src/call-interface";
-import { isIPv6 } from "harness";
 import {
   Endpoint,
   SubchannelAddress,
   endpointToString,
   subchannelAddressEqual,
 } from "@grpc/grpc-js/build/src/subchannel-address";
-import { parseUri, GrpcUri } from "@grpc/grpc-js/build/src/uri-parser";
-import { GRPC_NODE_USE_ALTERNATIVE_RESOLVER } from "@grpc/grpc-js/build/src/environment";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
+import { GrpcUri, parseUri } from "@grpc/grpc-js/build/src/uri-parser";
+import assert from "assert";
+import { beforeAll as before, describe, it } from "bun:test";
+import { isIPv6 } from "harness";
 
 function hasMatchingAddress(endpointList: Endpoint[], expectedAddress: SubchannelAddress): boolean {
   for (const endpoint of endpointList) {
@@ -188,7 +188,7 @@ describe("Name Resolver", () => {
     });
     // Created DNS TXT record using TXT sample from https://github.com/grpc/proposal/blob/master/A2-service-configs-in-dns.md
     // "grpc_config=[{\"serviceConfig\":{\"loadBalancingPolicy\":\"round_robin\",\"methodConfig\":[{\"name\":[{\"service\":\"MyService\",\"method\":\"Foo\"}],\"waitForReady\":true}]}}]"
-    it.skip("Should resolve a name with TXT service config", done => {
+    it("Should resolve a name with TXT service config", done => {
       const target = resolverManager.mapUriDefaultScheme(parseUri("grpctest.kleinsch.com")!)!;
       const listener: resolverManager.ResolverListener = {
         onSuccessfulResolution: (
@@ -208,7 +208,7 @@ describe("Name Resolver", () => {
       const resolver = resolverManager.createResolver(target, listener, {});
       resolver.updateResolution();
     });
-    it.skip("Should not resolve TXT service config if we disabled service config", done => {
+    it("Should not resolve TXT service config if we disabled service config", done => {
       const target = resolverManager.mapUriDefaultScheme(parseUri("grpctest.kleinsch.com")!)!;
       let count = 0;
       const listener: resolverManager.ResolverListener = {
@@ -241,7 +241,7 @@ describe("Name Resolver", () => {
      * as a regression test for https://github.com/grpc/grpc-node/issues/1044,
      * and the test 'Should resolve gRPC interop servers' tests the same thing.
      */
-    it.skip("Should resolve a name with multiple dots", done => {
+    it("Should resolve a name with multiple dots", done => {
       const target = resolverManager.mapUriDefaultScheme(parseUri("loopback4.unittest.grpc.io")!)!;
       const listener: resolverManager.ResolverListener = {
         onSuccessfulResolution: (
@@ -289,7 +289,7 @@ describe("Name Resolver", () => {
     /* This DNS name resolves to only the IPv4 address on Windows, and only the
      * IPv6 address on Mac. There is no result that we can consistently test
      * for here. */
-    it.skip("Should resolve a DNS name to IPv4 and IPv6 addresses", done => {
+    it("Should resolve a DNS name to IPv4 and IPv6 addresses", done => {
       const target = resolverManager.mapUriDefaultScheme(parseUri("loopback46.unittest.grpc.io")!)!;
       const listener: resolverManager.ResolverListener = {
         onSuccessfulResolution: (

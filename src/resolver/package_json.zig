@@ -1,14 +1,11 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 const options = @import("../options.zig");
@@ -33,7 +30,6 @@ const Dependency = @import("../install/dependency.zig");
 const String = Semver.String;
 const Version = Semver.Version;
 const Install = @import("../install/install.zig");
-const FolderResolver = @import("../install/resolvers/folder_resolver.zig");
 
 const Architecture = @import("../install/npm.zig").Architecture;
 const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
@@ -56,7 +52,7 @@ pub const PackageJSON = struct {
         production,
     };
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     const node_modules_path = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
 
@@ -100,7 +96,7 @@ pub const PackageJSON = struct {
 
     side_effects: SideEffects = .unspecified,
 
-    // Present if the "browser" field is present. This field is intended to be
+    // Populated if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
     // modules that don't work in the browser to other modules that shim that
     // functionality. That way you don't have to rewrite the code for those 3rd-
@@ -620,7 +616,7 @@ pub const PackageJSON = struct {
         var json_source = logger.Source.initPathString(key_path.text, entry.contents);
         json_source.path.pretty = json_source.path.text;
 
-        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, json_source, allocator, true) catch |err| {
+        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, &json_source, allocator, true) catch |err| {
             if (Environment.isDebug) {
                 Output.printError("{s}: JSON parse error: {s}", .{ package_json_path, @errorName(err) });
             }
@@ -701,8 +697,11 @@ pub const PackageJSON = struct {
             }
         }
 
-        // Read the "browser" property, but only when targeting the browser
-        if (r.opts.target == .browser) {
+        // Read the "browser" property
+        // Since we cache parsed package.json in-memory, we have to read the "browser" field
+        // including when `target` is not `browser` since the developer may later
+        // run a build for the browser in the same process (like the DevServer).
+        {
             // We both want the ability to have the option of CJS vs. ESM and the
             // option of having node vs. browser. The way to do this is to use the
             // object literal form of the "browser" field like this:
@@ -746,7 +745,9 @@ pub const PackageJSON = struct {
                                     }
                                 },
                                 else => {
-                                    r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
+                                    // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
+                                    if (!json_source.path.isNodeModule())
+                                        r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
                                 },
                             }
                         }
@@ -927,8 +928,8 @@ pub const PackageJSON = struct {
                     package_json.dependencies.map = DependencyMap.HashMap{};
                     package_json.dependencies.source_buf = json_source.contents;
                     const ctx = String.ArrayHashContext{
-                        .a_buf = json_source.contents,
-                        .b_buf = json_source.contents,
+                        .arg_buf = json_source.contents,
+                        .existing_buf = json_source.contents,
                     };
                     package_json.dependencies.map.ensureTotalCapacityContext(
                         allocator,

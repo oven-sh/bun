@@ -131,9 +131,41 @@ function onGC(value, holder) {
   }
 }
 
+/**
+ * Repeatedly triggers garbage collection until a specified condition is met or a maximum number of attempts is reached.
+ * @param {string|Function} [name] - Optional name, used in the rejection message if the condition is not met.
+ * @param {Function} condition - A function that returns true when the desired condition is met.
+ * @returns {Promise} A promise that resolves when the condition is met, or rejects after 10 failed attempts.
+ */
+function gcUntil(name, condition) {
+  if (typeof name === 'function') {
+    condition = name;
+    name = undefined;
+  }
+  return new Promise((resolve, reject) => {
+    let count = 0;
+    function gcAndCheck() {
+      setImmediate(() => {
+        count++;
+        global.gc();
+        if (condition()) {
+          resolve();
+        } else if (count < 10) {
+          gcAndCheck();
+        } else {
+          reject(name === undefined ? undefined : 'Test ' + name + ' failed');
+        }
+      });
+    }
+    gcAndCheck();
+  });
+}
+
+
 module.exports = {
   checkIfCollectable,
   runAndBreathe,
   checkIfCollectableByCounting,
   onGC,
+  gcUntil,
 };

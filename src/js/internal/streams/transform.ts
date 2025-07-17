@@ -125,7 +125,7 @@ function prefinish() {
 
 Transform.prototype._final = final;
 
-Transform.prototype._transform = function (chunk, encoding, callback) {
+Transform.prototype._transform = function (_chunk, _encoding, _callback) {
   throw $ERR_METHOD_NOT_IMPLEMENTED("_transform()");
 };
 

@@ -55,7 +55,7 @@ function printSimpleMyersDiff(diff: Diff[]) {
   return `\n${message}`;
 }
 
-function printMyersDiff(diff: Diff[], simple = false) {
+function printMyersDiff(diff: Diff[], _simple = false) {
   let message = "";
   let skipped = false;
   let nopCount = 0;

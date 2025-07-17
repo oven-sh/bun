@@ -73,13 +73,13 @@ std::optional<HTTPHeaderField> HTTPHeaderField::decode(Decoder& decoder)
 }
 
 namespace RFC7230 {
-bool isTokenCharacter(UChar);
-bool isWhitespace(UChar);
+bool isTokenCharacter(char16_t);
+bool isWhitespace(char16_t);
 bool isTokenCharacter(LChar);
 bool isWhitespace(LChar);
-bool isCommentText(UChar);
-bool isQuotedPairSecondOctet(UChar);
-bool isDelimiter(UChar);
+bool isCommentText(char16_t);
+bool isQuotedPairSecondOctet(char16_t);
+bool isDelimiter(char16_t);
 } // namespace RFC7230
 
 } // namespace WebCore

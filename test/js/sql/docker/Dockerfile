@@ -1,5 +1,5 @@
 # Dockerfile
-FROM postgres:15
+FROM postgres:15.13
 
 # Create initialization script
 RUN echo '#!/bin/bash\n\

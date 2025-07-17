@@ -1,46 +1,26 @@
 const std = @import("std");
 const logger = bun.logger;
 const js_lexer = bun.js_lexer;
-const importRecord = @import("import_record.zig");
 const js_ast = bun.JSAst;
-const options = @import("options.zig");
 const BabyList = @import("./baby_list.zig").BabyList;
-const fs = @import("fs.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
-const expect = std.testing.expect;
-const ImportKind = importRecord.ImportKind;
-const BindingNodeIndex = js_ast.BindingNodeIndex;
 
-const StmtNodeIndex = js_ast.StmtNodeIndex;
-const ExprNodeIndex = js_ast.ExprNodeIndex;
+const expect = std.testing.expect;
+
 const ExprNodeList = js_ast.ExprNodeList;
-const StmtNodeList = js_ast.StmtNodeList;
-const BindingNodeList = js_ast.BindingNodeList;
 const assert = bun.assert;
 
-const LocRef = js_ast.LocRef;
-const S = js_ast.S;
-const B = js_ast.B;
 const G = js_ast.G;
 const T = js_lexer.T;
 const E = js_ast.E;
 const Stmt = js_ast.Stmt;
 pub const Expr = js_ast.Expr;
-const Binding = js_ast.Binding;
-const Symbol = js_ast.Symbol;
-const Level = js_ast.Op.Level;
-const Op = js_ast.Op;
-const Scope = js_ast.Scope;
-const locModuleScope = logger.Loc.Empty;
 const Indentation = js_printer.Options.Indentation;
 
 const LEXER_DEBUGGER_WORKAROUND = false;
@@ -147,11 +127,11 @@ fn JSONLikeParser_(
         allocator: std.mem.Allocator,
         list_allocator: std.mem.Allocator,
 
-        pub fn init(allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log) !Parser {
+        pub fn init(allocator: std.mem.Allocator, source_: *const logger.Source, log: *logger.Log) !Parser {
             return initWithListAllocator(allocator, allocator, source_, log);
         }
 
-        pub fn initWithListAllocator(allocator: std.mem.Allocator, list_allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log) !Parser {
+        pub fn initWithListAllocator(allocator: std.mem.Allocator, list_allocator: std.mem.Allocator, source_: *const logger.Source, log: *logger.Log) !Parser {
             Expr.Data.Store.assert();
             Stmt.Data.Store.assert();
 
@@ -316,7 +296,7 @@ fn JSONLikeParser_(
                 },
                 else => {
                     if (comptime maybe_auto_quote) {
-                        p.lexer = try Lexer.initJSON(p.log, p.source().*, p.allocator);
+                        p.lexer = try Lexer.initJSON(p.log, p.source(), p.allocator);
                         try p.lexer.parseStringLiteral(0);
                         return p.parseExpr(false, force_utf8);
                     }
@@ -380,7 +360,7 @@ pub const PackageJSONVersionChecker = struct {
 
     pub fn init(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log) !Parser {
         return Parser{
-            .lexer = try Lexer.init(log, source.*, allocator),
+            .lexer = try Lexer.init(log, source, allocator),
             .allocator = allocator,
             .log = log,
             .source = source,
@@ -710,7 +690,7 @@ pub fn parse(
     allocator: std.mem.Allocator,
     comptime force_utf8: bool,
 ) !Expr {
-    var parser = try JSONParser.init(allocator, source.*, log);
+    var parser = try JSONParser.init(allocator, source, log);
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -766,7 +746,7 @@ pub fn parsePackageJSONUTF8(
         .is_json = true,
         .allow_comments = true,
         .allow_trailing_commas = true,
-    }).init(allocator, source.*, log);
+    }).init(allocator, source, log);
     bun.assert(parser.source().contents.len > 0);
 
     return try parser.parseExpr(false, true);
@@ -805,7 +785,7 @@ pub fn parsePackageJSONUTF8WithOpts(
         else => {},
     }
 
-    var parser = try JSONLikeParser(opts).init(allocator, source.*, log);
+    var parser = try JSONLikeParser(opts).init(allocator, source, log);
     bun.assert(parser.source().contents.len > 0);
 
     const root = try parser.parseExpr(false, true);
@@ -855,7 +835,7 @@ pub fn parseUTF8Impl(
         else => {},
     }
 
-    var parser = try JSONParser.init(allocator, source.*, log);
+    var parser = try JSONParser.init(allocator, source, log);
     bun.assert(parser.source().contents.len > 0);
 
     const result = try parser.parseExpr(false, true);
@@ -885,7 +865,7 @@ pub fn parseForMacro(source: *const logger.Source, log: *logger.Log, allocator: 
         else => {},
     }
 
-    var parser = try JSONParserForMacro.init(allocator, source.*, log);
+    var parser = try JSONParserForMacro.init(allocator, source, log);
 
     return try parser.parseExpr(false, false);
 }
@@ -949,7 +929,7 @@ pub fn parseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: s
         else => {},
     }
 
-    var parser = try DotEnvJSONParser.init(allocator, source.*, log);
+    var parser = try DotEnvJSONParser.init(allocator, source, log);
 
     switch (source.contents[0]) {
         '{', '[', '0'...'9', '"', '\'' => {
@@ -1000,7 +980,7 @@ pub fn parseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: 
         else => {},
     }
 
-    var parser = try TSConfigParser.init(allocator, source.*, log);
+    var parser = try TSConfigParser.init(allocator, source, log);
 
     return parser.parseExpr(false, force_utf8);
 }
@@ -1008,11 +988,7 @@ pub fn parseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: 
 const duplicateKeyJson = "{ \"name\": \"valid\", \"name\": \"invalid\" }";
 
 const js_printer = bun.js_printer;
-const renamer = @import("renamer.zig");
-const SymbolList = [][]Symbol;
 
-const Transpiler = bun.Transpiler;
-const ParseResult = bun.transpiler.ParseResult;
 fn expectPrintedJSON(_contents: string, expected: string) !void {
     Expr.Data.Store.create(default_allocator);
     Stmt.Data.Store.create(default_allocator);
@@ -1026,19 +1002,19 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
     var log = logger.Log.init(default_allocator);
     defer log.msgs.deinit();
 
-    var source = logger.Source.initPathString(
+    const source = &logger.Source.initPathString(
         "source.json",
         contents,
     );
-    const expr = try parse(&source, &log, default_allocator);
+    const expr = try parse(source, &log, default_allocator);
 
     if (log.msgs.items.len > 0) {
         Output.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
     }
 
-    const buffer_writer = try js_printer.BufferWriter.init(default_allocator);
+    const buffer_writer = js_printer.BufferWriter.init(default_allocator);
     var writer = js_printer.BufferPrinter.init(buffer_writer);
-    const written = try js_printer.printJSON(@TypeOf(&writer), &writer, expr, &source, .{
+    const written = try js_printer.printJSON(@TypeOf(&writer), &writer, expr, source, .{
         .mangled_props = null,
     });
     var js = writer.ctx.buffer.list.items.ptr[0 .. written + 1];

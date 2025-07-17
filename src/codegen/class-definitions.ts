@@ -7,6 +7,8 @@ interface PropertyAttribute {
    * from the prototype hash table, instead setting it using `putDirect()`.
    */
   privateSymbol?: string;
+  publicSymbol?: string;
+  name?: string;
 }
 
 /**
@@ -44,6 +46,13 @@ export type Field =
     } & PropertyAttribute)
   | ({
       fn: string;
+
+      /**
+       * Mark it as an async function in the TypeScript definition.
+       *
+       * Does not do anything at runtime.
+       */
+      async?: boolean;
       /**
        * Number of parameters accepted by the function.
        *
@@ -83,9 +92,21 @@ export class ClassDefinition {
    */
   name: string;
   /**
-   * Class constructor is newable.
+   * Class constructor is newable. Called before the JSValue corresponding to
+   * the object is created. Throwing an exception prevents the object from being
+   * created.
    */
   construct?: boolean;
+
+  /**
+   * Class constructor needs `this` value.
+   *
+   * Makes the code generator call the Zig constructor function **after** the
+   * JSValue is instantiated. Only use this if you must, as it probably isn't
+   * good for GC since it means if the constructor throws the GC will have to
+   * clean up the object that never reached JS.
+   */
+  constructNeedsThis?: boolean;
   /**
    * Class constructor is callable. In JS, ES6 class constructors are not
    * callable.
@@ -94,21 +115,44 @@ export class ClassDefinition {
   /**
    * ## IMPORTANT
    * You _must_ free the pointer to your native class!
+   *
+   * Example for pointers only owned by JavaScript classes:
    * ```zig
    * pub const NativeClass = struct {
-   *   pub usingnamespace bun.New(NativeClass);
    *
    *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
    *     // do stuff
-   *     return NativeClass.new(.{
+   *     return bun.new(NativeClass, .{
    *       // ...
    *     });
    *   }
    *
    *   fn finalize(this: *NativeClass) void {
    *     // free allocations owned by this class, then free the struct itself.
-   *     this.destroy();
+   *     bun.destroy(this);
    *   }
+   * };
+   * ```
+   * Example with ref counting:
+   * ```
+   * pub const RefCountedNativeClass = struct {
+   *   const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+   *   pub const ref = RefCount.ref;
+   *   pub const deref = RefCount.deref;
+   *
+   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
+   *     // do stuff
+   *     return bun.new(NativeClass, .{
+   *       // ...
+   *     });
+   *   }
+   *
+   *   fn deinit(this: *NativeClass) void {
+   *     // free allocations owned by this class, then free the struct itself.
+   *     bun.destroy(this);
+   *   }
+   *
+   *   pub const finalize = deref; // GC will deref, which can free if no references are left.
    * };
    * ```
    * @todo remove this and require all classes to implement `finalize`.
@@ -135,10 +179,6 @@ export class ClassDefinition {
   noConstructor?: boolean;
 
   final?: boolean;
-
-  // Do not try to track the `this` value in the constructor automatically.
-  // That is a memory leak.
-  wantsThis?: never;
 
   /**
    * Class has an `estimatedSize` function that reports external allocations to GC.
@@ -172,7 +212,8 @@ export class ClassDefinition {
 
   configurable?: boolean;
   enumerable?: boolean;
-  structuredClone?: boolean | { transferable: boolean; tag: number };
+  structuredClone?: { transferable: boolean; tag: number };
+  inspectCustom?: boolean;
 
   callbacks?: Record<string, string>;
 
@@ -215,10 +256,19 @@ export function define(
     estimatedSize = false,
     call = false,
     construct = false,
-    structuredClone = false,
+    structuredClone,
+    inspectCustom = false,
     ...rest
   } = {} as Partial<ClassDefinition>,
-): Partial<ClassDefinition> {
+): ClassDefinition {
+  if (inspectCustom) {
+    proto.inspectCustom = {
+      fn: "inspectCustom",
+      length: 2,
+      publicSymbol: "inspectCustom",
+      name: "[nodejs.util.inspect.custom]",
+    };
+  }
   return new ClassDefinition({
     ...rest,
     call,

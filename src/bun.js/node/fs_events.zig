@@ -1,6 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const Environment = bun.Environment;
+const bun = @import("bun");
 const Mutex = bun.Mutex;
 const sync = @import("../../sync.zig");
 const Semaphore = sync.Semaphore;
@@ -9,7 +8,7 @@ const string = bun.string;
 
 const PathWatcher = @import("./path_watcher.zig").PathWatcher;
 const EventType = PathWatcher.EventType;
-const Event = bun.JSC.Node.FSWatcher.Event;
+const Event = bun.JSC.Node.fs.Watcher.Event;
 
 pub const CFAbsoluteTime = f64;
 pub const CFTimeInterval = f64;
@@ -183,7 +182,7 @@ var fsevents_cf: ?CoreFoundation = null;
 var fsevents_cs: ?CoreServices = null;
 
 fn InitLibrary() void {
-    const fsevents_cf_handle = bun.C.dlopen("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation", .{ .LAZY = true, .LOCAL = true });
+    const fsevents_cf_handle = bun.sys.dlopen("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation", .{ .LAZY = true, .LOCAL = true });
     if (fsevents_cf_handle == null) @panic("Cannot Load CoreFoundation");
 
     fsevents_cf = CoreFoundation{
@@ -202,7 +201,7 @@ fn InitLibrary() void {
         .RunLoopDefaultMode = dlsym(fsevents_cf_handle, *CFStringRef, "kCFRunLoopDefaultMode") orelse @panic("Cannot Load CoreFoundation"),
     };
 
-    const fsevents_cs_handle = bun.C.dlopen("/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices", .{ .LAZY = true, .LOCAL = true });
+    const fsevents_cs_handle = bun.sys.dlopen("/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices", .{ .LAZY = true, .LOCAL = true });
     if (fsevents_cs_handle == null) @panic("Cannot Load CoreServices");
 
     fsevents_cs = CoreServices{
@@ -618,5 +617,18 @@ pub fn watch(path: string, recursive: bool, callback: FSEventsWatcher.Callback, 
             fsevents_default_loop = try FSEventsLoop.init();
         }
         return FSEventsWatcher.init(fsevents_default_loop.?, path, recursive, callback, updateEnd, ctx);
+    }
+}
+
+pub fn closeAndWait() void {
+    if (!bun.Environment.isMac) {
+        return;
+    }
+
+    if (fsevents_default_loop) |loop| {
+        fsevents_default_loop_mutex.lock();
+        defer fsevents_default_loop_mutex.unlock();
+        loop.deinit();
+        fsevents_default_loop = null;
     }
 }

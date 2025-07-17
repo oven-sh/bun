@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("Bun.Cookie.parse security fuzz tests", () => {
   // Security-focused fuzz tests

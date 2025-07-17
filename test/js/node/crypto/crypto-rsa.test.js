@@ -369,7 +369,7 @@ describe("Invalid oaepHash and oaepLabel options", () => {
         );
       }).toThrow(
         expect.objectContaining({
-          code: "ERR_CRYPTO_INVALID_DIGEST",
+          code: "ERR_OSSL_EVP_INVALID_DIGEST",
         }),
       );
 

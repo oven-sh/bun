@@ -114,6 +114,21 @@ JSValue fetchCommonJSModule(
     BunString* referrer,
     BunString* typeAttribute);
 
+template<bool isExtension>
+JSValue fetchCommonJSModuleNonBuiltin(
+    void* bunVM,
+    JSC::VM& vm,
+    Zig::GlobalObject* globalObject,
+    BunString* specifier,
+    JSC::JSValue specifierValue,
+    BunString* referrer,
+    BunString* typeAttribute,
+    ErrorableResolvedSource* res,
+    JSCommonJSModule* target,
+    String specifierWtfString,
+    BunLoaderType forceLoaderType,
+    JSC::ThrowScope& scope);
+
 JSValue resolveAndFetchBuiltinModule(
     Zig::GlobalObject* globalObject,
     BunString* specifier);

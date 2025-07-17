@@ -27,6 +27,7 @@ pub const xxHash3 = hashWrap(struct {
 pub const murmur32v2 = hashWrap(std.hash.murmur.Murmur2_32);
 pub const murmur32v3 = hashWrap(std.hash.murmur.Murmur3_32);
 pub const murmur64v2 = hashWrap(std.hash.murmur.Murmur2_64);
+pub const rapidhash = hashWrap(std.hash.RapidHash);
 
 pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
     const function = JSC.createCallback(globalThis, ZigString.static("hash"), 1, wyhash);
@@ -42,6 +43,7 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         "murmur32v2",
         "murmur32v3",
         "murmur64v2",
+        "rapidhash",
     };
     inline for (fns) |name| {
         const value = JSC.createCallback(
@@ -56,12 +58,12 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
     return function;
 }
 
-fn hashWrap(comptime Hasher_: anytype) JSC.JSHostZigFunction {
+fn hashWrap(comptime Hasher_: anytype) JSC.JSHostFnZig {
     return struct {
         const Hasher = Hasher_;
         pub fn hash(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments_old(2).slice();
-            var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+            var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
             defer args.deinit();
 
             var input: []const u8 = "";
@@ -138,7 +140,6 @@ const HashObject = @This();
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ZigString = JSC.ZigString;

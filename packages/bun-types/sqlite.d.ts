@@ -6,60 +6,62 @@
  * ```ts
  * import { Database } from 'bun:sqlite';
  *
- * var db = new Database('app.db');
+ * const db = new Database('app.db');
  * db.query('SELECT * FROM users WHERE name = ?').all('John');
  * // => [{ id: 1, name: 'John' }]
  * ```
  *
  * The following types can be used when binding parameters:
  *
- * | JavaScript type | SQLite type |
- * | -------------- | ----------- |
- * | `string` | `TEXT` |
- * | `number` | `INTEGER` or `DECIMAL` |
- * | `boolean` | `INTEGER` (1 or 0) |
- * | `Uint8Array` | `BLOB` |
- * | `Buffer` | `BLOB` |
- * | `bigint` | `INTEGER` |
- * | `null` | `NULL` |
+ * | JavaScript type | SQLite type            |
+ * | --------------- | ---------------------- |
+ * | `string`        | `TEXT`                 |
+ * | `number`        | `INTEGER` or `DECIMAL` |
+ * | `boolean`       | `INTEGER` (1 or 0)     |
+ * | `Uint8Array`    | `BLOB`                 |
+ * | `Buffer`        | `BLOB`                 |
+ * | `bigint`        | `INTEGER`              |
+ * | `null`          | `NULL`                 |
  */
 declare module "bun:sqlite" {
+  /**
+   * A SQLite3 database
+   *
+   * @example
+   * ```ts
+   * const db = new Database("mydb.sqlite");
+   * db.run("CREATE TABLE foo (bar TEXT)");
+   * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
+   * console.log(db.query("SELECT * FROM foo").all());
+   * ```
+   *
+   * @example
+   *
+   * Open an in-memory database
+   *
+   * ```ts
+   * const db = new Database(":memory:");
+   * db.run("CREATE TABLE foo (bar TEXT)");
+   * db.run("INSERT INTO foo VALUES (?)", ["hiiiiii"]);
+   * console.log(db.query("SELECT * FROM foo").all());
+   * ```
+   *
+   * @example
+   *
+   * Open read-only
+   *
+   * ```ts
+   * const db = new Database("mydb.sqlite", {readonly: true});
+   * ```
+   *
+   * @category Database
+   */
   export class Database implements Disposable {
     /**
      * Open or create a SQLite3 database
      *
      * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` or undefined for an in-memory database.
      * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
-     *
-     * @example
-     *
-     * ```ts
-     * const db = new Database("mydb.sqlite");
-     * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
-     * console.log(db.query("SELECT * FROM foo").all());
-     * ```
-     *
-     * @example
-     *
-     * Open an in-memory database
-     *
-     * ```ts
-     * const db = new Database(":memory:");
-     * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["hiiiiii"]);
-     * console.log(db.query("SELECT * FROM foo").all());
-     * ```
-     *
-     * @example
-     *
-     * Open read-only
-     *
-     * ```ts
-     * const db = new Database("mydb.sqlite", {readonly: true});
-     * ```
-     *
-     * @category Database
      */
     constructor(
       filename?: string,
@@ -157,6 +159,20 @@ declare module "bun:sqlite" {
      *
      * This does not cache the query, so if you want to run a query multiple times, you should use {@link prepare} instead.
      *
+     * Under the hood, this calls `sqlite3_prepare_v3` followed by `sqlite3_step` and `sqlite3_finalize`.
+     *
+     * The following types can be used when binding parameters:
+     *
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
+     *
      * @example
      * ```ts
      * db.run("CREATE TABLE foo (bar TEXT)");
@@ -182,30 +198,15 @@ declare module "bun:sqlite" {
      * - `CREATE TEMPORARY TABLE`
      *
      * @param sql The SQL query to run
-     *
      * @param bindings Optional bindings for the query
      *
      * @returns `Database` instance
-     *
-     * Under the hood, this calls `sqlite3_prepare_v3` followed by `sqlite3_step` and `sqlite3_finalize`.
-     *
-     *  * The following types can be used when binding parameters:
-     *
-     * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
      */
-    run<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
+    run<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
     /**
-        This is an alias of {@link Database.prototype.run}
+     * This is an alias of {@link Database.run}
      */
-    exec<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
+    exec<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
 
     /**
      * Compile a SQL query and return a {@link Statement} object. This is the
@@ -213,6 +214,8 @@ declare module "bun:sqlite" {
      *
      * This **does not execute** the query, but instead prepares it for later
      * execution and caches the compiled query if possible.
+     *
+     * Under the hood, this calls `sqlite3_prepare_v3`.
      *
      * @example
      * ```ts
@@ -226,20 +229,18 @@ declare module "bun:sqlite" {
      * ```
      *
      * @param sql The SQL query to compile
-     *
      * @returns `Statment` instance
-     *
-     * Under the hood, this calls `sqlite3_prepare_v3`.
      */
     query<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
-      sqlQuery: string,
-    ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-    Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
+      sql: string,
+    ): Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
 
     /**
      * Compile a SQL query and return a {@link Statement} object.
      *
      * This does not cache the compiled query and does not execute the query.
+     *
+     * Under the hood, this calls `sqlite3_prepare_v3`.
      *
      * @example
      * ```ts
@@ -252,15 +253,12 @@ declare module "bun:sqlite" {
      * @param sql The SQL query to compile
      * @param params Optional bindings for the query
      *
-     * @returns `Statment` instance
-     *
-     * Under the hood, this calls `sqlite3_prepare_v3`.
+     * @returns A {@link Statement} instance
      */
     prepare<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
-      sqlQuery: string,
+      sql: string,
       params?: ParamsType,
-    ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-    Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
+    ): Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
 
     /**
      * Is the database in a transaction?
@@ -644,15 +642,15 @@ declare module "bun:sqlite" {
      *
      * The following types can be used when binding parameters:
      *
-     * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
      */
     get(...params: ParamsType): ReturnType | null;
 
@@ -685,15 +683,15 @@ declare module "bun:sqlite" {
      *
      * The following types can be used when binding parameters:
      *
-     * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
      */
     run(...params: ParamsType): Changes;
 
@@ -725,15 +723,15 @@ declare module "bun:sqlite" {
      *
      * The following types can be used when binding parameters:
      *
-     * | JavaScript type | SQLite type |
-     * | ---------------|-------------|
-     * | `string` | `TEXT` |
-     * | `number` | `INTEGER` or `DECIMAL` |
-     * | `boolean` | `INTEGER` (1 or 0) |
-     * | `Uint8Array` | `BLOB` |
-     * | `Buffer` | `BLOB` |
-     * | `bigint` | `INTEGER` |
-     * | `null` | `NULL` |
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `DECIMAL` |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
      */
     values(...params: ParamsType): Array<Array<string | bigint | number | boolean | Uint8Array>>;
 
@@ -765,6 +763,79 @@ declare module "bun:sqlite" {
      * ```
      */
     readonly paramsCount: number;
+
+    /**
+     * The actual SQLite column types from the first row of the result set.
+     * Useful for expressions and computed columns, which are not covered by `declaredTypes`
+     *
+     * Returns an array of SQLite type constants as uppercase strings:
+     * - `"INTEGER"` for integer values
+     * - `"FLOAT"` for floating-point values
+     * - `"TEXT"` for text values
+     * - `"BLOB"` for binary data
+     * - `"NULL"` for null values
+     * - `null` for unknown/unsupported types
+     *
+     * **Requirements:**
+     * - Only available for read-only statements (SELECT queries)
+     * - For non-read-only statements, throws an error
+     *
+     * **Behavior:**
+     * - Uses `sqlite3_column_type()` to get actual data types from the first row
+     * - Returns `null` for columns with unknown SQLite type constants
+     *
+     * @example
+     * ```ts
+     * const stmt = db.prepare("SELECT id, name, age FROM users WHERE id = 1");
+     *
+     * console.log(stmt.columnTypes);
+     * // => ["INTEGER", "TEXT", "INTEGER"]
+     *
+     * // For expressions:
+     * const exprStmt = db.prepare("SELECT length('bun') AS str_length");
+     * console.log(exprStmt.columnTypes);
+     * // => ["INTEGER"]
+     * ```
+     *
+     * @throws Error if statement is not read-only (INSERT, UPDATE, DELETE, etc.)
+     * @since Bun v1.2.13
+     */
+    readonly columnTypes: Array<"INTEGER" | "FLOAT" | "TEXT" | "BLOB" | "NULL" | null>;
+
+    /**
+     * The declared column types from the table schema.
+     *
+     * Returns an array of declared type strings from `sqlite3_column_decltype()`:
+     * - Raw type strings as declared in the CREATE TABLE statement
+     * - `null` for columns without declared types (e.g., expressions, computed columns)
+     *
+     * **Requirements:**
+     * - Statement must be executed at least once before accessing this property
+     * - Available for both read-only and read-write statements
+     *
+     * **Behavior:**
+     * - Uses `sqlite3_column_decltype()` to get schema-declared types
+     * - Returns the exact type string from the table definition
+     *
+     * @example
+     * ```ts
+     * // For table columns:
+     * const stmt = db.prepare("SELECT id, name, weight FROM products");
+     * stmt.get();
+     * console.log(stmt.declaredTypes);
+     * // => ["INTEGER", "TEXT", "REAL"]
+     *
+     * // For expressions (no declared types):
+     * const exprStmt = db.prepare("SELECT length('bun') AS str_length");
+     * exprStmt.get();
+     * console.log(exprStmt.declaredTypes);
+     * // => [null]
+     * ```
+     *
+     * @throws Error if statement hasn't been executed
+     * @since Bun v1.2.13
+     */
+    readonly declaredTypes: Array<string | null>;
 
     /**
      * Finalize the prepared statement, freeing the resources used by the
@@ -842,6 +913,12 @@ declare module "bun:sqlite" {
      * Native object representing the underlying `sqlite3_stmt`
      *
      * This is left untyped because the ABI of the native bindings may change at any time.
+     *
+     * For stable, typed access to statement metadata, use the typed properties on the Statement class:
+     * - {@link columnNames} for column names
+     * - {@link paramsCount} for parameter count
+     * - {@link columnTypes} for actual data types from the first row
+     * - {@link declaredTypes} for schema-declared column types
      */
     readonly native: any;
   }
@@ -851,147 +928,146 @@ declare module "bun:sqlite" {
    *
    * This list isn't exhaustive, but some of the ones which are relevant
    */
-  export const constants: {
+  export namespace constants {
     /**
      * Open the database as read-only (no write operations, no create).
      * @constant 0x00000001
      */
-    SQLITE_OPEN_READONLY: number;
+    const SQLITE_OPEN_READONLY: number;
     /**
      * Open the database for reading and writing
      * @constant 0x00000002
      */
-    SQLITE_OPEN_READWRITE: number;
+    const SQLITE_OPEN_READWRITE: number;
     /**
      * Allow creating a new database
      * @constant 0x00000004
      */
-    SQLITE_OPEN_CREATE: number;
+    const SQLITE_OPEN_CREATE: number;
     /**
      * @constant 0x00000008
      */
-    SQLITE_OPEN_DELETEONCLOSE: number;
+    const SQLITE_OPEN_DELETEONCLOSE: number;
     /**
      * @constant 0x00000010
      */
-    SQLITE_OPEN_EXCLUSIVE: number;
+    const SQLITE_OPEN_EXCLUSIVE: number;
     /**
      * @constant 0x00000020
      */
-    SQLITE_OPEN_AUTOPROXY: number;
+    const SQLITE_OPEN_AUTOPROXY: number;
     /**
      * @constant 0x00000040
      */
-    SQLITE_OPEN_URI: number;
+    const SQLITE_OPEN_URI: number;
     /**
      * @constant 0x00000080
      */
-    SQLITE_OPEN_MEMORY: number;
+    const SQLITE_OPEN_MEMORY: number;
     /**
      * @constant 0x00000100
      */
-    SQLITE_OPEN_MAIN_DB: number;
+    const SQLITE_OPEN_MAIN_DB: number;
     /**
      * @constant 0x00000200
      */
-    SQLITE_OPEN_TEMP_DB: number;
+    const SQLITE_OPEN_TEMP_DB: number;
     /**
      * @constant 0x00000400
      */
-    SQLITE_OPEN_TRANSIENT_DB: number;
+    const SQLITE_OPEN_TRANSIENT_DB: number;
     /**
      * @constant 0x00000800
      */
-    SQLITE_OPEN_MAIN_JOURNAL: number;
+    const SQLITE_OPEN_MAIN_JOURNAL: number;
     /**
      * @constant 0x00001000
      */
-    SQLITE_OPEN_TEMP_JOURNAL: number;
+    const SQLITE_OPEN_TEMP_JOURNAL: number;
     /**
      * @constant 0x00002000
      */
-    SQLITE_OPEN_SUBJOURNAL: number;
+    const SQLITE_OPEN_SUBJOURNAL: number;
     /**
      * @constant 0x00004000
      */
-    SQLITE_OPEN_SUPER_JOURNAL: number;
+    const SQLITE_OPEN_SUPER_JOURNAL: number;
     /**
      * @constant 0x00008000
      */
-    SQLITE_OPEN_NOMUTEX: number;
+    const SQLITE_OPEN_NOMUTEX: number;
     /**
      * @constant 0x00010000
      */
-    SQLITE_OPEN_FULLMUTEX: number;
+    const SQLITE_OPEN_FULLMUTEX: number;
     /**
      * @constant 0x00020000
      */
-    SQLITE_OPEN_SHAREDCACHE: number;
+    const SQLITE_OPEN_SHAREDCACHE: number;
     /**
      * @constant 0x00040000
      */
-    SQLITE_OPEN_PRIVATECACHE: number;
+    const SQLITE_OPEN_PRIVATECACHE: number;
     /**
      * @constant 0x00080000
      */
-    SQLITE_OPEN_WAL: number;
+    const SQLITE_OPEN_WAL: number;
     /**
      * @constant 0x01000000
      */
-    SQLITE_OPEN_NOFOLLOW: number;
+    const SQLITE_OPEN_NOFOLLOW: number;
     /**
      * @constant 0x02000000
      */
-    SQLITE_OPEN_EXRESCODE: number;
+    const SQLITE_OPEN_EXRESCODE: number;
     /**
      * @constant 0x01
      */
-    SQLITE_PREPARE_PERSISTENT: number;
+    const SQLITE_PREPARE_PERSISTENT: number;
     /**
      * @constant 0x02
      */
-    SQLITE_PREPARE_NORMALIZE: number;
+    const SQLITE_PREPARE_NORMALIZE: number;
     /**
      * @constant 0x04
      */
-    SQLITE_PREPARE_NO_VTAB: number;
-
+    const SQLITE_PREPARE_NO_VTAB: number;
     /**
      * @constant 1
      */
-    SQLITE_FCNTL_LOCKSTATE: number;
+    const SQLITE_FCNTL_LOCKSTATE: number;
     /**
      * @constant 2
      */
-    SQLITE_FCNTL_GET_LOCKPROXYFILE: number;
+    const SQLITE_FCNTL_GET_LOCKPROXYFILE: number;
     /**
      * @constant 3
      */
-    SQLITE_FCNTL_SET_LOCKPROXYFILE: number;
+    const SQLITE_FCNTL_SET_LOCKPROXYFILE: number;
     /**
      * @constant 4
      */
-    SQLITE_FCNTL_LAST_ERRNO: number;
+    const SQLITE_FCNTL_LAST_ERRNO: number;
     /**
      * @constant 5
      */
-    SQLITE_FCNTL_SIZE_HINT: number;
+    const SQLITE_FCNTL_SIZE_HINT: number;
     /**
      * @constant 6
      */
-    SQLITE_FCNTL_CHUNK_SIZE: number;
+    const SQLITE_FCNTL_CHUNK_SIZE: number;
     /**
      * @constant 7
      */
-    SQLITE_FCNTL_FILE_POINTER: number;
+    const SQLITE_FCNTL_FILE_POINTER: number;
     /**
      * @constant 8
      */
-    SQLITE_FCNTL_SYNC_OMITTED: number;
+    const SQLITE_FCNTL_SYNC_OMITTED: number;
     /**
      * @constant 9
      */
-    SQLITE_FCNTL_WIN32_AV_RETRY: number;
+    const SQLITE_FCNTL_WIN32_AV_RETRY: number;
     /**
      * @constant 10
      *
@@ -1000,7 +1076,7 @@ declare module "bun:sqlite" {
      *
      * You can change this with code like the below:
      * ```ts
-     * import { Database } from "bun:sqlite";
+     * import { Database, constants } from "bun:sqlite";
      *
      * const db = Database.open("mydb.sqlite");
      * db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
@@ -1011,132 +1087,132 @@ declare module "bun:sqlite" {
      * ```
      *
      */
-    SQLITE_FCNTL_PERSIST_WAL: number;
+    const SQLITE_FCNTL_PERSIST_WAL: number;
     /**
      * @constant 11
      */
-    SQLITE_FCNTL_OVERWRITE: number;
+    const SQLITE_FCNTL_OVERWRITE: number;
     /**
      * @constant 12
      */
-    SQLITE_FCNTL_VFSNAME: number;
+    const SQLITE_FCNTL_VFSNAME: number;
     /**
      * @constant 13
      */
-    SQLITE_FCNTL_POWERSAFE_OVERWRITE: number;
+    const SQLITE_FCNTL_POWERSAFE_OVERWRITE: number;
     /**
      * @constant 14
      */
-    SQLITE_FCNTL_PRAGMA: number;
+    const SQLITE_FCNTL_PRAGMA: number;
     /**
      * @constant 15
      */
-    SQLITE_FCNTL_BUSYHANDLER: number;
+    const SQLITE_FCNTL_BUSYHANDLER: number;
     /**
      * @constant 16
      */
-    SQLITE_FCNTL_TEMPFILENAME: number;
+    const SQLITE_FCNTL_TEMPFILENAME: number;
     /**
      * @constant 18
      */
-    SQLITE_FCNTL_MMAP_SIZE: number;
+    const SQLITE_FCNTL_MMAP_SIZE: number;
     /**
      * @constant 19
      */
-    SQLITE_FCNTL_TRACE: number;
+    const SQLITE_FCNTL_TRACE: number;
     /**
      * @constant 20
      */
-    SQLITE_FCNTL_HAS_MOVED: number;
+    const SQLITE_FCNTL_HAS_MOVED: number;
     /**
      * @constant 21
      */
-    SQLITE_FCNTL_SYNC: number;
+    const SQLITE_FCNTL_SYNC: number;
     /**
      * @constant 22
      */
-    SQLITE_FCNTL_COMMIT_PHASETWO: number;
+    const SQLITE_FCNTL_COMMIT_PHASETWO: number;
     /**
      * @constant 23
      */
-    SQLITE_FCNTL_WIN32_SET_HANDLE: number;
+    const SQLITE_FCNTL_WIN32_SET_HANDLE: number;
     /**
      * @constant 24
      */
-    SQLITE_FCNTL_WAL_BLOCK: number;
+    const SQLITE_FCNTL_WAL_BLOCK: number;
     /**
      * @constant 25
      */
-    SQLITE_FCNTL_ZIPVFS: number;
+    const SQLITE_FCNTL_ZIPVFS: number;
     /**
      * @constant 26
      */
-    SQLITE_FCNTL_RBU: number;
+    const SQLITE_FCNTL_RBU: number;
     /**
      * @constant 27
      */
-    SQLITE_FCNTL_VFS_POINTER: number;
+    const SQLITE_FCNTL_VFS_POINTER: number;
     /**
      * @constant 28
      */
-    SQLITE_FCNTL_JOURNAL_POINTER: number;
+    const SQLITE_FCNTL_JOURNAL_POINTER: number;
     /**
      * @constant 29
      */
-    SQLITE_FCNTL_WIN32_GET_HANDLE: number;
+    const SQLITE_FCNTL_WIN32_GET_HANDLE: number;
     /**
      * @constant 30
      */
-    SQLITE_FCNTL_PDB: number;
+    const SQLITE_FCNTL_PDB: number;
     /**
      * @constant 31
      */
-    SQLITE_FCNTL_BEGIN_ATOMIC_WRITE: number;
+    const SQLITE_FCNTL_BEGIN_ATOMIC_WRITE: number;
     /**
      * @constant 32
      */
-    SQLITE_FCNTL_COMMIT_ATOMIC_WRITE: number;
+    const SQLITE_FCNTL_COMMIT_ATOMIC_WRITE: number;
     /**
      * @constant 33
      */
-    SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE: number;
+    const SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE: number;
     /**
      * @constant 34
      */
-    SQLITE_FCNTL_LOCK_TIMEOUT: number;
+    const SQLITE_FCNTL_LOCK_TIMEOUT: number;
     /**
      * @constant 35
      */
-    SQLITE_FCNTL_DATA_VERSION: number;
+    const SQLITE_FCNTL_DATA_VERSION: number;
     /**
      * @constant 36
      */
-    SQLITE_FCNTL_SIZE_LIMIT: number;
+    const SQLITE_FCNTL_SIZE_LIMIT: number;
     /**
      * @constant 37
      */
-    SQLITE_FCNTL_CKPT_DONE: number;
+    const SQLITE_FCNTL_CKPT_DONE: number;
     /**
      * @constant 38
      */
-    SQLITE_FCNTL_RESERVE_BYTES: number;
+    const SQLITE_FCNTL_RESERVE_BYTES: number;
     /**
      * @constant 39
      */
-    SQLITE_FCNTL_CKPT_START: number;
+    const SQLITE_FCNTL_CKPT_START: number;
     /**
      * @constant 40
      */
-    SQLITE_FCNTL_EXTERNAL_READER: number;
+    const SQLITE_FCNTL_EXTERNAL_READER: number;
     /**
      * @constant 41
      */
-    SQLITE_FCNTL_CKSM_FILE: number;
+    const SQLITE_FCNTL_CKSM_FILE: number;
     /**
      * @constant 42
      */
-    SQLITE_FCNTL_RESET_CACHE: number;
-  };
+    const SQLITE_FCNTL_RESET_CACHE: number;
+  }
 
   /**
    * The native module implementing the sqlite3 C bindings

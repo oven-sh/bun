@@ -109,6 +109,9 @@ test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
 
   NODE_API_CALL(env,
                 napi_get_value_string_utf8(env, string_js, buf, len, &copied));
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
 
   std::cout << "Chars to copy: " << len << std::endl;
   std::cout << "Copied chars: " << copied << std::endl;
@@ -118,6 +121,7 @@ test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   }
   std::cout << std::endl;
   std::cout << "Value str: " << buf << std::endl;
+
   return ok(env);
 }
 
@@ -163,14 +167,22 @@ test_napi_handle_scope_bigint(const Napi::CallbackInfo &info) {
 
   auto *small_ints = new napi_value[num_small_ints];
 
-  for (size_t i = 0; i < num_small_ints; i++) {
-    std::array<uint64_t, small_int_size> words;
-    words.fill(i + 1);
-    NODE_API_CALL(env, napi_create_bigint_words(env, 0, small_int_size,
-                                                words.data(), &small_ints[i]));
+  for (size_t i = 0, small_int_index = 1; i < num_small_ints;
+       i++, small_int_index++) {
+    uint64_t words[small_int_size];
+    for (size_t j = 0; j < small_int_size; j++) {
+      words[j] = small_int_index;
+    }
+
+    NODE_API_CALL(env, napi_create_bigint_words(env, 0, small_int_size, words,
+                                                &small_ints[i]));
   }
 
   run_gc(info);
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
 
   for (size_t j = 0; j < num_small_ints; j++) {
     std::array<uint64_t, small_int_size> words;
@@ -363,12 +375,29 @@ static napi_value test_napi_run_script(const Napi::CallbackInfo &info) {
   return ret;
 }
 
+static napi_value test_napi_throw_with_nullptr(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  const napi_status status = napi_throw(env, nullptr);
+  printf("napi_throw -> %d\n", status);
+
+  bool is_exception_pending;
+  NODE_API_CALL(env, napi_is_exception_pending(env, &is_exception_pending));
+  printf("napi_is_exception_pending -> %s\n",
+         is_exception_pending ? "true" : "false");
+
+  return ok(env);
+}
+
 // Call Node-API functions in ways that result in different error handling
 // (erroneous call, valid call, or valid call while an exception is pending) and
 // log information from napi_get_last_error_info
 static napi_value test_extended_error_messages(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   const napi_extended_error_info *error;
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
 
   // this function is implemented in C++
   // error because the result pointer is null
@@ -420,6 +449,11 @@ static napi_value test_extended_error_messages(const Napi::CallbackInfo &info) {
 
 static napi_value bigint_to_i64(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
   // start at 1 is intentional, since argument 0 is the callback to run GC
   // passed to every function
   // perform test on all arguments
@@ -448,6 +482,10 @@ static napi_value bigint_to_i64(const Napi::CallbackInfo &info) {
 
 static napi_value bigint_to_u64(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
   // start at 1 is intentional, since argument 0 is the callback to run GC
   // passed to every function
   // perform test on all arguments
@@ -476,6 +514,10 @@ static napi_value bigint_to_u64(const Napi::CallbackInfo &info) {
 
 static napi_value bigint_to_64_null(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
 
   napi_value bigint;
   NODE_API_CALL(env, napi_create_bigint_int64(env, 5, &bigint));
@@ -526,6 +568,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_many_args);
   REGISTER_FUNCTION(env, exports, test_napi_ref);
   REGISTER_FUNCTION(env, exports, test_napi_run_script);
+  REGISTER_FUNCTION(env, exports, test_napi_throw_with_nullptr);
   REGISTER_FUNCTION(env, exports, test_extended_error_messages);
   REGISTER_FUNCTION(env, exports, bigint_to_i64);
   REGISTER_FUNCTION(env, exports, bigint_to_u64);

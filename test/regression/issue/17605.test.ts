@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import { tmpdirSync } from "harness";
 import { write } from "bun";
+import { expect, test } from "bun:test";
+import { tmpdirSync } from "harness";
 import { join } from "path";
 
 test("empty and invalid JSON import do not crash", async () => {

@@ -1,6 +1,5 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import YamlPlugin from ".";
-import data from "./data.yml";
 
 test("yaml loader - no plugin", async () => {
   expect(async () => {

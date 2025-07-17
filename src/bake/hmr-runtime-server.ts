@@ -1,8 +1,8 @@
 // This file is the entrypoint to the hot-module-reloading runtime.
 // On the server, communication is established with `server_exports`.
-import './debug';
 import type { Bake } from "bun";
-import { loadExports, replaceModules, ssrManifest, serverManifest, HMRModule } from "./hmr-module";
+import "./debug";
+import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");

@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const strings = bun.strings;
 const SignResult = @import("./credentials.zig").S3Credentials.SignResult;
@@ -9,6 +9,7 @@ const S3Credentials = @import("./credentials.zig").S3Credentials;
 const picohttp = bun.picohttp;
 const ACL = @import("./acl.zig").ACL;
 const StorageClass = @import("./storage_class.zig").StorageClass;
+const ListObjects = @import("./list_objects.zig");
 
 pub const S3StatResult = union(enum) {
     success: struct {
@@ -48,6 +49,14 @@ pub const S3DeleteResult = union(enum) {
     /// failure error is not owned and need to be copied if used after this callback
     failure: S3Error,
 };
+pub const S3ListObjectsResult = union(enum) {
+    success: ListObjects.S3ListObjectsV2Result,
+    not_found: S3Error,
+
+    /// failure error is not owned and need to be copied if used after this callback
+    failure: S3Error,
+};
+
 // commit result also fails if status 200 but with body containing an Error
 pub const S3CommitResult = union(enum) {
     success: void,
@@ -65,7 +74,7 @@ pub const S3HttpSimpleTask = struct {
     http: bun.http.AsyncHTTP,
     vm: *JSC.VirtualMachine,
     sign_result: SignResult,
-    headers: JSC.WebCore.Headers,
+    headers: bun.http.Headers,
     callback_context: *anyopaque,
     callback: Callback,
     response_buffer: bun.MutableString = .{
@@ -80,12 +89,13 @@ pub const S3HttpSimpleTask = struct {
     range: ?[]const u8,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
 
-    usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
     pub const Callback = union(enum) {
         stat: *const fn (S3StatResult, *anyopaque) void,
         download: *const fn (S3DownloadResult, *anyopaque) void,
         upload: *const fn (S3UploadResult, *anyopaque) void,
         delete: *const fn (S3DeleteResult, *anyopaque) void,
+        listObjects: *const fn (S3ListObjectsResult, *anyopaque) void,
         commit: *const fn (S3CommitResult, *anyopaque) void,
         part: *const fn (S3PartResult, *anyopaque) void,
 
@@ -95,6 +105,7 @@ pub const S3HttpSimpleTask = struct {
                 .download,
                 .stat,
                 .delete,
+                .listObjects,
                 .commit,
                 .part,
                 => |callback| callback(.{
@@ -110,6 +121,7 @@ pub const S3HttpSimpleTask = struct {
                 inline .download,
                 .stat,
                 .delete,
+                .listObjects,
                 => |callback| callback(.{
                     .not_found = .{
                         .code = code,
@@ -120,6 +132,7 @@ pub const S3HttpSimpleTask = struct {
             }
         }
     };
+
     pub fn deinit(this: *@This()) void {
         if (this.result.certificate_info) |*certificate| {
             certificate.deinit(bun.default_allocator);
@@ -135,7 +148,7 @@ pub const S3HttpSimpleTask = struct {
         if (this.result.metadata) |*metadata| {
             metadata.deinit(bun.default_allocator);
         }
-        this.destroy();
+        bun.destroy(this);
     }
 
     const ErrorType = enum {
@@ -255,6 +268,28 @@ pub const S3HttpSimpleTask = struct {
                     },
                 }
             },
+            .listObjects => |callback| {
+                switch (response.status_code) {
+                    200 => {
+                        if (this.result.body) |body| {
+                            const success = ListObjects.parseS3ListObjectsResult(body.slice()) catch {
+                                this.errorWithBody(.failure);
+                                return;
+                            };
+
+                            callback(.{ .success = success }, this.callback_context);
+                        } else {
+                            this.errorWithBody(.failure);
+                        }
+                    },
+                    404 => {
+                        this.errorWithBody(.not_found);
+                    },
+                    else => {
+                        this.errorWithBody(.failure);
+                    },
+                }
+            },
             .upload => |callback| {
                 switch (response.status_code) {
                     200 => {
@@ -351,7 +386,7 @@ pub fn executeSimpleS3Request(
         .content_disposition = options.content_disposition,
         .acl = options.acl,
         .storage_class = options.storage_class,
-    }, null) catch |sign_err| {
+    }, false, null) catch |sign_err| {
         if (options.range) |range_| bun.default_allocator.free(range_);
         const error_code_and_message = getSignErrorCodeAndMessage(sign_err);
         callback.fail(error_code_and_message.code, error_code_and_message.message, callback_context);
@@ -362,16 +397,16 @@ pub fn executeSimpleS3Request(
         var header_buffer: [10]picohttp.Header = undefined;
         if (options.range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
-            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
+            break :brk bun.http.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
         } else {
             if (options.content_type) |content_type| {
                 if (content_type.len > 0) {
                     const _headers = result.mixWithHeader(&header_buffer, .{ .name = "Content-Type", .value = content_type });
-                    break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
+                    break :brk bun.http.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
                 }
             }
 
-            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
+            break :brk bun.http.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
         }
     };
     const task = S3HttpSimpleTask.new(.{

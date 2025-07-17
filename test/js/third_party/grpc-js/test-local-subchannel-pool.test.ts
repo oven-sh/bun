@@ -15,11 +15,11 @@
  *
  */
 
-import * as path from "path";
-import assert from "node:assert";
 import grpc, { sendUnaryData, Server, ServerCredentials, ServerUnaryCall, ServiceError } from "@grpc/grpc-js";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
 import { ServiceClientConstructor } from "@grpc/grpc-js/build/src/make-client";
+import { afterAll as after, beforeAll as before, describe, it } from "bun:test";
+import assert from "node:assert";
+import * as path from "path";
 
 import { loadProtoFile } from "./common";
 

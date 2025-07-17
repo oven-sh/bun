@@ -266,6 +266,7 @@ nodent-runtime
 nx
 odiff-bin
 oniguruma
+opencode-ai
 optipng-bin
 oracledb
 os-dns-native
@@ -358,7 +359,6 @@ wordpos
 workerd
 wrtc
 xxhash
-yarn
 yo
 yorkie
 zeromq

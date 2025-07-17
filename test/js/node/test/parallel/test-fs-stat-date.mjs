@@ -45,9 +45,7 @@ function closeEnough(actual, expected, margin) {
 async function runTest(atime, mtime, margin = 0) {
   margin += Number.EPSILON;
   try {
-    const atimeDate = new Date(atime);
-    const mtimeDate = new Date(mtime);
-    await fsPromises.utimes(filepath, atimeDate, mtimeDate);
+    await fsPromises.utimes(filepath, new Date(atime), new Date(mtime));
   } catch (e) {
     if (ignoredErrors.has(e.code)) return;
     throw e;

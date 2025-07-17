@@ -49,6 +49,7 @@ using namespace JSC;
     macro(assignToStream) \
     macro(associatedReadableByteStreamController) \
     macro(atimeMs) \
+    macro(attributes) \
     macro(autoAllocateChunkSize) \
     macro(backpressure) \
     macro(backpressureChangePromise) \
@@ -71,6 +72,7 @@ using namespace JSC;
     macro(closed) \
     macro(closedPromise) \
     macro(closedPromiseCapability) \
+    macro(cmd) \
     macro(code) \
     macro(connect) \
     macro(controlledReadableStream) \
@@ -131,6 +133,7 @@ using namespace JSC;
     macro(headers) \
     macro(highWaterMark) \
     macro(host) \
+    macro(hostDefinedImportType) \
     macro(hostname) \
     macro(href) \
     macro(httpOnly) \
@@ -233,6 +236,7 @@ using namespace JSC;
     macro(signal) \
     macro(sink) \
     macro(size) \
+    macro(specifier) \
     macro(start) \
     macro(startAlgorithm) \
     macro(startConsumingStream) \
@@ -299,7 +303,7 @@ public:
 
     const JSC::Identifier& resolvePublicName() const { return m_vm.propertyNames->resolve;}
     const JSC::Identifier& inspectCustomPublicName() {
-        if (UNLIKELY(m_inspectCustomPublicName.isEmpty())) {
+        if (m_inspectCustomPublicName.isEmpty()) [[unlikely]] {
             m_inspectCustomPublicName = Identifier::fromUid(m_vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
         }
         return m_inspectCustomPublicName;

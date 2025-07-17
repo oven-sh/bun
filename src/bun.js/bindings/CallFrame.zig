@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
@@ -17,15 +17,15 @@ pub const CallFrame = opaque {
     /// Usage: `const arg1, const arg2 = call_frame.argumentsAsArray(2);`
     pub fn argumentsAsArray(call_frame: *const CallFrame, comptime count: usize) [count]JSValue {
         const slice = call_frame.arguments();
-        var value: [count]JSValue = .{.undefined} ** count;
+        var value: [count]JSValue = @splat(.js_undefined);
         const n = @min(call_frame.argumentsCount(), count);
         @memcpy(value[0..n], slice[0..n]);
         return value;
     }
 
-    /// This function protects out-of-bounds access by returning `JSValue.undefined`
+    /// This function protects out-of-bounds access by returning undefined
     pub fn argument(self: *const CallFrame, i: usize) JSC.JSValue {
-        return if (self.argumentsCount() > i) self.arguments()[i] else .undefined;
+        return if (self.argumentsCount() > i) self.arguments()[i] else .js_undefined;
     }
 
     pub fn argumentsCount(self: *const CallFrame) u32 {
@@ -41,6 +41,11 @@ pub const CallFrame = opaque {
     /// `JSValue` for the current function being called.
     pub fn callee(self: *const CallFrame) JSC.JSValue {
         return self.asUnsafeJSValueArray()[offset_callee];
+    }
+
+    /// Return a basic iterator.
+    pub fn iterate(call_frame: *const CallFrame) Iterator {
+        return .{ .rest = call_frame.arguments() };
     }
 
     /// From JavaScriptCore/interpreter/CallFrame.h
@@ -129,7 +134,7 @@ pub const CallFrame = opaque {
             }
 
             pub inline fn initUndef(comptime i: usize, ptr: [*]const JSC.JSValue) @This() {
-                var args = [1]JSC.JSValue{.undefined} ** max;
+                var args: [max]JSC.JSValue = @splat(.js_undefined);
                 args[0..i].* = ptr[0..i].*;
                 return @This(){ .ptr = args, .len = i };
             }
@@ -163,7 +168,7 @@ pub const CallFrame = opaque {
         const slice = self.arguments();
         comptime bun.assert(max <= 9);
         return switch (@as(u4, @min(slice.len, max))) {
-            0 => .{ .ptr = .{.undefined} ** max, .len = 0 },
+            0 => .{ .ptr = @splat(.js_undefined), .len = 0 },
             inline 1...9 => |count| Arguments(max).initUndef(@min(count, max), slice.ptr),
             else => unreachable,
         };
@@ -194,4 +199,105 @@ pub const CallFrame = opaque {
     pub fn describeFrame(self: *const CallFrame) [:0]const u8 {
         return std.mem.span(Bun__CallFrame__describeFrame(self));
     }
+
+    pub const Iterator = struct {
+        rest: []const JSValue,
+        pub fn next(it: *Iterator) ?JSValue {
+            if (it.rest.len == 0) return null;
+            const current = it.rest[0];
+            it.rest = it.rest[1..];
+            return current;
+        }
+    };
+
+    /// This is an advanced iterator struct which is used by various APIs. In
+    /// Node.fs, `will_be_async` is set to true which allows string/path APIs to
+    /// know if they have to do threadsafe clones.
+    ///
+    /// Prefer `Iterator` for a simpler iterator.
+    pub const ArgumentsSlice = struct {
+        remaining: []const JSC.JSValue,
+        vm: *JSC.VirtualMachine,
+        arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator),
+        all: []const JSC.JSValue,
+        threw: bool = false,
+        protected: bun.bit_set.IntegerBitSet(32) = bun.bit_set.IntegerBitSet(32).initEmpty(),
+        will_be_async: bool = false,
+
+        pub fn unprotect(slice: *ArgumentsSlice) void {
+            var iter = slice.protected.iterator(.{});
+            while (iter.next()) |i| {
+                slice.all[i].unprotect();
+            }
+            slice.protected = bun.bit_set.IntegerBitSet(32).initEmpty();
+        }
+
+        pub fn deinit(slice: *ArgumentsSlice) void {
+            slice.unprotect();
+            slice.arena.deinit();
+        }
+
+        pub fn protectEat(slice: *ArgumentsSlice) void {
+            if (slice.remaining.len == 0) return;
+            const index = slice.all.len - slice.remaining.len;
+            slice.protected.set(index);
+            slice.all[index].protect();
+            slice.eat();
+        }
+
+        pub fn protectEatNext(slice: *ArgumentsSlice) ?JSC.JSValue {
+            if (slice.remaining.len == 0) return null;
+            return slice.nextEat();
+        }
+
+        pub fn from(vm: *JSC.VirtualMachine, slice: []const JSC.JSValueRef) ArgumentsSlice {
+            return init(vm, @as([*]const JSC.JSValue, @ptrCast(slice.ptr))[0..slice.len]);
+        }
+        pub fn init(vm: *JSC.VirtualMachine, slice: []const JSC.JSValue) ArgumentsSlice {
+            return ArgumentsSlice{
+                .remaining = slice,
+                .vm = vm,
+                .all = slice,
+                .arena = bun.ArenaAllocator.init(vm.allocator),
+            };
+        }
+
+        pub fn initAsync(vm: *JSC.VirtualMachine, slice: []const JSC.JSValue) ArgumentsSlice {
+            return ArgumentsSlice{
+                .remaining = bun.default_allocator.dupe(JSC.JSValue, slice),
+                .vm = vm,
+                .all = slice,
+                .arena = bun.ArenaAllocator.init(bun.default_allocator),
+            };
+        }
+
+        pub inline fn len(slice: *const ArgumentsSlice) u16 {
+            return @as(u16, @truncate(slice.remaining.len));
+        }
+
+        pub fn eat(slice: *ArgumentsSlice) void {
+            if (slice.remaining.len == 0) {
+                return;
+            }
+
+            slice.remaining = slice.remaining[1..];
+        }
+
+        /// Peek the next argument without eating it
+        pub fn next(slice: *ArgumentsSlice) ?JSC.JSValue {
+            if (slice.remaining.len == 0) {
+                return null;
+            }
+
+            return slice.remaining[0];
+        }
+
+        pub fn nextEat(slice: *ArgumentsSlice) ?JSC.JSValue {
+            if (slice.remaining.len == 0) {
+                return null;
+            }
+            defer slice.eat();
+            return slice.remaining[0];
+        }
+    };
 };

@@ -150,4 +150,4 @@ Duplex.from = function (body) {
   return duplexify(body, "body");
 };
 
-export default Duplex as any as typeof import("node:stream").Duplex;
+export default Duplex as unknown as typeof import("node:stream").Duplex;

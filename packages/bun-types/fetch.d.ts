@@ -10,7 +10,12 @@
 
 declare module "bun" {
   type HeadersInit = string[][] | Record<string, string | ReadonlyArray<string>> | Headers;
-  type BodyInit = ReadableStream | Bun.XMLHttpRequestBodyInit | URLSearchParams | AsyncGenerator<Uint8Array>;
+  type BodyInit =
+    | ReadableStream
+    | Bun.XMLHttpRequestBodyInit
+    | URLSearchParams
+    | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
+    | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>);
 
   namespace __internal {
     type LibOrFallbackHeaders = LibDomIsLoaded extends true ? {} : import("undici-types").Headers;
@@ -34,7 +39,7 @@ declare module "bun" {
        *
        * Does not preserve insertion order. Well-known header names are lowercased. Other header names are left as-is.
        */
-      toJSON(): Record<string, string>;
+      toJSON(): Record<string, string> & { "set-cookie"?: string[] };
 
       /**
        * Get the total number of headers

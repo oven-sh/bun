@@ -1,8 +1,6 @@
 const std = @import("std");
 
-const builtin = @import("builtin");
 const debug = std.debug;
-const heap = std.heap;
 const mem = std.mem;
 const process = std.process;
 const testing = std.testing;
@@ -21,15 +19,21 @@ pub const ExampleArgIterator = struct {
 pub const SliceIterator = struct {
     const Error = error{};
 
-    args: []const []const u8,
-    index: usize = 0,
+    remain: []const []const u8,
 
-    pub fn next(iter: *SliceIterator) Error!?[]const u8 {
-        if (iter.args.len <= iter.index)
-            return null;
+    pub fn init(args: []const []const u8) SliceIterator {
+        return .{
+            .remain = args,
+        };
+    }
 
-        defer iter.index += 1;
-        return iter.args[iter.index];
+    pub fn next(iter: *SliceIterator) ?[]const u8 {
+        if (iter.remain.len > 0) {
+            const res = iter.remain[0];
+            iter.remain = iter.remain[1..];
+            return res;
+        }
+        return null;
     }
 };
 
@@ -43,7 +47,7 @@ test "SliceIterator" {
     }
 }
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 /// An argument iterator which wraps the ArgIterator in ::std.
 /// On windows, this iterator allocates.
 pub const OsIterator = struct {

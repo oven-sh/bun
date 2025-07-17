@@ -4,10 +4,9 @@
 #include "helpers.h"
 #include "ncrypto.h"
 #include "CryptoUtil.h"
+#include "KeyObject.h"
 
-using namespace JSC;
-using namespace Bun;
-using namespace ncrypto;
+namespace Bun {
 
 JSC_DECLARE_HOST_FUNCTION(jsHkdf);
 JSC_DECLARE_HOST_FUNCTION(jsHkdfSync);
@@ -19,19 +18,19 @@ struct HkdfJobCtx {
         Async,
     };
 
-    HkdfJobCtx(Digest digest, size_t length, WTF::Vector<uint8_t>&& key, WTF::Vector<uint8_t>&& info, WTF::Vector<uint8_t>&& salt);
+    HkdfJobCtx(ncrypto::Digest digest, size_t length, KeyObject&& key, WTF::Vector<uint8_t>&& info, WTF::Vector<uint8_t>&& salt);
     HkdfJobCtx(HkdfJobCtx&&);
     ~HkdfJobCtx();
 
-    static std::optional<HkdfJobCtx> fromJS(JSGlobalObject*, CallFrame*, ThrowScope&, Mode);
+    static std::optional<HkdfJobCtx> fromJS(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::ThrowScope&, Mode);
 
-    void runTask(JSGlobalObject*);
-    void runFromJS(JSGlobalObject*, JSValue callback);
+    void runTask(JSC::JSGlobalObject*);
+    void runFromJS(JSC::JSGlobalObject*, JSC::JSValue callback);
     void deinit();
 
     ncrypto::Digest m_digest;
     size_t m_length;
-    WTF::Vector<uint8_t> m_key;
+    KeyObject m_key;
     WTF::Vector<uint8_t> m_info;
     WTF::Vector<uint8_t> m_salt;
 
@@ -41,7 +40,9 @@ struct HkdfJobCtx {
 };
 
 struct HkdfJob {
-    static HkdfJob* create(JSGlobalObject*, HkdfJobCtx&&, JSValue callback);
-    static void createAndSchedule(JSGlobalObject*, HkdfJobCtx&&, JSValue callback);
+    static HkdfJob* create(JSC::JSGlobalObject*, HkdfJobCtx&&, JSC::JSValue callback);
+    static void createAndSchedule(JSC::JSGlobalObject*, HkdfJobCtx&&, JSC::JSValue callback);
     void schedule();
 };
+
+} // namespace Bun

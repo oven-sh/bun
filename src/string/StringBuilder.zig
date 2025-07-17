@@ -1,11 +1,9 @@
 const StringBuilder = @This();
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const Environment = bun.Environment;
 const assert = bun.assert;
-
-const DebugHashTable = if (Environment.allow_assert) std.AutoHashMapUnmanaged(u64, void) else void;
 
 len: usize = 0,
 cap: usize = 0,
@@ -68,7 +66,7 @@ pub fn append16(this: *StringBuilder, slice: []const u16, fallback_allocator: st
         var list = std.ArrayList(u8).init(fallback_allocator);
         var out = bun.strings.toUTF8ListWithTypeBun(&list, []const u16, slice, false) catch return null;
         out.append(0) catch return null;
-        return list.items[0 .. list.items.len - 1 :0];
+        return out.items[0 .. out.items.len - 1 :0];
     }
 }
 

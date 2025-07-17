@@ -1,23 +1,8 @@
-const bun = @import("root").bun;
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
+const bun = @import("bun");
+
 const std = @import("std");
 
-const Fs = @import("../fs.zig");
-const resolver = @import("../resolver/resolver.zig");
-const ast = @import("../import_record.zig");
-const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
-const options = @import("../options.zig");
-const Transpiler = bun.transpiler.ServeBundler;
-const js_printer = bun.js_printer;
 
 pub const DefaultBunDefines = struct {
     pub const Keys = struct {

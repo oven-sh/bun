@@ -153,6 +153,7 @@ cluster.fork = function (env) {
   });
 
   worker.process.once("disconnect", () => {
+    worker.process.channel = null;
     /*
      * Now is a good time to remove the handles
      * associated with this worker because it is
@@ -207,7 +208,7 @@ const methodMessageMapping = {
   queryServer,
 };
 
-function onmessage(message, handle) {
+function onmessage(message, _handle) {
   const worker = this;
 
   const fn = methodMessageMapping[message.act];

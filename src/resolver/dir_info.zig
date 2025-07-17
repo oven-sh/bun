@@ -1,14 +1,7 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 
@@ -77,15 +70,10 @@ pub fn hasParentPackage(this: *const DirInfo) bool {
 }
 
 pub fn getFileDescriptor(dirinfo: *const DirInfo) StoredFileDescriptorType {
-    if (!FeatureFlags.store_file_descriptors) {
-        return .zero;
-    }
-
-    if (dirinfo.getEntries(0)) |entries| {
-        return entries.fd;
-    } else {
-        return .zero;
-    }
+    if (FeatureFlags.store_file_descriptors)
+        if (dirinfo.getEntries(0)) |entries|
+            return entries.fd;
+    return .invalid;
 }
 
 pub fn getEntries(dirinfo: *const DirInfo, generation: bun.Generation) ?*Fs.FileSystem.DirEntry {

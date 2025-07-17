@@ -44,7 +44,6 @@ struct Converter<Bun::BindgenCustomEnforceRange<NumericType, Min, Max, Kind>>
     static inline NumericType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
         auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
-        ASSERT(!scope.exception());
         double unrestricted;
         if constexpr (Kind == Bun::BindgenCustomEnforceRangeKind::Node) {
             // In Node.js, `validateNumber`, `validateInt32`, `validateUint32`,
@@ -58,7 +57,6 @@ struct Converter<Bun::BindgenCustomEnforceRange<NumericType, Min, Max, Kind>>
                 return 0;
             }
             unrestricted = value.asNumber();
-            ASSERT(!scope.exception());
 
             // Node also validates that integer types are integers
             if constexpr (std::is_integral_v<NumericType>) {

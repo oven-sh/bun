@@ -30,11 +30,11 @@ namespace WebCore {
 
 namespace RFC7230 {
 
-bool isTokenCharacter(UChar c)
+bool isTokenCharacter(char16_t c)
 {
     return c < 0x80 && isTokenCharacter(static_cast<LChar>(c));
 }
-bool isDelimiter(UChar c)
+bool isDelimiter(char16_t c)
 {
     return c < 0x80 && isDelimiter(static_cast<LChar>(c));
 }
@@ -59,28 +59,28 @@ bool isDelimiter(LChar c)
         || c == '}' || c == '"';
 }
 
-static bool isVisibleCharacter(UChar c)
+static bool isVisibleCharacter(char16_t c)
 {
     return isTokenCharacter(c) || isDelimiter(c);
 }
 
-bool isWhitespace(UChar c)
+bool isWhitespace(char16_t c)
 {
     return c == ' ' || c == '\t';
 }
 
 template<size_t min, size_t max>
-static bool isInRange(UChar c)
+static bool isInRange(char16_t c)
 {
     return c >= min && c <= max;
 }
 
-static bool isOBSText(UChar c)
+static bool isOBSText(char16_t c)
 {
     return isInRange<0x80, 0xFF>(c);
 }
 
-static bool isQuotedTextCharacter(UChar c)
+static bool isQuotedTextCharacter(char16_t c)
 {
     return isWhitespace(c)
         || c == 0x21
@@ -89,14 +89,14 @@ static bool isQuotedTextCharacter(UChar c)
         || isOBSText(c);
 }
 
-bool isQuotedPairSecondOctet(UChar c)
+bool isQuotedPairSecondOctet(char16_t c)
 {
     return isWhitespace(c)
         || isVisibleCharacter(c)
         || isOBSText(c);
 }
 
-bool isCommentText(UChar c)
+bool isCommentText(char16_t c)
 {
     return isWhitespace(c)
         || isInRange<0x21, 0x27>(c)
@@ -129,7 +129,7 @@ static bool isValidValue(StringView value)
     bool hadNonWhitespace = false;
 
     for (size_t i = 0; i < value.length(); ++i) {
-        UChar c = value[i];
+        char16_t c = value[i];
         switch (state) {
         case State::OptionalWhitespace:
             if (isWhitespace(c))
@@ -213,8 +213,8 @@ static bool isValidValue(StringView value)
 
 std::optional<HTTPHeaderField> HTTPHeaderField::create(String&& unparsedName, String&& unparsedValue)
 {
-    auto trimmedName = StringView(unparsedName).trim(isTabOrSpace<UChar>);
-    auto trimmedValue = StringView(unparsedValue).trim(isTabOrSpace<UChar>);
+    auto trimmedName = StringView(unparsedName).trim(isTabOrSpace<char16_t>);
+    auto trimmedValue = StringView(unparsedValue).trim(isTabOrSpace<char16_t>);
     if (!RFC7230::isValidName(trimmedName) || !RFC7230::isValidValue(trimmedValue))
         return std::nullopt;
 

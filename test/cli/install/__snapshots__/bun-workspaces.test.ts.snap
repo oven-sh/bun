@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`dependency on workspace without version in package.json: version: * 1`] = `
 "{
@@ -53,8 +53,7 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
       "workspace": "packages/mono",
       "package_id": 2,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -177,8 +176,7 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
       "workspace": "packages/mono",
       "package_id": 2,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -301,8 +299,7 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
       "workspace": "packages/mono",
       "package_id": 2,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -425,8 +422,7 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
       "workspace": "packages/mono",
       "package_id": 2,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -549,8 +545,7 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
       "workspace": "packages/mono",
       "package_id": 2,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -673,8 +668,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
       "workspace": "packages/mono",
       "package_id": 2,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }

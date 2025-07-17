@@ -1,5 +1,4 @@
 const KEventWatcher = @This();
-const log = Output.scoped(.watcher, false);
 pub const EventListIndex = u32;
 
 const KEvent = std.c.Kevent;
@@ -7,20 +6,19 @@ const KEvent = std.c.Kevent;
 // Everything being watched
 eventlist_index: EventListIndex = 0,
 
-fd: bun.FileDescriptor = bun.invalid_fd,
+fd: bun.FD.Optional = .none,
 
 const changelist_count = 128;
 
 pub fn init(this: *KEventWatcher, _: []const u8) !void {
     const fd = try std.posix.kqueue();
     if (fd == 0) return error.KQueueError;
-    this.fd = bun.toFD(fd);
+    this.fd = .init(.fromNative(fd));
 }
 
 pub fn stop(this: *KEventWatcher) void {
-    if (this.fd.isValid()) {
-        _ = bun.sys.close(this.fd);
-        this.fd = bun.invalid_fd;
+    if (this.fd.take()) |fd| {
+        fd.close();
     }
 }
 
@@ -37,7 +35,8 @@ pub fn watchEventFromKEvent(kevent: KEvent) Watcher.Event {
 }
 
 pub fn watchLoopCycle(this: *Watcher) bun.JSC.Maybe(void) {
-    bun.assert(this.platform.fd.isValid());
+    const fd: bun.FD = this.platform.fd.unwrap() orelse
+        @panic("KEventWatcher has an invalid file descriptor");
 
     // not initialized each time
     var changelist_array: [changelist_count]KEvent = undefined;
@@ -47,7 +46,7 @@ pub fn watchLoopCycle(this: *Watcher) bun.JSC.Maybe(void) {
     defer Output.flush();
 
     var count = std.posix.system.kevent(
-        this.platform.fd.cast(),
+        fd.native(),
         changelist,
         0,
         changelist,
@@ -59,7 +58,7 @@ pub fn watchLoopCycle(this: *Watcher) bun.JSC.Maybe(void) {
     if (count < 128 / 2) {
         const remain = 128 - count;
         const extra = std.posix.system.kevent(
-            this.platform.fd.cast(),
+            fd.native(),
             changelist[@intCast(count)..].ptr,
             0,
             changelist[@intCast(count)..].ptr,
@@ -102,7 +101,6 @@ pub fn watchLoopCycle(this: *Watcher) bun.JSC.Maybe(void) {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const Watcher = bun.Watcher;
-const max_eviction_count = Watcher.max_eviction_count;

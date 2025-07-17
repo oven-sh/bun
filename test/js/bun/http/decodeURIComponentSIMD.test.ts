@@ -1,5 +1,5 @@
 import { decodeURIComponentSIMD } from "bun:internal-for-testing";
-import { expect, test, describe, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 const inputs = [
   "hello world",

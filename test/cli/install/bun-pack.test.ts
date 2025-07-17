@@ -2,9 +2,9 @@ import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
-import { bunEnv, bunExe, runBunInstall, tmpdirSync, pack } from "harness";
-import { join } from "path";
+import { bunEnv, bunExe, pack, runBunInstall, tempDirWithFiles, tmpdirSync } from "harness";
 import fs from "node:fs/promises";
+import { join } from "path";
 
 var packageDir: string;
 
@@ -12,7 +12,7 @@ beforeEach(() => {
   packageDir = tmpdirSync();
 });
 
-async function packExpectError(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
+async function packExpectError(cwd: string, env: NodeJS.Dict<string>, ...args: string[]) {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "pack", ...args],
     cwd,
@@ -22,10 +22,10 @@ async function packExpectError(cwd: string, env: NodeJS.ProcessEnv, ...args: str
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
+  const err = await stderr.text();
   expect(err).not.toContain("panic:");
 
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
 
   const exitCode = await exited;
   expect(exitCode).toBeGreaterThan(0);
@@ -292,7 +292,7 @@ describe("flags", () => {
     },
     {
       filename: "no-extension",
-      error: false
+      error: false,
     },
     {
       filename: "no-extension.tar",
@@ -300,13 +300,13 @@ describe("flags", () => {
     },
     {
       filename: "out/foo.tgz",
-      error: true
+      error: true,
     },
     {
       filename: "out/foo.tar",
       mkdir: "out",
-      error: false
-    }
+      error: false,
+    },
   ];
 
   for (const { filename, error, mkdir } of filenameTests) {
@@ -393,6 +393,35 @@ describe("flags", () => {
     ]);
 
     expect(results).toEqual([true, true, false, true, false]);
+  });
+
+  test("--quiet", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-quiet-test",
+          version: "1.1.1",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv, "--quiet");
+
+    // Should not contain verbose output
+    expect(out).not.toContain("Total files:");
+    expect(out).not.toContain("Shasum:");
+    expect(out).not.toContain("Integrity:");
+    expect(out).not.toContain("Unpacked size:");
+    expect(out).not.toContain("Packed size:");
+    expect(out).not.toContain("bun pack v");
+
+    // Should only contain the tarball name
+    expect(out.trim()).toBe("pack-quiet-test-1.1.1.tgz");
+
+    // Should still create the tarball
+    expect(await exists(join(packageDir, "pack-quiet-test-1.1.1.tgz"))).toBeTrue();
   });
 });
 
@@ -762,7 +791,7 @@ describe("bundledDependnecies", () => {
       env: bunEnv,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).toContain("error:");
     expect(err).toContain("to be a boolean or an array of strings");
     expect(err).not.toContain("warning:");
@@ -930,7 +959,32 @@ describe("files", () => {
       { "pathname": "package/lib/index.js" },
     ]);
   });
-  test("cannot exclude LICENSE", async () => {
+
+  test(".npmignore cannot exclude CHANGELOG", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-changelog",
+          version: "1.1.2",
+        }),
+      ),
+      write(join(packageDir, ".npmignore"), "CHANGELOG\nCHANGELOG.*"),
+      write(join(packageDir, "CHANGELOG"), "hello"),
+      write(join(packageDir, "CHANGELOG.md"), "hello"),
+      write(join(packageDir, "CHANGELOG.txt"), "hello"),
+    ]);
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-changelog-1.1.2.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/CHANGELOG" },
+      { "pathname": "package/CHANGELOG.md" },
+      { "pathname": "package/CHANGELOG.txt" },
+    ]);
+  });
+
+  test("'files' field cannot exclude LICENSE", async () => {
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -952,6 +1006,24 @@ describe("files", () => {
       { "pathname": "package/lib/index.js" },
     ]);
   });
+
+  test(".npmignore cannot exclude LICENSE", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-license",
+          version: "1.1.2",
+        }),
+      ),
+      write(join(packageDir, ".npmignore"), "LICENSE"),
+      write(join(packageDir, "LICENSE"), "hello"),
+    ]);
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-license-1.1.2.tgz"));
+    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/LICENSE" }]);
+  });
+
   test("can include files and directories", async () => {
     await Promise.all([
       write(
@@ -1035,13 +1107,14 @@ describe("files", () => {
         JSON.stringify({
           name: "pack-files-4",
           version: "1.2.123",
-          files: ["**/index.js"],
+          files: ["**/index.js", "!**/index.test.ts"],
         }),
       ),
       write(join(packageDir, "root.js"), "console.log('hello ./root.js')"),
       write(join(packageDir, "subdir", "index.js"), "console.log('hello ./subdir/index.js')"),
       write(join(packageDir, "subdir", "anotherdir", "index.js"), "console.log('hello ./subdir/anotherdir/index.js')"),
       write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+      write(join(packageDir, "index.test.ts"), "console.log('hello ./index.test.ts')"),
     ]);
 
     await pack(packageDir, bunEnv);
@@ -1051,6 +1124,30 @@ describe("files", () => {
       { "pathname": "package/index.js" },
       { "pathname": "package/subdir/anotherdir/index.js" },
       { "pathname": "package/subdir/index.js" },
+    ]);
+  });
+
+  test("excluded entries within included directories are not included", async () => {
+    const dir = tempDirWithFiles("bun-pack-files-excluded-entries", {
+      "package.json": `
+      {
+        "name": "pack-excluded-entries-from-files",
+        "version": "1.0.0",
+        "files": ["src/**", "!src/**/*.test.ts"]
+      }
+      `,
+      src: {
+        "index.ts": "console.log('hello ./src/index.js')",
+        "index.test.ts": "test('foo', () => expect(1).toBe(1))",
+      },
+    });
+
+    const { out } = await pack(dir, bunEnv);
+    expect(out).toContain("Total files: 2");
+    const tarball = readTarball(join(dir, "pack-excluded-entries-from-files-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/src/index.ts" },
     ]);
   });
 });

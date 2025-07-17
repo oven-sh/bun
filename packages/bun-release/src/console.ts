@@ -1,5 +1,5 @@
-import { isatty } from "tty";
 import { createInterface } from "readline";
+import { isatty } from "tty";
 
 export const isAction = !!process.env["GITHUB_ACTION"];
 

@@ -1,8 +1,8 @@
-import { bunEnv, bunExe, isLinux, tmpdirSync } from "harness";
 import { ReadableSubprocess, spawn } from "bun";
-import { describe, expect, test, beforeAll } from "bun:test";
-import { join } from "node:path";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, tmpdirSync } from "harness";
 import fs from "node:fs";
+import { join } from "node:path";
 
 describe.skipIf(!isLinux)("running files on a FUSE mount", () => {
   async function doTest(pathOnMount: string): Promise<void> {

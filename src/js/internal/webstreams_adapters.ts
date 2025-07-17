@@ -14,7 +14,7 @@ const Duplex = require("internal/streams/duplex");
 const { destroyer } = require("internal/streams/destroy");
 const { isDestroyed, isReadable, isWritable, isWritableEnded } = require("internal/streams/utils");
 const { Buffer } = require("node:buffer");
-const { kEmptyObject, kGetNativeReadableProto } = require("internal/shared");
+const { kEmptyObject } = require("internal/shared");
 const { validateBoolean, validateObject } = require("internal/validators");
 const finished = require("internal/streams/end-of-stream");
 
@@ -98,7 +98,7 @@ class ReadableFromWeb extends Readable {
       return;
     }
 
-    var deferredError;
+    var deferredError: Error | undefined;
     try {
       do {
         var done = false,
@@ -134,10 +134,10 @@ class ReadableFromWeb extends Readable {
         }
       } while (!this.#closed);
     } catch (e) {
-      deferredError = e;
-    } finally {
-      if (deferredError) throw deferredError;
+      deferredError = e as Error;
     }
+
+    if (deferredError) throw deferredError;
   }
 
   _destroy(error, callback) {
@@ -511,7 +511,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
   );
 }
 
-function newStreamReadableFromReadableStream(readableStream, options = kEmptyObject) {
+function newStreamReadableFromReadableStream(readableStream, options: Record<string, unknown> = kEmptyObject) {
   if (!$inheritsReadableStream(readableStream)) {
     throw $ERR_INVALID_ARG_TYPE("readableStream", "ReadableStream", readableStream);
   }

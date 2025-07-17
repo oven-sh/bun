@@ -1,43 +1,20 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
 
 pub const css = @import("../css_parser.zig");
 
 const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
-const Error = css.Error;
-
-const Property = css.Property;
-const PropertyId = css.PropertyId;
-
-const ContainerName = css.css_rules.container.ContainerName;
 
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const LengthPercentage = css.css_values.length.LengthPercentage;
 const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
 const CSSNumber = css.css_values.number.CSSNumber;
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Image = css.css_values.image.Image;
-const CssColor = css.css_values.color.CssColor;
-const Ratio = css.css_values.ratio.Ratio;
-const Length = css.css_values.length.LengthValue;
-const Rect = css.css_values.rect.Rect;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
 const CustomIdentList = css.css_values.ident.CustomIdentList;
-const Angle = css.css_values.angle.Angle;
-const Url = css.css_values.url.Url;
 const CSSInteger = css.css_values.number.CSSInteger;
 const BabyList = bun.BabyList;
-
-const isFlex2009 = css.prefixes.Feature.isFlex2009;
-
-const VendorPrefix = css.VendorPrefix;
 
 /// A [track sizing](https://drafts.csswg.org/css-grid-2/#track-sizing) value
 /// for the `grid-template-rows` and `grid-template-columns` properties.
@@ -47,8 +24,8 @@ pub const TrackSizing = union(enum) {
     /// A list of grid tracks.
     tracklist: TrackList,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 };
 
 /// A [`<track-list>`](https://drafts.csswg.org/css-grid-2/#typedef-track-list) value,
@@ -449,8 +426,8 @@ pub const RepeatCount = union(enum) {
     /// The `auto-fit` keyword.
     @"auto-fit",
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn eql(this: *const @This(), other: *const @This()) bool {
         return css.implementEql(@This(), this, other);

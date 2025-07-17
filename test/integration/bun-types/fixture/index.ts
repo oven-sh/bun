@@ -1,6 +1,3 @@
-import svgpath from "cool.svg";
-svgpath satisfies `${string}.svg`;
-
 import * as test from "bun:test";
 test.describe;
 test.it;
@@ -10,15 +7,6 @@ const options: Bun.TLSOptions = {
 };
 
 process.assert;
-
-const channel = new BroadcastChannel("my-channel");
-const message = { hello: "world" };
-
-channel.onmessage = event => {
-  console.log(event);
-};
-
-channel.postMessage(message);
 
 const error = new Error("hello world");
 const clone = structuredClone(error);
@@ -34,6 +22,8 @@ import * as sqlite from "bun:sqlite";
 sqlite.Database;
 
 Bun satisfies typeof import("bun");
+expectType(Bun).is<typeof import("bun")>();
+expectType<typeof import("bun")>().is<typeof Bun>();
 
 type ConstructorOf<T> = new (...args: any[]) => T;
 
@@ -83,7 +73,7 @@ new Request("url");
 new Response();
 new Headers();
 new URL("");
-new URLSearchParams();
+new URLSearchParams([["cool", "stuff"]]);
 new File([], "filename", { type: "text/plain" });
 new Blob([], { type: "text/plain" });
 new ReadableStream();
@@ -112,104 +102,52 @@ Bun.fetch(new URL("url"), {
 
 Bun.S3Client;
 
-Bun.$.ShellPromise;
+Bun.$`hey`;
 
-new Bun.$.ShellError();
+type b = Bun.$.ShellPromise;
+
+const myShellPromise: Bun.$.ShellPromise = Bun.$`hey`;
+const myShellError: Bun.$.ShellError = new Bun.$.ShellError();
+
+expectType(myShellPromise).is<Bun.$.ShellPromise>();
+expectType(myShellError).is<Bun.$.ShellError>();
+
+const myShellConstructor: typeof Bun.$.Shell = Bun.$.Shell;
+const myShellPromiseConstructor: typeof Bun.$.ShellPromise = Bun.$.ShellPromise;
+const myShellErrorConstructor: typeof Bun.$.ShellError = Bun.$.ShellError;
+
+expectType(myShellConstructor).is<typeof Bun.$.Shell>();
+expectType(myShellPromiseConstructor).is<typeof Bun.$.ShellPromise>();
+expectType(myShellErrorConstructor).is<typeof Bun.$.ShellError>();
+
+const myShellInstance: Bun.$ = new Bun.$.Shell();
+await myShellInstance`hey`;
+
+expectType(Bun.$).is<Bun.$>();
+
+const myOtherShell = Bun.$.nothrow();
+expectType(myOtherShell).is<Bun.$>();
+
+expectType(myShellInstance).is<typeof Bun.$>();
+
+await Bun.$.nothrow().throws(false).env({ TEST: "cool" }).cwd("/")`exit 0`;
+await myShellInstance.nothrow().throws(false).env({ TEST: "cool" }).cwd("/")`exit 0`;
+
+Bun.$;
+
+declare const e: unknown;
+if (e instanceof Bun.$.ShellError) {
+  expectType(e.exitCode).is<number>();
+  expectType(e.stderr).is<Buffer>();
+  expectType(e.stdout).is<Buffer>();
+}
 
 new Promise(resolve => {
   resolve(1);
 });
 
-Bun.serve({
-  routes: {
-    "/:test": req => {
-      return new Response(req.params.test);
-    },
-  },
-
-  fetch: (req, server) => {
-    if (!server.upgrade(req)) {
-      return new Response("not upgraded");
-    }
-  },
-
-  websocket: {
-    message: ws => {
-      ws.data;
-      ws.send(" ");
-    },
-  },
-});
-
 import.meta.hot.on("bun:bun:beforeFullReloadBut also allows anything", () => {
   //
-});
-
-Bun.serve({
-  routes: {
-    "/:test": req => {
-      return new Response(req.params.test);
-    },
-  },
-
-  fetch: (req, server) => {
-    return new Response("cool");
-  },
-});
-
-Bun.serve({
-  fetch: (req, server) => {
-    return new Response("cool");
-  },
-});
-
-Bun.serve({
-  routes: {
-    "/:test": req => {
-      return new Response(req.params.test);
-    },
-  },
-});
-
-Bun.serve({
-  fetch: () => new Response("ok"),
-  websocket: {
-    message: ws => {
-      //
-    },
-  },
-});
-
-Bun.serve({
-  websocket: {
-    message: () => {
-      //
-    },
-  },
-  fetch: (req, server) => {
-    if (server.upgrade(req)) {
-      return;
-    }
-
-    return new Response("not upgraded");
-  },
-});
-
-Bun.serve({
-  websocket: {
-    message: () => {
-      //
-    },
-  },
-  routes: {
-    "/ws": (req, server) => {
-      if (server.upgrade(req)) {
-        return;
-      }
-
-      return new Response("not upgraded");
-    },
-  },
 });
 
 new Map();
@@ -235,6 +173,7 @@ Promise.try((message: string) => {
 declare const myReadableStream: ReadableStream<string>;
 for await (const chunk of myReadableStream) {
   console.log(chunk);
+  expectType(chunk).is<string>();
 }
 
 for await (const chunk of Bun.stdin.stream()) {
@@ -242,6 +181,8 @@ for await (const chunk of Bun.stdin.stream()) {
   // this converts it to text (assumes ASCII encoding)
   const chunkText = Buffer.from(chunk).toString();
   console.log(`Chunk: ${chunkText}`);
+  expectType(chunk).is<Uint8Array>();
+  expectType(chunkText).is<string>();
 }
 
 const myAsyncGenerator = async function* () {
@@ -310,12 +251,6 @@ req1.headers;
 req1.headers.toJSON();
 
 new ReadableStream({});
-new ReadableStream({
-  type: "direct",
-  async pull(controller) {
-    controller.write(new TextEncoder().encode("Hello, world!"));
-  },
-});
 
 const body = await fetch(req1);
 
@@ -506,6 +441,7 @@ serve({
 });
 
 import { s3 } from "bun";
+import { expectType } from "./utilities";
 
 s3.file("");
 

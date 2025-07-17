@@ -12,14 +12,13 @@ import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
 import path from "path";
-import ErrorCode from "../bun.js/bindings/ErrorCode";
+import jsclasses from "./../bun.js/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
 import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
-import jsclasses from "./../bun.js/bindings/js_classes";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
@@ -106,9 +105,12 @@ for (let i = 0; i < nativeStartIndex; i++) {
           isBuiltin = false;
         }
         if (isBuiltin) {
-          throw new Error(
-            `Cannot use ESM import statement within builtin modules. Use require("${imp.path}") instead. See src/js/README.md`,
+          const err = new Error(
+            `Cannot use ESM import statement within builtin modules. Use require("${imp.path}") instead. See src/js/README.md (from ${moduleList[i]})`,
           );
+          err.name = "BunError";
+          err.fileName = moduleList[i];
+          throw err;
         }
       }
     }
@@ -273,6 +275,7 @@ function idToEnumName(id: string) {
 }
 
 function idToPublicSpecifierOrEnumName(id: string) {
+  if (id === "internal-for-testing.ts") return "bun:internal-for-testing"; // not in the `bun/` folder because it's added conditionally
   id = id.replace(/\.[mc]?[tj]s$/, "");
   if (id.startsWith("node/")) {
     return "node:" + id.slice(5).replaceAll(".", "/");
@@ -490,8 +493,12 @@ declare module "module" {
 
     namespace NodeJS {
       interface Require {
-        
+
 `;
+
+    dts += `        (id: "bun"): typeof import("bun");\n`;
+    dts += `        (id: "bun:test"): typeof import("bun:test");\n`;
+    dts += `        (id: "bun:jsc"): typeof import("bun:jsc");\n`;
 
     for (let i = 0; i < nativeStartIndex; i++) {
       const id = moduleList[i];
@@ -502,8 +509,7 @@ declare module "module" {
       let internalName = idToPublicSpecifierOrEnumName(id);
       if (internalName.startsWith("internal:")) internalName = internalName.replace(":", "/");
 
-      dts += `        (id: "${internalName}"): typeof import("${path.join(BASE, id)}").default;
-`;
+      dts += `        (id: "${internalName}"): typeof import("${path.join(BASE, id)}").default;\n`;
     }
 
     dts += `

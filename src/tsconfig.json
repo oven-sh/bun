@@ -4,7 +4,7 @@
     // Path remapping
     "baseUrl": ".",
     "paths": {
-      "bindgen": ["./codegen/bindgen-lib.ts"],
+      "bindgen": ["./codegen/bindgen-lib.ts"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx"],

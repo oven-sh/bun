@@ -1,10 +1,9 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const JSC = bun.JSC;
 const boring = bun.BoringSSL.c;
 const hmac = @import("hmac.zig");
 const string = @import("string.zig");
-const gen = bun.gen.csrf;
 
 /// CSRF Token implementation for Bun
 /// It provides protection against Cross-Site Request Forgery attacks
@@ -231,7 +230,7 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
         if (jsSecret.isEmptyOrUndefinedOrNull()) {
             return globalObject.throwInvalidArguments("Secret is required", .{});
         }
-        if (!jsSecret.isString() or jsSecret.getLength(globalObject) == 0) {
+        if (!jsSecret.isString() or try jsSecret.getLength(globalObject) == 0) {
             return globalObject.throwInvalidArguments("Secret must be a non-empty string", .{});
         }
         secret = try jsSecret.toSlice(globalObject, bun.default_allocator);
@@ -248,8 +247,8 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
         const options_value = args[1];
 
         // Extract expiresIn (optional)
-        if (try options_value.get(globalObject, "expiresIn")) |expires_in_js| {
-            expires_in = @intCast(try globalObject.validateIntegerRange(expires_in_js, i64, 0, .{ .min = 0, .max = JSC.MAX_SAFE_INTEGER }));
+        if (try options_value.getOptionalInt(globalObject, "expiresIn", u64)) |expires_in_js| {
+            expires_in = expires_in_js;
         }
 
         // Extract encoding (optional)
@@ -299,7 +298,7 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
     return encoding.toNodeEncoding().encodeWithMaxSize(globalObject, boring.EVP_MAX_MD_SIZE + 32, token_bytes);
 }
 
-pub const csrf__generate: JSC.JSHostFunctionType = JSC.toJSHostFunction(csrf__generate_impl);
+pub const csrf__generate = JSC.toJSHostFn(csrf__generate_impl);
 
 /// JS binding function for verifying CSRF tokens
 /// First argument is token (required), second is options (optional)
@@ -317,7 +316,7 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
     if (jsToken.isUndefinedOrNull()) {
         return globalObject.throwInvalidArguments("Token is required", .{});
     }
-    if (!jsToken.isString() or jsToken.getLength(globalObject) == 0) {
+    if (!jsToken.isString() or try jsToken.getLength(globalObject) == 0) {
         return globalObject.throwInvalidArguments("Token must be a non-empty string", .{});
     }
     const token = try jsToken.toSlice(globalObject, bun.default_allocator);
@@ -344,8 +343,8 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
         }
 
         // Extract maxAge (optional)
-        if (try options_value.get(globalObject, "maxAge")) |max_age_js| {
-            max_age = @intCast(try globalObject.validateIntegerRange(max_age_js, i64, 0, .{ .min = 0, .max = JSC.MAX_SAFE_INTEGER }));
+        if (try options_value.getOptionalInt(globalObject, "maxAge", u64)) |max_age_js| {
+            max_age = max_age_js;
         }
 
         // Extract encoding (optional)
@@ -385,4 +384,4 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
     return JSC.JSValue.jsBoolean(is_valid);
 }
 
-pub const csrf__verify: JSC.JSHostFunctionType = JSC.toJSHostFunction(csrf__verify_impl);
+pub const csrf__verify = JSC.toJSHostFn(csrf__verify_impl);

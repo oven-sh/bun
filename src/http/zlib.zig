@@ -1,10 +1,7 @@
-const Lock = bun.Mutex;
 const std = @import("std");
 const MutableString = bun.MutableString;
-const getAllocator = @import("../http.zig").getAllocator;
-const ZlibPool = @This();
 const Zlib = @import("../zlib.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 fn initMutableString(allocator: std.mem.Allocator) anyerror!MutableString {
     return MutableString.initEmpty(allocator);

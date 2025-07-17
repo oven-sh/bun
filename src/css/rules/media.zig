@@ -1,16 +1,9 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
-const Error = css.Error;
-const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
-const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
-const Maybe = css.Maybe;
-const PrinterError = css.PrinterError;
 const PrintErr = css.PrintErr;
 const Location = css.css_rules.Location;
-const style = css.css_rules.style;
 const CssRuleList = css.CssRuleList;
 
 pub fn MediaRule(comptime R: type) type {

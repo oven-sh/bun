@@ -181,7 +181,6 @@ test(
       "required-server-files.json",
       // these have "signing keys", not sure what they are tbh
       "prerender-manifest.json",
-      "prerender-manifest.js",
       // these are similar but i feel like there might be something we can fix to make them the same
       "next-minimal-server.js.nft.json",
       "next-server.js.nft.json",

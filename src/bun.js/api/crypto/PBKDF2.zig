@@ -42,7 +42,7 @@ pub const Job = struct {
     any_task: JSC.AnyTask = undefined,
     poll: Async.KeepAlive = .{},
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn runTask(task: *JSC.WorkPoolTask) void {
         const job: *PBKDF2.Job = @fieldParentPtr("task", task);
@@ -76,11 +76,6 @@ pub const Job = struct {
         const output_slice = this.output;
         assert(output_slice.len == @as(usize, @intCast(this.pbkdf2.length)));
         const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
-        if (buffer_value == .zero) {
-            promise.reject(globalThis, ZigString.init("Failed to create buffer").toErrorInstance(globalThis));
-            return;
-        }
-
         this.output = &[_]u8{};
         promise.resolve(globalThis, buffer_value);
     }
@@ -90,7 +85,7 @@ pub const Job = struct {
         this.pbkdf2.deinitAndUnprotect();
         this.promise.deinit();
         bun.default_allocator.free(this.output);
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn create(vm: *JSC.VirtualMachine, globalThis: *JSC.JSGlobalObject, data: *const PBKDF2) *Job {
@@ -149,7 +144,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, is_asy
         return globalThis.throwInvalidArgumentTypeValue("iterations", "number", arg2);
     }
 
-    const iteration_count = arg2.coerce(i64, globalThis);
+    const iteration_count = try arg2.coerce(i64, globalThis);
 
     if (!globalThis.hasException() and (iteration_count < 1 or iteration_count > std.math.maxInt(i32))) {
         return globalThis.throwRangeError(iteration_count, .{ .field_name = "iterations", .min = 1, .max = std.math.maxInt(i32) + 1 });
@@ -175,7 +170,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, is_asy
             const slice = try arg4.toSlice(globalThis, bun.default_allocator);
             defer slice.deinit();
             const name = slice.slice();
-            return globalThis.ERR_CRYPTO_INVALID_DIGEST("Invalid digest: {s}", .{name}).throw();
+            return globalThis.ERR(.CRYPTO_INVALID_DIGEST, "Invalid digest: {s}", .{name}).throw();
         }
         return error.JSError;
     };
@@ -244,11 +239,8 @@ pub fn pbkdf2(
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const JSC = bun.JSC;
 const Async = bun.Async;

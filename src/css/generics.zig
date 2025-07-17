@@ -1,8 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
-const Log = logger.Log;
 
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -452,8 +451,10 @@ pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
         CustomIdent, DashedIdent, Ident => bun.strings.eql(lhs.v, rhs.v),
         []const u8 => bun.strings.eql(lhs.*, rhs.*),
         bun.logger.Loc => lhs.eql(rhs.*),
-        // css.VendorPrefix => css.VendorPrefix.eq(lhs.*, rhs.*),
-        else => T.eql(lhs, rhs),
+        else => if (@typeInfo(T) == .@"struct" and @typeInfo(T).@"struct".layout == .@"packed")
+            lhs.* == rhs.*
+        else
+            T.eql(lhs, rhs),
     };
 }
 

@@ -2,16 +2,10 @@ const std = @import("std");
 const logger = bun.logger;
 const js_ast = bun.JSAst;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
 const strings = bun.strings;
 const CodePoint = bun.CodePoint;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 
 pub const T = enum {
     t_end_of_file,
@@ -958,7 +952,7 @@ pub const Lexer = struct {
 
                             var value: CodePoint = 0;
                             var c3: CodePoint = 0;
-                            var width3: u3 = 0;
+                            var width3: @TypeOf(iter.width) = 0;
 
                             _ = iterator.next(&iter) or return lexer.syntaxError();
                             c3 = iter.c;

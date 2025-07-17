@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { itBundled } from "./expectBundled";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import * as path from "node:path";
+import { itBundled } from "./expectBundled";
 
 describe("defer", () => {
   {

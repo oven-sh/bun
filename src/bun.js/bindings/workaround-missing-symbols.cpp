@@ -82,6 +82,7 @@ extern "C" int kill(int pid, int sig)
 
 #if defined(__x86_64__)
 __asm__(".symver exp,exp@GLIBC_2.2.5");
+__asm__(".symver exp2,exp2@GLIBC_2.2.5");
 __asm__(".symver expf,expf@GLIBC_2.2.5");
 __asm__(".symver log,log@GLIBC_2.2.5");
 __asm__(".symver log2,log2@GLIBC_2.2.5");
@@ -92,6 +93,7 @@ __asm__(".symver powf,powf@GLIBC_2.2.5");
 #elif defined(__aarch64__)
 __asm__(".symver expf,expf@GLIBC_2.17");
 __asm__(".symver exp,exp@GLIBC_2.17");
+__asm__(".symver exp2,exp2@GLIBC_2.17");
 __asm__(".symver log,log@GLIBC_2.17");
 __asm__(".symver log2,log2@GLIBC_2.17");
 __asm__(".symver log2f,log2f@GLIBC_2.17");
@@ -109,6 +111,7 @@ __asm__(".symver powf,powf@GLIBC_2.17");
 extern "C" {
 
 double BUN_WRAP_GLIBC_SYMBOL(exp)(double);
+double BUN_WRAP_GLIBC_SYMBOL(exp2)(double);
 float BUN_WRAP_GLIBC_SYMBOL(expf)(float);
 float BUN_WRAP_GLIBC_SYMBOL(log2f)(float);
 float BUN_WRAP_GLIBC_SYMBOL(logf)(float);
@@ -123,6 +126,7 @@ float __wrap_powf(float x, float y) { return powf(x, y); }
 float __wrap_logf(float x) { return logf(x); }
 float __wrap_log2f(float x) { return log2f(x); }
 double __wrap_exp(double x) { return exp(x); }
+double __wrap_exp2(double x) { return exp2(x); }
 double __wrap_pow(double x, double y) { return pow(x, y); }
 double __wrap_log(double x) { return log(x); }
 double __wrap_log2(double x) { return log2(x); }
@@ -238,7 +242,39 @@ extern "C" __attribute__((used)) char __libc_single_threaded = 0;
 #include <cstdio>
 #include "headers.h"
 
-void std::__libcpp_verbose_abort(char const* format, ...)
+// Check if the stdlib declaration already has noexcept by looking at the header
+#ifdef _LIBCPP___VERBOSE_ABORT
+#if __has_include(<__verbose_abort>)
+#include <__verbose_abort>
+#endif
+#endif
+
+#ifdef _LIBCPP_VERBOSE_ABORT_NOEXCEPT
+// Workaround for this error:
+// workaround-missing-symbols.cpp:245:11: error: '__libcpp_verbose_abort' is missing exception specification 'noexcept'
+// 2025-07-10 15:59:47 PDT
+//   245 | void std::__libcpp_verbose_abort(char const* format, ...)
+// 2025-07-10 15:59:47 PDT
+//       |           ^
+// 2025-07-10 15:59:47 PDT
+//       |                                                           noexcept
+// 2025-07-10 15:59:47 PDT
+// /opt/homebrew/Cellar/llvm/20.1.7/bin/../include/c++/v1/__verbose_abort:30:28: note: previous declaration is here
+// 2025-07-10 15:59:47 PDT
+//    30 |     __printf__, 1, 2) void __libcpp_verbose_abort(const char* __format, ...) _LIBCPP_VERBOSE_ABORT_NOEXCEPT;
+// 2025-07-10 15:59:47 PDT
+//       |                            ^
+// 2025-07-10 15:59:47 PDT
+// 1 error generated.
+// 2025-07-10 15:59:47 PDT
+// [515/540] Building CXX
+#define BUN_VERBOSE_ABORT_NOEXCEPT _LIBCPP_VERBOSE_ABORT_NOEXCEPT
+#else
+#define BUN_VERBOSE_ABORT_NOEXCEPT
+#endif
+
+// Provide our implementation
+void std::__libcpp_verbose_abort(char const* format, ...) BUN_VERBOSE_ABORT_NOEXCEPT
 {
     va_list list;
     va_start(list, format);
@@ -248,6 +284,8 @@ void std::__libcpp_verbose_abort(char const* format, ...)
 
     Bun__panic(buffer, len);
 }
+
+#undef BUN_VERBOSE_ABORT_NOEXCEPT
 
 #endif
 

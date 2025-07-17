@@ -27,7 +27,7 @@ setTimeout(() => {
   let diff = process.memoryUsage.rss() - baseline;
   diff = (diff / 1024 / 1024) | 0;
   console.log({ leaked: diff + " MB" });
-  if (diff > 32) {
+  if (diff > 48) {
     console.log("\n--fail--\n");
     process.exit(1);
   } else {

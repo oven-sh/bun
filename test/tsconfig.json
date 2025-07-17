@@ -11,7 +11,8 @@
       "bun:internal-for-testing": ["../src/js/internal-for-testing.ts"],
       "foo/bar": ["js/bun/resolve/baz.js"],
       "@faasjs/*": ["js/bun/resolve/*.js", "js/bun/resolve/*/src/index.js"],
-      "@faasjs/larger/*": ["js/bun/resolve/*/larger-index.js"]
+      "@faasjs/larger/*": ["js/bun/resolve/*/larger-index.js"],
+      "bake/*": ["../src/bake/client/*"]
     },
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
@@ -24,7 +25,8 @@
     "**/*.mts",
     "**/*.cts",
     "../src/js/internal-for-testing.ts",
-    "bake/exit-code-map.mjs"
+    "bake/exit-code-map.mjs",
+    "../src/bake/client/**.ts"
   ],
   "exclude": [
     "fixtures",

@@ -260,7 +260,7 @@ public:
             /* This one always resets needsDrainage before it calls any cb's.
              * Otherwise we would stackoverflow when sending after publish but before drain. */
             drainImpl(s);
-            
+
             /* If we drained last subscriber, also clear outgoingMessages */
             if (!drainableSubscribers) {
                 outgoingMessages.clear();
@@ -363,5 +363,3 @@ public:
 };
 
 }
-
-

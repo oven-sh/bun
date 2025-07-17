@@ -2,7 +2,7 @@
   import FeatureCard from "./FeatureCard.svelte";
 
   const links = [
-    { text: "Bun Documentation", url: "https://bun.sh/docs" },
+    { text: "Bun Documentation", url: "https://bun.com/docs" },
     { text: "Svelte Documentation", url: "https://svelte.dev/docs" },
     { text: "GitHub", url: "https://github.com/oven-sh/bun/tree/main/packages/bun-plugin-svelte" },
   ];
@@ -11,7 +11,7 @@
 <main>
   <div class="hero">
     <div class="logo-container">
-      <a href="https://bun.sh" class="bun-logo">
+      <a href="https://bun.com" class="bun-logo">
         <img
           src="https://github.com/user-attachments/assets/50282090-adfd-4ddb-9e27-c30753c6b161"
           alt="Bun Logo"
@@ -20,10 +20,10 @@
       </a>
     </div>
     <h1><span class="highlight">bun-plugin-svelte</span></h1>
-    <p class="tagline">The official Svelte plugin for <a href="https://bun.sh" target="_blank">Bun</a></p>
+    <p class="tagline">The official Svelte plugin for <a href="https://bun.com" target="_blank">Bun</a></p>
 
     <div class="cta-buttons">
-      <a href="https://bun.sh/docs/bundler/html" class="button primary">🚀 Get Started</a>
+      <a href="https://bun.com/docs/bundler/html" class="button primary">🚀 Get Started</a>
       <a href="https://github.com/oven-sh/bun/tree/main/packages/bun-plugin-svelte/example" class="button secondary"
         >👀 View Examples</a
       >
@@ -39,7 +39,7 @@
         <pre><code class="language-bash">bun add -D bun-plugin-svelte</code></pre>
       </div>
       <div>
-        <h3>2. Add it to your <a href="https://bun.sh/docs/runtime/bunfig" target="_blank">bunfig.toml</a></h3>
+        <h3>2. Add it to your <a href="https://bun.com/docs/runtime/bunfig" target="_blank">bunfig.toml</a></h3>
         <pre><code class="language-toml">
 [serve.static]
 plugins = ["bun-plugin-svelte"];
@@ -51,11 +51,11 @@ plugins = ["bun-plugin-svelte"];
   <section class="features">
     <h2>✨ Features</h2>
     <div class="feature-grid">
-      <FeatureCard title="🔥 HMR Support" link="https://bun.sh/docs/bundler/html">
+      <FeatureCard title="🔥 HMR Support" link="https://bun.com/docs/bundler/html">
         Integrates with Bun's Fullstack Dev Server for hot module replacement
       </FeatureCard>
-      <FeatureCard title="📦 Bundling" link="https://bun.sh/docs/bundler">
-        Bundle Svelte components with <a href="https://bun.sh/docs/bundler">Bun.build</a>
+      <FeatureCard title="📦 Bundling" link="https://bun.com/docs/bundler">
+        Bundle Svelte components with <a href="https://bun.com/docs/bundler">Bun.build</a>
       </FeatureCard>
     </div>
 
@@ -78,8 +78,9 @@ plugins = ["bun-plugin-svelte"];
   :global(body) {
     margin: 0;
     padding: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans",
-      "Helvetica Neue", sans-serif;
+    font-family:
+      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue",
+      sans-serif;
     background-color: #f9f9f9;
     color: #333;
   }

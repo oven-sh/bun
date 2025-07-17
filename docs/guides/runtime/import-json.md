@@ -41,4 +41,4 @@ data.author.name; // => "John Dough"
 
 ---
 
-See [Docs > Runtime > TypeScript](https://bun.sh/docs/runtime/typescript) for more information on using TypeScript with Bun.
+See [Docs > Runtime > TypeScript](https://bun.com/docs/runtime/typescript) for more information on using TypeScript with Bun.

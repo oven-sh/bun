@@ -2,7 +2,7 @@
 const { expect, test } = require("bun:test");
 const fs = require("fs");
 const { tmpdir, devNull } = require("os");
-const { fsStreamInternals } = require('bun:internal-for-testing');
+const { fsStreamInternals } = require("bun:internal-for-testing");
 
 function getMaxFd() {
   const dev_null = fs.openSync(devNull, "r");

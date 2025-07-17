@@ -34,4 +34,4 @@ try {
 
 ---
 
-See [Docs > API > FileSystem](https://bun.sh/docs/api/file-io) for more filesystem operations.
+See [Docs > API > FileSystem](https://bun.com/docs/api/file-io) for more filesystem operations.

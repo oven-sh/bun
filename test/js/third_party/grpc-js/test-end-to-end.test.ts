@@ -15,10 +15,7 @@
  *
  */
 
-import * as path from "path";
-import { loadProtoFile } from "./common";
-import assert from "node:assert";
-import grpc, {
+import {
   Metadata,
   Server,
   ServerDuplexStream,
@@ -27,8 +24,11 @@ import grpc, {
   experimental,
   sendUnaryData,
 } from "@grpc/grpc-js";
-import { afterAll, beforeAll, describe, it, afterEach } from "bun:test";
 import { ServiceClient, ServiceClientConstructor } from "@grpc/grpc-js/build/src/make-client";
+import { afterEach, describe, it } from "bun:test";
+import assert from "node:assert";
+import * as path from "path";
+import { loadProtoFile } from "./common";
 
 const protoFile = path.join(__dirname, "fixtures", "echo_service.proto");
 const EchoService = loadProtoFile(protoFile).EchoService as ServiceClientConstructor;

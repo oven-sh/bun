@@ -1,10 +1,14 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 
 pub const S3Stat = struct {
     const log = bun.Output.scoped(.S3Stat, false);
-    pub usingnamespace JSC.Codegen.JSS3Stat;
-    pub usingnamespace bun.New(@This());
+    pub const js = JSC.Codegen.JSS3Stat;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
+    pub const new = bun.TrivialNew(@This());
 
     size: u64,
     etag: bun.String,
@@ -21,15 +25,15 @@ pub const S3Stat = struct {
         contentType: []const u8,
         lastModified: []const u8,
         globalThis: *JSC.JSGlobalObject,
-    ) *@This() {
+    ) bun.JSError!*@This() {
         var date_str = bun.String.init(lastModified);
         defer date_str.deref();
-        const last_modified = date_str.parseDate(globalThis);
+        const last_modified = try date_str.parseDate(globalThis);
 
         return S3Stat.new(.{
             .size = size,
-            .etag = bun.String.createUTF8(etag),
-            .contentType = bun.String.createUTF8(contentType),
+            .etag = bun.String.cloneUTF8(etag),
+            .contentType = bun.String.cloneUTF8(contentType),
             .lastModified = last_modified,
         });
     }
@@ -53,6 +57,6 @@ pub const S3Stat = struct {
     pub fn finalize(this: *@This()) void {
         this.etag.deref();
         this.contentType.deref();
-        this.destroy();
+        bun.destroy(this);
     }
 };

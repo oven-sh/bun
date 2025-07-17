@@ -64,9 +64,10 @@ public:
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
         auto thisValue = callFrame.thisValue().toThis(&lexicalGlobalObject, JSC::ECMAMode::strict());
-        auto thisObject = jsEventTargetCast(vm, thisValue.isUndefinedOrNull() ? JSC::JSValue(&lexicalGlobalObject) : thisValue);
-        if (UNLIKELY(!thisObject))
+        auto thisObject = jsEventTargetCast(vm, thisValue.isUndefinedOrNull() ? &lexicalGlobalObject : thisValue);
+        if (!thisObject) [[unlikely]] {
             return throwThisTypeError(lexicalGlobalObject, throwScope, "EventTarget", operationName);
+        }
 
         RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, thisObject.get())));
     }

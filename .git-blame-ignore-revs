@@ -1,0 +1,10 @@
+# Add commits to ignore in `git blame`. This allows large stylistic refactors to
+# avoid mucking up blames.
+#
+# To configure git to use this, run: 
+#
+#    git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+4ec410e0d7c5f6a712c323444edbf56b48d432d8 # make @import("bun") work in zig (#19096)
+dedd433cbf2e2fe38e51bc166e08fbcc601ad42b # JSValue.undefined -> .jsUndefined()
+6b4662ff55f58247cc2fd22e85b4f9805b0950a5 # JSValue.jsUndefined() -> .js_undefined

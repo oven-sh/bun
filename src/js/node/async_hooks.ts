@@ -22,7 +22,8 @@
 // each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
-const [setAsyncHooksEnabled, cleanupLater] = $cpp("NodeAsyncHooks.cpp", "createAsyncHooksBinding");
+const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
+const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
 
 // Only run during debug
@@ -101,8 +102,6 @@ class AsyncLocalStorage {
       set(context);
       try {
         return fn(...args);
-      } catch (error) {
-        throw error;
       } finally {
         set(prev);
       }
@@ -173,8 +172,6 @@ class AsyncLocalStorage {
     $assert(this.getStore() === store_value, "run: store_value was not set");
     try {
       return callback(...args);
-    } catch (e) {
-      throw e;
     } finally {
       // Note: early `return` will prevent `throw` above from working. I think...
       // Set AsyncContextFrame to undefined if we are out of context values
@@ -243,7 +240,7 @@ class AsyncLocalStorage {
 
   // Node.js internal function. In Bun's implementation, calling this is not
   // observable from outside the AsyncLocalStorage implementation.
-  _propagate(resource, triggerResource, type) {}
+  _propagate(_resource, _triggerResource, _type) {}
 }
 
 if (IS_BUN_DEVELOPMENT) {
@@ -306,8 +303,6 @@ class AsyncResource {
     set(this.#snapshot);
     try {
       return fn.$apply(thisArg, args);
-    } catch (error) {
-      throw error;
     } finally {
       set(prev);
     }

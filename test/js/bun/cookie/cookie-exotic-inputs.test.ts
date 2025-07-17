@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("Bun.Cookie.parse with exotic inputs", () => {
   test("handles cookies with various special characters in name", () => {

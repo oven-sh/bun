@@ -15,8 +15,8 @@
  *
  */
 
-import assert from "node:assert";
 import * as grpc from "@grpc/grpc-js";
+import assert from "node:assert";
 
 const { Metadata, CallCredentials } = grpc;
 

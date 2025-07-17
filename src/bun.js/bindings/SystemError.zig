@@ -1,21 +1,21 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const String = bun.String;
-const ZigString = @import("ZigString.zig");
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 
 pub const SystemError = extern struct {
     errno: c_int = 0,
     /// label for errno
-    code: String = String.empty,
-    message: String = String.empty,
-    path: String = String.empty,
-    syscall: String = String.empty,
-    hostname: String = String.empty,
-    fd: bun.FileDescriptor = bun.toFD(-1),
-    dest: String = String.empty,
+    code: String = .empty,
+    message: String, // it is illegal to have an empty message
+    path: String = .empty,
+    syscall: String = .empty,
+    hostname: String = .empty,
+    /// MinInt = no file descriptor
+    fd: c_int = std.math.minInt(c_int),
+    dest: String = .empty,
 
     pub fn Maybe(comptime Result: type) type {
         return union(enum) {
@@ -27,7 +27,7 @@ pub const SystemError = extern struct {
     extern fn SystemError__toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue;
     extern fn SystemError__toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSC.JSGlobalObject) JSValue;
 
-    pub fn getErrno(this: *const SystemError) bun.C.E {
+    pub fn getErrno(this: *const SystemError) bun.sys.E {
         // The inverse in bun.sys.Error.toSystemError()
         return @enumFromInt(this.errno * -1);
     }
@@ -52,7 +52,6 @@ pub const SystemError = extern struct {
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer this.deref();
-
         return SystemError__toErrorInstance(this, global);
     }
 
@@ -77,7 +76,6 @@ pub const SystemError = extern struct {
     /// to match the error code that `node:os` throws.
     pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer this.deref();
-
         return SystemError__toErrorInstanceWithInfoObject(this, global);
     }
 

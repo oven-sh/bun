@@ -3,7 +3,7 @@ name: Configure git to diff Bun's lockb lockfile
 ---
 
 {% callout %}
-Bun v1.1.39 introduced `bun.lock`, a JSONC formatted lockfile. `bun.lock` is human-readable and git-diffable without configuration, at no cost to performance. [**Learn more.**](https://bun.sh/docs/install/lockfile#text-based-lockfile)
+Bun v1.1.39 introduced `bun.lock`, a JSONC formatted lockfile. `bun.lock` is human-readable and git-diffable without configuration, at no cost to performance. [**Learn more.**](https://bun.com/docs/install/lockfile#text-based-lockfile)
 {% /callout %}
 
 ---

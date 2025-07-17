@@ -104,7 +104,6 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         us_internal_poll_type(p) |
         ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
         ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
-
     uv_poll_start(p->uv_p, events, poll_cb);
   }
 }

@@ -1,40 +1,20 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayListUnmanaged;
 
 pub const css = @import("../css_parser.zig");
 
-const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const Result = css.Result;
 const VendorPrefix = css.VendorPrefix;
-const PropertyId = css.css_properties.PropertyId;
 const Property = css.css_properties.Property;
 
-const ContainerName = css.css_rules.container.ContainerName;
-
 const LengthPercentage = css.css_values.length.LengthPercentage;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const CSSNumber = css.css_values.number.CSSNumber;
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Image = css.css_values.image.Image;
-const CssColor = css.css_values.color.CssColor;
-const Ratio = css.css_values.ratio.Ratio;
 const Length = css.css_values.length.LengthValue;
-const Rect = css.css_values.rect.Rect;
 const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
 const Angle = css.css_values.angle.Angle;
-const Url = css.css_values.url.Url;
-const Percentage = css.css_values.percentage.Percentage;
-
-const GenericBorder = css.css_properties.border.GenericBorder;
-const LineStyle = css.css_properties.border.LineStyle;
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
 pub const TransformList = struct {
@@ -864,7 +844,12 @@ pub fn Matrix3d(comptime T: type) type {
 pub const TransformStyle = enum {
     flat,
     @"preserve-3d",
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the [transform-box](https://drafts.csswg.org/css-transforms-1/#transform-box) property.
@@ -880,7 +865,12 @@ pub const TransformBox = enum {
     /// Uses the nearest SVG viewport as reference box.
     @"view-box",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the [backface-visibility](https://drafts.csswg.org/css-transforms-2/#backface-visibility-property) property.
@@ -888,7 +878,12 @@ pub const BackfaceVisibility = enum {
     visible,
     hidden,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the perspective property.
@@ -898,8 +893,8 @@ pub const Perspective = union(enum) {
     /// Distance to the center of projection.
     length: Length,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn eql(this: *const @This(), other: *const @This()) bool {
         return css.implementEql(@This(), this, other);
@@ -1230,14 +1225,14 @@ pub const TransformHandler = struct {
                 // If two vendor prefixes for the same property have different
                 // values, we need to flush what we have immediately to preserve order.
                 if (this.transform) |current| {
-                    if (!current[0].eql(&transform_val) and !current[1].contains(vp)) {
+                    if (!current[0].eql(&transform_val) and !bun.bits.contains(css.VendorPrefix, current[1], vp)) {
                         this.flush(allocator, dest, context);
                     }
                 }
 
                 // Otherwise, update the value and add the prefix.
                 if (this.transform) |*transform| {
-                    transform.* = .{ transform_val.deepClone(allocator), transform.*[1].bitwiseOr(vp) };
+                    transform.* = .{ transform_val.deepClone(allocator), bun.bits.@"or"(css.VendorPrefix, transform.*[1], vp) };
                 } else {
                     this.transform = .{ transform_val.deepClone(allocator), vp };
                     this.has_any = true;

@@ -14,7 +14,7 @@ ALWAYS_INLINE GCDeferralContext::~GCDeferralContext()
     if constexpr (validateDFGDoesGC)
         m_vm.verifyCanGC();
 
-    if (UNLIKELY(m_shouldGC))
+    if (m_shouldGC) [[unlikely]]
         m_vm.heap.collectIfNecessaryOrDefer();
 }
 

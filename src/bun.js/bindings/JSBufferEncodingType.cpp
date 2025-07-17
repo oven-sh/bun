@@ -54,7 +54,7 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
 template<bool allowBuffer>
 static std::optional<BufferEncodingType> parseEnumerationAllowBufferInternal(JSGlobalObject& lexicalGlobalObject, JSValue arg)
 {
-    if (UNLIKELY(!arg.isString())) {
+    if (!arg.isString()) [[unlikely]] {
         return std::nullopt;
     }
 

@@ -66,11 +66,11 @@ static ExceptionOr<Vector<uint8_t>> signWithMD(const CryptoAlgorithmRsaPssParams
         return Exception { OperationError };
 
     size_t signatureLen;
-    if (EVP_PKEY_sign(ctx.get(), nullptr, &signatureLen, digest->data(), digest->size()) <= 0)
+    if (EVP_PKEY_sign(ctx.get(), nullptr, &signatureLen, digest->begin(), digest->size()) <= 0)
         return Exception { OperationError };
 
     Vector<uint8_t> signature(signatureLen);
-    if (EVP_PKEY_sign(ctx.get(), signature.data(), &signatureLen, digest->data(), digest->size()) <= 0)
+    if (EVP_PKEY_sign(ctx.get(), signature.begin(), &signatureLen, digest->begin(), digest->size()) <= 0)
         return Exception { OperationError };
     signature.shrink(signatureLen);
 
@@ -134,7 +134,7 @@ static ExceptionOr<bool> verifyWithMD(const CryptoAlgorithmRsaPssParams& paramet
     if (!digest)
         return Exception { OperationError };
 
-    int ret = EVP_PKEY_verify(ctx.get(), signature.data(), signature.size(), digest->data(), digest->size());
+    int ret = EVP_PKEY_verify(ctx.get(), signature.begin(), signature.size(), digest->begin(), digest->size());
 
     return ret == 1;
 }

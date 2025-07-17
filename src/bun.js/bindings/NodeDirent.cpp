@@ -168,7 +168,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
     Structure* structure = zigGlobalObject->m_JSDirentClassStructure.get(zigGlobalObject);
     auto* originalStructure = structure;
     JSValue newTarget = callFrame->newTarget();
-    if (UNLIKELY(zigGlobalObject->m_JSDirentClassStructure.constructor(zigGlobalObject) != newTarget)) {
+    if (zigGlobalObject->m_JSDirentClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Dirent cannot be invoked without 'new'"_s);
@@ -177,9 +177,8 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
 
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject, newTarget.getObject(), functionGlobalObject->m_JSDirentClassStructure.get(functionGlobalObject));
-        scope.release();
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSDirentClassStructure.get(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto* object = JSC::JSFinalObject::create(vm, structure);
@@ -201,14 +200,14 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
 static inline int32_t getType(JSC::VM& vm, JSValue value, Zig::GlobalObject* globalObject)
 {
     JSObject* object = value.getObject();
-    if (UNLIKELY(!object)) {
+    if (!object) [[unlikely]] {
         return std::numeric_limits<int32_t>::max();
     }
     auto* structure = getStructure(globalObject);
     JSValue type;
     if (structure->id() != object->structure()->id()) {
         type = object->get(globalObject, Bun::builtinNames(vm).dataPrivateName());
-        if (UNLIKELY(!type)) {
+        if (!type) [[unlikely]] {
             return std::numeric_limits<int32_t>::max();
         }
     } else {
@@ -339,6 +338,7 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
     JSString* pathValue = nullptr;
     if (path && path->tag == BunStringTag::WTFStringImpl && previousPath && *previousPath && (*previousPath)->length() == path->impl.wtf->length()) {
         auto view = (*previousPath)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (view == path->impl.wtf) {
             pathValue = *previousPath;
 

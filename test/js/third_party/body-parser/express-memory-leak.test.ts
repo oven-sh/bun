@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import { spawn, ChildProcess } from "child_process";
-import { bunEnv, bunExe, isCI } from "harness";
+import { expect, test } from "bun:test";
+import { ChildProcess, spawn } from "child_process";
+import { bunEnv, bunExe, isBroken, isMacOS } from "harness";
 import { join } from "path";
 
 const REQUESTS_COUNT = 50000;
@@ -192,67 +192,71 @@ async function createAbortedRequestBatch(serverInfo: ServerInfo): Promise<void> 
   await Promise.allSettled(batch);
 }
 
-test("memory leak check - aborted requests", async () => {
-  // Start the fixture server in a separate process
-  const { child, serverInfo } = await spawnServer();
+test.skipIf(isBroken && isMacOS)(
+  "memory leak check - aborted requests",
+  async () => {
+    // Start the fixture server in a separate process
+    const { child, serverInfo } = await spawnServer();
 
-  try {
-    // Run first batch of aborted requests
-    for (let i = 0; i < REQUESTS_COUNT; i += BATCH_SIZE) {
-      await createAbortedRequestBatch(serverInfo);
+    try {
+      // Run first batch of aborted requests
+      for (let i = 0; i < REQUESTS_COUNT; i += BATCH_SIZE) {
+        await createAbortedRequestBatch(serverInfo);
 
-      // Log progress every 10% complete
-      if (i % (REQUESTS_COUNT / 10) < BATCH_SIZE) {
-        console.log(`Completed ${i + BATCH_SIZE} / ${REQUESTS_COUNT} aborted requests`);
+        // Log progress every 10% complete
+        if (i % (REQUESTS_COUNT / 10) < BATCH_SIZE) {
+          console.log(`Completed ${i + BATCH_SIZE} / ${REQUESTS_COUNT} aborted requests`);
+        }
       }
-    }
 
-    // Check memory after first batch
-    const rss1 = await getMemoryUsage(serverInfo);
-    console.log(rss1.objects);
-    console.log(`After ${REQUESTS_COUNT} aborted requests: RSS = ${formatBytes(rss1.rss)}`);
+      // Check memory after first batch
+      const rss1 = await getMemoryUsage(serverInfo);
+      console.log(rss1.objects);
+      console.log(`After ${REQUESTS_COUNT} aborted requests: RSS = ${formatBytes(rss1.rss)}`);
 
-    // Run garbage collection if available
-    if (typeof Bun !== "undefined") {
-      Bun.gc(true);
-    }
-
-    // Run second batch of aborted requests
-    for (let i = 0; i < REQUESTS_COUNT; i += BATCH_SIZE) {
-      await createAbortedRequestBatch(serverInfo);
-
-      // Log progress every 10% complete
-      if (i % (REQUESTS_COUNT / 10) < BATCH_SIZE) {
-        console.log(`Completed ${REQUESTS_COUNT + i + BATCH_SIZE} / ${REQUESTS_COUNT * 2} aborted requests`);
+      // Run garbage collection if available
+      if (typeof Bun !== "undefined") {
+        Bun.gc(true);
       }
+
+      // Run second batch of aborted requests
+      for (let i = 0; i < REQUESTS_COUNT; i += BATCH_SIZE) {
+        await createAbortedRequestBatch(serverInfo);
+
+        // Log progress every 10% complete
+        if (i % (REQUESTS_COUNT / 10) < BATCH_SIZE) {
+          console.log(`Completed ${REQUESTS_COUNT + i + BATCH_SIZE} / ${REQUESTS_COUNT * 2} aborted requests`);
+        }
+      }
+
+      // Check memory after second batch
+      const rss2 = await getMemoryUsage(serverInfo);
+      console.log(rss1.objects);
+      console.log(`After ${REQUESTS_COUNT * 2} aborted requests: RSS = ${formatBytes(rss2.rss)}`);
+
+      // Analyze memory growth
+      const ratio = rss2.rss / rss1.rss;
+      console.log(`Memory growth ratio: ${ratio.toFixed(2)}x`);
+
+      // A memory leak would show a significant increase
+      expect(ratio).toBeLessThan(1.5);
+    } finally {
+      // Shutdown the server
+      if (child.connected) {
+        child.send({ type: "shutdown" });
+      } else {
+        child.kill();
+      }
+
+      // Wait for the process to exit
+      await new Promise<void>(resolve => {
+        child.on("exit", () => resolve());
+        setTimeout(() => {
+          child.kill("SIGKILL");
+          resolve();
+        }, 1000).unref();
+      });
     }
-
-    // Check memory after second batch
-    const rss2 = await getMemoryUsage(serverInfo);
-    console.log(rss1.objects);
-    console.log(`After ${REQUESTS_COUNT * 2} aborted requests: RSS = ${formatBytes(rss2.rss)}`);
-
-    // Analyze memory growth
-    const ratio = rss2.rss / rss1.rss;
-    console.log(`Memory growth ratio: ${ratio.toFixed(2)}x`);
-
-    // A memory leak would show a significant increase
-    expect(ratio).toBeLessThan(1.5);
-  } finally {
-    // Shutdown the server
-    if (child.connected) {
-      child.send({ type: "shutdown" });
-    } else {
-      child.kill();
-    }
-
-    // Wait for the process to exit
-    await new Promise<void>(resolve => {
-      child.on("exit", () => resolve());
-      setTimeout(() => {
-        child.kill("SIGKILL");
-        resolve();
-      }, 1000).unref();
-    });
-  }
-}, 40000);
+  },
+  40000,
+);

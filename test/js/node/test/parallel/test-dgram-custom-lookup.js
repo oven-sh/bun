@@ -41,7 +41,8 @@ const dns = require('dns');
     }, {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
-      message: /The "lookup" argument must be of type function/
+      message: 'The "lookup" argument must be of type function.' +
+               common.invalidArgTypeHelper(value)
     });
   });
 }

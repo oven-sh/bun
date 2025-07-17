@@ -184,7 +184,7 @@ Peer dependencies are handled similarly to yarn. `bun install` will automaticall
 
 ## Lockfile
 
-`bun.lock` is Bun’s lockfile format. See [our blogpost about the text lockfile](https://bun.sh/blog/bun-lock-text-lockfile).
+`bun.lock` is Bun’s lockfile format. See [our blogpost about the text lockfile](https://bun.com/blog/bun-lock-text-lockfile).
 
 Prior to Bun 1.2, the lockfile was binary and called `bun.lockb`. Old lockfiles can be upgraded to the new format by running `bun install --save-text-lockfile --frozen-lockfile --lockfile-only`, and then deleting `bun.lockb`.
 

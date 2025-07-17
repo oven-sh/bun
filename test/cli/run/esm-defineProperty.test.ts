@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import * as CJSArrayLike from "./cjs-defineProperty-arraylike.cjs";
 import * as CJS from "./cjs-defineProperty-fixture.cjs";
+import * as Self from "./esm-defineProperty.test.ts";
 // https://github.com/oven-sh/bun/issues/4432
 test("defineProperty", () => {
   expect(CJS.a).toBe(1);
@@ -10,7 +11,6 @@ test("defineProperty", () => {
 
   expect(Bun.inspect(CJS.default)).toBe(`{\n  a: 1,\n  b: 2,\n  c: [Getter],\n}`);
 });
-import * as Self from "./esm-defineProperty.test.ts";
 export const __esModule = true;
 test("shows __esModule if it was exported", () => {
   expect(Bun.inspect(Self)).toBe(`Module {

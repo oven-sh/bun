@@ -79,7 +79,7 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
 // Create a file with given contents, returns if file was newly created
 fn createFile(filename: []const u8, contents: []const u8) bun.JSC.Maybe(bool) {
     // Check if file exists and has same contents
-    if (bun.sys.File.readFrom(bun.toFD(std.fs.cwd()), filename, default_allocator).asValue()) |source_contents| {
+    if (bun.sys.File.readFrom(bun.FD.cwd(), filename, default_allocator).asValue()) |source_contents| {
         defer default_allocator.free(source_contents);
         if (strings.eqlLong(source_contents, contents, true)) {
             return .{ .result = false };
@@ -92,11 +92,11 @@ fn createFile(filename: []const u8, contents: []const u8) bun.JSC.Maybe(bool) {
     }
 
     // Open file for writing
-    const fd = switch (bun.sys.openatA(bun.toFD(std.fs.cwd()), filename, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+    const fd = switch (bun.sys.openatA(.cwd(), filename, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
         .result => |fd| fd,
         .err => |err| return .{ .err = err },
     };
-    defer _ = bun.sys.close(fd);
+    defer fd.close();
 
     // Write contents
     switch (bun.sys.File.writeAll(.{ .handle = fd }, contents)) {
@@ -616,28 +616,22 @@ fn findReactComponentExport(bundler: *BundleV2) ?[]const u8 {
     return null;
 }
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
-const std = @import("std");
-const Progress = bun.Progress;
 
-const lex = bun.js_lexer;
+const std = @import("std");
+
 const logger = bun.logger;
 
-const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
 const BundleV2 = bun.bundle_v2.BundleV2;
 const Command = bun.CLI.Command;
 const Example = @import("../cli/create_command.zig").Example;
@@ -707,7 +701,6 @@ const shared_client_tsx = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_
 const shared_html = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html");
 const shared_package_json = @embedFile("projects/react-shadcn-spa/package.json");
 const shared_bunfig_toml = @embedFile("projects/react-shadcn-spa/bunfig.toml");
-const shared_index_tsx = @embedFile("projects/react-spa/index.tsx");
 
 // Template for basic React project
 const ReactSpa = struct {

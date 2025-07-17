@@ -3,7 +3,7 @@ name: Build a frontend using Vite and Bun
 ---
 
 {% callout %}
-While Vite currently works with Bun, it has not been heavily optimized, nor has Vite been adapted to use Bun's bundler, module resolver, or transpiler.
+You can use Vite with Bun, but many projects get faster builds & drop hundreds of dependencies by switching to [HTML imports](/docs/bundler/html).
 {% /callout %}
 
 ---
@@ -31,6 +31,7 @@ bun install
 Start the development server with the `vite` CLI using `bunx`.
 
 The `--bun` flag tells Bun to run Vite's CLI using `bun` instead of `node`; by default Bun respects Vite's `#!/usr/bin/env node` [shebang line](<https://en.wikipedia.org/wiki/Shebang_(Unix)>).
+
 ```bash
 bunx --bun vite
 ```

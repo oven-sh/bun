@@ -1,13 +1,13 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import crypto from "crypto";
+import { once } from "events";
 import { bunEnv, bunExe } from "harness";
+import { createServer } from "http";
+import { AddressInfo, connect } from "net";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
-import { createServer } from "http";
-import { connect, AddressInfo } from "net";
-import { once } from "events";
-import crypto from "crypto";
 
 const strings = [
   {

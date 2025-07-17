@@ -1,8 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
+const bun = @import("bun");
 const Symbol = bun.JSAst.Symbol;
 
 pub const css = @import("../css_parser.zig");
@@ -308,9 +306,9 @@ pub const CustomIdent = struct {
     ) PrintErr!void {
         const css_module_custom_idents_enabled = enabled_css_modules and
             if (dest.css_module) |*css_module|
-            css_module.config.custom_idents
-        else
-            false;
+                css_module.config.custom_idents
+            else
+                false;
         return dest.writeIdent(this.v, css_module_custom_idents_enabled);
     }
 

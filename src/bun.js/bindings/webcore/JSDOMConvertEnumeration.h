@@ -50,7 +50,7 @@ template<typename T> struct Converter<IDLEnumeration<T>> : DefaultConverter<IDLE
         auto result = parseEnumeration<T>(lexicalGlobalObject, value);
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        if (UNLIKELY(!result)) {
+        if (!result) [[unlikely]] {
             exceptionThrower(lexicalGlobalObject, throwScope);
             return {};
         }

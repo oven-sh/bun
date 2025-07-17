@@ -1,5 +1,4 @@
-import { test, expect } from "bun:test";
-import { spawn, sleep } from "bun";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("spawn AbortSignal works after spawning", async () => {

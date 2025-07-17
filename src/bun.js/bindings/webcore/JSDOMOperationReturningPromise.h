@@ -41,7 +41,7 @@ public:
         return JSC::JSValue::encode(callPromiseFunction(lexicalGlobalObject, callFrame, [&operationName](JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, Ref<DeferredPromise>&& promise) {
             auto* thisObject = IDLOperation<JSClass>::cast(lexicalGlobalObject, callFrame);
             if constexpr (shouldThrow != CastedThisErrorBehavior::Assert) {
-                if (UNLIKELY(!thisObject))
+                if (!thisObject) [[unlikely]]
                     return rejectPromiseWithThisTypeError(promise.get(), JSClass::info()->className, operationName);
             } else
                 ASSERT(thisObject);
@@ -60,8 +60,9 @@ public:
     {
         auto* thisObject = IDLOperation<JSClass>::cast(lexicalGlobalObject, callFrame);
         if constexpr (shouldThrow != CastedThisErrorBehavior::Assert) {
-            if (UNLIKELY(!thisObject))
+            if (!thisObject) [[unlikely]] {
                 return rejectPromiseWithThisTypeError(lexicalGlobalObject, JSClass::info()->className, operationName);
+            }
         } else
             ASSERT(thisObject);
 

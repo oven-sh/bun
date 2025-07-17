@@ -1,6 +1,5 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
-const Environment = bun.Environment;
 const O = bun.O;
 
 // O_TMPFILE doesn't seem to work very well.
@@ -46,7 +45,7 @@ pub const Tmpfile = struct {
             }
 
             tmpfile.fd = switch (bun.sys.openat(destination_dir, tmpfilename, O.CREAT | O.CLOEXEC | O.WRONLY, perm)) {
-                .result => |fd| switch (bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail)) {
+                .result => |fd| switch (fd.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                     .result => |owned_fd| owned_fd,
                     .err => |err| return .{ .err = err },
                 },
@@ -84,6 +83,6 @@ pub const Tmpfile = struct {
             }
         }
 
-        try bun.C.moveFileZWithHandle(this.fd, this.destination_dir, this.tmpfilename, this.destination_dir, destname);
+        try bun.sys.moveFileZWithHandle(this.fd, this.destination_dir, this.tmpfilename, this.destination_dir, destname);
     }
 };

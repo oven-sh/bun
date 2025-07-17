@@ -1,6 +1,4 @@
-const std = @import("std");
-const bun = @import("root").bun;
-const string = bun.string;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -48,8 +46,8 @@ pub const JSModuleLoader = opaque {
         return JSC__JSModuleLoader__loadAndEvaluateModule(globalObject, module_name);
     }
 
-    extern fn JSModuleLoader__import(*JSGlobalObject, *const bun.String) *JSInternalPromise;
-    pub fn import(globalObject: *JSGlobalObject, module_name: *const bun.String) *JSInternalPromise {
-        return JSModuleLoader__import(globalObject, module_name);
+    extern fn JSModuleLoader__import(*JSGlobalObject, *const bun.String) ?*JSInternalPromise;
+    pub fn import(globalObject: *JSGlobalObject, module_name: *const bun.String) bun.JSError!*JSInternalPromise {
+        return JSModuleLoader__import(globalObject, module_name) orelse error.JSError;
     }
 };

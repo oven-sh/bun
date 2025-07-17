@@ -817,7 +817,7 @@ function maybeReadMore_(stream, state) {
 // call cb(er, data) where data is <= n in length.
 // for virtual (non-string, non-buffer) streams, "length" is somewhat
 // arbitrary, and perhaps not very meaningful.
-Readable.prototype._read = function (n) {
+Readable.prototype._read = function (_n) {
   throw $ERR_METHOD_NOT_IMPLEMENTED("_read()");
 };
 
@@ -1268,9 +1268,9 @@ async function* createAsyncIterator(stream, options) {
 
   stream.on("readable", next);
 
-  let error;
+  let error: Error | null;
   const cleanup = eos(stream, { writable: false }, err => {
-    error = err ? aggregateTwoErrors(error, err) : null;
+    error = err ? aggregateTwoErrors(error as Error, err) : null;
     callback();
     callback = nop;
   });
@@ -1288,8 +1288,8 @@ async function* createAsyncIterator(stream, options) {
         await new Promise(next);
       }
     }
-  } catch (err) {
-    error = aggregateTwoErrors(error, err);
+  } catch (err: unknown) {
+    error = aggregateTwoErrors(error as Error, err as Error);
     throw error;
   } finally {
     if ((error || options?.destroyOnReturn !== false) && (error === undefined || stream._readableState.autoDestroy)) {
@@ -1647,4 +1647,4 @@ Readable.wrap = function (src, options) {
   }).wrap(src);
 };
 
-export default Readable;
+export default Readable as unknown as typeof import("node:stream").Readable;

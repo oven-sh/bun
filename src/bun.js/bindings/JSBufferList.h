@@ -72,7 +72,7 @@ public:
     }
     JSC::JSValue shift()
     {
-        if (UNLIKELY(length() == 0))
+        if (length() == 0) [[unlikely]]
             return JSC::jsUndefined();
         auto v = m_deque.first().get();
 
@@ -90,9 +90,9 @@ public:
     }
     JSC::JSValue first()
     {
-        if (UNLIKELY(length() == 0))
+        if (length() == 0) [[unlikely]]
             return JSC::jsUndefined();
-        return JSC::JSValue(m_deque.first().get());
+        return m_deque.first().get();
     }
 
     JSC::JSValue concat(JSC::VM&, JSC::JSGlobalObject*, size_t);

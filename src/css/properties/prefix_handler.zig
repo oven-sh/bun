@@ -1,17 +1,10 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const Allocator = std.mem.Allocator;
+const bun = @import("bun");
 
 pub const css = @import("../css_parser.zig");
 
-const CustomPropertyName = css.css_properties.CustomPropertyName;
-
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
-const Error = css.Error;
 
-const PropertyId = css.PropertyId;
 const PropertyIdTag = css.PropertyIdTag;
 const Property = css.Property;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;

@@ -3,9 +3,9 @@
 // various footguns in JavaScript, C++, and the bindings generator to
 // always produce correct code, or bail with an error.
 import { expect } from "bun:test";
-import type { FuncOptions, Type, t } from "./bindgen-lib";
-import * as path from "node:path";
 import assert from "node:assert";
+import * as path from "node:path";
+import type { FuncOptions, t } from "./bindgen-lib";
 
 export const src = path.join(import.meta.dirname, "../");
 

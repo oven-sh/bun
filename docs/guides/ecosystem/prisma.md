@@ -30,7 +30,7 @@ $ bun add @prisma/client
 We'll use the Prisma CLI with `bunx` to initialize our schema and migration directory. For simplicity we'll be using an in-memory SQLite database.
 
 ```bash
-$ bunx prisma init --datasource-provider sqlite
+$ bunx --bun prisma init --datasource-provider sqlite
 ```
 
 ---
@@ -40,6 +40,7 @@ Open `prisma/schema.prisma` and add a simple `User` model.
 ```prisma-diff#prisma/schema.prisma
   generator client {
     provider = "prisma-client-js"
+    output = "../generated/prisma"
   }
 
   datasource db {
@@ -78,7 +79,7 @@ migrations/
 
 Your database is now in sync with your schema.
 
-✔ Generated Prisma Client (v5.3.1) to ./node_modules/@prisma/client in 41ms
+✔ Generated Prisma Client (v6.11.1) to ./generated/prisma in 41ms
 ```
 
 ---

@@ -29,7 +29,9 @@ export default [
       unref: {
         fn: "doUnref",
       },
-
+      flush: {
+        fn: "doFlush",
+      },
       queries: {
         getter: "getQueries",
         this: true,

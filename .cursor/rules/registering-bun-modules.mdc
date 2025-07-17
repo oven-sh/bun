@@ -1,0 +1,203 @@
+# Registering Functions, Objects, and Modules in Bun
+
+This guide documents the process of adding new functionality to the Bun global object and runtime.
+
+## Overview
+
+Bun's architecture exposes functionality to JavaScript through a set of carefully registered functions, objects, and modules. Most core functionality is implemented in Zig, with JavaScript bindings that make these features accessible to users.
+
+There are several key ways to expose functionality in Bun:
+
+1. **Global Functions**: Direct methods on the `Bun` object (e.g., `Bun.serve()`)
+2. **Getter Properties**: Lazily initialized properties on the `Bun` object (e.g., `Bun.sqlite`)
+3. **Constructor Classes**: Classes available through the `Bun` object (e.g., `Bun.ValkeyClient`)
+4. **Global Modules**: Modules that can be imported directly (e.g., `import {X} from "bun:*"`)
+
+## The Registration Process
+
+Adding new functionality to Bun involves several coordinated steps across multiple files:
+
+### 1. Implement the Core Functionality in Zig
+
+First, implement your feature in Zig, typically in its own directory in `src/`. Examples:
+
+- `src/valkey/` for Redis/Valkey client
+- `src/semver/` for SemVer functionality
+- `src/smtp/` for SMTP client
+
+### 2. Create JavaScript Bindings
+
+Create bindings that expose your Zig functionality to JavaScript:
+
+- Create a class definition file (e.g., `js_bindings.classes.ts`) to define the JavaScript interface
+- Implement `JSYourFeature` struct in a file like `js_your_feature.zig`
+
+Example from a class definition file:
+
+```typescript
+// Example from a .classes.ts file
+import { define } from "../../codegen/class-definitions";
+
+export default [
+  define({
+    name: "YourFeature",
+    construct: true,
+    finalize: true,
+    hasPendingActivity: true,
+    memoryCost: true,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      yourMethod: {
+        fn: "yourZigMethod",
+        length: 1,
+      },
+      property: {
+        getter: "getProperty",
+      },
+    },
+    values: ["cachedValues"],
+  }),
+];
+```
+
+### 3. Register with BunObject in `src/bun.js/bindings/BunObject+exports.h`
+
+Add an entry to the `FOR_EACH_GETTER` macro:
+
+```c
+// In BunObject+exports.h
+#define FOR_EACH_GETTER(macro) \
+    macro(CSRF) \
+    macro(CryptoHasher) \
+    ... \
+    macro(YourFeature) \
+```
+
+### 4. Create a Getter Function in `src/bun.js/api/BunObject.zig`
+
+Implement a getter function in `BunObject.zig` that returns your feature:
+
+```zig
+// In BunObject.zig
+pub const YourFeature = toJSGetter(Bun.getYourFeatureConstructor);
+
+// In the exportAll() function:
+@export(&BunObject.YourFeature, .{ .name = getterName("YourFeature") });
+```
+
+### 5. Implement the Getter Function in a Relevant Zig File
+
+Implement the function that creates your object:
+
+```zig
+// In your main module file (e.g., src/your_feature/your_feature.zig)
+pub fn getYourFeatureConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    return JSC.API.YourFeature.getConstructor(globalThis);
+}
+```
+
+### 6. Add to Build System
+
+Ensure your files are included in the build system by adding them to the appropriate targets.
+
+## Example: Adding a New Module
+
+Here's a comprehensive example of adding a hypothetical SMTP module:
+
+1. Create implementation files in `src/smtp/`:
+
+   - `index.zig`: Main entry point that exports everything
+   - `SmtpClient.zig`: Core SMTP client implementation
+   - `js_smtp.zig`: JavaScript bindings
+   - `js_bindings.classes.ts`: Class definition
+
+2. Define your JS class in `js_bindings.classes.ts`:
+
+```typescript
+import { define } from "../../codegen/class-definitions";
+
+export default [
+  define({
+    name: "EmailClient",
+    construct: true,
+    finalize: true,
+    hasPendingActivity: true,
+    configurable: false,
+    memoryCost: true,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      send: {
+        fn: "send",
+        length: 1,
+      },
+      verify: {
+        fn: "verify",
+        length: 0,
+      },
+      close: {
+        fn: "close",
+        length: 0,
+      },
+    },
+    values: ["connectionPromise"],
+  }),
+];
+```
+
+3. Add getter to `BunObject+exports.h`:
+
+```c
+#define FOR_EACH_GETTER(macro) \
+    macro(CSRF) \
+    ... \
+    macro(SMTP) \
+```
+
+4. Add getter function to `BunObject.zig`:
+
+```zig
+pub const SMTP = toJSGetter(Bun.getSmtpConstructor);
+
+// In exportAll:
+@export(&BunObject.SMTP, .{ .name = getterName("SMTP") });
+```
+
+5. Implement getter in your module:
+
+```zig
+pub fn getSmtpConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    return JSC.API.JSEmailClient.getConstructor(globalThis);
+}
+```
+
+## Best Practices
+
+1. **Follow Naming Conventions**: Align your naming with existing patterns
+2. **Reference Existing Modules**: Study similar modules like Valkey or S3Client for guidance
+3. **Memory Management**: Be careful with memory management and reference counting
+4. **Error Handling**: Use `bun.JSError!JSValue` for proper error propagation
+5. **Documentation**: Add JSDoc comments to your JavaScript bindings
+6. **Testing**: Add tests for your new functionality
+
+## Common Gotchas
+
+- Be sure to handle reference counting properly with `ref()`/`deref()`
+- Always implement proper cleanup in `deinit()` and `finalize()`
+- For network operations, manage socket lifetimes correctly
+- Use `JSC.Codegen` correctly to generate necessary binding code
+
+## Related Files
+
+- `src/bun.js/bindings/BunObject+exports.h`: Registration of getters and functions
+- `src/bun.js/api/BunObject.zig`: Implementation of getters and object creation
+- `src/bun.js/api/BunObject.classes.ts`: Class definitions
+- `.cursor/rules/zig-javascriptcore-classes.mdc`: More details on class bindings
+
+## Additional Resources
+
+For more detailed information on specific topics:
+
+- See `zig-javascriptcore-classes.mdc` for details on creating JS class bindings
+- Review existing modules like `valkey`, `sqlite`, or `s3` for real-world examples

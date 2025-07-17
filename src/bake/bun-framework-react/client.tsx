@@ -2,11 +2,11 @@
 // Components integration. It is designed as a minimal base to build RSC
 // applications on, and to showcase what features that Bake offers.
 /// <reference lib="dom" />
+import { onServerSideReload } from "bun:bake/client";
 import * as React from "react";
+import { flushSync } from "react-dom";
 import { hydrateRoot } from "react-dom/client";
 import { createFromReadableStream } from "react-server-dom-bun/client.browser";
-import { onServerSideReload } from "bun:bake/client";
-import { flushSync } from "react-dom";
 
 const te = new TextEncoder();
 const td = new TextDecoder();

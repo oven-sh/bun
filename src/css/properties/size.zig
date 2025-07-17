@@ -1,14 +1,11 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
 
 pub const css = @import("../css_parser.zig");
 
-const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
-const Error = css.Error;
 
 const PropertyId = css.PropertyId;
 const PropertyIdTag = css.PropertyIdTag;
@@ -17,34 +14,20 @@ const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
 
 const PropertyCategory = css.logical.PropertyCategory;
 
-const ContainerName = css.css_rules.container.ContainerName;
-
 const LengthPercentage = css.css_values.length.LengthPercentage;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const CSSNumber = css.css_values.number.CSSNumber;
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Image = css.css_values.image.Image;
-const CssColor = css.css_values.color.CssColor;
 const Ratio = css.css_values.ratio.Ratio;
-const Length = css.css_values.length.LengthValue;
-const Rect = css.css_values.rect.Rect;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
-const Angle = css.css_values.angle.Angle;
-const Url = css.css_values.url.Url;
-
-const GenericBorder = css.css_properties.border.GenericBorder;
-const LineStyle = css.css_properties.border.LineStyle;
 
 pub const BoxSizing = enum {
     /// Exclude the margin/border/padding from the width and height.
     @"content-box",
     /// Include the padding and border (but not the margin) in the width and height.
     @"border-box",
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 pub const Size = union(enum) {
@@ -141,11 +124,11 @@ pub const Size = union(enum) {
                 try dest.writeStr("fit-content");
             },
             .stretch => |vp| {
-                if (vp.eql(css.VendorPrefix{ .none = true })) {
+                if (vp == css.VendorPrefix{ .none = true }) {
                     try dest.writeStr("stretch");
-                } else if (vp.eql(css.VendorPrefix{ .webkit = true })) {
+                } else if (vp == css.VendorPrefix{ .webkit = true }) {
                     try dest.writeStr("-webkit-fill-available");
-                } else if (vp.eql(css.VendorPrefix{ .moz = true })) {
+                } else if (vp == css.VendorPrefix{ .moz = true }) {
                     try dest.writeStr("-moz-available");
                 } else {
                     bun.unreachablePanic("Unexpected vendor prefixes", .{});
@@ -301,11 +284,11 @@ pub const MaxSize = union(enum) {
                 try dest.writeStr("fit-content");
             },
             .stretch => |vp| {
-                if (css.VendorPrefix.eql(vp, css.VendorPrefix{ .none = true })) {
+                if (vp == css.VendorPrefix{ .none = true }) {
                     try dest.writeStr("stretch");
-                } else if (css.VendorPrefix.eql(vp, css.VendorPrefix{ .webkit = true })) {
+                } else if (vp == css.VendorPrefix{ .webkit = true }) {
                     try dest.writeStr("-webkit-fill-available");
-                } else if (css.VendorPrefix.eql(vp, css.VendorPrefix{ .moz = true })) {
+                } else if (vp == css.VendorPrefix{ .moz = true }) {
                     try dest.writeStr("-moz-available");
                 } else {
                     bun.unreachablePanic("Unexpected vendor prefixes", .{});
@@ -418,8 +401,6 @@ pub const SizeProperty = packed struct(u16) {
     @"max-inline-size": bool = false,
     __unused: u4 = 0,
 
-    pub usingnamespace css.Bitflags(@This());
-
     pub fn tryFromPropertyIdTag(property_id: PropertyIdTag) ?SizeProperty {
         inline for (std.meta.fields(@This())) |field| {
             if (comptime std.mem.eql(u8, field.name, "__unused")) continue;
@@ -471,7 +452,7 @@ pub const SizeHandler = struct {
             .unparsed => |*unparsed| {
                 switch (unparsed.property_id) {
                     .width, .height, .@"min-width", .@"max-width", .@"min-height", .@"max-height" => {
-                        this.flushed_properties.insert(SizeProperty.tryFromPropertyIdTag(@as(PropertyIdTag, unparsed.property_id)).?);
+                        bun.bits.insert(SizeProperty, &this.flushed_properties, SizeProperty.tryFromPropertyIdTag(@as(PropertyIdTag, unparsed.property_id)).?);
                         dest.append(context.allocator, property.deepClone(context.allocator)) catch unreachable;
                     },
                     .@"block-size" => this.logicalUnparsedHelper(property, unparsed, .height, logical_supported, dest, context),
@@ -491,7 +472,7 @@ pub const SizeHandler = struct {
 
     inline fn logicalUnparsedHelper(this: *@This(), property: *const Property, unparsed: *const UnparsedProperty, comptime physical: PropertyIdTag, logical_supported: bool, dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
         if (logical_supported) {
-            this.flushed_properties.insert(SizeProperty.tryFromPropertyIdTag(@as(PropertyIdTag, unparsed.property_id)).?);
+            bun.bits.insert(SizeProperty, &this.flushed_properties, SizeProperty.tryFromPropertyIdTag(@as(PropertyIdTag, unparsed.property_id)).?);
             dest.append(context.allocator, property.deepClone(context.allocator)) catch bun.outOfMemory();
         } else {
             dest.append(context.allocator, Property{
@@ -500,7 +481,7 @@ pub const SizeHandler = struct {
                     @unionInit(PropertyId, @tagName(physical), {}),
                 ),
             }) catch bun.outOfMemory();
-            this.flushed_properties.insert(SizeProperty.fromName(@tagName(physical)));
+            @field(this.flushed_properties, @tagName(physical)) = true;
         }
     }
 
@@ -548,7 +529,7 @@ pub const SizeHandler = struct {
 
     pub fn finalize(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
         this.flush(dest, context);
-        this.flushed_properties = SizeProperty.empty();
+        this.flushed_properties = SizeProperty{};
     }
 
     inline fn flushPrefixHelper(
@@ -559,7 +540,7 @@ pub const SizeHandler = struct {
         dest: *css.DeclarationList,
         context: *css.PropertyHandlerContext,
     ) void {
-        if (!this.flushed_properties.contains(comptime SizeProperty.fromName(@tagName(property)))) {
+        if (!@field(this.flushed_properties, @tagName(property))) {
             const prefixes = context.targets.prefixes(css.VendorPrefix{ .none = true }, feature).difference(css.VendorPrefix{ .none = true });
             inline for (css.VendorPrefix.FIELDS) |field| {
                 if (@field(prefixes, field)) {
@@ -588,22 +569,22 @@ pub const SizeHandler = struct {
     ) void {
         if (bun.take(&@field(this, field))) |val| {
             switch (val) {
-                .stretch => |vp| if (vp.eql(css.VendorPrefix{ .none = true })) {
+                .stretch => |vp| if (vp == css.VendorPrefix{ .none = true }) {
                     this.flushPrefixHelper(property, SizeType, .stretch, dest, context);
                 },
-                .min_content => |vp| if (vp.eql(css.VendorPrefix{ .none = true })) {
+                .min_content => |vp| if (vp == css.VendorPrefix{ .none = true }) {
                     this.flushPrefixHelper(property, SizeType, .min_content, dest, context);
                 },
-                .max_content => |vp| if (vp.eql(css.VendorPrefix{ .none = true })) {
+                .max_content => |vp| if (vp == css.VendorPrefix{ .none = true }) {
                     this.flushPrefixHelper(property, SizeType, .max_content, dest, context);
                 },
-                .fit_content => |vp| if (vp.eql(css.VendorPrefix{ .none = true })) {
+                .fit_content => |vp| if (vp == css.VendorPrefix{ .none = true }) {
                     this.flushPrefixHelper(property, SizeType, .fit_content, dest, context);
                 },
                 else => {},
             }
             dest.append(context.allocator, @unionInit(Property, @tagName(property), val.deepClone(context.allocator))) catch bun.outOfMemory();
-            this.flushed_properties.insert(comptime SizeProperty.fromName(@tagName(property)));
+            @field(this.flushed_properties, @tagName(property)) = true;
         }
     }
 

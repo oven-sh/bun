@@ -1,7 +1,7 @@
 // Regression test for https://github.com/oven-sh/bun/issues/18159
 // When setTimeout is called without a delay argument, it should not emit a TimeoutNaNWarning
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("setTimeout() without delay should not emit TimeoutNaNWarning", done => {
   process.on("warning", warning => {

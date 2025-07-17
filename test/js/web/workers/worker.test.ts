@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { once } from "events";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
 import wt from "worker_threads";
@@ -269,6 +270,32 @@ describe("web worker", () => {
       done();
     });
   });
+
+  describe("worker event", () => {
+    test("is fired with the right object", () => {
+      const { promise, resolve } = Promise.withResolvers();
+      let worker: Worker | undefined = undefined;
+      let called = false;
+      process.once("worker", eventWorker => {
+        called = true;
+        expect(eventWorker as any).toBe(worker);
+        resolve();
+      });
+      worker = new Worker(new URL("data:text/javascript,"));
+      expect(called).toBeFalse();
+      return promise;
+    });
+  });
+
+  describe("error event", () => {
+    test("is fired with a string of the error", async () => {
+      const worker = new Worker("data:text/javascript,throw 5");
+      const [err] = await once(worker, "error");
+      expect(err.type).toBe("error");
+      expect(err.message).toBe("5");
+      expect(err.error).toBe(null);
+    });
+  });
 });
 
 // TODO: move to node:worker_threads tests directory
@@ -288,12 +315,27 @@ describe("worker_threads", () => {
     });
   });
 
-  test("worker terminate", async () => {
-    const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url).href, {
-      smol: true,
-    });
-    const code = await worker.terminate();
-    expect(code).toBe(0);
+  test("worker terminate while setting up thread", async () => {
+    // this test is inherently somewhat flaky: if we call terminate() before the worker starts
+    // running any JavaScript the code will be 0 like we expect, but if we terminate while it is
+    // running code the exit code is 1 instead (this happens in Node.js too). this means we can
+    // randomly see an exit code of 1 if the main thread happens to run slower than usual and allows
+    // the worker to run some code.
+    //
+    // to prevent it from polluting the flaky test list, we try 10 times and expect:
+    // - at least 1 time the exit code was 0
+    // - the exit code is never something other than 0 or 1
+    const codes: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url).href, {
+        smol: true,
+      });
+      worker.on("error", expect.unreachable);
+      const code = await worker.terminate();
+      expect(code === 0 || code === 1, `unexpected exit code ${code}`).toBeTrue();
+      codes.push(code);
+    }
+    expect(codes.includes(0)).toBeTrue();
   });
 
   test("worker with process.exit (delay) and terminate", async () => {
@@ -311,7 +353,7 @@ describe("worker_threads", () => {
       worker.on("message", () => done());
     });
     const code = await worker.terminate();
-    expect(code).toBe(0);
+    expect(code).toBe(1);
   });
 
   test("worker without argv/execArgv", async () => {
@@ -349,14 +391,10 @@ describe("worker_threads", () => {
 
   test("worker with eval = false fails with code", async () => {
     let has_error = false;
-    try {
-      const worker = new wt.Worker("console.log('this should not get printed')", { eval: false });
-    } catch (err) {
-      expect(err.constructor.name).toEqual("TypeError");
-      expect(err.message).toMatch(/BuildMessage: ModuleNotFound.+/);
-      has_error = true;
-    }
-    expect(has_error).toBe(true);
+    const worker = new wt.Worker("console.log('this should not get printed')", { eval: false });
+    const [err] = await once(worker, "error");
+    expect(err.constructor.name).toEqual("Error");
+    expect(err.message).toMatch(/BuildMessage: ModuleNotFound.+/);
   });
 
   test("worker with eval = true succeeds with valid code", async () => {

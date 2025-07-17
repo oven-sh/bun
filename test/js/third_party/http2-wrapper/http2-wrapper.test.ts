@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { tls } from "harness";
-import http2Wrapper from "http2-wrapper";
-import type { AutoRequestOptions } from "http2-wrapper";
 import http from "http";
+import type { AutoRequestOptions } from "http2-wrapper";
+import http2Wrapper from "http2-wrapper";
 
 async function doRequest(options: AutoRequestOptions) {
   const { promise, resolve, reject } = Promise.withResolvers();

@@ -12,9 +12,9 @@ Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1. Us
 {% codetabs %}
 
 ```bash#macOS/Linux_(curl)
-$ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
+$ curl -fsSL https://bun.com/install | bash # for macOS, Linux, and WSL
 # to install a specific version
-$ curl -fsSL https://bun.sh/install | bash -s "bun-v$BUN_LATEST_VERSION"
+$ curl -fsSL https://bun.com/install | bash -s "bun-v$BUN_LATEST_VERSION"
 ```
 
 ```bash#npm
@@ -56,7 +56,7 @@ To install, paste this into a terminal:
 Bun requires a minimum of Windows 10 version 1809
 {% /callout %}
 
-For support and discussion, please join the [#windows channel on our Discord](http://bun.sh/discord).
+For support and discussion, please join the [#windows channel on our Discord](http://bun.com/discord).
 
 ## Docker
 
@@ -192,7 +192,7 @@ Since Bun is a single binary, you can install older versions of Bun by re-runnin
 To install a specific version of Bun, you can pass the git tag of the version you want to install to the install script, such as `bun-v1.2.0` or `bun-v$BUN_LATEST_VERSION`.
 
 ```sh
-$ curl -fsSL https://bun.sh/install | bash -s "bun-v$BUN_LATEST_VERSION"
+$ curl -fsSL https://bun.com/install | bash -s "bun-v$BUN_LATEST_VERSION"
 ```
 
 ### Installing a specific version of Bun on Windows
@@ -201,12 +201,12 @@ On Windows, you can install a specific version of Bun by passing the version num
 
 ```sh
 # PowerShell:
-$ iex "& {$(irm https://bun.sh/install.ps1)} -Version $BUN_LATEST_VERSION"
+$ iex "& {$(irm https://bun.com/install.ps1)} -Version $BUN_LATEST_VERSION"
 ```
 
 ## Downloading Bun binaries directly
 
-To download Bun binaries directly, you can visit the [releases page](https://github.com/oven-sh/bun/releases) page on GitHub.
+To download Bun binaries directly, you can visit the [releases page](https://github.com/oven-sh/bun/releases) on GitHub.
 
 For convenience, here are download links for the latest version:
 
@@ -223,7 +223,16 @@ For convenience, here are download links for the latest version:
 
 The `musl` binaries are built for distributions that do not ship with the glibc libraries by default, instead relying on musl. The two most popular distros are Void Linux and Alpine Linux, with the latter is used heavily in Docker containers. If you encounter an error like the following: `bun: /lib/x86_64-linux-gnu/libm.so.6: version GLIBC_2.29' not found (required by bun)`, try using the musl binary. Bun's install script automatically chooses the correct binary for your system.
 
-Bun's `x64` binaries target the Haswell CPU architecture, which means they require AVX and AVX2 instructions. For Linux and Windows, the `x64-baseline` binaries are also available which target the Nehalem architecture. If you run into an "Illegal Instruction" error when running Bun, try using the `baseline` binaries instead. Bun's install scripts automatically chooses the correct binary for your system which helps avoid this issue. Baseline builds are slower than regular builds, so use them only if necessary.
+### CPU requirements and `baseline` builds
+
+Bun's `x64` binaries target the Haswell CPU architecture, which means they require AVX and AVX2 instructions. For Linux and Windows, the `x64-baseline` binaries are also available which target the Nehalem architecture. If you run into an "Illegal Instruction" error when running Bun, try using the `baseline` binaries instead. Bun's install script automatically chooses the correct binary for your system which helps avoid this issue. Baseline builds are slower than regular builds, so use them only if necessary.
+
+| Build        | Intel requirement                                                  | AMD requirement    |
+| ------------ | ------------------------------------------------------------------ | ------------------ |
+| x64          | Haswell (4th generation Core) or newer, except some low-end models | Excavator or newer |
+| x64-baseline | Nehalem (1st generation Core) or newer                             | Bulldozer or newer |
+
+Bun does not currently support any CPUs older than the `baseline` target, which mandates the SSE4.2 extension.
 
 Bun also publishes `darwin-x64-baseline` binaries, but these are just a copy of the `darwin-x64` ones so they still have the same CPU requirement. We only maintain these since some tools expect them to exist. Bun requires macOS 13.0 or later, which does not support any CPUs that don't meet our requirement.
 
@@ -233,7 +242,7 @@ Bun also publishes `darwin-x64-baseline` binaries, but these are just a copy of 
 Works on macOS x64 & Silicon, Linux x64, Windows Subsystem for Linux.
 
 ```sh
-$ curl -fsSL https://bun.sh/install | bash
+$ curl -fsSL https://bun.com/install | bash
 ```
 
 Once installed, the binary can upgrade itself.

@@ -1,7 +1,6 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
 
 pub const css = @import("../css_parser.zig");
 
@@ -10,17 +9,9 @@ const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
 const LengthPercentage = css.css_values.length.LengthPercentage;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
 const CSSNumber = css.css_values.number.CSSNumber;
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
 const LengthOrNumber = css.css_values.length.LengthOrNumber;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
 const Image = css.css_values.image.Image;
-const CssColor = css.css_values.color.CssColor;
-const Ratio = css.css_values.ratio.Ratio;
-const Length = css.css_values.length.LengthValue;
 const Rect = css.css_values.rect.Rect;
 const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
 const Percentage = css.css_values.percentage.Percentage;
@@ -39,8 +30,6 @@ pub const BorderImage = struct {
     outset: Rect(css.css_values.length.LengthOrNumber),
     /// How the border image is scaled and tiled.
     repeat: BorderImageRepeat,
-
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-image", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .source = css.PropertyIdTag.@"border-image-source",
@@ -274,8 +263,8 @@ pub const BorderImageSideWidth = union(enum) {
     /// The `auto` keyword, representing the natural width of the image slice.
     auto: void,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn deinit(this: *const BorderImageSideWidth, allocator: std.mem.Allocator) void {
         switch (this.*) {
@@ -329,7 +318,12 @@ pub const BorderImageRepeatKeyword = enum {
     /// The image is repeated so that it fits, and then spaced apart evenly.
     space,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
         return switch (this.*) {
@@ -406,8 +400,6 @@ pub const BorderImageProperty = packed struct(u8) {
     pub const @"border-image-outset" = BorderImageProperty{ .outset = true };
     pub const @"border-image-repeat" = BorderImageProperty{ .repeat = true };
 
-    pub usingnamespace css.Bitflags(@This());
-
     pub const @"border-image" = BorderImageProperty{
         .source = true,
         .slice = true,
@@ -415,6 +407,10 @@ pub const BorderImageProperty = packed struct(u8) {
         .outset = true,
         .repeat = true,
     };
+
+    pub fn isEmpty(this: BorderImageProperty) bool {
+        return @as(u8, @bitCast(this)) == 0;
+    }
 
     pub fn tryFromPropertyId(property_id: css.PropertyIdTag) ?BorderImageProperty {
         inline for (std.meta.fields(BorderImageProperty)) |field| {
@@ -439,8 +435,8 @@ pub const BorderImageHandler = struct {
     width: ?Rect(BorderImageSideWidth) = null,
     outset: ?Rect(LengthOrNumber) = null,
     repeat: ?BorderImageRepeat = null,
-    vendor_prefix: css.VendorPrefix = css.VendorPrefix.empty(),
-    flushed_properties: BorderImageProperty = BorderImageProperty.empty(),
+    vendor_prefix: css.VendorPrefix = .{},
+    flushed_properties: BorderImageProperty = .{},
     has_any: bool = false,
 
     pub fn handleProperty(this: *@This(), property: *const css.Property, dest: *css.DeclarationList, context: *css.PropertyHandlerContext) bool {
@@ -462,7 +458,7 @@ pub const BorderImageHandler = struct {
 
         const propertyHelper = struct {
             inline fn propertyHelper(self: *BorderImageHandler, comptime field: []const u8, comptime T: type, val: *const T, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext) void {
-                if (!self.vendor_prefix.eql(VendorPrefix{ .none = true })) {
+                if (self.vendor_prefix != VendorPrefix{ .none = true }) {
                     self.flush(d, ctx);
                 }
 
@@ -495,7 +491,7 @@ pub const BorderImageHandler = struct {
                 this.width = val.width.deepClone(allocator);
                 this.outset = val.outset.deepClone(allocator);
                 this.repeat = val.repeat.deepClone(allocator);
-                this.vendor_prefix = this.vendor_prefix.bitwiseOr(vp);
+                this.vendor_prefix = bun.bits.@"or"(VendorPrefix, this.vendor_prefix, vp);
                 this.has_any = true;
             },
             .unparsed => |unparsed| {
@@ -510,7 +506,7 @@ pub const BorderImageHandler = struct {
                         unparsed.deepClone(allocator);
 
                     context.addUnparsedFallbacks(&unparsed_clone);
-                    this.flushed_properties.insert(BorderImageProperty.tryFromPropertyId(unparsed_clone.property_id).?);
+                    bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.tryFromPropertyId(unparsed_clone.property_id).?);
                     dest.append(allocator, Property{ .unparsed = unparsed_clone }) catch bun.outOfMemory();
                 } else return false;
             },
@@ -522,7 +518,7 @@ pub const BorderImageHandler = struct {
 
     pub fn finalize(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
         this.flush(dest, context);
-        this.flushed_properties = BorderImageProperty.empty();
+        this.flushed_properties = BorderImageProperty{};
     }
 
     pub fn reset(this: *@This(), allocator: std.mem.Allocator) void {
@@ -545,7 +541,7 @@ pub const BorderImageHandler = struct {
             .@"border-image-width",
             .@"border-image-outset",
             .@"border-image-repeat",
-            => !this.vendor_prefix.eql(VendorPrefix{ .none = true }),
+            => this.vendor_prefix != VendorPrefix{ .none = true },
             .unparsed => |val| isBorderImageProperty(val.property_id),
             else => false,
         };
@@ -573,15 +569,15 @@ pub const BorderImageHandler = struct {
             };
 
             var prefix = this.vendor_prefix;
-            if (prefix.contains(css.VendorPrefix{ .none = true }) and !border_image.slice.fill) {
+            if (prefix.none and !border_image.slice.fill) {
                 prefix = context.targets.prefixes(this.vendor_prefix, css.prefixes.Feature.border_image);
-                if (!this.flushed_properties.intersects(BorderImageProperty.@"border-image")) {
+                if (this.flushed_properties.isEmpty()) {
                     const fallbacks = border_image.getFallbacks(allocator, context.targets).slice();
                     for (fallbacks) |fallback| {
                         // Match prefix of fallback. e.g. -webkit-linear-gradient
                         // can only be used in -webkit-border-image, not -moz-border-image.
                         // However, if border-image is unprefixed, gradients can still be.
-                        var p = fallback.source.getVendorPrefix().intersect(prefix);
+                        var p = bun.bits.@"and"(VendorPrefix, fallback.source.getVendorPrefix(), prefix);
                         if (p.isEmpty()) {
                             p = prefix;
                         }
@@ -590,47 +586,47 @@ pub const BorderImageHandler = struct {
                 }
             }
 
-            const p = border_image.source.getVendorPrefix().intersect(prefix);
+            const p = bun.bits.@"and"(css.VendorPrefix, border_image.source.getVendorPrefix(), prefix);
             if (!p.isEmpty()) {
                 prefix = p;
             }
 
             dest.append(allocator, Property{ .@"border-image" = .{ border_image, prefix } }) catch bun.outOfMemory();
-            this.flushed_properties.insert(BorderImageProperty.@"border-image");
+            bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.@"border-image");
         } else {
             if (source) |*mut_source| {
-                if (!this.flushed_properties.contains(BorderImageProperty.@"border-image-source")) {
+                if (!bun.bits.contains(BorderImageProperty, this.flushed_properties, BorderImageProperty.@"border-image-source")) {
                     for (mut_source.getFallbacks(allocator, context.targets).slice()) |fallback| {
                         dest.append(allocator, Property{ .@"border-image-source" = fallback }) catch bun.outOfMemory();
                     }
                 }
 
                 dest.append(allocator, Property{ .@"border-image-source" = mut_source.* }) catch bun.outOfMemory();
-                this.flushed_properties.insert(BorderImageProperty.@"border-image-source");
+                bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.@"border-image-source");
             }
 
             if (slice) |s| {
                 dest.append(allocator, Property{ .@"border-image-slice" = s }) catch bun.outOfMemory();
-                this.flushed_properties.insert(BorderImageProperty.@"border-image-slice");
+                bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.@"border-image-slice");
             }
 
             if (width) |w| {
                 dest.append(allocator, Property{ .@"border-image-width" = w }) catch bun.outOfMemory();
-                this.flushed_properties.insert(BorderImageProperty.@"border-image-width");
+                bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.@"border-image-width");
             }
 
             if (outset) |o| {
                 dest.append(allocator, Property{ .@"border-image-outset" = o }) catch bun.outOfMemory();
-                this.flushed_properties.insert(BorderImageProperty.@"border-image-outset");
+                bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.@"border-image-outset");
             }
 
             if (repeat) |r| {
                 dest.append(allocator, Property{ .@"border-image-repeat" = r }) catch bun.outOfMemory();
-                this.flushed_properties.insert(BorderImageProperty.@"border-image-repeat");
+                bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.@"border-image-repeat");
             }
         }
 
-        this.vendor_prefix = VendorPrefix.empty();
+        this.vendor_prefix = VendorPrefix{};
     }
 };
 

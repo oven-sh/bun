@@ -23,6 +23,7 @@ using namespace JSC;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
+JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
 
 void populateESMExports(
     JSC::JSGlobalObject* globalObject,
@@ -66,6 +67,9 @@ public:
     // When the module is assigned a JSCommonJSModule parent, it is assigned to this field.
     // This is the normal state.
     JSC::Weak<JSCommonJSModule> m_parent {};
+    // If compile is overridden, it is assigned to this field. The default
+    // compile function is not stored here, but in
+    mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
 
     bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
@@ -86,6 +90,7 @@ public:
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
     void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
+    void evaluateWithPotentiallyOverriddenCompile(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, JSValue keyJSString, ResolvedSource& resolvedSource);
     inline void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
     {
         return evaluate(globalObject, sourceURL, resolvedSource, false);

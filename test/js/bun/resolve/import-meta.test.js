@@ -1,4 +1,5 @@
 import { spawnSync } from "bun";
+import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 import { expect, it, mock } from "bun:test";
 import { bunEnv, bunExe, ospath } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -6,7 +7,6 @@ import Module from "node:module";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import sync from "./require-json.json";
-import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 
 const { path, dir, dirname, filename } = import.meta;
 

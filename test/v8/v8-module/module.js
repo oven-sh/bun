@@ -45,5 +45,49 @@ module.exports = debugMode => {
         console.log("constructor is", ret.constructor.name);
       }
     },
+
+    test_v8_object_get_set_exceptions() {
+      for (const key of [0, "key"]) {
+        for (const access of ["get", "set"]) {
+          const name = `perform_object_${access}_by_${typeof key == "number" ? "index" : "key"}`;
+          const nativeFunction = nativeModule[name];
+          if (typeof nativeFunction !== "function") throw new Error(name);
+
+          const normal = { [key]: 5 };
+          const accessor = {};
+          Object.defineProperty(accessor, key, {
+            [access](...args) {
+              throw new Error("exception from accessor");
+            },
+          });
+          const proxy = new Proxy(
+            {},
+            {
+              [access](...args) {
+                throw new Error("exception from proxy");
+              },
+            },
+          );
+          const readonly = {};
+          Object.defineProperty(readonly, key, { configurable: true, writable: false, enumerable: true, value: "bar" });
+
+          for (const [object, description] of [
+            [normal, "plain object"],
+            [accessor, "object with accessor that throws"],
+            [proxy, "proxy with handler that throws"],
+            [readonly, "plain object with readonly property"],
+          ]) {
+            console.log(`======\n${access} ${key} on ${description}`);
+            try {
+              nativeFunction(object, key, "foo");
+              console.log("did not throw");
+              if (object === normal || object === readonly) console.log("now value is", object[key]);
+            } catch (e) {
+              console.log(`threw: ${e.message}`);
+            }
+          }
+        }
+      }
+    },
   };
 };

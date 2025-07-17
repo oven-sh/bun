@@ -23,6 +23,7 @@
 #include <JavaScriptCore/InternalFunction.h>
 
 #include "ZigGlobalObject.h"
+#include "ErrorCode.h"
 
 namespace WebCore {
 
@@ -49,14 +50,21 @@ public:
 
     JSDOMGlobalObject* globalObject() const { return JSC::jsCast<JSDOMGlobalObject*>(Base::globalObject()); }
     ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
+    Bun::ErrorCode errorCode() const { return m_errorCode; }
 
 protected:
-    JSDOMConstructorBase(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction functionForConstruct, JSC::NativeFunction functionForCall = nullptr)
+    JSDOMConstructorBase(JSC::VM& vm, JSC::Structure* structure,
+        JSC::NativeFunction functionForConstruct,
+        JSC::NativeFunction functionForCall = nullptr,
+        Bun::ErrorCode errorCode = Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR)
         : Base(vm, structure,
               functionForCall ? functionForCall : callThrowTypeErrorForJSDOMConstructor,
               functionForConstruct ? functionForConstruct : callThrowTypeErrorForJSDOMConstructor)
+        , m_errorCode(errorCode)
     {
     }
+
+    Bun::ErrorCode m_errorCode;
 };
 
 } // namespace WebCore

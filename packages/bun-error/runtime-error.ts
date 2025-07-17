@@ -1,6 +1,6 @@
 // Based on https://github.com/stacktracejs/error-stack-parser/blob/master/error-stack-parser.js
 
-import type { StackFrame as StackFrameType, StackFramePosition, StackFrameScope } from "../../src/api/schema";
+import type { StackFramePosition, StackFrameScope, StackFrame as StackFrameType } from "../../src/api/schema";
 
 export class StackFrame implements StackFrameType {
   function_name: string;
@@ -42,11 +42,11 @@ export default class RuntimeError {
   original: Error;
   stack: StackFrame[];
 
-  static from(error: Error) {
+  static from(error: Error): RuntimeError {
     const runtime = new RuntimeError();
     runtime.original = error;
     runtime.stack = this.parseStack(error);
-    return RuntimeError;
+    return runtime;
   }
 
   /**

@@ -1,7 +1,7 @@
-import path from "path";
-import { bunExe } from "harness";
-import { $ } from "bun";
 import { fail } from "assert";
+import { $ } from "bun";
+import { bunExe } from "harness";
+import path from "path";
 
 const fixtureDir = path.join(import.meta.dir, "fixtures");
 describe("test.failing", () => {
@@ -39,7 +39,37 @@ describe("test.failing", () => {
     if (result.exitCode === 0) {
       fail("Expected exit code to be non-zero\n\n" + stderr);
     }
-    expect(stderr).toContain(" 1 fail\n");
+    expect(stderr).toContain(" 0 pass\n");
     expect(stderr).toMatch(/timed out after \d+ms/i);
+  });
+
+  describe("when using a done() callback", () => {
+    it("when a test throws, rejects, or passes an error to done(), the test passes", async () => {
+      const result = await $.cwd(
+        fixtureDir,
+      ).nothrow()`${bunExe()} test ./failing-test-done-test-succeeds.fixture.ts`.quiet();
+      const stderr = result.stderr.toString();
+      try {
+        expect(stderr).toContain("0 fail");
+        expect(result.exitCode).toBe(0);
+      } catch (e) {
+        console.error(stderr);
+        throw e;
+      }
+    });
+
+    it("when the test doesn't throw, or otherwise fail, the test does not pass", async () => {
+      const result = await $.cwd(
+        fixtureDir,
+      ).nothrow()`${bunExe()} test ./failing-test-done-test-fails.fixture.ts`.quiet();
+      const stderr = result.stderr.toString();
+      try {
+        expect(stderr).toContain("0 pass");
+        expect(result.exitCode).not.toBe(0);
+      } catch (e) {
+        console.error(stderr);
+        throw e;
+      }
+    });
   });
 });

@@ -93,7 +93,7 @@ template<> std::optional<CryptoKey::Type> parseEnumeration<CryptoKey::Type>(JSGl
         { "secret"_s, CryptoKey::Type::Secret },
     };
     static constexpr SortedArrayMap enumerationMapping { mappings };
-    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); LIKELY(enumerationValue))
+    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]
         return *enumerationValue;
     return std::nullopt;
 }
@@ -174,28 +174,6 @@ static const HashTableValue JSCryptoKeyPrototypeTableValues[] = {
 
 const ClassInfo JSCryptoKeyPrototype::s_info = { "CryptoKey"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoKeyPrototype) };
 
-JSCryptoKey* JSCryptoKey::fromJS(JSGlobalObject* globalObject, JSValue value)
-{
-    if (value.inherits<JSCryptoKey>()) {
-        return jsCast<JSCryptoKey*>(value);
-    }
-
-    JSObject* object = value.getObject();
-    if (!object) {
-        return nullptr;
-    }
-
-    auto& vm = JSC::getVM(globalObject);
-
-    auto& names = WebCore::builtinNames(vm);
-
-    if (auto nativeValue = object->getIfPropertyExists(globalObject, names.bunNativePtrPrivateName())) {
-        return jsDynamicCast<JSCryptoKey*>(nativeValue);
-    }
-
-    return nullptr;
-}
-
 void JSCryptoKeyPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -246,7 +224,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCryptoKeyConstructor, (JSGlobalObject * lexicalGlobal
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSCryptoKeyPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSCryptoKey::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -346,7 +324,7 @@ void JSCryptoKey::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 
 bool JSCryptoKeyOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    if (UNLIKELY(reason))
+    if (reason) [[unlikely]]
         *reason = "Reachable from CryptoKey"_s;
     return visitor.containsOpaqueRoot(context);
 }

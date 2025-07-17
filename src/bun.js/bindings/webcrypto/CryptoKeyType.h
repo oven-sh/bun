@@ -29,11 +29,13 @@
 
 namespace WebCore {
 
-enum class CryptoKeyType {
-    Public,
+enum class CryptoKeyType : uint8_t {
+    Public = 0,
     Private,
     Secret
 };
+
+const constexpr uint8_t cryptoKeyTypeMaximumValue = 2;
 
 } // namespace WebCore
 

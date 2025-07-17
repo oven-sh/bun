@@ -1,21 +1,13 @@
-const options = @import("./options.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
-const resolve_path = @import("./resolver/resolve_path.zig");
-const Fs = @import("./fs.zig");
 const Schema = @import("./api/schema.zig");
 const Ref = @import("ast/base.zig").Ref;
 const JSAst = bun.JSAst;
-const content = @import("root").content;
 
 const Api = Schema.Api;
 fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []const u8 {
@@ -323,6 +315,7 @@ pub const Runtime = struct {
         @"$$typeof": ?Ref = null,
         __using: ?Ref = null,
         __callDispose: ?Ref = null,
+        __jsonParse: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -338,6 +331,7 @@ pub const Runtime = struct {
             "$$typeof",
             "__using",
             "__callDispose",
+            "__jsonParse",
         };
         const all_sorted: [all.len]string = brk: {
             @setEvalBranchQuota(1000000);

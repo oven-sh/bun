@@ -1,29 +1,27 @@
 const Glob = @This();
 const globImpl = @import("../../glob.zig");
 const GlobWalker = globImpl.BunGlobWalker;
-const PathLike = @import("../node/types.zig").PathLike;
-const ArgumentsSlice = @import("../node/types.zig").ArgumentsSlice;
+const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const Syscall = @import("../../sys.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const BunString = bun.String;
 const string = bun.string;
 const JSC = bun.JSC;
-const JSArray = @import("../bindings/bindings.zig").JSArray;
-const JSValue = @import("../bindings/bindings.zig").JSValue;
-const ZigString = @import("../bindings/bindings.zig").ZigString;
-const Base = @import("../base.zig");
-const JSGlobalObject = @import("../bindings/bindings.zig").JSGlobalObject;
-const getAllocator = Base.getAllocator;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
+const JSGlobalObject = JSC.JSGlobalObject;
 const ResolvePath = @import("../../resolver/resolve_path.zig");
-const isAllAscii = @import("../../string_immutable.zig").isAllASCII;
 const CodepointIterator = @import("../../string_immutable.zig").UnsignedCodepointIterator;
 
 const Arena = std.heap.ArenaAllocator;
 
-pub usingnamespace JSC.Codegen.JSGlob;
+pub const js = JSC.Codegen.JSGlob;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
 
 pattern: []const u8,
 pattern_codepoints: ?std.ArrayList(u32) = null,
@@ -60,7 +58,7 @@ const ScanOpts = struct {
             const cwd = switch (bun.sys.getcwd((&path_buf))) {
                 .result => |cwd| cwd,
                 .err => |err| {
-                    const errJs = err.toJSC(globalThis);
+                    const errJs = err.toJS(globalThis);
                     return globalThis.throwValue(errJs);
                 },
             };
@@ -152,9 +150,9 @@ pub const WalkTask = struct {
         syscall: Syscall.Error,
         unknown: anyerror,
 
-        pub fn toJSC(this: Err, globalThis: *JSGlobalObject) JSValue {
+        pub fn toJS(this: Err, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
-                .syscall => |err| err.toJSC(globalThis),
+                .syscall => |err| err.toJS(globalThis),
                 .unknown => |err| ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
@@ -196,12 +194,12 @@ pub const WalkTask = struct {
         defer this.deinit();
 
         if (this.err) |err| {
-            const errJs = err.toJSC(this.global);
+            const errJs = err.toJS(this.global);
             promise.reject(this.global, errJs);
             return;
         }
 
-        const jsStrings = globWalkResultToJS(this.walker, this.global);
+        const jsStrings = globWalkResultToJS(this.walker, this.global) catch return promise.reject(this.global, error.JSError);
         promise.resolve(this.global, jsStrings);
     }
 
@@ -211,7 +209,7 @@ pub const WalkTask = struct {
     }
 };
 
-fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) JSValue {
+fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     if (globWalk.matchedPaths.keys().len == 0) {
         return JSC.JSValue.createEmptyArray(globalThis, 0);
     }
@@ -254,7 +252,7 @@ fn makeGlobWalker(
             only_files,
         )) {
             .err => |err| {
-                return globalThis.throwValue(err.toJSC(globalThis));
+                return globalThis.throwValue(err.toJS(globalThis));
             },
             else => {},
         }
@@ -271,7 +269,7 @@ fn makeGlobWalker(
         only_files,
     )) {
         .err => |err| {
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
         else => {},
     }
@@ -279,10 +277,10 @@ fn makeGlobWalker(
 }
 
 pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Glob {
-    const alloc = getAllocator(globalThis);
+    const alloc = bun.default_allocator;
 
     const arguments_ = callframe.arguments_old(1);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const pat_arg: JSValue = arguments.nextEat() orelse {
         return globalThis.throw("Glob.constructor: expected 1 arguments, got 0", .{});
@@ -324,16 +322,16 @@ fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void 
 }
 
 pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const alloc = getAllocator(globalThis);
+    const alloc = bun.default_allocator;
 
     const arguments_ = callframe.arguments_old(1);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
     const globWalker = try this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) orelse {
         arena.deinit();
-        return .undefined;
+        return .js_undefined;
     };
 
     incrPendingActivityFlag(&this.has_pending_activity);
@@ -347,22 +345,22 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
 }
 
 pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const alloc = getAllocator(globalThis);
+    const alloc = bun.default_allocator;
 
     const arguments_ = callframe.arguments_old(1);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
     var globWalker = try this.makeGlobWalker(globalThis, &arguments, "scanSync", alloc, &arena) orelse {
         arena.deinit();
-        return .undefined;
+        return .js_undefined;
     };
     defer globWalker.deinit(true);
 
     switch (try globWalker.walk()) {
         .err => |err| {
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
         .result => {},
     }
@@ -373,12 +371,12 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
 }
 
 pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const alloc = getAllocator(globalThis);
+    const alloc = bun.default_allocator;
     var arena = Arena.init(alloc);
     defer arena.deinit();
 
     const arguments_ = callframe.arguments_old(1);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const str_arg = arguments.nextEat() orelse {
         return globalThis.throw("Glob.matchString: expected 1 arguments, got 0", .{});

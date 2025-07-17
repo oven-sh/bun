@@ -4,6 +4,10 @@
 // into Zig code. By using automatic translation, differences
 // between platforms and subtle mistakes can be avoided.
 //
+// One way to locate a definition for a given symbol is to open
+// Zig's `lib` directory and run ripgrep on it. For example,
+// `sockaddr_dl` is in `libc/include/any-macos-any/net/if_dl.h`
+//
 // When Zig is translating this file, it will define these macros:
 // - WINDOWS
 // - DARWIN
@@ -19,26 +23,47 @@
 #include "../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
 
 #if POSIX
-#include "pwd.h"
-#include <unistd.h>
+#include <ifaddrs.h>
 #include <netdb.h>
+#include <pwd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #endif
 
 #if DARWIN
-#include <sys/mount.h>
-#include <sys/stat.h>
-#include <sys/sysctl.h>
+#include <copyfile.h>
+#include <mach/mach_host.h>
+#include <mach/processor_info.h>
+#include <net/if.h>
+#include <net/if_dl.h>
+#include <sys/clonefile.h>
 #include <sys/fcntl.h>
+#include <sys/mount.h>
 #include <sys/socket.h>
-#include <net/if.h>
 #include <sys/spawn.h>
-#elif LINUX
-#include <sys/statfs.h>
 #include <sys/stat.h>
-#include <spawn.h>
-#include <ifaddrs.h>
-#include <net/if.h>
+#include <sys/stdio.h>
+#include <sys/sysctl.h>
+#elif LINUX
 #include <fcntl.h>
-#include <sys/socket.h>
 #include <linux/fs.h>
+#include <net/if.h>
+#include <spawn.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/statfs.h>
+#include <sys/sysinfo.h>
 #endif
+
+#if WINDOWS
+#include <windows.h>
+#include <winternl.h>
+#endif
+
+#undef lstat
+#undef fstat
+#undef stat
+
+#include <zstd.h>
+#include <zstd_errors.h>

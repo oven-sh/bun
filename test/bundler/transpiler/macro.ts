@@ -17,3 +17,9 @@ export function addStringsUTF16(arg: string) {
 export default function() {
   return "defaultdefaultdefault";
 }
+
+export async function ireturnapromise() {
+  const { promise, resolve } = Promise.withResolvers();
+  setTimeout(() => resolve("aaa"), 100);
+  return promise;
+}

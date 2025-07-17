@@ -1,42 +1,20 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
 
 const ArrayList = std.ArrayListUnmanaged;
-const SmallList = css.SmallList;
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
 const css_values = css.css_values;
-const CssColor = css.css_values.color.CssColor;
-const Image = css.css_values.image.Image;
-const Length = css.css_values.length.LengthValue;
 const LengthPercentage = css_values.length.LengthPercentage;
-const LengthPercentageOrAuto = css_values.length.LengthPercentageOrAuto;
-const PropertyCategory = css.PropertyCategory;
-const LogicalGroup = css.LogicalGroup;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const CSSInteger = css.css_values.number.CSSInteger;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
 const Percentage = css.css_values.percentage.Percentage;
 const Angle = css.css_values.angle.Angle;
-const DashedIdentReference = css.css_values.ident.DashedIdentReference;
-const Time = css.css_values.time.Time;
-const EasingFunction = css.css_values.easing.EasingFunction;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Url = css.css_values.url.Url;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
-const Location = css.Location;
-const HorizontalPosition = css.css_values.position.HorizontalPosition;
-const VerticalPosition = css.css_values.position.VerticalPosition;
-const ContainerName = css.css_rules.container.ContainerName;
 
 /// A value for the [font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop) property.
 pub const FontWeight = union(enum) {
@@ -48,8 +26,8 @@ pub const FontWeight = union(enum) {
     lighter,
 
     // TODO: implement this
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub inline fn default() FontWeight {
         return .{ .absolute = AbsoluteFontWeight.default() };
@@ -83,7 +61,7 @@ pub const AbsoluteFontWeight = union(enum) {
     /// Same as `700`.
     bold,
 
-    pub usingnamespace css.DeriveParse(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
 
     pub fn toCss(this: *const AbsoluteFontWeight, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
         return switch (this.*) {
@@ -122,8 +100,8 @@ pub const FontSize = union(enum) {
     /// A relative font size keyword.
     relative: RelativeFontSize,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn isCompatible(this: *const FontSize, browsers: bun.css.targets.Browsers) bool {
         return switch (this.*) {
@@ -170,7 +148,12 @@ pub const AbsoluteFontSize = enum {
     /// "xxx-large"
     @"xxx-large",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn isCompatible(this: *const AbsoluteFontSize, browsers: bun.css.targets.Browsers) bool {
         return switch (this.*) {
@@ -188,7 +171,12 @@ pub const RelativeFontSize = enum {
     smaller,
     larger,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the [font-stretch](https://www.w3.org/TR/css-fonts-4/#font-stretch-prop) property.
@@ -199,7 +187,7 @@ pub const FontStretch = union(enum) {
     percentage: Percentage,
 
     // TODO: implement this
-    pub usingnamespace css.DeriveParse(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
 
     pub fn toCss(this: *const FontStretch, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
         if (dest.minify) {
@@ -264,7 +252,12 @@ pub const FontStretchKeyword = enum {
     /// 200%
     @"ultra-expanded",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub inline fn default() FontStretchKeyword {
         return .normal;
@@ -351,11 +344,12 @@ pub const FontFamily = union(enum) {
 
                 if (val.len > 0 and
                     !css.parse_utility.parseString(
-                    dest.allocator,
-                    GenericFontFamily,
-                    val,
-                    GenericFontFamily.parse,
-                ).isOk()) {
+                        dest.allocator,
+                        GenericFontFamily,
+                        val,
+                        GenericFontFamily.parse,
+                    ).isOk())
+                {
                     var id = ArrayList(u8){};
                     defer id.deinit(dest.allocator);
                     var first = true;
@@ -432,7 +426,12 @@ pub const GenericFontFamily = enum {
     revert,
     @"revert-layer",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn isCompatible(this: *const GenericFontFamily, browsers: bun.css.targets.Browsers) bool {
         return switch (this.*) {
@@ -530,7 +529,12 @@ pub const FontVariantCaps = enum {
     /// Uses titling capitals.
     @"titling-caps",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn default() FontVariantCaps {
         return .normal;
@@ -568,8 +572,8 @@ pub const LineHeight = union(enum) {
     /// An explicit height.
     length: LengthPercentage,
 
-    pub usingnamespace @call(.auto, css.DeriveParse, .{@This()});
-    pub usingnamespace @call(.auto, css.DeriveToCss, .{@This()});
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn isCompatible(this: *const LineHeight, browsers: bun.css.targets.Browsers) bool {
         return switch (this.*) {
@@ -608,7 +612,7 @@ pub const Font = struct {
     /// How the text should be capitalized. Only CSS 2.1 values are supported.
     variant_caps: FontVariantCaps,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.font, PropertyFieldMap);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.font, PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .family = css.PropertyIdTag.@"font-family",
@@ -775,7 +779,12 @@ pub const VerticalAlignKeyword = enum {
     /// Align the bottom of the box with the bottom of the parent’s content area.
     @"text-bottom",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 pub const FontProperty = packed struct(u8) {
@@ -787,8 +796,6 @@ pub const FontProperty = packed struct(u8) {
     @"line-height": bool = false,
     @"font-variant-caps": bool = false,
     __unused: u1 = 0,
-
-    pub usingnamespace css.Bitflags(@This());
 
     const FONT = FontProperty{
         .@"font-family" = true,
@@ -864,7 +871,7 @@ pub const FontHandler = struct {
             .unparsed => |*val| {
                 if (isFontProperty(val.property_id)) {
                     this.flush(dest, context);
-                    this.flushed_properties.insert(FontProperty.tryFromPropertyId(val.property_id).?);
+                    bun.bits.insert(FontProperty, &this.flushed_properties, FontProperty.tryFromPropertyId(val.property_id).?);
                     dest.append(context.allocator, property.*) catch bun.outOfMemory();
                 } else {
                     return false;
@@ -903,20 +910,18 @@ pub const FontHandler = struct {
         this.flushed_properties = .{};
     }
 
-    fn flush(this: *FontHandler, decls: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
-        const push = struct {
-            fn push(self: *FontHandler, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, comptime prop: []const u8, val: anytype) void {
-                d.append(ctx.allocator, @unionInit(css.Property, prop, val)) catch bun.outOfMemory();
-                var insertion: FontProperty = .{};
-                if (comptime std.mem.eql(u8, prop, "font")) {
-                    insertion = FontProperty.FONT;
-                } else {
-                    @field(insertion, prop) = true;
-                }
-                self.flushed_properties.insert(insertion);
-            }
-        }.push;
+    fn push(self: *FontHandler, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, comptime prop: []const u8, val: anytype) void {
+        d.append(ctx.allocator, @unionInit(css.Property, prop, val)) catch bun.outOfMemory();
+        var insertion: FontProperty = .{};
+        if (comptime std.mem.eql(u8, prop, "font")) {
+            insertion = FontProperty.FONT;
+        } else {
+            @field(insertion, prop) = true;
+        }
+        bun.bits.insert(FontProperty, &self.flushed_properties, insertion);
+    }
 
+    fn flush(this: *FontHandler, decls: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
         if (!this.has_any) {
             return;
         }
@@ -924,7 +929,7 @@ pub const FontHandler = struct {
         this.has_any = false;
 
         var family: ?bun.BabyList(FontFamily) = bun.take(&this.family);
-        if (!this.flushed_properties.contains(FontProperty{ .@"font-family" = true })) {
+        if (!this.flushed_properties.@"font-family") {
             family = compatibleFontFamily(context.allocator, family, !context.targets.shouldCompileSame(.font_family_system_ui));
         }
 

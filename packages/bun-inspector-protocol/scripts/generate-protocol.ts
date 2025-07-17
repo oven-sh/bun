@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync, realpathSync } from "node:fs";
-import type { Domain, Property, Protocol } from "../src/protocol/schema";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import type { Property, Protocol } from "../src/protocol/schema";
 
 function formatProtocol(protocol: Protocol, extraTs?: string): string {
   const { name, domains } = protocol;

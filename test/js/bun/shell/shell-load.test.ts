@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { isCI, isWindows } from "harness";
 import path from "path";
 describe("shell load", () => {

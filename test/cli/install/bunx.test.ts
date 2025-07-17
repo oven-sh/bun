@@ -1,8 +1,8 @@
 import { spawn } from "bun";
-import { describe, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, tmpdirSync, readdirSorted } from "harness";
-import { readdirSync, copyFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
+import { copyFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 
@@ -109,9 +109,9 @@ it("should install and run default (latest) version", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
   expect(await exited).toBe(0);
 });
@@ -125,9 +125,9 @@ it("should install and run specified version", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
   expect(await exited).toBe(0);
 });
@@ -142,10 +142,10 @@ it("should output usage if no arguments are passed", async () => {
     env,
   });
 
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Usage: ");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out).toHaveLength(0);
   expect(await exited).toBe(1);
 });
@@ -209,7 +209,7 @@ console.log(
     stderr: "pipe",
     env,
   });
-  const [err, out, exitCode] = await Promise.all([new Response(stderr).text(), new Response(stdout).text(), exited]);
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   expect(err).not.toContain("error:");
   expect(await readdirSorted(x_dir)).toEqual(["test.js"]);
   expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
@@ -309,11 +309,7 @@ it.each(["--version", "-v"])("should print the version using %s and exit", async
     env,
   });
 
-  let [err, out, exited] = await Promise.all([
-    new Response(subprocess.stderr).text(),
-    new Response(subprocess.stdout).text(),
-    subprocess.exited,
-  ]);
+  let [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
 
   expect(err).not.toContain("error:");
   expect(out.trim()).toContain(Bun.version);
@@ -330,11 +326,7 @@ it("should print the revision and exit", async () => {
     env,
   });
 
-  let [err, out, exited] = await Promise.all([
-    new Response(subprocess.stderr).text(),
-    new Response(subprocess.stdout).text(),
-    subprocess.exited,
-  ]);
+  let [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
 
   expect(err).not.toContain("error:");
   expect(out.trim()).toContain(Bun.version);
@@ -352,11 +344,7 @@ it("should pass --version to the package if specified", async () => {
     env,
   });
 
-  let [err, out, exited] = await Promise.all([
-    new Response(subprocess.stderr).text(),
-    new Response(subprocess.stdout).text(),
-    subprocess.exited,
-  ]);
+  let [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
 
   expect(err).not.toContain("error:");
   expect(out.trim()).not.toContain(Bun.version);
@@ -386,11 +374,7 @@ it('should set "npm_config_user_agent" to bun', async () => {
     stderr: "pipe",
   });
 
-  const [err, out, exited] = await Promise.all([
-    new Response(subprocess.stderr).text(),
-    new Response(subprocess.stdout).text(),
-    subprocess.exited,
-  ]);
+  const [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
 
   expect(err).not.toContain("error:");
   expect(out.trim()).toContain(`bun/${Bun.version}`);
@@ -411,11 +395,7 @@ describe("bunx --no-install", () => {
       stderr: "pipe",
     });
 
-    return Promise.all([
-      new Response(subprocess.stderr).text(),
-      new Response(subprocess.stdout).text(),
-      subprocess.exited,
-    ] as const);
+    return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
   };
 
   it("if the package is not installed, it should fail and print an error message", async () => {
@@ -486,14 +466,26 @@ it("should handle postinstall scripts correctly with symlinked bunx", async () =
     },
   });
 
-  let [err, out, exited] = await Promise.all([
-    new Response(subprocess.stderr).text(),
-    new Response(subprocess.stdout).text(),
-    subprocess.exited,
-  ]);
+  let [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
 
   expect(err).not.toContain("error:");
   expect(err).not.toContain("Cannot find module 'exec'");
+  expect(out.trim()).not.toContain(Bun.version);
+  expect(exited).toBe(0);
+});
+
+it("should handle package that requires node 24", async () => {
+  const subprocess = spawn({
+    cmd: [bunExe(), "x", "--bun", "@angular/cli@latest", "--help"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env,
+  });
+
+  let [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
+  expect(err).not.toContain("error:");
   expect(out.trim()).not.toContain(Bun.version);
   expect(exited).toBe(0);
 });

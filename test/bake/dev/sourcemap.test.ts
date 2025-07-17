@@ -3,8 +3,8 @@
 // work because hmr-runtime is minified in release builds, which would affect
 // the generated line/column numbers across different build configurations.
 import { expect } from "bun:test";
-import { Dev, devTest, emptyHtmlFile } from "../bake-harness";
 import { BasicSourceMapConsumer, IndexedSourceMapConsumer, SourceMapConsumer } from "source-map";
+import { Dev, devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("source map emitted for primary chunk", {
   files: {
@@ -93,7 +93,7 @@ async function extractSourceMap(dev: Dev, scriptSource: string) {
     throw new Error("Source map URL not found in " + scriptSource);
   }
   const sourceMap = await dev.fetch(sourceMapUrl[1]).text();
-  if (!sourceMap.startsWith('{')) {
+  if (!sourceMap.startsWith("{")) {
     throw new Error("Source map is not valid JSON: " + sourceMap);
   }
   console.log(sourceMap);

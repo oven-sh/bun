@@ -15,8 +15,9 @@
  *
  */
 import assert from "assert";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
+import { afterAll as after, beforeAll as before, beforeEach, describe, it } from "bun:test";
 
+import { credentials } from "@grpc/grpc-js";
 import { ConnectivityState } from "@grpc/grpc-js/build/src/connectivity-state";
 import { ChannelControlHelper, createChildChannelControlHelper } from "@grpc/grpc-js/build/src/load-balancer";
 import {
@@ -28,7 +29,6 @@ import { Metadata } from "@grpc/grpc-js/build/src/metadata";
 import { Picker } from "@grpc/grpc-js/build/src/picker";
 import { Endpoint, subchannelAddressToString } from "@grpc/grpc-js/build/src/subchannel-address";
 import { MockSubchannel, TestClient, TestServer } from "./common";
-import { credentials } from "@grpc/grpc-js";
 
 function updateStateCallBackForExpectedStateSequence(expectedStateSequence: ConnectivityState[], done: Mocha.Done) {
   const actualStateSequence: ConnectivityState[] = [];

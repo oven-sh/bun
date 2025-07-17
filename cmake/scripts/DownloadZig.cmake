@@ -29,6 +29,9 @@ else()
 endif()
 
 set(ZIG_NAME bootstrap-${ZIG_ARCH}-${ZIG_OS_ABI})
+if(ZIG_COMPILER_SAFE)
+  set(ZIG_NAME ${ZIG_NAME}-ReleaseSafe)
+endif()
 set(ZIG_FILENAME ${ZIG_NAME}.zip)
 
 if(CMAKE_HOST_WIN32)

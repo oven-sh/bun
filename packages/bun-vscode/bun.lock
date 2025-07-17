@@ -102,6 +102,8 @@
 
     "@types/ws": ["@types/ws@8.5.12", "", { "dependencies": { "@types/node": "*" } }, "sha512-3tPRkv1EtkDpzlgyKyI8pGsGZAGPEaXeu0DOj5DI25Ja91bdAYddYHbADRYVrZMRbfW+1l5YwXVDKohDJNQxkQ=="],
 
+    "@types/xml2js": ["@types/xml2js@0.4.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-4YnrRemBShWRO2QjvUin8ESA41rH+9nQGLUGZV/1IDhi3SL9OhdpNC/MrulTWuptXKwhx/aDxE7toV0f/ypIXQ=="],
+
     "@vscode/debugadapter": ["@vscode/debugadapter@1.61.0", "", { "dependencies": { "@vscode/debugprotocol": "1.61.0" } }, "sha512-VDGLUFDVAdnftUebZe4uQCIFUbJ7rTc2Grps4D/CXl+qyzTZSQLv5VADEOZ6kBYG4SvlnMLql5vPQ0G6XvUCvQ=="],
 
     "@vscode/debugadapter-testsupport": ["@vscode/debugadapter-testsupport@1.61.0", "", { "dependencies": { "@vscode/debugprotocol": "1.61.0" } }, "sha512-M/8aNX1aFvupd+SP0NLEVLKUK9y52BuCK5vKO2gzdpSoRUR2fR8oFbGkTie+/p2Yrcswnuf7hFx0xWkV9avRdg=="],

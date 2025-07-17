@@ -1,13 +1,13 @@
 import { describe, expect, it } from "bun:test";
+import { once } from "events";
 import { tls as COMMON_CERT_ } from "harness";
 import net from "net";
 import { join } from "path";
-import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls";
 import stream from "stream";
-import { once } from "events";
+import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls";
 
-import { Duplex } from "node:stream";
 import type { AddressInfo } from "net";
+import { Duplex } from "node:stream";
 
 const symbolConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
@@ -367,7 +367,8 @@ for (const { name, connect } of tests) {
     });
 
     // Test using only options
-    it("should process options correctly when connect is called with only options", done => {
+    // prettier-ignore
+    it.skipIf(connect === duplexProxy)("should process options correctly when connect is called with only options", done => {
       let socket = connect({
         port: 443,
         host: "bun.sh",

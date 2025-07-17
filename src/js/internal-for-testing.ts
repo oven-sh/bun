@@ -12,7 +12,7 @@ const fmtBinding = $bindgenFn("fmt.bind.ts", "fmtString");
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
-export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
+export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
@@ -78,7 +78,7 @@ export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bind
   closeTempDirHandle: () => void;
 };
 
-export const install_test_helpers = $zig("install.zig", "bun_install_js_bindings.generate") as {
+export const install_test_helpers = $zig("install_binding.zig", "bun_install_js_bindings.generate") as {
   /**
    * Returns the lockfile at the given path as an object.
    */
@@ -101,7 +101,7 @@ export const memfd_create: (size: number) => number = $newZigFunction(
 );
 
 export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $newZigFunction(
-  "javascript.zig",
+  "virtual_machine_exports.zig",
   "Bun__setSyntheticAllocationLimitForTesting",
   1,
 );
@@ -184,3 +184,12 @@ export const decodeURIComponentSIMD = $newCppFunction(
 );
 
 export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
+export const getCounters = $newZigFunction("Counters.zig", "createCountersObject", 0);
+export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
+
+interface setSocketOptionsFn {
+  (socket: Bun.Socket, sendBuffer: 1, size: number): void;
+  (socket: Bun.Socket, recvBuffer: 2, size: number): void;
+}
+
+export const setSocketOptions: setSocketOptionsFn = $newZigFunction("socket.zig", "jsSetSocketOptions", 3);

@@ -21,7 +21,7 @@ struct Oddball {
     TaggedPointer m_kind;
 
     Oddball(Kind kind)
-        : m_map(const_cast<Map*>(&Map::oddball_map))
+        : m_map(const_cast<Map*>(&Map::oddball_map()))
         , m_kind(TaggedPointer(static_cast<int>(kind)))
     {
     }

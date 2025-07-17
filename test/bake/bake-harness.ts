@@ -18,7 +18,7 @@ import { Matchers } from "bun:test";
 import { EventEmitter } from "node:events";
 // @ts-ignore
 import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, isCI, isWindows, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isCI, isWindows, mergeWindowEnvs } from "harness";
 import { expect } from "bun:test";
 import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
@@ -34,10 +34,16 @@ const verboseSynchronization = process.env.BUN_DEV_SERVER_VERBOSE_SYNC
  * Can be set in fast development environments to improve iteration time.
  * In CI/Windows it appears that sometimes these tests dont wait enough
  * for things to happen, so the extra delay reduces flakiness.
- * 
+ *
  * Needs much more investigation.
  */
 const fastBatches = !!process.env.BUN_DEV_SERVER_FAST_BATCHES;
+
+/**
+ * Set to `ALL` to run all stress tests for 10 minutes each.
+ * Set to a filter to run a specific filter for 10 minutes.
+ */
+const stressTestSelect = process.env.DEV_SERVER_STRESS;
 
 /** For testing bundler related bugs in the DevServer */
 export const minimalFramework: Bake.Framework = {
@@ -95,6 +101,8 @@ export interface DevServerTest {
 
   /** Starting files */
   files?: FileObject;
+  /** Manually specify which html files to serve */
+  htmlFiles?: string[];
   /**
    * Framework to use. Consider `minimalFramework` if possible.
    * Provide this object or `files['bun.app.ts']` for a dynamic one.
@@ -120,7 +128,11 @@ export interface DevServerTest {
    */
   mainDir?: string;
 
-  skip?: ('win32'|'darwin'|'linux'|'ci')[],
+  skip?: ("win32" | "darwin" | "linux" | "ci")[];
+  /**
+   * Only run this test.
+   */
+  only?: boolean;
 }
 
 let interactive = false;
@@ -186,6 +198,7 @@ export class Dev extends EventEmitter {
   options: { files: Record<string, string> };
   nodeEnv: "development" | "production";
   batchingChanges: { write?: () => void } | null = null;
+  stressTestEndurance = false;
 
   socket?: WebSocket;
 
@@ -301,14 +314,11 @@ export class Dev extends EventEmitter {
     const wait = this.waitForHotReload(wantsHmrEvent);
     const b = {
       write: resetSeenFilesWithResolvers,
-      [Symbol.asyncDispose]: async() => {
+      [Symbol.asyncDispose]: async () => {
         if (wantsHmrEvent && interactive) {
           await seenFiles.promise;
         } else if (wantsHmrEvent) {
-          await Promise.race([
-            seenFiles.promise,
-            Bun.sleep(1000),
-          ]);
+          await Promise.race([seenFiles.promise, Bun.sleep(1000)]);
         }
         if (!fastBatches) {
           // Wait an extra delay to avoid double-triggering events.
@@ -339,10 +349,12 @@ export class Dev extends EventEmitter {
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("write " + file);
       const isDev = this.nodeEnv === "development";
-      await using _wait = isDev ? await this.batchChanges({
-        errors: options.errors,
-        snapshot: snapshot,
-      }) : null;
+      await using _wait = isDev
+        ? await this.batchChanges({
+            errors: options.errors,
+            snapshot: snapshot,
+          })
+        : null;
 
       await Bun.write(
         this.join(file),
@@ -375,10 +387,12 @@ export class Dev extends EventEmitter {
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("delete " + file);
       const isDev = this.nodeEnv === "development";
-      await using _wait = isDev ? await this.batchChanges({
-        errors: options.errors,
-        snapshot: snapshot,
-      }) : null;
+      await using _wait = isDev
+        ? await this.batchChanges({
+            errors: options.errors,
+            snapshot: snapshot,
+          })
+        : null;
 
       const filePath = this.join(file);
       if (!fs.existsSync(filePath)) {
@@ -402,10 +416,12 @@ export class Dev extends EventEmitter {
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("patch " + file);
       const isDev = this.nodeEnv === "development";
-      await using _wait = isDev ? await this.batchChanges({
-        errors: errors,
-        snapshot: snapshot,
-      }) : null;
+      await using _wait = isDev
+        ? await this.batchChanges({
+            errors: errors,
+            snapshot: snapshot,
+          })
+        : null;
 
       const filename = this.join(file);
       const source = fs.readFileSync(filename, "utf8");
@@ -468,11 +484,13 @@ export class Dev extends EventEmitter {
           if (wantsHmrEvent) {
             await Bun.sleep(500);
             if (seenMainEvent) return;
-            console.warn("\x1b[33mWARN: Dev Server did not pick up any changed files. Consider wrapping this call in expectNoWebSocketActivity\x1b[35m");
+            console.warn(
+              "\x1b[33mWARN: Dev Server did not pick up any changed files. Consider wrapping this call in expectNoWebSocketActivity\x1b[35m",
+            );
           }
           cleanupAndResolve();
         }
-      };
+      }
       dev.on("watch_synchronization", onEvent);
     });
   }
@@ -483,6 +501,8 @@ export class Dev extends EventEmitter {
       errors?: ErrorSpec[];
       /** Allow using `getMostRecentHmrChunk` */
       storeHotChunks?: boolean;
+      /** Disable the logic that fails a test from a reload */
+      allowUnlimitedReloads?: boolean;
     } = {},
   ) {
     await maybeWaitInteractive("open client " + url);
@@ -490,6 +510,7 @@ export class Dev extends EventEmitter {
       storeHotChunks: options.storeHotChunks,
       hmr: this.nodeEnv === "development",
       expectErrors: !!options.errors,
+      allowUnlimitedReloads: options.allowUnlimitedReloads,
     });
     const onPanic = () => client.output.emit("panic");
     this.output.on("panic", onPanic);
@@ -512,9 +533,11 @@ export class Dev extends EventEmitter {
 
   async gracefulExit() {
     await this.fetch("/_dev_server_test_set");
-    this.devProcess.send({ type: "graceful-exit" });
+    const hasAlreadyExited = this.devProcess.exitCode !== null || this.devProcess.signalCode !== null;
+    if (!hasAlreadyExited) {
+      this.devProcess.send({ type: "graceful-exit" });
+    }
     await Promise.race([
-      //
       this.devProcess.exited,
       new Promise(resolve => setTimeout(resolve, interactive ? interactive_timeout : 2000)),
     ]);
@@ -532,6 +555,48 @@ export class Dev extends EventEmitter {
 
   mkdir(dir: string) {
     return fs.mkdirSync(path.join(this.rootDir, dir), { recursive: true });
+  }
+
+  /**
+   * Run a stress test. The function should perform I/O in a loop, for about a
+   * couple of seconds. In CI, this round is run once. In development, this can
+   * be run forever using `DEV_SERVER_STRESS=FILTER`.
+   *
+   * Tests using this should go in `stress.test.ts`
+   */
+  async stressTest(round: () => Promise<void> | void) {
+    if (!this.stressTestEndurance) {
+      await round();
+      await Bun.sleep(250);
+      if (this.output.panicked) {
+        throw new Error("DevServer panicked in stress test");
+      }
+      return;
+    }
+
+    const endTime = Date.now() + 10 * 60 * 1000;
+    let iteration = 0;
+
+    using log = new TrailingLog();
+    while (Date.now() < endTime) {
+      const timeRemaining = endTime - Date.now();
+      const minutes = Math.floor(timeRemaining / 60000);
+      const seconds = Math.floor((timeRemaining % 60000) / 1000);
+      log.setMessage(
+        `[STRESS] Time remaining: ${minutes}:${seconds.toString().padStart(2, "0")}. Iteration ${++iteration}`,
+      );
+
+      await round();
+
+      if (this.output.panicked) {
+        throw new Error("DevServer panicked in stress test");
+      }
+    }
+
+    await Bun.sleep(250);
+    if (this.output.panicked) {
+      throw new Error("DevServer panicked in stress test");
+    }
   }
 }
 
@@ -695,7 +760,10 @@ export class Client extends EventEmitter {
   hmr = false;
   webSocketMessagesAllowed = true;
 
-  constructor(url: string, options: { storeHotChunks?: boolean; hmr: boolean; expectErrors?: boolean }) {
+  constructor(
+    url: string,
+    options: { storeHotChunks?: boolean; hmr: boolean; expectErrors?: boolean; allowUnlimitedReloads?: boolean },
+  ) {
     super();
     activeClient = this;
     const proc = Bun.spawn({
@@ -707,6 +775,7 @@ export class Client extends EventEmitter {
         url,
         options.storeHotChunks ? "--store-hot-chunks" : "",
         options.expectErrors ? "--expect-errors" : "",
+        options.allowUnlimitedReloads ? "--allow-unlimited-reloads" : "",
       ].filter(Boolean) as string[],
       env: bunEnv,
       serialization: "json",
@@ -739,7 +808,6 @@ export class Client extends EventEmitter {
     });
     this.#proc = proc;
     this.hmr = options.hmr;
-    // @ts-expect-error
     this.output = new OutputLineStream("web", proc.stdout, proc.stderr);
   }
 
@@ -765,6 +833,15 @@ export class Client extends EventEmitter {
       `;
       if (text == null) throw new Error(`Element found but has no text content: ${selector}`);
       return text;
+    });
+  }
+
+  elemsText(selector: string): Promise<string[]> {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      const elems = await this.js<
+        string[]
+      >`Array.from(document.querySelectorAll(${selector})).map(elem => elem.innerHTML)`;
+      return elems;
     });
   }
 
@@ -892,7 +969,14 @@ export class Client extends EventEmitter {
   expectErrorOverlay(errors: ErrorSpec[], caller: string | null = null) {
     return withAnnotatedStack(caller ?? snapshotCallerLocationMayFail(), async () => {
       this.suppressInteractivePrompt = true;
-      const hasVisibleModal = await this.js`document.querySelector("bun-hmr")?.style.display === "block"`;
+      let retries = 0;
+      let hasVisibleModal = false;
+      while (retries < 5) {
+        hasVisibleModal = await this.js`document.querySelector("bun-hmr")?.style.display === "block"`;
+        if (hasVisibleModal) break;
+        await Bun.sleep(200);
+        retries++;
+      }
       this.suppressInteractivePrompt = false;
       if (errors && errors.length > 0) {
         if (!hasVisibleModal) {
@@ -1279,12 +1363,55 @@ if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir, { recursive: true });
 }
 
+// Create a cache directory for React dependencies
+const reactCacheDir = path.join(tempDir, ".react-cache");
+if (!fs.existsSync(reactCacheDir)) {
+  fs.mkdirSync(reactCacheDir, { recursive: true });
+}
+
 function cleanTestDir(dir: string) {
   if (!fs.existsSync(dir)) return;
   const files = fs.readdirSync(dir);
   for (const file of files) {
     const filePath = path.join(dir, file);
     fs.rmSync(filePath, { recursive: true, force: true });
+  }
+}
+
+async function installReactWithCache(root: string) {
+  const cacheFiles = ["node_modules", "package.json", "bun.lock"];
+  const cacheValid = cacheFiles.every(file => fs.existsSync(path.join(reactCacheDir, file)));
+
+  if (cacheValid) {
+    // Copy from cache
+    for (const file of cacheFiles) {
+      const src = path.join(reactCacheDir, file);
+      const dest = path.join(root, file);
+      if (fs.statSync(src).isDirectory()) {
+        fs.cpSync(src, dest, { recursive: true });
+      } else {
+        fs.copyFileSync(src, dest);
+      }
+    }
+  } else {
+    // Install fresh and populate cache
+    await Bun.$`${bunExe()} i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install`
+      .cwd(root)
+      .env({ ...bunEnv })
+      .throws(true);
+
+    // Copy to cache for future use
+    for (const file of cacheFiles) {
+      const src = path.join(root, file);
+      const dest = path.join(reactCacheDir, file);
+      if (fs.existsSync(src)) {
+        if (fs.statSync(src).isDirectory()) {
+          fs.cpSync(src, dest, { recursive: true, force: true });
+        } else {
+          fs.copyFileSync(src, dest);
+        }
+      }
+    }
   }
 }
 
@@ -1441,7 +1568,7 @@ class OutputLineStream extends EventEmitter {
 
 export function indexHtmlScript(htmlFiles: string[]) {
   return [
-    ...htmlFiles.map((file, i) => `import html${i} from ${JSON.stringify("./" + file.replaceAll(path.sep, '/'))};`),
+    ...htmlFiles.map((file, i) => `import html${i} from ${JSON.stringify("./" + file.replaceAll(path.sep, "/"))};`),
     "export default {",
     "  static: {",
     ...(htmlFiles.length === 1
@@ -1464,10 +1591,7 @@ export function indexHtmlScript(htmlFiles: string[]) {
   ].join("\n");
 }
 
-const skipTargets = [
-  process.platform,
-  isCI ? 'ci' : null,
-].filter(Boolean);
+const skipTargets = [process.platform, isCI ? "ci" : null].filter(Boolean);
 
 function testImpl<T extends DevServerTest>(
   description: string,
@@ -1482,6 +1606,18 @@ function testImpl<T extends DevServerTest>(
   const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
 
+  const name = `${
+    NODE_ENV === "development" //
+      ? Bun.enableANSIColors
+        ? " \x1b[35mDEV\x1b[0m"
+        : " DEV"
+      : Bun.enableANSIColors
+        ? "\x1b[36mPROD\x1b[0m"
+        : "PROD"
+  }:${basename}-${count}: ${description}`;
+
+  const isStressTest = stressTestSelect === "ALL" || (stressTestSelect && name.includes(stressTestSelect));
+
   async function run() {
     const root = path.join(tempDir, basename + count);
 
@@ -1490,10 +1626,14 @@ function testImpl<T extends DevServerTest>(
 
     const mainDir = path.resolve(root, options.mainDir ?? ".");
     if (options.files) {
-      const htmlFiles = Object.keys(options.files)
-        .filter(file => file.endsWith(".html"))
-        .map(x => path.join(root, x));
+      const htmlFiles = (options.htmlFiles ?? Object.keys(options.files).filter(file => file.endsWith(".html"))).map(
+        x => path.join(root, x),
+      );
       await writeAll(root, options.files);
+      const runInstall = options.framework === "react";
+      if (runInstall) {
+        await installReactWithCache(root);
+      }
       if (options.files["bun.app.ts"] == undefined && htmlFiles.length === 0) {
         if (!options.framework) {
           throw new Error("Must specify one of: `options.framework`, `*.html`, or `bun.app.ts`");
@@ -1619,6 +1759,7 @@ function testImpl<T extends DevServerTest>(
           BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
           BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
           BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
+          BUN_ASSUME_PERFECT_INCREMENTAL: "0",
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
@@ -1631,14 +1772,15 @@ function testImpl<T extends DevServerTest>(
     if (interactive) {
       console.log("\x1b[35mDev Server PID: " + devProcess.pid + "\x1b[0m");
     }
-    // @ts-expect-error
     using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
     devProcess.exited.then(exitCode => (stream.exitCode = exitCode));
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
-    // @ts-expect-error
     const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);
     if (dev.nodeEnv === "development") {
       await dev.connectSocket();
+    }
+    if (isStressTest) {
+      dev.stressTestEndurance = true;
     }
 
     await maybeWaitInteractive("start");
@@ -1670,26 +1812,20 @@ function testImpl<T extends DevServerTest>(
     await dev.gracefulExit();
   }
 
-  const name = `${
-    NODE_ENV === "development" //
-      ? Bun.enableANSIColors
-        ? " \x1b[35mDEV\x1b[0m"
-        : " DEV"
-      : Bun.enableANSIColors
-        ? "\x1b[36mPROD\x1b[0m"
-        : "PROD"
-  }:${basename}-${count}: ${description}`;
   try {
     if (options.skip && options.skip.some(x => skipTargets.includes(x))) {
       jest.test.todo(name, run);
       return options;
     }
-    jest.test(
+
+    (options.only ? jest.test.only : jest.test)(
       name,
       run,
-      interactive
-        ? interactive_timeout
-        : (options.timeoutMultiplier ?? 1) * (isWindows ? 15_000 : 10_000) * (Bun.version.includes("debug") ? 2 : 1),
+      isStressTest
+        ? 11 * 60 * 1000
+        : interactive
+          ? interactive_timeout
+          : (options.timeoutMultiplier ?? 1) * (isWindows ? 15_000 : 10_000) * (Bun.version.includes("debug") ? 2 : 1),
     );
     return options;
   } catch {
@@ -1725,6 +1861,61 @@ function logErr(err: any) {
   }
 }
 
+// Loosely modelled after the widget system in @paperclover/console
+// Only works with a single log
+let hasTrailingLog = false;
+class TrailingLog {
+  lines = 0;
+  message = "";
+  realConsole;
+
+  constructor() {
+    if (hasTrailingLog) throw new Error("Only one trailing log is allowed");
+    hasTrailingLog = true;
+    this.realConsole = {};
+    console.log = this.#wrapLog("log");
+    console.error = this.#wrapLog("error");
+    console.warn = this.#wrapLog("warn");
+    console.info = this.#wrapLog("info");
+    console.debug = this.#wrapLog("debug");
+  }
+
+  #wrapLog(method: keyof Console) {
+    const m: Function = (this.realConsole[method] = console[method]);
+    return (...args: any[]) => {
+      if (this.lines > 0) {
+        process.stderr.write("\u001B[?2026h" + this.#clear());
+        this.realConsole[method](...args);
+        process.stderr.write(this.message + "\u001B[?2026l");
+      } else {
+        m.apply(console, args);
+      }
+    };
+  }
+
+  #clear() {
+    return "\x1b[2K" + "\x1b[1A\x1b[2K".repeat(this.lines) + "\r";
+  }
+
+  [Symbol.dispose] = () => {
+    if (this.lines > 0) {
+      process.stderr.write(this.#clear());
+    }
+    hasTrailingLog = false;
+    console.log = this.realConsole.log;
+    console.error = this.realConsole.error;
+    console.warn = this.realConsole.warn;
+    console.info = this.realConsole.info;
+    console.debug = this.realConsole.debug;
+  };
+
+  setMessage(message: string) {
+    this.message = message.trim() + "\n";
+    this.lines = this.message.split("\n").length - 1;
+    process.stderr.write("\u001B[?2026h" + this.#clear() + this.message + "\u001B[?2026l");
+  }
+}
+
 process.on("exit", () => {
   for (const proc of danglingProcesses) {
     proc.kill("SIGKILL");
@@ -1742,6 +1933,17 @@ export function devTest<T extends DevServerTest>(description: string, options: T
 
   return testImpl(description, options, "development", caller);
 }
+
+devTest.only = function (description: string, options: DevServerTest) {
+  // Capture the caller name as part of the test tempdir
+  const callerLocation = snapshotCallerLocation();
+  const caller = stackTraceFileName(callerLocation);
+  assert(
+    caller.startsWith(devTestRoot) || caller.includes("dev-and-prod"),
+    "dev server tests must be in test/bake/dev, not " + caller,
+  );
+  return testImpl(description, { ...options, only: true }, "development", caller);
+};
 
 export function prodTest<T extends DevServerTest>(description: string, options: T): T {
   const callerLocation = snapshotCallerLocation();

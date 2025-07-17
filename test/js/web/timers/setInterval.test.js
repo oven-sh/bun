@@ -109,6 +109,10 @@ it("setInterval runs with at least the delay time", () => {
   expect([`run`, join(import.meta.dir, "setInterval-fixture.js")]).toRun();
 });
 
+it("setInterval canceling with unref, close, _idleTimeout, and _onTimeout", () => {
+  expect([join(import.meta.dir, "timers-fixture-unref.js"), "setInterval"]).toRun();
+});
+
 it(
   "setInterval doesn't leak memory",
   () => {

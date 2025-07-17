@@ -1,58 +1,90 @@
 import type { GlobScanOptions } from "bun";
-const { validateObject, validateString, validateFunction } = require("internal/validators");
+const { validateObject, validateString, validateFunction, validateArray } = require("internal/validators");
+const { sep } = require("node:path");
 
 const isWindows = process.platform === "win32";
 
 interface GlobOptions {
   /** @default process.cwd() */
   cwd?: string;
-  exclude?: (ent: string) => boolean;
+  exclude?: ((ent: string) => boolean) | string[];
   /**
    * Should glob return paths as {@link Dirent} objects. `false` for strings.
    * @default false */
   withFileTypes?: boolean;
 }
 
-interface ExtendedGlobOptions extends GlobScanOptions {
-  exclude(ent: string): boolean;
-}
-
-async function* glob(pattern: string | string[], options: GlobOptions): AsyncGenerator<string> {
-  pattern = validatePattern(pattern);
-  const globOptions = mapOptions(options);
-  let it = new Bun.Glob(pattern).scan(globOptions);
+async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGenerator<string> {
+  const patterns = validatePattern(pattern);
+  const globOptions = mapOptions(options || {});
   const exclude = globOptions.exclude;
+  const excludeGlobs = Array.isArray(exclude)
+    ? exclude.flatMap(pattern => [new Bun.Glob(pattern), new Bun.Glob(pattern.replace(/\/+$/, "") + "/**")])
+    : null;
 
-  for await (const ent of it) {
-    if (exclude(ent)) continue;
-    yield ent;
+  for (const pat of patterns) {
+    for await (const ent of new Bun.Glob(pat).scan(globOptions)) {
+      if (typeof exclude === "function") {
+        if (exclude(ent)) continue;
+      } else if (excludeGlobs) {
+        if (excludeGlobs.some(glob => glob.match(ent))) {
+          continue;
+        }
+      }
+
+      yield ent;
+    }
   }
 }
 
-function* globSync(pattern: string | string[], options: GlobOptions): Generator<string> {
-  pattern = validatePattern(pattern);
-  const globOptions = mapOptions(options);
-  const g = new Bun.Glob(pattern);
+function* globSync(pattern: string | string[], options?: GlobOptions): Generator<string> {
+  const patterns = validatePattern(pattern);
+  const globOptions = mapOptions(options || {});
   const exclude = globOptions.exclude;
-  for (const ent of g.scanSync(globOptions)) {
-    if (exclude(ent)) continue;
-    yield ent;
+  const excludeGlobs = Array.isArray(exclude)
+    ? exclude.flatMap(pattern => [new Bun.Glob(pattern), new Bun.Glob(pattern.replace(/\/+$/, "") + "/**")])
+    : null;
+
+  for (const pat of patterns) {
+    for (const ent of new Bun.Glob(pat).scanSync(globOptions)) {
+      if (typeof exclude === "function") {
+        if (exclude(ent)) continue;
+      } else if (excludeGlobs) {
+        if (excludeGlobs.some(glob => glob.match(ent))) {
+          continue;
+        }
+      }
+
+      yield ent;
+    }
   }
 }
 
-function validatePattern(pattern: string | string[]): string {
-  if ($isArray(pattern)) {
-    throw new TypeError("fs.glob does not support arrays of patterns yet. Please open an issue on GitHub.");
+function validatePattern(pattern: string | string[]): string[] {
+  if (Array.isArray(pattern)) {
+    validateArray(pattern, "pattern");
+    return pattern.map(p => {
+      validateString(p, "pattern");
+      return isWindows ? p.replaceAll("/", sep) : p;
+    });
   }
+
   validateString(pattern, "pattern");
-  return isWindows ? pattern.replaceAll("/", "\\") : pattern;
+  return [isWindows ? pattern.replaceAll("/", sep) : pattern];
 }
 
-function mapOptions(options: GlobOptions): ExtendedGlobOptions {
+function mapOptions(options: GlobOptions): GlobScanOptions & { exclude: GlobOptions["exclude"] } {
   validateObject(options, "options");
 
-  const exclude = options.exclude ?? no;
-  validateFunction(exclude, "options.exclude");
+  let exclude = options.exclude ?? no;
+  if (Array.isArray(exclude)) {
+    validateArray(exclude, "options.exclude");
+    if (isWindows) {
+      exclude = exclude.map((pattern: string) => pattern.replaceAll("\\", "/"));
+    }
+  } else {
+    validateFunction(exclude, "options.exclude");
+  }
 
   if (options.withFileTypes) {
     throw new TypeError("fs.glob does not support options.withFileTypes yet. Please open an issue on GitHub.");
@@ -65,6 +97,8 @@ function mapOptions(options: GlobOptions): ExtendedGlobOptions {
     cwd: options?.cwd ?? process.cwd(),
     // https://github.com/nodejs/node/blob/a9546024975d0bfb0a8ae47da323b10fb5cbb88b/lib/internal/fs/glob.js#L655
     followSymlinks: true,
+    // https://github.com/oven-sh/bun/issues/20507
+    onlyFiles: false,
     exclude,
   };
 }

@@ -45,7 +45,7 @@ void EventContext::handleLocalEvents(Event& event, EventInvokePhase phase) const
     event.setTarget(m_target.get());
     event.setCurrentTarget(m_currentTarget.get(), m_currentTargetIsInShadowTree);
 
-    if (!m_node || UNLIKELY(m_type == Type::Window)) {
+    if (!m_node || m_type == Type::Window) [[unlikely]] {
         m_currentTarget->fireEventListeners(event, phase);
         return;
     }

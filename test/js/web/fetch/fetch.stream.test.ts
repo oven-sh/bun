@@ -657,6 +657,7 @@ describe("fetch() with streaming", () => {
     { headers: { "Content-Encoding": "deflate" }, compression: "deflate-libdeflate" },
     { headers: { "Content-Encoding": "deflate" }, compression: "deflate_with_headers" },
     { headers: { "Content-Encoding": "br" }, compression: "br" },
+    { headers: { "Content-Encoding": "zstd" }, compression: "zstd" },
   ] as const;
 
   function compress(compression, data: Uint8Array) {
@@ -685,6 +686,8 @@ describe("fetch() with streaming", () => {
             [zlib.constants.BROTLI_PARAM_SIZE_HINT]: 0,
           },
         });
+      case "zstd":
+        return zlib.zstdCompressSync(data, {});
       default:
         return data;
     }
@@ -1241,9 +1244,11 @@ describe("fetch() with streaming", () => {
               expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("BrotliDecompressionError");
             } else if (compression === "deflate-libdeflate") {
-              // Since the compressed data is different, the error ends up different.
               expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("ShortRead");
+            } else if (compression === "zstd") {
+              expect((err as Error).name).toBe("Error");
+              expect((err as Error).code).toBe("ZstdDecompressionError");
             } else {
               expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("ZlibError");

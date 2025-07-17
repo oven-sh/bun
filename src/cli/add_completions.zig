@@ -8,9 +8,8 @@
 // This used to be a comptime block, but it made the build too slow.
 // Compressing the completions list saves about 100 KB of binary size.
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const zstd = bun.zstd;
-const Environment = bun.Environment;
 
 pub const FirstLetter = enum(u8) {
     a = 'a',

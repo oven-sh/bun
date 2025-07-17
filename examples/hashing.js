@@ -17,6 +17,7 @@ console.log(Bun.hash.xxHash3(input)); // bigint
 console.log(Bun.hash.murmur32v3(input)); // number
 console.log(Bun.hash.murmur32v2(input)); // number
 console.log(Bun.hash.murmur64v2(input)); // bigint
+console.log(Bun.hash.rapidhash(input)); // bigint
 
 // Second argument accepts a seed where relevant
 console.log(Bun.hash(input, 12345));

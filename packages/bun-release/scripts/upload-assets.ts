@@ -1,8 +1,8 @@
-import { getRelease, uploadAsset } from "../src/github";
-import { fetch } from "../src/fetch";
-import { spawn } from "../src/spawn";
 import { confirm, exit, log, stdin, warn } from "../src/console";
-import { hash, join, rm, tmp, write, basename, blob } from "../src/fs";
+import { fetch } from "../src/fetch";
+import { basename, blob, hash, join, rm, tmp, write } from "../src/fs";
+import { getRelease, uploadAsset } from "../src/github";
+import { spawn } from "../src/spawn";
 
 const [tag, ...paths] = process.argv.slice(2);
 

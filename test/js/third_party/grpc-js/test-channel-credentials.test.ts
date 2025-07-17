@@ -19,12 +19,12 @@ import * as fs from "fs";
 import * as path from "path";
 import { promisify } from "util";
 
-import assert from "node:assert";
 import grpc, { sendUnaryData, ServerUnaryCall, ServiceError } from "@grpc/grpc-js";
-import { afterAll, beforeAll, describe, it, afterEach, beforeEach } from "bun:test";
 import { CallCredentials } from "@grpc/grpc-js/build/src/call-credentials";
 import { ChannelCredentials } from "@grpc/grpc-js/build/src/channel-credentials";
 import { ServiceClient, ServiceClientConstructor } from "@grpc/grpc-js/build/src/make-client";
+import { afterEach, beforeEach, describe, it } from "bun:test";
+import assert from "node:assert";
 
 import { assert2, loadProtoFile, mockFunction } from "./common";
 

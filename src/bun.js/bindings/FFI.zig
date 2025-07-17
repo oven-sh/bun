@@ -1,7 +1,8 @@
 // This is zig translate-c run on ffi.h
 // it turns out: FFI.h is faster than our implementation that calls into C++ bindings
 // so we just use this in some cases
-
+const bun = @import("bun");
+const jsc = bun.jsc;
 pub const @"bool" = bool;
 pub const JSCell = ?*anyopaque;
 const struct_unnamed_1 = extern struct {
@@ -14,7 +15,7 @@ pub const union_EncodedJSValue = extern union {
     asBits: struct_unnamed_1,
     asPtr: ?*anyopaque,
     asDouble: f64,
-    asJSValue: @import("./bindings.zig").JSValue,
+    asJSValue: jsc.JSValue,
 };
 pub const EncodedJSValue = union_EncodedJSValue;
 pub export var ValueUndefined: EncodedJSValue = EncodedJSValue{
@@ -59,8 +60,8 @@ pub inline fn JSVALUE_TO_INT64(arg_value: EncodedJSValue) i64 {
 }
 pub extern fn JSVALUE_TO_UINT64_SLOW(value: EncodedJSValue) u64;
 pub extern fn JSVALUE_TO_INT64_SLOW(value: EncodedJSValue) i64;
-pub const UINT64_TO_JSVALUE_SLOW = @import("./bindings.zig").JSValue.fromUInt64NoTruncate;
-pub const INT64_TO_JSVALUE_SLOW = @import("./bindings.zig").JSValue.fromInt64NoTruncate;
+pub const UINT64_TO_JSVALUE_SLOW = jsc.JSValue.fromUInt64NoTruncate;
+pub const INT64_TO_JSVALUE_SLOW = jsc.JSValue.fromInt64NoTruncate;
 pub inline fn UINT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: u64) EncodedJSValue {
     const globalObject = arg_globalObject;
     const val = arg_val;
@@ -70,7 +71,7 @@ pub inline fn UINT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: u64) Enc
     if (val < @as(c_ulonglong, @bitCast(@as(c_longlong, @as(c_long, 9007199254740991))))) {
         return DOUBLE_TO_JSVALUE(@as(f64, @floatFromInt(val)));
     }
-    return UINT64_TO_JSVALUE_SLOW(@as(*@import("./bindings.zig").JSGlobalObject, @ptrCast(globalObject.?)), val).asEncoded();
+    return UINT64_TO_JSVALUE_SLOW(@as(*jsc.JSGlobalObject, @ptrCast(globalObject.?)), val).asEncoded();
 }
 pub inline fn INT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: i64) EncodedJSValue {
     const globalObject = arg_globalObject;
@@ -81,7 +82,7 @@ pub inline fn INT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: i64) Enco
     if ((val >= @as(c_longlong, @bitCast(@as(c_longlong, -@as(c_long, 9007199254740991))))) and (val <= @as(c_longlong, @bitCast(@as(c_longlong, @as(c_long, 9007199254740991)))))) {
         return DOUBLE_TO_JSVALUE(@as(f64, @floatFromInt(val)));
     }
-    return INT64_TO_JSVALUE_SLOW(@as(*@import("./bindings.zig").JSGlobalObject, @ptrCast(globalObject.?)), val).asEncoded();
+    return INT64_TO_JSVALUE_SLOW(@as(*jsc.JSGlobalObject, @ptrCast(globalObject.?)), val).asEncoded();
 }
 pub inline fn INT32_TO_JSVALUE(arg_val: i32) EncodedJSValue {
     return .{ .asInt64 = @as(i64, @bitCast(@as(c_ulonglong, 18446181123756130304) | @as(c_ulonglong, @bitCast(@as(c_ulonglong, @as(u32, @bitCast(arg_val))))))) };

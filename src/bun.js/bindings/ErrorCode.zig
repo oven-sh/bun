@@ -1,5 +1,3 @@
-const std = @import("std");
-
 const ErrorCodeInt = u16;
 
 pub const ErrorCode = enum(ErrorCodeInt) {

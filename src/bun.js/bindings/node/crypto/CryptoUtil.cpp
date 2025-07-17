@@ -9,15 +9,15 @@
 #include "JSBufferEncodingType.h"
 #include "JSCryptoKey.h"
 #include "CryptoKeyRSA.h"
-#include "AsymmetricKeyValue.h"
-#include "KeyObject.h"
 #include "JSVerify.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include "CryptoKeyRaw.h"
+#include "JSKeyObject.h"
 
 namespace Bun {
 
 using namespace JSC;
+using namespace ncrypto;
 
 namespace ExternZigHash {
 struct Hasher;
@@ -69,7 +69,7 @@ EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, st
     VM& vm = lexicalGlobalObject->vm();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    if (UNLIKELY(!bytes.size() and encoding != BufferEncodingType::buffer)) {
+    if (!bytes.size() and encoding != BufferEncodingType::buffer) [[unlikely]] {
         return JSValue::encode(jsEmptyString(vm));
     }
 
@@ -110,7 +110,7 @@ JSValue unsignedBigIntToBuffer(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
     JSString* paddedHex = hex.length() % 2
         ? jsString(vm, tryMakeString('0', hex))
         : jsString(vm, hex);
-    if (UNLIKELY(!paddedHex)) {
+    if (!paddedHex) [[unlikely]] {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
         return {};
     }
@@ -378,10 +378,9 @@ void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, uint
     throwException(globalObject, scope, errorObject);
 }
 
-std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, JSValue options, WTF::ASCIILiteral name)
+std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options, WTF::ASCIILiteral name)
 {
     JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue value = options.get(globalObject, JSC::Identifier::fromString(vm, name));
     RETURN_IF_EXCEPTION(scope, std::nullopt);
@@ -397,29 +396,28 @@ std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, JSValue o
     return value.asInt32();
 }
 
-int32_t getPadding(JSC::JSGlobalObject* globalObject, JSValue options, const ncrypto::EVPKeyPointer& pkey)
+int32_t getPadding(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options, const ncrypto::EVPKeyPointer& pkey)
 {
-    auto padding = getIntOption(globalObject, options, "padding"_s);
+    auto padding = getIntOption(globalObject, scope, options, "padding"_s);
     return padding.value_or(pkey.getDefaultSignPadding());
 }
 
-std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSValue options)
+std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue options)
 {
-    return getIntOption(globalObject, options, "saltLength"_s);
+    return getIntOption(globalObject, scope, options, "saltLength"_s);
 }
 
-NodeCryptoKeys::DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSValue options)
+DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (!options.isObject() || options.asCell()->type() != JSC::JSType::FinalObjectType) {
-        return NodeCryptoKeys::DSASigEnc::DER;
+        return DSASigEnc::DER;
     }
 
     JSValue dsaEncoding = options.get(globalObject, Identifier::fromString(globalObject->vm(), "dsaEncoding"_s));
     RETURN_IF_EXCEPTION(scope, {});
 
     if (dsaEncoding.isUndefined()) {
-        return NodeCryptoKeys::DSASigEnc::DER;
+        return DSASigEnc::DER;
     }
 
     if (!dsaEncoding.isString()) {
@@ -427,19 +425,77 @@ NodeCryptoKeys::DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSValu
         return {};
     }
 
-    WTF::String dsaEncodingStr = dsaEncoding.toWTFString(globalObject);
+    auto* dsaEncodingStr = dsaEncoding.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto dsaEncodingView = dsaEncodingStr->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (dsaEncodingStr == "der"_s) {
-        return NodeCryptoKeys::DSASigEnc::DER;
+    if (dsaEncodingView == "der"_s) {
+        return DSASigEnc::DER;
     }
 
-    if (dsaEncodingStr == "ieee-p1363"_s) {
-        return NodeCryptoKeys::DSASigEnc::P1363;
+    if (dsaEncodingView == "ieee-p1363"_s) {
+        return DSASigEnc::P1363;
     }
 
     Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.dsaEncoding"_s, dsaEncoding);
     return {};
+}
+
+bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
+    const ncrypto::EVPKeyPointer& pkey,
+    WTF::Vector<uint8_t>& derBuffer)
+{
+    // Get the size of r and s components from the key
+    auto bytesOfRS = pkey.getBytesOfRS();
+    if (!bytesOfRS) {
+        // If we can't get the bytes of RS, this is not a signature variant
+        // that we can convert. Return false to indicate that the original
+        // signature should be used.
+        return false;
+    }
+
+    size_t bytesOfRSValue = bytesOfRS.value();
+
+    // Check if the signature size is valid (should be 2 * bytesOfRS)
+    if (p1363Sig.len != 2 * bytesOfRSValue) {
+        // If the signature size doesn't match what we expect, return false
+        // to indicate that the original signature should be used.
+        return false;
+    }
+
+    // Create BignumPointers for r and s components
+    ncrypto::BignumPointer r(p1363Sig.data, bytesOfRSValue);
+    if (!r) {
+        return false;
+    }
+
+    ncrypto::BignumPointer s(p1363Sig.data + bytesOfRSValue, bytesOfRSValue);
+    if (!s) {
+        return false;
+    }
+
+    // Create a new ECDSA_SIG structure and set r and s components
+    auto asn1_sig = ncrypto::ECDSASigPointer::New();
+    if (!asn1_sig) {
+        return false;
+    }
+
+    if (!asn1_sig.setParams(WTFMove(r), WTFMove(s))) {
+        return false;
+    }
+
+    // Encode the signature in DER format
+    auto buf = asn1_sig.encode();
+    if (buf.len < 0) {
+        return false;
+    }
+
+    if (!derBuffer.tryAppend(std::span<uint8_t> { buf.data, buf.len })) {
+        return false;
+    }
+
+    return true;
 }
 
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding)
@@ -470,6 +526,55 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
     }
 
     return getArrayBufferOrView(globalObject, scope, value, argName, jsUndefined());
+}
+
+// maybe replace other getArrayBufferOrView
+GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue, bool arrayBufferViewOnly)
+{
+    using Return = GCOwnedDataScope<std::span<const uint8_t>>;
+
+    if (auto* view = jsDynamicCast<JSArrayBufferView*>(dataValue)) {
+        return { view, view->span() };
+    }
+
+    if (arrayBufferViewOnly) {
+        ERR::INVALID_ARG_INSTANCE(scope, globalObject, argName, "Buffer, TypedArray, or DataView"_s, dataValue);
+        return { nullptr, {} };
+    };
+
+    if (auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(dataValue)) {
+        return { arrayBuffer, arrayBuffer->impl()->span() };
+    }
+
+    if (dataValue.isString()) {
+        auto* str = dataValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+        auto strView = str->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+
+        BufferEncodingType encoding = BufferEncodingType::utf8;
+        if (encodingValue.isString()) {
+            auto* encodingString = encodingValue.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+            auto encodingView = encodingString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+
+            if (encodingView != "buffer"_s) {
+                encoding = parseEnumerationFromView<BufferEncodingType>(encodingView).value_or(BufferEncodingType::utf8);
+                RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+            }
+        }
+
+        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, strView, encoding));
+        RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+
+        if (auto* view = jsDynamicCast<JSArrayBufferView*>(buffer)) {
+            return { view, view->span() };
+        }
+    }
+
+    ERR::INVALID_ARG_TYPE(scope, globalObject, argName, "string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView"_s, dataValue);
+    return Return(nullptr, {});
 }
 
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding)
@@ -533,254 +638,229 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
     return view;
 }
 
-std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue maybeKey, std::optional<WebCore::CryptoAlgorithmIdentifier> algorithmIdentifier)
+std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer)
 {
-    ncrypto::ClearErrorOnReturn clearError;
+    if (auto* view = jsDynamicCast<JSArrayBufferView*>(maybeBuffer)) {
+        if (view->isDetached()) {
+            return std::nullopt;
+        }
 
-    VM& vm = lexicalGlobalObject->vm();
+        return view->span();
+    }
 
-    if (!maybeKey.isCell()) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, maybeKey);
+    if (auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(maybeBuffer)) {
+        auto* buffer = arrayBuffer->impl();
+        if (buffer->isDetached()) {
+            return std::nullopt;
+        }
+
+        return buffer->span();
+    }
+
+    return std::nullopt;
+}
+
+bool isStringOrBuffer(JSValue value)
+{
+    if (value.isString()) {
+        return true;
+    }
+
+    if (jsDynamicCast<JSArrayBufferView*>(value)) {
+        return true;
+    }
+
+    if (jsDynamicCast<JSArrayBuffer*>(value)) {
+        return true;
+    }
+
+    return false;
+}
+
+String makeOptionString(WTF::StringView objName, const ASCIILiteral& optionName)
+{
+    return objName.isNull() ? makeString("options."_s, optionName) : makeString("options."_s, objName, '.', optionName);
+}
+
+ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSGlobalObject* globalObject, ThrowScope& scope, JSValue formatValue, std::optional<EVPKeyPointer::PKFormatType> defaultFormat, WTF::String optionName)
+{
+    if (formatValue.isUndefined() && defaultFormat) {
+        return *defaultFormat;
+    }
+
+    if (formatValue.isString()) {
+        JSString* formatString = formatValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        GCOwnedDataScope<WTF::StringView> formatView = formatString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (formatView == "pem"_s) {
+            return EVPKeyPointer::PKFormatType::PEM;
+        } else if (formatView == "der"_s) {
+            return EVPKeyPointer::PKFormatType::DER;
+        } else if (formatView == "jwk"_s) {
+            return EVPKeyPointer::PKFormatType::JWK;
+        }
+    }
+
+    ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, formatValue);
+    return {};
+}
+
+std::optional<EVPKeyPointer::PKEncodingType> parseKeyType(JSGlobalObject* globalObject, ThrowScope& scope, JSValue typeValue, bool required, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::String optionName)
+{
+    if (typeValue.isUndefined() && !required) {
         return std::nullopt;
     }
 
-    auto optionsCell = maybeKey.asCell();
-    auto optionsType = optionsCell->type();
+    WTF::StringView keyTypeView = WTF::nullStringView();
+    if (!keyTypeValue.isUndefined()) {
+        keyTypeView = keyTypeValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+    }
 
-    if (optionsCell->inherits<WebCore::JSCryptoKey>()) {
-        auto* cryptoKey = jsCast<WebCore::JSCryptoKey*>(optionsCell);
-
-        // convert it to a key object, then to EVPKeyPointer
-        auto& key = cryptoKey->wrapped();
-
-        if (algorithmIdentifier) {
-            switch (key.keyClass()) {
-            case CryptoKeyClass::RSA: {
-                const auto& rsa = downcast<WebCore::CryptoKeyRSA>(key);
-                CryptoAlgorithmIdentifier restrictHash;
-                bool isRestricted = rsa.isRestrictedToHash(restrictHash);
-                if (isRestricted && algorithmIdentifier.value() != restrictHash) {
-                    JSC::throwTypeError(lexicalGlobalObject, scope, "digest not allowed"_s);
-                    return std::nullopt;
-                }
-            }
-            default:
-                break;
-            }
-        }
-
-        AsymmetricKeyValue keyValue(key);
-        if (keyValue.key) {
-            EVP_PKEY_up_ref(keyValue.key);
-            ncrypto::EVPKeyPointer keyPtr(keyValue.key);
-            return keyPtr;
-        }
-
-        throwCryptoOperationFailed(lexicalGlobalObject, scope);
-        return std::nullopt;
-    } else if (maybeKey.isObject()) {
-        JSObject* optionsObj = optionsCell->getObject();
-        const auto& names = WebCore::builtinNames(vm);
-
-        if (auto val = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.bunNativePtrPrivateName())) {
-            if (val.isCell() && val.inherits<WebCore::JSCryptoKey>()) {
-                auto* cryptoKey = jsCast<WebCore::JSCryptoKey*>(val.asCell());
-
-                auto& key = cryptoKey->wrapped();
-
-                if (algorithmIdentifier) {
-                    switch (key.keyClass()) {
-                    case CryptoKeyClass::RSA: {
-                        const auto& rsa = downcast<WebCore::CryptoKeyRSA>(key);
-                        CryptoAlgorithmIdentifier restrictHash;
-                        bool isRestricted = rsa.isRestrictedToHash(restrictHash);
-                        if (isRestricted && algorithmIdentifier.value() != restrictHash) {
-                            JSC::throwTypeError(lexicalGlobalObject, scope, "digest not allowed"_s);
-                            return std::nullopt;
-                        }
-                    }
-                    default:
-                        break;
-                    }
-                }
-
-                AsymmetricKeyValue keyValue(key);
-                if (keyValue.key) {
-                    EVP_PKEY_up_ref(keyValue.key);
-                    ncrypto::EVPKeyPointer keyPtr(keyValue.key);
-                    return keyPtr;
-                }
-                throwCryptoOperationFailed(lexicalGlobalObject, scope);
-                return std::nullopt;
-            }
-        } else if (optionsType >= Int8ArrayType && optionsType <= DataViewType) {
-            auto dataBuf = KeyObject__GetBuffer(maybeKey);
-            if (dataBuf.hasException()) {
-                return std::nullopt;
-            }
-
-            ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig config;
-            config.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
-
-            auto buffer = dataBuf.releaseReturnValue();
-            ncrypto::Buffer<const unsigned char> ncryptoBuf {
-                .data = buffer.data(),
-                .len = buffer.size(),
-            };
-
-            auto res = ncrypto::EVPKeyPointer::TryParsePrivateKey(config, ncryptoBuf);
-            if (res) {
-                ncrypto::EVPKeyPointer keyPtr(WTFMove(res.value));
-                return keyPtr;
-            }
-
-            if (res.error.value() == ncrypto::EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
-                Bun::ERR::MISSING_PASSPHRASE(scope, lexicalGlobalObject, "Passphrase required for encrypted key"_s);
-                return std::nullopt;
-            }
-
-            throwCryptoError(lexicalGlobalObject, scope, res.openssl_error.value_or(0), "Failed to read private key"_s);
-            return std::nullopt;
-        }
-
-        JSValue key = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "key"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue encodingValue = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue passphrase = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "passphrase"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue formatValue = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "format"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        WTF::StringView formatStr = WTF::nullStringView();
-        if (formatValue.isString()) {
-            auto str = formatValue.toString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            formatStr = str->view(lexicalGlobalObject);
-        }
-
-        if (!key.isCell()) {
-            if (formatStr == "jwk"_s) {
-                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.key"_s, "object"_s, key);
-            } else {
-                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, key);
-            }
-            return std::nullopt;
-        }
-
-        String encodingString = encodingValue.toWTFString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        auto keyCell = key.asCell();
-        auto keyCellType = keyCell->type();
-        if (keyCell->inherits<WebCore::JSCryptoKey>()) {
-            auto* cryptoKey = jsCast<WebCore::JSCryptoKey*>(keyCell);
-            auto& key = cryptoKey->wrapped();
-
-            if (algorithmIdentifier) {
-                switch (key.keyClass()) {
-                case CryptoKeyClass::RSA: {
-                    const auto& rsa = downcast<WebCore::CryptoKeyRSA>(key);
-                    CryptoAlgorithmIdentifier restrictHash;
-                    bool isRestricted = rsa.isRestrictedToHash(restrictHash);
-                    if (isRestricted && algorithmIdentifier.value() != restrictHash) {
-                        JSC::throwTypeError(lexicalGlobalObject, scope, "digest not allowed"_s);
-                        return std::nullopt;
-                    }
-                }
-                default:
-                    break;
-                }
-            }
-
-            AsymmetricKeyValue keyValue(key);
-            if (keyValue.key) {
-                EVP_PKEY_up_ref(keyValue.key);
-                ncrypto::EVPKeyPointer keyPtr(keyValue.key);
-                return keyPtr;
-            }
-            throwCryptoOperationFailed(lexicalGlobalObject, scope);
-            return std::nullopt;
-        } else if (key.isObject()) {
-            JSObject* keyObj = key.getObject();
-            if (auto keyVal = keyObj->getIfPropertyExists(lexicalGlobalObject, names.bunNativePtrPrivateName())) {
-                if (keyVal.isCell() && keyVal.inherits<WebCore::JSCryptoKey>()) {
-                    auto* cryptoKey = jsCast<WebCore::JSCryptoKey*>(keyVal.asCell());
-
-                    auto& key = cryptoKey->wrapped();
-                    AsymmetricKeyValue keyValue(key);
-                    if (keyValue.key) {
-                        EVP_PKEY_up_ref(keyValue.key);
-                        ncrypto::EVPKeyPointer keyPtr(WTFMove(keyValue.key));
-                        return keyPtr;
-                    }
-                    throwCryptoOperationFailed(lexicalGlobalObject, scope);
-                    return std::nullopt;
-                }
-            } else if (keyCellType >= Int8ArrayType && keyCellType <= DataViewType) {
-                auto dataBuf = KeyObject__GetBuffer(key);
-                if (dataBuf.hasException()) {
-                    return std::nullopt;
-                }
-
-                ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig config;
-                config.format = parseKeyFormat(lexicalGlobalObject, formatValue, "options.format"_s, ncrypto::EVPKeyPointer::PKFormatType::PEM);
-
-                config.passphrase = passphraseFromBufferSource(lexicalGlobalObject, scope, passphrase);
-                RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-                // Get the type value from options
-                JSValue typeValue = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "type"_s));
-                RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-                // Parse key type for private key
-                auto keyType = parseKeyType(lexicalGlobalObject, typeValue, config.format == ncrypto::EVPKeyPointer::PKFormatType::DER, WTF::nullStringView(), false, "options.type"_s);
-                RETURN_IF_EXCEPTION(scope, std::nullopt);
-                config.type = keyType.value_or(ncrypto::EVPKeyPointer::PKEncodingType::PKCS1);
-
-                auto buffer = dataBuf.releaseReturnValue();
-                ncrypto::Buffer<const unsigned char> ncryptoBuf {
-                    .data = buffer.data(),
-                    .len = buffer.size(),
-                };
-
-                auto res = ncrypto::EVPKeyPointer::TryParsePrivateKey(config, ncryptoBuf);
-                if (!res) {
-                    if (res.error.value() == ncrypto::EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
-                        Bun::ERR::MISSING_PASSPHRASE(scope, lexicalGlobalObject, "Passphrase required for encrypted key"_s);
-                        return std::nullopt;
-                    }
-
-                    throwCryptoError(lexicalGlobalObject, scope, res.openssl_error.value_or(0), "Failed to read private key"_s);
-                    return std::nullopt;
-                }
-
-                ncrypto::EVPKeyPointer keyPtr(WTFMove(res.value));
-                return keyPtr;
-            } else if (formatStr == "jwk"_s) {
-                bool isPublic = false;
-                return getKeyObjectHandleFromJwk(lexicalGlobalObject, scope, key, isPublic);
-            }
-        } else if (formatStr == "jwk"_s) {
-            bool isPublic = false;
-            return getKeyObjectHandleFromJwk(lexicalGlobalObject, scope, key, isPublic);
-        } else if (key.isString()) {
-            WTF::String keyStr = key.toWTFString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-            return keyFromString(lexicalGlobalObject, scope, keyStr, passphrase);
-        }
-
-        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, key);
-        return std::nullopt;
-    } else if (maybeKey.isString()) {
-        WTF::String keyStr = maybeKey.toWTFString(lexicalGlobalObject);
+    if (typeValue.isString()) {
+        JSString* typeString = typeValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        GCOwnedDataScope<WTF::StringView> typeView = typeString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-        return keyFromString(lexicalGlobalObject, scope, keyStr, jsUndefined());
+        if (typeView == "pkcs1"_s) {
+            if (!keyTypeView.isNull() && keyTypeView != "rsa"_s) {
+                ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, typeView, "can only be used for RSA keys"_s);
+                return std::nullopt;
+            }
+            return EVPKeyPointer::PKEncodingType::PKCS1;
+        }
+
+        if (typeView == "spki"_s && (!isPublic || *isPublic != false)) {
+            return EVPKeyPointer::PKEncodingType::SPKI;
+        }
+
+        if (typeView == "pkcs8"_s && (!isPublic || *isPublic != true)) {
+            return EVPKeyPointer::PKEncodingType::PKCS8;
+        }
+
+        if (typeView == "sec1"_s && (!isPublic || *isPublic != true)) {
+            if (!keyTypeView.isNull() && keyTypeView != "ec"_s) {
+                ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, typeView, "can only be used for EC keys"_s);
+                return std::nullopt;
+            }
+            return EVPKeyPointer::PKEncodingType::SEC1;
+        }
     }
 
-    Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, maybeKey);
+    ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, typeValue);
     return std::nullopt;
+}
+
+void parseKeyFormatAndType(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, bool isInput, WTF::StringView objName, EVPKeyPointer::PrivateKeyEncodingConfig& config)
+{
+    VM& vm = globalObject->vm();
+
+    JSValue formatValue = enc->get(globalObject, Identifier::fromString(vm, "format"_s));
+    RETURN_IF_EXCEPTION(scope, );
+    JSValue typeValue = enc->get(globalObject, Identifier::fromString(vm, "type"_s));
+    RETURN_IF_EXCEPTION(scope, );
+
+    config.format = parseKeyFormat(globalObject, scope, formatValue, isInput ? std::optional { EVPKeyPointer::PKFormatType::PEM } : std::nullopt, makeOptionString(objName, "format"_s));
+    RETURN_IF_EXCEPTION(scope, );
+
+    bool isRequired = (!isInput || config.format == EVPKeyPointer::PKFormatType::DER) && config.format != EVPKeyPointer::PKFormatType::JWK;
+    std::optional<EVPKeyPointer::PKEncodingType> maybeKeyType = parseKeyType(globalObject, scope, typeValue, isRequired, keyTypeValue, isPublic, makeOptionString(objName, "type"_s));
+    RETURN_IF_EXCEPTION(scope, );
+
+    if (maybeKeyType) {
+        config.type = *maybeKeyType;
+    }
+}
+
+void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::StringView objName, EVPKeyPointer::PrivateKeyEncodingConfig& config)
+{
+    VM& vm = globalObject->vm();
+
+    bool isInput = keyTypeValue.isUndefined();
+
+    parseKeyFormatAndType(globalObject, scope, enc, keyTypeValue, isPublic, isInput, objName, config);
+    RETURN_IF_EXCEPTION(scope, );
+
+    JSValue encodingValue = jsUndefined();
+    JSValue passphraseValue = jsUndefined();
+    JSValue cipherValue = jsUndefined();
+
+    if (!isPublic || *isPublic != true) {
+        cipherValue = enc->get(globalObject, Identifier::fromString(vm, "cipher"_s));
+        RETURN_IF_EXCEPTION(scope, );
+        passphraseValue = enc->get(globalObject, Identifier::fromString(vm, "passphrase"_s));
+        RETURN_IF_EXCEPTION(scope, );
+        encodingValue = enc->get(globalObject, Identifier::fromString(vm, "encoding"_s));
+        RETURN_IF_EXCEPTION(scope, );
+
+        if (!isInput) {
+            if (!cipherValue.isUndefinedOrNull()) {
+                if (!cipherValue.isString()) {
+                    ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "cipher"_s), cipherValue);
+                    return;
+                }
+                if (config.format == EVPKeyPointer::PKFormatType::DER && (config.type == EVPKeyPointer::PKEncodingType::PKCS1 || config.type == EVPKeyPointer::PKEncodingType::SEC1)) {
+                    ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, EVPKeyPointer::EncodingName(config.type), "does not support encryption"_s);
+                    return;
+                }
+            } else if (!passphraseValue.isUndefined()) {
+                ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "cipher"_s), cipherValue);
+                return;
+            }
+        }
+
+        if ((isInput && !passphraseValue.isUndefined() && !isStringOrBuffer(passphraseValue)) || (!isInput && !cipherValue.isUndefinedOrNull() && !isStringOrBuffer(passphraseValue))) {
+            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "passphrase"_s), passphraseValue);
+            return;
+        }
+    }
+
+    if (!passphraseValue.isUndefined()) {
+        JSArrayBufferView* passphraseView = getArrayBufferOrView(globalObject, scope, passphraseValue, "key.passphrase"_s, encodingValue);
+        RETURN_IF_EXCEPTION(scope, );
+        config.passphrase = DataPointer::FromSpan(passphraseView->span());
+    }
+
+    if (config.output_key_object) {
+        if (!isInput) {
+        }
+    } else {
+        if (!isInput) {
+            if (cipherValue.isString()) {
+                JSString* cipherString = cipherValue.toString(globalObject);
+                RETURN_IF_EXCEPTION(scope, );
+                GCOwnedDataScope<WTF::StringView> cipherView = cipherString->view(globalObject);
+                RETURN_IF_EXCEPTION(scope, );
+                config.cipher = getCipherByName(cipherView);
+                if (config.cipher == nullptr) {
+                    ERR::CRYPTO_UNKNOWN_CIPHER(scope, globalObject, cipherView);
+                    return;
+                }
+            } else {
+                config.cipher = nullptr;
+            }
+        }
+    }
+}
+
+void parsePublicKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, EVPKeyPointer::PublicKeyEncodingConfig& config)
+{
+    EVPKeyPointer::PrivateKeyEncodingConfig dummyConfig = {};
+    parseKeyEncoding(globalObject, scope, enc, keyTypeValue, keyTypeValue.pureToBoolean() != TriState::False ? std::optional<bool>(true) : std::nullopt, objName, dummyConfig);
+    RETURN_IF_EXCEPTION(scope, );
+
+    // using private config because it's a super set of public config
+    config.format = dummyConfig.format;
+    config.type = dummyConfig.type;
+    config.output_key_object = dummyConfig.output_key_object;
+}
+
+void parsePrivateKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, EVPKeyPointer::PrivateKeyEncodingConfig& config)
+{
+    parseKeyEncoding(globalObject, scope, enc, keyTypeValue, false, objName, config);
 }
 
 bool isArrayBufferOrView(JSValue value)
@@ -816,89 +896,6 @@ bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& pri
         return false;
 
     return privateKey < order;
-}
-
-// takes a key value and encoding value
-// - if key is string, returns the key as a vector of bytes, using encoding if !isUndefined
-// - if key is isAnyArrayBuffer, return the bytes
-// - if !bufferOnly:
-//   - if key is KeyObject with native crypto key, extract the key material
-//   - if key is CryptoKey, ensure `type` is secret, then extract the key material
-// - none matched, throw error for INVALID_ARG_TYPE
-void prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<uint8_t>& out, JSValue key, JSValue encodingValue, bool bufferOnly)
-{
-    VM& vm = globalObject->vm();
-
-    // Handle KeyObject (if not bufferOnly)
-    if (!bufferOnly && key.isObject()) {
-        JSObject* obj = key.getObject();
-        auto& names = WebCore::builtinNames(vm);
-
-        // Check for BunNativePtr on the object
-        if (auto val = obj->getIfPropertyExists(globalObject, names.bunNativePtrPrivateName())) {
-            if (auto* cryptoKey = jsDynamicCast<JSCryptoKey*>(val.asCell())) {
-
-                JSValue typeValue = obj->get(globalObject, Identifier::fromString(vm, "type"_s));
-                RETURN_IF_EXCEPTION(scope, );
-
-                auto wrappedKey = cryptoKey->protectedWrapped();
-
-                if (!typeValue.isString()) {
-                    Bun::ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, typeValue, "secret"_s);
-                    return;
-                }
-
-                WTF::String typeString = typeValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, );
-
-                if (wrappedKey->type() != CryptoKeyType::Secret || typeString != "secret"_s) {
-                    Bun::ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, typeValue, "secret"_s);
-                    return;
-                }
-
-                auto keyData = getSymmetricKey(wrappedKey);
-
-                if (UNLIKELY(!keyData)) {
-                    Bun::ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, typeValue, "secret"_s);
-                    return;
-                }
-
-                out.append(keyData.value());
-                return;
-            }
-        }
-    }
-
-    // Handle string or buffer
-    if (key.isString()) {
-        JSString* keyString = key.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, );
-
-        auto encoding = parseEnumeration<WebCore::BufferEncodingType>(*globalObject, encodingValue).value_or(WebCore::BufferEncodingType::utf8);
-        RETURN_IF_EXCEPTION(scope, );
-        if (encoding == WebCore::BufferEncodingType::buffer) {
-            encoding = WebCore::BufferEncodingType::utf8;
-        }
-
-        auto keyView = keyString->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, );
-
-        // TODO(dylan-conway): add a way to do this with just the Vector. no need to create a buffer
-        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyView, encoding));
-        auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
-        out.append(std::span { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() });
-        return;
-    }
-
-    // Handle ArrayBuffer types
-    if (auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(key)) {
-        out.append(std::span { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() });
-        return;
-    }
-
-    // If we got here, the key is not a valid type
-    WTF::String expectedTypes = bufferOnly ? "ArrayBuffer, Buffer, TypedArray, DataView, or a string"_s : "ArrayBuffer, Buffer, TypedArray, DataView, string, CryptoKey, or KeyObject"_s;
-    Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, expectedTypes, key);
 }
 
 ByteSource::ByteSource(ByteSource&& other) noexcept

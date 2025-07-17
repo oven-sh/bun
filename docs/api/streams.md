@@ -61,10 +61,12 @@ When using a direct `ReadableStream`, all chunk queueing is handled by the desti
 Bun also supports async generator functions as a source for `Response` and `Request`. This is an easy way to create a `ReadableStream` that fetches data from an asynchronous source.
 
 ```ts
-const response = new Response(async function* () {
-  yield "hello";
-  yield "world";
-}());
+const response = new Response(
+  (async function* () {
+    yield "hello";
+    yield "world";
+  })(),
+);
 
 await response.text(); // "helloworld"
 ```

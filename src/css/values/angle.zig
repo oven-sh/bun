@@ -1,8 +1,7 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const CSSNumber = css.css_values.number.CSSNumber;
@@ -86,9 +85,9 @@ pub const Angle = union(Tag) {
                 const deg = this.toDegrees();
 
                 // We print 5 digits of precision by default.
-                // Switch to degrees if there are an even number of them.
-                if (css.fract(std.math.round(deg * 100000.0)) == 0) {
-                    break :brk .{ val, "deg" };
+                // Switch to degrees if length is smaller than rad.
+                if (css.f32_length_with_5_digits(deg) < css.f32_length_with_5_digits(val)) {
+                    break :brk .{ deg, "deg" };
                 } else {
                     break :brk .{ val, "rad" };
                 }

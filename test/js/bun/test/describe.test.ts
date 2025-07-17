@@ -1,5 +1,5 @@
-import { describe, expect, test, jest } from "bun:test";
 import { spawnSync } from "bun";
+import { describe, expect, jest, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 describe("blocks should handle a number, string, anonymous class, named class, or function for the first arg", () => {

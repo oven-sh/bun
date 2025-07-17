@@ -33,7 +33,7 @@ using namespace JSC;
 
 String identifierToString(JSGlobalObject& lexicalGlobalObject, const Identifier& identifier)
 {
-    if (UNLIKELY(identifier.isSymbol())) {
+    if (identifier.isSymbol()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
         throwTypeError(&lexicalGlobalObject, scope, SymbolCoercionError);
         return {};
@@ -44,7 +44,7 @@ String identifierToString(JSGlobalObject& lexicalGlobalObject, const Identifier&
 
 static inline bool throwIfInvalidByteString(JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, const String& string)
 {
-    if (UNLIKELY(!string.containsOnlyLatin1())) {
+    if (!string.containsOnlyLatin1()) [[unlikely]] {
         throwTypeError(&lexicalGlobalObject, scope);
         return true;
     }
@@ -58,7 +58,7 @@ String identifierToByteString(JSGlobalObject& lexicalGlobalObject, const Identif
 
     auto string = identifierToString(lexicalGlobalObject, identifier);
     RETURN_IF_EXCEPTION(scope, {});
-    if (UNLIKELY(throwIfInvalidByteString(lexicalGlobalObject, scope, string)))
+    if (throwIfInvalidByteString(lexicalGlobalObject, scope, string)) [[unlikely]]
         return {};
     return string;
 }
@@ -71,7 +71,7 @@ String valueToByteString(JSGlobalObject& lexicalGlobalObject, JSValue value)
     auto string = value.toWTFString(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (UNLIKELY(throwIfInvalidByteString(lexicalGlobalObject, scope, string)))
+    if (throwIfInvalidByteString(lexicalGlobalObject, scope, string)) [[unlikely]]
         return {};
     return string;
 }
@@ -81,10 +81,10 @@ AtomString valueToByteAtomString(JSC::JSGlobalObject& lexicalGlobalObject, JSC::
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject);
+    AtomString string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject).data;
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (UNLIKELY(throwIfInvalidByteString(lexicalGlobalObject, scope, string.string())))
+    if (throwIfInvalidByteString(lexicalGlobalObject, scope, string.string())) [[unlikely]]
         return nullAtom();
 
     return string;
@@ -114,7 +114,7 @@ AtomString valueToUSVAtomString(JSGlobalObject& lexicalGlobalObject, JSValue val
     auto string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return replaceUnpairedSurrogatesWithReplacementCharacter(WTFMove(string));
+    return replaceUnpairedSurrogatesWithReplacementCharacter(AtomString(string));
 }
 
 } // namespace WebCore

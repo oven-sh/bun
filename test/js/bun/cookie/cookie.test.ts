@@ -1,4 +1,4 @@
-import { test, expect, describe, afterAll } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 
 describe("Bun.Cookie validation tests", () => {
   describe("expires validation", () => {
@@ -323,7 +323,7 @@ describe("cookie path option", () => {
       "/x/y": {
         GET(r) {
           r.cookies.set("user", "a", { maxAge: 3600, path: "/" });
-          const cookie = r.cookies.toSetCookieHeaders().at(0);
+          const cookie = r.cookies.toSetCookieHeaders().at(0)!;
           return new Response("ok", {
             headers: { "set-cookie": cookie },
           });
@@ -370,4 +370,46 @@ test("delete cookie invalid path option", () => {
   expect(() => map.delete("\n", {})).toThrowErrorMatchingInlineSnapshot(
     `"Invalid cookie name: contains invalid characters"`,
   );
+});
+
+describe("Bun.CookieMap constructor", () => {
+  test("throws for invalid array", () => {
+    expect(() => new Bun.CookieMap([["abc defg =fhaingj809读写汉字学中文"]])).toThrowErrorMatchingInlineSnapshot(
+      `"Expected arrays of exactly two strings"`,
+    );
+  });
+  test("accepts unicode cookie value in object", () => {
+    const map = new Bun.CookieMap({
+      "cookie key": "读写汉字学中文",
+    });
+    expect(map.get("cookie key")).toBe("读写汉字学中文");
+  });
+  test("accepts unicode cookie value in array", () => {
+    const map = new Bun.CookieMap([["cookie key", "读写汉字学中文"]]);
+    expect(map.get("cookie key")).toBe("读写汉字学中文");
+  });
+  test("accepts unicode cookie value in string", () => {
+    const map = new Bun.CookieMap("cookie key=读写汉字学中文");
+    expect(map.get("cookie key")).toBe("读写汉字学中文");
+  });
+  test("serializes unicode cookie value", () => {
+    const map = new Bun.CookieMap();
+    map.set("cookiekey", "读写汉字学中文");
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
+      [
+        "cookiekey=%E8%AF%BB%E5%86%99%E6%B1%89%E5%AD%97%E5%AD%A6%E4%B8%AD%E6%96%87; Path=/; SameSite=Lax",
+      ]
+    `);
+    // re-parse
+    const reparsed = new Bun.CookieMap(map.toSetCookieHeaders()[0].split(";")[0]!);
+    expect(reparsed.get("cookiekey")).toBe("读写汉字学中文");
+  });
+  test("doesn't parse percent encoded value in object or array", () => {
+    const map = new Bun.CookieMap({
+      "cookiekey": "%E8%AF%BB%E5%86%99%E6%B1%89%E5%AD%97%E5%AD%A6%E4%B8%AD%E6%96%87",
+    });
+    const map2 = new Bun.CookieMap([["cookiekey", "%E8%AF%BB%E5%86%99%E6%B1%89%E5%AD%97%E5%AD%A6%E4%B8%AD%E6%96%87"]]);
+    expect(map.get("cookiekey")).toBe("%E8%AF%BB%E5%86%99%E6%B1%89%E5%AD%97%E5%AD%A6%E4%B8%AD%E6%96%87");
+    expect(map2.get("cookiekey")).toBe("%E8%AF%BB%E5%86%99%E6%B1%89%E5%AD%97%E5%AD%A6%E4%B8%AD%E6%96%87");
+  });
 });

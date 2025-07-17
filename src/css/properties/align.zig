@@ -1,7 +1,6 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
 
 pub const css = @import("../css_parser.zig");
 
@@ -57,8 +56,8 @@ pub const AlignContent = union(enum) {
         }
     },
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
@@ -300,8 +299,8 @@ pub const AlignSelf = union(enum) {
         }
     },
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
@@ -494,8 +493,8 @@ pub const AlignItems = union(enum) {
         }
     },
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
@@ -728,8 +727,8 @@ pub const GapValue = union(enum) {
     /// An explicit length.
     length_percentage: LengthPercentage,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
@@ -746,8 +745,6 @@ pub const Gap = struct {
     row: GapValue,
     /// The column gap.
     column: GapValue,
-
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.gap, PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .row = "row-gap",
@@ -789,8 +786,6 @@ pub const PlaceItems = struct {
     @"align": AlignItems,
     /// The item justification.
     justify: JustifyItems,
-
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"place-items", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .@"align" = "align-items",
@@ -861,8 +856,6 @@ pub const PlaceSelf = struct {
     @"align": AlignSelf,
     /// The item justification.
     justify: JustifySelf,
-
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"place-self", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .@"align" = "align-self",
@@ -946,7 +939,12 @@ pub const SelfPosition = enum {
     /// Item  is aligned to the end of the container, within flexbox layouts.
     @"flex-end",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the [place-content](https://www.w3.org/TR/css-align-3/#place-content) shorthand property.
@@ -955,8 +953,6 @@ pub const PlaceContent = struct {
     @"align": AlignContent,
     /// The content justification.
     justify: JustifyContent,
-
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"place-content", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .@"align" = css.PropertyIdTag.@"align-content",
@@ -1036,7 +1032,12 @@ pub const ContentDistribution = enum {
     /// Items are stretched evenly to fill free space.
     stretch,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// An [`<overflow-position>`](https://www.w3.org/TR/css-align-3/#typedef-overflow-position) value.
@@ -1048,7 +1049,12 @@ pub const OverflowPosition = enum {
     /// container, the given alignment value is honored.
     unsafe,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A [`<content-position>`](https://www.w3.org/TR/css-align-3/#typedef-content-position) value.
@@ -1064,7 +1070,12 @@ pub const ContentPosition = enum {
     /// Same as `end` when within a flexbox container.
     @"flex-end",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 pub const SelfPositionInner = struct {
@@ -1280,7 +1291,7 @@ pub const AlignHandler = struct {
         // If two vendor prefixes for the same property have different
         // values, we need to flush what we have immediately to preserve order.
         if (@field(this, prop)) |*v| {
-            if (!val.eql(&v[0]) and !v[1].contains(vp)) {
+            if (!val.eql(&v[0]) and !bun.bits.contains(VendorPrefix, v[1], vp)) {
                 this.flush(dest, context);
             }
         }
@@ -1291,7 +1302,7 @@ pub const AlignHandler = struct {
         // Otherwise, update the value and add the prefix.
         if (@field(this, prop)) |*tuple| {
             tuple.*[0] = css.generic.deepClone(@TypeOf(val.*), val, context.allocator);
-            tuple.*[1].insert(vp);
+            bun.bits.insert(VendorPrefix, &tuple.*[1], vp);
         } else {
             @field(this, prop) = .{ css.generic.deepClone(@TypeOf(val.*), val, context.allocator), vp };
             this.has_any = true;
@@ -1303,10 +1314,8 @@ pub const AlignHandler = struct {
         var prefix = context.targets.prefixes(VendorPrefix.NONE, feature);
         // Firefox only implemented the 2009 spec prefixed.
         // Microsoft only implemented the 2012 spec prefixed.
-        prefix.remove(VendorPrefix{
-            .moz = true,
-            .ms = true,
-        });
+        prefix.moz = false;
+        prefix.ms = false;
         return prefix;
     }
 
@@ -1315,7 +1324,7 @@ pub const AlignHandler = struct {
             const val = v[0];
             var prefix = v[1];
             // If we have an unprefixed property, override necessary prefixes.
-            prefix = if (prefix.contains(VendorPrefix.NONE)) flushPrefixesHelper(this, context, feature) else prefix;
+            prefix = if (prefix.none) flushPrefixesHelper(this, context, feature) else prefix;
             dest.append(context.allocator, @unionInit(Property, prop, .{ val, prefix })) catch bun.outOfMemory();
         }
     }
@@ -1336,16 +1345,16 @@ pub const AlignHandler = struct {
             // If we have an unprefixed standard property, generate legacy prefixed versions.
             prefix = context.targets.prefixes(prefix, feature);
 
-            if (prefix.contains(VendorPrefix.NONE)) {
+            if (prefix.none) {
                 if (comptime prop_2009) |p2009| {
                     // 2009 spec, implemented by webkit and firefox.
                     if (context.targets.browsers) |targets| {
-                        var prefixes_2009 = VendorPrefix.empty();
+                        var prefixes_2009 = VendorPrefix{};
                         if (Feature.isFlex2009(targets)) {
-                            prefixes_2009.insert(VendorPrefix.WEBKIT);
+                            prefixes_2009.webkit = true;
                         }
-                        if (prefix.contains(VendorPrefix.MOZ)) {
-                            prefixes_2009.insert(VendorPrefix.MOZ);
+                        if (prefix.moz) {
+                            prefixes_2009.moz = true;
                         }
                         if (!prefixes_2009.isEmpty()) {
                             const s = brk: {
@@ -1365,7 +1374,7 @@ pub const AlignHandler = struct {
             }
 
             // 2012 spec, implemented by microsoft.
-            if (prefix.contains(VendorPrefix.MS)) {
+            if (prefix.ms) {
                 if (comptime prop_2012) |p2012| {
                     const s = brk: {
                         const T = comptime p2012[0];
@@ -1382,8 +1391,8 @@ pub const AlignHandler = struct {
             }
 
             // Remove Firefox and IE from standard prefixes.
-            prefix.remove(VendorPrefix.MOZ);
-            prefix.remove(VendorPrefix.MS);
+            prefix.moz = false;
+            prefix.ms = false;
         }
     }
 
@@ -1429,10 +1438,10 @@ pub const AlignHandler = struct {
 
                 const intersection = align_prefix.bitwiseAnd(if (comptime justify_prop != null) __v2.*[1] else align_prefix.*);
                 // Only use shorthand if unprefixed.
-                if (intersection.contains(VendorPrefix.NONE)) {
+                if (intersection.none) {
                     // Add prefixed longhands if needed.
                     align_prefix.* = flushPrefixesHelper(this, context, align_prop.feature);
-                    align_prefix.remove(VendorPrefix.NONE);
+                    align_prefix.none = false;
                     if (!align_prefix.isEmpty()) {
                         dest.append(
                             context.allocator,
@@ -1444,7 +1453,7 @@ pub const AlignHandler = struct {
                         const justify_actual = &__v2.*[0];
                         const justify_prefix = &__v2.*[1];
                         justify_prefix.* = this.flushPrefixesHelper(context, justify_prop.?.feature);
-                        justify_prefix.remove(css.VendorPrefix.NONE);
+                        justify_prefix.none = false;
 
                         if (!justify_prefix.isEmpty()) {
                             dest.append(

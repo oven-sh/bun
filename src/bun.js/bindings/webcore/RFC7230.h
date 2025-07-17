@@ -30,10 +30,10 @@
 
 namespace RFC7230 {
 
-bool isTokenCharacter(UChar);
-bool isCommentText(UChar);
-bool isQuotedPairSecondOctet(UChar);
-bool isDelimiter(UChar);
+bool isTokenCharacter(char16_t);
+bool isCommentText(char16_t);
+bool isQuotedPairSecondOctet(char16_t);
+bool isDelimiter(char16_t);
 bool isValidName(StringView);
 bool isValidValue(StringView);
 

@@ -1,8 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
+const bun = @import("bun");
+const bits = bun.bits;
 
 pub const css = @import("../css_parser.zig");
 const CSSString = css.CSSString;
@@ -10,9 +9,6 @@ const CSSStringFns = css.CSSStringFns;
 
 pub const Printer = css.Printer;
 pub const PrintErr = css.PrintErr;
-
-const Result = css.Result;
-const PrintResult = css.PrintResult;
 
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -102,10 +98,10 @@ pub fn isEquivalent(selectors: []const Selector, other: []const Selector) bool {
 /// Downlevels the given selectors to be compatible with the given browser targets.
 /// Returns the necessary vendor prefixes.
 pub fn downlevelSelectors(allocator: Allocator, selectors: []Selector, targets: css.targets.Targets) css.VendorPrefix {
-    var necessary_prefixes = css.VendorPrefix.empty();
+    var necessary_prefixes = css.VendorPrefix{};
     for (selectors) |*selector| {
         for (selector.components.items) |*component| {
-            necessary_prefixes.insert(downlevelComponent(allocator, component, targets));
+            bun.bits.insert(css.VendorPrefix, &necessary_prefixes, downlevelComponent(allocator, component, targets));
         }
     }
     return necessary_prefixes;
@@ -120,7 +116,7 @@ pub fn downlevelComponent(allocator: Allocator, component: *Component, targets: 
                         component.* = downlevelDir(allocator, d.direction, targets);
                         return downlevelComponent(allocator, component, targets);
                     }
-                    return css.VendorPrefix.empty();
+                    return css.VendorPrefix{};
                 },
                 .lang => |l| {
                     // :lang() with multiple languages is not supported everywhere.
@@ -129,7 +125,7 @@ pub fn downlevelComponent(allocator: Allocator, component: *Component, targets: 
                         component.* = .{ .is = langListToSelectors(allocator, l.languages.items) };
                         return downlevelComponent(allocator, component, targets);
                     }
-                    return css.VendorPrefix.empty();
+                    return css.VendorPrefix{};
                 },
                 else => pc.getNecessaryPrefixes(targets),
             };
@@ -147,9 +143,9 @@ pub fn downlevelComponent(allocator: Allocator, component: *Component, targets: 
                 }
                 break :brk true;
             }) {
-                necessary_prefixes.insert(targets.prefixes(css.VendorPrefix{ .none = true }, .any_pseudo));
+                bun.bits.insert(css.VendorPrefix, &necessary_prefixes, targets.prefixes(css.VendorPrefix{ .none = true }, .any_pseudo));
             } else {
-                necessary_prefixes.insert(css.VendorPrefix{ .none = true });
+                necessary_prefixes.none = true;
             }
 
             return necessary_prefixes;
@@ -173,9 +169,9 @@ pub fn downlevelComponent(allocator: Allocator, component: *Component, targets: 
                 component.* = .{ .negation = list.items };
 
                 if (targets.shouldCompileSame(.is_selector)) {
-                    necessary_prefixes.insert(targets.prefixes(css.VendorPrefix{ .none = true }, .any_pseudo));
+                    bun.bits.insert(css.VendorPrefix, &necessary_prefixes, targets.prefixes(css.VendorPrefix{ .none = true }, .any_pseudo));
                 } else {
-                    necessary_prefixes.insert(css.VendorPrefix{ .none = true });
+                    bun.bits.insert(css.VendorPrefix, &necessary_prefixes, css.VendorPrefix{ .none = true });
                 }
             }
 
@@ -183,7 +179,7 @@ pub fn downlevelComponent(allocator: Allocator, component: *Component, targets: 
         },
         .where, .has => |s| downlevelSelectors(allocator, s, targets),
         .any => |*a| downlevelSelectors(allocator, a.selectors, targets),
-        else => css.VendorPrefix.empty(),
+        else => css.VendorPrefix{},
     };
 }
 
@@ -238,7 +234,7 @@ fn langListToSelectors(allocator: Allocator, langs: []const []const u8) []Select
 /// Returns the vendor prefix (if any) used in the given selector list.
 /// If multiple vendor prefixes are seen, this is invalid, and an empty result is returned.
 pub fn getPrefix(selectors: *const SelectorList) css.VendorPrefix {
-    var prefix = css.VendorPrefix.empty();
+    var prefix = css.VendorPrefix{};
     for (selectors.v.slice()) |*selector| {
         for (selector.components.items) |*component_| {
             const component: *const Component = component_;
@@ -255,16 +251,17 @@ pub fn getPrefix(selectors: *const SelectorList) css.VendorPrefix {
                 .negation => css.VendorPrefix{ .none = true },
                 .any => |*any| any.vendor_prefix,
                 .pseudo_element => |*pe| pe.getPrefix(),
-                else => css.VendorPrefix.empty(),
+                else => css.VendorPrefix{},
             };
 
             if (!p.isEmpty()) {
                 // Allow none to be mixed with a prefix.
-                const prefix_without_none = prefix.maskOut(css.VendorPrefix{ .none = true });
-                if (prefix_without_none.isEmpty() or prefix_without_none.eql(p)) {
-                    prefix.insert(p);
+                var prefix_without_none = prefix;
+                prefix_without_none.none = false;
+                if (prefix_without_none.isEmpty() or prefix_without_none == p) {
+                    bun.bits.insert(css.VendorPrefix, &prefix, p);
                 } else {
-                    return css.VendorPrefix.empty();
+                    return css.VendorPrefix{};
                 }
             }
         }
@@ -351,12 +348,12 @@ pub fn isCompatible(selectors: []const parser.Selector, targets: css.targets.Tar
                         .checked, .disabled, .enabled, .target => break :brk F.selectors3,
 
                         .any_link => |prefix| {
-                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.any_link;
+                            if (prefix == css.VendorPrefix{ .none = true }) break :brk F.any_link;
                         },
                         .indeterminate => break :brk F.indeterminate_pseudo,
 
                         .fullscreen => |prefix| {
-                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.fullscreen;
+                            if (prefix == css.VendorPrefix{ .none = true }) break :brk F.fullscreen;
                         },
 
                         .focus_visible => break :brk F.focus_visible,
@@ -365,18 +362,18 @@ pub fn isCompatible(selectors: []const parser.Selector, targets: css.targets.Tar
                         .dir => break :brk F.dir_selector,
                         .optional => break :brk F.optional_pseudo,
                         .placeholder_shown => |prefix| {
-                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.placeholder_shown;
+                            if (prefix == css.VendorPrefix{ .none = true }) break :brk F.placeholder_shown;
                         },
 
                         inline .read_only, .read_write => |prefix| {
-                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.read_only_write;
+                            if (prefix == css.VendorPrefix{ .none = true }) break :brk F.read_only_write;
                         },
 
                         .valid, .invalid, .required => break :brk F.form_validation,
                         .in_range, .out_of_range => break :brk F.in_out_of_range,
 
                         .autofill => |prefix| {
-                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.autofill;
+                            if (prefix == css.VendorPrefix{ .none = true }) break :brk F.autofill;
                         },
 
                         // Experimental, no browser support.
@@ -411,14 +408,14 @@ pub fn isCompatible(selectors: []const parser.Selector, targets: css.targets.Tar
                         .first_line => break :brk F.first_line,
                         .first_letter => break :brk F.first_letter,
                         .selection => |prefix| {
-                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.selection;
+                            if (prefix == css.VendorPrefix{ .none = true }) break :brk F.selection;
                         },
                         .placeholder => |prefix| {
-                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.placeholder;
+                            if (prefix == css.VendorPrefix{ .none = true }) break :brk F.placeholder;
                         },
                         .marker => break :brk F.marker_pseudo,
                         .backdrop => |prefix| {
-                            if (prefix.eql(css.VendorPrefix{ .none = true })) break :brk F.dialog;
+                            if (prefix == css.VendorPrefix{ .none = true }) break :brk F.dialog;
                         },
                         .cue => break :brk F.cue,
                         .cue_function => break :brk F.cue_function,
@@ -577,7 +574,7 @@ pub const serialize = struct {
             //    which is a universal selector, append the result of
             //    serializing the universal selector to s.
             //
-            // Check if `!compound.empty()` first--this can happen if we have
+            // Check if `!compound{}` first--this can happen if we have
             // something like `... > ::before`, because we store `>` and `::`
             // both as combinators internally.
             //
@@ -747,7 +744,7 @@ pub const serialize = struct {
                         }
 
                         const vp = dest.vendor_prefix;
-                        if (vp.intersects(css.VendorPrefix{ .webkit = true, .moz = true })) {
+                        if (vp.webkit or vp.moz) {
                             try dest.writeChar(':');
                             try vp.toCss(W, dest);
                             try dest.writeStr("any(");
@@ -760,7 +757,7 @@ pub const serialize = struct {
                     },
                     .any => |v| {
                         const vp = dest.vendor_prefix._or(v.vendor_prefix);
-                        if (vp.intersects(css.VendorPrefix{ .webkit = true, .moz = true })) {
+                        if (vp.webkit or vp.moz) {
                             try dest.writeChar(':');
                             try vp.toCss(W, dest);
                             try dest.writeStr("any(");
@@ -885,7 +882,7 @@ pub const serialize = struct {
                 try d.writeChar(':');
                 // If the printer has a vendor prefix override, use that.
                 const vp = if (!d.vendor_prefix.isEmpty())
-                    d.vendor_prefix.bitwiseOr(prefix).orNone()
+                    bun.bits.@"or"(css.VendorPrefix, d.vendor_prefix, prefix).orNone()
                 else
                     prefix;
 
@@ -942,7 +939,7 @@ pub const serialize = struct {
             .fullscreen => |prefix| {
                 try dest.writeChar(':');
                 const vp = if (!dest.vendor_prefix.isEmpty())
-                    dest.vendor_prefix.bitwiseAnd(prefix).orNone()
+                    bits.@"and"(css.VendorPrefix, dest.vendor_prefix, prefix).orNone()
                 else
                     prefix;
                 try vp.toCss(W, dest);
@@ -1048,7 +1045,10 @@ pub const serialize = struct {
             pub fn writePrefix(d: *Printer(W), prefix: css.VendorPrefix) PrintErr!css.VendorPrefix {
                 try d.writeStr("::");
                 // If the printer has a vendor prefix override, use that.
-                const vp = if (!d.vendor_prefix.isEmpty()) d.vendor_prefix.bitwiseAnd(prefix).orNone() else prefix;
+                const vp = if (!d.vendor_prefix.isEmpty())
+                    bits.@"and"(css.VendorPrefix, d.vendor_prefix, prefix).orNone()
+                else
+                    prefix;
                 try vp.toCss(W, d);
                 debug("VENDOR PREFIX {d} OVERRIDE {d}", .{ vp.asBits(), d.vendor_prefix.asBits() });
                 return vp;
@@ -1176,7 +1176,7 @@ pub const serialize = struct {
             // so use :is() if that is not the case.
             if (ctx.selectors.v.len() == 1 and
                 (first or (!hasTypeSelector(ctx.selectors.v.at(0)) and
-                isSimple(ctx.selectors.v.at(0)))))
+                    isSimple(ctx.selectors.v.at(0)))))
             {
                 try serializeSelector(ctx.selectors.v.at(0), W, dest, ctx.parent, false);
             } else {
@@ -1246,7 +1246,7 @@ pub const tocss_servo = struct {
             //    which is a universal selector, append the result of
             //    serializing the universal selector to s.
             //
-            // Check if `!compound.empty()` first--this can happen if we have
+            // Check if `!compound{}` first--this can happen if we have
             // something like `... > ::before`, because we store `>` and `::`
             // both as combinators internally.
             //

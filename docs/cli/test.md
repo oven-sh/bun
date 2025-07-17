@@ -17,7 +17,7 @@ Bun aims for compatibility with Jest, but not everything is implemented. To trac
 $ bun test
 ```
 
-Tests are written in JavaScript or TypeScript with a Jest-like API. Refer to [Writing tests](https://bun.sh/docs/test/writing) for full documentation.
+Tests are written in JavaScript or TypeScript with a Jest-like API. Refer to [Writing tests](https://bun.com/docs/test/writing) for full documentation.
 
 ```ts#math.test.ts
 import { expect, test } from "bun:test";
@@ -53,7 +53,7 @@ To run a specific file in the test runner, make sure the path starts with `./` o
 $ bun test ./test/specific-file.test.ts
 ```
 
-The test runner runs all tests in a single process. It loads all `--preload` scripts (see [Lifecycle](https://bun.sh/docs/test/lifecycle) for details), then runs all tests. If a test fails, the test runner will exit with a non-zero exit code.
+The test runner runs all tests in a single process. It loads all `--preload` scripts (see [Lifecycle](https://bun.com/docs/test/lifecycle) for details), then runs all tests. If a test fails, the test runner will exit with a non-zero exit code.
 
 ## CI/CD integration
 
@@ -154,7 +154,7 @@ These hooks can be defined inside test files, or in a separate file that is prel
 $ bun test --preload ./setup.ts
 ```
 
-See [Test > Lifecycle](https://bun.sh/docs/test/lifecycle) for complete documentation.
+See [Test > Lifecycle](https://bun.com/docs/test/lifecycle) for complete documentation.
 
 ## Mocks
 
@@ -182,7 +182,7 @@ Alternatively, you can use `jest.fn()`, it behaves identically.
 + const random = jest.fn(() => Math.random());
 ```
 
-See [Test > Mocks](https://bun.sh/docs/test/mocks) for complete documentation.
+See [Test > Mocks](https://bun.com/docs/test/mocks) for complete documentation.
 
 ## Snapshot testing
 
@@ -203,7 +203,7 @@ To update snapshots, use the `--update-snapshots` flag.
 $ bun test --update-snapshots
 ```
 
-See [Test > Snapshots](https://bun.sh/docs/test/snapshots) for complete documentation.
+See [Test > Snapshots](https://bun.com/docs/test/snapshots) for complete documentation.
 
 ## UI & DOM testing
 
@@ -213,7 +213,7 @@ Bun is compatible with popular UI testing libraries:
 - [DOM Testing Library](https://testing-library.com/docs/dom-testing-library/intro/)
 - [React Testing Library](https://testing-library.com/docs/react-testing-library/intro)
 
-See [Test > DOM Testing](https://bun.sh/docs/test/dom) for complete documentation.
+See [Test > DOM Testing](https://bun.com/docs/test/dom) for complete documentation.
 
 ## Performance
 

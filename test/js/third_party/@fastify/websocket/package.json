@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@fastify/websocket": "^11.0.2",
+    "fastify": "^5.2.2"
+  }
+}

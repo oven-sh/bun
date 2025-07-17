@@ -1,6 +1,6 @@
-import path from "path";
 import { promises as fs } from "fs";
-import { bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe } from "harness";
+import path from "path";
 
 const fixturePath = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", "bun-pragma", ...segs);
 

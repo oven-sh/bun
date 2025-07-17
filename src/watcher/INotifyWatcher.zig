@@ -51,7 +51,7 @@ pub const Event = extern struct {
     const largest_size = std.mem.alignForward(usize, @sizeOf(Event) + bun.MAX_PATH_BYTES, @alignOf(Event));
 
     pub fn name(event: *align(1) Event) [:0]u8 {
-        if (comptime Environment.allow_assert) bun.assert(event.name_len > 0);
+        if (comptime Environment.allow_assert) bun.assertf(event.name_len > 0, "INotifyWatcher.Event.name() called with name_len == 0, you should check it before calling this function.", .{});
         const name_first_char_ptr = std.mem.asBytes(&event.name_len).ptr + @sizeOf(u32);
         return bun.sliceTo(@as([*:0]u8, @ptrCast(name_first_char_ptr)), 0);
     }
@@ -98,7 +98,7 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
     }
 
     // TODO: convert to bun.sys.Error
-    this.fd = bun.toFD(try std.posix.inotify_init1(IN.CLOEXEC));
+    this.fd = .fromNative(try std.posix.inotify_init1(IN.CLOEXEC));
     this.eventlist_bytes = &(try bun.default_allocator.alignedAlloc(EventListBytes, @alignOf(Event), 1))[0];
     log("{} init", .{this.fd});
 }
@@ -192,7 +192,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
         this.eventlist_ptrs[count] = event;
         i += event.size();
         count += 1;
-        if (!Environment.enable_logs)
+        if (Environment.enable_logs)
             log("{} read event {} {} {} {}", .{
                 this.fd,
                 event.watch_descriptor,
@@ -219,7 +219,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
 pub fn stop(this: *INotifyWatcher) void {
     log("{} stop", .{this.fd});
     if (this.fd != bun.invalid_fd) {
-        _ = bun.sys.close(this.fd);
+        this.fd.close();
         this.fd = bun.invalid_fd;
     }
 }
@@ -292,7 +292,8 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.running) {
-            this.onFileUpdate(this.ctx, all_events[0 .. last_event_index + 1], this.changed_filepaths[0 .. name_off + 1], this.watchlist);
+            // all_events.len == 0 is checked above, so last_event_index + 1 is safe
+            this.onFileUpdate(this.ctx, all_events[0 .. last_event_index + 1], this.changed_filepaths[0..name_off], this.watchlist);
         } else {
             break;
         }
@@ -315,7 +316,7 @@ pub fn watchEventFromInotifyEvent(event: *align(1) const INotifyWatcher.Event, i
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const Futex = bun.Futex;

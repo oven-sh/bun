@@ -1,0 +1,7 @@
+src/bake/bake.bind.ts
+src/bake/DevServer.bind.ts
+src/bun.js/api/BunObject.bind.ts
+src/bun.js/bindgen_test.bind.ts
+src/bun.js/bindings/NodeModuleModule.bind.ts
+src/bun.js/node/node_os.bind.ts
+src/fmt.bind.ts

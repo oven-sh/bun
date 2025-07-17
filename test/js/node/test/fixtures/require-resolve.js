@@ -16,7 +16,7 @@ if (require.resolve.paths) {
   // Verify that existing paths are removed.
   assert.throws(() => {
     require.resolve('bar', { paths: [] })
-  }, /^Error: Cannot find module 'bar'/);
+  }, /Cannot find package 'bar'/);
 }
 
 // Verify that resolution path can be overwritten.
@@ -24,14 +24,14 @@ if (require.resolve.paths) {
   // three.js cannot be loaded from this file by default.
   assert.throws(() => {
     require.resolve('three')
-  }, /^Error: Cannot find module 'three'/);
+  }, /Cannot find package 'three'/);
 
   // If the nested-index directory is provided as a resolve path, 'three'
   // cannot be found because nested-index is used as a starting point and not
   // a searched directory.
   assert.throws(() => {
     require.resolve('three', { paths: [nestedIndex] })
-  }, /^Error: Cannot find module 'three'/);
+  }, /Cannot find package 'three'/);
 
   // Resolution from nested index directory also checks node_modules.
   assert.strictEqual(

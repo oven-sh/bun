@@ -1,7 +1,6 @@
 import { describe } from "bun:test";
-import { itBundled } from "../expectBundled";
-import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_css_test.go

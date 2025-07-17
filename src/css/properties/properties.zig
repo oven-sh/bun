@@ -1,9 +1,6 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const Allocator = std.mem.Allocator;
+const bun = @import("bun");
 const css = @import("../css_parser.zig");
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
 const Position = position.Position;
 const Error = css.Error;
 const ArrayList = std.ArrayListUnmanaged;
@@ -59,7 +56,12 @@ pub const CSSWideKeyword = enum {
     /// Rolls back the cascade to the value of the previous cascade layer.
     @"revert-layer",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 // pub fn DefineProperties(comptime properties: anytype) type {
@@ -220,7 +222,7 @@ pub const CSSWideKeyword = enum {
 //                     const prop = @field(properties, field.name);
 //                     const allowed_prefixes = allowed_prefixes: {
 //                         var prefixes: css.VendorPrefix = if (@hasField(@TypeOf(prop), "unprefixed") and !prop.unprefixed)
-//                             css.VendorPrefix.empty()
+//                             css.VendorPrefix{}
 //                         else
 //                             css.VendorPrefix{ .none = true };
 

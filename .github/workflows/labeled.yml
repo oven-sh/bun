@@ -69,7 +69,6 @@ jobs:
         shell: bash
         run: |
           LABELS=$(bun scripts/read-issue.ts)
-          echo "labels=$LABELS" >> $GITHUB_OUTPUT
           bun scripts/is-outdated.ts
 
           if [[ -f "is-outdated.txt" ]]; then
@@ -77,12 +76,19 @@ jobs:
           fi
 
           if [[ -f "outdated.txt" ]]; then
-            echo "oudated=$(cat outdated.txt)" >> $GITHUB_OUTPUT
+            echo "outdated=$(cat outdated.txt)" >> $GITHUB_OUTPUT
+          fi
+
+          if [[ -f "is-very-outdated.txt" ]]; then
+            echo "is-very-outdated=true" >> $GITHUB_OUTPUT
+            LABELS="$LABELS,old-version"
+          else
+            echo "is-very-outdated=false" >> $GITHUB_OUTPUT
           fi
 
           echo "latest=$(cat LATEST)" >> $GITHUB_OUTPUT
-
-          rm -rf is-outdated.txt outdated.txt latest.txt
+          echo "labels=$LABELS" >> $GITHUB_OUTPUT
+          rm -rf is-outdated.txt outdated.txt latest.txt is-very-outdated.txt
       - name: Generate comment text with Sentry Link
         if: github.event.label.name == 'crash'
         # ignore if fail
@@ -102,7 +108,14 @@ jobs:
           if [[ -f "sentry-id.txt" ]]; then
             echo "sentry-id=$(cat sentry-id.txt)" >> $GITHUB_OUTPUT
           fi
-
+      - name: Remove old labels
+        uses: actions-cool/issues-helper@v3
+        if: github.event.label.name == 'crash' && steps.add-labels.outputs.is-very-outdated == 'false'
+        with:
+          actions: "remove-labels"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          labels: old-version
       - name: Add labels
         uses: actions-cool/issues-helper@v3
         if: github.event.label.name == 'crash'
@@ -119,7 +132,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
           body: |
-            @${{ github.event.issue.user.login }}, the latest version of Bun is v${{ steps.add-labels.outputs.latest }}, but this crash was reported on Bun v${{ steps.add-labels.outputs.oudated }}.
+            @${{ github.event.issue.user.login }}, the latest version of Bun is v${{ steps.add-labels.outputs.latest }}, but this crash was reported on Bun v${{ steps.add-labels.outputs.outdated }}.
 
             Are you able to reproduce this crash on the latest version of Bun?
 
@@ -134,7 +147,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
           body: |
-            @${{ github.event.issue.user.login }}, thank you for reporting this crash. The latest version of Bun is v${{ steps.add-labels.outputs.latest }}, but this crash was reported on Bun v${{ steps.add-labels.outputs.oudated }}.
+            @${{ github.event.issue.user.login }}, thank you for reporting this crash. The latest version of Bun is v${{ steps.add-labels.outputs.latest }}, but this crash was reported on Bun v${{ steps.add-labels.outputs.outdated }}.
 
             Are you able to reproduce this crash on the latest version of Bun?
 

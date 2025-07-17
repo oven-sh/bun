@@ -32,9 +32,9 @@ import {
   ServerWritableStream,
 } from "@grpc/grpc-js/build/src/server-call";
 
-import { loadProtoFile } from "./common";
 import { CompressionAlgorithms } from "@grpc/grpc-js/build/src/compression-algorithms";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
+import { afterAll as after, beforeAll as before, beforeEach, describe, it } from "bun:test";
+import { loadProtoFile } from "./common";
 
 const protoFile = join(__dirname, "fixtures", "test_service.proto");
 const testServiceDef = loadProtoFile(protoFile);
@@ -807,7 +807,7 @@ describe("Other conditions", () => {
 
   describe("Max message size", () => {
     const largeMessage = "a".repeat(10_000_000);
-    it.todo("Should be enforced on the server", done => {
+    it("Should be enforced on the server", done => {
       client.unary({ message: largeMessage }, (error?: ServiceError) => {
         assert(error);
         console.error(error);

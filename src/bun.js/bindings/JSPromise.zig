@@ -5,6 +5,7 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VM = JSC.VM;
 const String = bun.String;
+const JSError = bun.JSError;
 
 pub const JSPromise = opaque {
     pub const Status = enum(u32) {
@@ -17,7 +18,6 @@ pub const JSPromise = opaque {
     extern fn JSC__JSPromise__isHandled(arg0: *const JSPromise, arg1: *VM) bool;
     extern fn JSC__JSPromise__reject(arg0: *JSPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
     extern fn JSC__JSPromise__rejectAsHandled(arg0: *JSPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
-    extern fn JSC__JSPromise__rejectAsHandledException(arg0: *JSPromise, arg1: *JSGlobalObject, arg2: ?*JSC.Exception) void;
     extern fn JSC__JSPromise__rejectedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSPromise;
     /// **DEPRECATED** This function does not notify the VM about the rejection,
     /// meaning it will not trigger unhandled rejection handling. Use JSC__JSPromise__rejectedPromise instead.
@@ -111,8 +111,8 @@ pub const JSPromise = opaque {
 
         pub const empty: Strong = .{ .strong = .empty };
 
-        pub fn reject(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
-            this.swap().reject(globalThis, val);
+        pub fn reject(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSError!JSC.JSValue) void {
+            this.swap().reject(globalThis, val catch globalThis.tryTakeException().?);
         }
 
         /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
@@ -141,7 +141,7 @@ pub const JSPromise = opaque {
         pub fn init(globalThis: *JSC.JSGlobalObject) Strong {
             return Strong{
                 .strong = .create(
-                    JSC.JSPromise.create(globalThis).asValue(globalThis),
+                    JSC.JSPromise.create(globalThis).toJS(),
                     globalThis,
                 ),
             };
@@ -174,7 +174,7 @@ pub const JSPromise = opaque {
         }
     };
 
-    pub fn toJS(this: *JSPromise) JSValue {
+    pub inline fn toJS(this: *JSPromise) JSValue {
         return JSValue.fromCell(this);
     }
 
@@ -189,17 +189,22 @@ pub const JSPromise = opaque {
             args: Args,
 
             pub fn call(this: *@This(), g: *JSC.JSGlobalObject) callconv(.c) JSC.JSValue {
-                return JSC.toJSHostValue(g, @call(.auto, Fn, this.args));
+                return JSC.toJSHostCall(g, @src(), Fn, this.args);
             }
         };
 
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
         var ctx = Wrapper{ .args = args };
-        return JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
+        const promise = JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
+        bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
+        return promise;
     }
 
     pub fn wrapValue(globalObject: *JSGlobalObject, value: JSValue) JSValue {
         if (value == .zero) {
-            return resolvedPromiseValue(globalObject, JSValue.jsUndefined());
+            return resolvedPromiseValue(globalObject, .js_undefined);
         } else if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
             return resolvedPromiseValue(globalObject, value);
         }
@@ -265,10 +270,10 @@ pub const JSPromise = opaque {
             }
         }
 
-        JSC__JSPromise__resolve(this, globalThis, value);
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSPromise__resolve, .{ this, globalThis, value }) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
-    pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+    pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) void {
         if (comptime bun.Environment.isDebug) {
             const loop = JSC.VirtualMachine.get().eventLoop();
             loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
@@ -277,11 +282,13 @@ pub const JSPromise = opaque {
             }
         }
 
-        JSC__JSPromise__reject(this, globalThis, value);
+        const err = value catch |err| globalThis.takeException(err);
+
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSPromise__reject, .{ this, globalThis, err }) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
     pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
-        JSC__JSPromise__rejectAsHandled(this, globalThis, value);
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSPromise__rejectAsHandled, .{ this, globalThis, value }) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
     pub fn create(globalThis: *JSGlobalObject) *JSPromise {

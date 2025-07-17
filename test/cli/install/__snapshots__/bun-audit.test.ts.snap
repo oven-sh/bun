@@ -1,0 +1,445 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`\`bun audit\` should exit code 1 when there are vulnerabilities: bun-audit-expect-vulnerabilities-found 1`] = `
+"minimist  <0.2.4
+  express › mkdirp › minimist
+  critical: Prototype Pollution in minimist - https://github.com/advisories/GHSA-xvch-5gv4-984h
+  moderate: Prototype Pollution in minimist - https://github.com/advisories/GHSA-vh95-rmgr-6w4m
+
+express  >=3.4.5 <4.0.0-rc1
+  (direct dependency)
+  low: Express Open Redirect vulnerability - https://github.com/advisories/GHSA-jj78-5fmv-mv28
+  low: express vulnerable to XSS via response.redirect() - https://github.com/advisories/GHSA-qw6h-vgh9-j6wx
+  moderate: Express ressource injection - https://github.com/advisories/GHSA-cm5g-3pgc-8rg4
+  moderate: Express.js Open Redirect in malformed URLs - https://github.com/advisories/GHSA-rv95-896h-c2vc
+
+qs  <6.2.4
+  express › connect › body-parser › qs
+  high: qs vulnerable to Prototype Pollution - https://github.com/advisories/GHSA-hrpp-h998-j3pp
+  high: Prototype Pollution Protection Bypass in qs - https://github.com/advisories/GHSA-gqgv-6jq5-jjj9
+
+send  <0.19.0
+  express › send
+  low: send vulnerable to template injection that can lead to XSS - https://github.com/advisories/GHSA-m6fv-jmcg-4jfg
+
+negotiator  <0.6.1
+  express › connect › serve-index › accepts › negotiator
+  high: Regular Expression Denial of Service in negotiator - https://github.com/advisories/GHSA-7mc5-chhp-fmc3
+
+base64-url  <2.0.0
+  express › connect › csurf › csrf › uid-safe › base64-url
+  high: Out-of-bounds Read in base64-url - https://github.com/advisories/GHSA-j4mr-9xw3-c9jx
+
+serve-static  <1.16.0
+  express › connect › serve-static
+  low: serve-static vulnerable to template injection that can lead to XSS - https://github.com/advisories/GHSA-cm22-4g7w-348p
+
+cookie  <0.7.0
+  express › connect › cookie
+  low: cookie accepts cookie name, path, and domain with out of bounds characters - https://github.com/advisories/GHSA-pxg6-pf52-xh8x
+
+mime  <1.4.1
+  express › send › mime
+  high: mime Regular Expression Denial of Service when MIME lookup performed on untrusted user input - https://github.com/advisories/GHSA-wrvr-8mpx-r7pp
+
+body-parser  <1.20.3
+  express › connect › body-parser
+  high: body-parser vulnerable to denial of service when url encoding is enabled - https://github.com/advisories/GHSA-qwcr-r2fm-qrc7
+
+fresh  <0.5.2
+  express › connect › fresh
+  high: Regular Expression Denial of Service in fresh - https://github.com/advisories/GHSA-9qj9-36jm-prpv
+
+morgan  <1.9.1
+  express › connect › morgan
+  critical: Code Injection in morgan - https://github.com/advisories/GHSA-gwg9-rgvj-4h5j
+
+basic-auth-connect  <1.1.0
+  express › connect › basic-auth-connect
+  high: basic-auth-connect's callback uses time unsafe string comparison - https://github.com/advisories/GHSA-7p89-p6hx-q4fw
+
+debug  <2.6.9
+  express › connect › compression › debug
+  high: debug Inefficient Regular Expression Complexity vulnerability - https://github.com/advisories/GHSA-9vvw-cc9w-f27h
+  low: Regular Expression Denial of Service in debug - https://github.com/advisories/GHSA-gxpj-cx7g-858c
+
+ms  <2.0.0
+  express › connect › serve-favicon › ms
+  moderate: Vercel ms Inefficient Regular Expression Complexity vulnerability - https://github.com/advisories/GHSA-w9mr-4mfr-499f
+
+21 vulnerabilities (2 critical, 9 high, 4 moderate, 6 low)
+
+To update all dependencies to the latest compatible versions:
+  bun update
+
+To update all dependencies to the latest versions (including breaking changes):
+  bun update --latest
+
+"
+`;
+
+exports[`\`bun audit\` should print valid JSON and exit 0 when --json is passed and there are no vulnerabilities: bun-audit-expect-valid-json-stdout-report-no-vulnerabilities 1`] = `{}`;
+
+exports[`\`bun audit\` should print valid JSON and exit 1 when --json is passed and there are vulnerabilities: bun-audit-expect-valid-json-stdout-report-vulnerabilities 1`] = `
+{
+  "base64-url": [
+    {
+      "cvss": {
+        "score": 0,
+        "vectorString": null,
+      },
+      "cwe": [
+        "CWE-125",
+      ],
+      "id": 1090859,
+      "severity": "high",
+      "title": "Out-of-bounds Read in base64-url",
+      "url": "https://github.com/advisories/GHSA-j4mr-9xw3-c9jx",
+      "vulnerable_versions": "<2.0.0",
+    },
+  ],
+  "basic-auth-connect": [
+    {
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      },
+      "cwe": [
+        "CWE-208",
+      ],
+      "id": 1099800,
+      "severity": "high",
+      "title": "basic-auth-connect's callback uses time unsafe string comparison",
+      "url": "https://github.com/advisories/GHSA-7p89-p6hx-q4fw",
+      "vulnerable_versions": "<1.1.0",
+    },
+  ],
+  "body-parser": [
+    {
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      },
+      "cwe": [
+        "CWE-405",
+      ],
+      "id": 1099520,
+      "severity": "high",
+      "title": "body-parser vulnerable to denial of service when url encoding is enabled",
+      "url": "https://github.com/advisories/GHSA-qwcr-r2fm-qrc7",
+      "vulnerable_versions": "<1.20.3",
+    },
+  ],
+  "cookie": [
+    {
+      "cvss": {
+        "score": 0,
+        "vectorString": null,
+      },
+      "cwe": [
+        "CWE-74",
+      ],
+      "id": 1103907,
+      "severity": "low",
+      "title": "cookie accepts cookie name, path, and domain with out of bounds characters",
+      "url": "https://github.com/advisories/GHSA-pxg6-pf52-xh8x",
+      "vulnerable_versions": "<0.7.0",
+    },
+  ],
+  "debug": [
+    {
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      },
+      "cwe": [
+        "CWE-1333",
+      ],
+      "id": 1094457,
+      "severity": "high",
+      "title": "debug Inefficient Regular Expression Complexity vulnerability",
+      "url": "https://github.com/advisories/GHSA-9vvw-cc9w-f27h",
+      "vulnerable_versions": "<2.6.9",
+    },
+    {
+      "cvss": {
+        "score": 3.7,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:L",
+      },
+      "cwe": [
+        "CWE-400",
+      ],
+      "id": 1096795,
+      "severity": "low",
+      "title": "Regular Expression Denial of Service in debug",
+      "url": "https://github.com/advisories/GHSA-gxpj-cx7g-858c",
+      "vulnerable_versions": "<2.6.9",
+    },
+  ],
+  "express": [
+    {
+      "cvss": {
+        "score": 4.7,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:N/A:N",
+      },
+      "cwe": [
+        "CWE-601",
+      ],
+      "id": 1099969,
+      "severity": "low",
+      "title": "Express Open Redirect vulnerability",
+      "url": "https://github.com/advisories/GHSA-jj78-5fmv-mv28",
+      "vulnerable_versions": ">=3.4.5 <4.0.0-rc1",
+    },
+    {
+      "cvss": {
+        "score": 5,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:L/A:L",
+      },
+      "cwe": [
+        "CWE-79",
+      ],
+      "id": 1100530,
+      "severity": "low",
+      "title": "express vulnerable to XSS via response.redirect()",
+      "url": "https://github.com/advisories/GHSA-qw6h-vgh9-j6wx",
+      "vulnerable_versions": "<4.20.0",
+    },
+    {
+      "cvss": {
+        "score": 4,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:C/C:L/I:N/A:N",
+      },
+      "cwe": [
+        "CWE-74",
+      ],
+      "id": 1101381,
+      "severity": "moderate",
+      "title": "Express ressource injection",
+      "url": "https://github.com/advisories/GHSA-cm5g-3pgc-8rg4",
+      "vulnerable_versions": "<=3.21.4",
+    },
+    {
+      "cvss": {
+        "score": 6.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+      },
+      "cwe": [
+        "CWE-601",
+        "CWE-1286",
+      ],
+      "id": 1096820,
+      "severity": "moderate",
+      "title": "Express.js Open Redirect in malformed URLs",
+      "url": "https://github.com/advisories/GHSA-rv95-896h-c2vc",
+      "vulnerable_versions": "<4.19.2",
+    },
+  ],
+  "fresh": [
+    {
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      },
+      "cwe": [
+        "CWE-400",
+      ],
+      "id": 1093570,
+      "severity": "high",
+      "title": "Regular Expression Denial of Service in fresh",
+      "url": "https://github.com/advisories/GHSA-9qj9-36jm-prpv",
+      "vulnerable_versions": "<0.5.2",
+    },
+  ],
+  "mime": [
+    {
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      },
+      "cwe": [
+        "CWE-400",
+      ],
+      "id": 1093780,
+      "severity": "high",
+      "title": "mime Regular Expression Denial of Service when MIME lookup performed on untrusted user input",
+      "url": "https://github.com/advisories/GHSA-wrvr-8mpx-r7pp",
+      "vulnerable_versions": "<1.4.1",
+    },
+  ],
+  "minimist": [
+    {
+      "cvss": {
+        "score": 9.8,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      },
+      "cwe": [
+        "CWE-1321",
+      ],
+      "id": 1097677,
+      "severity": "critical",
+      "title": "Prototype Pollution in minimist",
+      "url": "https://github.com/advisories/GHSA-xvch-5gv4-984h",
+      "vulnerable_versions": "<0.2.4",
+    },
+    {
+      "cvss": {
+        "score": 5.6,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:L",
+      },
+      "cwe": [
+        "CWE-1321",
+      ],
+      "id": 1096466,
+      "severity": "moderate",
+      "title": "Prototype Pollution in minimist",
+      "url": "https://github.com/advisories/GHSA-vh95-rmgr-6w4m",
+      "vulnerable_versions": "<0.2.1",
+    },
+  ],
+  "morgan": [
+    {
+      "cvss": {
+        "score": 9.8,
+        "vectorString": "CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      },
+      "cwe": [
+        "CWE-94",
+      ],
+      "id": 1093804,
+      "severity": "critical",
+      "title": "Code Injection in morgan",
+      "url": "https://github.com/advisories/GHSA-gwg9-rgvj-4h5j",
+      "vulnerable_versions": "<1.9.1",
+    },
+  ],
+  "ms": [
+    {
+      "cvss": {
+        "score": 5.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+      },
+      "cwe": [
+        "CWE-1333",
+      ],
+      "id": 1094419,
+      "severity": "moderate",
+      "title": "Vercel ms Inefficient Regular Expression Complexity vulnerability",
+      "url": "https://github.com/advisories/GHSA-w9mr-4mfr-499f",
+      "vulnerable_versions": "<2.0.0",
+    },
+  ],
+  "negotiator": [
+    {
+      "cvss": {
+        "score": 0,
+        "vectorString": null,
+      },
+      "cwe": [
+        "CWE-400",
+      ],
+      "id": 1090969,
+      "severity": "high",
+      "title": "Regular Expression Denial of Service in negotiator",
+      "url": "https://github.com/advisories/GHSA-7mc5-chhp-fmc3",
+      "vulnerable_versions": "<0.6.1",
+    },
+  ],
+  "qs": [
+    {
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      },
+      "cwe": [
+        "CWE-1321",
+      ],
+      "id": 1104115,
+      "severity": "high",
+      "title": "qs vulnerable to Prototype Pollution",
+      "url": "https://github.com/advisories/GHSA-hrpp-h998-j3pp",
+      "vulnerable_versions": "<6.2.4",
+    },
+    {
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      },
+      "cwe": [
+        "CWE-20",
+      ],
+      "id": 1087527,
+      "severity": "high",
+      "title": "Prototype Pollution Protection Bypass in qs",
+      "url": "https://github.com/advisories/GHSA-gqgv-6jq5-jjj9",
+      "vulnerable_versions": "<6.0.4",
+    },
+  ],
+  "send": [
+    {
+      "cvss": {
+        "score": 5,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:L/A:L",
+      },
+      "cwe": [
+        "CWE-79",
+      ],
+      "id": 1100526,
+      "severity": "low",
+      "title": "send vulnerable to template injection that can lead to XSS",
+      "url": "https://github.com/advisories/GHSA-m6fv-jmcg-4jfg",
+      "vulnerable_versions": "<0.19.0",
+    },
+  ],
+  "serve-static": [
+    {
+      "cvss": {
+        "score": 5,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:L/A:L",
+      },
+      "cwe": [
+        "CWE-79",
+      ],
+      "id": 1100528,
+      "severity": "low",
+      "title": "serve-static vulnerable to template injection that can lead to XSS",
+      "url": "https://github.com/advisories/GHSA-cm22-4g7w-348p",
+      "vulnerable_versions": "<1.16.0",
+    },
+  ],
+}
+`;
+
+exports[`\`bun audit\` should exit 1 and behave exactly the same when there are vulnerabilities when only devDependencies are specified: bun-audit-expect-vulnerabilities-found 1`] = `
+"ms  <2.0.0
+  (direct dependency)
+  moderate: Vercel ms Inefficient Regular Expression Complexity vulnerability - https://github.com/advisories/GHSA-w9mr-4mfr-499f
+  high: Regular Expression Denial of Service in ms - https://github.com/advisories/GHSA-3fx5-fwvr-xrjg
+
+2 vulnerabilities (1 high, 1 moderate)
+
+To update all dependencies to the latest compatible versions:
+  bun update
+
+To update all dependencies to the latest versions (including breaking changes):
+  bun update --latest
+
+"
+`;
+
+exports[`\`bun audit\` when a project has some safe dependencies and some vulnerable dependencies, we should not print the safe dependencies: bun-audit-expect-vulnerabilities-found 1`] = `
+"ms  <2.0.0
+  (direct dependency)
+  moderate: Vercel ms Inefficient Regular Expression Complexity vulnerability - https://github.com/advisories/GHSA-w9mr-4mfr-499f
+  high: Regular Expression Denial of Service in ms - https://github.com/advisories/GHSA-3fx5-fwvr-xrjg
+
+2 vulnerabilities (1 high, 1 moderate)
+
+To update all dependencies to the latest compatible versions:
+  bun update
+
+To update all dependencies to the latest versions (including breaking changes):
+  bun update --latest
+
+"
+`;

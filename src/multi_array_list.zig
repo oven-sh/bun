@@ -5,7 +5,6 @@ const assert = bun.assert;
 const meta = std.meta;
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const testing = std.testing;
 
 /// A MultiArrayList stores a list of a struct or tagged union type.
 /// Instead of storing a single list of items, MultiArrayList
@@ -185,9 +184,9 @@ pub fn MultiArrayList(comptime T: type) type {
         };
 
         /// Release all allocated memory.
-        pub fn deinit(self: *Self, gpa: Allocator) void {
+        pub fn deinit(self: *const Self, gpa: Allocator) void {
             gpa.free(self.allocatedBytes());
-            self.* = undefined;
+            @constCast(self).* = undefined;
         }
 
         /// The caller owns the returned memory. Empties this MultiArrayList.

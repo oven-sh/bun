@@ -1,10 +1,9 @@
 import { createCanvas } from "@napi-rs/canvas";
 import { it as bunIt, test as bunTest, describe, expect } from "bun:test";
+import { appendFile } from "fs/promises";
+import { getSecret, isCI } from "harness";
 import { generate, generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";
-import { appendFile } from "fs/promises";
-import { heapStats } from "bun:jsc";
-import { getSecret, isCI } from "harness";
 
 function* TestIDGenerator(): Generator<number> {
   while (true) {

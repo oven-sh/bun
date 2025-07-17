@@ -1,17 +1,17 @@
 /**
  * This is the public API for `bind.ts` files
  * It is aliased as `import {} from 'bindgen'`
- * @see https://bun.sh/docs/project/bindgen
+ * @see https://bun.com/docs/project/bindgen
  */
 
 import {
-  isType,
   dictionaryImpl,
+  isFunc,
+  isType,
   oneOfImpl,
   registerFunction,
   TypeImpl,
   type TypeKind,
-  isFunc,
 } from "./bindgen-lib-internal";
 
 /** A type definition for argument parsing. See `bindgen.md` for usage details. */

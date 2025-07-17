@@ -107,6 +107,8 @@ type InitializeRequest = DAP.InitializeRequest & {
   supportsConfigurationDoneRequest?: boolean;
   enableControlFlowProfiler?: boolean;
   enableDebugger?: boolean;
+  enableTestReporter?: boolean;
+  enableConsole?: boolean | true;
 } & (
     | {
         enableLifecycleAgentReporter?: false;
@@ -460,7 +462,10 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
 
     this.send("Inspector.enable");
     this.send("Runtime.enable");
-    this.send("Console.enable");
+
+    if (request.enableConsole ?? true) {
+      this.send("Console.enable");
+    }
 
     if (request.enableControlFlowProfiler) {
       this.send("Runtime.enableControlFlowProfiler");
@@ -472,6 +477,10 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
       if (request.sendImmediatePreventExit) {
         this.send("LifecycleReporter.preventExit");
       }
+    }
+
+    if (request.enableTestReporter) {
+      this.send("TestReporter.enable");
     }
 
     // use !== false because by default if unspecified we want to enable the debugger
@@ -744,7 +753,7 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
             source,
             request,
             // It is theoretically possible for a breakpoint to resolve to multiple locations.
-            // In that case, send a seperate `breakpoint` event for each one, excluding the first.
+            // In that case, send a separate `breakpoint` event for each one, excluding the first.
             notify: i > 0,
           }),
         );

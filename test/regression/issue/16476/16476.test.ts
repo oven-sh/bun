@@ -1,6 +1,6 @@
+import t3 from "./a.txt" with { type: "file" };
 import t1 from "./a.txt?1" with { type: "file" };
 import t2 from "./a.txt?2";
-import t3 from "./a.txt" with { type: "file" };
 import w1 from "./a.wasm?1";
 import w2 from "./a.wasm?2";
 

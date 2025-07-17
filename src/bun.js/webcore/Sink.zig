@@ -79,7 +79,7 @@ pub const UTF8Fallback = struct {
 
         if (stack_size >= str.len * 2) {
             var buf: [stack_size]u8 = undefined;
-            const copied = bun.strings.copyUTF16IntoUTF8(&buf, []const u16, str, true);
+            const copied = bun.strings.copyUTF16IntoUTF8Impl(&buf, []const u16, str, true);
             bun.assert(copied.written <= stack_size);
             bun.assert(copied.read <= stack_size);
             if (input.isDone()) {
@@ -228,11 +228,11 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             }
 
             pub fn close(this: *@This(), _: ?Syscall.Error) void {
-                onClose(@as(SinkSignal, @bitCast(@intFromPtr(this))).cpp, JSValue.jsUndefined());
+                onClose(@as(SinkSignal, @bitCast(@intFromPtr(this))).cpp, .js_undefined);
             }
 
             pub fn ready(this: *@This(), _: ?Blob.SizeType, _: ?Blob.SizeType) void {
-                onReady(@as(SinkSignal, @bitCast(@intFromPtr(this))).cpp, JSValue.jsUndefined(), JSValue.jsUndefined());
+                onReady(@as(SinkSignal, @bitCast(@intFromPtr(this))).cpp, .js_undefined, .js_undefined);
             }
 
             pub fn start(_: *@This()) void {}
@@ -251,12 +251,12 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         const DetachPtrFn = *const fn (JSValue) callconv(.C) void;
 
         const assignToStreamExtern = @extern(AssignToStreamFn, .{ .name = abi_name ++ "__assignToStream" });
-        const onCloseExtern = @extern(OnCloseFn, .{ .name = abi_name ++ "__onClose" });
+        const onCloseExtern = @extern(OnCloseFn, .{ .name = abi_name ++ "__onClose" }).*;
         const onReadyExtern = @extern(OnReadyFn, .{ .name = abi_name ++ "__onReady" });
         const onStartExtern = @extern(OnStartFn, .{ .name = abi_name ++ "__onStart" });
         const createObjectExtern = @extern(CreateObjectFn, .{ .name = abi_name ++ "__createObject" });
         const setDestroyCallbackExtern = @extern(SetDestroyCallbackFn, .{ .name = abi_name ++ "__setDestroyCallback" });
-        const detachPtrExtern = @extern(DetachPtrFn, .{ .name = abi_name ++ "__detachPtr" });
+        const detachPtrExtern = @extern(DetachPtrFn, .{ .name = abi_name ++ "__detachPtr" }).*;
 
         pub fn assignToStream(globalThis: *JSGlobalObject, stream: JSValue, ptr: *anyopaque, jsvalue_ptr: **anyopaque) JSValue {
             return assignToStreamExtern(globalThis, stream, ptr, jsvalue_ptr);
@@ -264,7 +264,8 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
         pub fn onClose(ptr: JSValue, reason: JSValue) void {
             JSC.markBinding(@src());
-            return onCloseExtern(ptr, reason);
+            const globalThis = bun.jsc.VirtualMachine.get().global; // TODO: this should be got from a parameter
+            return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), onCloseExtern, .{ ptr, reason }) catch return; // TODO: properly propagate exception upwards
         }
 
         pub fn onReady(ptr: JSValue, amount: JSValue, offset: JSValue) void {
@@ -287,8 +288,8 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             return setDestroyCallbackExtern(value, callback);
         }
 
-        pub fn detachPtr(ptr: JSValue) void {
-            return detachPtrExtern(ptr);
+        pub fn detachPtr(globalThis: *JSGlobalObject, ptr: JSValue) bun.JSError!void {
+            return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), detachPtrExtern, .{ptr});
         }
 
         pub fn construct(globalThis: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -305,11 +306,8 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 return globalThis.throwValue(err.toErrorInstance(globalThis));
             }
 
-            var allocator = globalThis.bunVM().allocator;
-            var this = allocator.create(ThisSink) catch {
-                return globalThis.throwValue(Syscall.Error.oom.toJSC(globalThis));
-            };
-            this.sink.construct(allocator);
+            var this = bun.new(SinkType, undefined);
+            this.construct(bun.default_allocator);
             return createObject(globalThis, this, 0);
         }
 
@@ -319,7 +317,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             this.sink.finalize();
         }
 
-        pub fn detach(this: *ThisSink) void {
+        pub fn detach(this: *ThisSink, globalThis: *JSGlobalObject) void {
             if (comptime !@hasField(SinkType, "signal"))
                 return;
 
@@ -329,7 +327,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             this.sink.signal.clear();
             const value = @as(JSValue, @enumFromInt(@as(JSC.JSValue.backing_int, @bitCast(@intFromPtr(ptr)))));
             value.unprotect();
-            detachPtr(value);
+            detachPtr(globalThis, value) catch {}; // TODO: properly propagate exception upwards
         }
 
         // The code generator encodes two distinct failure types using 0 and 1
@@ -466,7 +464,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
         pub fn close(globalThis: *JSGlobalObject, sink_ptr: ?*anyopaque) callconv(.C) JSValue {
             JSC.markBinding(@src());
-            const this: *ThisSink = @ptrCast(@alignCast(sink_ptr orelse return .undefined));
+            const this: *ThisSink = @ptrCast(@alignCast(sink_ptr orelse return .js_undefined));
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
@@ -474,7 +472,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 }
             }
 
-            return this.sink.end(null).toJS(globalThis);
+            return this.sink.end(null).toJS(globalThis) catch .zero; // TODO: properly propagate exception upwards
         }
 
         pub fn flush(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -499,7 +497,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 const maybe_value: JSC.Maybe(JSValue) = this.sink.flushFromJS(globalThis, wait);
                 return switch (maybe_value) {
                     .result => |value| value,
-                    .err => |err| return globalThis.throwValue(err.toJSC(globalThis)),
+                    .err => |err| return globalThis.throwValue(err.toJS(globalThis)),
                 };
             }
 
@@ -571,7 +569,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 }
             }
 
-            return this.sink.endFromJS(globalThis).toJS(globalThis);
+            return this.sink.endFromJS(globalThis).toJS(globalThis) catch .zero; // TODO: properly propagate exception upwards
         }
 
         pub fn updateRef(ptr: *anyopaque, value: bool) callconv(.C) void {

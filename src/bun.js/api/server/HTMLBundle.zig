@@ -34,9 +34,8 @@ fn deinit(this: *HTMLBundle) void {
     bun.destroy(this);
 }
 
-pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) JSValue {
-    var str = bun.String.createUTF8(this.path);
-    return str.transferToJS(globalObject);
+pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) bun.JSError!JSValue {
+    return bun.String.createUTF8ForJS(globalObject, this.path);
 }
 
 /// Deprecated: use Route instead.
@@ -48,7 +47,7 @@ pub const HTMLBundleRoute = Route;
 /// html file on multiple endpoints.
 pub const Route = struct {
     /// One HTMLBundle.Route can be specified multiple times
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", Route.deinit, .{});
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", Route.deinit, .{ .debug_name = "HTMLBundleRoute" });
     pub const ref = Route.RefCount.ref;
     pub const deref = Route.RefCount.deref;
 
@@ -65,6 +64,11 @@ pub const Route = struct {
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: std.ArrayListUnmanaged(*PendingResponse) = .{},
 
+    method: union(enum) {
+        any: void,
+        method: bun.http.Method.Set,
+    } = .any,
+
     pub fn memoryCost(this: *const Route) usize {
         var cost: usize = 0;
         cost += @sizeOf(Route);
@@ -73,8 +77,8 @@ pub const Route = struct {
         return cost;
     }
 
-    pub fn init(html_bundle: *HTMLBundle) *Route {
-        return bun.new(Route, .{
+    pub fn init(html_bundle: *HTMLBundle) RefPtr(Route) {
+        return .new(.{
             .bundle = .initRef(html_bundle),
             .pending_responses = .{},
             .ref_count = .init(),
@@ -406,7 +410,7 @@ pub const Route = struct {
                         route_path = route_path[1..];
                     }
 
-                    server.appendStaticRoute(route_path, .{ .static = static_route }) catch bun.outOfMemory();
+                    server.appendStaticRoute(route_path, .{ .static = static_route }, .any) catch bun.outOfMemory();
                 }
 
                 const html_route: *StaticRoute = this_html_route orelse @panic("Internal assertion failure: HTML entry point not found in HTMLBundle.");
@@ -505,8 +509,6 @@ const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSString = JSC.JSString;
-const JSValueRef = JSC.JSValueRef;
 const JSBundler = JSC.API.JSBundler;
 const HTTPResponse = bun.uws.AnyResponse;
 const uws = bun.uws;

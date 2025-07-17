@@ -15,6 +15,8 @@ mode: enum {
 
 test_reporter_agent: TestReporterAgent = .{},
 lifecycle_reporter_agent: LifecycleAgent = .{},
+frontend_dev_server_agent: BunFrontendDevServerAgent = .{},
+http_server_agent: HTTPServerAgent = .{},
 must_block_until_connected: bool = false,
 
 pub const Wait = enum { off, shortly, forever };
@@ -165,6 +167,7 @@ pub export fn Debugger__didConnect() void {
     if (this.debugger.?.wait_for_connection != .off) {
         this.debugger.?.wait_for_connection = .off;
         this.debugger.?.poll_ref.unref(this);
+        this.eventLoop().wakeup();
     }
 }
 
@@ -176,7 +179,7 @@ fn start(other_vm: *VirtualMachine) void {
     const loop = this.eventLoop();
 
     if (debugger.from_environment_variable.len > 0) {
-        var url = bun.String.createUTF8(debugger.from_environment_variable);
+        var url = bun.String.cloneUTF8(debugger.from_environment_variable);
 
         loop.enter();
         defer loop.exit();
@@ -184,7 +187,7 @@ fn start(other_vm: *VirtualMachine) void {
     }
 
     if (debugger.path_or_port) |path_or_port| {
-        var url = bun.String.createUTF8(path_or_port);
+        var url = bun.String.cloneUTF8(path_or_port);
 
         loop.enter();
         defer loop.exit();
@@ -294,14 +297,21 @@ pub const TestReporterAgent = struct {
         timeout,
         skip,
         todo,
+        skipped_because_label,
     };
+
+    pub const TestType = enum(u8) {
+        @"test" = 0,
+        describe = 1,
+    };
+
     pub const Handle = opaque {
-        extern "c" fn Bun__TestReporterAgentReportTestFound(agent: *Handle, callFrame: *jsc.CallFrame, testId: c_int, name: *bun.String) void;
+        extern "c" fn Bun__TestReporterAgentReportTestFound(agent: *Handle, callFrame: *jsc.CallFrame, testId: c_int, name: *bun.String, item_type: TestType, parentId: c_int) void;
         extern "c" fn Bun__TestReporterAgentReportTestStart(agent: *Handle, testId: c_int) void;
         extern "c" fn Bun__TestReporterAgentReportTestEnd(agent: *Handle, testId: c_int, bunTestStatus: TestStatus, elapsed: f64) void;
 
-        pub fn reportTestFound(this: *Handle, callFrame: *jsc.CallFrame, testId: i32, name: *bun.String) void {
-            Bun__TestReporterAgentReportTestFound(this, callFrame, testId, name);
+        pub fn reportTestFound(this: *Handle, callFrame: *jsc.CallFrame, testId: i32, name: *bun.String, item_type: TestType, parentId: i32) void {
+            Bun__TestReporterAgentReportTestFound(this, callFrame, testId, name, item_type, parentId);
         }
 
         pub fn reportTestStart(this: *Handle, testId: c_int) void {
@@ -328,10 +338,10 @@ pub const TestReporterAgent = struct {
     /// Caller must ensure that it is enabled first.
     ///
     /// Since we may have to call .deinit on the name string.
-    pub fn reportTestFound(this: TestReporterAgent, callFrame: *jsc.CallFrame, test_id: i32, name: *bun.String) void {
+    pub fn reportTestFound(this: TestReporterAgent, callFrame: *jsc.CallFrame, test_id: i32, name: *bun.String, item_type: TestType, parentId: i32) void {
         debug("reportTestFound", .{});
 
-        this.handle.?.reportTestFound(callFrame, test_id, name);
+        this.handle.?.reportTestFound(callFrame, test_id, name, item_type, parentId);
     }
 
     /// Caller must ensure that it is enabled first.
@@ -411,6 +421,10 @@ pub const LifecycleAgent = struct {
         return this.handle != null;
     }
 };
+
+pub const DebuggerId = bun.GenericIndex(i32, Debugger);
+pub const BunFrontendDevServerAgent = @import("./api/server/InspectorBunFrontendDevServerAgent.zig").BunFrontendDevServerAgent;
+pub const HTTPServerAgent = @import("./bindings/HTTPServerAgent.zig");
 
 const std = @import("std");
 const bun = @import("bun");

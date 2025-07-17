@@ -1,7 +1,5 @@
 const std = @import("std");
 const mem = std.mem;
-const fs = std.fs;
-const io = std.io;
 const macho = std.macho;
 const Allocator = mem.Allocator;
 const bun = @import("bun");
@@ -171,7 +169,7 @@ pub const MachoFile = struct {
         // We need to shift [...data after __BUN] forward by size_diff bytes.
         const after_bun_slice = self.data.items[original_data_end + @as(usize, @intCast(size_diff)) ..];
         const prev_after_bun_slice = prev_data_slice[original_segsize..];
-        bun.move(after_bun_slice, prev_after_bun_slice);
+        bun.memmove(after_bun_slice, prev_after_bun_slice);
 
         // Now we copy the u32 size header
         std.mem.writeInt(u32, self.data.items[original_fileoff..][0..4], @intCast(data.len), .little);
@@ -199,7 +197,7 @@ pub const MachoFile = struct {
             linkedit_seg.fileoff += @as(usize, @intCast(size_diff));
             linkedit_seg.vmaddr += @as(usize, @intCast(size_diff));
 
-            if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.getRuntimeFeatureFlag("BUN_NO_CODESIGN_MACHO_BINARY")) {
+            if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.getRuntimeFeatureFlag(.BUN_NO_CODESIGN_MACHO_BINARY)) {
                 // We also update the sizes of the LINKEDIT segment to account for the hashes we're adding
                 linkedit_seg.filesize += @as(usize, @intCast(size_of_new_hashes));
                 linkedit_seg.vmsize += @as(usize, @intCast(size_of_new_hashes));
@@ -350,7 +348,7 @@ pub const MachoFile = struct {
     }
 
     pub fn buildAndSign(self: *MachoFile, writer: anytype) !void {
-        if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.getRuntimeFeatureFlag("BUN_NO_CODESIGN_MACHO_BINARY")) {
+        if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.getRuntimeFeatureFlag(.BUN_NO_CODESIGN_MACHO_BINARY)) {
             var data = std.ArrayList(u8).init(self.allocator);
             defer data.deinit();
             try self.build(data.writer());
@@ -585,6 +583,5 @@ const SEC_CODE_SIGNATURE_HASH_SHA256: u8 = 2;
 const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 
 const SuperBlob = std.macho.SuperBlob;
-const Blob = std.macho.GenericBlob;
 const CodeDirectory = std.macho.CodeDirectory;
 const BlobIndex = std.macho.BlobIndex;

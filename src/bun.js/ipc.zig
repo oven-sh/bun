@@ -1,20 +1,25 @@
 const uws = bun.uws;
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
+const uv = bun.windows.libuv;
 
 const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 
 pub const log = Output.scoped(.IPC, false);
+
+const IsInternal = enum { internal, external };
+const SerializeAndSendResult = enum {
+    success,
+    failure,
+    backoff,
+};
 
 /// Mode of Inter-Process Communication.
 pub const Mode = enum {
@@ -50,14 +55,12 @@ pub const IPCDecodeError = error{
     NotEnoughBytes,
     /// Format could not be recognized. Report an error and close the socket.
     InvalidFormat,
-} || bun.OOM;
+} || bun.JSError;
 
 pub const IPCSerializationError = error{
     /// Value could not be serialized.
     SerializationFailed,
-    /// Out of memory
-    OutOfMemory,
-};
+} || bun.JSError;
 
 const advanced = struct {
     pub const header_length = @sizeOf(IPCMessageType) + @sizeOf(u32);
@@ -82,7 +85,7 @@ const advanced = struct {
         }
 
         const message_type: IPCMessageType = @enumFromInt(data[0]);
-        const message_len: u32 = @as(*align(1) const u32, @ptrCast(data[1 .. @sizeOf(u32) + 1])).*;
+        const message_len = std.mem.readInt(u32, data[1 .. @sizeOf(u32) + 1], .little);
 
         log("Received IPC message type {d} ({s}) len {d}", .{
             @intFromEnum(message_type),
@@ -97,40 +100,18 @@ const advanced = struct {
                     .message = .{ .version = message_len },
                 };
             },
-            .SerializedMessage => {
+            .SerializedMessage, .SerializedInternalMessage => |tag| {
                 if (data.len < (header_length + message_len)) {
                     log("Not enough bytes to decode IPC message body of len {d}, have {d} bytes", .{ message_len, data.len });
                     return IPCDecodeError.NotEnoughBytes;
                 }
 
                 const message = data[header_length .. header_length + message_len];
-                const deserialized = JSValue.deserialize(message, global);
-
-                if (deserialized == .zero) {
-                    return IPCDecodeError.InvalidFormat;
-                }
+                const deserialized = try JSValue.deserialize(message, global);
 
                 return .{
                     .bytes_consumed = header_length + message_len,
-                    .message = .{ .data = deserialized },
-                };
-            },
-            .SerializedInternalMessage => {
-                if (data.len < (header_length + message_len)) {
-                    log("Not enough bytes to decode IPC message body of len {d}, have {d} bytes", .{ message_len, data.len });
-                    return IPCDecodeError.NotEnoughBytes;
-                }
-
-                const message = data[header_length .. header_length + message_len];
-                const deserialized = JSValue.deserialize(message, global);
-
-                if (deserialized == .zero) {
-                    return IPCDecodeError.InvalidFormat;
-                }
-
-                return .{
-                    .bytes_consumed = header_length + message_len,
-                    .message = .{ .internal = deserialized },
+                    .message = if (tag == .SerializedInternalMessage) .{ .internal = deserialized } else .{ .data = deserialized },
                 };
             },
             _ => {
@@ -142,28 +123,15 @@ const advanced = struct {
     pub inline fn getVersionPacket() []const u8 {
         return comptime std.mem.asBytes(&VersionPacket{});
     }
-
-    pub fn serialize(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
-        const serialized = value.serialize(global) orelse
-            return IPCSerializationError.SerializationFailed;
-        defer serialized.deinit();
-
-        const size: u32 = @intCast(serialized.data.len);
-
-        const payload_length: usize = @sizeOf(IPCMessageType) + @sizeOf(u32) + size;
-
-        try writer.ensureUnusedCapacity(payload_length);
-
-        writer.writeTypeAsBytesAssumeCapacity(IPCMessageType, .SerializedMessage);
-        writer.writeTypeAsBytesAssumeCapacity(u32, size);
-        writer.writeAssumeCapacity(serialized.data);
-
-        return payload_length;
+    pub fn getAckPacket() []const u8 {
+        return "\x02\x24\x00\x00\x00\r\x00\x00\x00\x02\x03\x00\x00\x80cmd\x10\x0f\x00\x00\x80NODE_HANDLE_ACK\xff\xff\xff\xff";
+    }
+    pub fn getNackPacket() []const u8 {
+        return "\x02\x25\x00\x00\x00\r\x00\x00\x00\x02\x03\x00\x00\x80cmd\x10\x10\x00\x00\x80NODE_HANDLE_NACK\xff\xff\xff\xff";
     }
 
-    pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
-        const serialized = value.serialize(global) orelse
-            return IPCSerializationError.SerializationFailed;
+    pub fn serialize(writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
+        const serialized = try value.serialize(global, true);
         defer serialized.deinit();
 
         const size: u32 = @intCast(serialized.data.len);
@@ -172,7 +140,10 @@ const advanced = struct {
 
         try writer.ensureUnusedCapacity(payload_length);
 
-        writer.writeTypeAsBytesAssumeCapacity(IPCMessageType, .SerializedInternalMessage);
+        writer.writeTypeAsBytesAssumeCapacity(IPCMessageType, switch (is_internal) {
+            .internal => .SerializedInternalMessage,
+            .external => .SerializedMessage,
+        });
         writer.writeTypeAsBytesAssumeCapacity(u32, size);
         writer.writeAssumeCapacity(serialized.data);
 
@@ -188,32 +159,32 @@ const json = struct {
     pub fn getVersionPacket() []const u8 {
         return &.{};
     }
+    pub fn getAckPacket() []const u8 {
+        return "{\"cmd\":\"NODE_HANDLE_ACK\"}\n";
+    }
+    pub fn getNackPacket() []const u8 {
+        return "{\"cmd\":\"NODE_HANDLE_NACK\"}\n";
+    }
 
-    // In order to not have to do a property lookup json messages sent from Bun will have a single u8 prepended to them
+    // In order to not have to do a property lookup internal messages sent from Bun will have a single u8 prepended to them
     // to be able to distinguish whether it is a regular json message or an internal one for cluster ipc communication.
-    // 1 is regular
     // 2 is internal
+    // ["[{\d\.] is regular
 
     pub fn decodeIPCMessage(data: []const u8, globalThis: *JSC.JSGlobalObject) IPCDecodeError!DecodeIPCMessageResult {
         // <tag>{ "foo": "bar"} // tag is 1 or 2
         if (bun.strings.indexOfChar(data, '\n')) |idx| {
-            var kind = data[0];
             var json_data = data[0..idx];
-
-            switch (kind) {
-                2 => {
-                    json_data = data[1..idx];
-                },
-                else => {
-                    // assume it's valid json with no header
-                    // any error will be thrown by toJSByParseJSON below
-                    kind = 1;
-                },
-            }
-
-            // no point in attempting to JSON.parse an empty string
+            // bounds-check for the following json_data[0]
             // TODO: should we return NotEnoughBytes?
             if (json_data.len == 0) return error.InvalidFormat;
+
+            var kind: enum { regular, internal } = .regular;
+            if (json_data[0] == 2) {
+                // internal message
+                json_data = json_data[1..];
+                kind = .internal;
+            }
 
             const is_ascii = bun.strings.isAllASCII(json_data);
             var was_ascii_string_freed = false;
@@ -230,7 +201,7 @@ const json = struct {
                     return IPCDecodeError.OutOfMemory;
                 }
                 break :ascii s;
-            } else bun.String.fromUTF8(json_data);
+            } else bun.String.borrowUTF8(json_data);
 
             defer {
                 str.deref();
@@ -248,23 +219,22 @@ const json = struct {
             };
 
             return switch (kind) {
-                1 => .{
+                .regular => .{
                     .bytes_consumed = idx + 1,
                     .message = .{ .data = deserialized },
                 },
-                2 => .{
+                .internal => .{
                     .bytes_consumed = idx + 1,
                     .message = .{ .internal = deserialized },
                 },
-                else => @panic("invalid ipc json message kind this is a bug in Bun."),
             };
         }
         return IPCDecodeError.NotEnoughBytes;
     }
 
-    pub fn serialize(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+    pub fn serialize(writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
         var out: bun.String = undefined;
-        value.jsonStringify(global, 0, &out);
+        try value.jsonStringify(global, 0, &out);
         defer out.deref();
 
         if (out.tag == .Dead) return IPCSerializationError.SerializationFailed;
@@ -275,34 +245,18 @@ const json = struct {
 
         const slice = str.slice();
 
-        try writer.ensureUnusedCapacity(slice.len + 1);
+        var result_len: usize = slice.len + 1;
+        if (is_internal == .internal) result_len += 1;
 
+        try writer.ensureUnusedCapacity(result_len);
+
+        if (is_internal == .internal) {
+            writer.writeAssumeCapacity(&.{2});
+        }
         writer.writeAssumeCapacity(slice);
         writer.writeAssumeCapacity("\n");
 
-        return slice.len + 1;
-    }
-
-    pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
-        var out: bun.String = undefined;
-        value.jsonStringify(global, 0, &out);
-        defer out.deref();
-
-        if (out.tag == .Dead) return IPCSerializationError.SerializationFailed;
-
-        // TODO: it would be cool to have a 'toUTF8Into' which can write directly into 'ipc_data.outgoing.list'
-        const str = out.toUTF8(bun.default_allocator);
-        defer str.deinit();
-
-        const slice = str.slice();
-
-        try writer.ensureUnusedCapacity(1 + slice.len + 1);
-
-        writer.writeAssumeCapacity(&.{2});
-        writer.writeAssumeCapacity(slice);
-        writer.writeAssumeCapacity("\n");
-
-        return 1 + slice.len + 1;
+        return result_len;
     }
 };
 
@@ -322,330 +276,623 @@ pub fn getVersionPacket(mode: Mode) []const u8 {
 
 /// Given a writer interface, serialize and write a value.
 /// Returns true if the value was written, false if it was not.
-pub fn serialize(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
-    return switch (data.mode) {
-        inline else => |t| @field(@This(), @tagName(t)).serialize(data, writer, global, value),
+pub fn serialize(mode: Mode, writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
+    return switch (mode) {
+        .advanced => advanced.serialize(writer, global, value, is_internal),
+        .json => json.serialize(writer, global, value, is_internal),
     };
 }
 
-/// Given a writer interface, serialize and write a value.
-/// Returns true if the value was written, false if it was not.
-pub fn serializeInternal(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
-    return switch (data.mode) {
-        inline else => |t| @field(@This(), @tagName(t)).serializeInternal(data, writer, global, value),
+pub fn getAckPacket(mode: Mode) []const u8 {
+    return switch (mode) {
+        .advanced => advanced.getAckPacket(),
+        .json => json.getAckPacket(),
+    };
+}
+
+pub fn getNackPacket(mode: Mode) []const u8 {
+    return switch (mode) {
+        .advanced => advanced.getNackPacket(),
+        .json => json.getNackPacket(),
     };
 }
 
 pub const Socket = uws.NewSocketHandler(false);
 
-/// Used on POSIX
-const SocketIPCData = struct {
-    socket: Socket,
-    mode: Mode,
+pub const Handle = struct {
+    fd: bun.FileDescriptor,
+    js: JSC.JSValue,
+    pub fn init(fd: bun.FileDescriptor, js: JSC.JSValue) @This() {
+        js.protect();
+        return .{ .fd = fd, .js = js };
+    }
+    fn deinit(self: *Handle) void {
+        self.js.unprotect();
+    }
+};
+pub const CallbackList = union(enum) {
+    ack_nack,
+    none,
+    /// js callable
+    callback: JSC.JSValue,
+    /// js array
+    callback_array: JSC.JSValue,
 
-    incoming: bun.ByteList = .{}, // Maybe we should use StreamBuffer here as well
-    outgoing: bun.io.StreamBuffer = .{},
-    has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
-    internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
-    disconnected: bool = false,
-    is_server: bool = false,
-    keep_alive: bun.Async.KeepAlive = .{},
-    close_next_tick: ?JSC.Task = null,
-
-    pub fn writeVersionPacket(this: *SocketIPCData, global: *JSC.JSGlobalObject) void {
-        if (Environment.allow_assert) {
-            bun.assert(this.has_written_version == 0);
+    /// protects the callback
+    pub fn init(callback: JSC.JSValue) @This() {
+        if (callback.isCallable()) {
+            callback.protect();
+            return .{ .callback = callback };
         }
-        const bytes = getVersionPacket(this.mode);
-        if (bytes.len > 0) {
-            const n = this.socket.write(bytes, false);
-            if (n >= 0 and n < @as(i32, @intCast(bytes.len))) {
-                this.outgoing.write(bytes[@intCast(n)..]) catch bun.outOfMemory();
-                // more remaining; need to ref event loop
-                this.keep_alive.ref(global.bunVM());
-            }
-        }
-        if (Environment.allow_assert) {
-            this.has_written_version = 1;
-        }
+        return .none;
     }
 
-    pub fn serializeAndSend(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue) bool {
-        if (Environment.allow_assert) {
-            bun.assert(ipc_data.has_written_version == 1);
-        }
-
-        // TODO: probably we should not direct access ipc_data.outgoing.list.items here
-        const start_offset = ipc_data.outgoing.list.items.len;
-
-        const payload_length = serialize(ipc_data, &ipc_data.outgoing, global, value) catch return false;
-
-        bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
-
-        if (start_offset == 0) {
-            bun.assert(ipc_data.outgoing.cursor == 0);
-            const n = ipc_data.socket.write(ipc_data.outgoing.list.items.ptr[start_offset..payload_length], false);
-            if (n == payload_length) {
-                ipc_data.outgoing.reset();
-            } else if (n > 0) {
-                ipc_data.outgoing.cursor = @intCast(n);
-                // more remaining; need to ref event loop
-                ipc_data.keep_alive.ref(global.bunVM());
-            }
-        }
-
-        return true;
-    }
-
-    pub fn serializeAndSendInternal(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue) bool {
-        if (Environment.allow_assert) {
-            bun.assert(ipc_data.has_written_version == 1);
-        }
-
-        // TODO: probably we should not direct access ipc_data.outgoing.list.items here
-        const start_offset = ipc_data.outgoing.list.items.len;
-
-        const payload_length = serializeInternal(ipc_data, &ipc_data.outgoing, global, value) catch return false;
-
-        bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
-
-        if (start_offset == 0) {
-            bun.assert(ipc_data.outgoing.cursor == 0);
-            const n = ipc_data.socket.write(ipc_data.outgoing.list.items.ptr[start_offset..payload_length], false);
-            if (n == payload_length) {
-                ipc_data.outgoing.reset();
-            } else if (n > 0) {
-                ipc_data.outgoing.cursor = @intCast(n);
-                // more remaining; need to ref event loop
-                ipc_data.keep_alive.ref(global.bunVM());
-            }
-        }
-
-        return true;
-    }
-
-    pub fn close(this: *SocketIPCData, nextTick: bool) void {
-        log("SocketIPCData#close", .{});
-        if (this.disconnected) return;
-        this.disconnected = true;
-        if (nextTick) {
-            if (this.close_next_tick != null) return;
-            this.close_next_tick = JSC.ManagedTask.New(SocketIPCData, closeTask).init(this);
-            JSC.VirtualMachine.get().enqueueTask(this.close_next_tick.?);
-        } else {
-            this.closeTask();
+    /// protects the callback
+    pub fn push(self: *@This(), callback: JSC.JSValue, global: *JSC.JSGlobalObject) bun.JSError!void {
+        switch (self.*) {
+            .ack_nack => unreachable,
+            .none => {
+                callback.protect();
+                self.* = .{ .callback = callback };
+            },
+            .callback => {
+                const prev = self.callback;
+                const arr = try JSC.JSValue.createEmptyArray(global, 2);
+                arr.protect();
+                try arr.putIndex(global, 0, prev); // add the old callback to the array
+                try arr.putIndex(global, 1, callback); // add the new callback to the array
+                prev.unprotect(); // owned by the array now
+                self.* = .{ .callback_array = arr };
+            },
+            .callback_array => |arr| {
+                try arr.push(global, callback);
+            },
         }
     }
+    fn callNextTick(self: *@This(), global: *JSC.JSGlobalObject) bun.JSError!void {
+        switch (self.*) {
+            .ack_nack => {},
+            .none => {},
+            .callback => {
+                try self.callback.callNextTick(global, .{.null});
+                self.callback.unprotect();
+                self.* = .none;
+            },
+            .callback_array => {
+                var iter = try self.callback_array.arrayIterator(global);
+                while (try iter.next()) |item| {
+                    try item.callNextTick(global, .{.null});
+                }
+                self.callback_array.unprotect();
+                self.* = .none;
+            },
+        }
+    }
+    pub fn deinit(self: *@This()) void {
+        switch (self.*) {
+            .ack_nack => {},
+            .none => {},
+            .callback => self.callback.unprotect(),
+            .callback_array => self.callback_array.unprotect(),
+        }
+        self.* = .none;
+    }
+};
+pub const SendHandle = struct {
+    // when a message has a handle, make sure it has a new SendHandle - so that if we retry sending it,
+    // we only retry sending the message with the handle, not the original message.
+    data: bun.io.StreamBuffer = .{},
+    /// keep sending the handle until data is drained (assume it hasn't sent until data is fully drained)
+    handle: ?Handle,
+    callbacks: CallbackList,
 
-    pub fn closeTask(this: *SocketIPCData) void {
-        log("SocketIPCData#closeTask", .{});
-        this.close_next_tick = null;
-        bun.assert(this.disconnected);
-        this.socket.close(.normal);
+    pub fn isAckNack(self: *SendHandle) bool {
+        return self.callbacks == .ack_nack;
+    }
+
+    /// Call the callback and deinit
+    pub fn complete(self: *SendHandle, global: *JSC.JSGlobalObject) void {
+        defer self.deinit();
+        self.callbacks.callNextTick(global) catch {}; // TODO: properly propagate exception upwards
+    }
+    pub fn deinit(self: *SendHandle) void {
+        self.data.deinit();
+        self.callbacks.deinit();
+        if (self.handle) |*handle| {
+            handle.deinit();
+        }
     }
 };
 
-/// Used on Windows
-const NamedPipeIPCData = struct {
-    const uv = bun.windows.libuv;
+pub const WindowsWrite = struct {
+    write_req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
+    write_buffer: uv.uv_buf_t = uv.uv_buf_t.init(""),
+    write_slice: []const u8,
+    owner: ?*SendQueue,
+    pub fn destroy(self: *WindowsWrite) void {
+        bun.default_allocator.free(self.write_slice);
+        bun.destroy(self);
+    }
+};
+pub const SendQueue = struct {
+    queue: std.ArrayList(SendHandle),
+    waiting_for_ack: ?SendHandle = null,
 
-    mode: Mode,
-
-    // we will use writer pipe as Duplex
-    writer: bun.io.StreamingWriter(@This(), .{
-        .onWrite = onWrite,
-        .onError = onError,
-        .onWritable = null,
-        .onClose = onPipeClose,
-    }) = .{},
-
-    incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
-    disconnected: bool = false,
-    is_server: bool = false,
-    connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
-    onClose: ?CloseHandler = null,
+    retry_count: u32 = 0,
+    keep_alive: bun.Async.KeepAlive = .{},
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
+    mode: Mode,
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
+    incoming: bun.ByteList = .{}, // Maybe we should use StreamBuffer here as well
+    incoming_fd: ?bun.FileDescriptor = null,
 
-    const CloseHandler = struct {
-        callback: *const fn (*anyopaque) void,
-        context: *anyopaque,
+    socket: SocketUnion,
+    owner: SendQueueOwner,
+
+    close_next_tick: ?JSC.Task = null,
+    write_in_progress: bool = false,
+    close_event_sent: bool = false,
+
+    windows: switch (Environment.isWindows) {
+        true => struct {
+            is_server: bool = false,
+            windows_write: ?*WindowsWrite = null,
+            try_close_after_write: bool = false,
+        },
+        false => struct {},
+    } = .{},
+
+    pub const SendQueueOwner = union(enum) {
+        subprocess: *bun.api.Subprocess,
+        virtual_machine: *bun.JSC.VirtualMachine.IPCInstance,
     };
+    pub const SocketType = switch (Environment.isWindows) {
+        true => *uv.Pipe,
+        false => Socket,
+    };
+    pub const SocketUnion = union(enum) {
+        uninitialized,
+        open: SocketType,
+        closed,
+    };
+
+    pub fn init(mode: Mode, owner: SendQueueOwner, socket: SocketUnion) @This() {
+        log("SendQueue#init", .{});
+        return .{ .queue = .init(bun.default_allocator), .mode = mode, .owner = owner, .socket = socket };
+    }
+    pub fn deinit(self: *@This()) void {
+        log("SendQueue#deinit", .{});
+        // must go first
+        self.closeSocket(.failure, .deinit);
+
+        for (self.queue.items) |*item| item.deinit();
+        self.queue.deinit();
+        self.internal_msg_queue.deinit();
+        self.incoming.deinitWithAllocator(bun.default_allocator);
+        if (self.waiting_for_ack) |*waiting| waiting.deinit();
+
+        // if there is a close next tick task, cancel it so it doesn't get called and then UAF
+        if (self.close_next_tick) |close_next_tick_task| {
+            const managed: *bun.JSC.ManagedTask = close_next_tick_task.as(bun.JSC.ManagedTask);
+            managed.cancel();
+        }
+    }
+
+    pub fn isConnected(this: *SendQueue) bool {
+        if (Environment.isWindows and this.windows.try_close_after_write) return false;
+        return this.socket == .open and this.close_next_tick == null;
+    }
+
+    fn closeSocket(this: *SendQueue, reason: enum { normal, failure }, from: enum { user, deinit }) void {
+        log("SendQueue#closeSocket {s}", .{@tagName(from)});
+        switch (this.socket) {
+            .open => |s| switch (Environment.isWindows) {
+                true => {
+                    const pipe: *uv.Pipe = s;
+                    const stream: *uv.uv_stream_t = pipe.asStream();
+                    stream.readStop();
+
+                    if (this.windows.windows_write != null and from != .deinit) {
+                        log("SendQueue#closeSocket -> mark ready for close", .{});
+                        // currently writing; wait for the write to complete
+                        this.windows.try_close_after_write = true;
+                    } else {
+                        log("SendQueue#closeSocket -> close now", .{});
+                        this._windowsClose();
+                    }
+                },
+                false => {
+                    s.close(switch (reason) {
+                        .normal => .normal,
+                        .failure => .failure,
+                    });
+                    this._socketClosed();
+                },
+            },
+            else => {
+                this._socketClosed();
+            },
+        }
+    }
+    fn _socketClosed(this: *SendQueue) void {
+        log("SendQueue#_socketClosed", .{});
+        if (Environment.isWindows) {
+            if (this.windows.windows_write) |windows_write| {
+                windows_write.owner = null; // so _windowsOnWriteComplete doesn't try to continue writing
+            }
+            this.windows.windows_write = null; // will be freed by _windowsOnWriteComplete
+        }
+        this.keep_alive.disable();
+        this.socket = .closed;
+        this._onAfterIPCClosed();
+    }
+    fn _windowsClose(this: *SendQueue) void {
+        log("SendQueue#_windowsClose", .{});
+        if (this.socket != .open) return;
+        const pipe = this.socket.open;
+        pipe.data = pipe;
+        pipe.close(&_windowsOnClosed);
+        this._socketClosed();
+        this._onAfterIPCClosed();
+    }
+    fn _windowsOnClosed(windows: *uv.Pipe) callconv(.C) void {
+        log("SendQueue#_windowsOnClosed", .{});
+        bun.default_allocator.destroy(windows);
+    }
+
+    pub fn closeSocketNextTick(this: *SendQueue, nextTick: bool) void {
+        log("SendQueue#closeSocketNextTick", .{});
+        if (this.socket != .open) {
+            this.socket = .closed;
+            return;
+        }
+        if (this.close_next_tick != null) return; // close already requested
+        if (!nextTick) {
+            this.closeSocket(.normal, .user);
+            return;
+        }
+        this.close_next_tick = JSC.ManagedTask.New(SendQueue, _closeSocketTask).init(this);
+        JSC.VirtualMachine.get().enqueueTask(this.close_next_tick.?);
+    }
+
+    fn _closeSocketTask(this: *SendQueue) void {
+        log("SendQueue#closeSocketTask", .{});
+        bun.assert(this.close_next_tick != null);
+        this.close_next_tick = null;
+        this.closeSocket(.normal, .user);
+    }
+
+    fn _onAfterIPCClosed(this: *SendQueue) void {
+        log("SendQueue#_onAfterIPCClosed", .{});
+        if (this.close_event_sent) return;
+        this.close_event_sent = true;
+        switch (this.owner) {
+            inline else => |owner| {
+                owner.handleIPCClose();
+            },
+        }
+    }
+
+    /// returned pointer is invalidated if the queue is modified
+    pub fn startMessage(self: *SendQueue, global: *JSC.JSGlobalObject, callback: JSC.JSValue, handle: ?Handle) bun.JSError!*SendHandle {
+        log("SendQueue#startMessage", .{});
+        if (Environment.allow_assert) bun.debugAssert(self.has_written_version == 1);
+
+        // optimal case: appending a message without a handle to the end of the queue when the last message also doesn't have a handle and isn't ack/nack
+        // this is rare. it will only happen if messages stack up after sending a handle, or if a long message is sent that is waiting for writable
+        if (handle == null and self.queue.items.len > 0) {
+            const last = &self.queue.items[self.queue.items.len - 1];
+            if (last.handle == null and !last.isAckNack() and !(self.queue.items.len == 1 and self.write_in_progress)) {
+                if (callback.isCallable()) {
+                    try last.callbacks.push(callback, global);
+                }
+                // caller can append now
+                return last;
+            }
+        }
+
+        // fallback case: append a new message to the queue
+        self.queue.append(.{ .handle = handle, .callbacks = .init(callback) }) catch bun.outOfMemory();
+        return &self.queue.items[self.queue.items.len - 1];
+    }
+    /// returned pointer is invalidated if the queue is modified
+    pub fn insertMessage(this: *SendQueue, message: SendHandle) void {
+        log("SendQueue#insertMessage", .{});
+        if (Environment.allow_assert) bun.debugAssert(this.has_written_version == 1);
+        if ((this.queue.items.len == 0 or this.queue.items[0].data.cursor == 0) and !this.write_in_progress) {
+            // prepend (we have not started sending the next message yet because we are waiting for the ack/nack)
+            this.queue.insert(0, message) catch bun.outOfMemory();
+        } else {
+            // insert at index 1 (we are in the middle of sending a message to the other process)
+            bun.debugAssert(this.queue.items[0].isAckNack());
+            this.queue.insert(1, message) catch bun.outOfMemory();
+        }
+    }
+
+    pub fn onAckNack(this: *SendQueue, global: *JSGlobalObject, ack_nack: enum { ack, nack }) void {
+        log("SendQueue#onAckNack", .{});
+        if (this.waiting_for_ack == null) {
+            log("onAckNack: ack received but not waiting for ack", .{});
+            return;
+        }
+        const item = &this.waiting_for_ack.?;
+        if (item.handle == null) {
+            log("onAckNack: ack received but waiting_for_ack is not a handle message?", .{});
+            return;
+        }
+        if (ack_nack == .nack) {
+            // retry up to three times
+            this.retry_count += 1;
+            if (this.retry_count < MAX_HANDLE_RETRANSMISSIONS) {
+                // retry sending the message
+                item.data.cursor = 0;
+                this.insertMessage(item.*);
+                this.waiting_for_ack = null;
+                log("IPC call continueSend() from onAckNack retry", .{});
+                return this.continueSend(global, .new_message_appended);
+            }
+            // too many retries; give up
+            var warning = bun.String.static("Handle did not reach the receiving process correctly");
+            var warning_name = bun.String.static("SentHandleNotReceivedWarning");
+            global.emitWarning(
+                warning.transferToJS(global),
+                warning_name.transferToJS(global),
+                .js_undefined,
+                .js_undefined,
+            ) catch |e| {
+                _ = global.takeException(e);
+            };
+            // (fall through to success code in order to consume the message and continue sending)
+        }
+        // consume the message and continue sending
+        item.complete(global); // call the callback & deinit
+        this.waiting_for_ack = null;
+        log("IPC call continueSend() from onAckNack success", .{});
+        this.continueSend(global, .new_message_appended);
+    }
+    fn shouldRef(this: *SendQueue) bool {
+        if (this.waiting_for_ack != null) return true; // waiting to receive an ack/nack from the other side
+        if (this.queue.items.len == 0) return false; // nothing to send
+        const first = &this.queue.items[0];
+        if (first.data.cursor > 0) return true; // send in progress, waiting on writable
+        if (this.write_in_progress) return true; // send in progress (windows), waiting on writable
+        return false; // error state.
+    }
+    pub fn updateRef(this: *SendQueue, global: *JSGlobalObject) void {
+        switch (this.shouldRef()) {
+            true => this.keep_alive.ref(global.bunVM()),
+            false => this.keep_alive.unref(global.bunVM()),
+        }
+    }
+    const ContinueSendReason = enum {
+        new_message_appended,
+        on_writable,
+    };
+    fn continueSend(this: *SendQueue, global: *JSC.JSGlobalObject, reason: ContinueSendReason) void {
+        log("IPC continueSend: {s}", .{@tagName(reason)});
+        this.debugLogMessageQueue();
+        defer this.updateRef(global);
+
+        if (this.queue.items.len == 0) {
+            return; // nothing to send
+        }
+        if (this.write_in_progress) {
+            return; // write in progress
+        }
+
+        const first = &this.queue.items[0];
+        if (this.waiting_for_ack != null and !first.isAckNack()) {
+            // waiting for ack/nack. may not send any items until it is received.
+            // only allowed to send the message if it is an ack/nack itself.
+            return;
+        }
+        if (reason != .on_writable and first.data.cursor != 0) {
+            // the last message isn't fully sent yet, we're waiting for a writable event
+            return;
+        }
+        const to_send = first.data.list.items[first.data.cursor..];
+        if (to_send.len == 0) {
+            // item's length is 0, remove it and continue sending. this should rarely (never?) happen.
+            var itm = this.queue.orderedRemove(0);
+            itm.complete(global); // call the callback & deinit
+            log("IPC call continueSend() from empty item", .{});
+            return continueSend(this, global, reason);
+        }
+        // log("sending ipc message: '{'}' (has_handle={})", .{ std.zig.fmtEscapes(to_send), first.handle != null });
+        bun.assert(!this.write_in_progress);
+        this.write_in_progress = true;
+        this._write(to_send, if (first.handle) |handle| handle.fd else null);
+        // the write is queued. this._onWriteComplete() will be called when the write completes.
+    }
+    fn _onWriteComplete(this: *SendQueue, n: i32) void {
+        log("SendQueue#_onWriteComplete {d}", .{n});
+        this.debugLogMessageQueue();
+        if (!this.write_in_progress or this.queue.items.len < 1) {
+            bun.debugAssert(false);
+            return;
+        }
+        this.write_in_progress = false;
+        const globalThis = this.getGlobalThis();
+        defer this.updateRef(globalThis);
+        const first = &this.queue.items[0];
+        const to_send = first.data.list.items[first.data.cursor..];
+        if (n == to_send.len) {
+            if (first.handle) |_| {
+                // the message was fully written, but it had a handle.
+                // we must wait for ACK or NACK before sending any more messages.
+                if (this.waiting_for_ack != null) {
+                    log("[error] already waiting for ack. this should never happen.", .{});
+                }
+                // shift the item off the queue and move it to waiting_for_ack
+                const item = this.queue.orderedRemove(0);
+                this.waiting_for_ack = item;
+            } else {
+                // the message was fully sent, but there may be more items in the queue.
+                // shift the queue and try to send the next item immediately.
+                var item = this.queue.orderedRemove(0);
+                item.complete(globalThis); // call the callback & deinit
+            }
+            return continueSend(this, globalThis, .on_writable);
+        } else if (n > 0 and n < @as(i32, @intCast(first.data.list.items.len))) {
+            // the item was partially sent; update the cursor and wait for writable to send the rest
+            // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
+            first.data.cursor += @intCast(n);
+            return;
+        } else if (n == 0) {
+            // no bytes written; wait for writable
+            return;
+        } else {
+            // error. close socket.
+            this.closeSocket(.failure, .deinit);
+            return;
+        }
+    }
+    pub fn writeVersionPacket(this: *SendQueue, global: *JSGlobalObject) void {
+        log("SendQueue#writeVersionPacket", .{});
+        bun.debugAssert(this.has_written_version == 0);
+        bun.debugAssert(this.queue.items.len == 0);
+        bun.debugAssert(this.waiting_for_ack == null);
+        const bytes = getVersionPacket(this.mode);
+        if (bytes.len > 0) {
+            this.queue.append(.{ .handle = null, .callbacks = .none }) catch bun.outOfMemory();
+            this.queue.items[this.queue.items.len - 1].data.write(bytes) catch bun.outOfMemory();
+            log("IPC call continueSend() from version packet", .{});
+            this.continueSend(global, .new_message_appended);
+        }
+        if (Environment.allow_assert) this.has_written_version = 1;
+    }
+    pub fn serializeAndSend(self: *SendQueue, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle) SerializeAndSendResult {
+        log("SendQueue#serializeAndSend", .{});
+        const indicate_backoff = self.waiting_for_ack != null and self.queue.items.len > 0;
+        const msg = self.startMessage(global, callback, handle) catch return .failure;
+        const start_offset = msg.data.list.items.len;
+
+        const payload_length = serialize(self.mode, &msg.data, global, value, is_internal) catch return .failure;
+        bun.assert(msg.data.list.items.len == start_offset + payload_length);
+        // log("enqueueing ipc message: '{'}'", .{std.zig.fmtEscapes(msg.data.list.items[start_offset..])});
+
+        log("IPC call continueSend() from serializeAndSend", .{});
+        self.continueSend(global, .new_message_appended);
+
+        if (indicate_backoff) return .backoff;
+        return .success;
+    }
+    fn debugLogMessageQueue(this: *SendQueue) void {
+        if (!Environment.isDebug) return;
+        log("IPC message queue ({d} items)", .{this.queue.items.len});
+        for (this.queue.items) |item| {
+            if (item.data.list.items.len > 100) {
+                log(" {d}|{d}", .{ item.data.cursor, item.data.list.items.len - item.data.cursor });
+            } else {
+                log("  '{'}'|'{'}'", .{ std.zig.fmtEscapes(item.data.list.items[0..item.data.cursor]), std.zig.fmtEscapes(item.data.list.items[item.data.cursor..]) });
+            }
+        }
+    }
+
+    fn getSocket(this: *SendQueue) ?SocketType {
+        return switch (this.socket) {
+            .open => |s| s,
+            else => return null,
+        };
+    }
+
+    /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
+    /// call _onWriteComplete later.
+    fn _write(this: *SendQueue, data: []const u8, fd: ?bun.FileDescriptor) void {
+        log("SendQueue#_write len {d}", .{data.len});
+        const socket = this.getSocket() orelse {
+            this._onWriteComplete(-1);
+            return;
+        };
+        return switch (Environment.isWindows) {
+            true => {
+                if (fd) |_| {
+                    // TODO: send fd on windows
+                }
+                const pipe: *uv.Pipe = socket;
+                const write_len = @min(data.len, std.math.maxInt(i32));
+
+                // create write request
+                const write_req_slice = bun.default_allocator.dupe(u8, data[0..write_len]) catch bun.outOfMemory();
+                const write_req = bun.new(WindowsWrite, .{
+                    .owner = this,
+                    .write_slice = write_req_slice,
+                    .write_req = std.mem.zeroes(uv.uv_write_t),
+                    .write_buffer = uv.uv_buf_t.init(write_req_slice),
+                });
+                bun.assert(this.windows.windows_write == null);
+                this.windows.windows_write = write_req;
+
+                pipe.ref(); // ref on write
+                if (this.windows.windows_write.?.write_req.write(pipe.asStream(), &this.windows.windows_write.?.write_buffer, write_req, &_windowsOnWriteComplete).asErr()) |err| {
+                    _windowsOnWriteComplete(write_req, @enumFromInt(-@as(c_int, err.errno)));
+                }
+                // write request is queued. it will call _onWriteComplete when it completes.
+            },
+            false => {
+                if (fd) |fd_unwrapped| {
+                    this._onWriteComplete(socket.writeFd(data, fd_unwrapped));
+                } else {
+                    this._onWriteComplete(socket.write(data));
+                }
+            },
+        };
+    }
+    fn _windowsOnWriteComplete(write_req: *WindowsWrite, status: uv.ReturnCode) void {
+        log("SendQueue#_windowsOnWriteComplete", .{});
+        const write_len = write_req.write_slice.len;
+        const this = blk: {
+            defer write_req.destroy();
+            break :blk write_req.owner orelse return; // orelse case if disconnected before the write completes
+        };
+
+        const vm = JSC.VirtualMachine.get();
+        vm.eventLoop().enter();
+        defer vm.eventLoop().exit();
+
+        this.windows.windows_write = null;
+        if (this.getSocket()) |socket| socket.unref(); // write complete; unref
+        if (status.toError(.write)) |_| {
+            this._onWriteComplete(-1);
+        } else {
+            this._onWriteComplete(@intCast(write_len));
+        }
+
+        if (this.windows.try_close_after_write) {
+            this.closeSocket(.normal, .user);
+        }
+    }
+    fn getGlobalThis(this: *SendQueue) *JSC.JSGlobalObject {
+        return switch (this.owner) {
+            inline else => |owner| owner.globalThis,
+        };
+    }
 
     fn onServerPipeClose(this: *uv.Pipe) callconv(.C) void {
         // safely free the pipes
         bun.default_allocator.destroy(this);
     }
 
-    fn detach(this: *NamedPipeIPCData) void {
-        log("NamedPipeIPCData#detach: is_server {}", .{this.is_server});
-        const source = this.writer.source.?;
-        // unref because we are closing the pipe
-        source.pipe.unref();
-        this.writer.source = null;
-
-        if (this.is_server) {
-            source.pipe.data = source.pipe;
-            source.pipe.close(onServerPipeClose);
-            this.onPipeClose();
-            return;
-        }
-        // server will be destroyed by the process that created it
-        defer bun.default_allocator.destroy(source.pipe);
-        this.writer.source = null;
-        this.onPipeClose();
-    }
-
-    fn onWrite(this: *NamedPipeIPCData, amount: usize, status: bun.io.WriteStatus) void {
-        log("onWrite {d} {}", .{ amount, status });
-
-        switch (status) {
-            .pending => {},
-            .drained => {
-                // unref after sending all data
-                this.writer.source.?.pipe.unref();
-            },
-            .end_of_file => {
-                this.detach();
-            },
-        }
-    }
-
-    fn onError(this: *NamedPipeIPCData, err: bun.sys.Error) void {
-        log("Failed to write outgoing data {}", .{err});
-        this.detach();
-    }
-
-    fn onPipeClose(this: *NamedPipeIPCData) void {
-        log("onPipeClose", .{});
-        if (this.onClose) |handler| {
-            this.onClose = null;
-            handler.callback(handler.context);
-            // deinit dont free the instance of IPCData we should call it before the onClose callback actually frees it
-            this.deinit();
-        }
-    }
-
-    pub fn writeVersionPacket(this: *NamedPipeIPCData, _: *JSC.JSGlobalObject) void {
-        if (Environment.allow_assert) {
-            bun.assert(this.has_written_version == 0);
-        }
-        const bytes = getVersionPacket(this.mode);
-        if (bytes.len > 0) {
-            if (this.disconnected) {
-                // enqueue to be sent after connecting
-                this.writer.outgoing.write(bytes) catch bun.outOfMemory();
-            } else {
-                _ = this.writer.write(bytes);
-            }
-        }
-        if (Environment.allow_assert) {
-            this.has_written_version = 1;
-        }
-    }
-
-    pub fn serializeAndSend(this: *NamedPipeIPCData, global: *JSGlobalObject, value: JSValue) bool {
-        if (Environment.allow_assert) {
-            bun.assert(this.has_written_version == 1);
-        }
-        if (this.disconnected) {
-            return false;
-        }
-        // ref because we have pending data
-        this.writer.source.?.pipe.ref();
-        const start_offset = this.writer.outgoing.list.items.len;
-
-        const payload_length: usize = serialize(this, &this.writer.outgoing, global, value) catch return false;
-
-        bun.assert(this.writer.outgoing.list.items.len == start_offset + payload_length);
-
-        if (start_offset == 0) {
-            bun.assert(this.writer.outgoing.cursor == 0);
-            _ = this.writer.flush();
-        }
-
-        return true;
-    }
-
-    pub fn serializeAndSendInternal(this: *NamedPipeIPCData, global: *JSGlobalObject, value: JSValue) bool {
-        if (Environment.allow_assert) {
-            bun.assert(this.has_written_version == 1);
-        }
-        if (this.disconnected) {
-            return false;
-        }
-        // ref because we have pending data
-        this.writer.source.?.pipe.ref();
-        const start_offset = this.writer.outgoing.list.items.len;
-
-        const payload_length: usize = serializeInternal(this, &this.writer.outgoing, global, value) catch return false;
-
-        bun.assert(this.writer.outgoing.list.items.len == start_offset + payload_length);
-
-        if (start_offset == 0) {
-            bun.assert(this.writer.outgoing.cursor == 0);
-            _ = this.writer.flush();
-        }
-
-        return true;
-    }
-
-    pub fn close(this: *NamedPipeIPCData, nextTick: bool) void {
-        log("NamedPipeIPCData#close", .{});
-        if (this.disconnected) return;
-        this.disconnected = true;
-        if (nextTick) {
-            JSC.VirtualMachine.get().enqueueTask(JSC.ManagedTask.New(NamedPipeIPCData, closeTask).init(this));
-        } else {
-            this.closeTask();
-        }
-    }
-
-    pub fn closeTask(this: *NamedPipeIPCData) void {
-        log("NamedPipeIPCData#closeTask is_server {}", .{this.is_server});
-        if (this.disconnected) {
-            _ = this.writer.flush();
-            this.writer.end();
-            if (this.writer.getStream()) |stream| {
-                stream.readStop();
-            }
-            if (!this.writer.hasPendingData()) {
-                this.detach();
-            }
-        }
-    }
-
-    pub fn configureServer(this: *NamedPipeIPCData, comptime Context: type, instance: *Context, ipc_pipe: *uv.Pipe) JSC.Maybe(void) {
+    pub fn windowsConfigureServer(this: *SendQueue, ipc_pipe: *uv.Pipe) JSC.Maybe(void) {
         log("configureServer", .{});
-        ipc_pipe.data = @ptrCast(instance);
-        this.onClose = .{
-            .callback = @ptrCast(&NewNamedPipeIPCHandler(Context).onClose),
-            .context = @ptrCast(instance),
-        };
+        ipc_pipe.data = this;
         ipc_pipe.unref();
-        this.is_server = true;
-        this.writer.setParent(this);
-        this.writer.owns_fd = false;
-        const startPipeResult = this.writer.startWithPipe(ipc_pipe);
-        if (startPipeResult == .err) {
-            this.close(false);
-            return startPipeResult;
-        }
+        this.socket = .{ .open = ipc_pipe };
+        this.windows.is_server = true;
+        const pipe: *uv.Pipe = this.socket.open;
+        pipe.data = this;
 
-        const stream = this.writer.getStream() orelse {
-            this.close(false);
-            return JSC.Maybe(void).errno(bun.sys.E.PIPE, .pipe);
-        };
+        const stream: *uv.uv_stream_t = pipe.asStream();
 
-        const readStartResult = stream.readStart(instance, NewNamedPipeIPCHandler(Context).onReadAlloc, NewNamedPipeIPCHandler(Context).onReadError, NewNamedPipeIPCHandler(Context).onRead);
+        const readStartResult = stream.readStart(this, IPCHandlers.WindowsNamedPipe.onReadAlloc, IPCHandlers.WindowsNamedPipe.onReadError, IPCHandlers.WindowsNamedPipe.onRead);
         if (readStartResult == .err) {
-            this.close(false);
+            this.closeSocket(.failure, .user);
             return readStartResult;
         }
         return .{ .result = {} };
     }
 
-    pub fn configureClient(this: *NamedPipeIPCData, comptime Context: type, instance: *Context, pipe_fd: bun.FileDescriptor) !void {
+    pub fn windowsConfigureClient(this: *SendQueue, pipe_fd: bun.FileDescriptor) !void {
         log("configureClient", .{});
         const ipc_pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
         ipc_pipe.init(uv.Loop.get(), true).unwrap() catch |err| {
@@ -657,41 +904,309 @@ const NamedPipeIPCData = struct {
             return err;
         };
         ipc_pipe.unref();
-        this.writer.owns_fd = false;
-        this.writer.setParent(this);
-        this.writer.startWithPipe(ipc_pipe).unwrap() catch |err| {
-            this.close(false);
+        this.socket = .{ .open = ipc_pipe };
+        this.windows.is_server = false;
+
+        const stream = ipc_pipe.asStream();
+
+        stream.readStart(this, IPCHandlers.WindowsNamedPipe.onReadAlloc, IPCHandlers.WindowsNamedPipe.onReadError, IPCHandlers.WindowsNamedPipe.onRead).unwrap() catch |err| {
+            this.closeSocket(.failure, .user);
             return err;
         };
-        this.connect_req.data = @ptrCast(instance);
-        this.onClose = .{
-            .callback = @ptrCast(&NewNamedPipeIPCHandler(Context).onClose),
-            .context = @ptrCast(instance),
-        };
-
-        const stream = this.writer.getStream() orelse {
-            this.close(false);
-            return error.FailedToConnectIPC;
-        };
-
-        stream.readStart(instance, NewNamedPipeIPCHandler(Context).onReadAlloc, NewNamedPipeIPCHandler(Context).onReadError, NewNamedPipeIPCHandler(Context).onRead).unwrap() catch |err| {
-            this.close(false);
-            return err;
-        };
-    }
-
-    fn deinit(this: *NamedPipeIPCData) void {
-        log("deinit", .{});
-        this.writer.deinit();
-        this.incoming.deinitWithAllocator(bun.default_allocator);
     }
 };
+const MAX_HANDLE_RETRANSMISSIONS = 3;
 
-pub const IPCData = if (Environment.isWindows) NamedPipeIPCData else SocketIPCData;
+fn emitProcessErrorEvent(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const ex = callframe.argumentsAsArray(1)[0];
+    JSC.VirtualMachine.Process__emitErrorEvent(globalThis, ex);
+    return .js_undefined;
+}
+const FromEnum = enum { subprocess_exited, subprocess, process };
+fn doSendErr(globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, ex: JSC.JSValue, from: FromEnum) bun.JSError!JSC.JSValue {
+    if (callback.isCallable()) {
+        try callback.callNextTick(globalObject, .{ex});
+        return .false;
+    }
+    if (from == .process) {
+        const target = JSC.JSFunction.create(globalObject, bun.String.empty, emitProcessErrorEvent, 1, .{});
+        try target.callNextTick(globalObject, .{ex});
+        return .false;
+    }
+    // Bun.spawn().send() should throw an error (unless callback is passed)
+    return globalObject.throwValue(ex);
+}
+pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, from: FromEnum) bun.JSError!JSValue {
+    var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
+
+    if (handle.isCallable()) {
+        callback = handle;
+        handle = .js_undefined;
+        options_ = .js_undefined;
+    } else if (options_.isCallable()) {
+        callback = options_;
+        options_ = .js_undefined;
+    } else if (!options_.isUndefined()) {
+        try globalObject.validateObject("options", options_, .{});
+    }
+
+    const connected = ipc != null and ipc.?.isConnected();
+    if (!connected) {
+        const ex = globalObject.ERR(.IPC_CHANNEL_CLOSED, "{s}", .{@as([]const u8, switch (from) {
+            .process => "process.send() can only be used if the IPC channel is open.",
+            .subprocess => "Subprocess.send() can only be used if an IPC channel is open.",
+            .subprocess_exited => "Subprocess.send() cannot be used after the process has exited.",
+        })}).toJS();
+        return doSendErr(globalObject, callback, ex, from);
+    }
+
+    const ipc_data = ipc.?;
+
+    if (message.isUndefined()) {
+        return globalObject.throwMissingArgumentsValue(&.{"message"});
+    }
+    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean() and !message.isNull()) {
+        return globalObject.throwInvalidArgumentTypeValueOneOf("message", "string, object, number, or boolean", message);
+    }
+
+    if (!handle.isUndefinedOrNull()) {
+        const serialized_array: JSC.JSValue = try ipcSerialize(globalObject, message, handle);
+        if (serialized_array.isUndefinedOrNull()) {
+            handle = .js_undefined;
+        } else {
+            const serialized_handle = try serialized_array.getIndex(globalObject, 0);
+            const serialized_message = try serialized_array.getIndex(globalObject, 1);
+            handle = serialized_handle;
+            message = serialized_message;
+        }
+    }
+
+    var zig_handle: ?Handle = null;
+    if (!handle.isUndefinedOrNull()) {
+        if (bun.JSC.API.Listener.fromJS(handle)) |listener| {
+            log("got listener", .{});
+            switch (listener.listener) {
+                .uws => |socket_uws| {
+                    // may need to handle ssl case
+                    const fd = socket_uws.getSocket().getFd();
+                    zig_handle = .init(fd, handle);
+                },
+                .namedPipe => |namedPipe| {
+                    _ = namedPipe;
+                },
+                .none => {},
+            }
+        } else {
+            //
+        }
+    }
+
+    const status = ipc_data.serializeAndSend(globalObject, message, .external, callback, zig_handle);
+
+    if (status == .failure) {
+        const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
+        ex.put(globalObject, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
+        return doSendErr(globalObject, callback, ex, from);
+    }
+
+    // in the success or backoff case, serializeAndSend will handle calling the callback
+    return if (status == .success) .true else .false;
+}
+
+pub fn emitHandleIPCMessage(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const target, const message, const handle = callframe.argumentsAsArray(3);
+    if (target.isNull()) {
+        const ipc = globalThis.bunVM().getIPCInstance() orelse return .js_undefined;
+        ipc.handleIPCMessage(.{ .data = message }, handle);
+    } else {
+        if (!target.isCell()) return .js_undefined;
+        const subprocess = bun.JSC.Subprocess.fromJSDirect(target) orelse return .js_undefined;
+        subprocess.handleIPCMessage(.{ .data = message }, handle);
+    }
+    return .js_undefined;
+}
+
+const IPCCommand = union(enum) {
+    handle: JSC.JSValue,
+    ack,
+    nack,
+};
+
+fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalThis: *JSC.JSGlobalObject) void {
+    if (Environment.isDebug) {
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        defer formatter.deinit();
+        switch (message) {
+            .version => |version| log("received ipc message: version: {}", .{version}),
+            .data => |jsvalue| log("received ipc message: {}", .{jsvalue.toFmt(&formatter)}),
+            .internal => |jsvalue| log("received ipc message: internal: {}", .{jsvalue.toFmt(&formatter)}),
+        }
+    }
+    var internal_command: ?IPCCommand = null;
+    if (message == .data) handle_message: {
+        const msg_data = message.data;
+        if (msg_data.isObject()) {
+            const cmd = msg_data.fastGet(globalThis, .cmd) catch {
+                globalThis.clearException();
+                break :handle_message;
+            } orelse {
+                break :handle_message;
+            };
+            if (cmd.isString()) {
+                if (!cmd.isCell()) break :handle_message;
+                const cmd_str = bun.String.fromJS(cmd, globalThis) catch |e| {
+                    _ = globalThis.takeException(e);
+                    break :handle_message;
+                };
+                if (cmd_str.eqlComptime("NODE_HANDLE")) {
+                    internal_command = .{ .handle = msg_data };
+                } else if (cmd_str.eqlComptime("NODE_HANDLE_ACK")) {
+                    internal_command = .ack;
+                } else if (cmd_str.eqlComptime("NODE_HANDLE_NACK")) {
+                    internal_command = .nack;
+                }
+            }
+        }
+    }
+
+    if (internal_command) |icmd| {
+        switch (icmd) {
+            .handle => |msg_data| {
+                // Handle NODE_HANDLE message
+                const ack = send_queue.incoming_fd != null;
+
+                const packet = if (ack) getAckPacket(send_queue.mode) else getNackPacket(send_queue.mode);
+                var handle = SendHandle{ .data = .{}, .handle = null, .callbacks = .ack_nack };
+                handle.data.write(packet) catch bun.outOfMemory();
+
+                // Insert at appropriate position in send queue
+                send_queue.insertMessage(handle);
+
+                // Send if needed
+                log("IPC call continueSend() from handleIPCMessage", .{});
+                send_queue.continueSend(globalThis, .new_message_appended);
+
+                if (!ack) return;
+
+                // Get file descriptor and clear it
+                const fd = send_queue.incoming_fd.?;
+                send_queue.incoming_fd = null;
+
+                const target: bun.JSC.JSValue = switch (send_queue.owner) {
+                    .subprocess => |subprocess| subprocess.this_jsvalue,
+                    .virtual_machine => bun.JSC.JSValue.null,
+                };
+
+                const vm = globalThis.bunVM();
+                vm.eventLoop().enter();
+                defer vm.eventLoop().exit();
+                _ = ipcParse(globalThis, target, msg_data, fd.toJS(globalThis)) catch |e| {
+                    // ack written already, that's okay.
+                    globalThis.reportActiveExceptionAsUnhandled(e);
+                    return;
+                };
+
+                // ipc_parse will call the callback which calls handleIPCMessage()
+                // we have sent the ack already so the next message could arrive at any time. maybe even before
+                // parseHandle calls emit(). however, node does this too and its messages don't end up out of order.
+                // so hopefully ours won't either.
+                return;
+            },
+            .ack => {
+                send_queue.onAckNack(globalThis, .ack);
+                return;
+            },
+            .nack => {
+                send_queue.onAckNack(globalThis, .nack);
+                return;
+            },
+        }
+    } else {
+        switch (send_queue.owner) {
+            inline else => |owner| {
+                owner.handleIPCMessage(message, .js_undefined);
+            },
+        }
+    }
+}
+
+fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
+    var data = all_data;
+    // log("onData '{'}'", .{std.zig.fmtEscapes(data)});
+
+    // In the VirtualMachine case, `globalThis` is an optional, in case
+    // the vm is freed before the socket closes.
+    const globalThis = send_queue.getGlobalThis();
+
+    // Decode the message with just the temporary buffer, and if that
+    // fails (not enough bytes) then we allocate to .ipc_buffer
+    if (send_queue.incoming.len == 0) {
+        while (true) {
+            const result = decodeIPCMessage(send_queue.mode, data, globalThis) catch |e| switch (e) {
+                error.NotEnoughBytes => {
+                    _ = send_queue.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
+                    log("hit NotEnoughBytes", .{});
+                    return;
+                },
+                error.InvalidFormat, error.JSError => {
+                    send_queue.closeSocket(.failure, .user);
+                    return;
+                },
+                error.OutOfMemory => {
+                    Output.printErrorln("IPC message is too long.", .{});
+                    send_queue.closeSocket(.failure, .user);
+                    return;
+                },
+            };
+
+            handleIPCMessage(send_queue, result.message, globalThis);
+
+            if (result.bytes_consumed < data.len) {
+                data = data[result.bytes_consumed..];
+            } else {
+                return;
+            }
+        }
+    }
+
+    _ = send_queue.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
+
+    var slice = send_queue.incoming.slice();
+    while (true) {
+        const result = decodeIPCMessage(send_queue.mode, slice, globalThis) catch |e| switch (e) {
+            error.NotEnoughBytes => {
+                // copy the remaining bytes to the start of the buffer
+                bun.copy(u8, send_queue.incoming.ptr[0..slice.len], slice);
+                send_queue.incoming.len = @truncate(slice.len);
+                log("hit NotEnoughBytes2", .{});
+                return;
+            },
+            error.InvalidFormat, error.JSError => {
+                send_queue.closeSocket(.failure, .user);
+                return;
+            },
+            error.OutOfMemory => {
+                Output.printErrorln("IPC message is too long.", .{});
+                send_queue.closeSocket(.failure, .user);
+                return;
+            },
+        };
+
+        handleIPCMessage(send_queue, result.message, globalThis);
+
+        if (result.bytes_consumed < slice.len) {
+            slice = slice[result.bytes_consumed..];
+        } else {
+            // clear the buffer
+            send_queue.incoming.len = 0;
+            return;
+        }
+    }
+}
 
 /// Used on POSIX
-fn NewSocketIPCHandler(comptime Context: type) type {
-    return struct {
+pub const IPCHandlers = struct {
+    pub const PosixSocket = struct {
         pub fn onOpen(
             _: *anyopaque,
             _: Socket,
@@ -707,272 +1222,164 @@ fn NewSocketIPCHandler(comptime Context: type) type {
         }
 
         pub fn onClose(
-            this: *Context,
+            send_queue: *SendQueue,
             _: Socket,
             _: c_int,
             _: ?*anyopaque,
         ) void {
-            log("onClose", .{});
-            const ipc = this.ipc() orelse return;
-            // unref if needed
-            ipc.keep_alive.unref((this.getGlobalThis() orelse return).bunVM());
-            // Note: uSockets has already freed the underlying socket, so calling Socket.close() can segfault
+            // uSockets has already freed the underlying socket
             log("NewSocketIPCHandler#onClose\n", .{});
-
-            if (ipc.close_next_tick) |close_next_tick_task| {
-                const managed: *bun.JSC.ManagedTask = close_next_tick_task.as(bun.JSC.ManagedTask);
-                managed.cancel();
-                ipc.close_next_tick = null;
-            }
-            // after onClose(), socketIPCData.close should never be called again because socketIPCData may be freed. just in case, set disconnected to true.
-            ipc.disconnected = true;
-
-            this.handleIPCClose();
+            send_queue._socketClosed();
         }
 
         pub fn onData(
-            this: *Context,
-            socket: Socket,
+            send_queue: *SendQueue,
+            _: Socket,
             all_data: []const u8,
         ) void {
-            var data = all_data;
-            const ipc = this.ipc() orelse return;
-            log("onData {}", .{std.fmt.fmtSliceHexLower(data)});
+            const globalThis = send_queue.getGlobalThis();
+            const loop = globalThis.bunVM().eventLoop();
+            loop.enter();
+            defer loop.exit();
+            onData2(send_queue, all_data);
+        }
 
-            // In the VirtualMachine case, `globalThis` is an optional, in case
-            // the vm is freed before the socket closes.
-            const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
-                .pointer => this.globalThis,
-                .optional => brk: {
-                    if (this.globalThis) |global| {
-                        break :brk global;
-                    }
-                    this.handleIPCClose();
-                    socket.close(.failure);
-                    return;
-                },
-                else => @panic("Unexpected globalThis type: " ++ @typeName(@TypeOf(this.globalThis))),
-            };
-
-            // Decode the message with just the temporary buffer, and if that
-            // fails (not enough bytes) then we allocate to .ipc_buffer
-            if (ipc.incoming.len == 0) {
-                while (true) {
-                    const result = decodeIPCMessage(ipc.mode, data, globalThis) catch |e| switch (e) {
-                        error.NotEnoughBytes => {
-                            _ = ipc.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
-                            log("hit NotEnoughBytes", .{});
-                            return;
-                        },
-                        error.InvalidFormat => {
-                            socket.close(.failure);
-                            return;
-                        },
-                        error.OutOfMemory => {
-                            Output.printErrorln("IPC message is too long.", .{});
-                            this.handleIPCClose();
-                            socket.close(.failure);
-                            return;
-                        },
-                    };
-
-                    this.handleIPCMessage(result.message);
-
-                    if (result.bytes_consumed < data.len) {
-                        data = data[result.bytes_consumed..];
-                    } else {
-                        return;
-                    }
-                }
+        pub fn onFd(
+            send_queue: *SendQueue,
+            _: Socket,
+            fd: c_int,
+        ) void {
+            log("onFd: {d}", .{fd});
+            if (send_queue.incoming_fd != null) {
+                log("onFd: incoming_fd already set; overwriting", .{});
             }
-
-            _ = ipc.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
-
-            var slice = ipc.incoming.slice();
-            while (true) {
-                const result = decodeIPCMessage(ipc.mode, slice, globalThis) catch |e| switch (e) {
-                    error.NotEnoughBytes => {
-                        // copy the remaining bytes to the start of the buffer
-                        bun.copy(u8, ipc.incoming.ptr[0..slice.len], slice);
-                        ipc.incoming.len = @truncate(slice.len);
-                        log("hit NotEnoughBytes2", .{});
-                        return;
-                    },
-                    error.InvalidFormat => {
-                        socket.close(.failure);
-                        return;
-                    },
-                    error.OutOfMemory => {
-                        Output.printErrorln("IPC message is too long.", .{});
-                        this.handleIPCClose();
-                        socket.close(.failure);
-                        return;
-                    },
-                };
-
-                this.handleIPCMessage(result.message);
-
-                if (result.bytes_consumed < slice.len) {
-                    slice = slice[result.bytes_consumed..];
-                } else {
-                    // clear the buffer
-                    ipc.incoming.len = 0;
-                    return;
-                }
-            }
+            send_queue.incoming_fd = bun.FD.fromNative(fd);
         }
 
         pub fn onWritable(
-            context: *Context,
-            socket: Socket,
+            send_queue: *SendQueue,
+            _: Socket,
         ) void {
             log("onWritable", .{});
-            const ipc = context.ipc() orelse return;
-            const to_write = ipc.outgoing.slice();
-            if (to_write.len == 0) {
-                ipc.outgoing.reset();
-                // done sending message; unref event loop
-                ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
-                return;
-            }
-            const n = socket.write(to_write, false);
-            if (n == to_write.len) {
-                ipc.outgoing.reset();
-                // almost done sending message; unref event loop
-                ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
-            } else if (n > 0) {
-                ipc.outgoing.cursor += @intCast(n);
-            }
+
+            const globalThis = send_queue.getGlobalThis();
+            const loop = globalThis.bunVM().eventLoop();
+            loop.enter();
+            defer loop.exit();
+            log("IPC call continueSend() from onWritable", .{});
+            send_queue.continueSend(globalThis, .on_writable);
         }
 
         pub fn onTimeout(
-            context: *Context,
+            _: *SendQueue,
             _: Socket,
         ) void {
             log("onTimeout", .{});
-            const ipc = context.ipc() orelse return;
             // unref if needed
-            ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
         }
 
         pub fn onLongTimeout(
-            context: *Context,
+            _: *SendQueue,
             _: Socket,
         ) void {
             log("onLongTimeout", .{});
-            const ipc = context.ipc() orelse return;
-            // unref if needed
-            ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
+            // onLongTimeout
         }
 
         pub fn onConnectError(
-            _: *anyopaque,
+            send_queue: *SendQueue,
             _: Socket,
             _: c_int,
         ) void {
             log("onConnectError", .{});
             // context has not been initialized
+            send_queue.closeSocket(.failure, .user);
         }
 
         pub fn onEnd(
-            _: *Context,
-            s: Socket,
+            send_queue: *SendQueue,
+            _: Socket,
         ) void {
             log("onEnd", .{});
-            s.close(.failure);
+            send_queue.closeSocket(.failure, .user);
         }
     };
-}
 
-/// Used on Windows
-fn NewNamedPipeIPCHandler(comptime Context: type) type {
-    return struct {
-        fn onReadAlloc(this: *Context, suggested_size: usize) []u8 {
-            const ipc = this.ipc() orelse return "";
-            var available = ipc.incoming.available();
+    pub const WindowsNamedPipe = struct {
+        fn onReadAlloc(send_queue: *SendQueue, suggested_size: usize) []u8 {
+            var available = send_queue.incoming.available();
             if (available.len < suggested_size) {
-                ipc.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
-                available = ipc.incoming.available();
+                send_queue.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
+                available = send_queue.incoming.available();
             }
             log("NewNamedPipeIPCHandler#onReadAlloc {d}", .{suggested_size});
             return available.ptr[0..suggested_size];
         }
 
-        fn onReadError(this: *Context, err: bun.sys.E) void {
+        fn onReadError(send_queue: *SendQueue, err: bun.sys.E) void {
             log("NewNamedPipeIPCHandler#onReadError {}", .{err});
-            if (this.ipc()) |ipc_data| {
-                ipc_data.close(true);
-            }
+            send_queue.closeSocketNextTick(true);
         }
 
-        fn onRead(this: *Context, buffer: []const u8) void {
-            const ipc = this.ipc() orelse return;
-
+        fn onRead(send_queue: *SendQueue, buffer: []const u8) void {
             log("NewNamedPipeIPCHandler#onRead {d}", .{buffer.len});
-            ipc.incoming.len += @as(u32, @truncate(buffer.len));
-            var slice = ipc.incoming.slice();
+            const globalThis = send_queue.getGlobalThis();
+            const loop = globalThis.bunVM().eventLoop();
+            loop.enter();
+            defer loop.exit();
+            send_queue.incoming.len += @as(u32, @truncate(buffer.len));
+            var slice = send_queue.incoming.slice();
 
-            bun.assert(ipc.incoming.len <= ipc.incoming.cap);
-            bun.assert(bun.isSliceInBuffer(buffer, ipc.incoming.allocatedSlice()));
+            bun.assert(send_queue.incoming.len <= send_queue.incoming.cap);
+            bun.assert(bun.isSliceInBuffer(buffer, send_queue.incoming.allocatedSlice()));
 
-            const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
-                .pointer => this.globalThis,
-                .optional => brk: {
-                    if (this.globalThis) |global| {
-                        break :brk global;
-                    }
-                    ipc.close(true);
-                    return;
-                },
-                else => @panic("Unexpected globalThis type: " ++ @typeName(@TypeOf(this.globalThis))),
-            };
             while (true) {
-                const result = decodeIPCMessage(ipc.mode, slice, globalThis) catch |e| switch (e) {
+                const result = decodeIPCMessage(send_queue.mode, slice, globalThis) catch |e| switch (e) {
                     error.NotEnoughBytes => {
                         // copy the remaining bytes to the start of the buffer
-                        bun.copy(u8, ipc.incoming.ptr[0..slice.len], slice);
-                        ipc.incoming.len = @truncate(slice.len);
+                        bun.copy(u8, send_queue.incoming.ptr[0..slice.len], slice);
+                        send_queue.incoming.len = @truncate(slice.len);
                         log("hit NotEnoughBytes3", .{});
                         return;
                     },
-                    error.InvalidFormat => {
-                        ipc.close(false);
+                    error.InvalidFormat, error.JSError => {
+                        send_queue.closeSocket(.failure, .user);
                         return;
                     },
                     error.OutOfMemory => {
                         Output.printErrorln("IPC message is too long.", .{});
-                        ipc.close(false);
+                        send_queue.closeSocket(.failure, .user);
                         return;
                     },
                 };
 
-                this.handleIPCMessage(result.message);
+                handleIPCMessage(send_queue, result.message, globalThis);
 
                 if (result.bytes_consumed < slice.len) {
                     slice = slice[result.bytes_consumed..];
                 } else {
                     // clear the buffer
-                    ipc.incoming.len = 0;
+                    send_queue.incoming.len = 0;
                     return;
                 }
             }
         }
 
-        pub fn onClose(this: *Context) void {
+        pub fn onClose(send_queue: *SendQueue) void {
             log("NewNamedPipeIPCHandler#onClose\n", .{});
-            this.handleIPCClose();
+            send_queue._onAfterIPCClosed();
         }
     };
+};
+
+extern "C" fn IPCSerialize(globalObject: *JSC.JSGlobalObject, message: JSC.JSValue, handle: JSC.JSValue) JSC.JSValue;
+
+pub fn ipcSerialize(globalObject: *JSC.JSGlobalObject, message: JSC.JSValue, handle: JSC.JSValue) bun.JSError!JSC.JSValue {
+    return bun.jsc.fromJSHostCall(globalObject, @src(), IPCSerialize, .{ globalObject, message, handle });
 }
 
-/// This type is shared between VirtualMachine and Subprocess for their respective IPC handlers
-///
-/// `Context` must be a struct that implements this interface:
-/// struct {
-///     globalThis: ?*JSGlobalObject,
-///
-///     fn ipc(*Context) ?*IPCData,
-///     fn handleIPCMessage(*Context, DecodedIPCMessage) void
-///     fn handleIPCClose(*Context) void
-/// }
-pub const NewIPCHandler = if (Environment.isWindows) NewNamedPipeIPCHandler else NewSocketIPCHandler;
+extern "C" fn IPCParse(globalObject: *JSC.JSGlobalObject, target: JSC.JSValue, serialized: JSC.JSValue, fd: JSC.JSValue) JSC.JSValue;
+
+pub fn ipcParse(globalObject: *JSC.JSGlobalObject, target: JSC.JSValue, serialized: JSC.JSValue, fd: JSC.JSValue) bun.JSError!JSC.JSValue {
+    return bun.jsc.fromJSHostCall(globalObject, @src(), IPCParse, .{ globalObject, target, serialized, fd });
+}

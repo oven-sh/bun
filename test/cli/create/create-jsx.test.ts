@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { cp, readdir } from "fs/promises";
-import { bunEnv, bunExe, isCI, isWindows, tempDirWithFiles as tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>, all = { text: "" }) {
@@ -99,7 +99,7 @@ async function fetchAndInjectHTML(url: string) {
   });
 
   await subprocess.exited;
-  return await new Response(subprocess.stdout).text();
+  return await subprocess.stdout.text();
 }
 
 for (const development of [true, false]) {

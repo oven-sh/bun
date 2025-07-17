@@ -1,4 +1,4 @@
-import { test, expect, describe, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 
 describe("Bun.Cookie", () => {
   test("can create a cookie", () => {

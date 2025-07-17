@@ -12,11 +12,9 @@ const extra_count = NodeErrors.map(x => x.slice(3))
   .reduce((ac, cv) => ac + cv.length, 0);
 const count = NodeErrors.length + extra_count;
 
-if (count > 256) {
-  // increase size of enum's to have more tags
-  // src/bun.js/node/types.zig#Encoding
-  // src/bun.js/bindings/BufferEncodingType.h
-  throw new Error("NodeError count exceeds u8");
+if (count > 1 << 16) {
+  // increase size of the enums below to have more tags
+  throw new Error(`NodeError can't fit ${count} codes in a u16`);
 }
 
 let enumHeader = ``;
@@ -33,7 +31,7 @@ enumHeader = `
 
 namespace Bun {
   static constexpr size_t NODE_ERROR_COUNT = ${count};
-  enum class ErrorCode : uint8_t {
+  enum class ErrorCode : uint16_t {
 `;
 
 listHeader = `
@@ -83,7 +81,7 @@ pub fn ErrorBuilder(comptime code: Error, comptime fmt: [:0]const u8, Args: type
   };
 }
 
-pub const Error = enum(u8) {
+pub const Error = enum(u16) {
 
 `;
 
@@ -92,7 +90,7 @@ for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
   if (name == null) name = constructor.name;
 
   // it's useful to avoid the prefix, but module not found has a prefixed and unprefixed version
-  const codeWithoutPrefix = code === 'ERR_MODULE_NOT_FOUND' ? code : code.replace(/^ERR_/, '');
+  const codeWithoutPrefix = code === "ERR_MODULE_NOT_FOUND" ? code : code.replace(/^ERR_/, "");
 
   enumHeader += `    ${code} = ${i},\n`;
   listHeader += `    { JSC::ErrorType::${constructor.name}, "${name}"_s, "${code}"_s },\n`;
@@ -126,6 +124,7 @@ zig += `
   extern fn Bun__createErrorWithCode(globalThis: *JSC.JSGlobalObject, code: Error, message: *bun.String) JSC.JSValue;
 
   /// Creates an Error object with the given error code.
+  /// If an error is thrown while creating the Error object, returns that error instead.
   /// Derefs the message string.
   pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject, message: *bun.String) JSC.JSValue {
     defer message.deref();
@@ -169,9 +168,9 @@ for (const [code, constructor, name, ...other_constructors] of NodeErrors) {
       ? `${constructor.name} & { name: "${name}", code: "${code}" }`
       : `${constructor.name} & { code: "${code}" }`;
   dts += `
-/** 
+/**
  * Construct an {@link ${constructor.name} ${constructor.name}} with the \`"${code}"\` error code.
- * 
+ *
  * To override this, update ErrorCode.cpp. To remove this generated type, mention \`"${code}"\` in builtins.d.ts.
  */
 declare function $${code}(message: string): ${namedError};\n`;

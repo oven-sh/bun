@@ -5,18 +5,12 @@ const ImportKind = @import("./import_record.zig").ImportKind;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const JSC = bun.JSC;
 const fs = @import("fs.zig");
-const unicode = std.unicode;
-const Ref = @import("./ast/base.zig").Ref;
-const expect = std.testing.expect;
 const assert = bun.assert;
 const StringBuilder = bun.StringBuilder;
 const Index = @import("./ast/base.zig").Index;
@@ -70,8 +64,8 @@ pub const Kind = enum(u8) {
 pub const Loc = struct {
     start: i32 = -1,
 
-    pub inline fn toNullable(loc: *Loc) ?Loc {
-        return if (loc.start == -1) null else loc.*;
+    pub inline fn toNullable(loc: Loc) ?Loc {
+        return if (loc.start == -1) null else loc;
     }
 
     pub const toUsize = i;
@@ -446,7 +440,7 @@ pub const Msg = struct {
         };
     }
 
-    pub fn toJS(this: Msg, globalObject: *bun.JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
+    pub fn toJS(this: Msg, globalObject: *bun.JSC.JSGlobalObject, allocator: std.mem.Allocator) bun.OOM!JSC.JSValue {
         return switch (this.metadata) {
             .build => bun.api.BuildMessage.create(globalObject, allocator, this),
             .resolve => bun.api.ResolveMessage.create(globalObject, allocator, this, ""),
@@ -703,7 +697,7 @@ pub const Log = struct {
         });
 
         pub fn fromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) JSError!?Level {
-            if (value == .zero or value == .undefined) {
+            if (value == .zero or value.isUndefined()) {
                 return null;
             }
 
@@ -748,13 +742,13 @@ pub const Log = struct {
         }
     }
 
-    pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, message: string) JSC.JSValue {
+    pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, message: string) bun.JSError!JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
         var errors_stack: [256]JSC.JSValue = undefined;
 
         const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
         switch (count) {
-            0 => return .undefined,
+            0 => return .js_undefined,
             1 => {
                 const msg = msgs[0];
                 return switch (msg.metadata) {
@@ -765,28 +759,28 @@ pub const Log = struct {
             else => {
                 for (msgs[0..count], 0..) |msg, i| {
                     errors_stack[i] = switch (msg.metadata) {
-                        .build => bun.api.BuildMessage.create(global, allocator, msg),
-                        .resolve => bun.api.ResolveMessage.create(global, allocator, msg, ""),
+                        .build => try bun.api.BuildMessage.create(global, allocator, msg),
+                        .resolve => try bun.api.ResolveMessage.create(global, allocator, msg, ""),
                     };
                 }
                 const out = JSC.ZigString.init(message);
-                const agg = global.createAggregateError(errors_stack[0..count], &out);
+                const agg = try global.createAggregateError(errors_stack[0..count], &out);
                 return agg;
             },
         }
     }
 
     /// unlike toJS, this always produces an AggregateError object
-    pub fn toJSAggregateError(this: Log, global: *JSC.JSGlobalObject, message: bun.String) JSC.JSValue {
-        return global.createAggregateErrorWithArray(message, this.toJSArray(global, bun.default_allocator));
+    pub fn toJSAggregateError(this: Log, global: *JSC.JSGlobalObject, message: bun.String) bun.JSError!JSC.JSValue {
+        return global.createAggregateErrorWithArray(message, try this.toJSArray(global, bun.default_allocator));
     }
 
-    pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
+    pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) bun.JSError!JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
 
-        const arr = JSC.JSValue.createEmptyArray(global, msgs.len);
+        const arr = try JSC.JSValue.createEmptyArray(global, msgs.len);
         for (msgs, 0..) |msg, i| {
-            arr.putIndex(global, @as(u32, @intCast(i)), msg.toJS(global, allocator));
+            try arr.putIndex(global, @as(u32, @intCast(i)), try msg.toJS(global, allocator));
         }
 
         return arr;

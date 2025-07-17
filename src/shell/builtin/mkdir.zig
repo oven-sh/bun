@@ -14,7 +14,7 @@ state: union(enum) {
     done,
 } = .idle,
 
-pub fn onIOWriterChunk(this: *Mkdir, _: usize, e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Mkdir, _: usize, e: ?JSC.SystemError) Yield {
     if (e) |err| err.deref();
 
     switch (this.state) {
@@ -25,13 +25,13 @@ pub fn onIOWriterChunk(this: *Mkdir, _: usize, e: ?JSC.SystemError) void {
         .idle, .done => @panic("Invalid state"),
     }
 
-    this.next();
+    return this.next();
 }
-pub fn writeFailingError(this: *Mkdir, buf: []const u8, exit_code: ExitCode) Maybe(void) {
+
+pub fn writeFailingError(this: *Mkdir, buf: []const u8, exit_code: ExitCode) Yield {
     if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .waiting_write_err;
-        this.bltn().stderr.enqueue(this, buf, safeguard);
-        return Maybe(void).success;
+        return this.bltn().stderr.enqueue(this, buf, safeguard);
     }
 
     _ = this.bltn().writeNoIO(.stderr, buf);
@@ -39,11 +39,10 @@ pub fn writeFailingError(this: *Mkdir, buf: []const u8, exit_code: ExitCode) May
     //     return .{ .err = e };
     // }
 
-    this.bltn().done(exit_code);
-    return Maybe(void).success;
+    return this.bltn().done(exit_code);
 }
 
-pub fn start(this: *Mkdir) Maybe(void) {
+pub fn start(this: *Mkdir) Yield {
     const filepath_args = switch (this.opts.parse(this.bltn().argsSlice())) {
         .ok => |filepath_args| filepath_args,
         .err => |e| {
@@ -53,12 +52,10 @@ pub fn start(this: *Mkdir) Maybe(void) {
                 .unsupported => |unsupported| this.bltn().fmtErrorArena(.mkdir, "unsupported option, please open a GitHub issue -- {s}\n", .{unsupported}),
             };
 
-            _ = this.writeFailingError(buf, 1);
-            return Maybe(void).success;
+            return this.writeFailingError(buf, 1);
         },
     } orelse {
-        _ = this.writeFailingError(Builtin.Kind.mkdir.usageString(), 1);
-        return Maybe(void).success;
+        return this.writeFailingError(Builtin.Kind.mkdir.usageString(), 1);
     };
 
     this.state = .{
@@ -67,12 +64,10 @@ pub fn start(this: *Mkdir) Maybe(void) {
         },
     };
 
-    _ = this.next();
-
-    return Maybe(void).success;
+    return this.next();
 }
 
-pub fn next(this: *Mkdir) void {
+pub fn next(this: *Mkdir) Yield {
     switch (this.state) {
         .idle => @panic("Invalid state"),
         .exec => {
@@ -82,10 +77,9 @@ pub fn next(this: *Mkdir) void {
                     const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
                     if (this.state.exec.err) |e| e.deref();
                     this.state = .done;
-                    this.bltn().done(exit_code);
-                    return;
+                    return this.bltn().done(exit_code);
                 }
-                return;
+                return .suspended;
             }
 
             exec.started = true;
@@ -96,9 +90,10 @@ pub fn next(this: *Mkdir) void {
                 var task = ShellMkdirTask.create(this, this.opts, dir_to_mk, this.bltn().parentCmd().base.shell.cwdZ());
                 task.schedule();
             }
+            return .suspended;
         },
-        .waiting_write_err => return,
-        .done => this.bltn().done(0),
+        .waiting_write_err => return .failed,
+        .done => return this.bltn().done(0),
     }
 }
 
@@ -116,10 +111,10 @@ pub fn onShellMkdirTaskDone(this: *Mkdir, task: *ShellMkdirTask) void {
     if (err) |e| {
         const error_string = this.bltn().taskErrorToString(.mkdir, e);
         this.state.exec.err = e;
-        output_task.start(error_string);
+        output_task.start(error_string).run();
         return;
     }
-    output_task.start(null);
+    output_task.start(null).run();
 }
 
 pub const ShellMkdirOutputTask = OutputTask(Mkdir, .{
@@ -131,38 +126,36 @@ pub const ShellMkdirOutputTask = OutputTask(Mkdir, .{
 });
 
 const ShellMkdirOutputTaskVTable = struct {
-    pub fn writeErr(this: *Mkdir, childptr: anytype, errbuf: []const u8) CoroutineResult {
+    pub fn writeErr(this: *Mkdir, childptr: anytype, errbuf: []const u8) ?Yield {
         if (this.bltn().stderr.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
-            this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
-            return .yield;
+            return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
         _ = this.bltn().writeNoIO(.stderr, errbuf);
-        return .cont;
+        return null;
     }
 
     pub fn onWriteErr(this: *Mkdir) void {
         this.state.exec.output_done += 1;
     }
 
-    pub fn writeOut(this: *Mkdir, childptr: anytype, output: *OutputSrc) CoroutineResult {
+    pub fn writeOut(this: *Mkdir, childptr: anytype, output: *OutputSrc) ?Yield {
         if (this.bltn().stdout.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
             const slice = output.slice();
             log("THE SLICE: {d} {s}", .{ slice.len, slice });
-            this.bltn().stdout.enqueue(childptr, slice, safeguard);
-            return .yield;
+            return this.bltn().stdout.enqueue(childptr, slice, safeguard);
         }
         _ = this.bltn().writeNoIO(.stdout, output.slice());
-        return .cont;
+        return null;
     }
 
     pub fn onWriteOut(this: *Mkdir) void {
         this.state.exec.output_done += 1;
     }
 
-    pub fn onDone(this: *Mkdir) void {
-        this.next();
+    pub fn onDone(this: *Mkdir) Yield {
+        return this.next();
     }
 };
 
@@ -379,6 +372,7 @@ pub inline fn bltn(this: *Mkdir) *Builtin {
 // --
 const debug = bun.Output.scoped(.ShellMkdir, true);
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
@@ -387,27 +381,14 @@ const Result = Interpreter.Builtin.Result;
 const ParseError = interpreter.ParseError;
 const ParseFlagResult = interpreter.ParseFlagResult;
 const ExitCode = shell.ExitCode;
-const IOReader = shell.IOReader;
-const IOWriter = shell.IOWriter;
-const IO = shell.IO;
-const IOVector = shell.IOVector;
-const IOVectorSlice = shell.IOVectorSlice;
-const IOVectorSliceMut = shell.IOVectorSliceMut;
-const Cat = @This();
-const ReadChunkAction = interpreter.ReadChunkAction;
 const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 const std = @import("std");
 const FlagParser = interpreter.FlagParser;
 
-const ShellSyscall = interpreter.ShellSyscall;
-const unsupportedFlag = interpreter.unsupportedFlag;
 const Mkdir = @This();
 const log = debug;
 const OutputTask = interpreter.OutputTask;
-const CoroutineResult = interpreter.CoroutineResult;
 const OutputSrc = interpreter.OutputSrc;
 const WorkPool = bun.JSC.WorkPool;
 const ResolvePath = bun.path;
-const Syscall = bun.sys;
 const ArrayList = std.ArrayList;

@@ -1,8 +1,8 @@
 import { LoaderKeys } from "../api/schema";
 import NodeErrors from "../bun.js/bindings/ErrorCode.ts";
+import jsclasses from "./../bun.js/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { registerNativeCall } from "./generate-js2native";
-import jsclasses from "./../bun.js/bindings/js_classes";
 
 // This is a list of extra syntax replacements to do. Kind of like macros
 // These are only run on code itself, not string contents or comments.

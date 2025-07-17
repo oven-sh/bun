@@ -2,7 +2,6 @@ const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
@@ -11,9 +10,7 @@ const FileDescriptor = bun.FileDescriptor;
 const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const sync = @import("sync.zig");
 const Mutex = bun.Mutex;
-const Semaphore = sync.Semaphore;
 const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
 const PathString = bun.PathString;
@@ -627,7 +624,7 @@ pub const FileSystem = struct {
             var existing = this.entries.atIndex(index) orelse return null;
             if (existing.* == .entries) {
                 if (existing.entries.generation < generation) {
-                    var handle = bun.openDirForIteration(std.fs.cwd(), existing.entries.dir) catch |err| {
+                    var handle = bun.openDirForIteration(FD.cwd(), existing.entries.dir).unwrap() catch |err| {
                         existing.entries.data.clearAndFree(bun.fs_allocator);
 
                         return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
@@ -639,7 +636,7 @@ pub const FileSystem = struct {
                         &existing.entries.data,
                         existing.entries.dir,
                         generation,
-                        handle,
+                        handle.stdDir(),
 
                         void,
                         void{},
@@ -800,8 +797,6 @@ pub const FileSystem = struct {
         pub const Limit = struct {
             pub var handles: usize = 0;
             pub var handles_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
-            pub var stack: usize = 0;
-            pub var stack_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
         };
 
         // Always try to max out how many files we can keep open
@@ -810,19 +805,6 @@ pub const FileSystem = struct {
                 return std.math.maxInt(usize);
             }
 
-            blk: {
-                const resource = std.posix.rlimit_resource.STACK;
-                const limit = try std.posix.getrlimit(resource);
-                Limit.stack_before = limit;
-                if (limit.cur < limit.max) {
-                    var new_limit = std.mem.zeroes(std.posix.rlimit);
-                    new_limit.cur = limit.max;
-                    new_limit.max = limit.max;
-
-                    std.posix.setrlimit(resource, new_limit) catch break :blk;
-                    Limit.stack = limit.max;
-                }
-            }
             var file_limit: usize = 0;
             blk: {
                 const resource = std.posix.rlimit_resource.NOFILE;
@@ -1000,7 +982,7 @@ pub const FileSystem = struct {
         ) !DirEntry {
             _ = fs;
 
-            var iter = bun.iterateDir(handle);
+            var iter = bun.iterateDir(.fromStdDir(handle));
             var dir = DirEntry.init(_dir, generation);
             const allocator = bun.fs_allocator;
             errdefer dir.deinit(allocator);
@@ -1400,10 +1382,10 @@ pub const FileSystem = struct {
             if (comptime bun.Environment.isWindows) {
                 var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
                 var depth: usize = 0;
-                const buf2: *bun.PathBuffer = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(buf2);
-                const buf3: *bun.PathBuffer = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(buf3);
+                const buf2: *bun.PathBuffer = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buf2);
+                const buf3: *bun.PathBuffer = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buf3);
 
                 var current_buf: *bun.PathBuffer = buf2;
                 var other_buf: *bun.PathBuffer = &outpath;
@@ -1992,3 +1974,4 @@ pub const Path = struct {
 //     defer std.posix.close(opened);
 
 // }
+pub const StatHash = @import("./fs/stat_hash.zig");

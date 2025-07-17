@@ -107,8 +107,8 @@ struct addrinfo_result {
 #define us_internal_ssl_socket_context_r struct us_internal_ssl_socket_context_t *nonnull_arg
 #define us_internal_ssl_socket_r struct us_internal_ssl_socket_t *nonnull_arg
 
-extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, struct addrinfo_request** ptr);
-extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket); 
+extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
+extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
 extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
 
@@ -158,7 +158,7 @@ void us_internal_socket_after_open(us_socket_r s, int error);
 struct us_internal_ssl_socket_t *
 us_internal_ssl_socket_close(us_internal_ssl_socket_r s, int code,
                              void *reason);
-                             
+
 int us_internal_handle_dns_results(us_loop_r loop);
 
 /* Sockets are polls */
@@ -167,9 +167,11 @@ struct us_socket_flags {
     /* If true, the readable side is paused */
     bool is_paused: 1;
     /* Allow to stay alive after FIN/EOF */
-    bool allow_half_open: 1; 
+    bool allow_half_open: 1;
     /* 0 = not in low-prio queue, 1 = is in low-prio queue, 2 = was in low-prio queue in this iteration */
-    unsigned char low_prio_state: 2; 
+    unsigned char low_prio_state: 2;
+    /* If true, the socket should be read using readmsg to support receiving file descriptors */
+    bool is_ipc: 1;
 
 } __attribute__((packed));
 
@@ -287,6 +289,7 @@ struct us_socket_context_t {
   struct us_socket_t *(*on_open)(struct us_socket_t *, int is_client, char *ip,
                                  int ip_length);
   struct us_socket_t *(*on_data)(struct us_socket_t *, char *data, int length);
+  struct us_socket_t *(*on_fd)(struct us_socket_t *, int fd);
   struct us_socket_t *(*on_writable)(struct us_socket_t *);
   struct us_socket_t *(*on_close)(struct us_socket_t *, int code, void *reason);
   // void (*on_timeout)(struct us_socket_context *);
@@ -296,7 +299,7 @@ struct us_socket_context_t {
   struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *, int code);
   struct us_socket_t *(*on_socket_connect_error)(struct us_socket_t *, int code);
   int (*is_low_prio)(struct us_socket_t *);
-  
+
 };
 
 /* Internal SSL interface */
@@ -307,7 +310,7 @@ struct us_internal_ssl_socket_t;
 typedef void (*us_internal_on_handshake_t)(
     struct us_internal_ssl_socket_t *, int success,
     struct us_bun_verify_error_t verify_error, void *custom_data);
-    
+
 void us_internal_socket_context_free(int ssl, struct us_socket_context_t *context);
 /* SNI functions */
 void us_internal_ssl_socket_context_add_server_name(
@@ -418,10 +421,9 @@ struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
     size_t pathlen, int options, int socket_ext_size);
 
 int us_internal_ssl_socket_write(us_internal_ssl_socket_r s,
-                                 const char *data, int length, int msg_more);
+                                 const char *data, int length);
 int us_internal_ssl_socket_raw_write(us_internal_ssl_socket_r s,
-                                     const char *data, int length,
-                                     int msg_more);
+                                     const char *data, int length);
 
 void us_internal_ssl_socket_timeout(us_internal_ssl_socket_r s,
                                     unsigned int seconds);

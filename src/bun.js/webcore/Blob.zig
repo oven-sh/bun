@@ -105,7 +105,7 @@ pub fn doReadFromS3(this: *Blob, comptime Function: anytype, global: *JSGlobalOb
 
     const WrappedFn = struct {
         pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) JSC.JSValue {
-            return JSC.toJSHostValue(g, Function(b, g, by, .clone));
+            return JSC.toJSHostCall(g, @src(), Function, .{ b, g, by, .clone });
         }
     };
     return S3BlobDownloadTask.init(global, this, WrappedFn.wrapped);
@@ -122,7 +122,7 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
 
     if (Environment.isWindows) {
         var promise = JSPromise.create(global);
-        const promise_value = promise.asValue(global);
+        const promise_value = promise.toJS();
         promise_value.ensureStillAlive();
         handler.promise.strong.set(global, promise_value);
 
@@ -147,7 +147,7 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
     // The JSPromise is the next GC'd memory allocation.
     // This shouldn't really fix anything, but it's a little safer.
     var promise = JSPromise.create(global);
-    const promise_value = promise.asValue(global);
+    const promise_value = promise.toJS();
     promise_value.ensureStillAlive();
     handler.promise.strong.set(global, promise_value);
 
@@ -248,7 +248,7 @@ const FormDataContext = struct {
 
                             switch (res) {
                                 .err => |err| {
-                                    globalThis.throwValue(err.toJSC(globalThis)) catch {};
+                                    globalThis.throwValue(err.toJS(globalThis)) catch {};
                                     this.failed = true;
                                 },
                                 .result => |result| {
@@ -518,7 +518,7 @@ pub fn fromURLSearchParams(
     };
     search_params.toString(URLSearchParamsConverter, &converter, URLSearchParamsConverter.convert);
     var store = Blob.Store.init(converter.buf, allocator);
-    store.mime_type = MimeType.all.@"application/x-www-form-urlencoded";
+    store.mime_type = MimeType.Compact.from(.@"application/x-www-form-urlencoded").toMimeType();
 
     var blob = Blob.initWithStore(store, globalThis);
     blob.content_type = store.mime_type.value;
@@ -813,11 +813,7 @@ pub noinline fn mkdirIfNotExists(this: anytype, err: bun.sys.Error, path_string:
 /// Returns an encoded `*JSPromise` that resolves if the file
 /// - doesn't exist and is created
 /// - exists and is truncated
-fn writeFileWithEmptySourceToDestination(
-    ctx: *JSC.JSGlobalObject,
-    destination_blob: *Blob,
-    options: WriteFileOptions,
-) JSC.JSValue {
+fn writeFileWithEmptySourceToDestination(ctx: *JSC.JSGlobalObject, destination_blob: *Blob, options: WriteFileOptions) bun.JSError!JSC.JSValue {
     // SAFETY: null-checked by caller
     const destination_store = destination_blob.store.?;
     defer destination_blob.detach();
@@ -894,7 +890,7 @@ fn writeFileWithEmptySourceToDestination(
                 }
 
                 result.err = result.err.withPathLike(file.pathlike);
-                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, result.toJS(ctx));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, try result.toJS(ctx));
             }
         },
         .s3 => |*s3| {
@@ -958,12 +954,7 @@ fn writeFileWithEmptySourceToDestination(
     return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(0));
 }
 
-pub fn writeFileWithSourceDestination(
-    ctx: *JSC.JSGlobalObject,
-    source_blob: *Blob,
-    destination_blob: *Blob,
-    options: WriteFileOptions,
-) JSC.JSValue {
+pub fn writeFileWithSourceDestination(ctx: *JSC.JSGlobalObject, source_blob: *Blob, destination_blob: *Blob, options: WriteFileOptions) bun.JSError!JSC.JSValue {
     const destination_store = destination_blob.store orelse Output.panic("Destination blob is detached", .{});
     const destination_type = std.meta.activeTag(destination_store.data);
 
@@ -1040,7 +1031,7 @@ pub fn writeFileWithSourceDestination(
         return file_copier.promise.value();
     } else if (destination_type == .file and source_type == .s3) {
         const s3 = &source_store.data.s3;
-        if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
+        if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(
             ctx,
             source_blob,
             @truncate(s3.options.partSize),
@@ -1077,7 +1068,7 @@ pub fn writeFileWithSourceDestination(
         switch (source_store.data) {
             .bytes => |bytes| {
                 if (bytes.len > S3.MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
-                    if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
+                    if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(
                         ctx,
                         source_blob,
                         @truncate(s3.options.partSize),
@@ -1144,7 +1135,7 @@ pub fn writeFileWithSourceDestination(
             },
             .file, .s3 => {
                 // stream
-                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(
+                if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(
                     ctx,
                     source_blob,
                     @truncate(s3.options.partSize),
@@ -1231,7 +1222,7 @@ pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOr
                     bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode))))
         {
             if (data.isString()) {
-                const len = data.getLength(globalThis);
+                const len = try data.getLength(globalThis);
 
                 if (len < 256 * 1024) {
                     const str = try data.toBunString(globalThis);
@@ -1342,7 +1333,7 @@ pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOr
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        _ = response.body.value.toReadableStream(globalThis);
+                        _ = try response.body.value.toReadableStream(globalThis);
                         if (locked.readable.get(globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
@@ -1403,7 +1394,7 @@ pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOr
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        _ = request.body.value.toReadableStream(globalThis);
+                        _ = try request.body.value.toReadableStream(globalThis);
                         if (locked.readable.get(globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
@@ -1546,7 +1537,7 @@ fn writeStringToFileFast(
 
                 return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis),
                 );
             },
         }
@@ -1587,11 +1578,11 @@ fn writeStringToFileFast(
                         return .zero;
                     }
                     if (comptime !needs_open) {
-                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
                     }
                     return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
-                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                        err.withPath(pathlike.path.slice()).toJS(globalThis),
                     );
                 },
             }
@@ -1633,7 +1624,7 @@ fn writeBytesToFileFast(
 
                 return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis),
                 );
             },
         }
@@ -1666,12 +1657,12 @@ fn writeBytesToFileFast(
                 if (comptime !needs_open) {
                     return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
-                        err.toJSC(globalThis),
+                        err.toJS(globalThis),
                     );
                 }
                 return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis),
                 );
             },
         }
@@ -1777,7 +1768,7 @@ pub fn JSDOMFile__construct_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Ca
 
             if (try options.getTruthy(globalThis, "lastModified")) |last_modified| {
                 set_last_modified = true;
-                blob.last_modified = last_modified.coerce(f64, globalThis);
+                blob.last_modified = try last_modified.coerce(f64, globalThis);
             }
         }
     }
@@ -1876,7 +1867,7 @@ pub fn constructBunFile(
                 }
             }
             if (try opts.getTruthy(globalObject, "lastModified")) |last_modified| {
-                blob.last_modified = last_modified.coerce(f64, globalObject);
+                blob.last_modified = try last_modified.coerce(f64, globalObject);
             }
         }
     }
@@ -1899,6 +1890,7 @@ pub fn findOrCreateFileFromPath(path_or_fd: *JSC.Node.PathOrFileDescriptor, glob
             }
         }
     }
+
     const path: JSC.Node.PathOrFileDescriptor = brk: {
         switch (path_or_fd.*) {
             .path => {
@@ -1970,7 +1962,7 @@ pub fn getStream(
 
         recommended_chunk_size = @as(SizeType, @intCast(@max(0, @as(i52, @truncate(arguments[0].toInt64())))));
     }
-    const stream = JSC.WebCore.ReadableStream.fromBlob(
+    const stream = try JSC.WebCore.ReadableStream.fromBlobCopyRef(
         globalThis,
         this,
         recommended_chunk_size,
@@ -2012,7 +2004,7 @@ pub fn toStreamWithOffset(
 fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: JSC.WebCore.Lifetime) fn (*Blob, *JSC.JSGlobalObject) JSC.JSValue {
     return struct {
         fn wrap(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-            return JSC.toJSHostValue(globalObject, Fn(this, globalObject, lifetime));
+            return JSC.toJSHostCall(globalObject, @src(), Fn, .{ this, globalObject, lifetime });
         }
     }.wrap;
 }
@@ -2329,7 +2321,7 @@ pub fn onFileStreamResolveRequestStream(globalThis: *JSC.JSGlobalObject, callfra
         stream.done(globalThis);
     }
     this.promise.resolve(globalThis, JSC.JSValue.jsNumber(0));
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn onFileStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -2347,7 +2339,7 @@ pub fn onFileStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callfram
     if (strong.get(globalThis)) |stream| {
         stream.cancel(globalThis);
     }
-    return .undefined;
+    return .js_undefined;
 }
 comptime {
     const jsonResolveRequestStream = JSC.toJSHostFn(onFileStreamResolveRequestStream);
@@ -2406,7 +2398,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, re
                         break :brk result;
                     },
                     .err => |err| {
-                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.withPath(path).toJSC(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.withPath(path).toJS(globalThis));
                     },
                 }
                 unreachable;
@@ -2439,7 +2431,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, re
                 switch (sink.writer.startSync(fd, false)) {
                     .err => |err| {
                         sink.deref();
-                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
                     },
                     else => {},
                 }
@@ -2447,7 +2439,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, re
                 switch (sink.writer.start(fd, true)) {
                     .err => |err| {
                         sink.deref();
-                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
                     },
                     else => {},
                 }
@@ -2482,7 +2474,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, re
         switch (sink.start(stream_start)) {
             .err => |err| {
                 sink.deref();
-                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
             },
             else => {},
         }
@@ -2649,7 +2641,7 @@ pub fn getWriter(
                     break :brk result;
                 },
                 .err => |err| {
-                    return globalThis.throwValue(err.withPath(pathlike.path.slice()).toJSC(globalThis));
+                    return globalThis.throwValue(err.withPath(pathlike.path.slice()).toJS(globalThis));
                 },
             }
             @compileError(unreachable);
@@ -2682,7 +2674,7 @@ pub fn getWriter(
             switch (sink.writer.startSync(fd, false)) {
                 .err => |err| {
                     sink.deref();
-                    return globalThis.throwValue(err.toJSC(globalThis));
+                    return globalThis.throwValue(err.toJS(globalThis));
                 },
                 else => {},
             }
@@ -2690,7 +2682,7 @@ pub fn getWriter(
             switch (sink.writer.start(fd, true)) {
                 .err => |err| {
                     sink.deref();
-                    return globalThis.throwValue(err.toJSC(globalThis));
+                    return globalThis.throwValue(err.toJS(globalThis));
                 },
                 else => {},
             }
@@ -2730,7 +2722,7 @@ pub fn getWriter(
     switch (sink.start(stream_start)) {
         .err => |err| {
             sink.deref();
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
         else => {},
     }
@@ -2898,7 +2890,7 @@ pub fn getNameString(this: *Blob) ?bun.String {
     if (this.name.tag != .Dead) return this.name;
 
     if (this.getFileName()) |path| {
-        this.name = bun.String.createUTF8(path);
+        this.name = bun.String.cloneUTF8(path);
         return this.name;
     }
 
@@ -2911,7 +2903,7 @@ pub fn getName(
     _: JSC.JSValue,
     globalThis: *JSC.JSGlobalObject,
 ) JSValue {
-    return if (this.getNameString()) |name| name.toJS(globalThis) else .undefined;
+    return if (this.getNameString()) |name| name.toJS(globalThis) else .js_undefined;
 }
 
 pub fn setName(
@@ -2919,35 +2911,23 @@ pub fn setName(
     jsThis: JSC.JSValue,
     globalThis: *JSC.JSGlobalObject,
     value: JSValue,
-
-    // TODO: support JSError for getters/setters
-) bool {
+) JSError!void {
     // by default we don't have a name so lets allow it to be set undefined
     if (value.isEmptyOrUndefinedOrNull()) {
         this.name.deref();
         this.name = bun.String.dead;
         js.nameSetCached(jsThis, globalThis, value);
-        return true;
+        return;
     }
     if (value.isString()) {
         const old_name = this.name;
 
-        this.name = bun.String.fromJS(value, globalThis) catch |err| {
-            switch (err) {
-                error.JSError => {},
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory() catch {};
-                },
-            }
-            this.name = bun.String.empty;
-            return false;
-        };
+        errdefer this.name = bun.String.empty;
+        this.name = try bun.String.fromJS(value, globalThis);
         // We don't need to increment the reference count since tryFromJS already did it.
         js.nameSetCached(jsThis, globalThis, value);
         old_name.deref();
-        return true;
     }
-    return false;
 }
 
 pub fn getFileName(
@@ -3029,7 +3009,7 @@ export fn Bun__Blob__getSizeForBindings(this: *Blob) callconv(.C) u64 {
 }
 
 pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, callback: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const store = this.store orelse return JSC.JSValue.jsUndefined();
+    const store = this.store orelse return .js_undefined;
     // TODO: make this async for files
     return switch (store.data) {
         .file => |*file| {
@@ -3049,7 +3029,7 @@ pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, callback: *JSC.Call
             };
         },
         .s3 => S3File.getStat(this, globalThis, callback),
-        else => JSC.JSValue.jsUndefined(),
+        else => .js_undefined,
     };
 }
 pub fn getSize(this: *Blob, _: *JSC.JSGlobalObject) JSValue {
@@ -3430,7 +3410,7 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
 
     if (bom == .utf16_le) {
         defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
-        var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+        var out = bun.String.cloneUTF16(bun.reinterpretSlice(u16, buf));
         defer out.deref();
         return out.toJS(global);
     }
@@ -3486,7 +3466,7 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
             // if there was a UTF-8 BOM, we need to clone the buffer because
             // external doesn't support this case here yet.
             if (buf.len != raw_bytes.len) {
-                var out = bun.String.createLatin1(buf);
+                var out = bun.String.cloneLatin1(buf);
                 defer {
                     bun.default_allocator.free(raw_bytes);
                     out.deref();
@@ -3539,7 +3519,7 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
     if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
 
     if (bom == .utf16_le) {
-        var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+        var out = bun.String.cloneUTF16(bun.reinterpretSlice(u16, buf));
         defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
         defer if (lifetime == .transfer) this.detach();
         defer out.deref();
@@ -3654,7 +3634,6 @@ pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u
                 global,
                 store,
                 JSC.array_buffer.BlobArrayBuffer_deallocator,
-                null,
             );
         },
         .temporary => {
@@ -3663,10 +3642,7 @@ pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u
                 return global.throwOutOfMemory();
             }
 
-            return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJS(
-                global,
-                null,
-            );
+            return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJS(global);
         },
     }
 }
@@ -3774,13 +3750,13 @@ fn fromJSWithoutDeferGC(
     var fail_if_top_value_is_not_typed_array_like = false;
     switch (current.jsTypeLoose()) {
         .Array, .DerivedArray => {
-            var top_iter = JSC.JSArrayIterator.init(current, global);
+            var top_iter = try JSC.JSArrayIterator.init(current, global);
             might_only_be_one_thing = top_iter.len == 1;
             if (top_iter.len == 0) {
                 return Blob{ .globalThis = global };
             }
             if (might_only_be_one_thing) {
-                top_value = top_iter.next().?;
+                top_value = (try top_iter.next()).?;
             }
         },
         else => {
@@ -3887,10 +3863,10 @@ fn fromJSWithoutDeferGC(
             },
 
             .Array, .DerivedArray => {
-                var iter = JSC.JSArrayIterator.init(current, global);
+                var iter = try JSC.JSArrayIterator.init(current, global);
                 try stack.ensureUnusedCapacity(iter.len);
                 var any_arrays = false;
-                while (iter.next()) |item| {
+                while (try iter.next()) |item| {
                     if (item.isUndefinedOrNull()) continue;
 
                     // When it's a string or ArrayBuffer inside an array, we can avoid the extra push/pop
@@ -4262,10 +4238,6 @@ pub const Any = union(enum) {
             //     return value;
             // },
             .InternalBlob => {
-                if (this.InternalBlob.bytes.items.len == 0) {
-                    return JSC.ArrayBuffer.create(global, "", TypedArrayView);
-                }
-
                 const bytes = this.InternalBlob.toOwnedSlice();
                 this.* = .{ .Blob = .{} };
 
@@ -4394,7 +4366,7 @@ pub const Internal = struct {
         // If there was a UTF8 BOM, we clone it
         (bytes_without_bom.len != this.bytes.items.len) {
             defer this.deinit();
-            var out = bun.String.createLatin1(this.bytes.items[3..]);
+            var out = bun.String.cloneLatin1(this.bytes.items[3..]);
             defer out.deref();
             return out.toJS(globalThis);
         } else {
@@ -4425,8 +4397,15 @@ pub const Internal = struct {
 
     pub fn toOwnedSlice(this: *@This()) []u8 {
         const bytes = this.bytes.items;
+        const capacity = this.bytes.capacity;
+        if (bytes.len == 0 and capacity > 0) {
+            this.bytes.clearAndFree();
+            return &.{};
+        }
+
         this.bytes.items = &.{};
         this.bytes.capacity = 0;
+
         return bytes;
     }
 
@@ -4721,54 +4700,37 @@ pub fn FileCloser(comptime This: type) type {
 }
 
 const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
 const bun = @import("bun");
 const MimeType = http.MimeType;
-const ZigURL = @import("../../url.zig").URL;
 const http = bun.http;
 const JSC = bun.JSC;
 const io = bun.io;
-const Method = @import("../../http/method.zig").Method;
-const FetchHeaders = bun.webcore.FetchHeaders;
-const ObjectPool = @import("../../pool.zig").ObjectPool;
-const SystemError = JSC.SystemError;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
 const JSError = bun.JSError;
 const assert = bun.assert;
 const streams = bun.webcore.streams;
 
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
-const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const NullableAllocator = bun.NullableAllocator;
 
 const VirtualMachine = JSC.VirtualMachine;
-const Task = JSC.Task;
-const JSPrinter = bun.js_printer;
-const picohttp = bun.picohttp;
 const StringJoiner = bun.StringJoiner;
-const uws = bun.uws;
 
 const invalid_fd = bun.invalid_fd;
 const Response = JSC.WebCore.Response;
-const Body = JSC.WebCore.Body;
 const Request = JSC.WebCore.Request;
 
 const libuv = bun.windows.libuv;
 
 const S3 = bun.S3;
 const S3File = @import("S3File.zig");
-const S3Credentials = S3.S3Credentials;
 const PathOrBlob = JSC.Node.PathOrBlob;
-const PathLike = JSC.Node.PathLike;
 const WriteFilePromise = write_file.WriteFilePromise;
 const WriteFileWaitFromLockedValueTask = write_file.WriteFileWaitFromLockedValueTask;
 const NewReadFileHandler = read_file.NewReadFileHandler;

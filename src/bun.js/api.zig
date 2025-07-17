@@ -28,8 +28,8 @@ pub const JSBundler = @import("api/JSBundler.zig").JSBundler;
 pub const JSTranspiler = @import("api/JSTranspiler.zig");
 pub const Listener = @import("api/bun/socket.zig").Listener;
 pub const MatchedRoute = @import("api/filesystem_router.zig").MatchedRoute;
-pub const NativeBrotli = @import("node/node_zlib_binding.zig").SNativeBrotli;
-pub const NativeZlib = @import("node/node_zlib_binding.zig").SNativeZlib;
+pub const NativeBrotli = @import("node/zlib/NativeBrotli.zig");
+pub const NativeZlib = @import("node/zlib/NativeZlib.zig");
 pub const NodeHTTPResponse = @import("api/server.zig").NodeHTTPResponse;
 pub const Postgres = @import("../sql/postgres.zig");
 pub const ResolveMessage = @import("ResolveMessage.zig").ResolveMessage;
@@ -40,8 +40,11 @@ pub const Shell = @import("../shell/shell.zig");
 pub const SocketAddress = @import("api/bun/socket.zig").SocketAddress;
 pub const TCPSocket = @import("api/bun/socket.zig").TCPSocket;
 pub const TLSSocket = @import("api/bun/socket.zig").TLSSocket;
+pub const SocketHandlers = @import("api/bun/socket.zig").Handlers;
 pub const UDPSocket = @import("api/bun/udp_socket.zig").UDPSocket;
 pub const Valkey = @import("../valkey/js_valkey.zig").JSValkeyClient;
+pub const BlockList = @import("./node/net/BlockList.zig");
+pub const NativeZstd = @import("./node/zlib/NativeZstd.zig");
 
 pub const napi = @import("../napi/napi.zig");
 

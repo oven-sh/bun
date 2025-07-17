@@ -1,3 +1,5 @@
+const { SafeArrayIterator } = require("internal/primordials");
+
 const ObjectFreeze = Object.freeze;
 
 class NotImplementedError extends Error {
@@ -80,6 +82,35 @@ class ExceptionWithHostPort extends Error {
   }
 }
 
+class NodeAggregateError extends AggregateError {
+  constructor(errors, message) {
+    super(new SafeArrayIterator(errors), message);
+    this.code = errors[0]?.code;
+  }
+
+  get ["constructor"]() {
+    return AggregateError;
+  }
+}
+
+class ErrnoException extends Error {
+  constructor(err, syscall, original) {
+    util ??= require("node:util");
+    const code = util.getSystemErrorName(err);
+    const message = original ? `${syscall} ${code} ${original}` : `${syscall} ${code}`;
+
+    super(message);
+
+    this.errno = err;
+    this.code = code;
+    this.syscall = syscall;
+  }
+
+  get ["constructor"]() {
+    return Error;
+  }
+}
+
 function once(callback, { preserveReturnValue = false } = kEmptyObject) {
   let called = false;
   let returnValue;
@@ -102,6 +133,8 @@ export default {
   hideFromStack,
   warnNotImplementedOnce,
   ExceptionWithHostPort,
+  NodeAggregateError,
+  ErrnoException,
   once,
 
   kHandle: Symbol("kHandle"),

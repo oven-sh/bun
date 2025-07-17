@@ -48,6 +48,17 @@ pub fn encode(destination: []u8, source: []const u8) usize {
     return bun.simdutf.base64.encode(source, destination, false);
 }
 
+pub fn encodeAlloc(allocator: std.mem.Allocator, source: []const u8) !bun.ByteList {
+    const len = encodeLen(source);
+    const destination = try allocator.alloc(u8, len);
+    const encoded_len = encode(destination, source);
+    return .{
+        .ptr = destination.ptr,
+        .len = @truncate(encoded_len),
+        .cap = @truncate(len),
+    };
+}
+
 pub fn simdutfEncodeLenUrlSafe(source_len: usize) usize {
     return bun.simdutf.base64.encode_len(source_len, true);
 }

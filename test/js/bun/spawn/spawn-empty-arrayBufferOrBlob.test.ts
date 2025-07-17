@@ -16,11 +16,7 @@ describe("spawn with empty", () => {
         env: bunEnv,
       });
 
-      const [exited, stdout, stderr] = await Promise.all([
-        proc.exited,
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-      ]);
+      const [exited, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
       expect(exited).toBe(0);
       expect(stdout).toBeEmpty();
       expect(stderr).toBeEmpty();

@@ -984,12 +984,12 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       stdout,
       stderr,
     });
-    if (result.signalCode !== undefined) {
+    if (options["coredump-upload"] && result.signalCode !== undefined) {
       const corePath = join(coresDir, `${basename(execPath)}-${result.pid}.core`);
       if (existsSync(corePath)) {
         let out = "";
         const lldb = await spawnSafe({
-          command: "lldb",
+          command: "lldb", // todo try lldb-19 too
           args: ["-c", corePath, "--batch", "-o", "thread backtrace all", "-o", "quit"],
           timeout: 60_000,
           stderr: () => {},

@@ -85,10 +85,8 @@ fn hasTransitiveUseClientImpl(
 
 const std = @import("std");
 const bun = @import("bun");
-const strings = bun.strings;
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const Index = bun.bundle_v2.Index;
 
-const js_ast = bun.js_ast.UseDirective;
 const ImportRecord = bun.bundle_v2.ImportRecord;
 const UseDirective = bun.bundle_v2.UseDirective;

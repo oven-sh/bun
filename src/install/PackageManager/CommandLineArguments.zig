@@ -712,9 +712,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     }
 
     var cli = CommandLineArguments{};
+    cli.positionals = args.positionals();
     cli.yarn = args.flag("--yarn");
     cli.production = args.flag("--production");
-    cli.frozen_lockfile = args.flag("--frozen-lockfile");
+    cli.frozen_lockfile = args.flag("--frozen-lockfile") or (cli.positionals.len > 0 and strings.eqlComptime(cli.positionals[0], "ci"));
     cli.no_progress = args.flag("--no-progress");
     cli.dry_run = args.flag("--dry-run");
     cli.global = args.flag("--global");
@@ -919,8 +920,6 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         }
         cli.registry = registry;
     }
-
-    cli.positionals = args.positionals();
 
     if (subcommand == .patch and cli.positionals.len < 2) {
         Output.errGeneric("Missing pkg to patch\n", .{});

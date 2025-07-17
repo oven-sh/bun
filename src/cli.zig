@@ -578,6 +578,7 @@ pub const Command = struct {
 
                 break :brk .InstallCommand;
             },
+            RootCommandMatcher.case("ci") => .InstallCommand,
             RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
             RootCommandMatcher.case("test") => .TestCommand,

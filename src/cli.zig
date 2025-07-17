@@ -118,6 +118,7 @@ pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
 pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
+pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
 
 const PackageManager = Install.PackageManager;
 const PmViewCommand = @import("./cli/pm_view_command.zig");
@@ -617,7 +618,7 @@ pub const Command = struct {
             RootCommandMatcher.case("whoami") => .ReservedCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
-            RootCommandMatcher.case("why") => .ReservedCommand,
+            RootCommandMatcher.case("why") => .WhyCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
 
@@ -797,9 +798,12 @@ pub const Command = struct {
             .AuditCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AuditCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .AuditCommand);
-
                 try AuditCommand.exec(ctx);
-                unreachable;
+            },
+            .WhyCommand => {
+                const ctx = try Command.init(allocator, log, .WhyCommand);
+                try WhyCommand.exec(ctx);
+                return;
             },
             .BunxCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
@@ -1230,6 +1234,7 @@ pub const Command = struct {
         OutdatedCommand,
         PublishCommand,
         AuditCommand,
+        WhyCommand,
 
         /// Used by crash reports.
         ///
@@ -1265,6 +1270,7 @@ pub const Command = struct {
                 .OutdatedCommand => 'o',
                 .PublishCommand => 'k',
                 .AuditCommand => 'A',
+                .WhyCommand => 'W',
             };
         }
 
@@ -1541,6 +1547,30 @@ pub const Command = struct {
                         \\  <b><green>bun info<r> <blue>react<r> versions
                         \\
                         \\Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
+                        \\
+                    ;
+
+                    Output.pretty(intro_text, .{});
+                    Output.flush();
+                },
+                .WhyCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r> <blue>[property path]<r>
+                        \\Explain why a package is installed
+                        \\
+                        \\<b>Arguments:<r>
+                        \\  <blue>\<package\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>
+                        \\
+                        \\<b>Options:<r>
+                        \\  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>
+                        \\  <cyan>--depth<r> <blue>\<NUM\><r> <d>Maximum depth of the dependency tree to display<r>
+                        \\
+                        \\<b>Examples:<r>
+                        \\  <d>$<r> <b><green>bun why<r> <blue>react<r>
+                        \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
+                        \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/why<r>
                         \\
                     ;
 

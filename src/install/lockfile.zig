@@ -26,28 +26,6 @@ patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
 
-node_linker: NodeLinker = .auto,
-
-pub const NodeLinker = enum(u8) {
-    // If workspaces are used: isolated
-    // If not: hoisted
-    // Used when nodeLinker is absent from package.json/bun.lock/bun.lockb
-    auto,
-
-    hoisted,
-    isolated,
-
-    pub fn fromStr(input: string) ?NodeLinker {
-        if (strings.eqlComptime(input, "hoisted")) {
-            return .hoisted;
-        }
-        if (strings.eqlComptime(input, "isolated")) {
-            return .isolated;
-        }
-        return null;
-    }
-};
-
 pub const DepSorter = struct {
     lockfile: *const Lockfile,
 
@@ -593,7 +571,7 @@ pub fn getWorkspacePkgIfWorkspaceDep(this: *const Lockfile, id: DependencyID) Pa
 /// Does this tree id belong to a workspace (including workspace root)?
 /// TODO(dylan-conway) fix!
 pub fn isWorkspaceTreeId(this: *const Lockfile, id: Tree.Id) bool {
-    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspaceOnly();
+    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspace();
 }
 
 /// Returns the package id of the workspace the install is taking place in.
@@ -654,8 +632,6 @@ pub fn cleanWithLogger(
     try new.packages.ensureTotalCapacity(old.allocator, old.packages.len);
     try new.buffers.preallocate(old.buffers, old.allocator);
     try new.patched_dependencies.ensureTotalCapacity(old.allocator, old.patched_dependencies.entries.len);
-
-    new.node_linker = old.node_linker;
 
     old.scratch.dependency_list_queue.head = 0;
 
@@ -1241,7 +1217,6 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .workspace_versions = .{},
         .overrides = .{},
         .catalogs = .{},
-        .node_linker = .auto,
         .meta_hash = zero_hash,
     };
 }

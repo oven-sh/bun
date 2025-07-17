@@ -8,7 +8,7 @@ pub const JSCDeferredWorkTask = opaque {
         scope.init(globalThis, @src());
         defer scope.deinit();
         Bun__runDeferredWork(task);
-        scope.assertNoExceptionExceptTermination() catch return;
+        scope.assertNoExceptionExceptTermination() catch return; // TODO: properly propagate exception upwards
     }
 };
 

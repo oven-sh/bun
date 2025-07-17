@@ -3750,6 +3750,7 @@ pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
 
 pub const server = @import("./bun.js/api/server.zig");
 pub const macho = @import("./macho.zig");
+pub const pe = @import("./pe.zig");
 pub const valkey = @import("./valkey/index.zig");
 pub const highway = @import("./highway.zig");
 

@@ -11,7 +11,7 @@ pub fn fromBinary(bytes: []const u8) f64 {
     return (double_microseconds / std.time.us_per_ms) + POSTGRES_EPOCH_DATE;
 }
 
-pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) i64 {
+pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) bun.JSError!i64 {
     const double_value = if (value.isDate())
         value.getUnixTimestamp()
     else if (value.isNumber())
@@ -19,7 +19,7 @@ pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) i64 {
     else if (value.isString()) brk: {
         var str = value.toBunString(globalObject) catch @panic("unreachable");
         defer str.deref();
-        break :brk str.parseDate(globalObject);
+        break :brk try str.parseDate(globalObject);
     } else return 0;
 
     const unix_timestamp: i64 = @intFromFloat(double_value);

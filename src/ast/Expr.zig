@@ -2662,6 +2662,19 @@ pub const Data = union(Tag) {
         };
     }
 
+    pub fn isSafeToString(data: Expr.Data) bool {
+        return switch (data) {
+            // rope strings can throw when toString is called.
+            .e_string => |str| str.next == null,
+
+            .e_number, .e_boolean, .e_undefined, .e_null => true,
+            // BigInt is deliberately excluded as a large enough BigInt could throw an out of memory error.
+            //
+
+            else => false,
+        };
+    }
+
     pub fn knownPrimitive(data: Expr.Data) PrimitiveType {
         return switch (data) {
             .e_big_int => .bigint,

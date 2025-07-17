@@ -760,8 +760,8 @@ pub fn NewSocket(comptime ssl: bool) type {
             const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
 
             const fallback = JSC.SystemError{
-                .code = bun.String.createUTF8(code),
-                .message = bun.String.createUTF8(reason),
+                .code = bun.String.cloneUTF8(code),
+                .message = bun.String.cloneUTF8(reason),
             };
 
             return fallback.toErrorInstance(globalObject);

@@ -1102,10 +1102,10 @@ export fn Bun__Node__Path_joinWTF(lhs: *bun.String, rhs_ptr: [*]const u8, rhs_le
     defer slice.deinit();
     if (Environment.isWindows) {
         const win = joinWindowsT(u8, &.{ slice.slice(), rhs }, &buf, &buf2);
-        result.* = bun.String.createUTF8(win);
+        result.* = bun.String.cloneUTF8(win);
     } else {
         const posix = joinPosixT(u8, &.{ slice.slice(), rhs }, &buf, &buf2);
-        result.* = bun.String.createUTF8(posix);
+        result.* = bun.String.cloneUTF8(posix);
     }
 }
 

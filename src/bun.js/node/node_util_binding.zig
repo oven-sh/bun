@@ -168,9 +168,9 @@ fn split(
     var it: SplitNewlineIterator(Char) = .{ .buffer = buffer, .index = 0 };
     while (it.next()) |line| {
         const encoded_line = switch (encoding) {
-            inline .utf8 => bun.String.fromUTF8(line),
-            inline .latin1 => bun.String.createLatin1(line),
-            inline .utf16 => bun.String.fromUTF16(line),
+            inline .utf8 => bun.String.borrowUTF8(line),
+            inline .latin1 => bun.String.cloneLatin1(line),
+            inline .utf16 => bun.String.borrowUTF16(line),
         };
         errdefer encoded_line.deref();
         try lines.append(alloc, encoded_line);

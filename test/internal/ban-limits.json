@@ -1,14 +1,13 @@
 {
   ".arguments_old(": 280,
-  ".ptr[": 453,
   ".stdDir()": 40,
   ".stdFile()": 18,
-  "// autofix": 169,
-  ": [a-zA-Z0-9_\\.\\*\\?\\[\\]\\(\\)]+ = undefined,": 242,
+  "// autofix": 168,
+  ": [a-zA-Z0-9_\\.\\*\\?\\[\\]\\(\\)]+ = undefined,": 235,
   "allocator.ptr !=": 1,
   "global.hasException": 28,
-  "globalObject.hasException": 47,
-  "globalThis.hasException": 140,
+  "globalObject.hasException": 42,
+  "globalThis.hasException": 134,
   "std.StringArrayHashMap(": 1,
   "std.StringArrayHashMapUnmanaged(": 12,
   "std.Thread.Mutex": 1,
@@ -16,7 +15,7 @@
   "std.enums.tagName(": 2,
   "std.fs.Dir": 170,
   "std.fs.File": 62,
-  "std.fs.cwd": 102,
+  "std.fs.cwd": 103,
   "std.log": 1,
   "std.unicode": 30
 }

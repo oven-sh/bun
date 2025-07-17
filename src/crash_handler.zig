@@ -1829,7 +1829,7 @@ pub const js_bindings = struct {
             // there is definitely enough space in the bounded array
             unreachable;
         };
-        var str = bun.String.createLatin1(buf.slice());
+        var str = bun.String.cloneLatin1(buf.slice());
         return str.transferToJS(global);
     }
 

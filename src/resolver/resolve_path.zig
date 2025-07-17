@@ -1988,7 +1988,7 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
         .auto,
     );
 
-    return bun.String.createUTF8(out_slice);
+    return bun.String.cloneUTF8(out_slice);
 }
 
 pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {

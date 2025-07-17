@@ -115,7 +115,7 @@ pub fn writeBind(
             },
             .timestamp, .timestamptz => {
                 const l = try writer.length();
-                try writer.int8(types.date.fromJS(globalObject, value));
+                try writer.int8(try types.date.fromJS(globalObject, value));
                 try l.writeExcludingSelf();
             },
             .bytea => {

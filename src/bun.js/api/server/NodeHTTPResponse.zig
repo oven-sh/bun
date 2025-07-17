@@ -729,7 +729,7 @@ fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event
 
         const bytes: JSC.JSValue = brk: {
             if (chunk.len > 0 and this.buffered_request_body_data_during_pause.len > 0) {
-                const buffer = JSC.JSValue.createBufferFromLength(globalThis, chunk.len + this.buffered_request_body_data_during_pause.len);
+                const buffer = JSC.JSValue.createBufferFromLength(globalThis, chunk.len + this.buffered_request_body_data_during_pause.len) catch return; // TODO: properly propagate exception upwards
                 this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
                 if (buffer.asArrayBuffer(globalThis)) |array_buffer| {
                     var input = array_buffer.slice();

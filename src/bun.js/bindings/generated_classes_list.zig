@@ -89,4 +89,5 @@ pub const Classes = struct {
     pub const RedisClient = api.Valkey;
     pub const BlockList = api.BlockList;
     pub const NativeZstd = api.NativeZstd;
+    pub const SourceMap = bun.sourcemap.JSSourceMap;
 };

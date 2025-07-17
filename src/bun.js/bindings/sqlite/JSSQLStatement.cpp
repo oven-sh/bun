@@ -178,6 +178,7 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
 #define DO_REBIND(param)                                                                                                \
     if (param.isObject()) {                                                                                             \
         JSC::JSValue reb = castedThis->rebind(lexicalGlobalObject, param, true, castedThis->version_db->db);            \
+        RETURN_IF_EXCEPTION(scope, {});                                                                                 \
         if (!reb.isNumber()) [[unlikely]] {                                                                             \
             return JSValue::encode(reb); /* this means an error */                                                      \
         }                                                                                                               \
@@ -1805,7 +1806,7 @@ void JSSQLStatementConstructor::finishCreation(VM& vm)
 
     // TODO: use LazyClassStructure?
     auto* instanceObject = JSSQLStatement::create(reinterpret_cast<Zig::GlobalObject*>(globalObject()), nullptr, nullptr);
-    JSValue proto = instanceObject->getPrototype(vm, globalObject());
+    JSValue proto = instanceObject->getPrototype(globalObject());
 
     this->putDirect(vm, vm.propertyNames->prototype, proto, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 

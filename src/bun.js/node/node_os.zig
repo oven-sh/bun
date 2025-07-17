@@ -105,7 +105,7 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
             // Actually create the JS object representing the CPU
             const cpu = JSC.JSValue.createEmptyObject(globalThis, 3);
             cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
-            values.putIndex(globalThis, num_cpus, cpu);
+            try values.putIndex(globalThis, num_cpus, cpu);
 
             num_cpus += 1;
         }
@@ -251,7 +251,7 @@ fn cpusImplDarwin(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         cpu.put(globalThis, JSC.ZigString.static("model"), model_name);
         cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
 
-        values.putIndex(globalThis, cpu_index, cpu);
+        try values.putIndex(globalThis, cpu_index, cpu);
     }
     return values;
 }
@@ -281,7 +281,7 @@ pub fn cpusImplWindows(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(cpu_info.speed));
         cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
 
-        values.putIndex(globalThis, @intCast(i), cpu);
+        try values.putIndex(globalThis, @intCast(i), cpu);
     }
 
     return values;
@@ -320,7 +320,7 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
         if (libuv.uv_os_homedir(&out, &size).toError(.uv_os_homedir)) |err| {
             return global.throwValue(err.toJS(global));
         }
-        return bun.String.createUTF8(out[0..size]);
+        return bun.String.cloneUTF8(out[0..size]);
     } else {
 
         // The posix implementation of uv_os_homedir first checks the HOME
@@ -384,7 +384,7 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
         }
 
         return if (pw.pw_dir) |dir|
-            bun.String.createUTF8(bun.span(dir))
+            bun.String.cloneUTF8(bun.span(dir))
         else
             bun.String.empty;
     }
@@ -394,7 +394,7 @@ pub fn hostname(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     if (Environment.isWindows) {
         var name_buffer: [129:0]u16 = undefined;
         if (bun.windows.GetHostNameW(&name_buffer, name_buffer.len) == 0) {
-            const str = bun.String.createUTF16(bun.sliceTo(&name_buffer, 0));
+            const str = bun.String.cloneUTF16(bun.sliceTo(&name_buffer, 0));
             defer str.deref();
             return str.toJS(global);
         }
@@ -402,7 +402,7 @@ pub fn hostname(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         var result: std.os.windows.ws2_32.WSADATA = undefined;
         if (std.os.windows.ws2_32.WSAStartup(0x202, &result) == 0) {
             if (bun.windows.GetHostNameW(&name_buffer, name_buffer.len) == 0) {
-                var y = bun.String.createUTF16(bun.sliceTo(&name_buffer, 0));
+                var y = bun.String.cloneUTF16(bun.sliceTo(&name_buffer, 0));
                 defer y.deref();
                 return y.toJS(global);
             }
@@ -628,19 +628,19 @@ fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSVal
 
         // scopeid <number> The numeric IPv6 scope ID (only specified when family is IPv6)
         if (addr.any.family == std.posix.AF.INET6) {
-            interface.put(globalThis, JSC.ZigString.static("scope_id"), JSC.JSValue.jsNumber(addr.in6.sa.scope_id));
+            interface.put(globalThis, JSC.ZigString.static("scopeid"), JSC.JSValue.jsNumber(addr.in6.sa.scope_id));
         }
 
         // Does this entry already exist?
         if (try ret.get(globalThis, interface_name)) |array| {
             // Add this interface entry to the existing array
             const next_index: u32 = @intCast(try array.getLength(globalThis));
-            array.putIndex(globalThis, next_index, interface);
+            try array.putIndex(globalThis, next_index, interface);
         } else {
             // Add it as an array with this interface as an element
             const member_name = JSC.ZigString.init(interface_name);
             var array = try JSC.JSValue.createEmptyArray(globalThis, 1);
-            array.putIndex(globalThis, 0, interface);
+            try array.putIndex(globalThis, 0, interface);
             ret.put(globalThis, &member_name, array);
         }
     }
@@ -749,12 +749,12 @@ fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSV
         if (try ret.get(globalThis, interface_name)) |array| {
             // Add this interface entry to the existing array
             const next_index: u32 = @intCast(try array.getLength(globalThis));
-            array.putIndex(globalThis, next_index, interface);
+            try array.putIndex(globalThis, next_index, interface);
         } else {
             // Add it as an array with this interface as an element
             const member_name = JSC.ZigString.init(interface_name);
             var array = try JSC.JSValue.createEmptyArray(globalThis, 1);
-            array.putIndex(globalThis, 0, interface);
+            try array.putIndex(globalThis, 0, interface);
             ret.put(globalThis, &member_name, array);
         }
     }
@@ -801,7 +801,7 @@ pub fn release() bun.String {
         else => @compileError("unsupported os"),
     };
 
-    return bun.String.createUTF8(value);
+    return bun.String.cloneUTF8(value);
 }
 
 pub extern fn set_process_priority(pid: i32, priority: i32) i32;
@@ -997,7 +997,7 @@ pub fn version() bun.JSError!bun.String {
         else => @compileError("unsupported os"),
     };
 
-    return bun.String.createUTF8(slice);
+    return bun.String.cloneUTF8(slice);
 }
 
 /// Given a netmask returns a CIDR suffix.  Returns null if the mask is not valid.

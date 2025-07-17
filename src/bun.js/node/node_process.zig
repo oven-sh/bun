@@ -8,7 +8,7 @@ comptime {
     @export(&exit, .{ .name = "Bun__Process__exit" });
     @export(&createArgv0, .{ .name = "Bun__Process__createArgv0" });
     @export(&getExecPath, .{ .name = "Bun__Process__getExecPath" });
-    @export(&createExecArgv, .{ .name = "Bun__Process__createExecArgv" });
+    @export(&bun.jsc.host_fn.wrap1(createExecArgv), .{ .name = "Bun__Process__createExecArgv" });
     @export(&getEval, .{ .name = "Bun__Process__getEval" });
 }
 
@@ -43,7 +43,7 @@ pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     return JSC.ZigString.fromUTF8(out).toJS(globalObject);
 }
 
-fn createExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+fn createExecArgv(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     var sfb = std.heap.stackFallback(4096, globalObject.allocator());
     const temp_alloc = sfb.get();
     const vm = globalObject.bunVM();
@@ -51,15 +51,15 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     if (vm.worker) |worker| {
         // was explicitly overridden for the worker?
         if (worker.execArgv) |execArgv| {
-            const array = JSC.JSValue.createEmptyArray(globalObject, execArgv.len) catch return .zero;
+            const array = try JSC.JSValue.createEmptyArray(globalObject, execArgv.len);
             for (0..execArgv.len) |i| {
-                array.putIndex(globalObject, @intCast(i), bun.String.init(execArgv[i]).toJS(globalObject));
+                try array.putIndex(globalObject, @intCast(i), bun.String.init(execArgv[i]).toJS(globalObject));
             }
             return array;
         }
     }
 
-    var args = std.ArrayList(bun.String).initCapacity(temp_alloc, bun.argv.len - 1) catch bun.outOfMemory();
+    var args = try std.ArrayList(bun.String).initCapacity(temp_alloc, bun.argv.len - 1);
     defer args.deinit();
     defer for (args.items) |*arg| arg.deref();
 
@@ -72,7 +72,7 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         defer prev = arg;
 
         if (arg.len >= 1 and arg[0] == '-') {
-            args.append(bun.String.createUTF8(arg)) catch bun.outOfMemory();
+            try args.append(bun.String.cloneUTF8(arg));
             continue;
         }
 
@@ -107,7 +107,7 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         });
 
         if (prev) |p| if (map.has(p)) {
-            args.append(bun.String.createUTF8(arg)) catch @panic("OOM");
+            try args.append(bun.String.cloneUTF8(arg));
             continue;
         };
 
@@ -115,7 +115,7 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         break;
     }
 
-    return bun.String.toJSArray(globalObject, args.items) catch .zero;
+    return bun.String.toJSArray(globalObject, args.items);
 }
 
 fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
@@ -152,7 +152,7 @@ fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     } else {
         const exe_path = bun.selfExePath() catch null;
         args_list.appendAssumeCapacity(
-            if (exe_path) |str| bun.String.fromUTF8(str) else bun.String.static("bun"),
+            if (exe_path) |str| bun.String.borrowUTF8(str) else bun.String.static("bun"),
         );
     }
 
@@ -163,7 +163,7 @@ fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         if (vm.worker != null and vm.worker.?.eval_mode) {
             args_list.appendAssumeCapacity(bun.String.static("[worker eval]"));
         } else {
-            args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
+            args_list.appendAssumeCapacity(bun.String.borrowUTF8(vm.main));
         }
     }
 
@@ -175,7 +175,7 @@ fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         }
     } else {
         for (vm.argv) |arg| {
-            const str = bun.String.fromUTF8(arg);
+            const str = bun.String.borrowUTF8(arg);
             // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
             args_list.appendAssumeCapacity(str);
         }
@@ -248,7 +248,7 @@ fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JS
                 fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1 :0];
             }
             const withoutTrailingSlash = if (Environment.isWindows) strings.withoutTrailingSlashWindowsPath else strings.withoutTrailingSlash;
-            var str = bun.String.createUTF8(withoutTrailingSlash(fs.top_level_dir));
+            var str = bun.String.cloneUTF8(withoutTrailingSlash(fs.top_level_dir));
             return str.transferToJS(globalObject);
         },
         .err => |e| {
@@ -310,6 +310,10 @@ comptime {
     if (Environment.export_cpp_apis and Environment.isWindows) {
         @export(&Bun__Process__editWindowsEnvVar, .{ .name = "Bun__Process__editWindowsEnvVar" });
     }
+}
+
+pub export fn Bun__NODE_NO_WARNINGS() callconv(.C) bool {
+    return bun.getRuntimeFeatureFlag(.NODE_NO_WARNINGS);
 }
 
 pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;

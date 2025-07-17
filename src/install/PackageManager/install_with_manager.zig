@@ -468,7 +468,6 @@ pub fn installWithManager(
                             this,
                             .{
                                 .onExtract = {},
-                                .onPatch = {},
                                 .onResolve = {},
                                 .onPackageManifestError = {},
                                 .onPackageDownloadError = {},
@@ -735,16 +734,33 @@ pub fn installWithManager(
         }
     }
 
-    var install_summary = PackageInstall.Summary{};
-    if (manager.options.do.install_packages) {
-        install_summary = try @import("../hoisted_install.zig").installHoistedPackages(
-            manager,
-            ctx,
-            workspace_filters.items,
-            install_root_dependencies,
-            log_level,
-        );
-    }
+    const install_summary: PackageInstall.Summary = install_summary: {
+        if (!manager.options.do.install_packages) {
+            break :install_summary .{};
+        }
+
+        switch (manager.options.node_linker) {
+            .hoisted,
+            // TODO
+            .auto,
+            => break :install_summary try installHoistedPackages(
+                manager,
+                ctx,
+                workspace_filters.items,
+                install_root_dependencies,
+                log_level,
+            ),
+
+            .isolated => break :install_summary installIsolatedPackages(
+                manager,
+                ctx,
+                install_root_dependencies,
+                workspace_filters.items,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+            },
+        }
+    };
 
     if (log_level != .silent) {
         try manager.log.print(Output.errorWriter());
@@ -821,7 +837,7 @@ pub fn installWithManager(
             // have finished, and lockfiles have been saved
             const optional = false;
             const output_in_foreground = true;
-            try manager.spawnPackageLifecycleScripts(ctx, scripts, optional, output_in_foreground);
+            try manager.spawnPackageLifecycleScripts(ctx, scripts, optional, output_in_foreground, null);
 
             while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                 manager.reportSlowLifecycleScripts();
@@ -849,6 +865,8 @@ fn printInstallSummary(
     did_meta_hash_change: bool,
     log_level: Options.LogLevel,
 ) !void {
+    defer Output.flush();
+
     var printed_timestamp = false;
     if (this.options.do.summary) {
         var printer = Lockfile.Printer{
@@ -858,10 +876,17 @@ fn printInstallSummary(
             .successfully_installed = install_summary.successfully_installed,
         };
 
-        switch (Output.enable_ansi_colors) {
-            inline else => |enable_ansi_colors| {
-                try Lockfile.Printer.Tree.print(&printer, this, Output.WriterType, Output.writer(), enable_ansi_colors, log_level);
-            },
+        {
+            Output.flush();
+            // Ensure at this point buffering is enabled.
+            // We deliberately do not disable it after this.
+            Output.enableBuffering();
+            const writer = Output.writerBuffered();
+            switch (Output.enable_ansi_colors) {
+                inline else => |enable_ansi_colors| {
+                    try Lockfile.Printer.Tree.print(&printer, this, @TypeOf(writer), writer, enable_ansi_colors, log_level);
+                },
+            }
         }
 
         if (!did_meta_hash_change) {
@@ -964,6 +989,8 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
 // @sortImports
 
 const std = @import("std");
+const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
+const installIsolatedPackages = @import("../isolated_install.zig").installIsolatedPackages;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

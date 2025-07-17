@@ -311,7 +311,7 @@ for (const inlineSnapshot of [false, true]) {
           { forceUpdate: true },
         );
         expect(await t.getSnapshotContents()).toBe(
-          '// Bun Snapshot v1, https://goo.gl/fbAQLP\n\nexports[`t1 1`] = `"abc def ghi jkl"`;\n\nexports[`t2 1`] = `"abc\\`def"`;\n\nexports[`t3 1`] = `"abc def ghi"`;\n',
+          '// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`t1 1`] = `"abc def ghi jkl"`;\n\nexports[`t2 1`] = `"abc\\`def"`;\n\nexports[`t3 1`] = `"abc def ghi"`;\n',
         );
       });
 

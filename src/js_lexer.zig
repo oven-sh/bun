@@ -1533,21 +1533,20 @@ fn NewLexer_(
                                             );
                                         },
                                         else => {
-                                            // if (comptime Environment.enableSIMD) {
-                                            // TODO: this seems to work, but we shouldn't enable this until after improving test coverage
-                                            // if (lexer.code_point < 128) {
-                                            //     const remainder = lexer.source.contents[lexer.current..];
-                                            //     if (remainder.len >= 4096) {
-                                            //         lexer.current += skipToInterestingCharacterInMultilineComment(remainder) orelse {
-                                            //             lexer.step();
-                                            //             continue;
-                                            //         };
-                                            //         lexer.end = lexer.current -| 1;
-                                            //         lexer.step();
-                                            //         continue;
-                                            //     }
-                                            // }
-                                            // }
+                                            if (comptime Environment.enableSIMD) {
+                                                if (lexer.code_point < 128) {
+                                                    const remainder = lexer.source.contents[lexer.current..];
+                                                    if (remainder.len >= 512) {
+                                                        lexer.current += skipToInterestingCharacterInMultilineComment(remainder) orelse {
+                                                            lexer.step();
+                                                            continue;
+                                                        };
+                                                        lexer.end = lexer.current -| 1;
+                                                        lexer.step();
+                                                        continue;
+                                                    }
+                                                }
+                                            }
 
                                             lexer.step();
                                         },
@@ -3353,8 +3352,8 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
     const V1x16 = strings.AsciiVectorU1;
 
     const text_end_len = text.len & ~(@as(usize, strings.ascii_vector_size) - 1);
-    bun.assert(text_end_len % strings.ascii_vector_size == 0);
-    bun.assert(text_end_len <= text.len);
+    bun.assertWithLocation(text_end_len % strings.ascii_vector_size == 0, @src());
+    bun.assertWithLocation(text_end_len <= text.len, @src());
 
     const text_end_ptr = text.ptr + text_end_len;
 
@@ -3370,8 +3369,8 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
         if (@reduce(.Max, any_significant) > 0) {
             const bitmask = @as(u16, @bitCast(any_significant));
             const first = @ctz(bitmask);
-            bun.assert(first < strings.ascii_vector_size);
-            bun.assert(text.ptr[first] == '*' or text.ptr[first] == '\r' or text.ptr[first] == '\n' or text.ptr[first] > 127);
+            bun.assertWithLocation(first < strings.ascii_vector_size, @src());
+            bun.assertWithLocation(text.ptr[first] == '*' or text.ptr[first] == '\r' or text.ptr[first] == '\n' or text.ptr[first] > 127, @src());
             return @as(u32, @truncate(first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr))));
         }
         text.ptr += strings.ascii_vector_size;

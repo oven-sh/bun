@@ -338,8 +338,8 @@ pub const UpgradeCommand = struct {
     const profile_exe_subpath = Version.profile_folder_name ++ std.fs.path.sep_str ++ "bun-profile" ++ exe_suffix;
 
     const manual_upgrade_command = switch (Environment.os) {
-        .linux, .mac => "curl -fsSL https://bun.sh/install | bash",
-        .windows => "powershell -c 'irm bun.sh/install.ps1|iex'",
+        .linux, .mac => "curl -fsSL https://bun.com/install | bash",
+        .windows => "powershell -c 'irm bun.com/install.ps1|iex'",
         else => "(TODO: Install script for " ++ Environment.os.displayString() ++ ")",
     };
 
@@ -889,7 +889,7 @@ pub const UpgradeCommand = struct {
                     \\
                     \\What's new in Bun v{s}:
                     \\
-                    \\    <cyan>https://bun.sh/blog/release-notes/{s}<r>
+                    \\    <cyan>https://bun.com/blog/release-notes/{s}<r>
                     \\
                     \\Report any bugs:
                     \\

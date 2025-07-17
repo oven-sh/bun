@@ -166,7 +166,7 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
-        try formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+        try formatter.printAs(.Private, Writer, writer, try this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
         formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
         try writer.writeAll("\n");
 
@@ -232,14 +232,14 @@ pub fn getOK(
     return JSValue.jsBoolean(this.isOK());
 }
 
-fn getOrCreateHeaders(this: *Response, globalThis: *JSC.JSGlobalObject) *FetchHeaders {
+fn getOrCreateHeaders(this: *Response, globalThis: *JSC.JSGlobalObject) bun.JSError!*FetchHeaders {
     if (this.init.headers == null) {
         this.init.headers = FetchHeaders.createEmpty();
 
         if (this.body.value == .Blob) {
             const content_type = this.body.value.Blob.content_type;
             if (content_type.len > 0) {
-                this.init.headers.?.put(.ContentType, content_type, globalThis);
+                try this.init.headers.?.put(.ContentType, content_type, globalThis);
             }
         }
     }
@@ -250,8 +250,8 @@ fn getOrCreateHeaders(this: *Response, globalThis: *JSC.JSGlobalObject) *FetchHe
 pub fn getHeaders(
     this: *Response,
     globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    return this.getOrCreateHeaders(globalThis).toJS(globalThis);
+) bun.JSError!JSC.JSValue {
+    return (try this.getOrCreateHeaders(globalThis)).toJS(globalThis);
 }
 
 pub fn doClone(
@@ -260,11 +260,7 @@ pub fn doClone(
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSValue {
     const this_value = callframe.this();
-    const cloned = this.clone(globalThis);
-    if (globalThis.hasException()) {
-        cloned.finalize();
-        return .zero;
-    }
+    const cloned = try this.clone(globalThis);
 
     const js_wrapper = Response.makeMaybePooled(globalThis, cloned);
 
@@ -293,17 +289,21 @@ pub fn makeMaybePooled(globalObject: *JSC.JSGlobalObject, ptr: *Response) JSValu
 pub fn cloneValue(
     this: *Response,
     globalThis: *JSGlobalObject,
-) Response {
+) bun.JSError!Response {
+    var body = try this.body.clone(globalThis);
+    errdefer body.deinit(bun.default_allocator);
+    var init = try this.init.clone(globalThis);
+    errdefer init.deinit(bun.default_allocator);
     return Response{
-        .body = this.body.clone(globalThis),
-        .init = this.init.clone(globalThis),
+        .body = body,
+        .init = init,
         .url = this.url.clone(),
         .redirected = this.redirected,
     };
 }
 
-pub fn clone(this: *Response, globalThis: *JSGlobalObject) *Response {
-    return bun.new(Response, this.cloneValue(globalThis));
+pub fn clone(this: *Response, globalThis: *JSGlobalObject) bun.JSError!*Response {
+    return bun.new(Response, try this.cloneValue(globalThis));
 }
 
 pub fn getStatus(
@@ -388,7 +388,7 @@ pub fn constructJSON(
         var str = bun.String.empty;
         // calling JSON.stringify on an empty string adds extra quotes
         // so this is correct
-        json_value.jsonStringify(globalThis, 0, &str);
+        try json_value.jsonStringify(globalThis, 0, &str);
 
         if (globalThis.hasException()) {
             return .zero;
@@ -421,8 +421,8 @@ pub fn constructJSON(
         }
     }
 
-    var headers_ref = response.getOrCreateHeaders(globalThis);
-    headers_ref.putDefault(.ContentType, MimeType.json.value, globalThis);
+    var headers_ref = try response.getOrCreateHeaders(globalThis);
+    try headers_ref.putDefault(.ContentType, MimeType.json.value, globalThis);
     did_succeed = true;
     return bun.new(Response, response).toJS(globalThis);
 }
@@ -481,9 +481,9 @@ pub fn constructRedirect(
         break :brk response;
     };
 
-    response.init.headers = response.getOrCreateHeaders(globalThis);
+    response.init.headers = try response.getOrCreateHeaders(globalThis);
     var headers_ref = response.init.headers.?;
-    headers_ref.put(.Location, url_string_slice.slice(), globalThis);
+    try headers_ref.put(.Location, url_string_slice.slice(), globalThis);
     const ptr = bun.new(Response, response);
 
     return ptr.toJS(globalThis);
@@ -535,10 +535,10 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
                     return s3.throwSignError(sign_err, globalThis);
                 };
                 defer result.deinit();
-                response.init.headers = response.getOrCreateHeaders(globalThis);
+                response.init.headers = try response.getOrCreateHeaders(globalThis);
                 response.redirected = true;
                 var headers_ref = response.init.headers.?;
-                headers_ref.put(.Location, result.url, globalThis);
+                try headers_ref.put(.Location, result.url, globalThis);
                 return bun.new(Response, response);
             }
         }
@@ -588,7 +588,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
         response.body.value.Blob.content_type.len > 0 and
         !response.init.headers.?.fastHas(.ContentType))
     {
-        response.init.headers.?.put(.ContentType, response.body.value.Blob.content_type, globalThis);
+        try response.init.headers.?.put(.ContentType, response.body.value.Blob.content_type, globalThis);
     }
 
     response.calculateEstimatedByteSize();
@@ -602,11 +602,11 @@ pub const Init = struct {
     status_text: bun.String = bun.String.empty,
     method: Method = Method.GET,
 
-    pub fn clone(this: Init, ctx: *JSGlobalObject) Init {
+    pub fn clone(this: Init, ctx: *JSGlobalObject) bun.JSError!Init {
         var that = this;
         const headers = this.headers;
         if (headers) |head| {
-            that.headers = head.cloneThis(ctx);
+            that.headers = try head.cloneThis(ctx);
         }
         that.status_text = this.status_text.clone();
 
@@ -627,7 +627,7 @@ pub const Init = struct {
             // we can skip calling JS getters
             if (response_init.asDirect(Request)) |req| {
                 if (req.getFetchHeadersUnlessEmpty()) |headers| {
-                    result.headers = headers.cloneThis(globalThis);
+                    result.headers = try headers.cloneThis(globalThis);
                 }
 
                 result.method = req.method;
@@ -635,7 +635,7 @@ pub const Init = struct {
             }
 
             if (response_init.asDirect(Response)) |resp| {
-                return resp.init.clone(globalThis);
+                return try resp.init.clone(globalThis);
             }
         }
 
@@ -646,10 +646,10 @@ pub const Init = struct {
         if (try response_init.fastGet(globalThis, .headers)) |headers| {
             if (headers.as(FetchHeaders)) |orig| {
                 if (!orig.isEmpty()) {
-                    result.headers = orig.cloneThis(globalThis);
+                    result.headers = try orig.cloneThis(globalThis);
                 }
             } else {
-                result.headers = FetchHeaders.createFromJS(globalThis, headers);
+                result.headers = try FetchHeaders.createFromJS(globalThis, headers);
             }
         }
 

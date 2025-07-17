@@ -760,8 +760,8 @@ pub fn NewSocket(comptime ssl: bool) type {
             const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
 
             const fallback = JSC.SystemError{
-                .code = bun.String.createUTF8(code),
-                .message = bun.String.createUTF8(reason),
+                .code = bun.String.cloneUTF8(code),
+                .message = bun.String.cloneUTF8(reason),
             };
 
             return fallback.toErrorInstance(globalObject);
@@ -1362,6 +1362,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             var prev_handlers = this.handlers;
             prev_handlers.unprotect();
             this.handlers.* = handlers; // TODO: this is a memory leak
+            this.handlers.withAsyncContextIfNeeded(globalObject);
             this.handlers.protect();
 
             return .js_undefined;
@@ -1404,7 +1405,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
+            var handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
 
             if (globalObject.hasException()) {
                 return .zero;
@@ -1459,6 +1460,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             const ext_size = @sizeOf(WrappedSocket);
 
             var handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
+            handlers.withAsyncContextIfNeeded(globalObject);
             handlers_ptr.* = handlers;
             handlers_ptr.protect();
             var tls = bun.new(TLSSocket, .{
@@ -1594,8 +1596,8 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
 
             const array = try JSC.JSValue.createEmptyArray(globalObject, 2);
-            array.putIndex(globalObject, 0, raw_js_value);
-            array.putIndex(globalObject, 1, tls_js_value);
+            try array.putIndex(globalObject, 0, raw_js_value);
+            try array.putIndex(globalObject, 1, tls_js_value);
 
             defer this.deref();
 
@@ -1980,6 +1982,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
     handlers_ptr.* = handlers;
     handlers_ptr.is_server = is_server;
+    handlers_ptr.withAsyncContextIfNeeded(globalObject);
     handlers_ptr.protect();
     var tls = bun.new(TLSSocket, .{
         .ref_count = .init(),
@@ -2024,9 +2027,9 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     duplexContext.startTLS();
 
     const array = try JSC.JSValue.createEmptyArray(globalObject, 2);
-    array.putIndex(globalObject, 0, tls_js_value);
+    try array.putIndex(globalObject, 0, tls_js_value);
     // data, end, drain and close events must be reported
-    array.putIndex(globalObject, 1, try duplexContext.upgrade.getJSHandlers(globalObject));
+    try array.putIndex(globalObject, 1, try duplexContext.upgrade.getJSHandlers(globalObject));
 
     return array;
 }
@@ -2081,8 +2084,8 @@ pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
     _ = bun.FD.fromNative(fds_[1]).updateNonblocking(true);
 
     const array = try JSC.JSValue.createEmptyArray(global, 2);
-    array.putIndex(global, 0, JSC.jsNumber(fds_[0]));
-    array.putIndex(global, 1, JSC.jsNumber(fds_[1]));
+    try array.putIndex(global, 0, JSC.jsNumber(fds_[0]));
+    try array.putIndex(global, 1, JSC.jsNumber(fds_[1]));
     return array;
 }
 

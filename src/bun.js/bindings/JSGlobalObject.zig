@@ -243,30 +243,15 @@ pub const JSGlobalObject = opaque {
 
     pub fn runOnLoadPlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, target: BunPluginTarget) bun.JSError!?JSValue {
         JSC.markBinding(@src());
-        const result = Bun__runOnLoadPlugins(this, if (namespace_.length() > 0) &namespace_ else null, &path, target);
-        if (this.hasException()) {
-            return error.JSError;
-        }
-        if (result.isEmptyOrUndefinedOrNull()) {
-            return null;
-        }
-
+        const result = try bun.jsc.fromJSHostCall(this, @src(), Bun__runOnLoadPlugins, .{ this, if (namespace_.length() > 0) &namespace_ else null, &path, target });
+        if (result.isUndefinedOrNull()) return null;
         return result;
     }
 
     pub fn runOnResolvePlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, source: bun.String, target: BunPluginTarget) bun.JSError!?JSValue {
         JSC.markBinding(@src());
-
-        const result = Bun__runOnResolvePlugins(this, if (namespace_.length() > 0) &namespace_ else null, &path, &source, target);
-
-        if (this.hasException()) {
-            return error.JSError;
-        }
-
-        if (result.isEmptyOrUndefinedOrNull()) {
-            return null;
-        }
-
+        const result = try bun.jsc.fromJSHostCall(this, @src(), Bun__runOnResolvePlugins, .{ this, if (namespace_.length() > 0) &namespace_ else null, &path, &source, target });
+        if (result.isUndefinedOrNull()) return null;
         return result;
     }
 
@@ -419,8 +404,7 @@ pub const JSGlobalObject = opaque {
 
     extern fn Bun__Process__emitWarning(globalObject: *JSGlobalObject, warning: JSValue, @"type": JSValue, code: JSValue, ctor: JSValue) void;
     pub fn emitWarning(globalObject: *JSGlobalObject, warning: JSValue, @"type": JSValue, code: JSValue, ctor: JSValue) JSError!void {
-        Bun__Process__emitWarning(globalObject, warning, @"type", code, ctor);
-        if (globalObject.hasException()) return error.JSError;
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__Process__emitWarning, .{ globalObject, warning, @"type", code, ctor });
     }
 
     extern fn JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject__ptr: *JSGlobalObject, JSValue, JSValue, JSValue) void;
@@ -429,8 +413,7 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn throwValue(this: *JSGlobalObject, value: JSC.JSValue) JSError {
-        this.vm().throwError(this, value);
-        return error.JSError;
+        return this.vm().throwError(this, value);
     }
 
     pub fn throwTypeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
@@ -460,8 +443,7 @@ pub const JSGlobalObject = opaque {
         defer allocator_.free(buffer);
         const str = ZigString.initUTF8(buffer);
         const err_value = str.toErrorInstance(this);
-        this.vm().throwError(this, err_value);
-        return error.JSError;
+        return this.vm().throwError(this, err_value);
     }
 
     // TODO: delete these two fns
@@ -471,8 +453,8 @@ pub const JSGlobalObject = opaque {
     pub const ctx = ref;
 
     extern fn JSC__JSGlobalObject__createAggregateError(*JSGlobalObject, [*]const JSValue, usize, *const ZigString) JSValue;
-    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: []const JSValue, message: *const ZigString) JSValue {
-        return JSC__JSGlobalObject__createAggregateError(globalObject, errors.ptr, errors.len, message);
+    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: []const JSValue, message: *const ZigString) bun.JSError!JSValue {
+        return bun.jsc.fromJSHostCall(globalObject, @src(), JSC__JSGlobalObject__createAggregateError, .{ globalObject, errors.ptr, errors.len, message });
     }
 
     extern fn JSC__JSGlobalObject__createAggregateErrorWithArray(*JSGlobalObject, JSValue, bun.String, JSValue) JSValue;
@@ -480,9 +462,9 @@ pub const JSGlobalObject = opaque {
         globalObject: *JSGlobalObject,
         message: bun.String,
         error_array: JSValue,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (bun.Environment.allow_assert) bun.assert(error_array.isArray());
-        return JSC__JSGlobalObject__createAggregateErrorWithArray(globalObject, error_array, message, .js_undefined);
+        return bun.jsc.fromJSHostCall(globalObject, @src(), JSC__JSGlobalObject__createAggregateErrorWithArray, .{ globalObject, error_array, message, .js_undefined });
     }
 
     extern fn JSC__JSGlobalObject__generateHeapSnapshot(*JSGlobalObject) JSValue;
@@ -562,8 +544,8 @@ pub const JSGlobalObject = opaque {
         return JSC__JSGlobalObject__vm(this);
     }
 
-    pub fn deleteModuleRegistryEntry(this: *JSGlobalObject, name_: *ZigString) void {
-        return JSC__JSGlobalObject__deleteModuleRegistryEntry(this, name_);
+    pub fn deleteModuleRegistryEntry(this: *JSGlobalObject, name_: *ZigString) bun.JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__deleteModuleRegistryEntry, .{ this, name_ });
     }
 
     fn bunVMUnsafe(this: *JSGlobalObject) *anyopaque {
@@ -611,7 +593,7 @@ pub const JSGlobalObject = opaque {
 
     extern fn JSC__JSGlobalObject__handleRejectedPromises(*JSGlobalObject) void;
     pub fn handleRejectedPromises(this: *JSGlobalObject) void {
-        return JSC__JSGlobalObject__handleRejectedPromises(this);
+        return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch @panic("unreachable");
     }
 
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
@@ -824,6 +806,11 @@ pub const JSGlobalObject = opaque {
     pub fn reportUncaughtException(global: *JSGlobalObject, exception: *JSC.Exception) callconv(.C) JSValue {
         JSC.markBinding(@src());
         return JSC.VirtualMachine.reportUncaughtException(global, exception);
+    }
+
+    pub fn reportUncaughtExceptionFromError(global: *JSGlobalObject, proof: bun.JSError) void {
+        JSC.markBinding(@src());
+        _ = global.reportUncaughtException(global.takeException(proof).asException(global.vm()).?);
     }
 
     pub fn onCrash() callconv(.C) void {

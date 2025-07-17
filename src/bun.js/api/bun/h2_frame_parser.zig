@@ -605,7 +605,7 @@ const Handlers = struct {
                     return globalObject.throwInvalidArguments("Expected \"{s}\" callback to be a function", .{pair[1]});
                 }
 
-                @field(handlers, pair.@"0") = callback_value;
+                @field(handlers, pair.@"0") = callback_value.withAsyncContextIfNeeded(globalObject);
             }
         }
 
@@ -614,7 +614,7 @@ const Handlers = struct {
                 return globalObject.throwInvalidArguments("Expected \"error\" callback to be a function", .{});
             }
 
-            handlers.onError = callback_value;
+            handlers.onError = callback_value.withAsyncContextIfNeeded(globalObject);
         }
 
         // onWrite is required for duplex support or if more than 1 parser is attached to the same socket (unliked)
@@ -700,13 +700,13 @@ pub const H2FrameParser = struct {
     // local Window limits the download of data
 
     // current window size for the connection
-    windowSize: u64 = 65535,
+    windowSize: u64 = DEFAULT_WINDOW_SIZE,
     // used window size for the connection
     usedWindowSize: u64 = 0,
 
     // remote Window limits the upload of data
     // remote window size for the connection
-    remoteWindowSize: u64 = 0,
+    remoteWindowSize: u64 = DEFAULT_WINDOW_SIZE,
     // remote used window size for the connection
     remoteUsedWindowSize: u64 = 0,
 
@@ -993,13 +993,13 @@ pub const H2FrameParser = struct {
                                 const able_to_send = frame_slice[0..max_size];
                                 client.queuedDataSize -= able_to_send.len;
                                 written.* += able_to_send.len;
-                                this.remoteUsedWindowSize += able_to_send.len;
-                                client.remoteUsedWindowSize += able_to_send.len;
 
-                                log("dataFrame partial flushed {} {} {} {} {} {} {}", .{ able_to_send.len, frame.end_stream, client.queuedDataSize, this.remoteUsedWindowSize, client.remoteUsedWindowSize, this.remoteWindowSize, client.remoteWindowSize });
-
-                                const padding = this.getPadding(able_to_send.len, MAX_PAYLOAD_SIZE_WITHOUT_FRAME - 1);
+                                const padding = this.getPadding(able_to_send.len, max_size);
                                 const payload_size = able_to_send.len + (if (padding != 0) padding + 1 else 0);
+
+                                this.remoteUsedWindowSize += payload_size;
+                                client.remoteUsedWindowSize += payload_size;
+
                                 var flags: u8 = 0; // we ignore end_stream for now because we know we have more data to send
                                 if (padding != 0) {
                                     flags |= @intFromEnum(DataFrameFlags.PADDED);
@@ -1024,12 +1024,11 @@ pub const H2FrameParser = struct {
                                 // flush with some payload
                                 client.queuedDataSize -= frame_slice.len;
                                 written.* += frame_slice.len;
-                                this.remoteUsedWindowSize += frame_slice.len;
-                                client.remoteUsedWindowSize += frame_slice.len;
-                                log("dataFrame flushed {} {}", .{ frame_slice.len, frame.end_stream });
 
-                                const padding = this.getPadding(frame_slice.len, MAX_PAYLOAD_SIZE_WITHOUT_FRAME - 1);
+                                const padding = this.getPadding(frame_slice.len, max_size);
                                 const payload_size = frame_slice.len + (if (padding != 0) padding + 1 else 0);
+                                this.remoteUsedWindowSize += payload_size;
+                                client.remoteUsedWindowSize += payload_size;
                                 var flags: u8 = if (frame.end_stream and !this.waitForTrailers) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
                                 if (padding != 0) {
                                     flags |= @intFromEnum(DataFrameFlags.PADDED);
@@ -1330,6 +1329,9 @@ pub const H2FrameParser = struct {
 
     pub fn endStream(this: *H2FrameParser, stream: *Stream, rstCode: ErrorCode) void {
         log("HTTP_FRAME_RST_STREAM id: {} code: {}", .{ stream.id, @intFromEnum(rstCode) });
+        if (stream.state == .CLOSED) {
+            return;
+        }
         var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
         @memset(&buffer, 0);
         var writerStream = std.io.fixedBufferStream(&buffer);
@@ -1917,29 +1919,29 @@ pub const H2FrameParser = struct {
             }
 
             if (getHTTP2CommonString(globalObject, header.well_know)) |js_header_name| {
-                headers.push(globalObject, js_header_name);
-                headers.push(globalObject, bun.String.createUTF8ForJS(globalObject, header.value));
+                try headers.push(globalObject, js_header_name);
+                try headers.push(globalObject, try bun.String.createUTF8ForJS(globalObject, header.value));
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
                         sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
                         sensitiveHeaders.ensureStillAlive();
                     }
-                    sensitiveHeaders.push(globalObject, js_header_name);
+                    try sensitiveHeaders.push(globalObject, js_header_name);
                 }
             } else {
-                const js_header_name = bun.String.createUTF8ForJS(globalObject, header.name);
-                const js_header_value = bun.String.createUTF8ForJS(globalObject, header.value);
+                const js_header_name = try bun.String.createUTF8ForJS(globalObject, header.name);
+                const js_header_value = try bun.String.createUTF8ForJS(globalObject, header.value);
 
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
                         sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
                         sensitiveHeaders.ensureStillAlive();
                     }
-                    sensitiveHeaders.push(globalObject, js_header_name);
+                    try sensitiveHeaders.push(globalObject, js_header_name);
                 }
 
-                headers.push(globalObject, js_header_name);
-                headers.push(globalObject, js_header_value);
+                try headers.push(globalObject, js_header_name);
+                try headers.push(globalObject, js_header_value);
 
                 js_header_name.ensureStillAlive();
                 js_header_value.ensureStillAlive();
@@ -2059,7 +2061,7 @@ pub const H2FrameParser = struct {
         return data.len;
     }
 
-    fn stringOrEmptyToJS(this: *H2FrameParser, payload: []const u8) JSC.JSValue {
+    fn stringOrEmptyToJS(this: *H2FrameParser, payload: []const u8) bun.JSError!JSC.JSValue {
         if (payload.len == 0) {
             return bun.String.empty.toJS(this.handlers.globalObject);
         }
@@ -2097,18 +2099,18 @@ pub const H2FrameParser = struct {
                 }
                 origin_str = origin_str[0..origin_length];
                 if (count == 0) {
-                    originValue = this.stringOrEmptyToJS(origin_str);
+                    originValue = try this.stringOrEmptyToJS(origin_str);
                     originValue.ensureStillAlive();
                 } else if (count == 1) {
                     // need to create an array
                     const array = try JSC.JSValue.createEmptyArray(this.handlers.globalObject, 0);
                     array.ensureStillAlive();
-                    array.push(this.handlers.globalObject, originValue);
-                    array.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
+                    try array.push(this.handlers.globalObject, originValue);
+                    try array.push(this.handlers.globalObject, try this.stringOrEmptyToJS(origin_str));
                     originValue = array;
                 } else {
                     // we already have an array, just add the origin to it
-                    originValue.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
+                    try originValue.push(this.handlers.globalObject, try this.stringOrEmptyToJS(origin_str));
                 }
                 count += 1;
                 payload = payload[origin_length + 2 ..];
@@ -2119,7 +2121,7 @@ pub const H2FrameParser = struct {
         }
         return data.len;
     }
-    pub fn handleAltsvcFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
+    pub fn handleAltsvcFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) bun.JSError!usize {
         log("handleAltsvcFrame {s}", .{data});
         if (this.isServer) {
             // client should not send ALTSVC frame
@@ -2148,7 +2150,7 @@ pub const H2FrameParser = struct {
                 return content.end;
             }
 
-            this.dispatchWith2Extra(.onAltSvc, this.stringOrEmptyToJS(origin_and_value[0..origin_length]), this.stringOrEmptyToJS(origin_and_value[origin_length..]), JSC.JSValue.jsNumber(frame.streamIdentifier));
+            this.dispatchWith2Extra(.onAltSvc, try this.stringOrEmptyToJS(origin_and_value[0..origin_length]), try this.stringOrEmptyToJS(origin_and_value[origin_length..]), JSC.JSValue.jsNumber(frame.streamIdentifier));
             return content.end;
         }
         return data.len;
@@ -2394,7 +2396,6 @@ pub const H2FrameParser = struct {
                     log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
 
                     if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
-                        this.remoteWindowSize = remoteSettings.initialWindowSize;
                         var it = this.streams.valueIterator();
                         while (it.next()) |stream| {
                             if (remoteSettings.initialWindowSize >= stream.remoteWindowSize) {
@@ -2426,7 +2427,6 @@ pub const H2FrameParser = struct {
             this.remoteSettings = remoteSettings;
             log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
             if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
-                this.remoteWindowSize = remoteSettings.initialWindowSize;
                 var it = this.streams.valueIterator();
                 while (it.next()) |stream| {
                     if (remoteSettings.initialWindowSize >= stream.remoteWindowSize) {
@@ -2549,7 +2549,7 @@ pub const H2FrameParser = struct {
                 @intFromEnum(FrameType.HTTP_FRAME_PING) => this.handlePingFrame(header, bytes[needed..], stream) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_GOAWAY) => this.handleGoAwayFrame(header, bytes[needed..], stream) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[needed..], stream) + needed,
-                @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => this.handleAltsvcFrame(header, bytes[needed..], stream) + needed,
+                @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => (try this.handleAltsvcFrame(header, bytes[needed..], stream)) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => (try this.handleOriginFrame(header, bytes[needed..], stream)) + needed,
                 else => {
                     this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
@@ -2582,7 +2582,7 @@ pub const H2FrameParser = struct {
             @intFromEnum(FrameType.HTTP_FRAME_PING) => this.handlePingFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_GOAWAY) => this.handleGoAwayFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
-            @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => this.handleAltsvcFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
+            @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => (try this.handleAltsvcFrame(header, bytes[FrameHeader.byteSize..], stream)) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => (try this.handleOriginFrame(header, bytes[FrameHeader.byteSize..], stream)) + FrameHeader.byteSize,
             else => {
                 this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
@@ -3262,11 +3262,7 @@ pub const H2FrameParser = struct {
                     max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME;
                 }
                 const size = @min(payload.len - offset, max_size);
-                defer if (!enqueued) {
-                    log("remoteUsedWindowSize += {} {} {} {}", .{ size, stream.remoteUsedWindowSize, this.remoteUsedWindowSize, this.isServer });
-                    stream.remoteUsedWindowSize += size;
-                    this.remoteUsedWindowSize += size;
-                };
+
                 const slice = payload[offset..(size + offset)];
                 offset += size;
                 const end_stream = offset >= payload.len and can_close;
@@ -3277,8 +3273,10 @@ pub const H2FrameParser = struct {
                     // the callback will only be called after the last frame is sended
                     stream.queueFrame(this, slice, if (offset >= payload.len) callback else .js_undefined, offset >= payload.len and close);
                 } else {
-                    const padding = stream.getPadding(size, max_size - 1);
+                    const padding = stream.getPadding(size, max_size);
                     const payload_size = size + (if (padding != 0) padding + 1 else 0);
+                    stream.remoteUsedWindowSize += payload_size;
+                    this.remoteUsedWindowSize += payload_size;
                     var flags: u8 = if (end_stream) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
                     if (padding != 0) {
                         flags |= @intFromEnum(DataFrameFlags.PADDED);
@@ -4428,8 +4426,6 @@ pub const H2FrameParser = struct {
         this.strong_ctx.set(globalObject, context_obj);
 
         this.hpack = lshpack.HPACK.init(this.localSettings.headerTableSize);
-        this.windowSize = this.localSettings.initialWindowSize;
-        log("windowSize: {d} isServer: {}", .{ this.windowSize, is_server });
         if (is_server) {
             _ = this.setSettings(this.localSettings);
         } else {

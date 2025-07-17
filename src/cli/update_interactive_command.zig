@@ -297,7 +297,7 @@ pub const UpdateInteractiveCommand = struct {
                 defer package_specifiers.deinit();
 
                 // Create a map to track dependency types for packages
-                var dep_types = std.StringHashMap([]const u8).init(bun.default_allocator);
+                var dep_types = bun.StringHashMap([]const u8).init(bun.default_allocator);
                 defer dep_types.deinit();
 
                 for (outdated_packages, selected) |pkg, is_selected| {

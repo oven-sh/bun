@@ -130,9 +130,6 @@ workspace_package_json_cache: WorkspacePackageJSONCache = .{},
 // dependency name -> original version information
 updating_packages: bun.StringArrayHashMapUnmanaged(PackageUpdateInfo) = .{},
 
-// For bun update --interactive: maps package names to their dependency type (dependencies, devDependencies, etc)
-update_dependency_types: std.StringHashMap([]const u8) = undefined,
-
 patched_dependencies_to_remove: std.ArrayHashMapUnmanaged(PackageNameAndVersionHash, void, ArrayIdentityContext.U64, false) = .{},
 
 active_lifecycle_scripts: LifecycleScriptSubprocess.List,

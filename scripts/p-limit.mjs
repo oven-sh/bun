@@ -1,6 +1,6 @@
 /**
  * p-limit@6.2.0
- * https://github.com/sponsors/sindresorhus
+ * https://github.com/sindresorhus/p-limit
  * MIT (c) Sindre Sorhus
  */
 

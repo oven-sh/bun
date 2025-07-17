@@ -217,7 +217,7 @@ export type DebugAdapterEventMap = InspectorEventMap & {
   "Process.requested": [unknown];
   "Process.spawned": [ChildProcess];
   "Process.exited": [number | Error | null, string | null];
-  "Process.success": [undefined | Error , undefined];
+  "Process.success": [undefined | Error, undefined];
   "Process.stdout": [string];
   "Process.stderr": [string];
 };

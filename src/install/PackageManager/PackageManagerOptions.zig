@@ -57,6 +57,20 @@ save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
 
+// `bun pm version` command options
+git_tag_version: bool = true,
+allow_same_version: bool = false,
+preid: string = "",
+message: ?string = null,
+force: bool = false,
+
+// `bun pm why` command options
+top_only: bool = false,
+depth: ?usize = null,
+
+/// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
+node_linker: NodeLinker = .auto,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -94,6 +108,7 @@ pub const LogLevel = enum {
     default,
     verbose,
     silent,
+    quiet,
     default_no_progress,
     verbose_no_progress,
 
@@ -108,6 +123,26 @@ pub const LogLevel = enum {
             .default, .verbose => true,
             else => false,
         };
+    }
+};
+
+pub const NodeLinker = enum(u8) {
+    // If workspaces are used: isolated
+    // If not: hoisted
+    // Used when nodeLinker is absent from package.json/bun.lock/bun.lockb
+    auto,
+
+    hoisted,
+    isolated,
+
+    pub fn fromStr(input: string) ?NodeLinker {
+        if (strings.eqlComptime(input, "hoisted")) {
+            return .hoisted;
+        }
+        if (strings.eqlComptime(input, "isolated")) {
+            return .isolated;
+        }
+        return null;
     }
 };
 
@@ -238,6 +273,10 @@ pub fn load(
                     this.ca = &.{ca_str};
                 },
             }
+        }
+
+        if (config.node_linker) |node_linker| {
+            this.node_linker = node_linker;
         }
 
         if (config.cafile) |cafile| {
@@ -504,6 +543,9 @@ pub fn load(
         } else if (cli.silent) {
             this.log_level = .silent;
             PackageManager.verbose_install = false;
+        } else if (cli.quiet) {
+            this.log_level = .quiet;
+            PackageManager.verbose_install = false;
         } else {
             this.log_level = if (disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
             PackageManager.verbose_install = false;
@@ -584,6 +626,17 @@ pub fn load(
         if (cli.ca_file_name.len > 0) {
             this.ca_file_name = cli.ca_file_name;
         }
+
+        // `bun pm version` command options
+        this.git_tag_version = cli.git_tag_version;
+        this.allow_same_version = cli.allow_same_version;
+        this.preid = cli.preid;
+        this.message = cli.message;
+        this.force = cli.force;
+
+        // `bun pm why` command options
+        this.top_only = cli.top_only;
+        this.depth = cli.depth;
     } else {
         this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
         PackageManager.verbose_install = false;

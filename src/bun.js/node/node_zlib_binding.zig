@@ -149,7 +149,7 @@ pub fn CompressionStream(comptime T: type) type {
             this_value.ensureStillAlive();
 
             if (!(checkError(this, global, this_value) catch return global.reportActiveExceptionAsUnhandled(error.JSError))) {
-                return;
+                return; // TODO: properly propagate exception upwards
             }
 
             this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
@@ -247,7 +247,7 @@ pub fn CompressionStream(comptime T: type) type {
 
         pub fn setOnError(_: *T, this_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
             if (value.isFunction()) {
-                T.js.errorCallbackSetCached(this_value, globalObject, value);
+                T.js.errorCallbackSetCached(this_value, globalObject, value.withAsyncContextIfNeeded(globalObject));
             }
         }
 

@@ -108,80 +108,97 @@ static std::optional<CookieInit> cookieInitFromJS(JSC::VM& vm, JSGlobalObject* l
 
         if (auto* optionsObj = options.getObject()) {
             if (checkName) {
-                if (auto nameValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name)) {
-                    name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
-                }
+                auto nameValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name);
                 RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+                if (nameValue) {
+                    name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
+                    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+                }
 
                 if (name.isEmpty()) {
                     throwVMTypeError(lexicalGlobalObject, throwScope, "name is required"_s);
                     return std::nullopt;
                 }
 
-                if (auto valueValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->value)) {
-                    value = convert<IDLUSVString>(*lexicalGlobalObject, valueValue);
-                }
+                auto valueValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->value);
                 RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+                if (valueValue) {
+                    value = convert<IDLUSVString>(*lexicalGlobalObject, valueValue);
+                    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+                }
             }
 
             // domain
-            if (auto domainValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.domainPublicName())) {
+            auto domainValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.domainPublicName());
+            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+            if (domainValue) {
                 if (!domainValue.isUndefined() && !domainValue.isNull()) {
                     domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
+                    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
                 }
             }
-            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
 
             // path
-            if (auto pathValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.pathPublicName())) {
+            auto pathValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.pathPublicName());
+            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+            if (pathValue) {
                 if (!pathValue.isUndefined() && !pathValue.isNull()) {
                     path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
+                    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
                 }
             }
-            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
 
             // expires
-            if (auto expiresValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.expiresPublicName())) {
-                expires = getExpiresValue(lexicalGlobalObject, throwScope, expiresValue);
-            }
+            auto expiresValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.expiresPublicName());
             RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+            if (expiresValue) {
+                expires = getExpiresValue(lexicalGlobalObject, throwScope, expiresValue);
+                RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+            }
 
             // maxAge
-            if (auto maxAgeValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.maxAgePublicName())) {
+            auto maxAgeValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.maxAgePublicName());
+            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+            if (maxAgeValue) {
                 if (!maxAgeValue.isUndefined() && !maxAgeValue.isNull() && maxAgeValue.isNumber()) {
                     maxAge = maxAgeValue.asNumber();
                 }
             }
-            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
 
             // secure
-            if (auto secureValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.securePublicName())) {
+            auto secureValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.securePublicName());
+            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+            if (secureValue) {
                 if (!secureValue.isUndefined()) {
                     secure = secureValue.toBoolean(lexicalGlobalObject);
                 }
             }
-            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
 
             // httpOnly
-            if (auto httpOnlyValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.httpOnlyPublicName())) {
+            auto httpOnlyValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.httpOnlyPublicName());
+            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+            if (httpOnlyValue) {
                 if (!httpOnlyValue.isUndefined()) {
                     httpOnly = httpOnlyValue.toBoolean(lexicalGlobalObject);
                 }
             }
-            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
 
             // partitioned
-            if (auto partitionedValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.partitionedPublicName())) {
+            auto partitionedValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.partitionedPublicName());
+            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+            if (partitionedValue) {
                 if (!partitionedValue.isUndefined()) {
                     partitioned = partitionedValue.toBoolean(lexicalGlobalObject);
                 }
             }
-            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
 
             // sameSite
-            if (auto sameSiteValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.sameSitePublicName())) {
+            auto sameSiteValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.sameSitePublicName());
+            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+            if (sameSiteValue) {
                 if (!sameSiteValue.isUndefined() && !sameSiteValue.isNull()) {
                     String sameSiteStr = convert<IDLUSVString>(*lexicalGlobalObject, sameSiteValue);
+                    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
 
                     if (sameSiteStr == "strict"_s)
                         sameSite = CookieSameSite::Strict;
@@ -191,9 +208,9 @@ static std::optional<CookieInit> cookieInitFromJS(JSC::VM& vm, JSGlobalObject* l
                         sameSite = CookieSameSite::None;
                     else
                         throwVMTypeError(lexicalGlobalObject, throwScope, "Invalid sameSite value. Must be 'strict', 'lax', or 'none'"_s);
+                    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
                 }
             }
-            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
         }
     }
 
@@ -304,8 +321,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
         auto cookie_exception = Cookie::parse(cookieString);
         if (cookie_exception.hasException()) {
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+            RELEASE_AND_RETURN(throwScope, {});
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
         auto cookie = cookie_exception.releaseReturnValue();
 
         auto* globalObject = castedThis->globalObject();
@@ -326,8 +343,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
         auto cookie_exception = Cookie::create(*cookieInit);
         if (cookie_exception.hasException()) {
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+            RELEASE_AND_RETURN(throwScope, {});
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
         auto cookie = cookie_exception.releaseReturnValue();
         auto* globalObject = castedThis->globalObject();
         RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, WTFMove(cookie))));
@@ -361,8 +378,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
         auto cookie_exception = Cookie::create(cookieInit);
         if (cookie_exception.hasException()) {
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+            RELEASE_AND_RETURN(throwScope, {});
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
         auto cookie = cookie_exception.releaseReturnValue();
 
         auto* globalObject = castedThis->globalObject();
@@ -527,8 +544,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionParse, (JSGlobalObject * lexicalG
         auto cookie_exception = Cookie::create(CookieInit {});
         if (cookie_exception.hasException()) {
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+            RELEASE_AND_RETURN(throwScope, {});
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
         auto cookie = cookie_exception.releaseReturnValue();
         return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject), WTFMove(cookie)));
     }
@@ -541,8 +558,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionParse, (JSGlobalObject * lexicalG
     auto cookie_exception = Cookie::parse(cookieString);
     if (cookie_exception.hasException()) {
         WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
     }
-    RETURN_IF_EXCEPTION(throwScope, {});
     auto cookie = cookie_exception.releaseReturnValue();
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -581,8 +598,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
     auto cookie_exception = Cookie::create(cookieInit);
     if (cookie_exception.hasException()) {
         WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
     }
-    RETURN_IF_EXCEPTION(throwScope, {});
     auto cookie = cookie_exception.releaseReturnValue();
     auto* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
     return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, globalObject, WTFMove(cookie)));

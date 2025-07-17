@@ -63,7 +63,7 @@ pub const PackCommand = struct {
             maybe_integrity: ?[sha.SHA512.digest]u8,
             log_level: LogLevel,
         ) void {
-            if (log_level != .silent) {
+            if (log_level != .silent and log_level != .quiet) {
                 Output.prettyln("\n<r><b><blue>Total files<r>: {d}", .{stats.total_files});
                 if (maybe_shasum) |shasum| {
                     Output.prettyln("<b><blue>Shasum<r>: {s}", .{std.fmt.bytesToHex(shasum, .lower)});
@@ -93,8 +93,10 @@ pub const PackCommand = struct {
     };
 
     pub fn execWithManager(ctx: Command.Context, manager: *PackageManager) !void {
-        Output.prettyln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        Output.flush();
+        if (manager.options.log_level != .silent and manager.options.log_level != .quiet) {
+            Output.prettyln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+            Output.flush();
+        }
 
         var lockfile: Lockfile = undefined;
         const load_from_disk_result = lockfile.loadFromCwd(
@@ -297,7 +299,7 @@ pub const PackCommand = struct {
                 }
             }
 
-            var dir_iter = DirIterator.iterate(dir, .u8);
+            var dir_iter = DirIterator.iterate(.fromStdDir(dir), .u8);
             while (dir_iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -451,7 +453,7 @@ pub const PackCommand = struct {
                 }
             }
 
-            var iter = DirIterator.iterate(dir, .u8);
+            var iter = DirIterator.iterate(.fromStdDir(dir), .u8);
             while (iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -565,7 +567,7 @@ pub const PackCommand = struct {
         var additional_bundled_deps: std.ArrayListUnmanaged(DirInfo) = .{};
         defer additional_bundled_deps.deinit(ctx.allocator);
 
-        var iter = DirIterator.iterate(dir, .u8);
+        var iter = DirIterator.iterate(.fromStdDir(dir), .u8);
         while (iter.next().unwrap() catch null) |entry| {
             if (entry.kind != .directory) continue;
 
@@ -579,7 +581,7 @@ pub const PackCommand = struct {
                 };
                 defer scoped_dir.close();
 
-                var scoped_iter = DirIterator.iterate(scoped_dir, .u8);
+                var scoped_iter = DirIterator.iterate(.fromStdDir(scoped_dir), .u8);
                 while (scoped_iter.next().unwrap() catch null) |sub_entry| {
                     const entry_name = try entrySubpath(ctx.allocator, _entry_name, sub_entry.name.slice());
 
@@ -689,7 +691,7 @@ pub const PackCommand = struct {
             var dir, const dir_subpath, const dir_depth = dir_info;
             defer dir.close();
 
-            var iter = DirIterator.iterate(dir, .u8);
+            var iter = DirIterator.iterate(.fromStdDir(dir), .u8);
             while (iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -849,7 +851,7 @@ pub const PackCommand = struct {
                 }
             }
 
-            var dir_iter = DirIterator.iterate(dir, .u8);
+            var dir_iter = DirIterator.iterate(.fromStdDir(dir), .u8);
             while (dir_iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -2426,7 +2428,7 @@ pub const PackCommand = struct {
         package_json_len: usize,
     ) void {
         const root_dir = bun.FD.fromStdDir(root_dir_std);
-        if (ctx.manager.options.log_level == .silent) return;
+        if (ctx.manager.options.log_level == .silent or ctx.manager.options.log_level == .quiet) return;
         const packed_fmt = "<r><b><cyan>packed<r> {} {s}";
 
         if (comptime is_dry_run) {
@@ -2559,7 +2561,7 @@ pub const bindings = struct {
         sha512.final(&sha512_digest);
         var base64_buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
         const encode_count = bun.simdutf.base64.encode(&sha512_digest, &base64_buf, false);
-        const integrity_str = String.createUTF8(base64_buf[0..encode_count]);
+        const integrity_str = String.cloneUTF8(base64_buf[0..encode_count]);
 
         const EntryInfo = struct {
             pathname: String,
@@ -2625,7 +2627,7 @@ pub const bindings = struct {
                     const perm = archive_entry.perm();
 
                     var entry_info: EntryInfo = .{
-                        .pathname = String.createUTF8(pathname),
+                        .pathname = String.cloneUTF8(pathname),
                         .kind = String.static(@tagName(kind)),
                         .perm = perm,
                     };
@@ -2643,7 +2645,7 @@ pub const bindings = struct {
                             });
                         }
                         read_buf.items.len = @intCast(read);
-                        entry_info.contents = String.createUTF8(read_buf.items);
+                        entry_info.contents = String.cloneUTF8(read_buf.items);
                     }
 
                     entries_info.append(entry_info) catch bun.outOfMemory();
@@ -2674,7 +2676,7 @@ pub const bindings = struct {
             if (entry.contents) |contents| {
                 obj.put(global, "contents", contents.toJS(global));
             }
-            entries.putIndex(global, @intCast(i), obj);
+            try entries.putIndex(global, @intCast(i), obj);
         }
 
         const result = JSValue.createEmptyObject(global, 2);

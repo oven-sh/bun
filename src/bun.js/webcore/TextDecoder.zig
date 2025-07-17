@@ -171,11 +171,7 @@ pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *J
     const stream = stream: {
         if (arguments.len > 1 and arguments[1].isObject()) {
             if (try arguments[1].fastGet(globalThis, .stream)) |stream_value| {
-                const stream_bool = stream_value.coerce(bool, globalThis);
-                if (globalThis.hasException()) {
-                    return .zero;
-                }
-                break :stream stream_bool;
+                break :stream stream_value.toBoolean();
             }
         }
 
@@ -273,7 +269,7 @@ fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice
                 return globalThis.ERR(.ENCODING_INVALID_ENCODED_DATA, "The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
             }
 
-            var output = bun.String.fromUTF16(decoded.items);
+            var output = bun.String.borrowUTF16(decoded.items);
             return output.toJS(globalThis);
         },
     }

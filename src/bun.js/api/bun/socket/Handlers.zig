@@ -30,8 +30,7 @@ pub const Scope = struct {
     handlers: *Handlers,
 
     pub fn exit(this: *Scope) void {
-        var vm = this.handlers.vm;
-        defer vm.eventLoop().exit();
+        this.handlers.vm.eventLoop().exit();
         this.handlers.markInactive();
     }
 };
@@ -39,9 +38,7 @@ pub const Scope = struct {
 pub fn enter(this: *Handlers) Scope {
     this.markActive();
     this.vm.eventLoop().enter();
-    return .{
-        .handlers = this,
-    };
+    return .{ .handlers = this };
 }
 
 // corker: Corker = .{},
@@ -173,6 +170,25 @@ pub fn unprotect(this: *Handlers) void {
     this.onEnd.unprotect();
     this.onError.unprotect();
     this.onHandshake.unprotect();
+}
+
+pub fn withAsyncContextIfNeeded(this: *Handlers, globalObject: *JSC.JSGlobalObject) void {
+    inline for (.{
+        "onOpen",
+        "onClose",
+        "onData",
+        "onWritable",
+        "onTimeout",
+        "onConnectError",
+        "onEnd",
+        "onError",
+        "onHandshake",
+    }) |field| {
+        const value = @field(this, field);
+        if (value != .zero) {
+            @field(this, field) = value.withAsyncContextIfNeeded(globalObject);
+        }
+    }
 }
 
 pub fn protect(this: *Handlers) void {
@@ -317,11 +333,7 @@ pub const SocketConfig = struct {
                     return globalObject.throwInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{});
                 }
 
-                const porti32 = port_value.coerceToInt32(globalObject);
-                if (globalObject.hasException()) {
-                    return error.JSError;
-                }
-
+                const porti32 = try port_value.coerceToInt32(globalObject);
                 if (porti32 < 0 or porti32 > 65535) {
                     return globalObject.throwInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{});
                 }
@@ -350,6 +362,7 @@ pub const SocketConfig = struct {
             default_data = default_data_value;
         }
 
+        handlers.withAsyncContextIfNeeded(globalObject);
         handlers.protect();
 
         return SocketConfig{

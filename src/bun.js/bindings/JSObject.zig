@@ -150,7 +150,7 @@ pub const JSObject = opaque {
         // with an exception:
         // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/JSObjectInlines.h#L112
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalThis, @src(), .enabled);
+        scope.init(globalThis, @src());
         defer scope.deinit();
         const value = JSC__JSObject__getIndex(this, globalThis, i);
         try scope.returnIfException();

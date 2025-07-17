@@ -140,8 +140,8 @@ it("should keep process alive only when active", async () => {
   });
 
   expect(await exited).toBe(0);
-  expect(await new Response(stderr).text()).toBe("");
-  var lines = (await new Response(stdout).text()).split(/\r?\n/);
+  expect(await stderr.text()).toBe("");
+  var lines = (await stdout.text()).split(/\r?\n/);
   expect(
     lines.filter(function (line) {
       return line.startsWith("[Server]");
@@ -171,7 +171,7 @@ it("connect without top level await should keep process alive", async () => {
   await proc.exited;
   try {
     expect(proc.exitCode).toBe(0);
-    expect(await new Response(proc.stdout).text()).toContain("event loop was not killed");
+    expect(await proc.stdout.text()).toContain("event loop was not killed");
   } finally {
     server.stop();
   }
@@ -188,7 +188,7 @@ it("connect() should return the socket object", async () => {
   });
 
   expect(await exited).toBe(0);
-  expect(await new Response(stderr).text()).toBe("");
+  expect(await stderr.text()).toBe("");
 });
 
 it("listen() should throw connection error for invalid host", () => {

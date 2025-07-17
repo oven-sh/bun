@@ -84,26 +84,24 @@ pub const RunCommand = struct {
     /// Find the "best" shell to use
     /// Cached to only run once
     pub fn findShell(PATH: string, cwd: string) ?stringZ {
-        const bufs = struct {
-            pub var shell_buf_once: bun.PathBuffer = undefined;
-            pub var found_shell: [:0]const u8 = "";
+        const Once = struct {
+            var shell_buf: bun.PathBuffer = undefined;
+            pub var once = bun.once(struct {
+                pub fn run(PATH_: string, cwd_: string) ?stringZ {
+                    if (findShellImpl(PATH_, cwd_)) |found| {
+                        if (found.len < shell_buf.len) {
+                            @memcpy(shell_buf[0..found.len], found);
+                            shell_buf[found.len] = 0;
+                            return shell_buf[0..found.len :0];
+                        }
+                    }
+
+                    return null;
+                }
+            }.run);
         };
-        if (bufs.found_shell.len > 0) {
-            return bufs.found_shell;
-        }
 
-        if (findShellImpl(PATH, cwd)) |found| {
-            if (found.len < bufs.shell_buf_once.len) {
-                @memcpy(bufs.shell_buf_once[0..found.len], found);
-                bufs.shell_buf_once[found.len] = 0;
-                bufs.found_shell = bufs.shell_buf_once[0..found.len :0];
-                return bufs.found_shell;
-            }
-
-            return found;
-        }
-
-        return null;
+        return Once.once.call(.{ PATH, cwd });
     }
 
     const BUN_BIN_NAME = if (Environment.isDebug) "bun-debug" else "bun";
@@ -1199,7 +1197,7 @@ pub const RunCommand = struct {
             \\  <b><green>bun run<r> <blue>dev<r>
             \\  <b><green>bun run<r> <blue>lint<r>
             \\
-            \\Full documentation is available at <magenta>https://bun.sh/docs/cli/run<r>
+            \\Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             \\
         ;
 

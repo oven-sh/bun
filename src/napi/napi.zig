@@ -436,10 +436,7 @@ pub export fn napi_create_string_utf8(env_: napi_env, str: ?[*]const u8, length:
     log("napi_create_string_utf8: {s}", .{slice});
 
     const globalObject = env.toJS();
-    const string = bun.String.createUTF8ForJS(globalObject, slice);
-    if (globalObject.hasException()) {
-        return env.setLastError(.pending_exception);
-    }
+    const string = bun.String.createUTF8ForJS(globalObject, slice) catch return env.setLastError(.pending_exception);
     result.set(env, string);
     return env.ok();
 }
@@ -808,7 +805,11 @@ pub export fn napi_get_arraybuffer_info(env_: napi_env, arraybuffer_: napi_value
     };
     env.checkGC();
     const arraybuffer = arraybuffer_.get();
-    const array_buffer = arraybuffer.asArrayBuffer(env.toJS()) orelse return env.setLastError(.arraybuffer_expected);
+    const array_buffer = arraybuffer.asArrayBuffer(env.toJS()) orelse return env.setLastError(.invalid_arg);
+    if (array_buffer.typed_array_type != .ArrayBuffer) {
+        return env.setLastError(.invalid_arg);
+    }
+
     const slice = array_buffer.slice();
     if (data) |dat|
         dat.* = slice.ptr;
@@ -840,7 +841,7 @@ pub export fn napi_get_typedarray_info(
 
     const array_buffer = typedarray.asArrayBuffer(env.toJS()) orelse return env.invalidArg();
     if (maybe_type) |@"type"|
-        @"type".* = napi_typedarray_type.fromJSType(array_buffer.typed_array_type) orelse return env.invalidArg();
+        @"type".* = array_buffer.typed_array_type.toTypedArrayType().toNapi() orelse return env.invalidArg();
 
     // TODO: handle detached
     if (maybe_data) |data|
@@ -997,30 +998,8 @@ pub export fn napi_is_date(env_: napi_env, value_: napi_value, is_date_: ?*bool)
 }
 pub extern fn napi_get_date_value(env: napi_env, value: napi_value, result: *f64) napi_status;
 pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: napi_ref) napi_status;
-pub export fn napi_create_bigint_int64(env_: napi_env, value: i64, result_: ?*napi_value) napi_status {
-    log("napi_create_bigint_int64", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    env.checkGC();
-    const result = result_ orelse {
-        return env.invalidArg();
-    };
-    result.set(env, JSC.JSValue.fromInt64NoTruncate(env.toJS(), value));
-    return env.ok();
-}
-pub export fn napi_create_bigint_uint64(env_: napi_env, value: u64, result_: ?*napi_value) napi_status {
-    log("napi_create_bigint_uint64", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    env.checkGC();
-    const result = result_ orelse {
-        return env.invalidArg();
-    };
-    result.set(env, JSC.JSValue.fromUInt64NoTruncate(env.toJS(), value));
-    return env.ok();
-}
+pub extern fn napi_create_bigint_int64(env: napi_env, value: i64, result_: ?*napi_value) napi_status;
+pub extern fn napi_create_bigint_uint64(env: napi_env, value: u64, result_: ?*napi_value) napi_status;
 pub extern fn napi_create_bigint_words(env: napi_env, sign_bit: c_int, word_count: usize, words: [*c]const u64, result: *napi_value) napi_status;
 pub extern fn napi_get_value_bigint_int64(_: napi_env, value_: napi_value, result_: ?*i64, _: *bool) napi_status;
 pub extern fn napi_get_value_bigint_uint64(_: napi_env, value_: napi_value, result_: ?*u64, _: *bool) napi_status;
@@ -1197,20 +1176,7 @@ pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize
 
     bun.Output.panic("napi: {s}", .{message});
 }
-pub export fn napi_create_buffer(env_: napi_env, length: usize, data: ?**anyopaque, result: *napi_value) napi_status {
-    log("napi_create_buffer: {d}", .{length});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    var buffer = JSC.JSValue.createBufferFromLength(env.toJS(), length);
-    if (length > 0) {
-        if (data) |ptr| {
-            ptr.* = buffer.asArrayBuffer(env.toJS()).?.ptr;
-        }
-    }
-    result.set(env, buffer);
-    return env.ok();
-}
+pub extern fn napi_create_buffer(env: napi_env, length: usize, data: ?**anyopaque, result: *napi_value) napi_status;
 pub extern fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 pub export fn napi_create_buffer_copy(env_: napi_env, length: usize, data: [*]u8, result_data: ?*?*anyopaque, result_: ?*napi_value) napi_status {
     log("napi_create_buffer_copy: {d}", .{length});
@@ -1220,7 +1186,7 @@ pub export fn napi_create_buffer_copy(env_: napi_env, length: usize, data: [*]u8
     const result = result_ orelse {
         return env.invalidArg();
     };
-    var buffer = JSC.JSValue.createBufferFromLength(env.toJS(), length);
+    var buffer = JSC.JSValue.createBufferFromLength(env.toJS(), length) catch return env.setLastError(.pending_exception);
     if (buffer.asArrayBuffer(env.toJS())) |array_buf| {
         if (length > 0) {
             @memcpy(array_buf.slice()[0..length], data[0..length]);
@@ -1831,8 +1797,11 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v88External5ValueEv() *anyopaque;
     pub extern fn _ZN2v86Object3NewEPNS_7IsolateE() *anyopaque;
     pub extern fn _ZN2v86Object3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_() *anyopaque;
+    pub extern fn _ZN2v86Object3SetENS_5LocalINS_7ContextEEEjNS1_INS_5ValueEEE() *anyopaque;
     pub extern fn _ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE() *anyopaque;
     pub extern fn _ZN2v86Object20SlowGetInternalFieldEi() *anyopaque;
+    pub extern fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() *anyopaque;
+    pub extern fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEEj() *anyopaque;
     pub extern fn _ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm() *anyopaque;
     pub extern fn _ZN2v811HandleScopeC1EPNS_7IsolateE() *anyopaque;
     pub extern fn _ZN2v811HandleScopeD1Ev() *anyopaque;
@@ -1847,6 +1816,10 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v824EscapableHandleScopeBaseC2EPNS_7IsolateE() *anyopaque;
     pub extern fn _ZN2v88internal35IsolateFromNeverReadOnlySpaceObjectEm() *anyopaque;
     pub extern fn _ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm() *anyopaque;
+    pub extern fn _ZNK2v85Array6LengthEv() *anyopaque;
+    pub extern fn _ZN2v85Array3NewEPNS_7IsolateEi() *anyopaque;
+    pub extern fn _ZN2v85Array7IterateENS_5LocalINS_7ContextEEEPFNS0_14CallbackResultEjNS1_INS_5ValueEEEPvES7_() *anyopaque;
+    pub extern fn _ZN2v85Array9CheckCastEPNS_5ValueE() *anyopaque;
     pub extern fn _ZN2v88Function7SetNameENS_5LocalINS_6StringEEE() *anyopaque;
     pub extern fn _ZNK2v85Value9IsBooleanEv() *anyopaque;
     pub extern fn _ZNK2v87Boolean5ValueEv() *anyopaque;
@@ -1866,6 +1839,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v85Value6IsTrueEv() *anyopaque;
     pub extern fn _ZNK2v85Value7IsFalseEv() *anyopaque;
     pub extern fn _ZNK2v85Value8IsStringEv() *anyopaque;
+    pub extern fn _ZNK2v85Value12StrictEqualsENS_5LocalIS0_EE() *anyopaque;
     pub extern fn _ZN2v87Boolean3NewEPNS_7IsolateEb() *anyopaque;
     pub extern fn _ZN2v86Object16GetInternalFieldEi() *anyopaque;
     pub extern fn _ZN2v87Context10GetIsolateEv() *anyopaque;
@@ -1878,6 +1852,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v86String19ContainsOnlyOneByteEv() *anyopaque;
     pub extern fn _ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm() *anyopaque;
     pub extern fn _ZN2v812api_internal13DisposeGlobalEPm() *anyopaque;
+    pub extern fn _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE() *anyopaque;
     pub extern fn _ZNK2v88Function7GetNameEv() *anyopaque;
     pub extern fn _ZNK2v85Value10IsFunctionEv() *anyopaque;
     pub extern fn _ZN2v812api_internal17FromJustIsNothingEv() *anyopaque;
@@ -1905,8 +1880,11 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?Value@External@v8@@QEBAPEAXXZ"() *anyopaque;
     pub extern fn @"?New@Object@v8@@SA?AV?$Local@VObject@v8@@@2@PEAVIsolate@2@@Z"() *anyopaque;
     pub extern fn @"?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@1@Z"() *anyopaque;
+    pub extern fn @"?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@IV?$Local@VValue@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?SetInternalField@Object@v8@@QEAAXHV?$Local@VData@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?SlowGetInternalField@Object@v8@@AEAA?AV?$Local@VData@v8@@@2@H@Z"() *anyopaque;
+    pub extern fn @"?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@I@Z"() *anyopaque;
+    pub extern fn @"?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?CreateHandle@HandleScope@v8@@KAPEA_KPEAVIsolate@internal@2@_K@Z"() *anyopaque;
     pub extern fn @"??0HandleScope@v8@@QEAA@PEAVIsolate@1@@Z"() *anyopaque;
     pub extern fn @"??1HandleScope@v8@@QEAA@XZ"() *anyopaque;
@@ -1920,6 +1898,11 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"??0EscapableHandleScopeBase@v8@@QEAA@PEAVIsolate@1@@Z"() *anyopaque;
     pub extern fn @"?IsolateFromNeverReadOnlySpaceObject@internal@v8@@YAPEAVIsolate@12@_K@Z"() *anyopaque;
     pub extern fn @"?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@PEAV?$Local@VValue@v8@@@2@_K@Z"() *anyopaque;
+    pub extern fn @"?Length@Array@v8@@QEBAIXZ"() *anyopaque;
+    pub extern fn @"?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@H@Z"() *anyopaque;
+    pub extern fn @"?New@Array@v8@@SA?AV?$MaybeLocal@VArray@v8@@@2@V?$Local@VContext@v8@@@2@_KV?$function@$$A6A?AV?$MaybeLocal@VValue@v8@@@v8@@XZ@std@@@Z"() *anyopaque;
+    pub extern fn @"?Iterate@Array@v8@@QEAA?AV?$Maybe@X@2@V?$Local@VContext@v8@@@2@P6A?AW4CallbackResult@12@IV?$Local@VValue@v8@@@2@PEAX@Z2@Z"() *anyopaque;
+    pub extern fn @"?CheckCast@Array@v8@@CAXPEAVValue@2@@Z"() *anyopaque;
     pub extern fn @"?SetName@Function@v8@@QEAAXV?$Local@VString@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?IsBoolean@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?Value@Boolean@v8@@QEBA_NXZ"() *anyopaque;
@@ -1937,6 +1920,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?IsTrue@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?IsFalse@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?IsString@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?StrictEquals@Value@v8@@QEBA_NV?$Local@VValue@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?New@Boolean@v8@@SA?AV?$Local@VBoolean@v8@@@2@PEAVIsolate@2@_N@Z"() *anyopaque;
     pub extern fn @"?GetInternalField@Object@v8@@QEAA?AV?$Local@VData@v8@@@2@H@Z"() *anyopaque;
     pub extern fn @"?GetIsolate@Context@v8@@QEAAPEAVIsolate@2@XZ"() *anyopaque;
@@ -1949,9 +1933,22 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?ContainsOnlyOneByte@String@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?GlobalizeReference@api_internal@v8@@YAPEA_KPEAVIsolate@internal@2@_K@Z"() *anyopaque;
     pub extern fn @"?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z"() *anyopaque;
+    pub extern fn @"?GetFunctionTemplateData@api_internal@v8@@YA?AV?$Local@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VData@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"() *anyopaque;
     pub extern fn @"?IsFunction@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?FromJustIsNothing@api_internal@v8@@YAXXZ"() *anyopaque;
+};
+
+/// V8 API functions whose mangled name differs between Linux and macOS
+const posix_platform_specific_v8_apis = switch (bun.Environment.os) {
+    .mac => struct {
+        pub extern fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE() *anyopaque;
+    },
+    .linux => struct {
+        pub extern fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE() *anyopaque;
+    },
+    .windows => struct {},
+    else => unreachable,
 };
 
 // To update this list, use find + multi-cursor in your editor.
@@ -2430,6 +2427,10 @@ pub fn fixDeadCodeElimination() void {
 
     inline for (comptime std.meta.declarations(V8API)) |decl| {
         std.mem.doNotOptimizeAway(&@field(V8API, decl.name));
+    }
+
+    inline for (comptime std.meta.declarations(posix_platform_specific_v8_apis)) |decl| {
+        std.mem.doNotOptimizeAway(&@field(posix_platform_specific_v8_apis, decl.name));
     }
 
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);

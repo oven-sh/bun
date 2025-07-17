@@ -84,7 +84,7 @@ pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
     const dictionary = if (arguments[6].isUndefined()) null else arguments[6].asArrayBuffer(globalThis).?.byteSlice();
 
     this.write_result = writeResult;
-    js.writeCallbackSetCached(this_value, globalThis, writeCallback);
+    js.writeCallbackSetCached(this_value, globalThis, writeCallback.withAsyncContextIfNeeded(globalThis));
 
     // Keep the dictionary alive by keeping a reference to it in the JS object.
     if (dictionary != null) {

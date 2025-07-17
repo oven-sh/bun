@@ -62,18 +62,21 @@ pub const ChildPtr = StatePtrUnion(.{
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.CondExpr,
     parent: ParentPtr,
     io: IO,
 ) *CondExpr {
-    return bun.new(CondExpr, .{
-        .base = .{ .kind = .condexpr, .interpreter = interpreter, .shell = shell_state },
+    const condexpr = parent.create(CondExpr);
+    condexpr.* = .{
+        .base = State.initWithNewAllocScope(.condexpr, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
-        .args = std.ArrayList([:0]const u8).init(bun.default_allocator),
-    });
+        .args = undefined,
+    };
+    condexpr.args = std.ArrayList([:0]const u8).init(condexpr.base.allocator());
+    return condexpr;
 }
 
 pub fn format(this: *const CondExpr, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -209,7 +212,12 @@ fn doStat(this: *CondExpr) Yield {
 
 pub fn deinit(this: *CondExpr) void {
     this.io.deinit();
-    bun.destroy(this);
+    for (this.args.items) |item| {
+        this.base.allocator().free(item);
+    }
+    this.args.deinit();
+    this.base.endScope();
+    this.parent.destroy(this);
 }
 
 pub fn childDone(this: *CondExpr, child: ChildPtr, exit_code: ExitCode) Yield {
@@ -268,7 +276,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

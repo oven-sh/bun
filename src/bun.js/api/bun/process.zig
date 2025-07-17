@@ -1,13 +1,5 @@
-const bun = @import("bun");
-const std = @import("std");
-const PosixSpawn = bun.spawn;
-const Environment = bun.Environment;
-const JSC = bun.JSC;
-const Output = bun.Output;
-const uv = bun.windows.libuv;
 const pid_t = if (Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 const fd_t = if (Environment.isPosix) std.posix.fd_t else i32;
-const Maybe = JSC.Maybe;
 const log = bun.Output.scoped(.PROCESS, false);
 
 const win_rusage = struct {
@@ -79,10 +71,6 @@ pub fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
 }
 pub const Rusage = if (Environment.isWindows) win_rusage else std.posix.rusage;
 
-const Subprocess = JSC.Subprocess;
-const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
-const ShellSubprocess = bun.shell.ShellSubprocess;
-const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 // const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
 pub const ProcessExitHandler = struct {
     ptr: TaggedPointer = TaggedPointer.Null,
@@ -144,7 +132,7 @@ pub const PidFDType = if (Environment.isLinux) fd_t else u0;
 
 pub const Process = struct {
     const Self = @This();
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -2246,3 +2234,20 @@ pub const sync = struct {
         };
     }
 };
+
+// @sortImports
+
+const std = @import("std");
+const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const PosixSpawn = bun.spawn;
+const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const ShellSubprocess = bun.shell.ShellSubprocess;
+const uv = bun.windows.libuv;
+
+const JSC = bun.JSC;
+const Maybe = JSC.Maybe;
+const Subprocess = JSC.Subprocess;

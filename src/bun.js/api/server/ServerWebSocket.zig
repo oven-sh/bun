@@ -142,8 +142,8 @@ pub fn onMessage(
     const arguments = [_]JSValue{
         this.getThisValue(),
         switch (opcode) {
-            .text => bun.String.createUTF8ForJS(globalObject, message),
-            .binary => this.binaryToJS(globalObject, message),
+            .text => bun.String.createUTF8ForJS(globalObject, message) catch .zero, // TODO: properly propagate exception upwards
+            .binary => this.binaryToJS(globalObject, message) catch .zero, // TODO: properly propagate exception upwards
             else => unreachable,
         },
     };
@@ -208,7 +208,7 @@ pub fn onDrain(this: *ServerWebSocket, _: uws.AnyWebSocket) void {
     }
 }
 
-fn binaryToJS(this: *const ServerWebSocket, globalThis: *JSC.JSGlobalObject, data: []const u8) JSC.JSValue {
+fn binaryToJS(this: *const ServerWebSocket, globalThis: *JSC.JSGlobalObject, data: []const u8) bun.JSError!JSC.JSValue {
     return switch (this.flags.binary_type) {
         .Buffer => JSC.ArrayBuffer.createBuffer(
             globalThis,
@@ -244,7 +244,7 @@ pub fn onPing(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) voi
     _ = cb.call(
         globalThis,
         .js_undefined,
-        &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
+        &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) catch .zero }, // TODO: properly propagate exception upwards
     ) catch |e| {
         const err = globalThis.takeException(e);
         log("onPing error", .{});
@@ -272,7 +272,7 @@ pub fn onPong(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) voi
     _ = cb.call(
         globalThis,
         .js_undefined,
-        &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
+        &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) catch .zero }, // TODO: properly propagate exception upwards
     ) catch |e| {
         const err = globalThis.takeException(e);
         log("onPong error", .{});
@@ -322,14 +322,18 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
             }
         }
 
-        _ = handler.onClose.call(
-            globalObject,
-            .js_undefined,
-            &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), bun.String.createUTF8ForJS(globalObject, message) },
-        ) catch |e| {
+        const message_js = bun.String.createUTF8ForJS(globalObject, message) catch |e| {
             const err = globalObject.takeException(e);
             log("onClose error", .{});
             handler.runErrorCallback(vm, globalObject, err);
+            return;
+        };
+
+        _ = handler.onClose.call(globalObject, .js_undefined, &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), message_js }) catch |e| {
+            const err = globalObject.takeException(e);
+            log("onClose error", .{});
+            handler.runErrorCallback(vm, globalObject, err);
+            return;
         };
     } else if (signal) |sig| {
         const loop = vm.eventLoop();
@@ -1077,7 +1081,7 @@ pub fn close(
             return globalThis.throwInvalidArguments("close requires a numeric code or undefined", .{});
         }
 
-        break :brk args.ptr[0].coerce(i32, globalThis);
+        break :brk try args.ptr[0].coerce(i32, globalThis);
     };
 
     var message_value: ZigString.Slice = brk: {
@@ -1242,7 +1246,7 @@ pub fn isSubscribed(
 pub fn getRemoteAddress(
     this: *ServerWebSocket,
     globalThis: *JSC.JSGlobalObject,
-) JSValue {
+) bun.JSError!JSValue {
     if (this.isClosed()) {
         return .js_undefined;
     }

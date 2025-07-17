@@ -18,8 +18,11 @@ Usage: bun scripts/sortImports [options] <files...>
 Options:
   --help                   Show this help message
   --no-include-pub         Exclude pub imports from sorting
-  --no-remove-unused       Don't remove unused imports
   --include-unsorted       Process files even if they don't have @sortImports marker
+
+Markers:
+  // @sortImports
+  // @sortImports @noRemoveUnused
 
 Examples:
   bun scripts/sortImports src
@@ -35,7 +38,6 @@ if (filePaths.length === 0) {
 
 const config = {
   includePub: !args.includes("--no-include-pub"),
-  removeUnused: !args.includes("--no-remove-unused"),
   includeUnsorted: args.includes("--include-unsorted"),
 };
 
@@ -54,9 +56,11 @@ type Declaration = {
 function parseDeclarations(
   lines: string[],
   fileContents: string,
+  skipRemoveUnused: boolean,
 ): {
   declarations: Map<string, Declaration>;
   unusedLineIndices: number[];
+  sortImportsLines: number[];
 } {
   const declarations = new Map<string, Declaration>();
   const unusedLineIndices: number[] = [];
@@ -64,11 +68,13 @@ function parseDeclarations(
   // for stability
   const sortedLineKeys = [...lines.keys()].sort((a, b) => (lines[a] < lines[b] ? -1 : lines[a] > lines[b] ? 1 : 0));
 
+  let sortImportsLines: number[] = [];
+
   for (const i of sortedLineKeys) {
     const line = lines[i];
 
-    if (line === "// @sortImports") {
-      lines[i] = "";
+    if (line.startsWith("// @sortImports")) {
+      sortImportsLines.push(i);
       continue;
     }
 
@@ -87,7 +93,7 @@ function parseDeclarations(
     }
 
     // Skip unused declarations (non-public declarations that appear only once)
-    if (config.removeUnused && !line.includes("pub ")) {
+    if (!skipRemoveUnused && !line.includes("pub ")) {
       const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const expectedCount = (line.match(new RegExp(`\\b${escapedName}\\b`, "g")) || []).length;
       const actualCount = (fileContents.match(new RegExp(`\\b${escapedName}\\b`, "g")) || []).length;
@@ -111,7 +117,7 @@ function parseDeclarations(
     });
   }
 
-  return { declarations, unusedLineIndices };
+  return { declarations, unusedLineIndices, sortImportsLines };
 }
 
 // Validate if a segment is a valid identifier
@@ -273,10 +279,18 @@ function sortGroupsAndDeclarations(groups: Map<string, Group>): string[] {
 }
 
 // Generate the sorted output
-function generateSortedOutput(lines: string[], groups: Map<string, Group>, sortedGroupKeys: string[]): string[] {
+function generateSortedOutput(
+  lines: string[],
+  groups: Map<string, Group>,
+  sortedGroupKeys: string[],
+  sortImportsLines: number[],
+): string[] {
   const outputLines = [...lines];
   outputLines.push("");
-  outputLines.push("// @sortImports");
+  for (const line of sortImportsLines) {
+    outputLines.push(lines[line]);
+    outputLines[line] = "";
+  }
 
   for (const groupKey of sortedGroupKeys) {
     const groupDeclarations = groups.get(groupKey)!;
@@ -296,14 +310,14 @@ function generateSortedOutput(lines: string[], groups: Map<string, Group>, sorte
 }
 
 // Main execution function for a single file
-async function processFile(filePath: string): Promise<void> {
+async function processFile(filePath: string): Promise<{ written: boolean; noSortImports: boolean }> {
   const originalFileContents = await Bun.file(filePath).text();
   let fileContents = originalFileContents;
 
   if (!config.includeUnsorted && !originalFileContents.includes("// @sortImports")) {
-    return;
+    return { written: false, noSortImports: true };
   }
-  console.log(`Processing: ${filePath}`);
+  const skipRemoveUnused = originalFileContents.includes("@noRemoveUnused");
 
   let needsRecurse = true;
   while (needsRecurse) {
@@ -311,17 +325,21 @@ async function processFile(filePath: string): Promise<void> {
 
     const lines = fileContents.split("\n");
 
-    const { declarations, unusedLineIndices } = parseDeclarations(lines, fileContents);
+    const { declarations, unusedLineIndices, sortImportsLines } = parseDeclarations(
+      lines,
+      fileContents,
+      skipRemoveUnused,
+    );
     const groups = groupDeclarationsByImportPath(declarations);
 
     promoteItemsWithChildGroups(groups);
     mergeSingleItemGroups(groups);
     const sortedGroupKeys = sortGroupsAndDeclarations(groups);
 
-    const sortedLines = generateSortedOutput(lines, groups, sortedGroupKeys);
+    const sortedLines = generateSortedOutput(lines, groups, sortedGroupKeys, sortImportsLines);
 
     // Remove unused declarations
-    if (config.removeUnused) {
+    if (!skipRemoveUnused) {
       for (const line of unusedLineIndices) {
         sortedLines[line] = "";
         needsRecurse = true;
@@ -343,20 +361,22 @@ async function processFile(filePath: string): Promise<void> {
   if (fileContents === "\n") fileContents = "";
 
   if (fileContents === originalFileContents) {
-    console.log(`✓ No changes: ${filePath}`);
-    return;
+    return { written: false, noSortImports: false };
   }
 
   // Write the sorted file
   await Bun.write(filePath, fileContents);
 
-  console.log(`✓ Done: ${filePath}`);
+  console.log(`Sorted imports: ${filePath}`);
+  return { written: true, noSortImports: false };
 }
 
 // Process all files
 async function main() {
-  let successCount = 0;
-  let errorCount = 0;
+  let filesWritten = 0;
+  let filesNotWritten = 0;
+  let filesWithErrors = 0;
+  let filesWithoutSortImports = 0;
 
   for (const filePath of filePaths) {
     const stat = await Bun.file(filePath).stat();
@@ -365,10 +385,16 @@ async function main() {
       for (const file of files) {
         if (typeof file !== "string" || !file.endsWith(".zig")) continue;
         try {
-          await processFile(path.join(filePath, file));
-          successCount++;
+          const result = await processFile(path.join(filePath, file));
+          if (result.noSortImports) {
+            filesWithoutSortImports++;
+          } else if (result.written) {
+            filesWritten++;
+          } else {
+            filesNotWritten++;
+          }
         } catch (error) {
-          errorCount++;
+          filesWithErrors++;
           console.error(`Failed to process ${filePath}`);
         }
       }
@@ -376,17 +402,58 @@ async function main() {
     }
 
     try {
-      await processFile(filePath);
-      successCount++;
+      const result = await processFile(filePath);
+      if (result.noSortImports) {
+        filesWithoutSortImports++;
+      } else if (result.written) {
+        filesWritten++;
+      } else {
+        filesNotWritten++;
+      }
     } catch (error) {
-      errorCount++;
+      filesWithErrors++;
       console.error(`Failed to process ${filePath}`);
     }
   }
 
-  console.log(`\nSummary: ${successCount} files processed successfully, ${errorCount} errors`);
+  // ANSI color codes
+  const colors = {
+    reset: "\x1b[0m",
+    bright: "\x1b[1m",
+    green: "\x1b[32m",
+    yellow: "\x1b[33m",
+    red: "\x1b[31m",
+    blue: "\x1b[34m",
+    cyan: "\x1b[36m",
+    gray: "\x1b[90m",
+  };
 
-  if (errorCount > 0) {
+  const total = filesWritten + filesNotWritten + filesWithErrors + filesWithoutSortImports;
+
+  console.log(`\n${colors.bright}${colors.cyan}╭─────────────────────────────────────╮${colors.reset}`);
+  console.log(
+    `${colors.bright}${colors.cyan}│${colors.reset}               ${colors.bright}SUMMARY${colors.reset}               ${colors.bright}${colors.cyan}│${colors.reset}`,
+  );
+  console.log(`${colors.bright}${colors.cyan}├─────────────────────────────────────┤${colors.reset}`);
+
+  function writeText(text: string) {
+    console.log(
+      `${colors.bright}${colors.cyan}│${colors.reset}   ${text}${" ".repeat(Math.max(0, 34 - Bun.stringWidth(text)))}${colors.bright}${colors.cyan}│${colors.reset}`,
+    );
+  }
+
+  if (filesWritten > 0)
+    writeText(`${colors.green}✓${colors.reset} ${filesWritten.toString().padStart(3)} files written`);
+  if (filesNotWritten > 0) writeText(`${colors.gray}○ ${filesNotWritten.toString().padStart(3)} files unchanged`);
+  if (filesWithErrors > 0) writeText(`${colors.red}✗ ${filesWithErrors.toString().padStart(3)} files with errors`);
+  if (filesWithoutSortImports > 0)
+    writeText(`${colors.yellow}⚠ ${filesWithoutSortImports.toString().padStart(3)} files without @sortImports`);
+
+  console.log(`${colors.bright}${colors.cyan}├─────────────────────────────────────┤${colors.reset}`);
+  writeText(`${colors.bright}Total: ${total} files processed${colors.reset}`);
+  console.log(`${colors.bright}${colors.cyan}╰─────────────────────────────────────╯${colors.reset}`);
+
+  if (filesWithErrors > 0) {
     process.exit(1);
   }
 }

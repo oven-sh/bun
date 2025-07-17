@@ -660,7 +660,7 @@ pub fn installIsolatedPackages(
                         continue;
                     }
                     entry_steps[entry_id.get()].store(.done, .monotonic);
-                    installer.onTaskComplete(entry_id, .success);
+                    installer.onTaskComplete(entry_id, .skipped);
                     continue;
                 },
                 .symlink => {

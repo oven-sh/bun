@@ -179,12 +179,38 @@ pub const Installer = struct {
             node.completeOne();
         }
 
-        switch (state) {
+        const nodes = this.store.nodes.slice();
+
+        const node_id, const real_state = state: {
+            if (entry_id == .root) {
+                break :state .{ .root, .skipped };
+            }
+
+            const node_id = this.store.entries.items(.node_id)[entry_id.get()];
+            const dep_id = nodes.items(.dep_id)[node_id.get()];
+
+            if (dep_id == invalid_dependency_id) {
+                // should be coverd by `entry_id == .root` above, but
+                // just in case
+                break :state .{ .root, .skipped };
+            }
+
+            const dep = this.lockfile.buffers.dependencies.items[dep_id];
+
+            if (dep.behavior.isWorkspace()) {
+                break :state .{ node_id, .skipped };
+            }
+
+            break :state .{ node_id, state };
+        };
+
+        switch (real_state) {
             .success => {
                 this.summary.success += 1;
             },
             .skipped => {
                 this.summary.skipped += 1;
+                return;
             },
             .fail => {
                 this.summary.fail += 1;
@@ -192,30 +218,7 @@ pub const Installer = struct {
             },
         }
 
-        const pkg_id = pkg_id: {
-            if (entry_id == .root) {
-                return;
-            }
-
-            const node_id = this.store.entries.items(.node_id)[entry_id.get()];
-            const nodes = this.store.nodes.slice();
-
-            const dep_id = nodes.items(.dep_id)[node_id.get()];
-
-            if (dep_id == invalid_dependency_id) {
-                // should be coverd by `entry_id == .root` above, but
-                // just in case
-                return;
-            }
-
-            const dep = this.lockfile.buffers.dependencies.items[dep_id];
-
-            if (dep.behavior.isWorkspace()) {
-                return;
-            }
-
-            break :pkg_id nodes.items(.pkg_id)[node_id.get()];
-        };
+        const pkg_id = nodes.items(.pkg_id)[node_id.get()];
 
         const is_duplicate = this.installed.isSet(pkg_id);
         this.summary.success += @intFromBool(!is_duplicate);

@@ -67,7 +67,7 @@ pub const TestRunner = struct {
     default_timeout_override: u32 = std.math.maxInt(u32),
 
     event_loop_timer: bun.api.Timer.EventLoopTimer = .{
-        .next = .{},
+        .next = .epoch,
         .tag = .TestRunner,
     },
     active_test_for_timeout: ?TestRunner.Test.ID = null,
@@ -701,7 +701,7 @@ pub const TestScope = struct {
         debug("test({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
         var initial_value = JSValue.zero;
-        task.started_at = bun.timespec.now();
+        task.started_at = .now();
 
         if (this.timeout_millis == std.math.maxInt(u32)) {
             if (Jest.runner.?.default_timeout_override != std.math.maxInt(u32)) {
@@ -1178,6 +1178,7 @@ pub const DescribeScope = struct {
                     .globalThis = globalObject,
                     .source_file_path = source.path.text,
                     .test_id_for_debugger = 0,
+                    .started_at = .epoch,
                 };
                 runner.ref.ref(globalObject.bunVM());
 
@@ -1196,6 +1197,7 @@ pub const DescribeScope = struct {
                 .globalThis = globalObject,
                 .source_file_path = source.path.text,
                 .test_id_for_debugger = if (maybe_report_debugger) tests[i].test_id_for_debugger else 0,
+                .started_at = .epoch,
             };
             runner.ref.ref(globalObject.bunVM());
 
@@ -1300,7 +1302,7 @@ pub const TestRunnerTask = struct {
     promise_state: AsyncState = .none,
     sync_state: AsyncState = .none,
     reported: bool = false,
-    started_at: bun.timespec = .{},
+    started_at: bun.timespec,
 
     pub const AsyncState = enum {
         none,
@@ -1380,6 +1382,7 @@ pub const TestRunnerTask = struct {
         expect.is_expecting_assertions = false;
         expect.is_expecting_assertions_count = false;
         jsc_vm.last_reported_error_for_dedupe = .zero;
+        this.started_at = .now();
 
         const test_id = this.test_id;
         if (test_id == TestRunner.Test.null_id) {
@@ -1417,7 +1420,8 @@ pub const TestRunnerTask = struct {
 
         if (this.needs_before_each) {
             this.needs_before_each = false;
-            const label = test_.label;
+            const label = bun.default_allocator.dupe(u8, test_.label) catch bun.outOfMemory();
+            defer bun.default_allocator.free(label);
 
             if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
                 _ = jsc_vm.uncaughtException(globalThis, err, true);
@@ -2007,30 +2011,6 @@ fn consumeArg(
     args_idx.* += 1;
 }
 
-fn resolvePropertyPath(globalThis: *JSGlobalObject, obj: JSValue, path: []const u8) !?JSValue {
-    var current = obj;
-    var parts = std.mem.tokenizeScalar(u8, path, '.');
-
-    while (parts.next()) |part| {
-        if (current.isEmptyOrUndefinedOrNull()) return null;
-
-        if (std.fmt.parseInt(u32, part, 10)) |index| {
-            if (current.jsType().isArray()) {
-                if (index >= try current.getLength(globalThis)) return null;
-                current = try current.getIndex(globalThis, index);
-            } else {
-                return null;
-            }
-        } else |_| if (current.isObject()) {
-            current = try current.get(globalThis, part) orelse return null;
-        } else {
-            return null;
-        }
-    }
-
-    return if (current.isEmptyOrUndefinedOrNull()) null else current;
-}
-
 // Generate test label by positionally injecting parameters with printf formatting
 fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSValue, test_idx: usize) !string {
     const allocator = bun.default_allocator;
@@ -2045,19 +2025,18 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
             const var_start = idx + 1;
             var var_end = var_start;
 
-            if (std.ascii.isAlphabetic(label[var_end]) or label[var_end] == '_' or label[var_end] == '$') {
+            if (bun.js_lexer.isIdentifierStart(label[var_end])) {
                 var_end += 1;
 
                 while (var_end < label.len) {
                     const c = label[var_end];
                     if (c == '.') {
-                        const next_char = label[var_end + 1];
-                        if (var_end + 1 < label.len and (std.ascii.isAlphanumeric(next_char) or next_char == '_' or next_char == '$')) {
+                        if (var_end + 1 < label.len and bun.js_lexer.isIdentifierContinue(label[var_end + 1])) {
                             var_end += 1;
                         } else {
                             break;
                         }
-                    } else if (std.ascii.isAlphanumeric(c) or c == '_' or c == '$') {
+                    } else if (bun.js_lexer.isIdentifierContinue(c)) {
                         var_end += 1;
                     } else {
                         break;
@@ -2065,7 +2044,8 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                 }
 
                 const var_path = label[var_start..var_end];
-                if (try resolvePropertyPath(globalThis, function_args[0], var_path)) |value| {
+                const value = try function_args[0].getIfPropertyExistsFromPath(globalThis, bun.String.init(var_path).toJS(globalThis));
+                if (!value.isEmptyOrUndefinedOrNull()) {
                     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                     defer formatter.deinit();
                     const value_str = std.fmt.allocPrint(allocator, "{}", .{value.toFmt(&formatter)}) catch bun.outOfMemory();
@@ -2075,7 +2055,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                     continue;
                 }
             } else {
-                while (var_end < label.len and (std.ascii.isAlphanumeric(label[var_end]) or label[var_end] == '_')) {
+                while (var_end < label.len and (bun.js_lexer.isIdentifierContinue(label[var_end]) and label[var_end] != '$')) {
                     var_end += 1;
                 }
             }

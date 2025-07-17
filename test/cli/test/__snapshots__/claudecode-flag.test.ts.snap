@@ -1,0 +1,5 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`CLAUDECODE=0 shows normal test output 1`] = `"bun test <version> (<revision>)"`;
+
+exports[`CLAUDECODE=1 shows quiet test output (only failures) 1`] = `"bun test <version> (<revision>)"`;

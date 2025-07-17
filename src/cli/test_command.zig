@@ -97,6 +97,11 @@ fn fmtStatusTextLine(comptime status: @Type(.enum_literal), comptime emoji_or_co
 }
 
 fn writeTestStatusLine(comptime status: @Type(.enum_literal), writer: anytype) void {
+    // In quiet mode (CLAUDECODE=1), only print failures
+    if (bun.getRuntimeFeatureFlag(.CLAUDECODE) and status != .fail) {
+        return;
+    }
+    
     if (Output.enable_ansi_colors_stderr)
         writer.print(fmtStatusTextLine(status, true), .{}) catch unreachable
     else
@@ -644,6 +649,139 @@ pub const CommandLineReporter = struct {
         file_reporter: ?FileReporter,
         line_number: u32,
     ) void {
+        // In quiet mode (CLAUDECODE=1), only print failures
+        if (bun.getRuntimeFeatureFlag(.CLAUDECODE) and status != .fail) {
+            // Still need to handle JUnit reporting if enabled
+            if (file_reporter) |reporter| {
+                switch (reporter) {
+                    .junit => |junit| {
+                        const filename = brk: {
+                            if (strings.hasPrefix(file, bun.fs.FileSystem.instance.top_level_dir)) {
+                                break :brk strings.withoutLeadingPathSeparator(file[bun.fs.FileSystem.instance.top_level_dir.len..]);
+                            } else {
+                                break :brk file;
+                            }
+                        };
+
+                        if (!strings.eql(junit.current_file, filename)) {
+                            while (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
+                                junit.endTestSuite() catch bun.outOfMemory();
+                            }
+
+                            if (junit.current_file.len > 0) {
+                                junit.endTestSuite() catch bun.outOfMemory();
+                            }
+
+                            junit.beginTestSuite(filename) catch bun.outOfMemory();
+                        }
+
+                        var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
+                        var parent_ = parent;
+
+                        while (parent_) |scope| {
+                            scopes_stack.append(scope) catch break;
+                            parent_ = scope.parent;
+                        }
+
+                        const scopes: []*jest.DescribeScope = scopes_stack.slice();
+
+                        // Replicate the JUnit reporting logic from the normal flow
+                        var needed_suites = std.ArrayList(*jest.DescribeScope).init(bun.default_allocator);
+                        defer needed_suites.deinit();
+
+                        for (scopes, 0..) |_, i| {
+                            const index = (scopes.len - 1) - i;
+                            const scope = scopes[index];
+                            if (scope.label.len > 0) {
+                                needed_suites.append(scope) catch bun.outOfMemory();
+                            }
+                        }
+
+                        var current_suite_depth: u32 = 0;
+                        if (junit.suite_stack.items.len > 0) {
+                            for (junit.suite_stack.items) |suite_info| {
+                                if (!suite_info.is_file_suite) {
+                                    current_suite_depth += 1;
+                                }
+                            }
+                        }
+
+                        while (current_suite_depth > needed_suites.items.len) {
+                            if (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
+                                junit.endTestSuite() catch bun.outOfMemory();
+                                current_suite_depth -= 1;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        var suites_to_close: u32 = 0;
+                        var suite_index: usize = 0;
+                        for (junit.suite_stack.items) |suite_info| {
+                            if (suite_info.is_file_suite) continue;
+
+                            if (suite_index < needed_suites.items.len) {
+                                const needed_scope = needed_suites.items[suite_index];
+                                if (!strings.eql(suite_info.name, needed_scope.label)) {
+                                    suites_to_close = @as(u32, @intCast(current_suite_depth)) - @as(u32, @intCast(suite_index));
+                                    break;
+                                }
+                            } else {
+                                suites_to_close = @as(u32, @intCast(current_suite_depth)) - @as(u32, @intCast(suite_index));
+                                break;
+                            }
+                            suite_index += 1;
+                        }
+
+                        while (suites_to_close > 0) {
+                            if (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
+                                junit.endTestSuite() catch bun.outOfMemory();
+                                current_suite_depth -= 1;
+                                suites_to_close -= 1;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        var describe_suite_index: usize = 0;
+                        for (junit.suite_stack.items) |suite_info| {
+                            if (!suite_info.is_file_suite) {
+                                describe_suite_index += 1;
+                            }
+                        }
+
+                        while (describe_suite_index < needed_suites.items.len) {
+                            const scope = needed_suites.items[describe_suite_index];
+                            junit.beginTestSuiteWithLine(scope.label, scope.line_number, false) catch bun.outOfMemory();
+                            describe_suite_index += 1;
+                        }
+
+                        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                        defer arena.deinit();
+                        var stack_fallback = std.heap.stackFallback(4096, arena.allocator());
+                        const allocator = stack_fallback.get();
+                        var concatenated_describe_scopes = std.ArrayList(u8).init(allocator);
+
+                        {
+                            const initial_length = concatenated_describe_scopes.items.len;
+                            for (scopes) |scope| {
+                                if (scope.label.len > 0) {
+                                    if (initial_length != concatenated_describe_scopes.items.len) {
+                                        concatenated_describe_scopes.appendSlice(" &gt; ") catch bun.outOfMemory();
+                                    }
+
+                                    escapeXml(scope.label, concatenated_describe_scopes.writer()) catch bun.outOfMemory();
+                                }
+                            }
+                        }
+
+                        const display_label = if (label.len > 0) label else "test";
+                        junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number) catch bun.outOfMemory();
+                    },
+                }
+            }
+            return;
+        }
         var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
         var parent_ = parent;
 

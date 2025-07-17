@@ -53,5 +53,5 @@ test("basic", async () => {
 
   expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.5.tgz`]);
 
-  expect(out).toContain("Installation cancelled because of fatal security advisories"); // TODO: Error message is TBA
+  expect(out).toContain("Installation cancelled due to fatal security advisories");
 });

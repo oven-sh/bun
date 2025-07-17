@@ -619,6 +619,15 @@ pub const CommandLineReporter = struct {
     todos_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
 
     file_reporter: ?FileReporter = null,
+    
+    // Track current file info for CLAUDECODE mode
+    current_file_title: ?string = null,
+    current_file_prefix: ?string = null,
+    current_repeat_info: ?struct {
+        count: u32,
+        index: u32,
+    } = null,
+    filename_printed_for_current_file: bool = false,
 
     pub const FileReporter = union(enum) {
         junit: *JunitReporter,
@@ -649,139 +658,6 @@ pub const CommandLineReporter = struct {
         file_reporter: ?FileReporter,
         line_number: u32,
     ) void {
-        // In quiet mode (CLAUDECODE=1), only print failures
-        if (bun.getRuntimeFeatureFlag(.CLAUDECODE) and status != .fail) {
-            // Still need to handle JUnit reporting if enabled
-            if (file_reporter) |reporter| {
-                switch (reporter) {
-                    .junit => |junit| {
-                        const filename = brk: {
-                            if (strings.hasPrefix(file, bun.fs.FileSystem.instance.top_level_dir)) {
-                                break :brk strings.withoutLeadingPathSeparator(file[bun.fs.FileSystem.instance.top_level_dir.len..]);
-                            } else {
-                                break :brk file;
-                            }
-                        };
-
-                        if (!strings.eql(junit.current_file, filename)) {
-                            while (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
-                                junit.endTestSuite() catch bun.outOfMemory();
-                            }
-
-                            if (junit.current_file.len > 0) {
-                                junit.endTestSuite() catch bun.outOfMemory();
-                            }
-
-                            junit.beginTestSuite(filename) catch bun.outOfMemory();
-                        }
-
-                        var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
-                        var parent_ = parent;
-
-                        while (parent_) |scope| {
-                            scopes_stack.append(scope) catch break;
-                            parent_ = scope.parent;
-                        }
-
-                        const scopes: []*jest.DescribeScope = scopes_stack.slice();
-
-                        // Replicate the JUnit reporting logic from the normal flow
-                        var needed_suites = std.ArrayList(*jest.DescribeScope).init(bun.default_allocator);
-                        defer needed_suites.deinit();
-
-                        for (scopes, 0..) |_, i| {
-                            const index = (scopes.len - 1) - i;
-                            const scope = scopes[index];
-                            if (scope.label.len > 0) {
-                                needed_suites.append(scope) catch bun.outOfMemory();
-                            }
-                        }
-
-                        var current_suite_depth: u32 = 0;
-                        if (junit.suite_stack.items.len > 0) {
-                            for (junit.suite_stack.items) |suite_info| {
-                                if (!suite_info.is_file_suite) {
-                                    current_suite_depth += 1;
-                                }
-                            }
-                        }
-
-                        while (current_suite_depth > needed_suites.items.len) {
-                            if (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
-                                junit.endTestSuite() catch bun.outOfMemory();
-                                current_suite_depth -= 1;
-                            } else {
-                                break;
-                            }
-                        }
-
-                        var suites_to_close: u32 = 0;
-                        var suite_index: usize = 0;
-                        for (junit.suite_stack.items) |suite_info| {
-                            if (suite_info.is_file_suite) continue;
-
-                            if (suite_index < needed_suites.items.len) {
-                                const needed_scope = needed_suites.items[suite_index];
-                                if (!strings.eql(suite_info.name, needed_scope.label)) {
-                                    suites_to_close = @as(u32, @intCast(current_suite_depth)) - @as(u32, @intCast(suite_index));
-                                    break;
-                                }
-                            } else {
-                                suites_to_close = @as(u32, @intCast(current_suite_depth)) - @as(u32, @intCast(suite_index));
-                                break;
-                            }
-                            suite_index += 1;
-                        }
-
-                        while (suites_to_close > 0) {
-                            if (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
-                                junit.endTestSuite() catch bun.outOfMemory();
-                                current_suite_depth -= 1;
-                                suites_to_close -= 1;
-                            } else {
-                                break;
-                            }
-                        }
-
-                        var describe_suite_index: usize = 0;
-                        for (junit.suite_stack.items) |suite_info| {
-                            if (!suite_info.is_file_suite) {
-                                describe_suite_index += 1;
-                            }
-                        }
-
-                        while (describe_suite_index < needed_suites.items.len) {
-                            const scope = needed_suites.items[describe_suite_index];
-                            junit.beginTestSuiteWithLine(scope.label, scope.line_number, false) catch bun.outOfMemory();
-                            describe_suite_index += 1;
-                        }
-
-                        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-                        defer arena.deinit();
-                        var stack_fallback = std.heap.stackFallback(4096, arena.allocator());
-                        const allocator = stack_fallback.get();
-                        var concatenated_describe_scopes = std.ArrayList(u8).init(allocator);
-
-                        {
-                            const initial_length = concatenated_describe_scopes.items.len;
-                            for (scopes) |scope| {
-                                if (scope.label.len > 0) {
-                                    if (initial_length != concatenated_describe_scopes.items.len) {
-                                        concatenated_describe_scopes.appendSlice(" &gt; ") catch bun.outOfMemory();
-                                    }
-
-                                    escapeXml(scope.label, concatenated_describe_scopes.writer()) catch bun.outOfMemory();
-                                }
-                            }
-                        }
-
-                        const display_label = if (label.len > 0) label else "test";
-                        junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number) catch bun.outOfMemory();
-                    },
-                }
-            }
-            return;
-        }
         var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
         var parent_ = parent;
 
@@ -791,8 +667,13 @@ pub const CommandLineReporter = struct {
         }
 
         const scopes: []*jest.DescribeScope = scopes_stack.slice();
-
         const display_label = if (label.len > 0) label else "test";
+        
+        // In quiet mode (CLAUDECODE=1), only print failures to console
+        // but still handle JUnit reporting normally below
+        if (bun.getRuntimeFeatureFlag(.CLAUDECODE) and status != .fail) {
+            // Skip console output but continue to JUnit reporting
+        } else {
 
         const color_code = comptime if (skip) "<d>" else "";
 
@@ -836,6 +717,7 @@ pub const CommandLineReporter = struct {
         }
 
         writer.writeAll("\n") catch unreachable;
+        }
 
         if (file_reporter) |reporter| {
             switch (reporter) {
@@ -960,6 +842,27 @@ pub const CommandLineReporter = struct {
     pub inline fn summary(this: *CommandLineReporter) *TestRunner.Summary {
         return &this.jest.summary;
     }
+    
+    pub fn printFilenameIfNeeded(this: *CommandLineReporter) void {
+        if (this.filename_printed_for_current_file) return;
+        
+        if (this.current_file_title) |file_title| {
+            const file_prefix = this.current_file_prefix orelse "";
+            
+            if (this.current_repeat_info) |repeat_info| {
+                if (repeat_info.count > 1) {
+                    Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_info.index + 1 });
+                } else {
+                    Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
+                }
+            } else {
+                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
+            }
+            
+            Output.flush();
+            this.filename_printed_for_current_file = true;
+        }
+    }
 
     pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         const writer = Output.errorWriterBuffered();
@@ -981,6 +884,11 @@ pub const CommandLineReporter = struct {
         var writer_ = Output.errorWriterBuffered();
         defer Output.flush();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
+
+        // In CLAUDECODE mode, print filename before first failure
+        if (bun.getRuntimeFeatureFlag(.CLAUDECODE)) {
+            this.printFilenameIfNeeded();
+        }
 
         // when the tests fail, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
@@ -1979,12 +1887,25 @@ pub const TestCommand = struct {
         vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
-            if (repeat_count > 1) {
-                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });
+            // Store filename info for CLAUDECODE mode
+            reporter.current_file_title = file_title;
+            reporter.current_file_prefix = file_prefix;
+            reporter.current_repeat_info = if (repeat_count > 1) .{ .count = repeat_count, .index = repeat_index } else null;
+            reporter.filename_printed_for_current_file = false;
+            
+            if (bun.getRuntimeFeatureFlag(.CLAUDECODE)) {
+                // In CLAUDECODE mode, don't print filename immediately
+                // It will be printed by printFilenameIfNeeded when first failure occurs
             } else {
-                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
+                // Normal mode - print filename immediately
+                if (repeat_count > 1) {
+                    Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });
+                } else {
+                    Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
+                }
+                Output.flush();
+                reporter.filename_printed_for_current_file = true;
             }
-            Output.flush();
 
             var promise = try vm.loadEntryPointForTestRunner(file_path);
             reporter.summary().files += 1;

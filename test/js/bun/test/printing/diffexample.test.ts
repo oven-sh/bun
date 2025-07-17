@@ -162,11 +162,152 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 4 - ansi colors don't get printed to console [DURATION]
+    34 | test("example 4 - ansi colors don't get printed to console", () => {
+    35 |   expect("\\x1b[31mhello\\x1b[0m").toEqual("\\x1b[32mhello\\x1b[0m");
+    36 | });
+    37 | 
+    38 | test("example 5 - Unicode characters", () => {
+    39 |   expect("Hello 👋 世界 🌍").toEqual("Hello 👋 世界 🌎");
+                                   ^
+    error: expect(received).toEqual(expected)
 
-     0 pass
-     4 fail
-     4 expect() calls
-    Ran 4 tests across 1 file. [DURATION]
+    Difference:
+
+    - Received
+    + Expected
+
+    @@ -1 +1 @@
+    - Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0D
+    + Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0E
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 5 - Unicode characters [DURATION]
+    38 | test("example 5 - Unicode characters", () => {
+    39 |   expect("Hello 👋 世界 🌍").toEqual("Hello 👋 世界 🌎");
+    40 | });
+    41 | 
+    42 | test("example 6 - Unicode with line breaks", () => {
+    43 |   expect("Line 1: 你好\\nLine 2: مرحبا\\nLine 3: Здравствуйте").toEqual("Line 1: 你好\\nLine 2: مرحبا\\nLine 3: Привет");
+                                                                    ^
+    error: expect(received).toEqual(expected)
+
+    Difference:
+
+    - Received
+    + Expected
+
+    @@ -1,3 +1,3 @@
+      "Line 1: 你好
+       Line 2: مرحبا
+    -  Line 3: Здравствуйте"
+    +  Line 3: Привет"
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 6 - Unicode with line breaks [DURATION]
+    47 |   expect({
+    48 |     emoji: "🔥💧🌊",
+    49 |     chinese: "测试字符串",
+    50 |     arabic: "اختبار",
+    51 |     mixed: "Hello 世界 🌍",
+    52 |   }).toEqual({
+              ^
+    error: expect(received).toEqual(expected)
+
+    Difference:
+
+    - Received
+    + Expected
+
+    @@ -1,6 +1,6 @@
+      {
+        arabic: اختبار,
+    -   chinese: 测试字符串,
+    +   chinese: 测试文本,
+        emoji: \\uD83D\\uDD25\\uD83D\\uDCA7\\uD83C\\uDF0A,
+    -   mixed: Hello 世界 \\uD83C\\uDF0D,
+    +   mixed: Hello 世界 \\uD83C\\uDF0E,
+      }
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 7 - Mixed Unicode in objects [DURATION]
+    56 |     mixed: "Hello 世界 🌎",
+    57 |   });
+    58 | });
+    59 | 
+    60 | test("example 8 - Latin-1 characters", () => {
+    61 |   expect("café résumé naïve").toEqual("café resumé naive");
+                                      ^
+    error: expect(received).toEqual(expected)
+
+    Difference:
+
+    - Received
+    + Expected
+
+    @@ -1 +1 @@
+    - café résumé naïve
+    + café resumé naive
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 8 - Latin-1 characters [DURATION]
+    (pass) example 9 - Latin-1 extended characters [DURATION]
+    64 | test("example 9 - Latin-1 extended characters", () => {
+    65 |   expect("© ® ™ £ € ¥ § ¶").toEqual("© ® ™ £ € ¥ § ¶");
+    66 | });
+    67 | 
+    68 | test("example 10 - Latin-1 with line breaks", () => {
+    69 |   expect("Línea 1: ñoño\\nLínea 2: àèìòù\\nLínea 3: äëïöü").toEqual("Línea 1: ñoño\\nLínea 2: àèìòù\\nLínea 3: aeiou");
+                                                                  ^
+    error: expect(received).toEqual(expected)
+
+    Difference:
+
+    - Received
+    + Expected
+
+    @@ -1,3 +1,3 @@
+      "Línea 1: ñoño
+       Línea 2: àèìòù
+    -  Línea 3: äëïöü"
+    +  Línea 3: aeiou"
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 10 - Latin-1 with line breaks [DURATION]
+    72 | test("example 11 - Latin-1 in objects", () => {
+    73 |   expect({
+    74 |     french: "crème brûlée",
+    75 |     spanish: "niño español",
+    76 |     special: "½ ¼ ¾ ± × ÷",
+    77 |   }).toEqual({
+              ^
+    error: expect(received).toEqual(expected)
+
+    Difference:
+
+    - Received
+    + Expected
+
+    @@ -1,5 +1,5 @@
+      {
+    -   french: crème brûlée,
+    +   french: crème brulée,
+        spanish: niño español,
+        special: ½ ¼ ¾ ± × ÷,
+      }
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 11 - Latin-1 in objects [DURATION]
+
+     1 pass
+     10 fail
+     11 expect() calls
+    Ran 11 tests across 1 file. [DURATION]
     "
   `);
   expect(spawn.exitCode).toBe(1);

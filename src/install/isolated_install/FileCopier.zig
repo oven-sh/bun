@@ -1,0 +1,130 @@
+pub const FileCopier = struct {
+    src_dir: FD,
+
+    src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
+    dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+
+    pub fn copy(this: *FileCopier, skip_dirnames: []const bun.OSPathSlice) OOM!sys.Maybe(void) {
+        var dest_dir = dest_dir: {
+            if (comptime Environment.isWindows) {
+                break :dest_dir FD.cwd().stdDir().openDirW(this.dest_subpath.slice(), .{}) catch {
+                    FD.cwd().makePath(u16, this.dest_subpath.slice()) catch {};
+                    break :dest_dir FD.cwd().stdDir().openDirW(this.dest_subpath.slice(), .{}) catch {
+                        unreachable;
+                    };
+                };
+            }
+
+            break :dest_dir FD.cwd().stdDir().makeOpenPath(this.dest_subpath.slice(), .{}) catch {
+                unreachable;
+            };
+        };
+        defer dest_dir.close();
+
+        var copy_file_state: bun.CopyFileState = .{};
+
+        var walker: Walker = try .walk(
+            this.src_dir,
+            bun.default_allocator,
+            &.{},
+            skip_dirnames,
+        );
+        defer walker.deinit();
+
+        while (switch (walker.next()) {
+            .result => |res| res,
+            .err => |err| return .initErr(err),
+        }) |entry| {
+            if (comptime Environment.isWindows) {
+                switch (entry.kind) {
+                    .directory, .file => {},
+                    else => continue,
+                }
+
+                var src_path_save = this.src_path.save();
+                defer src_path_save.restore();
+
+                this.src_path.append(entry.path);
+
+                var dest_subpath_save = this.dest_subpath.save();
+                defer dest_subpath_save.restore();
+
+                this.dest_subpath.append(entry.path);
+
+                switch (entry.kind) {
+                    .directory => {
+                        if (bun.windows.CreateDirectoryExW(this.src_path.sliceZ(), this.dest_subpath.sliceZ(), null) == null) {
+                            bun.MakePath.makePath(u16, dest_dir, entry.path) catch {};
+                        }
+                    },
+                    .file => {
+                        bun.copyFile(this.src_path.sliceZ(), this.dest_subpath.sliceZ()).unwrap() catch {
+                            if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
+                                bun.MakePath.makePath(u16, dest_dir, entry_dirname) catch {};
+                                switch (bun.copyFile(this.src_path.sliceZ(), this.dest_subpath.sliceZ())) {
+                                    .result => {},
+                                    .err => |err| {
+                                        return .initErr(err);
+                                    },
+                                }
+                            }
+                        };
+                    },
+                    else => unreachable,
+                }
+            } else {
+                if (entry.kind != .file) {
+                    continue;
+                }
+
+                const src = switch (entry.dir.openat(entry.basename, bun.O.RDONLY, 0)) {
+                    .result => |fd| fd,
+                    .err => |err| {
+                        return .initErr(err);
+                    },
+                };
+                defer src.close();
+
+                var dest = dest_dir.createFileZ(entry.path, .{}) catch dest: {
+                    if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+                        bun.MakePath.makePath(bun.OSPathChar, dest_dir, entry_dirname) catch {};
+                    }
+
+                    break :dest dest_dir.createFileZ(entry.path, .{}) catch |err| {
+                        Output.prettyErrorln("<r><red>{s}<r>: copy file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                        Global.exit(1);
+                    };
+                };
+                defer dest.close();
+
+                if (comptime Environment.isPosix) {
+                    const stat = src.stat().unwrap() catch continue;
+                    _ = bun.c.fchmod(dest.handle, @intCast(stat.mode));
+                }
+
+                switch (bun.copyFileWithState(src, .fromStdFile(dest), &copy_file_state)) {
+                    .result => {},
+                    .err => |err| {
+                        return .initErr(err);
+                    },
+                }
+            }
+        }
+
+        return .success;
+    }
+};
+
+// @sortImports
+
+const std = @import("std");
+
+const Walker = @import("../../walker_skippable.zig");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const OOM = bun.OOM;
+const sys = bun.sys;
+const Output = bun.Output;
+const Global = bun.Global;

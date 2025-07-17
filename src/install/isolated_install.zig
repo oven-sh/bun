@@ -618,6 +618,7 @@ pub fn installIsolatedPackages(
             .preallocated_tasks = .init(bun.default_allocator),
             .trusted_dependencies_mutex = .{},
             .trusted_dependencies_from_update_requests = manager.findTrustedDependenciesFromUpdateRequests(),
+            .supported_backend = .init(PackageInstall.supported_method),
         };
 
         // add the pending task count upfront

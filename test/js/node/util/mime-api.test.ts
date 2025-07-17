@@ -1,6 +1,6 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunExe } from "harness";
-import { MIMEType, MIMEParams } from "util";
+import { MIMEParams, MIMEType } from "util";
 
 describe("MIME API", () => {
   const WHITESPACES = "\t\n\f\r ";

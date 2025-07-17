@@ -25,6 +25,43 @@ else
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
+/// In debug builds, this will catch memory leaks. In release builds, it is mimalloc.
+pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug or Environment.enable_asan)
+    debug_allocator_data.allocator
+else
+    default_allocator;
+pub const debug_allocator_data = struct {
+    comptime {
+        if (!Environment.isDebug) @compileError("only available in debug");
+    }
+    pub var backing: ?std.heap.DebugAllocator(.{}) = null;
+    pub const allocator: std.mem.Allocator = .{
+        .ptr = undefined,
+        .vtable = &.{
+            .alloc = &alloc,
+            .resize = &resize,
+            .remap = &remap,
+            .free = &free,
+        },
+    };
+
+    fn alloc(_: *anyopaque, new_len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        return backing.?.allocator().rawAlloc(new_len, alignment, ret_addr);
+    }
+
+    fn resize(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        return backing.?.allocator().rawResize(memory, alignment, new_len, ret_addr);
+    }
+
+    fn remap(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        return backing.?.allocator().rawRemap(memory, alignment, new_len, ret_addr);
+    }
+
+    fn free(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        return backing.?.allocator().rawFree(memory, alignment, ret_addr);
+    }
+};
+
 pub extern "c" fn powf(x: f32, y: f32) f32;
 pub extern "c" fn pow(x: f64, y: f64) f64;
 
@@ -84,6 +121,15 @@ pub const JSError = error{
     JSError,
     // XXX: This is temporary! meghan will remove this soon
     OutOfMemory,
+};
+
+pub const JSExecutionTerminated = error{
+    /// JavaScript execution has been terminated.
+    /// This condition is indicated by throwing an exception, so most code should still handle it
+    /// with JSError. If you expect that you will not throw any errors other than the termination
+    /// exception, you can catch JSError, assert that the exception is the termination exception,
+    /// and return error.JSExecutionTerminated.
+    JSExecutionTerminated,
 };
 
 pub const JSOOM = OOM || JSError;
@@ -208,13 +254,22 @@ pub const stringZ = StringTypes.stringZ;
 pub const string = StringTypes.string;
 pub const CodePoint = StringTypes.CodePoint;
 
-pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.max_path_bytes;
-pub const PathBuffer = [MAX_PATH_BYTES]u8;
-pub const WPathBuffer = [std.os.windows.PATH_MAX_WIDE]u16;
-pub const OSPathChar = if (Environment.isWindows) u16 else u8;
-pub const OSPathSliceZ = [:0]const OSPathChar;
-pub const OSPathSlice = []const OSPathChar;
-pub const OSPathBuffer = if (Environment.isWindows) WPathBuffer else PathBuffer;
+pub const paths = @import("./paths.zig");
+pub const MAX_PATH_BYTES = paths.MAX_PATH_BYTES;
+pub const PathBuffer = paths.PathBuffer;
+pub const PATH_MAX_WIDE = paths.PATH_MAX_WIDE;
+pub const WPathBuffer = paths.WPathBuffer;
+pub const OSPathChar = paths.OSPathChar;
+pub const OSPathSliceZ = paths.OSPathSliceZ;
+pub const OSPathSlice = paths.OSPathSlice;
+pub const OSPathBuffer = paths.OSPathBuffer;
+pub const Path = paths.Path;
+pub const AbsPath = paths.AbsPath;
+pub const RelPath = paths.RelPath;
+pub const EnvPath = paths.EnvPath;
+pub const path_buffer_pool = paths.path_buffer_pool;
+pub const w_path_buffer_pool = paths.w_path_buffer_pool;
+pub const os_path_buffer_pool = paths.os_path_buffer_pool;
 
 pub inline fn cast(comptime To: type, value: anytype) To {
     if (@typeInfo(@TypeOf(value)) == .int) {
@@ -706,14 +761,18 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     }
 }
 
-pub fn openDirForIteration(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
+pub fn openDirForIteration(dir: FD, path_: []const u8) sys.Maybe(FD) {
     if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(.fromStdDir(dir), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
-        return res.stdDir();
-    } else {
-        const fd = try sys.openatA(.fromStdDir(dir), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
-        return fd.stdDir();
+        return sys.openDirAtWindowsA(dir, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true });
     }
+    return sys.openatA(dir, path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0);
+}
+
+pub fn openDirForIterationOSPath(dir: FD, path_: []const OSPathChar) sys.Maybe(FD) {
+    if (comptime Environment.isWindows) {
+        return sys.openDirAtWindows(dir, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true });
+    }
+    return sys.openatA(dir, path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0);
 }
 
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
@@ -735,7 +794,7 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
 }
 
 pub const MimallocArena = @import("./allocators/mimalloc_arena.zig").Arena;
-pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
+pub fn getRuntimeFeatureFlag(comptime flag: FeatureFlags.RuntimeFeatureFlag) bool {
     return struct {
         const state = enum(u8) { idk, disabled, enabled };
         var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
@@ -744,7 +803,7 @@ pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
                 .enabled => true,
                 .disabled => false,
                 .idk => {
-                    const enabled = if (getenvZ(flag)) |val|
+                    const enabled = if (getenvZ(@tagName(flag))) |val|
                         strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true")
                     else
                         false;
@@ -1228,7 +1287,7 @@ pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
         const wide_slice = try windows.GetFinalPathNameByHandle(fd.native(), .{}, wide_buf[0..]);
-        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice, true);
+        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice);
         return buf[0..res.written];
     }
 
@@ -1783,10 +1842,14 @@ pub const StringMap = struct {
 
 pub const DotEnv = @import("./env_loader.zig");
 pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
+pub const js_ast = bun.bundle_v2.js_ast;
+pub const Loader = bundle_v2.Loader;
 pub const BundleV2 = bundle_v2.BundleV2;
 pub const ParseTask = bundle_v2.ParseTask;
 
-pub const Mutex = @import("./Mutex.zig");
+pub const threading = @import("./threading.zig");
+pub const Mutex = threading.Mutex;
+pub const Futex = threading.Futex;
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 
 pub fn threadlocalAllocator() std.mem.Allocator {
@@ -1874,6 +1937,7 @@ pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").Standal
 const _string = @import("./string.zig");
 pub const strings = @import("string_immutable.zig");
 pub const String = _string.String;
+pub const ZigString = JSC.ZigString;
 pub const StringJoiner = _string.StringJoiner;
 pub const SliceWithUnderlyingString = _string.SliceWithUnderlyingString;
 pub const PathString = _string.PathString;
@@ -1949,6 +2013,116 @@ pub const StatFS = switch (Environment.os) {
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
+fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), allocator: std.mem.Allocator) !void {
+    var i: usize = 0;
+    var offset_in_args: usize = 1;
+    while (i < env.len) {
+        // skip whitespace
+        while (i < env.len and std.ascii.isWhitespace(env[i])) : (i += 1) {}
+        if (i >= env.len) break;
+
+        // Handle all command-line arguments with quotes preserved
+        const start = i;
+        var j = i;
+
+        // Check if this is an option (starts with --)
+        const is_option = j + 2 <= env.len and env[j] == '-' and env[j + 1] == '-';
+
+        if (is_option) {
+            // Find the end of the option flag (--flag)
+            while (j < env.len and !std.ascii.isWhitespace(env[j]) and env[j] != '=') : (j += 1) {}
+
+            var found_equals = false;
+
+            // Check for equals sign
+            if (j < env.len and env[j] == '=') {
+                found_equals = true;
+                j += 1; // Move past the equals sign
+            } else if (j < env.len and std.ascii.isWhitespace(env[j])) {
+                j += 1; // Move past the space
+                // Skip any additional whitespace
+                while (j < env.len and std.ascii.isWhitespace(env[j])) : (j += 1) {}
+            }
+
+            // Handle quoted values
+            if (j < env.len and (env[j] == '\'' or env[j] == '"')) {
+                const quote_char = env[j];
+                j += 1; // Move past opening quote
+
+                // Find the closing quote
+                while (j < env.len and env[j] != quote_char) : (j += 1) {}
+                if (j < env.len) j += 1; // Move past closing quote
+            } else if (found_equals) {
+                // If we had --flag=value (no quotes), find next whitespace
+                while (j < env.len and !std.ascii.isWhitespace(env[j])) : (j += 1) {}
+            }
+
+            // Copy the entire argument including quotes
+            const arg_len = j - start;
+            const arg = try allocator.allocSentinel(u8, arg_len, 0);
+            @memcpy(arg, env[start..j]);
+            try args.insert(offset_in_args, arg);
+            offset_in_args += 1;
+
+            i = j;
+            continue;
+        }
+
+        // Non-option arguments or standalone values
+        var buf = std.ArrayList(u8).init(allocator);
+
+        var in_single = false;
+        var in_double = false;
+        var escape = false;
+        while (i < env.len) : (i += 1) {
+            const ch = env[i];
+            if (escape) {
+                try buf.append(ch);
+                escape = false;
+                continue;
+            }
+
+            if (ch == '\\') {
+                escape = true;
+                continue;
+            }
+
+            if (in_single) {
+                if (ch == '\'') {
+                    in_single = false;
+                } else {
+                    try buf.append(ch);
+                }
+                continue;
+            }
+
+            if (in_double) {
+                if (ch == '"') {
+                    in_double = false;
+                } else {
+                    try buf.append(ch);
+                }
+                continue;
+            }
+
+            if (ch == '\'') {
+                in_single = true;
+            } else if (ch == '"') {
+                in_double = true;
+            } else if (std.ascii.isWhitespace(ch)) {
+                break;
+            } else {
+                try buf.append(ch);
+            }
+        }
+
+        try buf.append(0);
+        const owned = try buf.toOwnedSlice();
+        try args.insert(offset_in_args, owned[0 .. owned.len - 1 :0]);
+        offset_in_args += 1;
+    }
+}
+
 pub fn initArgv(allocator: std.mem.Allocator) !void {
     if (comptime Environment.isPosix) {
         argv = try allocator.alloc([:0]const u8, std.os.argv.len);
@@ -2007,6 +2181,12 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         argv = out_argv;
     } else {
         argv = try std.process.argsAlloc(allocator);
+    }
+
+    if (bun.getenvZ("BUN_OPTIONS")) |opts| {
+        var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(allocator, argv);
+        try appendOptionsEnv(opts, &argv_list, allocator);
+        argv = argv_list.items;
     }
 }
 
@@ -2547,8 +2727,8 @@ pub fn exitThread() noreturn {
 pub fn deleteAllPoolsForThreadExit() void {
     const pools_to_delete = .{
         JSC.WebCore.ByteListPool,
-        bun.WPathBufferPool,
-        bun.PathBufferPool,
+        bun.w_path_buffer_pool,
+        bun.path_buffer_pool,
         bun.JSC.ConsoleObject.Formatter.Visited.Pool,
         bun.js_parser.StringVoidMap.Pool,
     };
@@ -2601,7 +2781,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
 
 pub const brotli = @import("./brotli.zig");
 
-pub fn iterateDir(dir: std.fs.Dir) DirIterator.Iterator {
+pub fn iterateDir(dir: FD) DirIterator.Iterator {
     return DirIterator.iterate(dir, .u8).iter;
 }
 
@@ -2797,8 +2977,6 @@ pub fn SliceIterator(comptime T: type) type {
     };
 }
 
-pub const Futex = @import("./futex.zig");
-
 // TODO: migrate
 pub const ArenaAllocator = std.heap.ArenaAllocator;
 
@@ -2820,7 +2998,7 @@ noinline fn assertionFailureAtLocation(src: std.builtin.SourceLocation) noreturn
         @compileError(std.fmt.comptimePrint("assertion failure"));
     } else {
         @branchHint(.cold);
-        Output.panic(assertion_failure_msg ++ "at {s}:{d}:{d}", .{ src.file, src.line, src.column });
+        Output.panic(assertion_failure_msg ++ " at {s}:{d}:{d}", .{ src.file, src.line, src.column });
     }
 }
 
@@ -2848,7 +3026,7 @@ pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     }
 
     if (!cheap_value_only_plz) {
-        unreachable;
+        unreachable; // ASSERTION FAILURE
     }
 }
 
@@ -2875,7 +3053,8 @@ pub fn assert(ok: bool) callconv(callconv_inline) void {
     }
 
     if (!ok) {
-        if (comptime Environment.isDebug) unreachable;
+        if (comptime Environment.isDebug)
+            unreachable; // ASSERTION FAILURE
         assertionFailure();
     }
 }
@@ -2925,7 +3104,8 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
     }
 
     if (!value) {
-        if (comptime Environment.isDebug) unreachable;
+        if (comptime Environment.isDebug)
+            unreachable; // ASSERTION FAILURE
         assertionFailureAtLocation(src);
     }
 }
@@ -2953,7 +3133,8 @@ pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
 }
 
 pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
-    if (!condition) unreachable;
+    if (!condition)
+        unreachable; // ASSERTION FAILURE
 }
 
 pub const dns = @import("./dns.zig");
@@ -3328,7 +3509,7 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
 
         pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
             comptime if (strings.eql(f, "d") or strings.eql(f, "any"))
-                @compileError("Invalid format specifier: " ++ f);
+                @compileError("Invalid format specifier: " ++ f ++ ". To use these, call .get() first");
             try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
         }
 
@@ -3474,6 +3655,15 @@ pub inline fn clear(val: anytype, allocator: std.mem.Allocator) void {
     }
 }
 
+pub inline fn move(val: anytype) switch (@typeInfo(@TypeOf(val))) {
+    .pointer => |p| p.child,
+    else => @compileError("unexpected move type"),
+} {
+    const tmp = val.*;
+    @constCast(val).* = undefined;
+    return tmp;
+}
+
 pub inline fn wrappingNegation(val: anytype) @TypeOf(val) {
     return 0 -% val;
 }
@@ -3544,45 +3734,6 @@ pub noinline fn throwStackOverflow() StackOverflow!void {
 }
 const StackOverflow = error{StackOverflow};
 
-// This pool exists because on Windows, each path buffer costs 64 KB.
-// This makes the stack memory usage very unpredictable, which means we can't really know how much stack space we have left.
-// This pool is a workaround to make the stack memory usage more predictable.
-// We keep up to 4 path buffers alive per thread at a time.
-pub fn PathBufferPoolT(comptime T: type) type {
-    return struct {
-        const Pool = ObjectPool(PathBuf, null, true, 4);
-        pub const PathBuf = struct {
-            bytes: T,
-
-            pub fn deinit(this: *PathBuf) void {
-                var node: *Pool.Node = @alignCast(@fieldParentPtr("data", this));
-                node.release();
-            }
-        };
-
-        pub fn get() *T {
-            // use a threadlocal allocator so mimalloc deletes it on thread deinit.
-            return &Pool.get(bun.threadlocalAllocator()).data.bytes;
-        }
-
-        pub fn put(buffer: *T) void {
-            var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
-            path_buf.deinit();
-        }
-
-        pub fn deleteAll() void {
-            Pool.deleteAll();
-        }
-    };
-}
-
-pub const PathBufferPool = PathBufferPoolT(bun.PathBuffer);
-pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPathBuffer) else struct {
-    // So it can be used in code that deletes all the pools.
-    pub fn deleteAll() void {}
-};
-pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;
-
 pub const S3 = @import("./s3/client.zig");
 pub const ptr = @import("ptr.zig");
 
@@ -3599,16 +3750,18 @@ pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
 
 pub const server = @import("./bun.js/api/server.zig");
 pub const macho = @import("./macho.zig");
+pub const pe = @import("./pe.zig");
 pub const valkey = @import("./valkey/index.zig");
 pub const highway = @import("./highway.zig");
 
 pub const MemoryReportingAllocator = @import("allocators/MemoryReportingAllocator.zig");
 
-pub fn move(dest: []u8, src: []const u8) void {
-    if (comptime Environment.allow_assert) {
-        if (src.len != dest.len) {
-            bun.Output.panic("Move: src.len != dest.len, {d} != {d}", .{ src.len, dest.len });
-        }
-    }
-    _ = bun.c.memmove(dest.ptr, src.ptr, src.len);
+pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
+
+pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item))) bool {
+    const T = @TypeOf(item);
+    return switch (T) {
+        u8 => strings.containsChar(list.items, item),
+        else => std.mem.indexOfScalar(T, list.items, item) != null,
+    };
 }

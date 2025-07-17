@@ -176,12 +176,18 @@ export default {
     page("cli/pm", "`bun pm`", {
       description: "Utilities relating to package management with Bun.",
     }),
+    page("cli/why", "`bun why`", {
+      description: "Explains why a package is installed in your project.",
+    }),
     page("install/cache", "Global cache", {
       description:
         "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",
     }),
     page("install/workspaces", "Workspaces", {
       description: "Bun's package manager supports workspaces and monorepo development workflows.",
+    }),
+    page("install/catalogs", "Catalogs", {
+      description: "Use catalogs to share dependency versions between packages in a monorepo.",
     }),
     page("install/lifecycle", "Lifecycle scripts", {
       description: "How Bun handles package lifecycle scripts with trustedDependencies",
@@ -203,6 +209,9 @@ export default {
     page("install/patch", "Patch dependencies", {
       description:
         "Patch dependencies in your project to fix bugs or add features without vendoring the entire package.",
+    }),
+    page("install/audit", "Audit dependencies", {
+      description: "Check installed packages for vulnerabilities.",
     }),
     page("install/npmrc", ".npmrc support", {
       description: "Bun supports loading some configuration options from .npmrc",
@@ -389,7 +398,7 @@ export default {
     page("api/cc", "C Compiler", {
       description: `Build & run native C from JavaScript with Bun's native C compiler API`,
     }), // "`bun:ffi`"),
-    page("api/test", "Testing", {
+    page("cli/test", "Testing", {
       description: `Bun's built-in test runner is fast and uses Jest-compatible syntax.`,
     }), // "`bun:test`"),
     page("api/utils", "Utils", {

@@ -1,5 +1,5 @@
 // Plugin tests concern plugins in development mode.
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { devTest, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
 devTest("onResolve", {

@@ -1,16 +1,11 @@
-const Allocator = std.mem.Allocator;
-const uws = bun.uws;
 const std = @import("std");
 const default_allocator = bun.default_allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Async = bun.Async;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const posix = std.posix;
 const Output = bun.Output;
-const os = std.os;
 
 const uv = bun.windows.libuv;
 pub const Stdio = union(enum) {
@@ -28,6 +23,7 @@ pub const Stdio = union(enum) {
     memfd: bun.FileDescriptor,
     pipe,
     ipc,
+    readable_stream: JSC.WebCore.ReadableStream,
 
     const log = bun.sys.syslog;
 
@@ -83,6 +79,9 @@ pub const Stdio = union(enum) {
             .memfd => |fd| {
                 fd.close();
             },
+            .readable_stream => {
+                // ReadableStream cleanup is handled by the subprocess
+            },
             else => {},
         }
     }
@@ -100,9 +99,9 @@ pub const Stdio = union(enum) {
         };
     }
 
-    pub fn useMemfd(this: *@This(), index: u32) void {
+    pub fn useMemfd(this: *@This(), index: u32) bool {
         if (comptime !Environment.isLinux) {
-            return;
+            return false;
         }
         const label = switch (index) {
             0 => "spawn_stdio_stdin",
@@ -111,7 +110,7 @@ pub const Stdio = union(enum) {
             else => "spawn_stdio_memory_file",
         };
 
-        const fd = bun.sys.memfd_create(label, 0).unwrap() catch return;
+        const fd = bun.sys.memfd_create(label, 0).unwrap() catch return false;
 
         var remain = this.byteSlice();
 
@@ -130,13 +129,13 @@ pub const Stdio = union(enum) {
 
                     Output.debugWarn("Failed to write to memfd: {s}", .{@tagName(err.getErrno())});
                     fd.close();
-                    return;
+                    return false;
                 },
                 .result => |result| {
                     if (result == 0) {
                         Output.debugWarn("Failed to write to memfd: EOF", .{});
                         fd.close();
-                        return;
+                        return false;
                     }
                     written += @intCast(result);
                     remain = remain[result..];
@@ -151,6 +150,7 @@ pub const Stdio = union(enum) {
         }
 
         this.* = .{ .memfd = fd };
+        return true;
     }
 
     fn toPosix(
@@ -195,7 +195,7 @@ pub const Stdio = union(enum) {
                     break :brk .{ .buffer = {} };
                 },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
-                .capture, .pipe, .array_buffer => .{ .buffer = {} },
+                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = {} },
                 .ipc => .{ .ipc = {} },
                 .fd => |fd| .{ .pipe = fd },
                 .memfd => |fd| .{ .pipe = fd },
@@ -248,7 +248,7 @@ pub const Stdio = union(enum) {
                     break :brk .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
                 },
                 .ipc => .{ .ipc = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
-                .capture, .pipe, .array_buffer => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
+                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
                 .fd => |fd| .{ .pipe = fd },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
                 .path => |pathlike| .{ .path = pathlike.slice() },
@@ -281,22 +281,69 @@ pub const Stdio = union(enum) {
 
     pub fn isPiped(self: Stdio) bool {
         return switch (self) {
-            .capture, .array_buffer, .blob, .pipe => true,
+            .capture, .array_buffer, .blob, .pipe, .readable_stream => true,
             .ipc => Environment.isWindows,
             else => false,
         };
     }
 
-    pub fn extract(out_stdio: *Stdio, globalThis: *JSC.JSGlobalObject, i: i32, value: JSValue) bun.JSError!void {
-        switch (value) {
-            // undefined: default
-            .undefined, .zero => return,
-            // null: ignore
-            .null => {
-                out_stdio.* = Stdio{ .ignore = {} };
+    fn extractBodyValue(out_stdio: *Stdio, globalThis: *JSC.JSGlobalObject, i: i32, body: *JSC.WebCore.Body.Value, is_sync: bool) bun.JSError!void {
+        body.toBlobIfPossible();
+
+        if (body.tryUseAsAnyBlob()) |blob| {
+            return out_stdio.extractBlob(globalThis, blob, i);
+        }
+
+        switch (body.*) {
+            .Null, .Empty => {
+                out_stdio.* = .{ .ignore = {} };
                 return;
             },
-            else => {},
+            .Used => {
+                return globalThis.ERR(.BODY_ALREADY_USED, "Body already used", .{}).throw();
+            },
+            .Error => {
+                return globalThis.throwValue(body.Error.toJS(globalThis));
+            },
+
+            .Blob, .WTFStringImpl, .InternalBlob => unreachable, // handled above.
+            .Locked => {
+                if (is_sync) {
+                    return globalThis.throwInvalidArguments("ReadableStream cannot be used in sync mode", .{});
+                }
+
+                switch (i) {
+                    0 => {},
+                    1 => {
+                        return globalThis.throwInvalidArguments("ReadableStream cannot be used for stdout yet. For now, do .stdout", .{});
+                    },
+                    2 => {
+                        return globalThis.throwInvalidArguments("ReadableStream cannot be used for stderr yet. For now, do .stderr", .{});
+                    },
+                    else => unreachable,
+                }
+
+                const stream_value = try body.toReadableStream(globalThis);
+
+                const stream = (try JSC.WebCore.ReadableStream.fromJS(stream_value, globalThis)) orelse return globalThis.throwInvalidArguments("Failed to create ReadableStream", .{});
+
+                if (stream.isDisturbed(globalThis)) {
+                    return globalThis.ERR(.BODY_ALREADY_USED, "ReadableStream has already been used", .{}).throw();
+                }
+
+                out_stdio.* = .{ .readable_stream = stream };
+            },
+        }
+
+        return;
+    }
+
+    pub fn extract(out_stdio: *Stdio, globalThis: *JSC.JSGlobalObject, i: i32, value: JSValue, is_sync: bool) bun.JSError!void {
+        if (value == .zero) return;
+        if (value.isUndefined()) return;
+        if (value.isNull()) {
+            out_stdio.* = Stdio{ .ignore = {} };
+            return;
         }
 
         if (value.isString()) {
@@ -354,34 +401,36 @@ pub const Stdio = union(enum) {
         } else if (value.as(JSC.WebCore.Blob)) |blob| {
             return out_stdio.extractBlob(globalThis, .{ .Blob = blob.dupe() }, i);
         } else if (value.as(JSC.WebCore.Request)) |req| {
-            req.getBodyValue().toBlobIfPossible();
-            return out_stdio.extractBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i);
-        } else if (value.as(JSC.WebCore.Response)) |req| {
-            req.getBodyValue().toBlobIfPossible();
-            return out_stdio.extractBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i);
-        } else if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |req_const| {
-            var req = req_const;
-            if (i == 0) {
-                if (req.toAnyBlob(globalThis)) |blob| {
-                    return out_stdio.extractBlob(globalThis, blob, i);
-                }
+            return extractBodyValue(out_stdio, globalThis, i, req.getBodyValue(), is_sync);
+        } else if (value.as(JSC.WebCore.Response)) |res| {
+            return extractBodyValue(out_stdio, globalThis, i, res.getBodyValue(), is_sync);
+        }
 
-                switch (req.ptr) {
-                    .File, .Blob => {
-                        globalThis.throwTODO("Support fd/blob backed ReadableStream in spawn stdin. See https://github.com/oven-sh/bun/issues/8049") catch {};
-                        return error.JSError;
-                    },
-                    .Direct, .JavaScript, .Bytes => {
-                        // out_stdio.* = .{ .connect = req };
-                        globalThis.throwTODO("Re-enable ReadableStream support in spawn stdin. ") catch {};
-                        return error.JSError;
-                    },
-                    .Invalid => {
-                        return globalThis.throwInvalidArguments("ReadableStream is in invalid state.", .{});
-                    },
-                }
+        if (try JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |stream_| {
+            var stream = stream_;
+            if (stream.toAnyBlob(globalThis)) |blob| {
+                return out_stdio.extractBlob(globalThis, blob, i);
             }
-        } else if (value.asArrayBuffer(globalThis)) |array_buffer| {
+
+            const name: []const u8 = switch (i) {
+                0 => "stdin",
+                1 => "stdout",
+                2 => "stderr",
+                else => unreachable,
+            };
+
+            if (is_sync) {
+                return globalThis.throwInvalidArguments("'{s}' ReadableStream cannot be used in sync mode", .{name});
+            }
+
+            if (stream.isDisturbed(globalThis)) {
+                return globalThis.ERR(.INVALID_STATE, "'{s}' ReadableStream has already been used", .{name}).throw();
+            }
+            out_stdio.* = .{ .readable_stream = stream };
+            return;
+        }
+
+        if (value.asArrayBuffer(globalThis)) |array_buffer| {
             // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
             if (array_buffer.byteSlice().len == 0) {
                 out_stdio.* = .{ .ignore = {} };

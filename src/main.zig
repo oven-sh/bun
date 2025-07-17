@@ -33,14 +33,18 @@ pub fn main() void {
         std.posix.sigaction(std.posix.SIG.XFSZ, &act, null);
     }
 
+    if (Environment.isDebug) {
+        bun.debug_allocator_data.backing = .init;
+    }
+
     // This should appear before we make any calls at all to libuv.
     // So it's safest to put it very early in the main function.
     if (Environment.isWindows) {
         _ = bun.windows.libuv.uv_replace_allocator(
-            @ptrCast(&bun.Mimalloc.mi_malloc),
-            @ptrCast(&bun.Mimalloc.mi_realloc),
-            @ptrCast(&bun.Mimalloc.mi_calloc),
-            @ptrCast(&bun.Mimalloc.mi_free),
+            &bun.Mimalloc.mi_malloc,
+            &bun.Mimalloc.mi_realloc,
+            &bun.Mimalloc.mi_calloc,
+            &bun.Mimalloc.mi_free,
         );
         environ = @ptrCast(std.os.environ.ptr);
         _environ = @ptrCast(std.os.environ.ptr);

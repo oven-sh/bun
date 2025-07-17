@@ -7,6 +7,8 @@ pub const String = extern struct {
     /// 3. If the final bit is not set, then it's a string that is stored in an external buffer.
     bytes: [max_inline_len]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
 
+    pub const empty: String = .{};
+
     /// Create an inline string
     pub fn from(comptime inlinable_buffer: []const u8) String {
         comptime {
@@ -133,7 +135,7 @@ pub const String = extern struct {
         str: *const String,
         buf: string,
 
-        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
             const str = formatter.str;
             try writer.writeAll(str.slice(formatter.buf));
         }
@@ -157,8 +159,30 @@ pub const String = extern struct {
             quote: bool = true,
         };
 
-        pub fn format(formatter: JsonFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: JsonFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
             try writer.print("{}", .{bun.fmt.formatJSONStringUTF8(formatter.str.slice(formatter.buf), .{ .quote = formatter.opts.quote })});
+        }
+    };
+
+    pub inline fn fmtStorePath(self: *const String, buf: []const u8) StorePathFormatter {
+        return .{
+            .buf = buf,
+            .str = self,
+        };
+    }
+
+    pub const StorePathFormatter = struct {
+        str: *const String,
+        buf: string,
+
+        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            for (this.str.slice(this.buf)) |c| {
+                switch (c) {
+                    '/' => try writer.writeByte('+'),
+                    '\\' => try writer.writeByte('+'),
+                    else => try writer.writeByte(c),
+                }
+            }
         }
     };
 
@@ -212,32 +236,46 @@ pub const String = extern struct {
     }
 
     pub const HashContext = struct {
-        a_buf: []const u8,
-        b_buf: []const u8,
+        arg_buf: []const u8,
+        existing_buf: []const u8,
 
-        pub fn eql(ctx: HashContext, a: String, b: String) bool {
-            return a.eql(b, ctx.a_buf, ctx.b_buf);
+        pub fn eql(ctx: HashContext, arg: String, existing: String) bool {
+            return arg.eql(existing, ctx.arg_buf, ctx.existing_buf);
         }
 
-        pub fn hash(ctx: HashContext, a: String) u64 {
-            const str = a.slice(ctx.a_buf);
+        pub fn hash(ctx: HashContext, arg: String) u64 {
+            const str = arg.slice(ctx.arg_buf);
             return bun.hash(str);
         }
     };
 
-    pub const ArrayHashContext = struct {
-        a_buf: []const u8,
-        b_buf: []const u8,
+    pub fn hashContext(l_lockfile: *Lockfile, r_lockfile: ?*Lockfile) HashContext {
+        return .{
+            .arg_buf = l_lockfile.buffers.string_bytes.items,
+            .existing_buf = if (r_lockfile) |r| r.buffers.string_bytes.items else l_lockfile.buffers.string_bytes.items,
+        };
+    }
 
-        pub fn eql(ctx: ArrayHashContext, a: String, b: String, _: usize) bool {
-            return a.eql(b, ctx.a_buf, ctx.b_buf);
+    pub const ArrayHashContext = struct {
+        arg_buf: []const u8,
+        existing_buf: []const u8,
+
+        pub fn eql(ctx: ArrayHashContext, arg: String, existing: String, _: usize) bool {
+            return arg.eql(existing, ctx.arg_buf, ctx.existing_buf);
         }
 
-        pub fn hash(ctx: ArrayHashContext, a: String) u32 {
-            const str = a.slice(ctx.a_buf);
+        pub fn hash(ctx: ArrayHashContext, arg: String) u32 {
+            const str = arg.slice(ctx.arg_buf);
             return @as(u32, @truncate(bun.hash(str)));
         }
     };
+
+    pub fn arrayHashContext(l_lockfile: *const Lockfile, r_lockfile: ?*const Lockfile) ArrayHashContext {
+        return .{
+            .arg_buf = l_lockfile.buffers.string_bytes.items,
+            .existing_buf = if (r_lockfile) |r| r.buffers.string_bytes.items else l_lockfile.buffers.string_bytes.items,
+        };
+    }
 
     pub fn init(
         buf: string,
@@ -413,7 +451,7 @@ pub const String = extern struct {
         return @as(Pointer, @bitCast(@as(u64, @as(u63, @truncate(@as(u64, @bitCast(this)))))));
     }
 
-    pub fn toJS(this: *const String, buffer: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: *const String, buffer: []const u8, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return bun.String.createUTF8ForJS(globalThis, this.slice(buffer));
     }
 
@@ -611,18 +649,12 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 
 const JSC = bun.JSC;
 const IdentityContext = bun.IdentityContext;
 const OOM = bun.OOM;
-const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
 const Lockfile = bun.install.Lockfile;
 const ExternalString = bun.Semver.ExternalString;
 const SlicedString = bun.Semver.SlicedString;

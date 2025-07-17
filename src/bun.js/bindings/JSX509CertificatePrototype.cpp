@@ -99,7 +99,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToString, (JSGlobalObject * g
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "toString"_s);
         return {};
     }
@@ -248,7 +248,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckEmail, (JSGlobalObject *
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "checkEmail"_s);
         return {};
     }
@@ -264,14 +264,16 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckEmail, (JSGlobalObject *
     auto emailString = arg0.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto view = emailString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     uint32_t flags = getFlags(vm, globalObject, scope, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
 
     Bun::UTF8View emailView(view);
 
-    if (!thisObject->checkEmail(globalObject, emailView.span(), flags))
-        return JSValue::encode(jsUndefined());
+    auto check = thisObject->checkEmail(globalObject, emailView.span(), flags);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!check) return JSValue::encode(jsUndefined());
     return JSValue::encode(emailString);
 }
 
@@ -281,7 +283,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckHost, (JSGlobalObject * 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "checkHost"_s);
         return {};
     }
@@ -300,11 +302,13 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckHost, (JSGlobalObject * 
     auto hostString = arg0.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto view = hostString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     Bun::UTF8View hostView(view);
 
-    if (!thisObject->checkHost(globalObject, hostView.span(), flags))
-        return JSValue::encode(jsUndefined());
+    auto check = thisObject->checkHost(globalObject, hostView.span(), flags);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!check) return JSValue::encode(jsUndefined());
     return JSValue::encode(hostString);
 }
 
@@ -314,7 +318,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIP, (JSGlobalObject * gl
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "checkIP"_s);
         return {};
     }
@@ -330,14 +334,16 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIP, (JSGlobalObject * gl
     auto ipString = arg0.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto view = ipString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     WTF::CString ip = view->utf8();
 
     // ignore flags
     // uint32_t flags = getFlags(vm, globalObject, scope, callFrame->argument(1));
     // RETURN_IF_EXCEPTION(scope, {});
 
-    if (!thisObject->checkIP(globalObject, ip.data()))
-        return JSValue::encode(jsUndefined());
+    auto check = thisObject->checkIP(globalObject, ip.data());
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!check) return JSValue::encode(jsUndefined());
     return JSValue::encode(ipString);
 }
 
@@ -347,7 +353,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIssued, (JSGlobalObject 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwVMError(globalObject, scope, createError(globalObject, ErrorCode::ERR_INVALID_THIS, "checkIssued called on incompatible receiver"_s));
 
     JSX509Certificate* issuer = jsDynamicCast<JSX509Certificate*>(callFrame->argument(0));
@@ -356,8 +362,9 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIssued, (JSGlobalObject 
         return {};
     }
 
-    if (!thisObject->checkIssued(globalObject, issuer))
-        return JSValue::encode(jsUndefined());
+    auto check = thisObject->checkIssued(globalObject, issuer);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!check) return JSValue::encode(jsUndefined());
     return JSValue::encode(issuer);
 }
 
@@ -367,7 +374,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckPrivateKey, (JSGlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwVMError(globalObject, scope, createError(globalObject, ErrorCode::ERR_INVALID_THIS, "checkPrivateKey called on incompatible receiver"_s));
 
     JSValue pkeyValue = callFrame->argument(0);
@@ -391,7 +398,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToJSON, (JSGlobalObject * glo
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwVMError(globalObject, scope, createError(globalObject, ErrorCode::ERR_INVALID_THIS, "toJSON called on incompatible receiver"_s));
 
     // There's no standardized JSON encoding for X509 certs so we
@@ -405,12 +412,12 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToLegacyObject, (JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "toLegacyObject"_s);
         return {};
     }
 
-    return JSValue::encode(thisObject->toLegacyObject(globalObject));
+    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->toLegacyObject(globalObject)));
 }
 
 static JSValue undefinedIfEmpty(JSString* value)
@@ -433,7 +440,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncVerify, (JSGlobalObject * glo
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "verify"_s);
         return {};
     }
@@ -459,7 +466,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_ca, (JSGlobalObject * globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "ca"_s);
         return {};
     }
@@ -473,12 +480,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint, (JSGlobalObject * 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "fingerprint"_s);
         return {};
     }
 
-    return JSValue::encode(thisObject->fingerprint());
+    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->fingerprint()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint256, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -487,12 +494,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint256, (JSGlobalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "fingerprint256"_s);
         return {};
     }
 
-    return JSValue::encode(thisObject->fingerprint256());
+    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->fingerprint256()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint512, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -501,12 +508,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint512, (JSGlobalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "fingerprint512"_s);
         return {};
     }
 
-    return JSValue::encode(thisObject->fingerprint512());
+    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->fingerprint512()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subject, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -515,12 +522,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subject, (JSGlobalObject * glob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "subject"_s);
         return {};
     }
 
-    return JSValue::encode(undefinedIfEmpty(thisObject->subject()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->subject())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subjectAltName, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -529,12 +536,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subjectAltName, (JSGlobalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "subjectAltName"_s);
         return {};
     }
 
-    return JSValue::encode(undefinedIfEmpty(thisObject->subjectAltName()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->subjectAltName())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_infoAccess, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -543,7 +550,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_infoAccess, (JSGlobalObject * g
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "infoAccess"_s);
         return {};
     }
@@ -562,12 +569,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_keyUsage, (JSGlobalObject * glo
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "keyUsage"_s);
         return {};
     }
 
-    return JSValue::encode(thisObject->getKeyUsage(globalObject));
+    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->getKeyUsage(globalObject)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_issuer, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -576,12 +583,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_issuer, (JSGlobalObject * globa
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "issuer"_s);
         return {};
     }
 
-    return JSValue::encode(undefinedIfEmpty(thisObject->issuer()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->issuer())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_issuerCertificate, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -590,7 +597,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_issuerCertificate, (JSGlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "issuerCertificate"_s);
         return {};
     }
@@ -617,12 +624,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_publicKey, (JSGlobalObject * gl
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "publicKey"_s);
         return {};
     }
 
-    return JSValue::encode(thisObject->publicKey());
+    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->publicKey()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_raw, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -631,12 +638,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_raw, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "raw"_s);
         return {};
     }
 
-    return JSValue::encode(undefinedIfEmpty(thisObject->raw()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->raw())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_serialNumber, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -645,12 +652,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_serialNumber, (JSGlobalObject *
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "serialNumber"_s);
         return {};
     }
 
-    return JSValue::encode(undefinedIfEmpty(thisObject->serialNumber()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->serialNumber())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFrom, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -659,12 +666,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFrom, (JSGlobalObject * gl
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "validFrom"_s);
         return {};
     }
 
-    return JSValue::encode(undefinedIfEmpty(thisObject->validFrom()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->validFrom())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validTo, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -673,12 +680,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validTo, (JSGlobalObject * glob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "validTo"_s);
         return {};
     }
 
-    return JSValue::encode(undefinedIfEmpty(thisObject->validTo()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->validTo())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validToDate, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -687,7 +694,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validToDate, (JSGlobalObject * 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "validToDate"_s);
         return {};
     }
@@ -710,7 +717,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFromDate, (JSGlobalObject 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSX509Certificate* thisObject = jsDynamicCast<JSX509Certificate*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "validFromDate"_s);
         return {};
     }

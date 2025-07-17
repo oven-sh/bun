@@ -29,9 +29,9 @@ pub fn parse(
 
     var input_slice = try arguments[0].toSlice(globalThis, bun.default_allocator);
     defer input_slice.deinit();
-    var source = logger.Source.initPathString("input.toml", input_slice.slice());
-    const parse_result = TOMLParser.parse(&source, &log, allocator, false) catch {
-        return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse toml"));
+    const source = &logger.Source.initPathString("input.toml", input_slice.slice());
+    const parse_result = TOMLParser.parse(source, &log, allocator, false) catch {
+        return globalThis.throwValue(try log.toJS(globalThis, default_allocator, "Failed to parse toml"));
     };
 
     // for now...
@@ -41,27 +41,24 @@ pub fn parse(
         *js_printer.BufferPrinter,
         &writer,
         parse_result,
-        &source,
+        source,
         .{
             .mangled_props = null,
         },
     ) catch {
-        return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
+        return globalThis.throwValue(try log.toJS(globalThis, default_allocator, "Failed to print toml"));
     };
 
     const slice = writer.ctx.buffer.slice();
-    var out = bun.String.fromUTF8(slice);
+    var out = bun.String.borrowUTF8(slice);
     defer out.deref();
 
     return out.toJSByParseJSON(globalThis);
 }
 
-const TOMLObject = @This();
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
-const std = @import("std");
 const ZigString = JSC.ZigString;
 const logger = bun.logger;
 const bun = @import("bun");

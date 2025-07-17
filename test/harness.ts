@@ -1,12 +1,18 @@
+/**
+ * This file is loaded in every test file in the repository.
+ *
+ * Avoid adding external dependencies here so that we can still run some tests
+ * without always needing to run `bun install` in development.
+ */
+
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
-import { fork, ChildProcess } from "child_process";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFile, readlink, writeFile, readdir, rm } from "fs/promises";
+import { ChildProcess, fork } from "child_process";
+import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-import detectLibc from "detect-libc";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -19,7 +25,14 @@ export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
-export const libcFamily = detectLibc.familySync() as "glibc" | "musl";
+export const libcFamily: "glibc" | "musl" =
+  process.platform !== "linux"
+    ? "glibc"
+    : // process.report.getReport() has incorrect type definitions.
+      (process.report.getReport() as any).header.glibcVersionRuntime
+      ? "glibc"
+      : "musl";
+
 export const isMusl = isLinux && libcFamily === "musl";
 export const isGlibc = isLinux && libcFamily === "glibc";
 export const isBuildKite = process.env.BUILDKITE === "true";
@@ -31,8 +44,9 @@ export const isVerbose = process.env.DEBUG === "1";
 // test.todoIf(isFlaky && isMacOS)("this test is flaky");
 export const isFlaky = isCI;
 export const isBroken = isCI;
+export const isASAN = basename(process.execPath).includes("bun-asan");
 
-export const bunEnv: NodeJS.ProcessEnv = {
+export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
@@ -48,6 +62,10 @@ export const bunEnv: NodeJS.ProcessEnv = {
 };
 
 const ciEnv = { ...bunEnv };
+
+if (isASAN) {
+  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";
+}
 
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
@@ -187,11 +205,42 @@ export async function makeTree(base: string, tree: DirectoryTree) {
   }
 }
 
+export function makeTreeSyncFromDirectoryTree(base: string, tree: DirectoryTree) {
+  const isDirectoryTree = (value: string | DirectoryTree | Buffer): value is DirectoryTree =>
+    typeof value === "object" && value && typeof value?.byteLength === "undefined";
+
+  for (const [name, raw_contents] of Object.entries(tree)) {
+    const contents = (typeof raw_contents === "function" ? raw_contents({ root: base }) : raw_contents) as string;
+    const joined = join(base, name);
+    if (name.includes("/")) {
+      const dir = dirname(name);
+      if (dir !== name && dir !== ".") {
+        fs.mkdirSync(join(base, dir), { recursive: true });
+      }
+    }
+    if (isDirectoryTree(contents)) {
+      fs.mkdirSync(joined);
+      makeTreeSync(joined, contents);
+      continue;
+    }
+    fs.writeFileSync(joined, contents);
+  }
+}
+
+export function makeTreeSync(base: string, filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string) {
+  if (typeof filesOrAbsolutePathToCopyFolderFrom === "string") {
+    fs.cpSync(filesOrAbsolutePathToCopyFolderFrom, base, { recursive: true });
+    return;
+  }
+
+  return makeTreeSyncFromDirectoryTree(base, filesOrAbsolutePathToCopyFolderFrom);
+}
+
 /**
  * Recursively create files within a new temporary directory.
  *
  * @param basename prefix of the new temporary directory
- * @param files directory tree. Each key is a folder or file, and each value is the contents of the file. Use objects for directories.
+ * @param filesOrAbsolutePathToCopyFolderFrom Directory tree or absolute path to a folder to copy. If passing an object each key is a folder or file, and each value is the contents of the file. Use objects for directories.
  * @returns an absolute path to the new temporary directory
  *
  * @example
@@ -204,9 +253,18 @@ export async function makeTree(base: string, tree: DirectoryTree) {
  * });
  * ```
  */
-export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
+export function tempDirWithFiles(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): string {
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
-  makeTree(base, files);
+  makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
+  return base;
+}
+
+export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
+  const base = tmpdirSync();
+  makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
 }
 
@@ -875,6 +933,7 @@ export function osSlashes(path: string) {
 }
 
 import * as child_process from "node:child_process";
+import { basename } from "node:path";
 
 class WriteBlockedError extends Error {
   constructor(time) {
@@ -1066,7 +1125,7 @@ export function tmpdirSync(pattern: string = "bun.test."): string {
 }
 
 export async function runBunInstall(
-  env: NodeJS.ProcessEnv,
+  env: NodeJS.Dict<string>,
   cwd: string,
   options?: {
     allowWarnings?: boolean;
@@ -1107,7 +1166,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = stderrForInstall(await new Response(stderr).text());
+  let err = stderrForInstall(await stderr.text());
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -1118,7 +1177,7 @@ export async function runBunInstall(
   if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
-  let out = await new Response(stdout).text();
+  let out = await stdout.text();
   expect(await exited).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
 }
@@ -1142,8 +1201,8 @@ export async function runBunUpdate(
     env,
   });
 
-  let err = await Bun.readableStreamToText(stderr);
-  let out = await Bun.readableStreamToText(stdout);
+  let err = await stderr.text();
+  let out = await stdout.text();
   let exitCode = await exited;
   if (exitCode !== 0) {
     console.log("stdout:", out);
@@ -1154,7 +1213,7 @@ export async function runBunUpdate(
   return { out: out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/), err, exitCode };
 }
 
-export async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
+export async function pack(cwd: string, env: NodeJS.Dict<string>, ...args: string[]) {
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: [bunExe(), "pm", "pack", ...args],
     cwd,
@@ -1164,13 +1223,13 @@ export async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).not.toContain("warning:");
   expect(err).not.toContain("failed");
   expect(err).not.toContain("panic:");
 
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
 
   const exitCode = await exited;
   expect(exitCode).toBe(0);
@@ -1495,7 +1554,11 @@ export class VerdaccioRegistry {
     this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
       silent,
       // Prefer using a release build of Bun since it's faster
-      execPath: Bun.which("bun") || bunExe(),
+      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
+      env: {
+        ...(bunEnv as any),
+        NODE_NO_WARNINGS: "1",
+      },
     });
 
     this.process.stderr?.on("data", data => {
@@ -1587,16 +1650,17 @@ export class VerdaccioRegistry {
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
     let bunfig = `
-    [install]
-    cache = "${join(dir, ".bun-cache")}"
-    `;
+[install]
+cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
+`;
     if ("saveTextLockfile" in opts) {
       bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
-      `;
+`;
     }
     if (!opts.npm) {
-      bunfig += `registry = "${this.registryUrl()}"`;
+      bunfig += `registry = "${this.registryUrl()}"\n`;
     }
+    bunfig += `linker = "${opts.isolated ? "isolated" : "hoisted"}"\n`;
     await write(join(dir, "bunfig.toml"), bunfig);
   }
 }
@@ -1604,10 +1668,84 @@ export class VerdaccioRegistry {
 type BunfigOpts = {
   saveTextLockfile?: boolean;
   npm?: boolean;
+  isolated?: boolean;
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {
   const results = await readdir(path);
   results.sort();
   return results;
+}
+
+/**
+ * Helper function for making automatically lazily-executed promises.
+ *
+ * The difference is that the promise has not already started to be evaluated when it is created,
+ * only when you await it does it execute the function.
+ *
+ * @example
+ * ```ts
+ * function createMyFixture() {
+ *   return {
+ *     start: lazyPromiseLike(() => fetch("https://example.com")),
+ *     stop: lazyPromiseLike(() => fetch("https://example.com")),
+ *   }
+ * }
+ *
+ * const { start, stop } = createMyFixture();
+ *
+ * await start; // Calls only the start function
+ * ```
+ *
+ * @param fn A function to make lazily evaluated.
+ * @returns A promise-like object that will evaluate the function when `then` is called.
+ */
+export function lazyPromiseLike<T>(fn: () => Promise<T>): PromiseLike<T> {
+  let p: Promise<T>;
+
+  return {
+    then(onfulfilled, onrejected) {
+      if (!p) {
+        p = fn();
+      }
+      return p.then(onfulfilled, onrejected);
+    },
+  };
+}
+
+export async function gunzipJsonRequest(req: Request) {
+  const buf = await req.arrayBuffer();
+  const inflated = Bun.gunzipSync(buf);
+  const body = JSON.parse(Buffer.from(inflated).toString("utf-8"));
+  return body;
+}
+
+export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
+  if (optionalDir) {
+    snapshot = snapshot
+      .replaceAll(fs.realpathSync.native(optionalDir).replaceAll("\\", "/"), "<dir>")
+      .replaceAll(optionalDir, "<dir>");
+  }
+
+  // Remove timestamps from test result lines that start with (pass), (fail), (skip), or (todo)
+  snapshot = snapshot.replace(/^((?:pass|fail|skip|todo)\) .+) \[[\d.]+\s?m?s\]$/gm, "$1");
+
+  return (
+    snapshot
+      .replaceAll("\r\n", "\n")
+      .replaceAll("\\", "/")
+      .replaceAll(fs.realpathSync.native(process.cwd()).replaceAll("\\", "/"), "<cwd>")
+      .replaceAll(fs.realpathSync.native(os.tmpdir()).replaceAll("\\", "/"), "<tmp>")
+      .replaceAll(fs.realpathSync.native(os.homedir()).replaceAll("\\", "/"), "<home>")
+      // look for [\d\d ms] or [\d\d s] with optional periods
+      .replace(/\s\[[\d.]+\s?m?s\]/gm, "")
+      .replace(/^\[[\d.]+\s?m?s\]/gm, "")
+      // line numbers in stack traces like at FunctionName (NN:NN)
+      // it must specifically look at the stacktrace format
+      .replace(/^\s+at (.*?)\(.*?:\d+(?::\d+)?\)/gm, "    at $1(file:NN:NN)")
+      .replaceAll(Bun.version_with_sha, "<version> (<revision>)")
+      .replaceAll(Bun.version, "<bun-version>")
+      .replaceAll(Bun.revision, "<revision>")
+      .trim()
+  );
 }

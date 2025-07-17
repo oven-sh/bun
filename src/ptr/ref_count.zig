@@ -4,6 +4,7 @@ const enable_single_threaded_checks = enable_debug;
 pub const RefCountOptions = struct {
     /// Defaults to the type basename.
     debug_name: ?[]const u8 = null,
+    destructor_ctx: ?type = null,
 };
 
 /// Add managed reference counting to a struct type. This implements a `ref()`
@@ -63,15 +64,21 @@ pub const RefCountOptions = struct {
 ///
 ///     const ref_ptr = RefPtr(T).initRef(existing_raw_pointer);
 ///
+/// If you want to enforce usage of RefPtr for memory management, you
+/// can remove the forwarded `ref` and `deref` methods from `RefCount`.
+/// If these methods are not forwarded, keep in mind that it should use the wrapper.
 pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, options: RefCountOptions) type {
     return struct {
-        const destructor: fn (*T) void = destructor_untyped;
         active_counts: u32,
         thread: if (enable_single_threaded_checks) ?bun.DebugThreadLock else void,
         debug: if (enable_debug) DebugData(false) else void,
 
         const debug_name = options.debug_name orelse bun.meta.typeBaseName(@typeName(T));
         pub const scope = bun.Output.Scoped(debug_name, true);
+        const DEBUG_STACK_TRACE = false;
+
+        const Destructor = if (options.destructor_ctx) |ctx| fn (*T, ctx) void else fn (*T) void;
+        const destructor: Destructor = destructor_untyped;
 
         pub fn init() @This() {
             return .initExactRefs(1);
@@ -94,28 +101,44 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
             if (enable_debug) {
                 counter.debug.assertValid();
             }
-            if (comptime bun.Environment.enable_logs) {
-                scope.log("0x{x}   ref {d} -> {d}", .{
+            if (bun.Environment.enable_logs and scope.isVisible()) {
+                scope.log("0x{x}   ref {d} -> {d}:", .{
                     @intFromPtr(self),
                     counter.active_counts,
                     counter.active_counts + 1,
                 });
+                if (DEBUG_STACK_TRACE) {
+                    bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
+                        .frame_count = 2,
+                        .skip_file_patterns = &.{"ptr/ref_count.zig"},
+                    });
+                }
             }
             counter.assertNonThreadSafeCountIsSingleThreaded();
             counter.active_counts += 1;
         }
 
         pub fn deref(self: *T) void {
+            derefWithContext(self, {});
+        }
+
+        pub fn derefWithContext(self: *T, ctx: (options.destructor_ctx orelse void)) void {
             const counter = getCounter(self);
             if (enable_debug) {
-                counter.debug.assertValid();
+                counter.debug.assertValid(); // Likely double deref.
             }
-            if (comptime bun.Environment.enable_logs) {
-                scope.log("0x{x} deref {d} -> {d}", .{
+            if (bun.Environment.enable_logs and scope.isVisible()) {
+                scope.log("0x{x} deref {d} -> {d}:", .{
                     @intFromPtr(self),
                     counter.active_counts,
                     counter.active_counts - 1,
                 });
+                if (DEBUG_STACK_TRACE) {
+                    bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
+                        .frame_count = 2,
+                        .skip_file_patterns = &.{"ptr/ref_count.zig"},
+                    });
+                }
             }
             counter.assertNonThreadSafeCountIsSingleThreaded();
             counter.active_counts -= 1;
@@ -123,7 +146,11 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
                 if (enable_debug) {
                     counter.debug.deinit(std.mem.asBytes(self), @returnAddress());
                 }
-                destructor(self);
+                if (comptime options.destructor_ctx != null) {
+                    destructor(self, ctx);
+                } else {
+                    destructor(self);
+                }
             }
         }
 
@@ -134,7 +161,7 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
 
         // utility functions
 
-        pub fn hasOneRef(count: *const @This()) bool {
+        pub fn hasOneRef(count: *@This()) bool {
             count.assertNonThreadSafeCountIsSingleThreaded();
             return count.active_counts == 1;
         }
@@ -166,6 +193,10 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
         fn getCounter(self: *T) *@This() {
             return &@field(self, field_name);
         }
+
+        /// Private, allows RefPtr to assert that ref_count is a valid RefCount type.
+        const is_ref_count = unique_symbol;
+        const ref_count_options = options;
     };
 }
 
@@ -203,30 +234,30 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
         pub fn ref(self: *T) void {
             const counter = getCounter(self);
             if (enable_debug) counter.debug.assertValid();
-            const new_count = counter.active_counts.fetchAdd(1, .seq_cst);
+            const old_count = counter.active_counts.fetchAdd(1, .seq_cst);
             if (comptime bun.Environment.enable_logs) {
                 scope.log("0x{x}   ref {d} -> {d}", .{
                     @intFromPtr(self),
-                    new_count - 1,
-                    new_count,
+                    old_count,
+                    old_count + 1,
                 });
             }
-            bun.debugAssert(new_count > 0);
+            bun.debugAssert(old_count > 0);
         }
 
         pub fn deref(self: *T) void {
             const counter = getCounter(self);
             if (enable_debug) counter.debug.assertValid();
-            const new_count = counter.active_counts.fetchSub(1, .seq_cst);
+            const old_count = counter.active_counts.fetchSub(1, .seq_cst);
             if (comptime bun.Environment.enable_logs) {
                 scope.log("0x{x} deref {d} -> {d}", .{
                     @intFromPtr(self),
-                    new_count + 1,
-                    new_count,
+                    old_count,
+                    old_count - 1,
                 });
             }
-            bun.debugAssert(new_count > 0);
-            if (new_count == 1) {
+            bun.debugAssert(old_count > 0);
+            if (old_count == 1) {
                 if (enable_debug) {
                     counter.debug.deinit(std.mem.asBytes(self), @returnAddress());
                 }
@@ -249,7 +280,7 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
 
         pub fn dumpActiveRefs(count: *@This()) void {
             if (enable_debug) {
-                const ptr: *T = @fieldParentPtr(field_name, count);
+                const ptr: *T = @alignCast(@fieldParentPtr(field_name, count));
                 count.debug.dump(@typeName(T), ptr, count.active_counts.load(.seq_cst));
             }
         }
@@ -264,6 +295,10 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
         fn getCounter(self: *T) *@This() {
             return &@field(self, field_name);
         }
+
+        /// Private, allows RefPtr to assert that ref_count is a valid RefCount type.
+        const is_ref_count = unique_symbol;
+        const ref_count_options = options;
     };
 }
 
@@ -275,32 +310,50 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
 /// - `T.ref_count.dump()` to dump all active references.
 /// - AllocationScope integration via `.newTracked()` and `.trackAll()`
 ///
+/// If you want to enforce usage of RefPtr for memory management, you
+/// can remove the forwarded `ref` and `deref` methods from `RefCount`.
+///
 /// See `RefCount`'s comment defined above for examples & best practices.
 pub fn RefPtr(T: type) type {
     return struct {
         data: *T,
         debug: DebugId,
 
+        const RefCountMixin = @FieldType(T, "ref_count");
+        const options = RefCountMixin.ref_count_options;
         comptime {
-            const RefCountMixin = @FieldType(T, "ref_count");
-            bun.assert(@field(T, "ref") == @field(RefCountMixin, "ref"));
-            bun.assert(@field(T, "deref") == @field(RefCountMixin, "deref"));
+            bun.assert(RefCountMixin.is_ref_count == unique_symbol);
         }
         const DebugId = if (enable_debug) TrackedRef.Id else void;
 
         /// Increment the reference count, and return a structure boxing the pointer.
         pub fn initRef(raw_ptr: *T) @This() {
-            raw_ptr.ref();
+            RefCountMixin.ref(raw_ptr);
+            bun.assert(RefCountMixin.is_ref_count == unique_symbol);
             return uncheckedAndUnsafeInit(raw_ptr, @returnAddress());
         }
 
+        // NOTE: would be nice to use an if for deref.
+        //
+        // pub const deref = if (options.destructor_ctx == null) derefWithoutContext else derefWithContext;
+        //
+        // but ZLS doesn't realize it is function so the semantic tokens look bad.
+
         /// Decrement the reference count, and destroy the object if the count is 0.
         pub fn deref(self: *const @This()) void {
+            derefWithContext(self, {});
+        }
+
+        ///  Decrement the reference count, and destroy the object if the count is 0.
+        pub fn derefWithContext(self: *const @This(), ctx: (options.destructor_ctx orelse void)) void {
             if (enable_debug) {
                 self.data.ref_count.debug.release(self.debug, @returnAddress());
             }
-            self.data.deref();
-
+            if (comptime options.destructor_ctx != null) {
+                RefCountMixin.derefWithContext(self.data, ctx);
+            } else {
+                RefCountMixin.deref(self.data);
+            }
             if (bun.Environment.isDebug) {
                 // make UAF fail faster (ideally integrate this with ASAN)
                 // this @constCast is "okay" because it makes no sense to store
@@ -350,7 +403,7 @@ pub fn RefPtr(T: type) type {
             );
         }
 
-        fn uncheckedAndUnsafeInit(raw_ptr: *T, ret_addr: ?usize) @This() {
+        pub fn uncheckedAndUnsafeInit(raw_ptr: *T, ret_addr: ?usize) @This() {
             return .{
                 .data = raw_ptr,
                 .debug = if (enable_debug) raw_ptr.ref_count.debug.acquire(
@@ -380,7 +433,7 @@ pub fn DebugData(thread_safe: bool) type {
         const Debug = @This();
         const Count = if (thread_safe) std.atomic.Value(u32) else u32;
 
-        magic: enum(u128) { valid = 0x2f84e51d } align(@alignOf(u32)),
+        magic: enum(u128) { valid = 0x2f84e51d, _ } align(@alignOf(u32)),
         lock: if (thread_safe) std.debug.SafetyLock else bun.Mutex,
         next_id: u32,
         map: std.AutoHashMapUnmanaged(TrackedRef.Id, TrackedRef),
@@ -431,7 +484,7 @@ pub fn DebugData(thread_safe: bool) type {
         }
 
         fn release(debug: *@This(), id: TrackedRef.Id, return_address: usize) void {
-            debug.lock.lock();
+            debug.lock.lock(); // If this triggers ASAN, the RefCounted object is double-freed.
             defer debug.lock.unlock();
             const entry = debug.map.fetchRemove(id) orelse {
                 return;
@@ -446,6 +499,7 @@ pub fn DebugData(thread_safe: bool) type {
             assertValid(debug);
             debug.magic = undefined;
             debug.lock.lock();
+            defer debug.lock.unlock();
             debug.map.clearAndFree(bun.default_allocator);
             debug.frees.clearAndFree(bun.default_allocator);
             if (debug.allocation_scope) |scope| {
@@ -506,6 +560,8 @@ pub fn maybeAssertNoRefs(T: type, ptr: *const T) void {
         else => {},
     }
 }
+
+const unique_symbol = opaque {};
 
 const std = @import("std");
 const bun = @import("bun");

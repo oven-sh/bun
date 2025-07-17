@@ -69,8 +69,7 @@ extern "C" BunString BunString__createAtom(const char* bytes, size_t length)
 {
     ASSERT(simdutf::validate_ascii(bytes, length));
     auto atom = tryMakeAtomString(String(StringImpl::createWithoutCopying({ bytes, length })));
-    atom.impl()->ref();
-    return { BunStringTag::WTFStringImpl, { .wtf = atom.impl() } };
+    return { BunStringTag::WTFStringImpl, { .wtf = atom.releaseImpl().leakRef() } };
 }
 
 extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
@@ -79,8 +78,7 @@ extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
         auto atom = tryMakeAtomString(String(StringImpl::createWithoutCopying({ bytes, length })));
         if (atom.isNull())
             return { BunStringTag::Dead, {} };
-        atom.impl()->ref();
-        return { BunStringTag::WTFStringImpl, { .wtf = atom.impl() } };
+        return { BunStringTag::WTFStringImpl, { .wtf = atom.releaseImpl().leakRef() } };
     }
 
     return { BunStringTag::Dead, {} };
@@ -98,23 +96,24 @@ extern "C" JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* g
     }
 
     auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(ptr), length });
-    if (UNLIKELY(str.isNull())) {
+    EXCEPTION_ASSERT(str.isNull() == !!scope.exception());
+    if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
-        return JSC::EncodedJSValue();
+        return {};
     }
+    scope.assertNoException();
     return JSValue::encode(jsString(vm, WTFMove(str)));
 }
 
 extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (UNLIKELY(bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead)) {
+    if (bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead) [[unlikely]] {
         return JSValue::encode(JSC::jsEmptyString(vm));
     }
 
-    if (LIKELY(bunString->tag == BunStringTag::WTFStringImpl)) {
+    if (bunString->tag == BunStringTag::WTFStringImpl) [[likely]] {
 #if ASSERT_ENABLED
         unsigned refCount = bunString->impl.wtf->refCount();
         ASSERT(refCount > 0 && !bunString->impl.wtf->isEmpty());
@@ -180,10 +179,10 @@ BunString toString(const char* bytes, size_t length)
 BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     WTF::String str = value.toWTFString(globalObject);
-    if (UNLIKELY(str.isNull())) {
+    if (str.isNull()) [[unlikely]] {
         return { BunStringTag::Dead };
     }
-    if (UNLIKELY(str.length() == 0)) {
+    if (str.length() == 0) [[unlikely]] {
         return { BunStringTag::Empty };
     }
 
@@ -210,10 +209,10 @@ BunString toString(JSC::JSGlobalObject* globalObject, JSValue value)
 BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto str = value.toWTFString(globalObject);
-    if (UNLIKELY(str.isNull())) {
+    if (str.isNull()) [[unlikely]] {
         return { BunStringTag::Dead };
     }
-    if (UNLIKELY(str.length() == 0)) {
+    if (str.length() == 0) [[unlikely]] {
         return { BunStringTag::Empty };
     }
 
@@ -290,9 +289,9 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject
 extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
 {
     ASSERT(length > 0);
-    std::span<UChar> ptr;
+    std::span<char16_t> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
-    if (UNLIKELY(!impl)) {
+    if (!impl) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
@@ -303,7 +302,7 @@ extern "C" BunString BunString__fromLatin1Unitialized(size_t length)
     ASSERT(length > 0);
     std::span<LChar> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
-    if (UNLIKELY(!impl)) {
+    if (!impl) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
@@ -314,9 +313,9 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
     ASSERT(length > 0);
     if (simdutf::validate_utf8(bytes, length)) {
         size_t u16Length = simdutf::utf16_length_from_utf8(bytes, length);
-        std::span<UChar> ptr;
+        std::span<char16_t> ptr;
         auto impl = WTF::StringImpl::tryCreateUninitialized(static_cast<unsigned int>(u16Length), ptr);
-        if (UNLIKELY(!impl)) {
+        if (!impl) [[unlikely]] {
             return { .tag = BunStringTag::Dead };
         }
         RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(bytes, length, ptr.data()) == u16Length);
@@ -324,7 +323,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
     }
 
     auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(bytes), length });
-    if (UNLIKELY(str.isNull())) {
+    if (str.isNull()) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
     auto impl = str.releaseImpl();
@@ -336,7 +335,7 @@ extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
     ASSERT(length > 0);
     std::span<LChar> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
-    if (UNLIKELY(!impl)) {
+    if (!impl) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
     memcpy(ptr.data(), bytes, length);
@@ -351,7 +350,7 @@ extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t 
     size_t outLength = simdutf::latin1_length_from_utf16(length);
     std::span<LChar> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(outLength, ptr);
-    if (UNLIKELY(!impl)) {
+    if (!impl) [[unlikely]] {
         return { BunStringTag::Dead };
     }
 
@@ -363,9 +362,9 @@ extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t 
 extern "C" BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
 {
     ASSERT(length > 0);
-    std::span<UChar> ptr;
+    std::span<char16_t> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
-    if (UNLIKELY(!impl)) {
+    if (!impl) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
     memcpy(ptr.data(), bytes, length * sizeof(char16_t));
@@ -386,7 +385,7 @@ extern "C" BunString BunString__createStaticExternal(const char* bytes, size_t l
 {
     Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const LChar*>(bytes), length }) :
 
-                                                 WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const UChar*>(bytes), length });
+                                                 WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const char16_t*>(bytes), length });
 
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
@@ -395,7 +394,7 @@ extern "C" BunString BunString__createExternal(const char* bytes, size_t length,
 {
     Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::create({ reinterpret_cast<const LChar*>(bytes), length }, ctx, callback) :
 
-                                                 WTF::ExternalStringImpl::create({ reinterpret_cast<const UChar*>(bytes), length }, ctx, callback);
+                                                 WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(bytes), length }, ctx, callback);
 
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
@@ -429,13 +428,11 @@ extern "C" JSC::EncodedJSValue BunString__createArray(
     // Using tryCreateUninitialized here breaks stuff..
     // https://github.com/oven-sh/bun/issues/3931
     JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, length);
-    if (!array) {
-        JSC::throwOutOfMemoryError(globalObject, throwScope);
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSValue()));
-    }
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     for (size_t i = 0; i < length; ++i) {
         array->putDirectIndex(globalObject, i, Bun::toJS(globalObject, *ptr++));
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     return JSValue::encode(array);
@@ -723,7 +720,7 @@ extern "C" BunString BunString__createExternalGloballyAllocatedLatin1(
 }
 
 extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
-    const UChar* bytes,
+    const char16_t* bytes,
     size_t length)
 {
     ASSERT(length > 0);
@@ -759,4 +756,17 @@ extern "C" void JSC__JSValue__putBunString(
     WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
     Identifier id = Identifier::fromString(vm, str);
     target->putDirect(vm, id, value, 0);
+}
+
+bool BunString::isEmpty() const
+{
+    switch (this->tag) {
+    case BunStringTag::WTFStringImpl:
+        return impl.wtf->isEmpty();
+    case BunStringTag::ZigString:
+    case BunStringTag::StaticZigString:
+        return impl.zig.len == 0;
+    default:
+        return true;
+    }
 }

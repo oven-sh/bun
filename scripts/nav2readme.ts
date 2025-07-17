@@ -5,9 +5,9 @@
 //   bun ./scripts/nav2readme.ts
 //
 //
-import nav from "../docs/nav";
 import { readdirSync } from "fs";
 import path from "path";
+import nav from "../docs/nav";
 function getQuickLinks() {
   let md = "";
 
@@ -16,7 +16,7 @@ function getQuickLinks() {
     if (item.type === "divider") {
       md += "\n" + `- ${item.title}` + "\n";
     } else {
-      md += `  - [${item.title}](https://bun.sh/docs/${item.slug})` + "\n";
+      md += `  - [${item.title}](https://bun.com/docs/${item.slug})` + "\n";
     }
   }
 
@@ -70,7 +70,7 @@ async function getGuides() {
       prevDirname = dirname;
     }
     md +=
-      `  - [${name}](https://bun.sh/guides/${path.dirname(file)}/${path.basename(file, path.extname(file))})` + "\n";
+      `  - [${name}](https://bun.com/guides/${path.dirname(file)}/${path.basename(file, path.extname(file))})` + "\n";
   }
 
   return md;

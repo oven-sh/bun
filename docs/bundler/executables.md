@@ -126,6 +126,117 @@ The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that erro
 
 The `--bytecode` argument enables bytecode compilation. Every time you run JavaScript code in Bun, JavaScriptCore (the engine) will compile your source code into bytecode. We can move this parsing work from runtime to bundle time, saving you startup time.
 
+## Act as the Bun CLI
+
+{% note %}
+
+New in Bun v1.2.16
+
+{% /note %}
+
+You can run a standalone executable as if it were the `bun` CLI itself by setting the `BUN_BE_BUN=1` environment variable. When this variable is set, the executable will ignore its bundled entrypoint and instead expose all the features of Bun's CLI.
+
+For example, consider an executable compiled from a simple script:
+
+```sh
+$ cat such-bun.js
+console.log("you shouldn't see this");
+
+$ bun build --compile ./such-bun.js
+ [3ms] bundle 1 modules
+[89ms] compile such-bun
+```
+
+Normally, running `./such-bun` with arguments would execute the script. However, with the `BUN_BE_BUN=1` environment variable, it acts just like the `bun` binary:
+
+```sh
+# Executable runs its own entrypoint by default
+$ ./such-bun install
+you shouldn't see this
+
+# With the env var, the executable acts like the `bun` CLI
+$ BUN_BE_BUN=1 ./such-bun install
+bun install v1.2.16-canary.1 (1d1db811)
+Checked 63 installs across 64 packages (no changes) [5.00ms]
+```
+
+This is useful for building CLI tools on top of Bun that may need to install packages, bundle dependencies, run different or local files and more without needing to download a separate binary or install bun.
+
+## Full-stack executables
+
+{% note %}
+
+New in Bun v1.2.17
+
+{% /note %}
+
+Bun's `--compile` flag can create standalone executables that contain both server and client code, making it ideal for full-stack applications. When you import an HTML file in your server code, Bun automatically bundles all frontend assets (JavaScript, CSS, etc.) and embeds them into the executable. When Bun sees the HTML import on the server, it kicks off a frontend build process to bundle JavaScript, CSS, and other assets.
+
+{% codetabs %}
+
+```ts#server.ts
+import { serve } from "bun";
+import index from "./index.html";
+
+const server = serve({
+  routes: {
+    "/": index,
+    "/api/hello": { GET: () => Response.json({ message: "Hello from API" }) },
+  },
+});
+
+console.log(`Server running at http://localhost:${server.port}`);
+```
+
+```html#index.html
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>My App</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <h1>Hello World</h1>
+    <script src="./app.js"></script>
+  </body>
+</html>
+```
+
+```js#app.js
+console.log("Hello from the client!");
+```
+
+```css#styles.css
+body {
+  background-color: #f0f0f0;
+}
+```
+
+{% /codetabs %}
+
+To build this into a single executable:
+
+```sh
+bun build --compile ./server.ts --outfile myapp
+```
+
+This creates a self-contained binary that includes:
+
+- Your server code
+- The Bun runtime
+- All frontend assets (HTML, CSS, JavaScript)
+- Any npm packages used by your server
+
+The result is a single file that can be deployed anywhere without needing Node.js, Bun, or any dependencies installed. Just run:
+
+```sh
+./myapp
+```
+
+Bun automatically handles serving the frontend assets with proper MIME types and cache headers. The HTML import is replaced with a manifest object that `Bun.serve` uses to efficiently serve pre-bundled assets.
+
+For more details on building full-stack applications with Bun, see the [full-stack guide](/docs/bundler/fullstack).
+
 ## Worker
 
 To use workers in a standalone executable, add the worker's entrypoint to the CLI arguments:
@@ -174,7 +285,7 @@ $ ./hello
 
 Standalone executables support embedding files.
 
-To embed files into an executable with `bun build --compile`, import the file in your code
+To embed files into an executable with `bun build --compile`, import the file in your code.
 
 ```ts
 // this becomes an internal file path
@@ -353,5 +464,4 @@ Currently, the `--compile` flag can only accept a single entrypoint at a time an
 - `--splitting`
 - `--public-path`
 - `--target=node` or `--target=browser`
-- `--format` - always outputs a binary executable. Internally, it's almost esm.
 - `--no-bundle` - we always bundle everything into the executable.

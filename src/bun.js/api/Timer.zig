@@ -5,13 +5,9 @@ const VirtualMachine = JSC.VirtualMachine;
 const JSValue = JSC.JSValue;
 const JSError = bun.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
-const Debugger = JSC.Debugger;
 const Environment = bun.Environment;
 const uv = bun.windows.libuv;
-const api = bun.api;
-const StatWatcherScheduler = @import("../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const Timer = @This();
-const DNSResolver = @import("./bun/dns_resolver.zig").DNSResolver;
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
@@ -126,7 +122,11 @@ pub const All = struct {
             else
                 timespec{ .nsec = 0, .sec = 0 };
 
-            this.uv_timer.start(wait.msUnsigned(), 0, &onUVTimer);
+            // minimum 1ms
+            // https://github.com/nodejs/node/blob/f552c86fecd6c2ba9e832ea129b731dd63abdbe2/src/env.cc#L1512
+            const wait_ms = @max(1, wait.msUnsigned());
+
+            this.uv_timer.start(wait_ms, 0, &onUVTimer);
 
             if (this.active_timer_count > 0) {
                 this.uv_timer.ref();
@@ -209,10 +209,6 @@ pub const All = struct {
     }
 
     pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
-        if (this.active_timer_count == 0) {
-            return false;
-        }
-
         var maybe_now: ?timespec = null;
         while (this.timers.peek()) |min| {
             const now = maybe_now orelse now: {
@@ -283,61 +279,11 @@ pub const All = struct {
         var has_set_now: bool = false;
 
         while (this.next(&has_set_now, &now)) |t| {
-            switch (t.fire(
-                &now,
-                vm,
-            )) {
+            switch (t.fire(&now, vm)) {
                 .disarm => {},
                 .rearm => {},
             }
         }
-    }
-
-    const SetRequest = union(Kind) {
-        setTimeout: u31,
-        setInterval: u31,
-        setImmediate,
-    };
-
-    fn set(
-        id: i32,
-        globalThis: *JSGlobalObject,
-        callback: JSValue,
-        request: SetRequest,
-        arguments_array_or_zero: JSValue,
-    ) JSC.JSValue {
-        JSC.markBinding(@src());
-        var vm = globalThis.bunVM();
-        const kind: Kind = request;
-
-        const js = switch (request) {
-            .setImmediate => ImmediateObject.init(globalThis, id, callback, arguments_array_or_zero),
-            .setTimeout, .setInterval => |countdown| TimeoutObject.init(globalThis, id, kind, countdown, callback, arguments_array_or_zero),
-        };
-
-        if (vm.isInspectorEnabled()) {
-            Debugger.didScheduleAsyncCall(
-                globalThis,
-                .DOMTimer,
-                ID.asyncID(.{ .id = id, .kind = kind.big() }),
-                kind != .setInterval, // single_shot
-            );
-        }
-        return js;
-    }
-
-    pub fn setImmediate(
-        globalThis: *JSGlobalObject,
-        callback: JSValue,
-        arguments: JSValue,
-    ) callconv(.c) JSValue {
-        JSC.markBinding(@src());
-        const id = globalThis.bunVM().timer.last_id;
-        globalThis.bunVM().timer.last_id +%= 1;
-
-        const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
-
-        return set(id, globalThis, wrappedCallback, .setImmediate, arguments);
     }
 
     const TimeoutWarning = enum {
@@ -376,8 +322,8 @@ pub const All = struct {
         globalThis.emitWarning(
             warning_string.transferToJS(globalThis),
             warning_type_string.transferToJS(globalThis),
-            .undefined,
-            .undefined,
+            .js_undefined,
+            .js_undefined,
         ) catch unreachable;
     }
 
@@ -420,38 +366,71 @@ pub const All = struct {
         return countdown_int;
     }
 
-    pub fn setTimeout(
-        globalThis: *JSGlobalObject,
-        callback: JSValue,
+    /// Bun.sleep
+    /// a setTimeout that uses a promise instead of a callback, and interprets the countdown
+    /// slightly differently for historical reasons (see jsValueToCountdown)
+    pub fn sleep(
+        global: *JSGlobalObject,
+        promise: JSValue,
         countdown: JSValue,
-        arguments: JSValue,
-        overflow_behavior: CountdownOverflowBehavior,
     ) JSError!JSValue {
         JSC.markBinding(@src());
-        const id = globalThis.bunVM().timer.last_id;
-        globalThis.bunVM().timer.last_id +%= 1;
+        bun.debugAssert(promise != .zero and countdown != .zero);
+        const vm = global.bunVM();
+        const id = vm.timer.last_id;
+        vm.timer.last_id +%= 1;
 
-        const countdown_int = try globalThis.bunVM().timer.jsValueToCountdown(globalThis, countdown, overflow_behavior, true);
+        const countdown_int = try vm.timer.jsValueToCountdown(global, countdown, .clamp, true);
+        const wrapped_promise = promise.withAsyncContextIfNeeded(global);
+        return TimeoutObject.init(global, id, .setTimeout, countdown_int, wrapped_promise, .js_undefined);
+    }
 
-        const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
+    pub fn setImmediate(
+        global: *JSGlobalObject,
+        callback: JSValue,
+        arguments: JSValue,
+    ) JSError!JSValue {
+        JSC.markBinding(@src());
+        bun.debugAssert(callback != .zero and arguments != .zero);
+        const vm = global.bunVM();
+        const id = vm.timer.last_id;
+        vm.timer.last_id +%= 1;
 
-        return set(id, globalThis, wrappedCallback, .{ .setTimeout = countdown_int }, arguments);
+        const wrapped_callback = callback.withAsyncContextIfNeeded(global);
+        return ImmediateObject.init(global, id, wrapped_callback, arguments);
+    }
+
+    pub fn setTimeout(
+        global: *JSGlobalObject,
+        callback: JSValue,
+        arguments: JSValue,
+        countdown: JSValue,
+    ) JSError!JSValue {
+        JSC.markBinding(@src());
+        bun.debugAssert(callback != .zero and arguments != .zero and countdown != .zero);
+        const vm = global.bunVM();
+        const id = vm.timer.last_id;
+        vm.timer.last_id +%= 1;
+
+        const wrapped_callback = callback.withAsyncContextIfNeeded(global);
+        const countdown_int = try global.bunVM().timer.jsValueToCountdown(global, countdown, .one_ms, true);
+        return TimeoutObject.init(global, id, .setTimeout, countdown_int, wrapped_callback, arguments);
     }
     pub fn setInterval(
-        globalThis: *JSGlobalObject,
+        global: *JSGlobalObject,
         callback: JSValue,
-        countdown: JSValue,
         arguments: JSValue,
+        countdown: JSValue,
     ) JSError!JSValue {
         JSC.markBinding(@src());
-        const id = globalThis.bunVM().timer.last_id;
-        globalThis.bunVM().timer.last_id +%= 1;
+        bun.debugAssert(callback != .zero and arguments != .zero and countdown != .zero);
+        const vm = global.bunVM();
+        const id = vm.timer.last_id;
+        vm.timer.last_id +%= 1;
 
-        const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
-
-        const countdown_int = try globalThis.bunVM().timer.jsValueToCountdown(globalThis, countdown, .one_ms, true);
-
-        return set(id, globalThis, wrappedCallback, .{ .setInterval = countdown_int }, arguments);
+        const wrapped_callback = callback.withAsyncContextIfNeeded(global);
+        const countdown_int = try global.bunVM().timer.jsValueToCountdown(global, countdown, .one_ms, true);
+        return TimeoutObject.init(global, id, .setInterval, countdown_int, wrapped_callback, arguments);
     }
 
     fn removeTimerById(this: *All, id: i32) ?*TimeoutObject {
@@ -512,10 +491,10 @@ pub const All = struct {
             }
 
             break :brk if (TimeoutObject.fromJS(timer_id_value)) |timeout|
-                &timeout.internals
+                // clearImmediate should be a noop if anything other than an Immediate is passed to it.
+                if (kind != .setImmediate) &timeout.internals else return
             else if (ImmediateObject.fromJS(timer_id_value)) |immediate|
                 // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
-                // setTimeout and setInterval can be cleared by any of the 3 clear functions.
                 if (kind == .setImmediate) &immediate.internals else return
             else
                 null;
@@ -530,7 +509,7 @@ pub const All = struct {
     ) JSError!JSValue {
         JSC.markBinding(@src());
         try clearTimer(id, globalThis, .setImmediate);
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
     pub fn clearTimeout(
         globalThis: *JSGlobalObject,
@@ -538,7 +517,7 @@ pub const All = struct {
     ) JSError!JSValue {
         JSC.markBinding(@src());
         try clearTimer(id, globalThis, .setTimeout);
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
     pub fn clearInterval(
         globalThis: *JSGlobalObject,
@@ -546,12 +525,13 @@ pub const All = struct {
     ) JSError!JSValue {
         JSC.markBinding(@src());
         try clearTimer(id, globalThis, .setInterval);
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
 
     comptime {
-        @export(&setImmediate, .{ .name = "Bun__Timer__setImmediate" });
-        @export(&JSC.host_fn.wrap5(setTimeout), .{ .name = "Bun__Timer__setTimeout" });
+        @export(&JSC.host_fn.wrap3(setImmediate), .{ .name = "Bun__Timer__setImmediate" });
+        @export(&JSC.host_fn.wrap3(sleep), .{ .name = "Bun__Timer__sleep" });
+        @export(&JSC.host_fn.wrap4(setTimeout), .{ .name = "Bun__Timer__setTimeout" });
         @export(&JSC.host_fn.wrap4(setInterval), .{ .name = "Bun__Timer__setInterval" });
         @export(&JSC.host_fn.wrap2(clearImmediate), .{ .name = "Bun__Timer__clearImmediate" });
         @export(&JSC.host_fn.wrap2(clearTimeout), .{ .name = "Bun__Timer__clearTimeout" });
@@ -560,640 +540,11 @@ pub const All = struct {
     }
 };
 
-const uws = bun.uws;
-
-pub const TimeoutObject = struct {
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
-
-    pub const js = JSC.Codegen.JSTimeout;
-    pub const toJS = js.toJS;
-    pub const fromJS = js.fromJS;
-    pub const fromJSDirect = js.fromJSDirect;
-
-    ref_count: RefCount,
-    event_loop_timer: EventLoopTimer = .{
-        .next = .{},
-        .tag = .TimeoutObject,
-    },
-    internals: TimerObjectInternals,
-
-    pub fn init(
-        globalThis: *JSGlobalObject,
-        id: i32,
-        kind: Kind,
-        interval: u31,
-        callback: JSValue,
-        arguments_array_or_zero: JSValue,
-    ) JSValue {
-        // internals are initialized by init()
-        const timeout = bun.new(TimeoutObject, .{ .ref_count = .init(), .internals = undefined });
-        const js_value = timeout.toJS(globalThis);
-        defer js_value.ensureStillAlive();
-        timeout.internals.init(
-            js_value,
-            globalThis,
-            id,
-            kind,
-            interval,
-            callback,
-            arguments_array_or_zero,
-        );
-        return js_value;
-    }
-
-    fn deinit(this: *TimeoutObject) void {
-        this.internals.deinit();
-        bun.destroy(this);
-    }
-
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !*TimeoutObject {
-        _ = callFrame;
-        return globalObject.throw("Timeout is not constructible", .{});
-    }
-
-    pub fn runImmediateTask(this: *TimeoutObject, vm: *VirtualMachine) void {
-        this.internals.runImmediateTask(vm);
-    }
-
-    pub fn toPrimitive(this: *TimeoutObject, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-        return this.internals.toPrimitive();
-    }
-
-    pub fn doRef(this: *TimeoutObject, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
-        return this.internals.doRef(globalThis, callFrame.this());
-    }
-
-    pub fn doUnref(this: *TimeoutObject, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
-        return this.internals.doUnref(globalThis, callFrame.this());
-    }
-
-    pub fn doRefresh(this: *TimeoutObject, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
-        return this.internals.doRefresh(globalThis, callFrame.this());
-    }
-
-    pub fn hasRef(this: *TimeoutObject, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-        return this.internals.hasRef();
-    }
-
-    pub fn finalize(this: *TimeoutObject) void {
-        this.internals.finalize();
-    }
-
-    pub fn getDestroyed(this: *TimeoutObject, globalThis: *JSGlobalObject) JSValue {
-        _ = globalThis;
-        return .jsBoolean(this.internals.getDestroyed());
-    }
-
-    pub fn close(this: *TimeoutObject, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
-        this.internals.cancel(globalThis.bunVM());
-        return callFrame.this();
-    }
-
-    pub fn get_onTimeout(_: *TimeoutObject, thisValue: JSValue, _: *JSGlobalObject) JSValue {
-        return TimeoutObject.js.callbackGetCached(thisValue).?;
-    }
-
-    pub fn set_onTimeout(this: *TimeoutObject, thisValue: JSValue, globalThis: *JSGlobalObject, value: JSValue) bool {
-        TimeoutObject.js.callbackSetCached(thisValue, globalThis, value);
-        this.internals.flags.should_destroy_before_firing = !value.toBoolean();
-        return true;
-    }
-
-    pub fn get_idleTimeout(_: *TimeoutObject, thisValue: JSValue, _: *JSGlobalObject) JSValue {
-        return TimeoutObject.js.idleTimeoutGetCached(thisValue).?;
-    }
-
-    pub fn set_idleTimeout(this: *TimeoutObject, thisValue: JSValue, globalThis: *JSGlobalObject, value: JSValue) bool {
-        TimeoutObject.js.idleTimeoutSetCached(thisValue, globalThis, value);
-
-        if (value.isNumber()) {
-            const num = value.toNumber(globalThis) catch |err| switch (err) {
-                error.JSError => return false,
-                error.OutOfMemory => {
-                    _ = globalThis.throwOutOfMemoryValue();
-                    return false;
-                },
-            };
-
-            // cancel if the value is exactly -1
-            // https://github.com/nodejs/node/blob/4cd8e1914a503ece778d642e748020e675cf1060/lib/internal/timers.js#L612-L625
-            this.internals.flags.should_reschedule_interval = num != -1;
-        } else {
-            this.internals.flags.should_reschedule_interval = true;
-        }
-
-        this.internals.interval = globalThis.bunVM().timer.jsValueToCountdown(globalThis, value, .one_ms, false) catch |err| switch (err) {
-            error.JSError => return false,
-            error.OutOfMemory => {
-                _ = globalThis.throwOutOfMemoryValue();
-                return false;
-            },
-        };
-
-        return true;
-    }
-
-    pub fn dispose(this: *TimeoutObject, globalThis: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-        this.internals.cancel(globalThis.bunVM());
-        return .undefined;
-    }
-};
-
-pub const ImmediateObject = struct {
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
-
-    pub const js = JSC.Codegen.JSImmediate;
-    pub const toJS = js.toJS;
-    pub const fromJS = js.fromJS;
-    pub const fromJSDirect = js.fromJSDirect;
-
-    ref_count: RefCount,
-    event_loop_timer: EventLoopTimer = .{
-        .next = .{},
-        .tag = .ImmediateObject,
-    },
-    internals: TimerObjectInternals,
-
-    pub fn init(
-        globalThis: *JSGlobalObject,
-        id: i32,
-        callback: JSValue,
-        arguments_array_or_zero: JSValue,
-    ) JSValue {
-        // internals are initialized by init()
-        const immediate = bun.new(ImmediateObject, .{ .ref_count = .init(), .internals = undefined });
-        const js_value = immediate.toJS(globalThis);
-        defer js_value.ensureStillAlive();
-        immediate.internals.init(
-            js_value,
-            globalThis,
-            id,
-            .setImmediate,
-            0,
-            callback,
-            arguments_array_or_zero,
-        );
-        return js_value;
-    }
-
-    fn deinit(this: *ImmediateObject) void {
-        this.internals.deinit();
-        bun.destroy(this);
-    }
-
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !*ImmediateObject {
-        _ = callFrame;
-        return globalObject.throw("Immediate is not constructible", .{});
-    }
-
-    pub fn runImmediateTask(this: *ImmediateObject, vm: *VirtualMachine) void {
-        this.internals.runImmediateTask(vm);
-    }
-
-    pub fn toPrimitive(this: *ImmediateObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-        return this.internals.toPrimitive();
-    }
-
-    pub fn doRef(this: *ImmediateObject, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
-        return this.internals.doRef(globalThis, callFrame.this());
-    }
-
-    pub fn doUnref(this: *ImmediateObject, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
-        return this.internals.doUnref(globalThis, callFrame.this());
-    }
-
-    pub fn hasRef(this: *ImmediateObject, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-        return this.internals.hasRef();
-    }
-
-    pub fn finalize(this: *ImmediateObject) void {
-        this.internals.finalize();
-    }
-
-    pub fn getDestroyed(this: *ImmediateObject, globalThis: *JSGlobalObject) JSValue {
-        _ = globalThis;
-        return .jsBoolean(this.internals.getDestroyed());
-    }
-
-    pub fn dispose(this: *ImmediateObject, globalThis: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-        this.internals.cancel(globalThis.bunVM());
-        return .undefined;
-    }
-};
-
-/// Data that TimerObject and ImmediateObject have in common
-pub const TimerObjectInternals = struct {
-    /// Identifier for this timer that is exposed to JavaScript (by `+timer`)
-    id: i32 = -1,
-    interval: u31 = 0,
-    strong_this: JSC.Strong.Optional = .empty,
-    flags: Flags = .{},
-
-    const Flags = packed struct(u34) {
-        /// Whenever a timer is inserted into the heap (which happen on creation or refresh), the global
-        /// epoch is incremented and the new epoch is set on the timer. For timers created by
-        /// JavaScript, the epoch is used to break ties between timers scheduled for the same
-        /// millisecond. This ensures that if you set two timers for the same amount of time, and
-        /// refresh the first one, the first one will fire last. This mimics Node.js's behavior where
-        /// the refreshed timer will be inserted at the end of a list, which makes it fire later.
-        epoch: u25 = 0,
-
-        kind: Kind = .setTimeout,
-
-        // we do not allow the timer to be refreshed after we call clearInterval/clearTimeout
-        has_cleared_timer: bool = false,
-        is_keeping_event_loop_alive: bool = false,
-
-        // if they never access the timer by integer, don't create a hashmap entry.
-        has_accessed_primitive: bool = false,
-
-        has_js_ref: bool = true,
-
-        /// Set to `true` only during execution of the JavaScript function so that `_destroyed` can be
-        /// false during the callback, even though the `state` will be `FIRED`.
-        in_callback: bool = false,
-
-        // is set `false` when `_idleTimeout` is set to -1
-        // https://github.com/nodejs/node/blob/4cd8e1914a503ece778d642e748020e675cf1060/lib/internal/timers.js#L612-L626
-        should_reschedule_interval: bool = true,
-
-        // is set `true` when `_onTimeout` is set to a falsy value
-        // https://github.com/nodejs/node/blob/4cd8e1914a503ece778d642e748020e675cf1060/lib/internal/timers.js#L578-L592
-        should_destroy_before_firing: bool = false,
-    };
-
-    fn eventLoopTimer(this: *TimerObjectInternals) *EventLoopTimer {
-        switch (this.flags.kind) {
-            .setImmediate => {
-                const parent: *ImmediateObject = @fieldParentPtr("internals", this);
-                assert(parent.event_loop_timer.tag == .ImmediateObject);
-                return &parent.event_loop_timer;
-            },
-            .setTimeout, .setInterval => {
-                const parent: *TimeoutObject = @fieldParentPtr("internals", this);
-                assert(parent.event_loop_timer.tag == .TimeoutObject);
-                return &parent.event_loop_timer;
-            },
-        }
-    }
-
-    fn ref(this: *TimerObjectInternals) void {
-        switch (this.flags.kind) {
-            .setImmediate => @as(*ImmediateObject, @fieldParentPtr("internals", this)).ref(),
-            .setTimeout, .setInterval => @as(*TimeoutObject, @fieldParentPtr("internals", this)).ref(),
-        }
-    }
-
-    fn deref(this: *TimerObjectInternals) void {
-        switch (this.flags.kind) {
-            .setImmediate => @as(*ImmediateObject, @fieldParentPtr("internals", this)).deref(),
-            .setTimeout, .setInterval => @as(*TimeoutObject, @fieldParentPtr("internals", this)).deref(),
-        }
-    }
-
-    extern "c" fn Bun__JSTimeout__call(encodedTimeoutValue: JSValue, globalObject: *JSC.JSGlobalObject) void;
-
-    pub fn runImmediateTask(this: *TimerObjectInternals, vm: *VirtualMachine) void {
-        if (this.flags.has_cleared_timer or
-            // unref'd setImmediate callbacks should only run if there are things keeping the event
-            // loop alive other than setImmediates
-            (!this.flags.is_keeping_event_loop_alive and !vm.isEventLoopAliveExcludingImmediates()))
-        {
-            this.deref();
-            return;
-        }
-
-        const this_object = this.strong_this.get() orelse {
-            if (Environment.isDebug) {
-                @panic("TimerObjectInternals.runImmediateTask: this_object is null");
-            }
-            return;
-        };
-        const globalThis = vm.global;
-        this.strong_this.deinit();
-        this.eventLoopTimer().state = .FIRED;
-        this.setEnableKeepingEventLoopAlive(vm, false);
-
-        vm.eventLoop().enter();
-        {
-            this.ref();
-            defer this.deref();
-
-            this.run(this_object, globalThis, this.asyncID(), vm);
-
-            if (this.eventLoopTimer().state == .FIRED) {
-                this.deref();
-            }
-        }
-        vm.eventLoop().exit();
-    }
-
-    pub fn asyncID(this: *const TimerObjectInternals) u64 {
-        return ID.asyncID(.{ .id = this.id, .kind = this.flags.kind.big() });
-    }
-
-    pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *JSC.VirtualMachine) EventLoopTimer.Arm {
-        const id = this.id;
-        const kind = this.flags.kind.big();
-        const has_been_cleared = this.eventLoopTimer().state == .CANCELLED or this.flags.has_cleared_timer or vm.scriptExecutionStatus() != .running;
-
-        this.eventLoopTimer().state = .FIRED;
-
-        const globalThis = vm.global;
-
-        if (has_been_cleared or this.flags.should_destroy_before_firing) {
-            if (vm.isInspectorEnabled()) {
-                Debugger.didCancelAsyncCall(globalThis, .DOMTimer, ID.asyncID(.{ .id = id, .kind = kind }));
-            }
-
-            this.flags.has_cleared_timer = true;
-            this.strong_this.deinit();
-            this.deref();
-
-            return .disarm;
-        }
-
-        const this_object = this.strong_this.get().?;
-        var time_before_call: timespec = undefined;
-
-        if (kind != .setInterval) {
-            this.strong_this.clearWithoutDeallocation();
-        } else {
-            time_before_call = timespec.msFromNow(this.interval);
-        }
-        this_object.ensureStillAlive();
-
-        vm.eventLoop().enter();
-        {
-            // Ensure it stays alive for this scope.
-            this.ref();
-            defer this.deref();
-
-            this.run(this_object, globalThis, ID.asyncID(.{ .id = id, .kind = kind }), vm);
-
-            const is_timer_done = is_timer_done: {
-                // Node doesn't drain microtasks after each timer callback.
-                if (kind == .setInterval) {
-                    if (!this.flags.should_reschedule_interval) {
-                        break :is_timer_done true;
-                    }
-                    switch (this.eventLoopTimer().state) {
-                        .FIRED => {
-                            // If we didn't clear the setInterval, reschedule it starting from
-                            vm.timer.update(this.eventLoopTimer(), &time_before_call);
-
-                            if (this.flags.has_js_ref) {
-                                this.setEnableKeepingEventLoopAlive(vm, true);
-                            }
-
-                            // The ref count doesn't change. It wasn't decremented.
-                        },
-                        .ACTIVE => {
-                            // The developer called timer.refresh() synchronously in the callback.
-                            vm.timer.update(this.eventLoopTimer(), &time_before_call);
-
-                            // Balance out the ref count.
-                            // the transition from "FIRED" -> "ACTIVE" caused it to increment.
-                            this.deref();
-                        },
-                        else => {
-                            break :is_timer_done true;
-                        },
-                    }
-                } else if (this.eventLoopTimer().state == .FIRED) {
-                    break :is_timer_done true;
-                }
-
-                break :is_timer_done false;
-            };
-
-            if (is_timer_done) {
-                this.setEnableKeepingEventLoopAlive(vm, false);
-                // The timer will not be re-entered into the event loop at this point.
-                this.deref();
-            }
-        }
-        vm.eventLoop().exit();
-
-        return .disarm;
-    }
-
-    pub fn run(this: *TimerObjectInternals, this_object: JSC.JSValue, globalThis: *JSC.JSGlobalObject, async_id: u64, vm: *JSC.VirtualMachine) void {
-        if (vm.isInspectorEnabled()) {
-            Debugger.willDispatchAsyncCall(globalThis, .DOMTimer, async_id);
-        }
-
-        defer {
-            if (vm.isInspectorEnabled()) {
-                Debugger.didDispatchAsyncCall(globalThis, .DOMTimer, async_id);
-            }
-        }
-
-        // Bun__JSTimeout__call handles exceptions.
-        this.flags.in_callback = true;
-        defer this.flags.in_callback = false;
-        Bun__JSTimeout__call(this_object, globalThis);
-    }
-
-    pub fn init(
-        this: *TimerObjectInternals,
-        timer_js: JSValue,
-        globalThis: *JSGlobalObject,
-        id: i32,
-        kind: Kind,
-        interval: u31,
-        callback: JSValue,
-        arguments: JSValue,
-    ) void {
-        const vm = globalThis.bunVM();
-        this.* = .{
-            .id = id,
-            .flags = .{ .kind = kind, .epoch = vm.timer.epoch },
-            .interval = interval,
-        };
-
-        if (kind == .setImmediate) {
-            if (arguments != .zero)
-                ImmediateObject.js.argumentsSetCached(timer_js, globalThis, arguments);
-            ImmediateObject.js.callbackSetCached(timer_js, globalThis, callback);
-            const parent: *ImmediateObject = @fieldParentPtr("internals", this);
-            vm.enqueueImmediateTask(parent);
-            this.setEnableKeepingEventLoopAlive(vm, true);
-            // ref'd by event loop
-            parent.ref();
-        } else {
-            if (arguments != .zero)
-                TimeoutObject.js.argumentsSetCached(timer_js, globalThis, arguments);
-            TimeoutObject.js.callbackSetCached(timer_js, globalThis, callback);
-            TimeoutObject.js.idleTimeoutSetCached(timer_js, globalThis, JSC.jsNumber(interval));
-            // this increments the refcount
-            this.reschedule(vm);
-        }
-
-        this.strong_this.set(globalThis, timer_js);
-    }
-
-    pub fn doRef(this: *TimerObjectInternals, _: *JSC.JSGlobalObject, this_value: JSValue) JSValue {
-        this_value.ensureStillAlive();
-
-        const did_have_js_ref = this.flags.has_js_ref;
-        this.flags.has_js_ref = true;
-
-        if (!did_have_js_ref) {
-            this.setEnableKeepingEventLoopAlive(JSC.VirtualMachine.get(), true);
-        }
-
-        return this_value;
-    }
-
-    pub fn doRefresh(this: *TimerObjectInternals, globalObject: *JSC.JSGlobalObject, this_value: JSValue) JSValue {
-        // Immediates do not have a refresh function, and our binding generator should not let this
-        // function be reached even if you override the `this` value calling a Timeout object's
-        // `refresh` method
-        assert(this.flags.kind != .setImmediate);
-
-        // setImmediate does not support refreshing and we do not support refreshing after cleanup
-        if (this.id == -1 or this.flags.kind == .setImmediate or this.flags.has_cleared_timer) {
-            return this_value;
-        }
-
-        this.strong_this.set(globalObject, this_value);
-        this.reschedule(VirtualMachine.get());
-
-        return this_value;
-    }
-
-    pub fn doUnref(this: *TimerObjectInternals, _: *JSC.JSGlobalObject, this_value: JSValue) JSValue {
-        this_value.ensureStillAlive();
-
-        const did_have_js_ref = this.flags.has_js_ref;
-        this.flags.has_js_ref = false;
-
-        if (did_have_js_ref) {
-            this.setEnableKeepingEventLoopAlive(JSC.VirtualMachine.get(), false);
-        }
-
-        return this_value;
-    }
-
-    pub fn cancel(this: *TimerObjectInternals, vm: *VirtualMachine) void {
-        this.setEnableKeepingEventLoopAlive(vm, false);
-        this.flags.has_cleared_timer = true;
-
-        if (this.flags.kind == .setImmediate) return;
-
-        const was_active = this.eventLoopTimer().state == .ACTIVE;
-
-        this.eventLoopTimer().state = .CANCELLED;
-        this.strong_this.deinit();
-
-        if (was_active) {
-            vm.timer.remove(this.eventLoopTimer());
-            this.deref();
-        }
-    }
-
-    pub fn reschedule(this: *TimerObjectInternals, vm: *VirtualMachine) void {
-        if (this.flags.kind == .setImmediate) return;
-        if (!this.flags.should_reschedule_interval) return;
-
-        const now = timespec.msFromNow(this.interval);
-        const was_active = this.eventLoopTimer().state == .ACTIVE;
-        if (was_active) {
-            vm.timer.remove(this.eventLoopTimer());
-        } else {
-            this.ref();
-        }
-
-        vm.timer.update(this.eventLoopTimer(), &now);
-        this.flags.has_cleared_timer = false;
-
-        if (this.flags.has_js_ref) {
-            this.setEnableKeepingEventLoopAlive(vm, true);
-        }
-    }
-
-    fn setEnableKeepingEventLoopAlive(this: *TimerObjectInternals, vm: *VirtualMachine, enable: bool) void {
-        if (this.flags.is_keeping_event_loop_alive == enable) {
-            return;
-        }
-        this.flags.is_keeping_event_loop_alive = enable;
-        switch (this.flags.kind) {
-            .setTimeout, .setInterval => vm.timer.incrementTimerRef(if (enable) 1 else -1),
-
-            // setImmediate has slightly different event loop logic
-            .setImmediate => vm.timer.incrementImmediateRef(if (enable) 1 else -1),
-        }
-    }
-
-    pub fn hasRef(this: *TimerObjectInternals) JSValue {
-        return JSValue.jsBoolean(this.flags.is_keeping_event_loop_alive);
-    }
-
-    pub fn toPrimitive(this: *TimerObjectInternals) bun.JSError!JSValue {
-        if (!this.flags.has_accessed_primitive) {
-            this.flags.has_accessed_primitive = true;
-            const vm = VirtualMachine.get();
-            try vm.timer.maps.get(this.flags.kind).put(bun.default_allocator, this.id, this.eventLoopTimer());
-        }
-        return JSValue.jsNumber(this.id);
-    }
-
-    /// This is the getter for `_destroyed` on JS Timeout and Immediate objects
-    pub fn getDestroyed(this: *TimerObjectInternals) bool {
-        if (this.flags.has_cleared_timer) {
-            return true;
-        }
-        if (this.flags.in_callback) {
-            return false;
-        }
-        return switch (this.eventLoopTimer().state) {
-            .ACTIVE, .PENDING => false,
-            .FIRED, .CANCELLED => true,
-        };
-    }
-
-    pub fn finalize(this: *TimerObjectInternals) void {
-        this.strong_this.deinit();
-        this.deref();
-    }
-
-    pub fn deinit(this: *TimerObjectInternals) void {
-        this.strong_this.deinit();
-        const vm = VirtualMachine.get();
-        const kind = this.flags.kind;
-
-        if (this.eventLoopTimer().state == .ACTIVE) {
-            vm.timer.remove(this.eventLoopTimer());
-        }
-
-        if (this.flags.has_accessed_primitive) {
-            const map = vm.timer.maps.get(kind);
-            if (map.orderedRemove(this.id)) {
-                // If this array gets large, let's shrink it down
-                // Array keys are i32
-                // Values are 1 ptr
-                // Therefore, 12 bytes per entry
-                // So if you created 21,000 timers and accessed them by ID, you'd be using 252KB
-                const allocated_bytes = map.capacity() * @sizeOf(TimeoutMap.Data);
-                const used_bytes = map.count() * @sizeOf(TimeoutMap.Data);
-                if (allocated_bytes - used_bytes > 256 * 1024) {
-                    map.shrinkAndFree(bun.default_allocator, map.count() + 8);
-                }
-            }
-        }
-
-        this.setEnableKeepingEventLoopAlive(vm, false);
-        switch (kind) {
-            .setImmediate => (@as(*ImmediateObject, @fieldParentPtr("internals", this))).ref_count.assertNoRefs(),
-            .setTimeout, .setInterval => (@as(*TimeoutObject, @fieldParentPtr("internals", this))).ref_count.assertNoRefs(),
-        }
-    }
-};
+pub const EventLoopTimer = @import("./Timer/EventLoopTimer.zig");
+
+pub const TimeoutObject = @import("./Timer/TimeoutObject.zig");
+pub const ImmediateObject = @import("./Timer/ImmediateObject.zig");
+pub const TimerObjectInternals = @import("./Timer/TimerObjectInternals.zig");
 
 pub const Kind = enum(u2) {
     setTimeout = 0,
@@ -1229,348 +580,10 @@ pub const ID = extern struct {
 const assert = bun.assert;
 const heap = bun.io.heap;
 
-pub const EventLoopTimer = struct {
-    /// The absolute time to fire this timer next.
-    next: timespec,
-    state: State = .PENDING,
-    tag: Tag,
-    /// Internal heap fields.
-    heap: heap.IntrusiveField(EventLoopTimer) = .{},
-
-    pub fn less(_: void, a: *const EventLoopTimer, b: *const EventLoopTimer) bool {
-        const sec_order = std.math.order(a.next.sec, b.next.sec);
-        if (sec_order != .eq) return sec_order == .lt;
-
-        // collapse sub-millisecond precision for JavaScript timers
-        const maybe_a_internals = a.jsTimerInternals();
-        const maybe_b_internals = b.jsTimerInternals();
-        var a_ns = a.next.nsec;
-        var b_ns = b.next.nsec;
-        if (maybe_a_internals != null) a_ns = std.time.ns_per_ms * @divTrunc(a_ns, std.time.ns_per_ms);
-        if (maybe_b_internals != null) b_ns = std.time.ns_per_ms * @divTrunc(b_ns, std.time.ns_per_ms);
-
-        const order = std.math.order(a_ns, b_ns);
-        if (order == .eq) {
-            if (maybe_a_internals) |a_internals| {
-                if (maybe_b_internals) |b_internals| {
-                    // We expect that the epoch will overflow sometimes.
-                    // If it does, we would ideally like timers with an epoch from before the
-                    // overflow to be sorted *before* timers with an epoch from after the overflow
-                    // (even though their epoch will be numerically *larger*).
-                    //
-                    // Wrapping subtraction gives us a distance that is consistent even if one
-                    // epoch has overflowed and the other hasn't. If the distance from a to b is
-                    // small, it's likely that b is really newer than a, so we consider a less than
-                    // b. If the distance from a to b is large (greater than half the u25 range),
-                    // it's more likely that b is older than a so the true distance is from b to a.
-                    return b_internals.flags.epoch -% a_internals.flags.epoch < std.math.maxInt(u25) / 2;
-                }
-            }
-        }
-        return order == .lt;
-    }
-
-    pub const Tag = if (Environment.isWindows) enum {
-        TimerCallback,
-        TimeoutObject,
-        ImmediateObject,
-        TestRunner,
-        StatWatcherScheduler,
-        UpgradedDuplex,
-        DNSResolver,
-        WindowsNamedPipe,
-        WTFTimer,
-        PostgresSQLConnectionTimeout,
-        PostgresSQLConnectionMaxLifetime,
-        ValkeyConnectionTimeout,
-        ValkeyConnectionReconnect,
-        SubprocessTimeout,
-
-        pub fn Type(comptime T: Tag) type {
-            return switch (T) {
-                .TimerCallback => TimerCallback,
-                .TimeoutObject => TimeoutObject,
-                .ImmediateObject => ImmediateObject,
-                .TestRunner => JSC.Jest.TestRunner,
-                .StatWatcherScheduler => StatWatcherScheduler,
-                .UpgradedDuplex => uws.UpgradedDuplex,
-                .DNSResolver => DNSResolver,
-                .WindowsNamedPipe => uws.WindowsNamedPipe,
-                .WTFTimer => WTFTimer,
-                .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
-                .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
-                .SubprocessTimeout => JSC.Subprocess,
-                .ValkeyConnectionReconnect => JSC.API.Valkey,
-                .ValkeyConnectionTimeout => JSC.API.Valkey,
-            };
-        }
-    } else enum {
-        TimerCallback,
-        TimeoutObject,
-        ImmediateObject,
-        TestRunner,
-        StatWatcherScheduler,
-        UpgradedDuplex,
-        WTFTimer,
-        DNSResolver,
-        PostgresSQLConnectionTimeout,
-        PostgresSQLConnectionMaxLifetime,
-        ValkeyConnectionTimeout,
-        ValkeyConnectionReconnect,
-        SubprocessTimeout,
-
-        pub fn Type(comptime T: Tag) type {
-            return switch (T) {
-                .TimerCallback => TimerCallback,
-                .TimeoutObject => TimeoutObject,
-                .ImmediateObject => ImmediateObject,
-                .TestRunner => JSC.Jest.TestRunner,
-                .StatWatcherScheduler => StatWatcherScheduler,
-                .UpgradedDuplex => uws.UpgradedDuplex,
-                .WTFTimer => WTFTimer,
-                .DNSResolver => DNSResolver,
-                .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
-                .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
-                .ValkeyConnectionTimeout => JSC.API.Valkey,
-                .ValkeyConnectionReconnect => JSC.API.Valkey,
-                .SubprocessTimeout => JSC.Subprocess,
-            };
-        }
-    };
-
-    const TimerCallback = struct {
-        callback: *const fn (*TimerCallback) Arm,
-        ctx: *anyopaque,
-        event_loop_timer: EventLoopTimer,
-    };
-
-    pub const State = enum {
-        /// The timer is waiting to be enabled.
-        PENDING,
-
-        /// The timer is active and will fire at the next time.
-        ACTIVE,
-
-        /// The timer has been cancelled and will not fire.
-        CANCELLED,
-
-        /// The timer has fired and the callback has been called.
-        FIRED,
-    };
-
-    /// If self was created by set{Immediate,Timeout,Interval}, get a pointer to the common data
-    /// for all those kinds of timers
-    fn jsTimerInternals(self: anytype) switch (@TypeOf(self)) {
-        *EventLoopTimer => ?*TimerObjectInternals,
-        *const EventLoopTimer => ?*const TimerObjectInternals,
-        else => |T| @compileError("wrong type " ++ @typeName(T) ++ " passed to jsTimerInternals"),
-    } {
-        switch (self.tag) {
-            inline .TimeoutObject, .ImmediateObject => |tag| {
-                const parent: switch (@TypeOf(self)) {
-                    *EventLoopTimer => *tag.Type(),
-                    *const EventLoopTimer => *const tag.Type(),
-                    else => unreachable,
-                } = @fieldParentPtr("event_loop_timer", self);
-                return &parent.internals;
-            },
-            else => return null,
-        }
-    }
-
-    fn ns(self: *const EventLoopTimer) u64 {
-        return self.next.ns();
-    }
-
-    pub const Arm = union(enum) {
-        rearm: timespec,
-        disarm,
-    };
-
-    pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Arm {
-        switch (this.tag) {
-            .PostgresSQLConnectionTimeout => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
-            .PostgresSQLConnectionMaxLifetime => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
-            .ValkeyConnectionTimeout => return @as(*api.Valkey, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
-            .ValkeyConnectionReconnect => return @as(*api.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", this))).onReconnectTimer(),
-            inline else => |t| {
-                if (@FieldType(t.Type(), "event_loop_timer") != EventLoopTimer) {
-                    @compileError(@typeName(t.Type()) ++ " has wrong type for 'event_loop_timer'");
-                }
-                var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", this));
-                if (comptime t.Type() == TimeoutObject or t.Type() == ImmediateObject) {
-                    return container.internals.fire(now, vm);
-                }
-
-                if (comptime t.Type() == WTFTimer) {
-                    return container.fire(now, vm);
-                }
-
-                if (comptime t.Type() == StatWatcherScheduler) {
-                    return container.timerCallback();
-                }
-                if (comptime t.Type() == uws.UpgradedDuplex) {
-                    return container.onTimeout();
-                }
-                if (Environment.isWindows) {
-                    if (comptime t.Type() == uws.WindowsNamedPipe) {
-                        return container.onTimeout();
-                    }
-                }
-
-                if (comptime t.Type() == JSC.Jest.TestRunner) {
-                    container.onTestTimeout(now, vm);
-                    return .disarm;
-                }
-
-                if (comptime t.Type() == DNSResolver) {
-                    return container.checkTimeouts(now, vm);
-                }
-
-                if (comptime t.Type() == JSC.Subprocess) {
-                    return container.timeoutCallback();
-                }
-
-                return container.callback(container);
-            },
-        }
-    }
-
-    pub fn deinit(_: *EventLoopTimer) void {}
-};
-
 const timespec = bun.timespec;
 
 /// A timer created by WTF code and invoked by Bun's event loop
-pub const WTFTimer = struct {
-    /// This is WTF::RunLoop::TimerBase from WebKit
-    const RunLoopTimer = opaque {};
-
-    vm: *VirtualMachine,
-    run_loop_timer: *RunLoopTimer,
-    event_loop_timer: EventLoopTimer,
-    imminent: *std.atomic.Value(?*WTFTimer),
-    repeat: bool,
-    lock: bun.Mutex = .{},
-
-    pub const new = bun.TrivialNew(@This());
-
-    pub fn init(run_loop_timer: *RunLoopTimer, js_vm: *VirtualMachine) *WTFTimer {
-        const this = WTFTimer.new(.{
-            .vm = js_vm,
-            .imminent = &js_vm.eventLoop().imminent_gc_timer,
-            .event_loop_timer = .{
-                .next = .{
-                    .sec = std.math.maxInt(i64),
-                    .nsec = 0,
-                },
-                .tag = .WTFTimer,
-                .state = .CANCELLED,
-            },
-            .run_loop_timer = run_loop_timer,
-            .repeat = false,
-        });
-
-        return this;
-    }
-
-    pub export fn WTFTimer__runIfImminent(vm: *VirtualMachine) void {
-        vm.eventLoop().runImminentGCTimer();
-    }
-
-    pub fn run(this: *WTFTimer, vm: *VirtualMachine) void {
-        if (this.event_loop_timer.state == .ACTIVE) {
-            vm.timer.remove(&this.event_loop_timer);
-        }
-        this.runWithoutRemoving();
-    }
-
-    inline fn runWithoutRemoving(this: *const WTFTimer) void {
-        WTFTimer__fire(this.run_loop_timer);
-    }
-
-    pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
-        // There's only one of these per VM, and each VM has its own imminent_gc_timer
-        this.imminent.store(if (seconds == 0) this else null, .seq_cst);
-
-        if (seconds == 0.0) {
-            return;
-        }
-
-        const modf = std.math.modf(seconds);
-        var interval = bun.timespec.now();
-        interval.sec += @intFromFloat(modf.ipart);
-        interval.nsec += @intFromFloat(modf.fpart * std.time.ns_per_s);
-        if (interval.nsec >= std.time.ns_per_s) {
-            interval.sec += 1;
-            interval.nsec -= std.time.ns_per_s;
-        }
-
-        this.vm.timer.update(&this.event_loop_timer, &interval);
-        this.repeat = repeat;
-    }
-
-    pub fn cancel(this: *WTFTimer) void {
-        this.lock.lock();
-        defer this.lock.unlock();
-        this.imminent.store(null, .seq_cst);
-        if (this.event_loop_timer.state == .ACTIVE) {
-            this.vm.timer.remove(&this.event_loop_timer);
-        }
-    }
-
-    pub fn fire(this: *WTFTimer, _: *const bun.timespec, _: *VirtualMachine) EventLoopTimer.Arm {
-        this.event_loop_timer.state = .FIRED;
-        this.imminent.store(null, .seq_cst);
-        this.runWithoutRemoving();
-        return if (this.repeat)
-            .{ .rearm = this.event_loop_timer.next }
-        else
-            .disarm;
-    }
-
-    pub fn deinit(this: *WTFTimer) void {
-        this.cancel();
-        bun.destroy(this);
-    }
-
-    export fn WTFTimer__create(run_loop_timer: *RunLoopTimer) ?*anyopaque {
-        if (VirtualMachine.is_bundler_thread_for_bytecode_cache) {
-            return null;
-        }
-
-        return init(run_loop_timer, VirtualMachine.get());
-    }
-
-    export fn WTFTimer__update(this: *WTFTimer, seconds: f64, repeat: bool) void {
-        this.update(seconds, repeat);
-    }
-
-    export fn WTFTimer__deinit(this: *WTFTimer) void {
-        this.deinit();
-    }
-
-    export fn WTFTimer__isActive(this: *const WTFTimer) bool {
-        return this.event_loop_timer.state == .ACTIVE or (this.imminent.load(.seq_cst) orelse return false) == this;
-    }
-
-    export fn WTFTimer__cancel(this: *WTFTimer) void {
-        this.cancel();
-    }
-
-    export fn WTFTimer__secondsUntilTimer(this: *WTFTimer) f64 {
-        this.lock.lock();
-        defer this.lock.unlock();
-        if (this.event_loop_timer.state == .ACTIVE) {
-            const until = this.event_loop_timer.next.duration(&bun.timespec.now());
-            const sec: f64, const nsec: f64 = .{ @floatFromInt(until.sec), @floatFromInt(until.nsec) };
-            return sec + nsec / std.time.ns_per_s;
-        }
-        return std.math.inf(f64);
-    }
-
-    extern fn WTFTimer__fire(this: *RunLoopTimer) void;
-};
+pub const WTFTimer = @import("../WTFTimer.zig");
 
 pub const internal_bindings = struct {
     /// Node.js has some tests that check whether timers fire at the right time. They check this

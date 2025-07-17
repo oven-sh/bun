@@ -416,6 +416,7 @@ extern "C" void bun_restore_stdio()
 extern "C" void onExitSignal(int sig)
 {
     bun_restore_stdio();
+    signal(sig, SIG_DFL);
     raise(sig);
 }
 #endif
@@ -479,7 +480,7 @@ extern "C" void bun_initialize_process()
             err = dup2(devNullFd_, target_fd);
         } while (err < 0 && errno == EINTR);
 
-        if (UNLIKELY(err != 0)) {
+        if (err != 0) [[unlikely]] {
             abort();
         }
     };
@@ -487,7 +488,7 @@ extern "C" void bun_initialize_process()
     for (int fd = 0; fd < 3; fd++) {
         int result = isatty(fd);
         if (result == 0) {
-            if (UNLIKELY(errno == EBADF)) {
+            if (errno == EBADF) [[unlikely]] {
                 // the fd is invalid, let's make sure it's always valid
                 setDevNullFd(fd);
             }
@@ -499,7 +500,7 @@ extern "C" void bun_initialize_process()
                 err = tcgetattr(fd, &termios_to_restore_later[fd]);
             } while (err == -1 && errno == EINTR);
 
-            if (LIKELY(err == 0)) {
+            if (err == 0) [[likely]] {
                 anyTTYs = true;
             }
         }
@@ -920,4 +921,55 @@ extern "C" uint32_t* Bun__getStandaloneModuleGraphMachoLength()
 {
     return &BUN_COMPILED.size;
 }
+
+#elif defined(_WIN32)
+// Windows PE section handling
+#include <windows.h>
+#include <winnt.h>
+
+static uint32_t* pe_section_size = nullptr;
+static uint8_t* pe_section_data = nullptr;
+
+// Helper function to find and map the .bun section
+static bool initializePESection()
+{
+    if (pe_section_size != nullptr) return true;
+
+    HMODULE hModule = GetModuleHandleA(NULL);
+    if (!hModule) return false;
+
+    PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)hModule;
+    if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) return false;
+
+    PIMAGE_NT_HEADERS ntHeaders = (PIMAGE_NT_HEADERS)((BYTE*)hModule + dosHeader->e_lfanew);
+    if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) return false;
+
+    PIMAGE_SECTION_HEADER sectionHeader = IMAGE_FIRST_SECTION(ntHeaders);
+
+    for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
+        if (strncmp((char*)sectionHeader->Name, ".bun", 4) == 0) {
+            // Found the .bun section
+            BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;
+            pe_section_size = (uint32_t*)sectionData;
+            pe_section_data = sectionData + sizeof(uint32_t);
+            return true;
+        }
+        sectionHeader++;
+    }
+
+    return false;
+}
+
+extern "C" uint32_t Bun__getStandaloneModuleGraphPELength()
+{
+    if (!initializePESection()) return 0;
+    return pe_section_size ? *pe_section_size : 0;
+}
+
+extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
+{
+    if (!initializePESection()) return nullptr;
+    return pe_section_data;
+}
+
 #endif

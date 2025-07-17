@@ -122,6 +122,8 @@ foreach(i RANGE ${BUILDKITE_JOBS_MAX_INDEX})
     if(BUILDKITE)
       if(BUILDKITE_ARTIFACT_PATH STREQUAL "libbun-profile.a")
         set(BUILDKITE_ARTIFACT_PATH libbun-profile.a.gz)
+      elseif(BUILDKITE_ARTIFACT_PATH STREQUAL "libbun-asan.a")
+        set(BUILDKITE_ARTIFACT_PATH libbun-asan.a.gz)
       endif()
       set(BUILDKITE_DOWNLOAD_COMMAND buildkite-agent artifact download ${BUILDKITE_ARTIFACT_PATH} . --build ${BUILDKITE_BUILD_UUID} --step ${BUILDKITE_JOB_ID})
     else()
@@ -150,6 +152,19 @@ foreach(i RANGE ${BUILDKITE_JOBS_MAX_INDEX})
           ${BUILD_PATH}/libbun-profile.a
         DEPENDS
           ${BUILD_PATH}/libbun-profile.a.gz
+      )
+    elseif(BUILDKITE_ARTIFACT_PATH STREQUAL "libbun-asan.a.gz")
+      add_custom_command(
+        COMMENT
+          "Unpacking libbun-asan.a.gz"
+        VERBATIM COMMAND
+          gunzip libbun-asan.a.gz
+        WORKING_DIRECTORY
+          ${BUILD_PATH}
+        OUTPUT
+          ${BUILD_PATH}/libbun-asan.a
+        DEPENDS
+          ${BUILD_PATH}/libbun-asan.a.gz
       )
     endif()
   endforeach()

@@ -1,19 +1,23 @@
-import { join, resolve } from "path";
-import { bunExe, bunEnv } from "harness";
 import type { SpawnOptions } from "bun";
+import { bunEnv, bunExe } from "harness";
+import { join, resolve } from "path";
 
 const fixturePath = (...segs: string[]) => resolve(import.meta.dirname, "fixtures", "preload", ...segs);
 
 type Opts = {
   args?: string[];
   cwd?: string;
+  env?: Record<string, string>;
 };
 type Out = [stdout: string, stderr: string, exitCode: number];
-const run = (file: string, { args = [], cwd }: Opts = {}): Promise<Out> => {
+const run = (file: string, { args = [], cwd, env = {} }: Opts = {}): Promise<Out> => {
   const res = Bun.spawn([bunExe(), ...args, file], {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
-    env: bunEnv,
+    env: {
+      ...env,
+      ...bunEnv,
+    },
   } satisfies SpawnOptions.OptionsObject<"ignore", "pipe", "pipe">);
 
   return Promise.all([
@@ -134,3 +138,65 @@ describe("Given a `bunfig.toml` file with a relative path without a leading './'
     expect(code).toBe(0);
   });
 }); // </given a `bunfig.toml` file with a relative path without a leading './'>
+
+describe("Test that all the aliases for --preload work", () => {
+  const dir = fixturePath("many");
+
+  it.each(["--preload=./preload1.ts", "--require=./preload1.ts", "--import=./preload1.ts"])(
+    "When `bun run` is run with %s, the preload is executed",
+    async flag => {
+      const [out, err, code] = await run("index.ts", { args: [flag], cwd: dir });
+      expect(err).toBeEmpty();
+      expect(out).toBe('[ "multi/preload1.ts" ]');
+      expect(code).toBe(0);
+    },
+  );
+
+  it.each(["1", "2", "3", "4"])(
+    "When multiple preload flags are used, they execute in order: --preload, --require, --import (#%s)",
+    async i => {
+      let args: string[] = [];
+      if (i === "1") args = ["--preload", "./preload1.ts", "--require", "./preload2.ts", "--import", "./preload3.ts"];
+      if (i === "2") args = ["--import", "./preload3.ts", "--preload=./preload1.ts", "--require", "./preload2.ts"];
+      if (i === "3") args = ["--require", "./preload2.ts", "--import", "./preload3.ts", "--preload", "./preload1.ts"];
+      if (i === "4") args = ["--require", "./preload1.ts", "--import", "./preload3.ts", "--require", "./preload2.ts"];
+      const [out, err, code] = await run("index.ts", { args, cwd: dir });
+      expect(err).toBeEmpty();
+      expect(out).toBe('[ "multi/preload1.ts", "multi/preload2.ts", "multi/preload3.ts" ]');
+      expect(code).toBe(0);
+    },
+  );
+
+  it("Duplicate preload flags are only executed once", async () => {
+    const args = ["--preload", "./preload1.ts", "--require", "./preload1.ts", "--import", "./preload1.ts"];
+    const [out, err, code] = await run("index.ts", { args, cwd: dir });
+    expect(err).toBeEmpty();
+    expect(out).toBe('[ "multi/preload1.ts" ]');
+    expect(code).toBe(0);
+  });
+
+  it("Test double preload flags", async () => {
+    const dir = fixturePath("many");
+    const args = [
+      "--preload",
+      "./preload1.ts",
+      "--preload=./preload2.ts",
+      "--preload",
+      "./preload3.ts",
+      "-r",
+      "./preload3.ts",
+    ];
+    const [out, err, code] = await run("index.ts", { args, cwd: dir });
+    expect(err).toBeEmpty();
+    expect(out).toMatchInlineSnapshot(`"[ "multi/preload1.ts", "multi/preload2.ts", "multi/preload3.ts" ]"`);
+    expect(code).toBe(0);
+  });
+}); // </Test that all the aliases for --preload work>
+
+test("Test BUN_INSPECT_PRELOAD is used to set preloads", async () => {
+  const dir = fixturePath("many");
+  const [out, err, code] = await run("index.ts", { args: [], cwd: dir, env: { BUN_INSPECT_PRELOAD: "./preload1.ts" } });
+  expect(err).toBeEmpty();
+  expect(out).toMatchInlineSnapshot(`"[ "multi/preload1.ts" ]"`);
+  expect(code).toBe(0);
+}); // </Test BUN_INSPECT_PRELOAD is used to set preloads>

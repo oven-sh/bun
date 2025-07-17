@@ -35,18 +35,14 @@ pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn {
 pub fn toJSHostFnWithContext(comptime ContextType: type, comptime Function: JSHostFnZigWithContext(ContextType)) JSHostFunctionTypeWithContext(ContextType) {
     return struct {
         pub fn function(ctx: *ContextType, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
-            if (Environment.allow_assert and Environment.is_canary) {
-                const value = Function(ctx, globalThis, callframe) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(globalThis, value, Function);
-                return value;
-            }
-            return @call(.always_inline, Function, .{ ctx, globalThis, callframe }) catch |err| switch (err) {
+            const value = Function(ctx, globalThis, callframe) catch |err| switch (err) {
                 error.JSError => .zero,
                 error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
             };
+            if (Environment.allow_assert and Environment.is_canary) {
+                debugExceptionAssertion(globalThis, value, Function);
+            }
+            return value;
         }
     }.function;
 }
@@ -74,19 +70,85 @@ fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime
     bun.assert((value == .zero) == globalThis.hasException());
 }
 
-pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!JSValue) JSValue {
-    if (Environment.allow_assert and Environment.is_canary) {
-        const normal = value catch |err| switch (err) {
-            error.JSError => .zero,
-            error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-        };
-        bun.assert((normal == .zero) == globalThis.hasException());
-        return normal;
-    }
-    return value catch |err| switch (err) {
+pub fn toJSHostSetterValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!void) bool {
+    value catch |err| switch (err) {
+        error.JSError => return false,
+        error.OutOfMemory => {
+            _ = globalThis.throwOutOfMemoryValue();
+            return false;
+        },
+    };
+    return true;
+}
+
+/// Convert the return value of a function returning an error union into a maybe-empty JSValue
+pub fn toJSHostCall(
+    globalThis: *JSGlobalObject,
+    src: std.builtin.SourceLocation,
+    comptime function: anytype,
+    // This can't use std.meta.ArgsTuple because that will turn comptime function parameters into
+    // runtime tuple values
+    args: anytype,
+) JSValue {
+    var scope: jsc.ExceptionValidationScope = undefined;
+    scope.init(globalThis, src);
+    defer scope.deinit();
+
+    const returned: error{ OutOfMemory, JSError }!JSValue = @call(.auto, function, args);
+    const normal = returned catch |err| switch (err) {
         error.JSError => .zero,
         error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
     };
+    scope.assertExceptionPresenceMatches(normal == .zero);
+    return normal;
+}
+
+/// Convert the return value of a function returning a maybe-empty JSValue into an error union.
+/// The wrapped function must return an empty JSValue if and only if it has thrown an exception.
+/// If your function does not follow this pattern (if it can return empty without an exception, or
+/// throw an exception and return non-empty), either fix the function or write a custom wrapper with
+/// CatchScope.
+pub fn fromJSHostCall(
+    globalThis: *JSGlobalObject,
+    /// For attributing thrown exceptions
+    src: std.builtin.SourceLocation,
+    comptime function: anytype,
+    args: std.meta.ArgsTuple(@TypeOf(function)),
+) bun.JSError!JSValue {
+    var scope: jsc.ExceptionValidationScope = undefined;
+    scope.init(globalThis, src);
+    defer scope.deinit();
+
+    const value = @call(.auto, function, args);
+    if (@TypeOf(value) != JSValue) @compileError("fromJSHostCall only supports JSValue");
+    scope.assertExceptionPresenceMatches(value == .zero);
+    return if (value == .zero) error.JSError else value;
+}
+
+pub fn fromJSHostCallGeneric(
+    globalThis: *JSGlobalObject,
+    /// For attributing thrown exceptions
+    src: std.builtin.SourceLocation,
+    comptime function: anytype,
+    args: std.meta.ArgsTuple(@TypeOf(function)),
+) bun.JSError!@typeInfo(@TypeOf(function)).@"fn".return_type.? {
+    var scope: jsc.CatchScope = undefined;
+    scope.init(globalThis, src);
+    defer scope.deinit();
+
+    const result = @call(.auto, function, args);
+    // supporting JSValue would make it too easy to mix up this function with fromJSHostCall
+    // fromJSHostCall has the benefit of checking that the function is correctly returning an empty
+    // value if and only if it has thrown.
+    // fromJSHostCallGeneric is only for functions where the return value tells you nothing about
+    // whether an exception was thrown.
+    //
+    // alternatively, we could consider something like `comptime exception_sentinel: ?T`
+    // to generically support using a value of any type to signal exceptions (INT_MAX, infinity,
+    // nullptr...?) but it's unclear how often that would be useful
+    if (@TypeOf(result) == JSValue) @compileError("fromJSHostCallGeneric does not support JSValue");
+    try scope.returnIfException();
+    return result;
 }
 
 const ParsedHostFunctionErrorSet = struct {
@@ -107,8 +169,6 @@ inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ParsedH
     };
 }
 
-const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
-
 pub fn wrap1(comptime func: anytype) @"return": {
     const p = checkWrapParams(func, 1);
     break :@"return" fn (p[0].type.?) callconv(.c) JSValue;
@@ -116,18 +176,7 @@ pub fn wrap1(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?) callconv(.c) JSValue {
-            if (Environment.allow_assert and Environment.isDebug) {
-                const value = func(arg0) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(arg0, value, func);
-                return value;
-            }
-            return @call(.always_inline, func, .{arg0}) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-            };
+            return toJSHostCall(arg0, @src(), func, .{arg0});
         }
     }.wrapped;
 }
@@ -139,18 +188,7 @@ pub fn wrap2(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?) callconv(.c) JSValue {
-            if (Environment.allow_assert and Environment.isDebug) {
-                const value = func(arg0, arg1) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(arg0, value, func);
-                return value;
-            }
-            return @call(.always_inline, func, .{ arg0, arg1 }) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-            };
+            return toJSHostCall(arg0, @src(), func, .{ arg0, arg1 });
         }
     }.wrapped;
 }
@@ -162,18 +200,7 @@ pub fn wrap3(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?) callconv(.c) JSValue {
-            if (Environment.allow_assert and Environment.isDebug) {
-                const value = func(arg0, arg1, arg2) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(arg0, value, func);
-                return value;
-            }
-            return @call(.always_inline, func, .{ arg0, arg1, arg2 }) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-            };
+            return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2 });
         }
     }.wrapped;
 }
@@ -185,18 +212,7 @@ pub fn wrap4(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?) callconv(.c) JSValue {
-            if (Environment.allow_assert and Environment.isDebug) {
-                const value = func(arg0, arg1, arg2, arg3) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(arg0, value, func);
-                return value;
-            }
-            return @call(.always_inline, func, .{ arg0, arg1, arg2, arg3 }) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-            };
+            return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2, arg3 });
         }
     }.wrapped;
 }
@@ -208,18 +224,7 @@ pub fn wrap5(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?, arg4: p[4].type.?) callconv(.c) JSValue {
-            if (Environment.allow_assert and Environment.isDebug) {
-                const value = func(arg0, arg1, arg2, arg3, arg4) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(arg0, value, func);
-                return value;
-            }
-            return @call(.always_inline, func, .{ arg0, arg1, arg2, arg3, arg4 }) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-            };
+            return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2, arg3, arg4 });
         }
     }.wrapped;
 }
@@ -232,6 +237,20 @@ fn checkWrapParams(comptime func: anytype, comptime N: u8) []const std.builtin.T
         @compileError("first arg must be *JSGlobalObject");
     }
     return params;
+}
+
+/// Uses .SysV callconv on Windows. Use to satisfy SYSV_ABI requirement in JSC APIs.
+/// Otherwise (when the C++ counterpart has no explicit calling convention) use wrap4.
+pub fn wrap4v(comptime func: anytype) @"return": {
+    const p = checkWrapParams(func, 4);
+    break :@"return" fn (p[0].type.?, p[1].type.?, p[2].type.?, p[3].type.?) callconv(jsc.conv) JSValue;
+} {
+    const p = @typeInfo(@TypeOf(func)).@"fn".params;
+    return struct {
+        pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?) callconv(jsc.conv) JSValue {
+            return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2, arg3 });
+        }
+    }.wrapped;
 }
 
 const private = struct {
@@ -483,7 +502,7 @@ pub fn DOMCall(
             arguments_ptr: [*]const jsc.JSValue,
             arguments_len: usize,
         ) callconv(jsc.conv) jsc.JSValue {
-            return jsc.toJSHostValue(globalObject, @field(Container, functionName)(globalObject, thisValue, arguments_ptr[0..arguments_len]));
+            return jsc.toJSHostCall(globalObject, @src(), @field(Container, functionName), .{ globalObject, thisValue, arguments_ptr[0..arguments_len] });
         }
 
         pub const fastpath = @field(Container, functionName ++ "WithoutTypeChecks");
@@ -708,7 +727,7 @@ pub fn wrapStaticMethod(
                     ?jsc.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
                             args[i] = try jsc.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse brk: {
-                                if (arg == .undefined) {
+                                if (arg.isUndefined()) {
                                     break :brk null;
                                 }
 

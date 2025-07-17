@@ -1,6 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { isBroken, isMacOS } from "harness";
-import type { Server, ServeOptions, BunRequest } from "bun";
+import type { Server } from "bun";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
 describe("request cookies", () => {
   let server: Server;

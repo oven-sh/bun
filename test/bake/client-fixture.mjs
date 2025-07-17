@@ -28,6 +28,7 @@ let pendingReload = null;
 let pendingReloadTimer = null;
 let isUpdating = null;
 let objectURLRegistry = new Map();
+let internalAPIs;
 
 function reset() {
   if (isUpdating !== null) {
@@ -64,11 +65,16 @@ function createWindow(windowUrl) {
     height: 768,
   });
 
+  window[globalThis[Symbol.for("bun testing api, may change at any time")]] = internal => {
+    window.internal = internal;
+  };
+
+  const original_window_fetch = window.fetch;
   window.fetch = async function (url, options) {
     if (typeof url === "string") {
       url = new URL(url, windowUrl).href;
     }
-    return fetch(url, options);
+    return await original_window_fetch(url, options);
   };
 
   // Provide WebSocket

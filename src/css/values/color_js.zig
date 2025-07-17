@@ -3,12 +3,8 @@ const std = @import("std");
 const color = @import("./color.zig");
 const RGBA = color.RGBA;
 const LAB = color.LAB;
-const LCH = color.LCH;
 const SRGB = color.SRGB;
 const HSL = color.HSL;
-const HWB = color.HWB;
-const SRGBLinear = color.SRGBLinear;
-const P3 = color.P3;
 const JSC = bun.JSC;
 const css = bun.css;
 
@@ -59,12 +55,12 @@ const OutputColorFormat = enum {
 };
 
 fn colorIntFromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue, comptime property: []const u8) bun.JSError!i32 {
-    if (input == .zero or input == .undefined or !input.isNumber()) {
+    if (input == .zero or input.isUndefined() or !input.isNumber()) {
         return globalThis.throwInvalidArgumentType("color", property, "integer");
     }
 
     // CSS spec says to clamp values to their valid range so we'll respect that here
-    return std.math.clamp(input.coerce(i32, globalThis), 0, 255);
+    return std.math.clamp(try input.coerce(i32, globalThis), 0, 255);
 }
 
 // https://github.com/tmux/tmux/blob/dae2868d1227b95fd076fb4a5efa6256c7245943/colour.c#L44-L55
@@ -187,18 +183,18 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
 
             break :brk .{ .result = css.CssColor{ .rgba = .{ .alpha = rgba.alpha, .red = rgba.red, .green = rgba.green, .blue = rgba.blue } } };
         } else if (args[0].jsType().isArrayLike()) {
-            switch (args[0].getLength(globalThis)) {
+            switch (try args[0].getLength(globalThis)) {
                 3 => {
-                    const r = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 0), "[0]");
-                    const g = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 1), "[1]");
-                    const b = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 2), "[2]");
+                    const r = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 0), "[0]");
+                    const g = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 1), "[1]");
+                    const b = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 2), "[2]");
                     break :brk .{ .result = css.CssColor{ .rgba = .{ .alpha = 255, .red = @intCast(r), .green = @intCast(g), .blue = @intCast(b) } } };
                 },
                 4 => {
-                    const r = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 0), "[0]");
-                    const g = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 1), "[1]");
-                    const b = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 2), "[2]");
-                    const a = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 3), "[3]");
+                    const r = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 0), "[0]");
+                    const g = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 1), "[1]");
+                    const b = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 2), "[2]");
+                    const a = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 3), "[3]");
                     break :brk .{ .result = css.CssColor{ .rgba = .{ .alpha = @intCast(a), .red = @intCast(r), .green = @intCast(g), .blue = @intCast(b) } } };
                 },
                 else => {
@@ -307,18 +303,18 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                                     return object;
                                 },
                                 .@"[rgb]" => {
-                                    const object = JSC.JSValue.createEmptyArray(globalThis, 3);
-                                    object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
-                                    object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
-                                    object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
+                                    const object = try JSC.JSValue.createEmptyArray(globalThis, 3);
+                                    try object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
+                                    try object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
+                                    try object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
                                     return object;
                                 },
                                 .@"[rgba]" => {
-                                    const object = JSC.JSValue.createEmptyArray(globalThis, 4);
-                                    object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
-                                    object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
-                                    object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
-                                    object.putIndex(globalThis, 3, JSC.JSValue.jsNumber(rgba.alpha));
+                                    const object = try JSC.JSValue.createEmptyArray(globalThis, 4);
+                                    try object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
+                                    try object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
+                                    try object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
+                                    try object.putIndex(globalThis, 3, JSC.JSValue.jsNumber(rgba.alpha));
                                     return object;
                                 },
                                 .number => {
@@ -343,7 +339,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                                 .ansi_16 => {
                                     const ansi_16_color = Ansi256.get16(rgba.red, rgba.green, rgba.blue);
                                     // 16-color ansi, foreground text color
-                                    break :color bun.String.createLatin1(&[_]u8{
+                                    break :color bun.String.cloneLatin1(&[_]u8{
                                         // 0x1b is the escape character
                                         // 38 is the foreground color code
                                         // 5 is the 16-color mode
@@ -368,13 +364,13 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                                         rgba.blue,
                                     }) catch unreachable;
 
-                                    break :color bun.String.createLatin1(buf[0 .. 7 + additional.len]);
+                                    break :color bun.String.cloneLatin1(buf[0 .. 7 + additional.len]);
                                 },
                                 .ansi_256 => {
                                     // ANSI escape sequence
                                     var buf: Ansi256.Buffer = undefined;
                                     const val = Ansi256.from(rgba, &buf);
-                                    break :color bun.String.createLatin1(val);
+                                    break :color bun.String.cloneLatin1(val);
                                 },
                                 else => unreachable,
                             }

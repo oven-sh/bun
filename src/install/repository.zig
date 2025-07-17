@@ -1,5 +1,4 @@
 const bun = @import("bun");
-const Global = bun.Global;
 const logger = bun.logger;
 const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
@@ -9,7 +8,6 @@ const Install = @import("./install.zig");
 const ExtractData = Install.ExtractData;
 const PackageManager = Install.PackageManager;
 const Semver = bun.Semver;
-const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const std = @import("std");
 const string = @import("../string_types.zig").string;
@@ -54,16 +52,10 @@ const SloppyGlobalGitConfig = struct {
         const config_file_path = bun.path.joinAbsStringBufZ(home_dir_path, &config_file_path_buf, &.{".gitconfig"}, .auto);
         var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
         const allocator = stack_fallback.get();
-        var source = File.toSource(config_file_path, allocator).unwrap() catch {
+        const source = File.toSource(config_file_path, allocator, .{ .convert_bom = true }).unwrap() catch {
             return;
         };
         defer allocator.free(source.contents);
-
-        if (comptime Environment.isWindows) {
-            if (strings.BOM.detect(source.contents)) |bom| {
-                source.contents = bom.removeAndConvertToUTF8AndFree(allocator, @constCast(source.contents)) catch bun.outOfMemory();
-            }
-        }
 
         var remaining = bun.strings.split(source.contents, "\n");
         var found_askpass = false;
@@ -301,10 +293,51 @@ pub const Repository = extern struct {
         return lhs.resolved.eql(rhs.resolved, lhs_buf, rhs_buf);
     }
 
-    pub fn formatAs(this: *const Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn formatAs(this: *const Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
         const formatter = Formatter{ .label = label, .repository = this, .buf = buf };
         return try formatter.format(layout, opts, writer);
     }
+
+    pub fn fmtStorePath(this: *const Repository, label: string, string_buf: string) StorePathFormatter {
+        return .{
+            .repo = this,
+            .label = label,
+            .string_buf = string_buf,
+        };
+    }
+
+    pub const StorePathFormatter = struct {
+        repo: *const Repository,
+        label: string,
+        string_buf: string,
+
+        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            try writer.print("{}", .{Install.fmtStorePath(this.label)});
+
+            if (!this.repo.owner.isEmpty()) {
+                try writer.print("{}", .{this.repo.owner.fmtStorePath(this.string_buf)});
+                // try writer.writeByte(if (this.opts.replace_slashes) '+' else '/');
+                try writer.writeByte('+');
+            } else if (Dependency.isSCPLikePath(this.repo.repo.slice(this.string_buf))) {
+                // try writer.print("ssh:{s}", .{if (this.opts.replace_slashes) "++" else "//"});
+                try writer.writeAll("ssh:++");
+            }
+
+            try writer.print("{}", .{this.repo.repo.fmtStorePath(this.string_buf)});
+
+            if (!this.repo.resolved.isEmpty()) {
+                try writer.writeByte('+'); // this would be '#' but it's not valid on windows
+                var resolved = this.repo.resolved.slice(this.string_buf);
+                if (strings.lastIndexOfChar(resolved, '-')) |i| {
+                    resolved = resolved[i + 1 ..];
+                }
+                try writer.print("{}", .{Install.fmtStorePath(resolved)});
+            } else if (!this.repo.committish.isEmpty()) {
+                try writer.writeByte('+'); // this would be '#' but it's not valid on windows
+                try writer.print("{}", .{this.repo.committish.fmtStorePath(this.string_buf)});
+            }
+        }
+    };
 
     pub fn fmt(this: *const Repository, label: string, buf: []const u8) Formatter {
         return .{
@@ -318,7 +351,7 @@ pub const Repository = extern struct {
         label: []const u8 = "",
         buf: []const u8,
         repository: *const Repository,
-        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
             if (comptime Environment.allow_assert) bun.assert(formatter.label.len > 0);
             try writer.writeAll(formatter.label);
 
@@ -466,14 +499,14 @@ pub const Repository = extern struct {
         env: DotEnv.Map,
         log: *logger.Log,
         cache_dir: std.fs.Dir,
-        task_id: u64,
+        task_id: Install.Task.Id,
         name: string,
         url: string,
         attempt: u8,
     ) !std.fs.Dir {
         bun.Analytics.Features.git_dependencies += 1;
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
-            bun.fmt.hexIntLower(task_id),
+            bun.fmt.hexIntLower(task_id.get()),
         });
 
         return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
@@ -531,10 +564,10 @@ pub const Repository = extern struct {
         repo_dir: std.fs.Dir,
         name: string,
         committish: string,
-        task_id: u64,
+        task_id: Install.Task.Id,
     ) !string {
         const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
-            bun.fmt.hexIntLower(task_id),
+            bun.fmt.hexIntLower(task_id.get()),
         })}, .auto);
 
         _ = repo_dir;

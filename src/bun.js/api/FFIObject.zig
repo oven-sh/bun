@@ -1,4 +1,4 @@
-pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, lengthValue: ?JSValue) JSC.JSValue {
+pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, lengthValue: ?JSValue) bun.JSError!JSC.JSValue {
     switch (FFIObject.getPtrSlice(globalThis, value, byteOffset, lengthValue)) {
         .err => |err| {
             return err;
@@ -413,7 +413,7 @@ const ValueOrError = union(enum) {
 };
 
 pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, byteLength: ?JSValue) ValueOrError {
-    if (!value.isNumber()) {
+    if (!value.isNumber() or value.asNumber() < 0 or value.asNumber() > std.math.maxInt(usize)) {
         return .{ .err = globalThis.toInvalidArguments("ptr must be a number.", .{}) };
     }
 
@@ -504,7 +504,7 @@ pub fn toArrayBuffer(
     valueLength: ?JSValue,
     finalizationCtxOrPtr: ?JSValue,
     finalizationCallback: ?JSValue,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
         .err => |erro| {
             return erro;
@@ -534,7 +534,7 @@ pub fn toArrayBuffer(
                 }
             }
 
-            return JSC.ArrayBuffer.fromBytes(slice, JSC.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis, ctx, callback, null);
+            return JSC.ArrayBuffer.fromBytes(slice, JSC.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis, ctx, callback);
         },
     }
 }
@@ -546,7 +546,7 @@ pub fn toBuffer(
     valueLength: ?JSValue,
     finalizationCtxOrPtr: ?JSValue,
     finalizationCallback: ?JSValue,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
         .err => |err| {
             return err;

@@ -21,6 +21,8 @@ const {
   setServerCustomOptions: (
     server: any,
     requireHostHeader: boolean,
+    useStrictMethodValidation: boolean,
+    maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
@@ -354,13 +356,19 @@ function emitErrorNt(msg, err, callback) {
     msg.emit("error", err);
   }
 }
+const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
+const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
+const kOutHeaders = Symbol("kOutHeaders");
 
 export {
+  ConnResetException,
+  Headers,
+  METHODS,
+  STATUS_CODES,
   abortedSymbol,
   assignHeadersFast,
   bodyStreamSymbol,
   callCloseCallback,
-  ConnResetException,
   controllerSymbol,
   deferredSymbol,
   drainMicrotasks,
@@ -374,11 +382,11 @@ export {
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   getHeader,
   getIsNextIncomingMessageHTTPS,
+  getMaxHTTPHeaderSize,
   getRawKeys,
   hasServerResponseFinished,
-  Headers,
-  headersSymbol,
   headerStateSymbol,
+  headersSymbol,
   headersTuple,
   isAbortError,
   isTlsSymbol,
@@ -395,10 +403,11 @@ export {
   kHandle,
   kHost,
   kInternalSocketData,
-  kMaxHeadersCount,
   kMaxHeaderSize,
+  kMaxHeadersCount,
   kMethod,
   kOptions,
+  kOutHeaders,
   kParser,
   kPath,
   kPendingCallbacks,
@@ -414,7 +423,6 @@ export {
   kTls,
   kUpgradeOrConnect,
   kUseDefaultPort,
-  METHODS,
   noBodySymbol,
   optionsSymbol,
   reqSymbol,
@@ -422,10 +430,10 @@ export {
   serverSymbol,
   setHeader,
   setIsNextIncomingMessageHTTPS,
+  setMaxHTTPHeaderSize,
   setRequestTimeout,
   setServerCustomOptions,
   setServerIdleTimeout,
-  STATUS_CODES,
   statusCodeSymbol,
   statusMessageSymbol,
   timeoutTimerSymbol,

@@ -132,7 +132,8 @@ pub const FD = packed struct(backing_int) {
     /// When calling fd function, you may not be able to close the returned fd.
     /// To close the fd, you have to call `.close()` on the `bun.FD`.
     pub fn native(fd: FD) fd_t {
-        if (Environment.isDebug and !@inComptime()) bun.assert(fd.isValid());
+        // Do not assert that the fd is valid, as there are many syscalls where
+        // we deliberately pass an invalid file descriptor.
         return switch (os) {
             else => fd.value.as_system,
             .windows => switch (fd.decodeWindows()) {
@@ -535,6 +536,36 @@ pub const FD = packed struct(backing_int) {
     /// Properly converts FD.invalid into FD.Optional.none
     pub fn toOptional(fd: FD) Optional {
         return @enumFromInt(@as(backing_int, @bitCast(fd)));
+    }
+
+    pub fn makePath(dir: FD, comptime T: type, subpath: []const T) !void {
+        return switch (T) {
+            u8 => bun.makePath(dir.stdDir(), subpath),
+            u16 => bun.makePathW(dir.stdDir(), subpath),
+            else => @compileError("unexpected type"),
+        };
+    }
+
+    pub fn makeOpenPath(dir: FD, comptime T: type, subpath: []const T) !FD {
+        return switch (T) {
+            u8 => {
+                if (comptime Environment.isWindows) {
+                    return bun.sys.openDirAtWindowsA(dir, subpath, .{ .can_rename_or_delete = false, .create = true, .read_only = false }).unwrap();
+                }
+
+                return FD.fromStdDir(try dir.stdDir().makeOpenPath(subpath, .{ .iterate = true, .access_sub_paths = true }));
+            },
+            u16 => {
+                if (comptime !Environment.isWindows) @compileError("unexpected type");
+                return bun.sys.openDirAtWindows(dir, subpath, .{ .can_rename_or_delete = false, .create = true, .read_only = false }).unwrap();
+            },
+            else => @compileError("unexpected type"),
+        };
+    }
+
+    // TODO: make our own version of deleteTree
+    pub fn deleteTree(dir: FD, subpath: []const u8) !void {
+        try dir.stdDir().deleteTree(subpath);
     }
 
     // The following functions are from bun.sys but with the 'f' prefix dropped

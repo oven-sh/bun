@@ -356,6 +356,7 @@ src/cli/test_command.zig
 src/cli/test/Scanner.zig
 src/cli/unlink_command.zig
 src/cli/update_command.zig
+src/cli/update_interactive_command.zig
 src/cli/upgrade_command.zig
 src/cli/why_command.zig
 src/codegen/process_windows_translate_c.zig

@@ -114,6 +114,7 @@ pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
 pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
 pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
+pub const UpdateInteractiveCommand = @import("./cli/update_interactive_command.zig").UpdateInteractiveCommand;
 pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
 pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
@@ -788,6 +789,13 @@ pub const Command = struct {
                 try OutdatedCommand.exec(ctx);
                 return;
             },
+            .UpdateInteractiveCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpdateInteractiveCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .UpdateInteractiveCommand);
+
+                try UpdateInteractiveCommand.exec(ctx);
+                return;
+            },
             .PublishCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PublishCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .PublishCommand);
@@ -1232,6 +1240,7 @@ pub const Command = struct {
         PatchCommand,
         PatchCommitCommand,
         OutdatedCommand,
+        UpdateInteractiveCommand,
         PublishCommand,
         AuditCommand,
         WhyCommand,
@@ -1268,6 +1277,7 @@ pub const Command = struct {
                 .PatchCommand => 'x',
                 .PatchCommitCommand => 'z',
                 .OutdatedCommand => 'o',
+                .UpdateInteractiveCommand => 'U',
                 .PublishCommand => 'k',
                 .AuditCommand => 'A',
                 .WhyCommand => 'W',
@@ -1522,9 +1532,10 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
-                .OutdatedCommand, .PublishCommand, .AuditCommand => {
+                .OutdatedCommand, .UpdateInteractiveCommand, .PublishCommand, .AuditCommand => {
                     Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
                         .OutdatedCommand => .outdated,
+                        .UpdateInteractiveCommand => .update,
                         .PublishCommand => .publish,
                         .AuditCommand => .audit,
                     });
@@ -1636,6 +1647,7 @@ pub const Command = struct {
             .RunCommand = true,
             .RunAsNodeCommand = true,
             .OutdatedCommand = true,
+            .UpdateInteractiveCommand = true,
             .PublishCommand = true,
             .AuditCommand = true,
         });
@@ -1652,6 +1664,7 @@ pub const Command = struct {
             .PackageManagerCommand = true,
             .BunxCommand = true,
             .OutdatedCommand = true,
+            .UpdateInteractiveCommand = true,
             .PublishCommand = true,
             .AuditCommand = true,
         });
@@ -1665,6 +1678,7 @@ pub const Command = struct {
             .InstallCommand = false,
             .LinkCommand = false,
             .OutdatedCommand = false,
+            .UpdateInteractiveCommand = false,
             .PackageManagerCommand = false,
             .PatchCommand = false,
             .PatchCommitCommand = false,

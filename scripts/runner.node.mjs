@@ -28,9 +28,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { userInfo, availableParallelism } from "node:os";
+import { availableParallelism, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
+import pLimit from "p-limit";
 import {
   getAbi,
   getAbiVersion,
@@ -63,7 +64,6 @@ import {
   unzip,
   uploadArtifact,
 } from "./utils.mjs";
-import pLimit from "p-limit";
 
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();

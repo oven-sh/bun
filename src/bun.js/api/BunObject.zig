@@ -1,11 +1,12 @@
-/// How to add a new function or property to the Bun global
-///
-/// - Add a callback or property to the below struct
-/// - @export it in the appropriate place
-/// - Update "@begin bunObjectTable" in BunObject.cpp
-///     - Getters use a generated wrapper function `BunObject_getter_wrap_<name>`
-/// - Update "BunObject+exports.h"
-/// - Run `bun run build`
+//! How to add a new function or property to the Bun global
+//!
+//! - Add a callback or property to the below struct
+//! - @export it in the appropriate place
+//! - Update "@begin bunObjectTable" in BunObject.cpp
+//!     - Getters use a generated wrapper function `BunObject_getter_wrap_<name>`
+//! - Update "BunObject+exports.h"
+//! - Run `bun run build`
+
 pub const BunObject = struct {
     // --- Callbacks ---
     pub const allocUnsafe = toJSCallback(Bun.allocUnsafe);

@@ -830,7 +830,7 @@ pub const RunCommand = struct {
             this_transpiler.runEnvLoader(true) catch {};
         }
 
-        this_transpiler.env.map.putDefault("npm_config_local_prefix", this_transpiler.fs.top_level_dir) catch unreachable;
+        this_transpiler.env.map.put("INIT_CWD", this_transpiler.fs.top_level_dir) catch unreachable;
 
         // we have no way of knowing what version they're expecting without running the node executable
         // running the node executable is too slow
@@ -872,6 +872,10 @@ pub const RunCommand = struct {
                     this_transpiler.env.map.putAssumeCapacity(key, v);
                 }
             }
+
+            this_transpiler.env.map.put("npm_config_local_prefix", package_json.source.path.name.dir) catch unreachable;
+        } else {
+            this_transpiler.env.map.put("npm_config_local_prefix", this_transpiler.fs.top_level_dir) catch unreachable;
         }
 
         return root_dir_info;
@@ -1381,7 +1385,7 @@ pub const RunCommand = struct {
         var this_transpiler: transpiler.Transpiler = undefined;
         const root_dir_info = try configureEnvForRun(ctx, &this_transpiler, null, log_errors, false);
         try configurePathForRun(ctx, root_dir_info, &this_transpiler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
-        this_transpiler.env.map.put("npm_command", "run-script") catch unreachable;
+        this_transpiler.env.map.put("npm_command", "run") catch unreachable;
 
         if (!ctx.debug.loaded_bunfig) {
             bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};

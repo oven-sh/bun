@@ -590,8 +590,8 @@ pub const UpdateInteractiveCommand = struct {
         var max_latest_len: usize = "Latest".len;
 
         // Set reasonable limits to prevent excessive column widths
-        const MAX_NAME_WIDTH = 60;
-        const MAX_VERSION_WIDTH = 20;
+        const MAX_NAME_WIDTH = 80;
+        const MAX_VERSION_WIDTH = 30;
 
         for (packages) |pkg| {
             // Include dev tag length in max calculation
@@ -870,8 +870,8 @@ pub const UpdateInteractiveCommand = struct {
                 defer if (package_url.len > 0) bun.default_allocator.free(package_url);
 
                 // Truncate package name if it's too long
-                const display_name = if (pkg.name.len > 60)
-                    try std.fmt.allocPrint(bun.default_allocator, "{s}...", .{pkg.name[0..57]})
+                const display_name = if (pkg.name.len > MAX_NAME_WIDTH)
+                    try std.fmt.allocPrint(bun.default_allocator, "{s}...", .{pkg.name[0..MAX_NAME_WIDTH-3]})
                 else
                     pkg.name;
                 defer if (display_name.ptr != pkg.name.ptr) bun.default_allocator.free(display_name);

@@ -1,4 +1,4 @@
-# List of tests for which we do NOT set validateExceptionChecks=1 when running in ASan CI
+# List of tests for which we do NOT set validateExceptionChecks=1 when running in ASAN CI
 vendor/elysia/test/a.test.ts
 vendor/elysia/test/adapter/web-standard/cookie-to-header.test.ts
 vendor/elysia/test/adapter/web-standard/map-compact-response.test.ts

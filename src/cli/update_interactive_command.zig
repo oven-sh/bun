@@ -605,15 +605,12 @@ pub const UpdateInteractiveCommand = struct {
             max_latest_len = @max(max_latest_len, pkg.latest_version.len);
         }
 
-        // Apply reasonable maximum limits to prevent excessive width
-        const MAX_NAME_WIDTH = 50;
-        const MAX_VERSION_WIDTH = 25;
-        
+        // Use natural widths without any limits
         return ColumnWidths{
-            .name = @min(max_name_len, MAX_NAME_WIDTH),
-            .current = @min(max_current_len, MAX_VERSION_WIDTH),
-            .target = @min(max_target_len, MAX_VERSION_WIDTH),
-            .latest = @min(max_latest_len, MAX_VERSION_WIDTH),
+            .name = max_name_len,
+            .current = max_current_len,
+            .target = max_target_len,
+            .latest = max_latest_len,
         };
     }
 
@@ -883,14 +880,7 @@ pub const UpdateInteractiveCommand = struct {
                     "";
                 defer if (package_url.len > 0) bun.default_allocator.free(package_url);
 
-                // Truncate package name if it's too long
-                const display_name = if (pkg.name.len > state.max_name_len and state.max_name_len > 3)
-                    try std.fmt.allocPrint(bun.default_allocator, "{s}...", .{pkg.name[0..state.max_name_len-3]})
-                else
-                    pkg.name;
-                defer if (display_name.ptr != pkg.name.ptr) bun.default_allocator.free(display_name);
-
-                const hyperlink = TerminalHyperlink.new(package_url, display_name, package_url.len > 0);
+                const hyperlink = TerminalHyperlink.new(package_url, pkg.name, package_url.len > 0);
 
                 if (selected) {
                     if (strings.eqlComptime(checkbox_color, "red")) {
@@ -919,18 +909,11 @@ pub const UpdateInteractiveCommand = struct {
                     Output.print(" ", .{});
                 }
 
-                // Current version - truncate if too long
-                const display_current = if (pkg.current_version.len > state.max_current_len and state.max_current_len > 3)
-                    try std.fmt.allocPrint(bun.default_allocator, "{s}...", .{pkg.current_version[0..state.max_current_len-3]})
-                else
-                    pkg.current_version;
-                defer if (display_current.ptr != pkg.current_version.ptr) bun.default_allocator.free(display_current);
-
-                Output.pretty("<r>{s}<r>", .{display_current});
+                // Current version
+                Output.pretty("<r>{s}<r>", .{pkg.current_version});
 
                 // Print padding after current version (4 spaces as requested)
-                const current_display_len = if (pkg.current_version.len > state.max_current_len) state.max_current_len else pkg.current_version.len;
-                const current_padding = if (current_display_len >= state.max_current_len) 0 else state.max_current_len - current_display_len;
+                const current_padding = if (pkg.current_version.len >= state.max_current_len) 0 else state.max_current_len - pkg.current_version.len;
                 j = 0;
                 while (j < current_padding + 4) : (j += 1) {
                     Output.print(" ", .{});

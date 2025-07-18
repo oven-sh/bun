@@ -991,7 +991,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
         const gdb = await spawnSafe({
           command: "gdb",
           args: ["-batch", `--command=${join(import.meta.dirname, "backtrace.gdb")}`, "--core", corePath, execPath],
-          timeout: 60_000,
+          timeout: 240_000,
           stderr: () => {},
           stdout(text) {
             out += text;

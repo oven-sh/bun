@@ -31,6 +31,8 @@ import { readFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
+import { setTimeout as setTimeoutPromise } from "node:timers/promises";
+import { createInterface } from "node:readline";
 import {
   getAbi,
   getAbiVersion,
@@ -187,6 +189,8 @@ if (options["coredump-upload"]) {
     throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
   }
 }
+
+let remapPort = undefined;
 
 /**
  * @typedef {Object} TestExpectation
@@ -451,6 +455,40 @@ async function runTests() {
   }
 
   if (!failedResults.length) {
+    // bun install has succeeded
+    const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
+    const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
+    console.log("run in", cwd);
+    let exiting = false;
+
+    const server = spawn(execPath, ["run", "ci-remap-server", execPath, cwd], {
+      stdio: ["ignore", "pipe", "inherit"],
+      cwd, // run in main repo
+      env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
+    });
+    server.unref();
+    server.on("error", errorResolve);
+    server.on("exit", (code, signal) => {
+      if (!exiting && (code !== 0 || signal !== null)) errorResolve(signal ? signal : "code " + code);
+    });
+    process.on("exit", () => {
+      exiting = true;
+      server.kill();
+    });
+    const lines = createInterface(server.stdout);
+    lines.on("line", line => {
+      portResolve({ port: parseInt(line) });
+    });
+
+    const result = await Promise.race([portPromise, errorPromise, setTimeoutPromise(5000, "timeout")]);
+    if (typeof result.port != "number") {
+      server.kill();
+      console.warn("ci-remap server did not start:", result);
+    } else {
+      console.log("crash reports parsed on port", result.port);
+      remapPort = result.port;
+    }
+
     for (const testPath of tests) {
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
@@ -464,6 +502,9 @@ async function runTests() {
           NO_COLOR: "1",
           BUN_DEBUG_QUIET_LOGS: "1",
         };
+        if (typeof remapPort == "number") {
+          env.BUN_CRASH_REPORT_URL = `http://localhost:${remapPort}`;
+        }
         if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
           env.BUN_JSC_validateExceptionChecks = "1";
         }
@@ -990,7 +1031,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
         let out = "";
         const gdb = await spawnSafe({
           command: "gdb",
-          args: ["-batch", `--command=${join(import.meta.dirname, "backtrace.gdb")}`, "--core", corePath, execPath],
+          args: ["-batch", `--eval-command=bt`, "--core", corePath, execPath],
           timeout: 240_000,
           stderr: () => {},
           stdout(text) {
@@ -1005,6 +1046,33 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
         }
       } else {
         console.warn(`process killed by ${result.signalCode} but no core file found at ${corePath}`);
+      }
+    }
+
+    if (typeof remapPort == "number") {
+      try {
+        const response = await fetch(`http://localhost:${remapPort}/traces`);
+        if (!response.ok || response.status !== 200) throw new Error(`server responded with code ${response.status}`);
+        const traces = await response.json();
+        if (traces.length > 0) {
+          console.log(`${traces.length} crashes reported during this test`);
+          for (const t of traces) {
+            if (t.failed_parse) {
+              console.log("Trace string failed to parse:");
+              console.log(t.failed_parse);
+            } else if (t.failed_remap) {
+              console.log("Parsed trace failed to remap:");
+              console.log(JSON.stringify(t.failed_remap, null, 2));
+            } else {
+              console.log("================");
+              console.log(t.remap);
+            }
+          }
+        } else {
+          console.log("no traces?");
+        }
+      } catch (e) {
+        console.warn("failed to fetch traces:", e);
       }
     }
     return result;
@@ -1091,6 +1159,9 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   };
   if (basename(execPath).includes("asan") && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
+  }
+  if (typeof remapPort == "number") {
+    env.BUN_CRASH_REPORT_URL = `http://localhost:${remapPort}`;
   }
 
   const { ok, error, stdout } = await spawnBun(execPath, {

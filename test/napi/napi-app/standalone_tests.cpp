@@ -274,7 +274,7 @@ test_napi_escapable_handle_scope(const Napi::CallbackInfo &info) {
 
   constexpr const char *str = "this is a long string meow meow meow";
 
-  napi_value *hidden = new napi_value;
+  napi_value *hidden = nullptr; // test crashing here
   NODE_API_ASSERT(env, store_escaped_handle(env, hidden, str));
 
   run_gc(info);

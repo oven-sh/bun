@@ -1,5 +1,5 @@
 import { test } from "bun:test";
 
-test.skipIf(process.platform != "linux")("crash", () => {
+test("crash", () => {
   Bun.FFI.read.u8(123);
 });

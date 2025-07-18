@@ -1,9 +1,5 @@
-const std = @import("std");
-const diff_match_patch = @import("diff_match_patch.zig");
 const DMP = diff_match_patch.DMP(u8);
 const DMPUsize = diff_match_patch.DMP(usize);
-
-// @sortImports
 
 fn removeTrailingNewline(text: []const u8) []const u8 {
     if (!std.mem.endsWith(u8, text, "\n")) return text;
@@ -307,3 +303,8 @@ pub fn printDiff(
 
     try writer.writeAll("\n");
 }
+
+// @sortImports
+
+const diff_match_patch = @import("diff_match_patch.zig");
+const std = @import("std");

@@ -457,7 +457,9 @@ pub inline fn isEmojiEnabled() bool {
 
 pub fn isGithubAction() bool {
     if (bun.getenvZ("GITHUB_ACTIONS")) |value| {
-        return strings.eqlComptime(value, "true");
+        return strings.eqlComptime(value, "true") and
+            // Do not print github annotations for AI agents because that wastes the context window.
+            !isAIAgent();
     }
     return false;
 }

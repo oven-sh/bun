@@ -21,7 +21,8 @@ Received: 1
  1 todo
  1 fail
  2 expect() calls
-Ran 4 tests across 1 file."
+Ran 4 tests across 1 file.
+bun test <version> (<revision>)"
 `;
 
 exports[`CLAUDECODE=1 vs CLAUDECODE=0 comparison: normal 1`] = `
@@ -46,7 +47,8 @@ exports[`CLAUDECODE=1 vs CLAUDECODE=0 comparison: quiet 1`] = `
  1 todo
  0 fail
  2 expect() calls
-Ran 4 tests across 1 file."
+Ran 4 tests across 1 file.
+bun test <version> (<revision>)"
 `;
 
 exports[`CLAUDECODE flag handles no test files found: no-tests-normal 1`] = `
@@ -58,4 +60,8 @@ Learn more about bun test: https://bun.com/docs/cli/test
 bun test <version> (<revision>)"
 `;
 
-exports[`CLAUDECODE flag handles no test files found: no-tests-quiet 1`] = `"error: 0 test files matching **.{test,spec,_test_,_spec_}.{js,ts,jsx,tsx} found in cwd "<dir>""`;
+exports[`CLAUDECODE flag handles no test files found: no-tests-quiet 1`] = `
+"error: 0 test files matching **.{test,spec,_test_,_spec_}.{js,ts,jsx,tsx} found in cwd "<dir>"
+
+bun test <version> (<revision>)"
+`;

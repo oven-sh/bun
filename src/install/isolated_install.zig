@@ -628,7 +628,7 @@ pub fn installIsolatedPackages(
             .install_node = if (manager.options.log_level.showProgress()) &install_node else null,
             .scripts_node = if (manager.options.log_level.showProgress()) &scripts_node else null,
             .store = &store,
-            .preallocated_tasks = .init(.init(bun.default_allocator)),
+            .preallocated_tasks = .init(bun.default_allocator),
             .trusted_dependencies_mutex = .{},
             .trusted_dependencies_from_update_requests = manager.findTrustedDependenciesFromUpdateRequests(),
             .supported_backend = .init(PackageInstall.supported_method),

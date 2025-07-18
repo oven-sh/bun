@@ -74,9 +74,7 @@ pub fn runTasks(
         var iter = batch.iterator();
         while (iter.next()) |task| {
             defer {
-                const preallocated_tasks = installer.preallocated_tasks.lock();
-                defer installer.preallocated_tasks.unlock();
-                preallocated_tasks.put(task);
+                installer.preallocated_tasks.put(task);
             }
             switch (task.result) {
                 .none => {

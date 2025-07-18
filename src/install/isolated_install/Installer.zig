@@ -14,7 +14,7 @@ pub const Installer = struct {
     store: *const Store,
 
     tasks: bun.UnboundedQueue(Task, .next) = .{},
-    preallocated_tasks: GuardedValue(Task.Preallocated, Mutex),
+    preallocated_tasks: Task.Preallocated,
 
     supported_backend: std.atomic.Value(PackageInstall.Method),
 
@@ -25,12 +25,7 @@ pub const Installer = struct {
     }
 
     pub fn startTask(this: *Installer, entry_id: Store.Entry.Id) void {
-        const task = blk: {
-            const preallocated_tasks = this.preallocated_tasks.lock();
-            defer this.preallocated_tasks.unlock();
-            break :blk preallocated_tasks.get();
-        };
-
+        const task = this.preallocated_tasks.get();
         task.* = .{
             .entry_id = entry_id,
             .installer = this,

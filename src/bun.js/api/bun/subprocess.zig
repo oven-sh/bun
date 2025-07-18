@@ -1629,17 +1629,17 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                         if (exited.code != 0) {
                             promise.asAnyPromise().?.reject(globalThis, globalThis.createErrorInstance("Shell error", .{}));
                         } else {
-                            promise.asAnyPromise().?.resolve(globalThis, .undefined);
+                            promise.asAnyPromise().?.resolve(globalThis, undefined);
                         }
                     },
                     .err => |err| {
-                        promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis));
+                        promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis));
                     },
                     .signaled => {
                         if (128 +% @intFromEnum(status.signaled) != 0) {
                             promise.asAnyPromise().?.reject(globalThis, globalThis.createErrorInstance("Shell error", .{}));
                         } else {
-                            promise.asAnyPromise().?.resolve(globalThis, .undefined);
+                            promise.asAnyPromise().?.resolve(globalThis, undefined);
                         }
                     },
                     else => {
@@ -1820,17 +1820,17 @@ pub fn getSuccess(
                 // TODO: this should be a real `ShellError`?
                 return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Shell error", .{}));
             }
-            return JSC.JSPromise.resolvedPromiseValue(globalThis, .undefined);
+            return JSC.JSPromise.resolvedPromiseValue(globalThis, undefined);
         },
         .signaled => |signal| {
             if ((signal.toExitCode() orelse 254) != 0) {
                 // TODO: this should be a real `ShellError`?
                 return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Shell error", .{}));
             }
-            return JSC.JSPromise.resolvedPromiseValue(globalThis, .undefined);
+            return JSC.JSPromise.resolvedPromiseValue(globalThis, undefined);
         },
         .err => |err| {
-            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
         },
         else => {
             const promise = JSC.JSPromise.create(globalThis).asValue(globalThis);

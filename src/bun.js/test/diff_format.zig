@@ -74,7 +74,9 @@ pub const DiffFormatter = struct {
         const received_slice = received_buf.slice();
         const expected_slice = expected_buf.slice();
 
-        try printDiffMain(allocator, this.not, received_slice, expected_slice, writer, Output.enable_ansi_colors);
+        try printDiffMain(allocator, this.not, received_slice, expected_slice, writer, .{
+            .enable_ansi_colors = Output.enable_ansi_colors,
+        });
     }
 };
 

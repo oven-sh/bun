@@ -248,4 +248,34 @@ $ bun test foo
 
 Any test file in the directory with an _absolute path_ that contains one of the targets will run. Glob patterns are not yet supported. -->
 
+## AI Agent Integration
+
+When using Bun's test runner with AI coding assistants, you can enable quieter output to improve readability and reduce context noise. This feature minimizes test output verbosity while preserving essential failure information.
+
+### Environment Variables
+
+Set any of the following environment variables to enable AI-friendly output:
+
+- `CLAUDECODE=1` - For Claude Code
+- `REPL_ID=1` - For Replit  
+- `IS_CODE_AGENT=1` - Generic AI agent flag
+
+### Behavior
+
+When an AI agent environment is detected:
+
+- Only test failures are displayed in detail
+- Passing, skipped, and todo test indicators are hidden
+- Summary statistics remain intact
+- JUnit XML reporting is preserved
+
+```bash
+# Example: Enable quiet output for Claude Code
+$ CLAUDECODE=1 bun test
+
+# Still shows failures and summary, but hides verbose passing test output
+```
+
+This feature is particularly useful in AI-assisted development workflows where reduced output verbosity improves context efficiency while maintaining visibility into test failures.
+
 {% bunCLIUsage command="test" /%}

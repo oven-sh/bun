@@ -27,6 +27,7 @@ test("basic", async () => {
         version: "1",
         onInstall: async ({packages}) => {
           console.log("Security scanner is checking packages:", packages.map(p => p.name).join(", "));
+
           return [
             {
               name: packages[0].name,

@@ -55,6 +55,226 @@ fn updatePackageJSONAndInstallWithManagerWithUpdatesAndUpdateRequests(
         original_cwd,
     );
 }
+
+const SecurityAdvisoryLevel = enum { fatal, warn };
+
+const SecurityAdvisory = struct {
+    level: SecurityAdvisoryLevel,
+    package: []const u8,
+    url: ?[]const u8,
+    description: ?[]const u8,
+};
+
+fn performSecurityScanOnAdds(
+    manager: *PackageManager,
+    updates: []const UpdateRequest,
+    original_cwd: string,
+) !void {
+    const security_provider = manager.options.security_provider orelse {
+        return;
+    };
+
+    if (manager.options.dry_run or !manager.options.do.install_packages) return;
+    if (updates.len == 0) return;
+
+    var json_buf = std.ArrayList(u8).init(manager.allocator);
+    defer json_buf.deinit();
+    var writer = json_buf.writer();
+
+    try writer.writeAll("[\n");
+    for (updates, 0..) |update, i| {
+        if (i > 0) try writer.writeAll(",\n");
+
+        const name = update.getName();
+        const version_str = update.version.literal.slice(update.version_buf);
+
+        try writer.print(
+            \\  {{
+            \\    "name": "{s}",
+            \\    "version": "{s}",
+            \\    "registryUrl": "{s}",
+            \\    "requestedRange": "{s}",
+            \\    "integrity": ""
+            \\  }}
+        , .{ name, version_str, manager.options.scope.url.href, version_str });
+    }
+    try writer.writeAll("\n]");
+
+    var code_buf = std.ArrayList(u8).init(manager.allocator);
+    defer code_buf.deinit();
+    var code_writer = code_buf.writer();
+
+    try code_writer.print(
+        \\try {{
+        \\  const provider = await import('{s}');
+        \\  const packages = {s};
+        \\
+        \\  if (provider.version !== '1') {{
+        \\    throw new Error('Security provider must be version 1');
+        \\  }}
+        \\
+        \\  const result = await provider.onInstall({{ packages }});
+        \\
+        \\  if (!Array.isArray(result)) {{
+        \\    console.error('Security provider must return an array of advisories');
+        \\    process.exit(1);
+        \\  }}
+        \\
+        \\  process.stderr.write(JSON.stringify(result));
+        \\}} catch (error) {{
+        \\  console.error('Security provider failed:', error);
+        \\  process.exit(1);
+        \\}}
+    , .{ security_provider, json_buf.items });
+
+    const exec_path = bun.selfExePath() catch unreachable;
+    const code_z = manager.allocator.dupeZ(u8, code_buf.items) catch bun.outOfMemory();
+    defer manager.allocator.free(code_z);
+
+    const argv = [_][]const u8{ exec_path, "-e", code_z };
+
+    const result = switch (try bun.spawn.sync.spawn(&.{
+        .argv = &argv,
+        .envp = null,
+        .stdin = .ignore,
+        .stdout = .buffer,
+        .stderr = .buffer,
+        .cwd = original_cwd,
+    })) {
+        .err => |err| {
+            Output.errGeneric("Security provider spawn failed: {s}", .{@tagName(err.getErrno())});
+            Global.exit(1);
+        },
+        .result => |res| res,
+    };
+
+    if (result.stdout.items.len > 0) {
+        Output.prettyln("{s}", .{result.stdout.items});
+    }
+
+    if (!result.status.isOK()) {
+        Output.errGeneric("Security provider failed with exit code", .{});
+        Global.exit(1);
+    }
+
+    if (result.stderr.items.len == 0) {
+        Output.errGeneric("Security provider returned no data", .{});
+        Global.exit(1);
+    }
+
+    const source = logger.Source.initPathString("<security-provider>", result.stderr.items);
+    const parsed = bun.JSON.parse(&source, manager.log, manager.allocator, false) catch {
+        Output.errGeneric("Security provider returned invalid JSON. This may indicate the provider crashed.\nStderr: {s}", .{result.stderr.items});
+        Global.exit(1);
+    };
+
+    if (parsed.data != .e_array) {
+        Output.errGeneric("Security provider returned invalid response (expected array)", .{});
+        Global.exit(1);
+    }
+
+    var has_fatal = false;
+    var has_warn = false;
+    var advisories = std.ArrayList(SecurityAdvisory).init(manager.allocator);
+    defer advisories.deinit();
+
+    for (parsed.data.e_array.items.slice()) |item| {
+        if (item.data != .e_object) {
+            Output.errGeneric("Security provider returned invalid advisory: expected object, got {s}", .{@tagName(item.data)});
+            Global.exit(1);
+        }
+
+        const obj = item.data.e_object;
+        const level_property = obj.get("level") orelse {
+            Output.errGeneric("Security provider returned invalid advisory: missing required 'level' field", .{});
+            Global.exit(1);
+        };
+        const package_property = obj.get("name") orelse {
+            Output.errGeneric("Security provider returned invalid advisory: missing required 'name' field", .{});
+            Global.exit(1);
+        };
+
+        if (level_property.data != .e_string) {
+            Output.errGeneric("Security provider returned invalid advisory: 'level' field must be a string", .{});
+            Global.exit(1);
+        }
+        if (package_property.data != .e_string) {
+            Output.errGeneric("Security provider returned invalid advisory: 'name' field must be a string", .{});
+            Global.exit(1);
+        }
+
+        const level_str = level_property.data.e_string.string(manager.allocator) catch |err| {
+            Output.errGeneric("Security provider returned invalid advisory: failed to parse 'level' string: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
+        const package_str = package_property.data.e_string.string(manager.allocator) catch |err| {
+            Output.errGeneric("Security provider returned invalid advisory: failed to parse 'name' string: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
+
+        const level = if (strings.eqlComptime(level_str, "fatal"))
+            SecurityAdvisoryLevel.fatal
+        else if (strings.eqlComptime(level_str, "warn"))
+            SecurityAdvisoryLevel.warn
+        else {
+            Output.errGeneric("Security provider returned invalid advisory: 'level' must be 'fatal' or 'warn', got '{s}'", .{level_str});
+            Global.exit(1);
+        };
+
+        if (level == .fatal) has_fatal = true;
+        if (level == .warn) has_warn = true;
+
+        const url = if (obj.get("url")) |u|
+            if (u.data == .e_string) u.data.e_string.string(manager.allocator) catch null else null
+        else
+            null;
+
+        const description = if (obj.get("description")) |d|
+            if (d.data == .e_string) d.data.e_string.string(manager.allocator) catch null else null
+        else
+            null;
+
+        try advisories.append(.{
+            .level = level,
+            .package = package_str,
+            .url = url,
+            .description = description,
+        });
+    }
+
+    if (advisories.items.len == 0) return;
+
+    Output.prettyln("\n<r><yellow>Security advisories found:<r>\n", .{});
+
+    for (advisories.items) |advisory| {
+        if (advisory.level == .fatal) {
+            Output.prettyln("<red>[{s}]<r> {s}", .{ @tagName(advisory.level), advisory.package });
+        } else {
+            Output.prettyln("<yellow>[{s}]<r> {s}", .{ @tagName(advisory.level), advisory.package });
+        }
+
+        if (advisory.description) |desc| {
+            Output.prettyln("  {s}", .{desc});
+        }
+
+        if (advisory.url) |url| {
+            Output.prettyln("  <cyan>{s}<r>", .{url});
+        }
+
+        Output.prettyln("", .{});
+    }
+
+    if (has_fatal) {
+        Output.prettyErrorln("<r><red>Installation cancelled due to fatal security advisories<r>", .{});
+        Global.exit(1);
+    }
+
+    if (has_warn) {
+        // TODO: add tty prompting for warnings
+        Output.prettyln("<yellow>⚠️  Security warnings found. Proceeding with installation.<r>\n", .{});
+    }
+}
+
 fn updatePackageJSONAndInstallWithManagerWithUpdates(
     manager: *PackageManager,
     ctx: Command.Context,
@@ -68,6 +288,10 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             manager.log.print(Output.errorWriter()) catch {};
         }
         Global.crash();
+    }
+
+    if (subcommand == .add) {
+        try performSecurityScanOnAdds(manager, updates.*, original_cwd);
     }
 
     var current_package_json = switch (manager.workspace_package_json_cache.getWithPath(

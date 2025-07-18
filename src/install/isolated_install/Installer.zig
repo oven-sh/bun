@@ -1273,9 +1273,9 @@ pub const Installer = struct {
 
 // @sortImports
 
+const Hardlinker = @import("./Hardlinker.zig");
 const std = @import("std");
 const FileCopier = @import("./FileCopier.zig").FileCopier;
-const Hardlinker = @import("./Hardlinker.zig");
 const Symlinker = @import("./Symlinker.zig").Symlinker;
 
 const bun = @import("bun");

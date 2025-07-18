@@ -15,19 +15,65 @@ pub const ThreadPool = struct {
 
     const IOThreadPool = struct {
         var thread_pool: ThreadPoolLib = undefined;
-        var once = bun.once(startIOThreadPool);
+        // Protects initialization and deinitialization of the IO thread pool.
+        var mutex = bun.threading.Mutex{};
+        // 0 means not initialized. 1 means initialized but not used.
+        // N > 1 means N-1 `ThreadPool`s are using the IO thread pool.
+        var ref_count = std.atomic.Value(usize).init(0);
 
-        fn startIOThreadPool() void {
-            thread_pool = ThreadPoolLib.init(.{
+        pub fn acquire() *ThreadPoolLib {
+            var count = ref_count.load(.acquire);
+            while (true) {
+                if (count == 0) break;
+                // .monotonic is okay because we already loaded this value with .acquire,
+                // and we don't need the store to be .release because the only store that
+                // matters is the one that goes from 0 to 1, and that one is .release.
+                count = ref_count.cmpxchgWeak(
+                    count,
+                    count + 1,
+                    .monotonic,
+                    .monotonic,
+                ) orelse return &thread_pool;
+            }
+            mutex.lock();
+            defer mutex.unlock();
+
+            // .monotonic because the store we care about (the one that stores 1 to
+            // indicate the thread pool is initialized) is guarded by the mutex.
+            if (ref_count.load(.monotonic) != 0) return &thread_pool;
+            thread_pool = .init(.{
                 .max_threads = @max(@min(bun.getThreadCount(), 4), 2),
                 // Use a much smaller stack size for the IO thread pool
                 .stack_size = 512 * 1024,
             });
+            ref_count.store(1, .release);
+            return &thread_pool;
         }
 
-        pub fn get() *ThreadPoolLib {
-            once.call(.{});
-            return &thread_pool;
+        pub fn release() void {
+            const old = ref_count.fetchSub(1, .release);
+            bun.assertf(old > 1, "IOThreadPool: too many calls to release()", .{});
+        }
+
+        pub fn shutdown() bool {
+            // .acquire instead of .acq_rel is okay because we only need to ensure that other
+            // threads are done using the IO pool if we read 1 from the ref count.
+            //
+            // .monotonic is okay because this function is only guaranteed to succeed when we
+            // can ensure that no `ThreadPool`s exist.
+            if (ref_count.cmpxchgStrong(1, 0, .acquire, .monotonic) != null) {
+                // At least one `ThreadPool` still exists.
+                return false;
+            }
+
+            mutex.lock();
+            defer mutex.unlock();
+
+            // .monotonic is okay because the only store that could happen at this point
+            // is guarded by the mutex.
+            if (ref_count.load(.monotonic) != 0) return false;
+            thread_pool.deinit();
+            thread_pool = undefined;
         }
     };
 
@@ -47,7 +93,7 @@ pub const ThreadPool = struct {
     pub fn initWithPool(v2: *BundleV2, worker_pool: *ThreadPoolLib) ThreadPool {
         return .{
             .worker_pool = worker_pool,
-            .io_pool = if (usesIOPool()) IOThreadPool.get() else undefined,
+            .io_pool = if (usesIOPool()) IOThreadPool.acquire() else undefined,
             .v2 = v2,
         };
     }
@@ -58,7 +104,7 @@ pub const ThreadPool = struct {
             this.v2.graph.allocator.destroy(this.worker_pool);
         }
         if (usesIOPool()) {
-            this.io_pool.shutdown();
+            IOThreadPool.release();
         }
     }
 
@@ -86,6 +132,13 @@ pub const ThreadPool = struct {
         }
 
         return false;
+    }
+
+    /// Shut down the IO pool, if and only if no `ThreadPool`s exist right now.
+    /// If a `ThreadPool` exists, this function is a no-op and returns false.
+    /// Blocks until the IO pool is shut down.
+    pub fn shutdownIOPool() bool {
+        return if (usesIOPool()) IOThreadPool.shutdown() else true;
     }
 
     pub fn scheduleWithOptions(this: *ThreadPool, parse_task: *ParseTask, is_inside_thread_pool: bool) void {

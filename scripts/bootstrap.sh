@@ -1052,7 +1052,7 @@ install_llvm() {
 		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
 
 		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
-		install_packages "llvm-$(llvm_version)-tools" "lldb"
+		install_packages "llvm-$(llvm_version)-tools"
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"
@@ -1064,7 +1064,6 @@ install_llvm() {
 			"clang$(llvm_version)" \
 			"scudo-malloc" \
 			"lld" \
-			"lldb" \
 			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
 		;;
 	esac
@@ -1522,6 +1521,9 @@ configure_core_dumps() {
 		if [ -d /sbin ]; then
 			append_to_path /sbin
 		fi
+
+		# install gdb for backtraces
+		install_packages gdb
 		;;
 	esac
 }

@@ -984,23 +984,23 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       stdout,
       stderr,
     });
-    if (options["coredump-upload"] && result.signalCode !== undefined) {
+    if (options["coredump-upload"] && result.signalCode !== null) {
       const corePath = join(coresDir, `${basename(execPath)}-${result.pid}.core`);
       if (existsSync(corePath)) {
         let out = "";
-        const lldb = await spawnSafe({
-          command: "lldb", // todo try lldb-19 too
-          args: ["-c", corePath, "--batch", "-o", "thread backtrace all", "-o", "quit"],
+        const gdb = await spawnSafe({
+          command: "gdb",
+          args: ["-batch", `--command=${join(import.meta.dirname, "backtrace.gdb")}`, "--core", corePath, execPath],
           timeout: 60_000,
           stderr: () => {},
           stdout(text) {
             out += text;
           },
         });
-        if (!lldb.ok) {
-          console.warn(`failed to get backtrace from LLDB: ${lldb.error}`);
+        if (!gdb.ok) {
+          console.warn(`failed to get backtrace from GDB: ${gdb.error}`);
         } else {
-          console.log("======== Stack traces from LLDB: ========");
+          console.log("======== Stack traces from GDB: ========");
           console.log(out);
         }
       } else {

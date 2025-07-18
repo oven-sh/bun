@@ -257,7 +257,7 @@ When using Bun's test runner with AI coding assistants, you can enable quieter o
 Set any of the following environment variables to enable AI-friendly output:
 
 - `CLAUDECODE=1` - For Claude Code
-- `REPL_ID=1` - For Replit  
+- `REPL_ID=1` - For Replit
 - `IS_CODE_AGENT=1` - Generic AI agent flag
 
 ### Behavior

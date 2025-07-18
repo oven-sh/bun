@@ -1,4 +1,4 @@
-const Fs = @import("fs.zig");
+const Fs = @import("./fs.zig");
 const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
@@ -10,7 +10,7 @@ const FeatureFlags = bun.FeatureFlags;
 const default_allocator = bun.default_allocator;
 
 const options = @import("./options.zig");
-const import_record = @import("import_record.zig");
+const import_record = @import("./import_record.zig");
 const logger = bun.logger;
 const Options = options;
 const URL = @import("./url.zig").URL;

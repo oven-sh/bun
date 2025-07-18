@@ -2,7 +2,7 @@ const bun = @import("bun");
 const std = @import("std");
 const Environment = @import("./env.zig");
 const string = bun.string;
-const root = @import("root");
+const root = @import("./root");
 const strings = bun.strings;
 const StringTypes = bun.StringTypes;
 const Global = bun.Global;
@@ -187,7 +187,7 @@ pub const Source = struct {
             const stdout = std.os.windows.GetStdHandle(std.os.windows.STD_OUTPUT_HANDLE) catch w.INVALID_HANDLE_VALUE;
             const stderr = std.os.windows.GetStdHandle(std.os.windows.STD_ERROR_HANDLE) catch w.INVALID_HANDLE_VALUE;
 
-            const fd_internals = @import("fd.zig");
+            const fd_internals = @import("./fd.zig");
             const INVALID_HANDLE_VALUE = std.os.windows.INVALID_HANDLE_VALUE;
             fd_internals.windows_cached_stderr = if (stderr != INVALID_HANDLE_VALUE) .fromSystem(stderr) else .invalid;
             fd_internals.windows_cached_stdout = if (stdout != INVALID_HANDLE_VALUE) .fromSystem(stdout) else .invalid;

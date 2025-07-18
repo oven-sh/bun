@@ -104,7 +104,7 @@ const string = bun.string;
 const Semver = bun.Semver;
 const String = Semver.String;
 
-const install = @import("install.zig");
+const install = @import("./install.zig");
 const Npm = install.Npm;
 const PackageManager = install.PackageManager;
 const PackageManifestMap = install.PackageManifestMap;

@@ -637,40 +637,40 @@ pub fn NewBatcher(comptime Type: type) type {
 
 // @sortImports
 
-pub const ASTMemoryAllocator = @import("ast/ASTMemoryAllocator.zig");
-pub const Ast = @import("ast/Ast.zig");
-pub const Binding = @import("ast/Binding.zig");
+pub const ASTMemoryAllocator = @import("./ast/ASTMemoryAllocator.zig");
+pub const Ast = @import("./ast/Ast.zig");
+pub const Binding = @import("./ast/Binding.zig");
 pub const BindingNodeIndex = Binding;
-pub const BundledAst = @import("ast/BundledAst.zig");
-pub const E = @import("ast/E.zig");
-pub const Expr = @import("ast/Expr.zig");
+pub const BundledAst = @import("./ast/BundledAst.zig");
+pub const E = @import("./ast/E.zig");
+pub const Expr = @import("./ast/Expr.zig");
 pub const ExprNodeIndex = Expr;
-pub const G = @import("ast/G.zig");
-pub const Macro = @import("ast/Macro.zig");
-pub const Op = @import("ast/Op.zig");
-pub const S = @import("ast/S.zig");
-pub const Scope = @import("ast/Scope.zig");
-pub const ServerComponentBoundary = @import("ast/ServerComponentBoundary.zig");
-pub const Stmt = @import("ast/Stmt.zig");
+pub const G = @import("./ast/G.zig");
+pub const Macro = @import("./ast/Macro.zig");
+pub const Op = @import("./ast/Op.zig");
+pub const S = @import("./ast/S.zig");
+pub const Scope = @import("./ast/Scope.zig");
+pub const ServerComponentBoundary = @import("./ast/ServerComponentBoundary.zig");
+pub const Stmt = @import("./ast/Stmt.zig");
 pub const StmtNodeIndex = Stmt;
-pub const Symbol = @import("ast/Symbol.zig");
+pub const Symbol = @import("./ast/Symbol.zig");
 const std = @import("std");
-pub const B = @import("ast/B.zig").B;
-pub const NewStore = @import("ast/NewStore.zig").NewStore;
+pub const B = @import("./ast/B.zig").B;
+pub const NewStore = @import("./ast/NewStore.zig").NewStore;
 const TypeScript = @import("./js_parser.zig").TypeScript;
-pub const UseDirective = @import("ast/UseDirective.zig").UseDirective;
+pub const UseDirective = @import("./ast/UseDirective.zig").UseDirective;
 
-pub const CharFreq = @import("ast/CharFreq.zig");
+pub const CharFreq = @import("./ast/CharFreq.zig");
 const char_freq_count = CharFreq.char_freq_count;
 
-pub const TS = @import("ast/TS.zig");
+pub const TS = @import("./ast/TS.zig");
 pub const TSNamespaceMember = TS.TSNamespaceMember;
 pub const TSNamespaceMemberMap = TS.TSNamespaceMemberMap;
 pub const TSNamespaceScope = TS.TSNamespaceScope;
 
-pub const Index = @import("ast/base.zig").Index;
-pub const Ref = @import("ast/base.zig").Ref;
-pub const RefHashCtx = @import("ast/base.zig").RefHashCtx;
+pub const Index = @import("./ast/base.zig").Index;
+pub const Ref = @import("./ast/base.zig").Ref;
+pub const RefHashCtx = @import("./ast/base.zig").RefHashCtx;
 
 const bun = @import("bun");
 pub const BabyList = bun.BabyList;

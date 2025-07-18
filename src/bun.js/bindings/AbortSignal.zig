@@ -2,7 +2,7 @@ const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const CommonAbortReason = @import("CommonAbortReason.zig").CommonAbortReason;
+const CommonAbortReason = @import("./CommonAbortReason.zig").CommonAbortReason;
 
 pub const AbortSignal = opaque {
     extern fn WebCore__AbortSignal__aborted(arg0: *AbortSignal) bool;

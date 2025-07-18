@@ -43,7 +43,7 @@ const Arena = @import("../../allocators/mimalloc_arena.zig").Arena;
 const Async = bun.Async;
 const httplog = Output.scoped(.Server, false);
 const ctxLog = Output.scoped(.RequestContext, false);
-const SocketAddress = @import("bun/socket.zig").SocketAddress;
+const SocketAddress = @import("./bun/socket.zig").SocketAddress;
 
 pub const WebSocketServerContext = @import("./server/WebSocketServerContext.zig");
 pub const HTTPStatusText = @import("./server/HTTPStatusText.zig");

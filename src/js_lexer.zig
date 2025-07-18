@@ -1,6 +1,6 @@
 const std = @import("std");
 const logger = bun.logger;
-const tables = @import("js_lexer_tables.zig");
+const tables = @import("./js_lexer_tables.zig");
 const js_ast = bun.JSAst;
 
 const bun = @import("bun");
@@ -11,7 +11,7 @@ const strings = bun.strings;
 const CodePoint = bun.CodePoint;
 const MutableString = bun.MutableString;
 
-const FeatureFlags = @import("feature_flags.zig");
+const FeatureFlags = @import("./feature_flags.zig");
 const JavascriptString = []const u16;
 const Indentation = bun.js_printer.Options.Indentation;
 

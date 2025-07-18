@@ -8,21 +8,21 @@ const default_allocator = bun.default_allocator;
 
 const std = @import("std");
 const logger = bun.logger;
-const options = @import("options.zig");
+const options = @import("./options.zig");
 const RegularExpression = bun.RegularExpression;
 const File = bun.sys.File;
 
 const debug = Output.scoped(.CLI, true);
 
 const sync = @import("./sync.zig");
-const Api = @import("api/schema.zig").Api;
+const Api = @import("./api/schema.zig").Api;
 const clap = bun.clap;
 const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
 const FilterRun = @import("./cli/filter_run.zig");
 
-const fs = @import("fs.zig");
+const fs = @import("./fs.zig");
 
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;

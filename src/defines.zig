@@ -3,12 +3,12 @@ const js_ast = bun.JSAst;
 const logger = bun.logger;
 const js_lexer = bun.js_lexer;
 const json_parser = bun.JSON;
-const fs = @import("fs.zig");
+const fs = @import("./fs.zig");
 const bun = @import("bun");
 const string = bun.string;
 const strings = bun.strings;
 
-const Ref = @import("ast/base.zig").Ref;
+const Ref = @import("./ast/base.zig").Ref;
 
 const global_no_side_effect_property_accesses = table.global_no_side_effect_property_accesses;
 const global_no_side_effect_function_calls_safe_for_to_string = table.global_no_side_effect_function_calls_safe_for_to_string;

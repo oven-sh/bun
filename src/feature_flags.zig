@@ -1,4 +1,4 @@
-const env = @import("env.zig");
+const env = @import("./env.zig");
 const bun = @import("bun");
 
 /// All runtime feature flags that can be toggled with an environment variable.

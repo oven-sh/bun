@@ -369,7 +369,7 @@ const File = bun.sys.File;
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;
 
-const install = @import("install.zig");
+const install = @import("./install.zig");
 const DependencyID = install.DependencyID;
 const ExtractData = install.ExtractData;
 const ExtractTarball = install.ExtractTarball;

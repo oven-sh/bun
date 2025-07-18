@@ -10,7 +10,7 @@ const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 
 const JSC = bun.JSC;
-const fs = @import("fs.zig");
+const fs = @import("./fs.zig");
 const assert = bun.assert;
 const StringBuilder = bun.StringBuilder;
 const Index = @import("./ast/base.zig").Index;

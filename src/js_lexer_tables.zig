@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("bun");
-const string = @import("string_types.zig").string;
-const CodePoint = @import("string_types.zig").CodePoint;
+const string = @import("./string_types.zig").string;
+const CodePoint = @import("./string_types.zig").CodePoint;
 const ComptimeStringMap = bun.ComptimeStringMap;
 
 pub const T = enum(u8) {

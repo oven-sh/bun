@@ -6,10 +6,10 @@
 const Blob = @This();
 const debug = Output.scoped(.Blob, false);
 
-pub const Store = @import("blob/Store.zig");
-pub const read_file = @import("blob/read_file.zig");
-pub const write_file = @import("blob/write_file.zig");
-pub const copy_file = @import("blob/copy_file.zig");
+pub const Store = @import("./blob/Store.zig");
+pub const read_file = @import("./blob/read_file.zig");
+pub const write_file = @import("./blob/write_file.zig");
+pub const copy_file = @import("./blob/copy_file.zig");
 
 pub const new = bun.TrivialNew(@This());
 pub const js = JSC.Codegen.JSBlob;
@@ -4729,7 +4729,7 @@ const Request = JSC.WebCore.Request;
 const libuv = bun.windows.libuv;
 
 const S3 = bun.S3;
-const S3File = @import("S3File.zig");
+const S3File = @import("./S3File.zig");
 const PathOrBlob = JSC.Node.PathOrBlob;
 const WriteFilePromise = write_file.WriteFilePromise;
 const WriteFileWaitFromLockedValueTask = write_file.WriteFileWaitFromLockedValueTask;

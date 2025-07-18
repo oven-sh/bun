@@ -8,7 +8,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const std = @import("std");
-const DotEnv = @import("env_loader.zig");
+const DotEnv = @import("./env_loader.zig");
 
 pub const opener = switch (@import("builtin").target.os.tag) {
     .macos => "/usr/bin/open",

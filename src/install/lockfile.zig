@@ -1061,8 +1061,8 @@ pub const Printer = struct {
         }
     }
 
-    pub const Tree = @import("lockfile/printer/tree_printer.zig");
-    pub const Yarn = @import("lockfile/printer/Yarn.zig");
+    pub const Tree = @import("./lockfile/printer/tree_printer.zig");
+    pub const Yarn = @import("./lockfile/printer/Yarn.zig");
 };
 
 pub fn verifyData(this: *const Lockfile) !void {
@@ -1594,14 +1594,14 @@ pub const DependencyIDList = std.ArrayListUnmanaged(DependencyID);
 pub const StringBuffer = std.ArrayListUnmanaged(u8);
 pub const ExternalStringBuffer = std.ArrayListUnmanaged(ExternalString);
 
-pub const jsonStringify = @import("lockfile/lockfile_json_stringify_for_debugging.zig").jsonStringify;
+pub const jsonStringify = @import("./lockfile/lockfile_json_stringify_for_debugging.zig").jsonStringify;
 pub const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
-pub const Buffers = @import("lockfile/Buffers.zig");
-pub const Serializer = @import("lockfile/bun.lockb.zig");
-pub const CatalogMap = @import("lockfile/CatalogMap.zig");
-pub const OverrideMap = @import("lockfile/OverrideMap.zig");
-pub const Package = @import("lockfile/Package.zig").Package;
-pub const Tree = @import("lockfile/Tree.zig");
+pub const Buffers = @import("./lockfile/Buffers.zig");
+pub const Serializer = @import("./lockfile/bun.lockb.zig");
+pub const CatalogMap = @import("./lockfile/CatalogMap.zig");
+pub const OverrideMap = @import("./lockfile/OverrideMap.zig");
+pub const Package = @import("./lockfile/Package.zig").Package;
+pub const Tree = @import("./lockfile/Tree.zig");
 
 pub fn deinit(this: *Lockfile) void {
     this.buffers.deinit(this.allocator);

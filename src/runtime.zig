@@ -6,7 +6,7 @@ const strings = bun.strings;
 
 const std = @import("std");
 const Schema = @import("./api/schema.zig");
-const Ref = @import("ast/base.zig").Ref;
+const Ref = @import("./ast/base.zig").Ref;
 const JSAst = bun.JSAst;
 
 const Api = Schema.Api;

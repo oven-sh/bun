@@ -5,14 +5,14 @@ const JSValue = bun.JSC.JSValue;
 const OOM = bun.OOM;
 const JSError = bun.JSError;
 
-pub const HashedString = @import("string/HashedString.zig");
-pub const MutableString = @import("string/MutableString.zig");
-pub const PathString = @import("string/PathString.zig").PathString;
-pub const SmolStr = @import("string/SmolStr.zig").SmolStr;
-pub const StringBuilder = @import("string/StringBuilder.zig");
-pub const StringJoiner = @import("string/StringJoiner.zig");
-pub const WTFStringImpl = @import("string/WTFStringImpl.zig").WTFStringImpl;
-pub const WTFStringImplStruct = @import("string/WTFStringImpl.zig").WTFStringImplStruct;
+pub const HashedString = @import("./string/HashedString.zig");
+pub const MutableString = @import("./string/MutableString.zig");
+pub const PathString = @import("./string/PathString.zig").PathString;
+pub const SmolStr = @import("./string/SmolStr.zig").SmolStr;
+pub const StringBuilder = @import("./string/StringBuilder.zig");
+pub const StringJoiner = @import("./string/StringJoiner.zig");
+pub const WTFStringImpl = @import("./string/WTFStringImpl.zig").WTFStringImpl;
+pub const WTFStringImplStruct = @import("./string/WTFStringImpl.zig").WTFStringImplStruct;
 
 pub const Tag = enum(u8) {
     /// String is not valid. Observed on some failed operations.
@@ -54,7 +54,7 @@ pub const String = extern struct {
     pub const empty = String{ .tag = .Empty, .value = .{ .ZigString = .Empty } };
 
     pub const dead = String{ .tag = .Dead, .value = .{ .Dead = {} } };
-    pub const StringImplAllocator = @import("string/WTFStringImpl.zig").StringImplAllocator;
+    pub const StringImplAllocator = @import("./string/WTFStringImpl.zig").StringImplAllocator;
 
     extern fn BunString__fromLatin1(bytes: [*]const u8, len: usize) String;
     extern fn BunString__fromBytes(bytes: [*]const u8, len: usize) String;

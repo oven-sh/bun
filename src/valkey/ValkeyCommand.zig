@@ -160,7 +160,7 @@ const Command = @This();
 
 const bun = @import("bun");
 const JSC = bun.JSC;
-const protocol = @import("valkey_protocol.zig");
+const protocol = @import("./valkey_protocol.zig");
 const std = @import("std");
 const Slice = JSC.ZigString.Slice;
 

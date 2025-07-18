@@ -1,13 +1,13 @@
 const std = @import("std");
 const logger = bun.logger;
 const js_lexer = bun.js_lexer;
-const importRecord = @import("import_record.zig");
+const importRecord = @import("./import_record.zig");
 const js_ast = bun.JSAst;
-const options = @import("options.zig");
-const rename = @import("renamer.zig");
-const runtime = @import("runtime.zig");
+const options = @import("./options.zig");
+const rename = @import("./renamer.zig");
+const runtime = @import("./runtime.zig");
 const Api = @import("./api/schema.zig").Api;
-const fs = @import("fs.zig");
+const fs = @import("./fs.zig");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
@@ -16,7 +16,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const default_allocator = bun.default_allocator;
 
-const Ref = @import("ast/base.zig").Ref;
+const Ref = @import("./ast/base.zig").Ref;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 const FileDescriptorType = bun.FileDescriptor;

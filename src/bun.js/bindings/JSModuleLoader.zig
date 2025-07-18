@@ -2,7 +2,7 @@ const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSInternalPromise = @import("JSInternalPromise.zig").JSInternalPromise;
+const JSInternalPromise = @import("./JSInternalPromise.zig").JSInternalPromise;
 const String = bun.String;
 
 pub const JSModuleLoader = opaque {

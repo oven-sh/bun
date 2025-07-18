@@ -8,16 +8,16 @@ const default_allocator = bun.default_allocator;
 const std = @import("std");
 
 const logger = bun.logger;
-const options = @import("options.zig");
+const options = @import("./options.zig");
 const js_ast = bun.JSAst;
 
-const Command = @import("cli.zig").Command;
+const Command = @import("./cli.zig").Command;
 const transpiler = bun.transpiler;
-const which = @import("which.zig").which;
+const which = @import("./which.zig").which;
 const JSC = bun.JSC;
 const AsyncHTTP = bun.http.AsyncHTTP;
 const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
-const DNSResolver = @import("bun.js/api/bun/dns_resolver.zig").DNSResolver;
+const DNSResolver = @import("./bun.js/api/bun/dns_resolver.zig").DNSResolver;
 
 const OpaqueWrap = JSC.OpaqueWrap;
 const VirtualMachine = JSC.VirtualMachine;

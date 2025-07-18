@@ -218,4 +218,4 @@ const VirtualMachine = JSC.VirtualMachine;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 const PluginRunner = bun.transpiler.PluginRunner;
-const IPC = @import("ipc.zig");
+const IPC = @import("./ipc.zig");

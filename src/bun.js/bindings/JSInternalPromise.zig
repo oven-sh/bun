@@ -3,7 +3,7 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VM = JSC.VM;
-const JSPromise = @import("JSPromise.zig").JSPromise;
+const JSPromise = @import("./JSPromise.zig").JSPromise;
 
 pub const JSInternalPromise = opaque {
     extern fn JSC__JSInternalPromise__create(arg0: *JSGlobalObject) *JSInternalPromise;

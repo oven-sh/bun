@@ -32,7 +32,7 @@ const coverage = bun.sourcemap.coverage;
 const CodeCoverageReport = coverage.Report;
 const uws = bun.uws;
 
-const Scanner = @import("test/Scanner.zig");
+const Scanner = @import("./test/Scanner.zig");
 
 fn escapeXml(str: string, writer: anytype) !void {
     var last: usize = 0;

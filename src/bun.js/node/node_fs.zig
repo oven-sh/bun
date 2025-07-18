@@ -1,10 +1,10 @@
 // This file contains the underlying implementation for sync & async functions
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
-pub const constants = @import("node_fs_constant.zig");
-pub const Binding = @import("node_fs_binding.zig").Binding;
-pub const Watcher = @import("node_fs_watcher.zig").FSWatcher;
-pub const StatWatcher = @import("node_fs_stat_watcher.zig").StatWatcher;
+pub const constants = @import("./node_fs_constant.zig");
+pub const Binding = @import("./node_fs_binding.zig").Binding;
+pub const Watcher = @import("./node_fs_watcher.zig").FSWatcher;
+pub const StatWatcher = @import("./node_fs_stat_watcher.zig").StatWatcher;
 
 pub const default_permission = if (Environment.isPosix)
     Syscall.S.IRUSR |

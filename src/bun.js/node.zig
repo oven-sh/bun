@@ -2,25 +2,25 @@
 comptime {
     _ = process.getTitle;
     _ = process.setTitle;
-    _ = @import("node/util/parse_args.zig");
+    _ = @import("./node/util/parse_args.zig");
 }
 
 /// node:fs
-pub const fs = @import("node/node_fs.zig");
+pub const fs = @import("./node/node_fs.zig");
 /// node:path
-pub const path = @import("node/path.zig");
+pub const path = @import("./node/path.zig");
 /// node:crypto
-pub const crypto = @import("node/node_crypto_binding.zig");
+pub const crypto = @import("./node/node_crypto_binding.zig");
 /// node:os
-pub const os = @import("node/node_os.zig");
+pub const os = @import("./node/node_os.zig");
 /// node:process
-pub const process = @import("node/node_process.zig");
-pub const validators = @import("node/util/validators.zig");
-pub const ErrorCode = @import("node/nodejs_error_code.zig").Code;
+pub const process = @import("./node/node_process.zig");
+pub const validators = @import("./node/util/validators.zig");
+pub const ErrorCode = @import("./node/nodejs_error_code.zig").Code;
 
 pub const Buffer = JSC.MarkedArrayBuffer;
 
-const types = @import("node/types.zig");
+const types = @import("./node/types.zig");
 pub const PathOrBlob = types.PathOrBlob;
 pub const Dirent = types.Dirent;
 pub const FileSystemFlags = types.FileSystemFlags;
@@ -36,13 +36,13 @@ pub const Encoding = types.Encoding;
 pub const StringOrBuffer = types.StringOrBuffer;
 pub const BlobOrStringOrBuffer = types.BlobOrStringOrBuffer;
 
-pub const FSEvents = @import("node/fs_events.zig");
-const stat = @import("node/Stat.zig");
+pub const FSEvents = @import("./node/fs_events.zig");
+const stat = @import("./node/Stat.zig");
 pub const Stats = stat.Stats;
 pub const StatsBig = stat.StatsBig;
 pub const StatsSmall = stat.StatsSmall;
 
-const statfs = @import("node/StatFS.zig");
+const statfs = @import("./node/StatFS.zig");
 pub const StatFSSmall = statfs.StatFSSmall;
 pub const StatFSBig = statfs.StatFSBig;
 pub const StatFS = statfs.StatFS;
@@ -50,7 +50,7 @@ pub const StatFS = statfs.StatFS;
 pub const uid_t = if (Environment.isPosix) std.posix.uid_t else bun.windows.libuv.uv_uid_t;
 pub const gid_t = if (Environment.isPosix) std.posix.gid_t else bun.windows.libuv.uv_gid_t;
 
-pub const time_like = @import("node/time_like.zig");
+pub const time_like = @import("./node/time_like.zig");
 pub const TimeLike = time_like.TimeLike;
 pub const timeLikeFromJS = time_like.fromJS;
 

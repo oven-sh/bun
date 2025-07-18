@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 pub const bun = @import("./bun.zig");
-const recover = @import("test/recover.zig");
+const recover = @import("./test/recover.zig");
 
 const TestFn = std.builtin.TestFn;
 const Output = bun.Output;
@@ -198,7 +198,7 @@ comptime {
 
     _ = bun.bun_js.Bun__onRejectEntryPointResult;
     _ = bun.bun_js.Bun__onResolveEntryPointResult;
-    _ = &@import("bun.js/node/buffer.zig").BufferVectorized;
-    @import("cli/upgrade_command.zig").@"export"();
-    @import("cli/test_command.zig").@"export"();
+    _ = &@import("./bun.js/node/buffer.zig").BufferVectorized;
+    @import("./cli/upgrade_command.zig").@"export"();
+    @import("./cli/test_command.zig").@"export"();
 }

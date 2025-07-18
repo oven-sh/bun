@@ -427,7 +427,7 @@ pub const PosixSpawn = struct {
         }
     }
 
-    pub const process = @import("process.zig");
+    pub const process = @import("./process.zig");
     pub const Process = process.Process;
     pub const SpawnOptions = process.SpawnOptions;
     pub const Status = process.Status;
@@ -439,5 +439,5 @@ pub const PosixSpawn = struct {
     pub const WindowsSpawnOptions = process.WindowsSpawnOptions;
     pub const Rusage = process.Rusage;
 
-    pub const Stdio = @import("spawn/stdio.zig").Stdio;
+    pub const Stdio = @import("./spawn/stdio.zig").Stdio;
 };

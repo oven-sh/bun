@@ -4182,9 +4182,9 @@ pub const bake = bun.bake;
 pub const lol = bun.LOLHTML;
 pub const DataURL = @import("../resolver/resolver.zig").DataURL;
 
-pub const DeferredBatchTask = @import("DeferredBatchTask.zig").DeferredBatchTask;
-pub const ThreadPool = @import("ThreadPool.zig").ThreadPool;
-pub const ParseTask = @import("ParseTask.zig").ParseTask;
-pub const LinkerContext = @import("LinkerContext.zig").LinkerContext;
-pub const LinkerGraph = @import("LinkerGraph.zig").LinkerGraph;
-pub const Graph = @import("Graph.zig");
+pub const DeferredBatchTask = @import("./DeferredBatchTask.zig").DeferredBatchTask;
+pub const ThreadPool = @import("./ThreadPool.zig").ThreadPool;
+pub const ParseTask = @import("./ParseTask.zig").ParseTask;
+pub const LinkerContext = @import("./LinkerContext.zig").LinkerContext;
+pub const LinkerGraph = @import("./LinkerGraph.zig").LinkerGraph;
+pub const Graph = @import("./Graph.zig");

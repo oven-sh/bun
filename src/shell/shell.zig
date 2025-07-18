@@ -4440,4 +4440,4 @@ pub const TestingAPIs = struct {
 
 const assert = bun.assert;
 
-pub const ShellSubprocess = @import("subproc.zig").ShellSubprocess;
+pub const ShellSubprocess = @import("./subproc.zig").ShellSubprocess;

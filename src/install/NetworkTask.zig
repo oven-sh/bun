@@ -323,7 +323,7 @@ const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 const HeaderBuilder = HTTP.HeaderBuilder;
 
-const install = @import("install.zig");
+const install = @import("./install.zig");
 const ExtractTarball = install.ExtractTarball;
 const NetworkTask = install.NetworkTask;
 const Npm = install.Npm;

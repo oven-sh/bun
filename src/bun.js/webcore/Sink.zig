@@ -5,7 +5,7 @@ vtable: VTable,
 status: Status = Status.closed,
 used: bool = false,
 
-pub const ArrayBufferSink = @import("ArrayBufferSink.zig");
+pub const ArrayBufferSink = @import("./ArrayBufferSink.zig");
 
 pub const pending = Sink{
     .ptr = @as(*anyopaque, @ptrFromInt(0xaaaaaaaa)),

@@ -17,7 +17,7 @@ pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 pub const BundlePackageOverride = bun.StringArrayHashMapUnmanaged(options.BundleOverride);
 const LoaderMap = bun.StringArrayHashMapUnmanaged(options.Loader);
 const JSONParser = bun.JSON;
-const Command = @import("cli.zig").Command;
+const Command = @import("./cli.zig").Command;
 const TOML = @import("./toml/toml_parser.zig").TOML;
 const PackageManager = bun.install.PackageManager;
 

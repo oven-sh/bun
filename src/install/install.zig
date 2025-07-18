@@ -240,11 +240,11 @@ pub const PackageManifestError = error{
 // @sortImports
 
 pub const ExtractTarball = @import("./extract_tarball.zig");
-pub const NetworkTask = @import("NetworkTask.zig");
+pub const NetworkTask = @import("./NetworkTask.zig");
 pub const Npm = @import("./npm.zig");
-pub const PackageManager = @import("PackageManager.zig");
-pub const PackageManifestMap = @import("PackageManifestMap.zig");
-pub const Task = @import("PackageManagerTask.zig");
+pub const PackageManager = @import("./PackageManager.zig");
+pub const PackageManifestMap = @import("./PackageManifestMap.zig");
+pub const Task = @import("./PackageManagerTask.zig");
 pub const TextLockfile = @import("./lockfile/bun.lock.zig");
 const std = @import("std");
 pub const Bin = @import("./bin.zig").Bin;

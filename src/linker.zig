@@ -7,9 +7,9 @@ const FileDescriptorType = bun.FileDescriptor;
 
 const std = @import("std");
 const logger = bun.logger;
-const Options = @import("options.zig");
+const Options = @import("./options.zig");
 
-const Fs = @import("fs.zig");
+const Fs = @import("./fs.zig");
 const Resolver = @import("./resolver/resolver.zig");
 const _import_record = @import("./import_record.zig");
 const ImportRecord = _import_record.ImportRecord;
@@ -18,7 +18,7 @@ const _transpiler = bun.transpiler;
 const Transpiler = _transpiler.Transpiler;
 const ResolveQueue = _transpiler.ResolveQueue;
 const ResolverType = Resolver.Resolver;
-const URL = @import("url.zig").URL;
+const URL = @import("./url.zig").URL;
 const JSC = bun.JSC;
 const PluginRunner = bun.transpiler.PluginRunner;
 pub const CSSResolveError = error{ResolveMessage};

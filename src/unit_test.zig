@@ -3,8 +3,8 @@ const bun = @import("bun");
 const t = std.testing;
 
 test {
-    _ = @import("shell/braces.zig");
-    _ = @import("bun.js/node/assert/myers_diff.zig");
+    _ = @import("./shell/braces.zig");
+    _ = @import("./bun.js/node/assert/myers_diff.zig");
 }
 
 test "basic string usage" {

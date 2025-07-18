@@ -2,7 +2,7 @@
 //
 // This file contains the core Valkey client implementation with protocol handling
 
-pub const ValkeyContext = @import("ValkeyContext.zig");
+pub const ValkeyContext = @import("./ValkeyContext.zig");
 
 /// Connection flags to track Valkey client state
 pub const ConnectionFlags = packed struct(u8) {
@@ -966,6 +966,6 @@ const JSValkeyClient = JSC.API.Valkey;
 const JSC = bun.JSC;
 const std = @import("std");
 const bun = @import("bun");
-const protocol = @import("valkey_protocol.zig");
+const protocol = @import("./valkey_protocol.zig");
 const debug = bun.Output.scoped(.Redis, false);
 const uws = bun.uws;

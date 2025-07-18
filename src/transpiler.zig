@@ -11,16 +11,16 @@ const FeatureFlags = bun.FeatureFlags;
 
 const std = @import("std");
 const logger = bun.logger;
-pub const options = @import("options.zig");
+pub const options = @import("./options.zig");
 const js_parser = bun.js_parser;
 const JSON = bun.JSON;
 const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
-const linker = @import("linker.zig");
-const Ref = @import("ast/base.zig").Ref;
+const linker = @import("./linker.zig");
+const Ref = @import("./ast/base.zig").Ref;
 
-const Fs = @import("fs.zig");
-const schema = @import("api/schema.zig");
+const Fs = @import("./fs.zig");
+const schema = @import("./api/schema.zig");
 const Api = schema.Api;
 const _resolver = @import("./resolver/resolver.zig");
 const MimeType = @import("./http/MimeType.zig");

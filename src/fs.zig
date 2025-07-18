@@ -24,7 +24,7 @@ const WPathBuffer = bun.WPathBuffer;
 
 pub const debug = Output.scoped(.fs, true);
 
-// pub const FilesystemImplementation = @import("fs_impl.zig");
+// pub const FilesystemImplementation = @import("./fs_impl.zig");
 
 pub const Preallocate = struct {
     pub const Counts = struct {

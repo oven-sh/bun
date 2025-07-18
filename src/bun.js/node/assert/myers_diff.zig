@@ -50,7 +50,7 @@ const int = i64; // must be large enough to hold all valid values of `uint` w/o 
 ///
 /// ## Example
 /// ```zig
-/// const myers_diff = @import("inode/assert/myers_diff.zig");
+/// const myers_diff = @import("./inode/assert/myers_diff.zig");
 /// const StrDiffer = myers_diff.Differ([]const u8, .{});
 /// const actual = &[_][]const u8{
 ///   "foo",

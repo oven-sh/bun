@@ -48,11 +48,11 @@ fn selectALPNCallback(_: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u8,
     }
 }
 
-pub const Handlers = @import("socket/Handlers.zig");
+pub const Handlers = @import("./socket/Handlers.zig");
 pub const SocketConfig = Handlers.SocketConfig;
 
-pub const Listener = @import("socket/Listener.zig");
-pub const WindowsNamedPipeContext = if (Environment.isWindows) @import("socket/WindowsNamedPipeContext.zig") else void;
+pub const Listener = @import("./socket/Listener.zig");
+pub const WindowsNamedPipeContext = if (Environment.isWindows) @import("./socket/WindowsNamedPipeContext.zig") else void;
 
 pub fn NewSocket(comptime ssl: bool) type {
     return struct {
@@ -2122,4 +2122,4 @@ pub fn jsSetSocketOptions(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
     return .js_undefined;
 }
 
-const tls_socket_functions = @import("socket/tls_socket_functions.zig");
+const tls_socket_functions = @import("./socket/tls_socket_functions.zig");

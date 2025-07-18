@@ -2,7 +2,7 @@
 /// Normalization is necessary because most fields in the API schema are optional
 const std = @import("std");
 const logger = bun.logger;
-const Fs = @import("fs.zig");
+const Fs = @import("./fs.zig");
 
 const resolver = @import("./resolver/resolver.zig");
 const api = @import("./api/schema.zig");

@@ -3,8 +3,8 @@ const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = @import("JSObject.zig").JSObject;
-const ZigString = @import("ZigString.zig").ZigString;
+const JSObject = @import("./JSObject.zig").JSObject;
+const ZigString = @import("./ZigString.zig").ZigString;
 const JSError = bun.JSError;
 
 pub const JSString = opaque {

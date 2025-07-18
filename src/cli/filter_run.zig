@@ -3,7 +3,7 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const std = @import("std");
-const RunCommand = @import("run_command.zig").RunCommand;
+const RunCommand = @import("./run_command.zig").RunCommand;
 const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
 
 const CLI = bun.CLI;
@@ -11,7 +11,7 @@ const Command = CLI.Command;
 
 const transpiler = bun.transpiler;
 
-const FilterArg = @import("filter_arg.zig");
+const FilterArg = @import("./filter_arg.zig");
 
 const ScriptConfig = struct {
     package_json_path: []u8,

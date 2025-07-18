@@ -189,7 +189,7 @@ commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.C
 /// The value is decremented when defaults are restored.
 has_mutated_built_in_extensions: u32 = 0,
 
-pub const ProcessAutoKiller = @import("ProcessAutoKiller.zig");
+pub const ProcessAutoKiller = @import("./ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
 pub const OnException = fn (*ZigException) void;
@@ -3651,8 +3651,8 @@ const URL = @import("../url.zig").URL;
 const Bun = JSC.API.Bun;
 const EventLoop = JSC.EventLoop;
 const PackageManager = @import("../install/install.zig").PackageManager;
-const IPC = @import("ipc.zig");
-const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
+const IPC = @import("./ipc.zig");
+const DNSResolver = @import("./api/bun/dns_resolver.zig").DNSResolver;
 const Watcher = bun.Watcher;
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
 const ServerEntryPoint = bun.transpiler.EntryPoints.ServerEntryPoint;

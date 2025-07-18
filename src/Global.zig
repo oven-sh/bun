@@ -1,7 +1,7 @@
 const std = @import("std");
 const Environment = @import("./env.zig");
 
-const Output = @import("output.zig");
+const Output = @import("./output.zig");
 const use_mimalloc = bun.use_mimalloc;
 const Mimalloc = bun.Mimalloc;
 const bun = @import("bun");

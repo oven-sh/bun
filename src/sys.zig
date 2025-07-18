@@ -9,12 +9,12 @@
 // like `Error`, `Maybe`, `Tag`, and so on.
 const sys = @This(); // to avoid ambiguous references.
 const platform_defs = switch (Environment.os) {
-    .windows => @import("errno/windows_errno.zig"),
-    .linux => @import("errno/linux_errno.zig"),
-    .mac => @import("errno/darwin_errno.zig"),
+    .windows => @import("./errno/windows_errno.zig"),
+    .linux => @import("./errno/linux_errno.zig"),
+    .mac => @import("./errno/darwin_errno.zig"),
     .wasm => {},
 };
-pub const workaround_symbols = @import("workaround_missing_symbols.zig").current;
+pub const workaround_symbols = @import("./workaround_missing_symbols.zig").current;
 /// Enum of `errno` values
 pub const E = platform_defs.E;
 /// Namespace of (potentially polyfilled) libuv `errno` values.

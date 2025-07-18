@@ -1,7 +1,7 @@
 const JSC = bun.JSC;
 const bun = @import("bun");
 const JSGlobalObject = JSC.JSGlobalObject;
-const ZigStackTrace = @import("ZigStackTrace.zig").ZigStackTrace;
+const ZigStackTrace = @import("./ZigStackTrace.zig").ZigStackTrace;
 const JSValue = JSC.JSValue;
 
 /// Opaque representation of a JavaScript exception

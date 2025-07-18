@@ -1201,6 +1201,7 @@ const strings = bun.strings;
 const sys = bun.sys;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const Command = bun.CLI.Command;
+const Mutex = bun.threading.Mutex;
 const String = bun.Semver.String;
 
 const install = bun.install;
@@ -1215,6 +1216,3 @@ const invalid_dependency_id = install.invalid_dependency_id;
 
 const Lockfile = install.Lockfile;
 const Package = Lockfile.Package;
-
-const GuardedValue = bun.threading.GuardedValue;
-const Mutex = bun.threading.Mutex;

@@ -17533,13 +17533,20 @@ fn NewParser_(
                         if (!ReactRefresh.isHookName(original_name)) break :try_record_hook;
                         if (p.options.features.react_fast_refresh) {
                             p.handleReactRefreshHookCall(e_, original_name);
-                        } else {
-                            // if we're in this branch then it is a server
-                            // component, error if they try to use `useState`
-                            if (bun.strings.eqlComptime(original_name, "useState") and
-                                // this feels dumb, what's a better way to detect that it's not React?
-                                !bun.strings.includes(p.source.path.text, "node_modules/react"))
-                            {
+                        } else if (
+                        // If we're here it means we're in server component.
+                        // Error if the user is using the `useState` hook as it
+                        // is disallowed in server components.
+                        //
+                        // We're also specifically checking that the target is
+                        // `.e_import_identifier`.
+                        //
+                        // Why? Because we *don't* want to check for uses of
+                        // `useState` _inside_ React, and we know React uses
+                        // commonjs so it will never be `.e_import_identifier`.
+                        e_.target.data == .e_import_identifier) {
+                            bun.assert(p.options.features.server_components.isServerSide());
+                            if (bun.strings.eqlComptime(original_name, "useState")) {
                                 p.log.addError(
                                     p.source,
                                     expr.loc,

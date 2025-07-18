@@ -592,7 +592,6 @@ pub fn runTasks(
 
                 manager.extracted_count += 1;
                 bun.Analytics.Features.extracted_packages += 1;
-                manager.setPreinstallState(package_id, manager.lockfile, .done);
 
                 if (comptime @TypeOf(callbacks.onExtract) != void) {
                     switch (Ctx) {
@@ -668,6 +667,8 @@ pub fn runTasks(
 
                     try manager.processDependencyList(dependency_list, void, {}, {}, install_peer);
                 }
+
+                manager.setPreinstallState(package_id, manager.lockfile, .done);
 
                 if (log_level.showProgress()) {
                     if (!has_updated_this_run) {
@@ -783,13 +784,12 @@ pub fn runTasks(
                     continue;
                 }
 
-                manager.setPreinstallState(package_id, manager.lockfile, .done);
-
                 if (comptime @TypeOf(callbacks.onExtract) != void) {
                     // We've populated the cache, package already exists in memory. Call the package installer callback
                     // and don't enqueue dependencies
                     switch (Ctx) {
                         *PackageInstaller => {
+
                             // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
                             // keeping just in case for now
                             extract_ctx.fixCachedLockfilePackageSlices();

@@ -937,11 +937,7 @@ pub const Installer = struct {
             };
 
             switch (res) {
-                .yield => {
-                    const preallocated_tasks = this.installer.preallocated_tasks.lock();
-                    defer this.installer.preallocated_tasks.unlock();
-                    preallocated_tasks.put(this);
-                },
+                .yield => {},
                 .done => {
                     if (comptime Environment.ci_assert) {
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .done, @src());

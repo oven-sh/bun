@@ -1,7 +1,8 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`CLAUDECODE=1 shows quiet test output (only failures) 1`] = `
-"4 |       test("passing test", () => {
+"test2.test.js:
+4 |       test("passing test", () => {
 5 |         expect(1).toBe(1);
 6 |       });
 7 | 
@@ -13,8 +14,6 @@ error: expect(received).toBe(expected)
 Expected: 2
 Received: 1
     at <anonymous> (file:NN:NN)
-
-test2.test.js:
 (fail) failing test
 
  1 pass
@@ -52,6 +51,7 @@ Ran 4 tests across 1 file."
 
 exports[`CLAUDECODE flag handles no test files found: no-tests-normal 1`] = `
 "No tests found!
+
 Tests need ".test", "_test_", ".spec" or "_spec_" in the filename (ex: "MyApp.test.ts")
 
 Learn more about bun test: https://bun.com/docs/cli/test

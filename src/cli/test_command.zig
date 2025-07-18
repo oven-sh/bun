@@ -607,55 +607,6 @@ pub const JunitReporter = struct {
     }
 };
 
-const CurrentFile = struct {
-    title: string = "",
-    prefix: string = "",
-    repeat_info: struct {
-        count: u32 = 0,
-        index: u32 = 0,
-    } = .{},
-    has_printed_filename: bool = false,
-
-    pub fn set(this: *CurrentFile, title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
-        if (Output.isAIAgent()) {
-            this.freeAndClear();
-            this.title = bun.default_allocator.dupe(u8, title) catch bun.outOfMemory();
-            this.prefix = bun.default_allocator.dupe(u8, prefix) catch bun.outOfMemory();
-            this.repeat_info.count = repeat_count;
-            this.repeat_info.index = repeat_index;
-            this.has_printed_filename = false;
-            return;
-        }
-
-        print(title, prefix, repeat_count, repeat_index);
-    }
-
-    fn freeAndClear(this: *CurrentFile) void {
-        bun.default_allocator.free(this.title);
-        bun.default_allocator.free(this.prefix);
-    }
-
-    fn print(title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
-        if (repeat_count > 0) {
-            if (repeat_count > 1) {
-                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ prefix, title, repeat_index + 1 });
-            } else {
-                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
-            }
-        } else {
-            Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
-        }
-
-        Output.flush();
-    }
-
-    pub fn printIfNeeded(this: *CurrentFile) void {
-        if (this.has_printed_filename) return;
-        this.has_printed_filename = true;
-        print(this.title, this.prefix, this.repeat_info.count, this.repeat_info.index);
-    }
-};
-
 pub const CommandLineReporter = struct {
     jest: TestRunner,
     callback: TestRunner.Callback,
@@ -668,8 +619,6 @@ pub const CommandLineReporter = struct {
     todos_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
 
     file_reporter: ?FileReporter = null,
-
-    current_file: CurrentFile = .{},
 
     pub const FileReporter = union(enum) {
         junit: *JunitReporter,
@@ -902,7 +851,7 @@ pub const CommandLineReporter = struct {
         defer Output.flush();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
-        this.current_file.printIfNeeded();
+        this.jest.current_file.printIfNeeded();
 
         // when the tests fail, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
@@ -1913,7 +1862,7 @@ pub const TestCommand = struct {
         vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
-            reporter.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
+            reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
 
             var promise = try vm.loadEntryPointForTestRunner(file_path);
             reporter.summary().files += 1;

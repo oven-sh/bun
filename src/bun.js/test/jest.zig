@@ -39,8 +39,61 @@ pub const Tag = enum(u3) {
     skipped_because_label,
 };
 const debug = Output.scoped(.jest, false);
+
 var max_test_id_for_debugger: u32 = 0;
+
+const CurrentFile = struct {
+    title: string = "",
+    prefix: string = "",
+    repeat_info: struct {
+        count: u32 = 0,
+        index: u32 = 0,
+    } = .{},
+    has_printed_filename: bool = false,
+
+    pub fn set(this: *CurrentFile, title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
+        if (Output.isAIAgent()) {
+            this.freeAndClear();
+            this.title = bun.default_allocator.dupe(u8, title) catch bun.outOfMemory();
+            this.prefix = bun.default_allocator.dupe(u8, prefix) catch bun.outOfMemory();
+            this.repeat_info.count = repeat_count;
+            this.repeat_info.index = repeat_index;
+            this.has_printed_filename = false;
+            return;
+        }
+
+        this.has_printed_filename = true;
+        print(title, prefix, repeat_count, repeat_index);
+    }
+
+    fn freeAndClear(this: *CurrentFile) void {
+        bun.default_allocator.free(this.title);
+        bun.default_allocator.free(this.prefix);
+    }
+
+    fn print(title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
+        if (repeat_count > 0) {
+            if (repeat_count > 1) {
+                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ prefix, title, repeat_index + 1 });
+            } else {
+                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
+            }
+        } else {
+            Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
+        }
+
+        Output.flush();
+    }
+
+    pub fn printIfNeeded(this: *CurrentFile) void {
+        if (this.has_printed_filename) return;
+        this.has_printed_filename = true;
+        print(this.title, this.prefix, this.repeat_info.count, this.repeat_info.index);
+    }
+};
+
 pub const TestRunner = struct {
+    current_file: CurrentFile = CurrentFile{},
     tests: TestRunner.Test.List = .{},
     log: *logger.Log,
     files: File.List = .{},
@@ -1325,6 +1378,10 @@ pub const TestRunnerTask = struct {
             deduped = true;
         } else {
             if (is_unhandled and Jest.runner != null) {
+                if (Output.isAIAgent()) {
+                    Jest.runner.?.current_file.printIfNeeded();
+                }
+
                 Output.prettyErrorln(
                     \\<r>
                     \\<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>
@@ -1333,7 +1390,12 @@ pub const TestRunnerTask = struct {
                 , .{});
 
                 Output.flush();
+            } else if (!is_unhandled and Jest.runner != null) {
+                if (Output.isAIAgent()) {
+                    Jest.runner.?.current_file.printIfNeeded();
+                }
             }
+
             jsc_vm.runErrorHandlerWithDedupe(rejection, jsc_vm.onUnhandledRejectionExceptionList);
             if (is_unhandled and Jest.runner != null) {
                 Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});

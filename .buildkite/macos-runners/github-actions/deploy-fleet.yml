@@ -1,0 +1,377 @@
+name: Deploy macOS Runner Fleet
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+      fleet_size_macos_13:
+        description: 'Number of macOS 13 VMs'
+        required: false
+        default: '4'
+      fleet_size_macos_14:
+        description: 'Number of macOS 14 VMs'
+        required: false
+        default: '6'
+      fleet_size_macos_15:
+        description: 'Number of macOS 15 VMs'
+        required: false
+        default: '8'
+      force_deploy:
+        description: 'Force deployment even if no changes'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  TERRAFORM_VERSION: "1.6.0"
+  AWS_REGION: "us-west-2"
+
+jobs:
+  validate-inputs:
+    runs-on: ubuntu-latest
+    outputs:
+      validated: ${{ steps.validate.outputs.validated }}
+      total_vms: ${{ steps.validate.outputs.total_vms }}
+    steps:
+      - name: Validate inputs
+        id: validate
+        run: |
+          # Validate fleet sizes
+          macos_13="${{ github.event.inputs.fleet_size_macos_13 }}"
+          macos_14="${{ github.event.inputs.fleet_size_macos_14 }}"
+          macos_15="${{ github.event.inputs.fleet_size_macos_15 }}"
+          
+          # Check if inputs are valid numbers
+          if ! [[ "$macos_13" =~ ^[0-9]+$ ]] || ! [[ "$macos_14" =~ ^[0-9]+$ ]] || ! [[ "$macos_15" =~ ^[0-9]+$ ]]; then
+            echo "Error: Fleet sizes must be valid numbers"
+            exit 1
+          fi
+          
+          # Check if at least one VM is requested
+          total_vms=$((macos_13 + macos_14 + macos_15))
+          if [[ $total_vms -eq 0 ]]; then
+            echo "Error: At least one VM must be requested"
+            exit 1
+          fi
+          
+          # Check reasonable limits
+          if [[ $total_vms -gt 50 ]]; then
+            echo "Error: Total VMs cannot exceed 50"
+            exit 1
+          fi
+          
+          echo "validated=true" >> $GITHUB_OUTPUT
+          echo "total_vms=$total_vms" >> $GITHUB_OUTPUT
+          
+          echo "Validation passed:"
+          echo "- macOS 13: $macos_13 VMs"
+          echo "- macOS 14: $macos_14 VMs"
+          echo "- macOS 15: $macos_15 VMs"
+          echo "- Total: $total_vms VMs"
+
+  plan-deployment:
+    runs-on: ubuntu-latest
+    needs: validate-inputs
+    if: needs.validate-inputs.outputs.validated == 'true'
+    outputs:
+      plan_status: ${{ steps.plan.outputs.plan_status }}
+      has_changes: ${{ steps.plan.outputs.has_changes }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Initialize Terraform
+        working-directory: .buildkite/macos-runners/terraform
+        run: |
+          terraform init
+          terraform workspace select ${{ github.event.inputs.environment }} || terraform workspace new ${{ github.event.inputs.environment }}
+
+      - name: Create terraform variables file
+        working-directory: .buildkite/macos-runners/terraform
+        run: |
+          cat > terraform.tfvars << EOF
+          environment = "${{ github.event.inputs.environment }}"
+          fleet_size = {
+            macos_13 = ${{ github.event.inputs.fleet_size_macos_13 }}
+            macos_14 = ${{ github.event.inputs.fleet_size_macos_14 }}
+            macos_15 = ${{ github.event.inputs.fleet_size_macos_15 }}
+          }
+          EOF
+
+      - name: Plan Terraform deployment
+        id: plan
+        working-directory: .buildkite/macos-runners/terraform
+        run: |
+          set -e
+          
+          # Run terraform plan
+          terraform plan \
+            -var "macstadium_api_key=${{ secrets.MACSTADIUM_API_KEY }}" \
+            -var "buildkite_agent_token=${{ secrets.BUILDKITE_AGENT_TOKEN }}" \
+            -var "github_token=${{ secrets.GITHUB_TOKEN }}" \
+            -out=tfplan \
+            -detailed-exitcode > plan_output.txt 2>&1
+          
+          plan_exit_code=$?
+          
+          # Check plan results
+          if [[ $plan_exit_code -eq 0 ]]; then
+            echo "plan_status=no_changes" >> $GITHUB_OUTPUT
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          elif [[ $plan_exit_code -eq 2 ]]; then
+            echo "plan_status=has_changes" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "plan_status=failed" >> $GITHUB_OUTPUT
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            cat plan_output.txt
+            exit 1
+          fi
+          
+          # Save plan output
+          echo "Plan output:"
+          cat plan_output.txt
+
+      - name: Upload plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: |
+            .buildkite/macos-runners/terraform/tfplan
+            .buildkite/macos-runners/terraform/plan_output.txt
+          retention-days: 30
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, plan-deployment]
+    if: needs.plan-deployment.outputs.has_changes == 'true' || github.event.inputs.force_deploy == 'true'
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+          path: .buildkite/macos-runners/terraform/
+
+      - name: Initialize Terraform
+        working-directory: .buildkite/macos-runners/terraform
+        run: |
+          terraform init
+          terraform workspace select ${{ github.event.inputs.environment }}
+
+      - name: Apply Terraform deployment
+        working-directory: .buildkite/macos-runners/terraform
+        run: |
+          echo "Applying Terraform deployment..."
+          terraform apply -auto-approve tfplan
+
+      - name: Get deployment outputs
+        working-directory: .buildkite/macos-runners/terraform
+        run: |
+          terraform output -json > terraform-outputs.json
+          echo "Deployment outputs:"
+          cat terraform-outputs.json | jq .
+
+      - name: Upload deployment outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-outputs-${{ github.event.inputs.environment }}
+          path: .buildkite/macos-runners/terraform/terraform-outputs.json
+          retention-days: 90
+
+      - name: Verify deployment
+        working-directory: .buildkite/macos-runners/terraform
+        run: |
+          echo "Verifying deployment..."
+          
+          # Check VM count
+          vm_count=$(terraform output -json vm_instances | jq 'length')
+          expected_count=${{ needs.validate-inputs.outputs.total_vms }}
+          
+          if [[ $vm_count -eq $expected_count ]]; then
+            echo "✅ VM count matches expected: $vm_count"
+          else
+            echo "❌ VM count mismatch: expected $expected_count, got $vm_count"
+            exit 1
+          fi
+          
+          # Check VM states
+          terraform output -json vm_instances | jq -r 'to_entries[] | "\(.key): \(.value.name) - \(.value.status)"' | while read vm_info; do
+            echo "VM: $vm_info"
+          done
+
+  health-check:
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, plan-deployment, deploy]
+    if: always() && needs.deploy.result == 'success'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+
+      - name: Download deployment outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-outputs-${{ github.event.inputs.environment }}
+          path: ./
+
+      - name: Wait for VMs to be ready
+        run: |
+          echo "Waiting for VMs to be ready..."
+          sleep 300  # Wait 5 minutes for VMs to initialize
+
+      - name: Check VM health
+        run: |
+          echo "Checking VM health..."
+          
+          # Read VM details from outputs
+          jq -r '.vm_instances.value | to_entries[] | "\(.value.name) \(.value.ip_address)"' terraform-outputs.json | while read vm_name vm_ip; do
+            echo "Checking VM: $vm_name ($vm_ip)"
+            
+            # Check health endpoint
+            max_attempts=12
+            attempt=1
+            
+            while [[ $attempt -le $max_attempts ]]; do
+              if curl -f -s --max-time 30 "http://$vm_ip:8080/health" > /dev/null; then
+                echo "✅ $vm_name is healthy"
+                break
+              else
+                echo "⏳ $vm_name not ready yet (attempt $attempt/$max_attempts)"
+                sleep 30
+                ((attempt++))
+              fi
+            done
+            
+            if [[ $attempt -gt $max_attempts ]]; then
+              echo "❌ $vm_name failed health check"
+            fi
+          done
+
+      - name: Check Buildkite connectivity
+        run: |
+          echo "Checking Buildkite agent connectivity..."
+          
+          # Wait a bit more for agents to connect
+          sleep 60
+          
+          # Check connected agents
+          curl -s -H "Authorization: Bearer ${{ secrets.BUILDKITE_API_TOKEN }}" \
+            "https://api.buildkite.com/v2/organizations/${{ secrets.BUILDKITE_ORG }}/agents" | \
+            jq -r '.[] | select(.name | test("^bun-runner-")) | "\(.name) \(.connection_state) \(.hostname)"' | \
+            while read agent_name state hostname; do
+              echo "Agent: $agent_name - State: $state - Host: $hostname"
+            done
+
+  notify-success:
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, plan-deployment, deploy, health-check]
+    if: always() && needs.deploy.result == 'success'
+    
+    steps:
+      - name: Notify success
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          channel: '#ci-updates'
+          text: |
+            🚀 macOS runner fleet deployed successfully
+            
+            Environment: ${{ github.event.inputs.environment }}
+            Total VMs: ${{ needs.validate-inputs.outputs.total_vms }}
+            
+            Fleet composition:
+            - macOS 13: ${{ github.event.inputs.fleet_size_macos_13 }} VMs
+            - macOS 14: ${{ github.event.inputs.fleet_size_macos_14 }} VMs
+            - macOS 15: ${{ github.event.inputs.fleet_size_macos_15 }} VMs
+            
+            Repository: ${{ github.repository }}
+            Deployment: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  notify-failure:
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, plan-deployment, deploy, health-check]
+    if: always() && (needs.validate-inputs.result == 'failure' || needs.plan-deployment.result == 'failure' || needs.deploy.result == 'failure')
+    
+    steps:
+      - name: Notify failure
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#ci-alerts'
+          text: |
+            🔴 macOS runner fleet deployment failed
+            
+            Environment: ${{ github.event.inputs.environment }}
+            Failed stage: ${{ needs.validate-inputs.result == 'failure' && 'Validation' || needs.plan-deployment.result == 'failure' && 'Planning' || 'Deployment' }}
+            
+            Repository: ${{ github.repository }}
+            Deployment: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            
+            Please check the logs for more details.
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  notify-no-changes:
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, plan-deployment]
+    if: needs.plan-deployment.outputs.has_changes == 'false' && github.event.inputs.force_deploy != 'true'
+    
+    steps:
+      - name: Notify no changes
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              channel: '#ci-updates',
+              username: 'GitHub Actions',
+              icon_emoji: ':information_source:',
+              text: 'ℹ️ macOS runner fleet deployment skipped - no changes detected in Terraform plan'
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

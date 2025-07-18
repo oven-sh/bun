@@ -25,7 +25,11 @@ test("file does the right thing", async () => {
     env: bunEnv,
   });
 
-  expect((await new Response(result.stdout).text()).trim()).toBe("undefined");
+  expect(await result.stdout.text()).toMatchInlineSnapshot(`
+    "undefined
+    "
+  `);
+  expect(await result.stderr.text()).toMatchInlineSnapshot(`""`);
   expect(await result.exited).toBe(0);
 });
 
@@ -57,12 +61,13 @@ test("stdin with 'readable' event handler should receive data when paused", asyn
   });
 
   proc.stdin.write("abc\n");
+  proc.stdin.write("def\n");
   proc.stdin.end();
 
   await proc.exited;
 
   expect(await proc.stdout.text()).toMatchInlineSnapshot(`
-    "got chunk {"type":"Buffer","data":[97,98,99,10]}
+    "got chunk {"type":"Buffer","data":[97,98,99,10,100,101,102,10]}
     "
   `);
   expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
@@ -94,6 +99,7 @@ test("stdin with 'data' event handler should NOT receive data when paused", asyn
   });
 
   proc.stdin.write("abc\n");
+  proc.stdin.write("def\n");
   proc.stdin.end();
 
   const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);

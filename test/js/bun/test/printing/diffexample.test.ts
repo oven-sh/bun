@@ -32,8 +32,6 @@ test("no color", async () => {
                                    ^
     error: expect(received).toEqual(expected)
 
-    Difference:
-
     - Received
     + Expected
 
@@ -57,8 +55,6 @@ test("no color", async () => {
     11 |   }).toEqual({
               ^
     error: expect(received).toEqual(expected)
-
-    Difference:
 
     - Received
     + Expected
@@ -85,8 +81,6 @@ test("no color", async () => {
     31 |   expect(originalString).toEqual(expectedString);
                                   ^
     error: expect(received).toEqual(expected)
-
-    Difference:
 
     - Received
     + Expected
@@ -140,8 +134,6 @@ test("no color", async () => {
                                           ^
     error: expect(received).toEqual(expected)
 
-    Difference:
-
     - Received
     + Expected
 
@@ -161,8 +153,6 @@ test("no color", async () => {
                                    ^
     error: expect(received).toEqual(expected)
 
-    Difference:
-
     - Received
     + Expected
 
@@ -181,8 +171,6 @@ test("no color", async () => {
     43 |   expect("Line 1: 你好\\nLine 2: مرحبا\\nLine 3: Здравствуйте").toEqual("Line 1: 你好\\nLine 2: مرحبا\\nLine 3: Привет");
                                                                     ^
     error: expect(received).toEqual(expected)
-
-    Difference:
 
     - Received
     + Expected
@@ -204,8 +192,6 @@ test("no color", async () => {
     52 |   }).toEqual({
               ^
     error: expect(received).toEqual(expected)
-
-    Difference:
 
     - Received
     + Expected
@@ -232,8 +218,6 @@ test("no color", async () => {
                                       ^
     error: expect(received).toEqual(expected)
 
-    Difference:
-
     - Received
     + Expected
 
@@ -253,8 +237,6 @@ test("no color", async () => {
     69 |   expect("Línea 1: ñoño\\nLínea 2: àèìòù\\nLínea 3: äëïöü").toEqual("Línea 1: ñoño\\nLínea 2: àèìòù\\nLínea 3: aeiou");
                                                                   ^
     error: expect(received).toEqual(expected)
-
-    Difference:
 
     - Received
     + Expected
@@ -276,8 +258,6 @@ test("no color", async () => {
     77 |   }).toEqual({
               ^
     error: expect(received).toEqual(expected)
-
-    Difference:
 
     - Received
     + Expected
@@ -301,8 +281,6 @@ test("no color", async () => {
     162 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
-
-    Difference:
 
     - Received
     + Expected
@@ -344,8 +322,6 @@ test("no color", async () => {
     245 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
-
-    Difference:
 
     - Received
     + Expected
@@ -415,8 +391,6 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-    Difference:
-
     - Received
     + Expected
 
@@ -436,8 +410,6 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-    Difference:
-
     - Received
     + Expected
 
@@ -456,8 +428,6 @@ test("no color", async () => {
     271 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
-
-    Difference:
 
     - Received
     + Expected
@@ -483,8 +453,6 @@ test("no color", async () => {
     307 |   expect(receivedString).toEqual(expectedString);
                                    ^
     error: expect(received).toEqual(expected)
-
-    Difference:
 
     - Received
     + Expected
@@ -568,13 +536,15 @@ test("color", async () => {
   });
   await spawn.exited;
   let stderr = await spawn.stderr.text();
-  stderr = stderr.split("Difference:")[1];
+  stderr = stderr.split("a\\nd\\nc\\nd\\ne")[1];
   const split = stderr.split("\n\n");
   split.pop();
   stderr = split.join("\n\n");
 
   expect(stderr).toMatchInlineSnapshot(`
-    "
+    ""\x1B[0m)\x1B[0m\x1B[2m;\x1B[0m
+                                 \x1B[31m\x1B[1m^\x1B[0m
+    \x1B[0m\x1B[31merror\x1B[0m\x1B[2m:\x1B[0m \x1B[1m\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
     \x1B[31m- Received\x1B[0m
     \x1B[32m+ Expected\x1B[0m

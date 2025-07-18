@@ -1,5 +1,9 @@
+const std = @import("std");
+const diff_match_patch = @import("diff_match_patch.zig");
 const DMP = diff_match_patch.DMP(u8);
 const DMPUsize = diff_match_patch.DMP(usize);
+
+// @sortImports
 
 fn removeTrailingNewline(text: []const u8) []const u8 {
     if (!std.mem.endsWith(u8, text, "\n")) return text;
@@ -163,9 +167,9 @@ pub const DiffSegment = struct {
 
 fn printDiffHeader(writer: anytype, enable_colors: bool) !void {
     if (enable_colors) {
-        try writer.print("Difference:\n\n{s}- Received{s}\n{s}+ Expected{s}\n\n", .{ colors.red, colors.reset, colors.green, colors.reset });
+        try writer.print("{s}- Received{s}\n{s}+ Expected{s}\n\n", .{ colors.red, colors.reset, colors.green, colors.reset });
     } else {
-        try writer.print("Difference:\n\n- Received\n+ Expected\n\n", .{});
+        try writer.print("- Received\n+ Expected\n\n", .{});
     }
 }
 
@@ -303,8 +307,3 @@ pub fn printDiff(
 
     try writer.writeAll("\n");
 }
-
-// @sortImports
-
-const diff_match_patch = @import("diff_match_patch.zig");
-const std = @import("std");

@@ -3787,16 +3787,9 @@ pub fn link(comptime T: type, src: [:0]const T, dest: [:0]const T) Maybe(void) {
             return sys_uv.link(src, dest);
         }
 
-        const ret = bun.windows.CreateHardLinkW(dest, src, null);
-        if (Maybe(void).errnoSys(ret, .link)) |err| {
-            log("CreateHardLinkW({s}, {s}) = {s}", .{
-                bun.fmt.fmtPath(T, dest, .{}),
-                bun.fmt.fmtPath(T, src, .{}),
-                @tagName(err.getErrno()),
-            });
-            return err;
+        if (bun.windows.CreateHardLinkW(dest, src, null) == 0) {
+            return Maybe(void).errno(bun.windows.getLastErrno(), .link);
         }
-
         log("CreateHardLinkW({s}, {s}) = 0", .{
             bun.fmt.fmtPath(T, dest, .{}),
             bun.fmt.fmtPath(T, src, .{}),

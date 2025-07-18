@@ -35,6 +35,7 @@ pub const ThreadPool = struct {
                     .monotonic,
                 ) orelse return &thread_pool;
             }
+
             mutex.lock();
             defer mutex.unlock();
 
@@ -46,7 +47,8 @@ pub const ThreadPool = struct {
                 // Use a much smaller stack size for the IO thread pool
                 .stack_size = 512 * 1024,
             });
-            ref_count.store(1, .release);
+            // 2 means initialized and referenced by one `ThreadPool`.
+            ref_count.store(2, .release);
             return &thread_pool;
         }
 

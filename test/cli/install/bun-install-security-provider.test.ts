@@ -26,6 +26,7 @@ test("basic", async () => {
       export default {
         version: "1",
         onInstall: async ({packages}) => {
+          console.log("Security scanner is checking packages:", packages.map(p => p.name).join(", "));
           return [
             {
               name: packages[0].name,
@@ -46,8 +47,10 @@ test("basic", async () => {
     dependencies: {},
   });
 
-  const { out } = await runBunInstall(bunEnv, package_dir, {
-    packages: ["baz"],
+  const pkg = "pkg";
+
+  const { out, err } = await runBunInstall(bunEnv, package_dir, {
+    packages: [pkg],
     allowErrors: true,
     allowWarnings: false,
     savesLockfile: false,
@@ -56,5 +59,6 @@ test("basic", async () => {
 
   expect(urls).toEqual([]);
 
-  expect(out).toContain("Installation cancelled due to fatal security advisories");
+  expect(out).toContain(`Security scanner is checking packages: ${pkg}`);
+  expect(err).toContain("Installation cancelled due to fatal security advisories");
 });

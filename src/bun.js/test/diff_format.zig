@@ -15,7 +15,9 @@ pub const DiffFormatter = struct {
             const received = this.received_string.?;
             const expected = this.expected_string.?;
 
-            try printDiffMain(allocator, this.not, received, expected, writer, Output.enable_ansi_colors);
+            try printDiffMain(allocator, this.not, received, expected, writer, .{
+                .enable_ansi_colors = Output.enable_ansi_colors,
+            });
             return;
         }
 

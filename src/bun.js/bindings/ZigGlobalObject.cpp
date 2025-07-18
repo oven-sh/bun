@@ -4195,7 +4195,6 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     JSValue parameters,
     const SourceOrigin& sourceOrigin)
 {
-    printf("GlobalObject::moduleLoaderImportModule: %s, %s\n", moduleNameValue->getString(jsGlobalObject).utf8().data(), sourceOrigin.url().string().utf8().data());
     auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
 
     VM& vm = JSC::getVM(globalObject);
@@ -4338,7 +4337,6 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     auto moduleKeyJS = key.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto moduleKey = moduleKeyJS->value(globalObject);
-    printf("GlobalObject::moduleLoaderFetch: %s\n", moduleKey->utf8().data());
     if (scope.exception()) [[unlikely]]
         return rejectedInternalPromise(globalObject, scope.exception()->value());
 

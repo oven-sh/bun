@@ -680,6 +680,8 @@ pub const OperatingSystem = enum(u16) {
     pub const sunos: u16 = 1 << 6;
     pub const win32: u16 = 1 << 7;
     pub const android: u16 = 1 << 8;
+    // some more in use on npm:
+    // netbsd, haiku, cygwin
 
     pub const all_value: u16 = aix | darwin | freebsd | linux | openbsd | sunos | win32 | android;
 
@@ -831,12 +833,10 @@ pub const Architecture = enum(u16) {
     pub const s390x: u16 = 1 << 9;
     pub const x32: u16 = 1 << 10;
     pub const x64: u16 = 1 << 11;
-    pub const wasm32: u16 = 1 << 12;
-    pub const riscv64: u16 = 1 << 13;
-    pub const loong64: u16 = 1 << 14;
-    pub const mips64el: u16 = 1 << 15;
+    // some more in use on npm:
+    // wasm32, riscv64, loong64, mips64el, sparc
 
-    pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64 | wasm32 | riscv64 | loong64 | mips64el;
+    pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64;
 
     pub const current: Architecture = switch (Environment.arch) {
         .arm64 => @enumFromInt(arm64),
@@ -862,10 +862,6 @@ pub const Architecture = enum(u16) {
         .{ "s390x", s390x },
         .{ "x32", x32 },
         .{ "x64", x64 },
-        .{ "wasm32", wasm32 },
-        .{ "riscv64", riscv64 },
-        .{ "loong64", loong64 },
-        .{ "mips64el", mips64el },
     });
 
     pub const validValuesString = blk: {

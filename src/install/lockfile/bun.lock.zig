@@ -751,7 +751,7 @@ pub const Stringifier = struct {
             );
         }
 
-        if (meta.libc != .all) {
+        if (meta.libc != .all and meta.libc != .none) {
             if (any) {
                 try writer.writeByte(',');
             } else {

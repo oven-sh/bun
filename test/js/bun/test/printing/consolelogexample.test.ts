@@ -1,6 +1,21 @@
 import { test, expect } from "bun:test";
 import { bunExe } from "harness";
 
+test("Bun.inspect", async () => {
+  expect(Bun.inspect("abc\ndef\nghi")).toMatchInlineSnapshot(`
+    ""abc
+     def
+     ghi""
+  `);
+  expect(Bun.inspect({ a: "abc\ndef\nghi" })).toMatchInlineSnapshot(`
+    "{
+      a: "abc
+       def
+       ghi",
+    }"
+  `);
+});
+
 test("console.log output", async () => {
   const result = Bun.spawn({
     cmd: [bunExe(), import.meta.dir + "/consolelog.fixture.ts"],

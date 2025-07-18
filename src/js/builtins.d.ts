@@ -84,11 +84,6 @@ interface ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaul
   $error: typeof ReadableStreamDefaultController.prototype.error;
 }
 
-declare var ReadableStreamDefaultController: {
-  prototype: ReadableStreamDefaultController;
-  new (): ReadableStreamDefaultController;
-};
-
 interface ReadableStream<R = any> extends _ReadableStream<R> {
   $highWaterMark: number;
   $bunNativePtr: undefined | TODO;

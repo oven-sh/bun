@@ -139,10 +139,10 @@ endif()
 optionx(REVISION STRING "The git revision of the build" DEFAULT ${DEFAULT_REVISION})
 
 # Used in process.version, process.versions.node, napi, and elsewhere
-optionx(NODEJS_VERSION STRING "The version of Node.js to report" DEFAULT "24.3.0")
+setx(NODEJS_VERSION "24.3.0")
 
 # Used in process.versions.modules and compared while loading V8 modules
-optionx(NODEJS_ABI_VERSION STRING "The ABI version of Node.js to report" DEFAULT "137")
+setx(NODEJS_ABI_VERSION "137")
 
 if(APPLE)
   set(DEFAULT_STATIC_SQLITE OFF)

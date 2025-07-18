@@ -97,6 +97,11 @@ fn fmtStatusTextLine(comptime status: @Type(.enum_literal), comptime emoji_or_co
 }
 
 fn writeTestStatusLine(comptime status: @Type(.enum_literal), writer: anytype) void {
+    // When using AI agents, only print failures
+    if (Output.isAIAgent() and status != .fail) {
+        return;
+    }
+
     if (Output.enable_ansi_colors_stderr)
         writer.print(fmtStatusTextLine(status, true), .{}) catch unreachable
     else
@@ -653,51 +658,53 @@ pub const CommandLineReporter = struct {
         }
 
         const scopes: []*jest.DescribeScope = scopes_stack.slice();
-
         const display_label = if (label.len > 0) label else "test";
 
-        const color_code = comptime if (skip) "<d>" else "";
+        // Quieter output when claude code is in use.
+        if (!Output.isAIAgent() or status == .fail) {
+            const color_code = comptime if (skip) "<d>" else "";
 
-        if (Output.enable_ansi_colors_stderr) {
-            for (scopes, 0..) |_, i| {
-                const index = (scopes.len - 1) - i;
-                const scope = scopes[index];
-                if (scope.label.len == 0) continue;
-                writer.writeAll(" ") catch unreachable;
+            if (Output.enable_ansi_colors_stderr) {
+                for (scopes, 0..) |_, i| {
+                    const index = (scopes.len - 1) - i;
+                    const scope = scopes[index];
+                    if (scope.label.len == 0) continue;
+                    writer.writeAll(" ") catch unreachable;
 
-                writer.print(comptime Output.prettyFmt("<r>" ++ color_code, true), .{}) catch unreachable;
-                writer.writeAll(scope.label) catch unreachable;
-                writer.print(comptime Output.prettyFmt("<d>", true), .{}) catch unreachable;
-                writer.writeAll(" >") catch unreachable;
+                    writer.print(comptime Output.prettyFmt("<r>" ++ color_code, true), .{}) catch unreachable;
+                    writer.writeAll(scope.label) catch unreachable;
+                    writer.print(comptime Output.prettyFmt("<d>", true), .{}) catch unreachable;
+                    writer.writeAll(" >") catch unreachable;
+                }
+            } else {
+                for (scopes, 0..) |_, i| {
+                    const index = (scopes.len - 1) - i;
+                    const scope = scopes[index];
+                    if (scope.label.len == 0) continue;
+                    writer.writeAll(" ") catch unreachable;
+                    writer.writeAll(scope.label) catch unreachable;
+                    writer.writeAll(" >") catch unreachable;
+                }
             }
-        } else {
-            for (scopes, 0..) |_, i| {
-                const index = (scopes.len - 1) - i;
-                const scope = scopes[index];
-                if (scope.label.len == 0) continue;
-                writer.writeAll(" ") catch unreachable;
-                writer.writeAll(scope.label) catch unreachable;
-                writer.writeAll(" >") catch unreachable;
+
+            const line_color_code = if (comptime skip) "<r><d>" else "<r><b>";
+
+            if (Output.enable_ansi_colors_stderr)
+                writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
+            else
+                writer.print(comptime Output.prettyFmt(" {s}", false), .{display_label}) catch unreachable;
+
+            if (elapsed_ns > (std.time.ns_per_us * 10)) {
+                writer.print(" {any}", .{
+                    Output.ElapsedFormatter{
+                        .colors = Output.enable_ansi_colors_stderr,
+                        .duration_ns = elapsed_ns,
+                    },
+                }) catch unreachable;
             }
+
+            writer.writeAll("\n") catch unreachable;
         }
-
-        const line_color_code = if (comptime skip) "<r><d>" else "<r><b>";
-
-        if (Output.enable_ansi_colors_stderr)
-            writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
-        else
-            writer.print(comptime Output.prettyFmt(" {s}", false), .{display_label}) catch unreachable;
-
-        if (elapsed_ns > (std.time.ns_per_us * 10)) {
-            writer.print(" {any}", .{
-                Output.ElapsedFormatter{
-                    .colors = Output.enable_ansi_colors_stderr,
-                    .duration_ns = elapsed_ns,
-                },
-            }) catch unreachable;
-        }
-
-        writer.writeAll("\n") catch unreachable;
 
         if (file_reporter) |reporter| {
             switch (reporter) {
@@ -843,6 +850,8 @@ pub const CommandLineReporter = struct {
         var writer_ = Output.errorWriterBuffered();
         defer Output.flush();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
+
+        this.jest.current_file.printIfNeeded();
 
         // when the tests fail, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
@@ -1530,7 +1539,7 @@ pub const TestCommand = struct {
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
         var coverage_options = ctx.test_options.coverage;
-        if (reporter.summary().pass > 20) {
+        if (reporter.summary().pass > 20 and !Output.isAIAgent()) {
             if (reporter.summary().skip > 0) {
                 Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary().skip});
                 Output.flush();
@@ -1571,16 +1580,24 @@ pub const TestCommand = struct {
         if (test_files.len == 0) {
             failed_to_find_any_tests = true;
 
-            if (ctx.positionals.len == 0) {
-                Output.prettyErrorln(
-                    \\<yellow>No tests found!<r>
-                    \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
-                    \\
-                , .{});
+            // "bun test" - positionals[0] == "test"
+            // Therefore positionals starts at [1].
+            if (ctx.positionals.len < 2) {
+                if (Output.isAIAgent()) {
+                    // Be very clear to ai.
+                    Output.errGeneric("0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
+                } else {
+                    // Be friendlier to humans.
+                    Output.prettyErrorln(
+                        \\<yellow>No tests found!<r>
+                        \\
+                        \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                        \\
+                    , .{});
+                }
             } else {
                 Output.prettyErrorln("<yellow>The following filters did not match any test files:<r>", .{});
                 var has_file_like: ?usize = null;
-                Output.prettyError(" ", .{});
                 for (ctx.positionals[1..], 1..) |filter, i| {
                     Output.prettyError(" {s}", .{filter});
 
@@ -1611,10 +1628,12 @@ pub const TestCommand = struct {
                     , .{ ctx.positionals[i], ctx.positionals[i] });
                 }
             }
-            Output.prettyError(
-                \\
-                \\Learn more about the test runner: <magenta>https://bun.com/docs/cli/test<r>
-            , .{});
+            if (!Output.isAIAgent()) {
+                Output.prettyError(
+                    \\
+                    \\Learn more about bun test: <magenta>https://bun.com/docs/cli/test<r>
+                , .{});
+            }
         } else {
             Output.prettyError("\n", .{});
 
@@ -1841,12 +1860,7 @@ pub const TestCommand = struct {
         vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
-            if (repeat_count > 1) {
-                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });
-            } else {
-                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
-            }
-            Output.flush();
+            reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
 
             var promise = try vm.loadEntryPointForTestRunner(file_path);
             reporter.summary().files += 1;

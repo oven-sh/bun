@@ -356,6 +356,7 @@ src/cli/test_command.zig
 src/cli/test/Scanner.zig
 src/cli/unlink_command.zig
 src/cli/update_command.zig
+src/cli/update_interactive_command.zig
 src/cli/upgrade_command.zig
 src/cli/why_command.zig
 src/codegen/process_windows_translate_c.zig
@@ -566,6 +567,7 @@ src/install/install_binding.zig
 src/install/install.zig
 src/install/integrity.zig
 src/install/isolated_install.zig
+src/install/isolated_install/FileCopier.zig
 src/install/isolated_install/Hardlinker.zig
 src/install/isolated_install/Installer.zig
 src/install/isolated_install/Store.zig

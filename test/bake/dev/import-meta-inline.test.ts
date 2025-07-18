@@ -47,7 +47,7 @@ export default function (req, meta) {
 
     // Check that url is a file:// URL
     expect(json.url).toStartWith("file://");
-    expect(json.url).toContain(platformPath("routes/index.ts"));
+    expect(json.url).toContain("routes/index.ts");
   },
 });
 
@@ -113,11 +113,7 @@ export default function (req, meta) {
     expect(json.file).toBe("handler.ts");
     expect(json.path).toContain(platformPath("routes/api/v1/handler.ts"));
     expect(json.dir).toContain(platformPath("routes/api/v1"));
-    expect(json.url).toMatch(
-      process.platform === "win32"
-        ? /^file:\/\/.*routes\\api\\v1\\handler\.ts$/
-        : /^file:\/\/.*routes\/api\/v1\/handler\.ts$/,
-    );
+    expect(json.url).toMatch(/^file:\/\/.*routes\/api\/v1\/handler\.ts$/);
   },
 });
 

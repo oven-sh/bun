@@ -4,6 +4,17 @@ pub const Hardlinker = struct {
     dest: bun.RelPath(.{ .sep = .auto, .unit = .os }),
 
     pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.Maybe(void) {
+        if (bun.install.PackageManager.verbose_install) {
+            bun.Output.prettyErrorln(
+                \\Hardlinking {} to {}
+            ,
+                .{
+                    bun.fmt.fmtOSPath(this.src.slice(), .{ .path_sep = .auto }),
+                    bun.fmt.fmtOSPath(this.dest.slice(), .{ .path_sep = .auto }),
+                },
+            );
+        }
+
         var walker: Walker = try .walk(
             this.src_dir,
             bun.default_allocator,

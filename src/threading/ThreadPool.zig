@@ -263,7 +263,12 @@ fn scheduleImpl(self: *ThreadPool, batch: Batch, try_current: bool) void {
         self.wait_group.addUnsynchronized(batch.len);
     }
 
-    const current = if (try_current) Thread.current else null;
+    const current = blk: {
+        if (!try_current) break :blk null;
+        const current = Thread.current orelse break :blk null;
+        // Make sure thread is part of this thread pool, not a different one.
+        break :blk if (current.thread_pool == self) current else null;
+    };
     if (current) |thread| {
         thread.run_buffer.push(&list) catch thread.run_queue.push(list);
     } else {
@@ -508,7 +513,7 @@ fn unregister(noalias self: *ThreadPool, noalias maybe_thread: ?*Thread) void {
     thread.join_event.wait();
 
     // After receiving the shutdown signal, shutdown the next thread in the pool.
-    // We have to do that without touching the thread pool itself since it's memory is invalidated by now.
+    // We have to do that without touching the thread pool itself since its memory is invalidated by now.
     // So just follow our .next link.
     const next_thread = thread.next orelse return;
     next_thread.join_event.notify();
@@ -540,6 +545,7 @@ pub const Thread = struct {
     run_queue: Node.Queue = .{},
     idle_queue: Node.Queue = .{},
     run_buffer: Node.Buffer = .{},
+    thread_pool: *ThreadPool,
 
     pub threadlocal var current: ?*Thread = null;
 
@@ -561,7 +567,7 @@ pub const Thread = struct {
             Output.Source.configureNamedThread(named);
         }
 
-        var self_ = Thread{};
+        var self_ = Thread{ .thread_pool = thread_pool };
         var self = &self_;
         current = self;
         defer current = null;
@@ -863,7 +869,7 @@ pub const Node = struct {
                 var size = tail -% head;
                 assert(size <= capacity);
 
-                // Push nodes from the list to the buffer if it's not empty..
+                // Push nodes from the list to the buffer if it's not empty.
                 if (size < capacity) {
                     var nodes: ?*Node = list.head;
                     while (size < capacity) : (size += 1) {

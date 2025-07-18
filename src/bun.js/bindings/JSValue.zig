@@ -1107,8 +1107,8 @@ pub const JSValue = enum(i64) {
 
     /// this: RegExp value
     /// other: string value
-    pub fn toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bool {
-        return JSC__JSValue__toMatch(this, global, other);
+    pub fn toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bun.JSError!bool {
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__toMatch, .{ this, global, other });
     }
 
     extern fn JSC__JSValue__asArrayBuffer_(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool;

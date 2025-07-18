@@ -4147,7 +4147,7 @@ pub const Expect = struct {
             if (expected_value.isString()) {
                 break :brk value.stringIncludes(globalThis, expected_value);
             } else if (expected_value.isRegExp()) {
-                break :brk expected_value.toMatch(globalThis, value);
+                break :brk try expected_value.toMatch(globalThis, value);
             }
             unreachable;
         };

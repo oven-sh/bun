@@ -217,7 +217,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
     VM& vm = context.vm();
 
     auto* thisObject = protectedThis->m_thisObject.get();
-    JSC::JSValue thisValue = thisObject ? JSC::JSValue(thisObject) : JSC::jsUndefined();
+    JSC::JSValue thisValue = thisObject ? thisObject : JSC::jsUndefined();
     auto fired = false;
 
     for (auto& registeredListener : listeners) {

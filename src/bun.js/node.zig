@@ -36,6 +36,7 @@ pub const Encoding = types.Encoding;
 pub const StringOrBuffer = types.StringOrBuffer;
 pub const BlobOrStringOrBuffer = types.BlobOrStringOrBuffer;
 
+pub const FSEvents = @import("node/fs_events.zig");
 const stat = @import("node/Stat.zig");
 pub const Stats = stat.Stats;
 pub const StatsBig = stat.StatsBig;
@@ -73,13 +74,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         err: ErrorType,
         result: ReturnType,
 
-        /// NOTE: this has to have a well defined layout (e.g. setting to `u8`)
-        /// experienced a bug with a Maybe(void, void)
-        /// creating the `err` variant of this type
-        /// resulted in Zig incorrectly setting the tag, leading to a switch
-        /// statement to just not work.
-        /// we (Zack, Dylan, Chloe, Mason) observed that it was set to 0xFF in ReleaseFast in the debugger
-        pub const Tag = enum(u8) { err, result };
+        pub const Tag = enum { err, result };
 
         pub const retry: @This() = if (has_retry) .{ .err = ErrorType.retry } else .{ .err = .{} };
         pub const success: @This() = .{
@@ -198,16 +193,16 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             return switch (this) {
                 .result => |r| switch (ReturnType) {
                     JSC.JSValue => r,
 
-                    void => .undefined,
+                    void => .js_undefined,
                     bool => JSC.JSValue.jsBoolean(r),
 
-                    JSC.ArrayBuffer => r.toJS(globalObject, null),
-                    []u8 => JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject, null),
+                    JSC.ArrayBuffer => r.toJS(globalObject),
+                    []u8 => JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject),
 
                     else => switch (@typeInfo(ReturnType)) {
                         .int, .float, .comptime_int, .comptime_float => JSC.JSValue.jsNumber(r),
@@ -220,14 +215,14 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                         },
                     },
                 },
-                .err => |e| e.toJSC(globalObject),
+                .err => |e| e.toJS(globalObject),
             };
         }
 
         pub fn toArrayBuffer(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
             return switch (this) {
                 .result => |r| JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject, null),
-                .err => |e| e.toJSC(globalObject),
+                .err => |e| e.toJS(globalObject),
             };
         }
 

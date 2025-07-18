@@ -19,6 +19,7 @@ const LoaderMap = bun.StringArrayHashMapUnmanaged(options.Loader);
 const JSONParser = bun.JSON;
 const Command = @import("cli.zig").Command;
 const TOML = @import("./toml/toml_parser.zig").TOML;
+const PackageManager = bun.install.PackageManager;
 
 // TODO: replace Api.TransformOptions with Bunfig
 pub const Bunfig = struct {
@@ -341,6 +342,34 @@ pub const Bunfig = struct {
                         try this.expect(expr, .e_boolean);
                         this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
                     }
+
+                    if (test_.get("coveragePathIgnorePatterns")) |expr| brk: {
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                const pattern = try str.string(allocator);
+                                const patterns = try allocator.alloc(string, 1);
+                                patterns[0] = pattern;
+                                this.ctx.test_options.coverage.ignore_patterns = patterns;
+                            },
+                            .e_array => |arr| {
+                                if (arr.items.len == 0) break :brk;
+
+                                const patterns = try allocator.alloc(string, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    if (item.data != .e_string) {
+                                        try this.addError(item.loc, "coveragePathIgnorePatterns array must contain only strings");
+                                        return;
+                                    }
+                                    patterns[i] = try item.data.e_string.string(allocator);
+                                }
+                                this.ctx.test_options.coverage.ignore_patterns = patterns;
+                            },
+                            else => {
+                                try this.addError(expr.loc, "coveragePathIgnorePatterns must be a string or array of strings");
+                                return;
+                            },
+                        }
+                    }
                 }
             }
 
@@ -478,6 +507,16 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("linker")) |node_linker_expr| {
+                        try this.expectString(node_linker_expr);
+                        if (node_linker_expr.asString(this.allocator)) |node_linker_str| {
+                            install.node_linker = PackageManager.Options.NodeLinker.fromStr(node_linker_str);
+                            if (install.node_linker == null) {
+                                try this.addError(node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
+                            }
+                        }
+                    }
+
                     if (install_obj.get("lockfile")) |lockfile_expr| {
                         if (lockfile_expr.get("print")) |lockfile| {
                             try this.expectString(lockfile);
@@ -582,6 +621,12 @@ pub const Bunfig = struct {
                             }
                         }
                     }
+
+                    if (install_obj.get("linkWorkspacePackages")) |link_workspace| {
+                        if (link_workspace.asBool()) |value| {
+                            install.link_workspace_packages = value;
+                        }
+                    }
                 }
 
                 if (json.get("run")) |run_expr| {
@@ -620,6 +665,18 @@ pub const Bunfig = struct {
                             this.ctx.debug.run_in_bun = value;
                         } else {
                             try this.addError(bun_flag.loc, "Expected boolean");
+                        }
+                    }
+                }
+
+                if (json.get("console")) |console_expr| {
+                    if (console_expr.get("depth")) |depth| {
+                        if (depth.data == .e_number) {
+                            const depth_value = @as(u16, @intFromFloat(depth.data.e_number.value));
+                            // Treat depth=0 as maxInt(u16) for infinite depth
+                            this.ctx.runtime_options.console_depth = if (depth_value == 0) std.math.maxInt(u16) else depth_value;
+                        } else {
+                            try this.addError(depth.loc, "Expected number");
                         }
                     }
                 }
@@ -975,21 +1032,21 @@ pub const Bunfig = struct {
         }
     };
 
-    pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn parse(allocator: std.mem.Allocator, source: *const logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         const log_count = ctx.log.errors + ctx.log.warnings;
 
-        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator, true) catch |err| {
+        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 try ctx.log.addErrorOpts("Failed to parse", .{
-                    .source = &source,
+                    .source = source,
                     .redact_sensitive_information = true,
                 });
             }
             return err;
-        } else JSONParser.parseTSConfig(&source, ctx.log, allocator, true) catch |err| {
+        } else JSONParser.parseTSConfig(source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 try ctx.log.addErrorOpts("Failed to parse", .{
-                    .source = &source,
+                    .source = source,
                     .redact_sensitive_information = true,
                 });
             }
@@ -1000,7 +1057,7 @@ pub const Bunfig = struct {
             .json = expr,
             .log = ctx.log,
             .allocator = allocator,
-            .source = &source,
+            .source = source,
             .bunfig = &ctx.args,
             .ctx = ctx,
         };

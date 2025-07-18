@@ -269,7 +269,7 @@ pub const Async = struct {
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, @intFromEnum(req.result));
 
                 if (this.result == .err) {
-                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    this.result.err = this.result.err.clone(bun.default_allocator);
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -283,7 +283,7 @@ pub const Async = struct {
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, req, @intFromEnum(req.result));
 
                 if (this.result == .err) {
-                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    this.result.err = this.result.err.clone(bun.default_allocator);
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -292,18 +292,15 @@ pub const Async = struct {
 
             pub fn runFromJSThread(this: *Task) void {
                 const globalObject = this.globalObject;
-                var success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
-                const result = switch (this.result) {
-                    .err => |err| err.toJSC(globalObject),
-                    .result => |*res| brk: {
-                        const out = globalObject.toJS(res, .temporary);
-                        success = out != .zero;
-
-                        break :brk out;
-                    },
-                };
+                const success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
+                const result = switch (this.result) {
+                    .err => |err| err.toJS(globalObject),
+                    .result => |*res| brk: {
+                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
+                    },
+                };
                 promise_value.ensureStillAlive();
 
                 const tracker = this.tracker;
@@ -323,7 +320,7 @@ pub const Async = struct {
 
             pub fn deinit(this: *Task) void {
                 if (this.result == .err) {
-                    bun.default_allocator.free(this.result.err.path);
+                    this.result.err.deinit();
                 }
 
                 this.ref.unref(this.globalObject.bunVM());
@@ -385,7 +382,7 @@ pub const Async = struct {
                 this.result = function(&node_fs, this.args, .@"async");
 
                 if (this.result == .err) {
-                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    this.result.err = this.result.err.clone(bun.default_allocator);
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -394,17 +391,15 @@ pub const Async = struct {
 
             pub fn runFromJSThread(this: *Task) void {
                 const globalObject = this.globalObject;
-                var success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
-                const result = switch (this.result) {
-                    .err => |err| err.toJSC(globalObject),
-                    .result => |*res| brk: {
-                        const out = globalObject.toJS(res, .temporary);
-                        success = out != .zero;
-                        break :brk out;
-                    },
-                };
+                const success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
+                const result = switch (this.result) {
+                    .err => |err| err.toJS(globalObject),
+                    .result => |*res| brk: {
+                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
+                    },
+                };
                 promise_value.ensureStillAlive();
 
                 const tracker = this.tracker;
@@ -433,7 +428,7 @@ pub const Async = struct {
 
             pub fn deinit(this: *Task) void {
                 if (this.result == .err) {
-                    bun.default_allocator.free(this.result.err.path);
+                    this.result.err.deinit();
                 }
 
                 this.ref.unref(this.globalObject.bunVM());
@@ -472,7 +467,6 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         /// When each task is finished, decrement.
         /// The maintask thread starts this at 1 and decrements it at the end, to avoid the promise being resolved while new tasks may be added.
         subtask_count: std.atomic.Value(usize),
-        deinitialized: bool = false,
 
         shelltask: ShellTaskT,
 
@@ -648,7 +642,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             this.result = result;
 
             if (this.result == .err) {
-                this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                this.result.err = this.result.err.clone(bun.default_allocator);
             }
 
             if (this.evtloop == .js) {
@@ -671,18 +665,15 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             const globalObject = this.evtloop.globalObject() orelse {
                 @panic("No global object, this indicates a bug in Bun. Please file a GitHub issue.");
             };
-            var success = @as(JSC.Maybe(Return.Cp).Tag, this.result) == .result;
-            const result = switch (this.result) {
-                .err => |err| err.toJSC(globalObject),
-                .result => |*res| brk: {
-                    const out = globalObject.toJS(res, .temporary);
-                    success = out != .zero;
-
-                    break :brk out;
-                },
-            };
+            const success = @as(JSC.Maybe(Return.Cp).Tag, this.result) == .result;
             var promise_value = this.promise.value();
             var promise = this.promise.get();
+            const result = switch (this.result) {
+                .err => |err| err.toJS(globalObject),
+                .result => |*res| brk: {
+                    break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
+                },
+            };
             promise_value.ensureStillAlive();
 
             const tracker = this.tracker;
@@ -701,8 +692,9 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         }
 
         pub fn deinit(this: *ThisAsyncCpTask) void {
-            bun.assert(!this.deinitialized);
-            this.deinitialized = true;
+            if (this.result == .err) {
+                this.result.err.deinit();
+            }
             if (comptime !is_shell) this.ref.unref(this.evtloop);
             this.args.deinit();
             this.promise.deinit();
@@ -867,8 +859,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 },
             }
 
-            const dir = fd.stdDir();
-            var iterator = DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
+            var iterator = DirIterator.iterate(fd, if (Environment.isWindows) .u16 else .u8);
             var entry = iterator.next();
             while (switch (entry) {
                 .err => |err| {
@@ -1225,22 +1216,17 @@ pub const AsyncReaddirRecursiveTask = struct {
 
     pub fn runFromJSThread(this: *AsyncReaddirRecursiveTask) void {
         const globalObject = this.globalObject;
-        var success = this.pending_err == null;
-        const result = if (this.pending_err) |*err| err.toJSC(globalObject) else brk: {
+        const success = this.pending_err == null;
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
+        const result = if (this.pending_err) |*err| err.toJS(globalObject) else brk: {
             const res = switch (this.result_list) {
                 .with_file_types => |*res| Return.Readdir{ .with_file_types = res.moveToUnmanaged().items },
                 .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },
                 .files => |*res| Return.Readdir{ .files = res.moveToUnmanaged().items },
             };
-            const out = res.toJS(globalObject);
-            if (out == .zero) {
-                success = false;
-            }
-
-            break :brk out;
+            break :brk res.toJS(globalObject) catch return promise.reject(globalObject, error.JSError);
         };
-        var promise_value = this.promise.value();
-        var promise = this.promise.get();
         promise_value.ensureStillAlive();
 
         const tracker = this.tracker;
@@ -1261,7 +1247,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     pub fn deinit(this: *AsyncReaddirRecursiveTask) void {
         bun.assert(this.root_fd == bun.invalid_fd); // should already have closed it
         if (this.pending_err) |*err| {
-            bun.default_allocator.free(err.path);
+            err.deinit();
         }
 
         this.ref.unref(this.globalObject.bunVM());
@@ -1299,11 +1285,11 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Rename {
             const old_path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArgumentTypeValue("oldPath", "string or an instance of Buffer or URL", arguments.next() orelse .undefined);
+                return ctx.throwInvalidArgumentTypeValue("oldPath", "string or an instance of Buffer or URL", arguments.next() orelse .js_undefined);
             };
 
             const new_path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArgumentTypeValue("newPath", "string or an instance of Buffer or URL", arguments.next() orelse .undefined);
+                return ctx.throwInvalidArgumentTypeValue("newPath", "string or an instance of Buffer or URL", arguments.next() orelse .js_undefined);
             };
 
             return Rename{ .old_path = old_path, .new_path = new_path };
@@ -1363,7 +1349,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Writev {
-            const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -1417,7 +1403,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Readv {
-            const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -1463,7 +1449,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!FTruncate {
-            const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -1534,7 +1520,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(_: *const @This()) void {}
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Fchown {
-            const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -1590,7 +1576,7 @@ pub const Arguments = struct {
             };
             errdefer path.deinit();
 
-            const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const atime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("atime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("atime must be a number or a Date", .{});
@@ -1598,7 +1584,7 @@ pub const Arguments = struct {
 
             arguments.eat();
 
-            const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const mtime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("mtime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("mtime must be a number or a Date", .{});
@@ -1632,7 +1618,7 @@ pub const Arguments = struct {
             };
             errdefer path.deinit();
 
-            const mode_arg = arguments.next() orelse .undefined;
+            const mode_arg: JSC.JSValue = arguments.next() orelse .js_undefined;
             const mode: Mode = try JSC.Node.modeFromJS(ctx, mode_arg) orelse {
                 return JSC.Node.validators.throwErrInvalidArgType(ctx, "mode", .{}, "number", mode_arg);
             };
@@ -1652,12 +1638,12 @@ pub const Arguments = struct {
         pub fn toThreadSafe(_: *const @This()) void {}
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!FChmod {
-            const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
-            const mode_arg = arguments.next() orelse .undefined;
+            const mode_arg: JSC.JSValue = arguments.next() orelse .js_undefined;
             const mode: Mode = try JSC.Node.modeFromJS(ctx, mode_arg) orelse {
                 return JSC.Node.validators.throwErrInvalidArgType(ctx, "mode", .{}, "number", mode_arg);
             };
@@ -1766,7 +1752,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(_: *@This()) void {}
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Fstat {
-            const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -2080,7 +2066,7 @@ pub const Arguments = struct {
                     if (try val.get(ctx, "maxRetries")) |retries| {
                         max_retries = @intCast(try JSC.Node.validators.validateInteger(ctx, retries, "options.maxRetries", 0, std.math.maxInt(u32)));
                     }
-                } else if (val != .undefined) {
+                } else if (!val.isUndefined()) {
                     return ctx.throwInvalidArguments("The \"options\" argument must be of type object.", .{});
                 }
             }
@@ -2173,7 +2159,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!MkdirTemp {
             const prefix = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArgumentTypeValue("prefix", "string, Buffer, or URL", arguments.next() orelse .undefined);
+                return ctx.throwInvalidArgumentTypeValue("prefix", "string, Buffer, or URL", arguments.next() orelse .js_undefined);
             };
             errdefer prefix.deinit();
 
@@ -2281,7 +2267,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(_: Close) void {}
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Close {
-            const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -2368,19 +2354,19 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Futimes {
-            const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
-            const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const atime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("atime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("atime must be a number or a Date", .{});
             };
             arguments.eat();
 
-            const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const mtime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("mtime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("mtime must be a number or a Date", .{});
@@ -2440,7 +2426,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Write {
-            const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -2545,7 +2531,7 @@ pub const Arguments = struct {
             // fs_binding.read(fd, buffer, offset, length, position)
 
             // fd = getValidatedFd(fd);
-            const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -2990,7 +2976,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!FdataSync {
-            const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -3098,7 +3084,7 @@ pub const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isNumber()) {
-                    mode = arg.coerce(i32, ctx);
+                    mode = try arg.coerce(i32, ctx);
                 }
             }
 
@@ -3140,7 +3126,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(_: *const @This()) void {}
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Fsync {
-            const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -3157,14 +3143,14 @@ pub const StatOrNotFound = union(enum) {
     pub fn toJS(this: *StatOrNotFound, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this.*) {
             .stats => this.stats.toJS(globalObject),
-            .not_found => JSC.JSValue.undefined,
+            .not_found => .js_undefined,
         };
     }
 
-    pub fn toJSNewlyCreated(this: *const StatOrNotFound, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSNewlyCreated(this: *const StatOrNotFound, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return switch (this.*) {
             .stats => this.stats.toJSNewlyCreated(globalObject),
-            .not_found => JSC.JSValue.undefined,
+            .not_found => .js_undefined,
         };
     }
 };
@@ -3176,7 +3162,7 @@ pub const StringOrUndefined = union(enum) {
     pub fn toJS(this: *const StringOrUndefined, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this.*) {
             .string => this.string.toJS(globalObject),
-            .none => JSC.JSValue.undefined,
+            .none => .js_undefined,
         };
     }
 };
@@ -3228,7 +3214,7 @@ const Return = struct {
             .bytesRead = JSC.ZigString.init("bytesRead"),
             .buffer = JSC.ZigString.init("buffer"),
         };
-        pub fn toJS(this: *const ReadPromise, ctx: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: *const ReadPromise, ctx: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
                 this.buffer_val.unprotect();
 
@@ -3251,7 +3237,7 @@ const Return = struct {
         };
 
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
-        pub fn toJS(this: *const WritePromise, globalObject: *JSC.JSGlobalObject) JSC.C.JSValueRef {
+        pub fn toJS(this: *const WritePromise, globalObject: *JSC.JSGlobalObject) bun.JSError!bun.jsc.JSValue {
             defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
                 this.buffer_val.unprotect();
 
@@ -3289,30 +3275,25 @@ const Return = struct {
             files,
         };
 
-        pub fn toJS(this: Readdir, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: Readdir, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             switch (this) {
                 .with_file_types => {
                     defer bun.default_allocator.free(this.with_file_types);
-                    var array = JSC.JSValue.createEmptyArray(globalObject, this.with_file_types.len);
+                    var array = try JSC.JSValue.createEmptyArray(globalObject, this.with_file_types.len);
                     var previous_jsstring: ?*JSC.JSString = null;
                     for (this.with_file_types, 0..) |*item, i| {
-                        const res = item.toJSNewlyCreated(globalObject, &previous_jsstring);
-                        if (res == .zero) return .zero;
-                        array.putIndex(
-                            globalObject,
-                            @truncate(i),
-                            res,
-                        );
+                        const res = try item.toJSNewlyCreated(globalObject, &previous_jsstring);
+                        try array.putIndex(globalObject, @truncate(i), res);
                     }
                     return array;
                 },
                 .buffers => {
                     defer bun.default_allocator.free(this.buffers);
-                    return JSC.toJS(globalObject, []Buffer, this.buffers, .temporary);
+                    return JSC.toJS(globalObject, []Buffer, this.buffers);
                 },
                 .files => {
                     // automatically freed
-                    return JSC.toJS(globalObject, []const bun.String, this.files, .temporary);
+                    return JSC.toJS(globalObject, []const bun.String, this.files);
                 },
             }
         }
@@ -3740,8 +3721,8 @@ pub const NodeFS = struct {
         }
 
         if (comptime Environment.isWindows) {
-            const dest_buf = bun.OSPathBufferPool.get();
-            defer bun.OSPathBufferPool.put(dest_buf);
+            const dest_buf = bun.os_path_buffer_pool.get();
+            defer bun.os_path_buffer_pool.put(dest_buf);
 
             const src = bun.strings.toKernel32Path(bun.reinterpretSlice(u16, &fs.sync_error_buf), args.src.slice());
             const dest = bun.strings.toKernel32Path(dest_buf, args.dest.slice());
@@ -3931,8 +3912,8 @@ pub const NodeFS = struct {
     }
 
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
-        const buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(buf);
+        const buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(buf);
         const path = args.path.osPathKernel32(buf);
 
         return switch (args.always_return_none) {
@@ -4443,7 +4424,6 @@ pub const NodeFS = struct {
         comptime ExpectedType: type,
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
-        const dir = fd.stdDir();
         const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == bun.JSC.Node.Dirent);
 
         var dirent_path: bun.String = bun.String.dead;
@@ -4451,15 +4431,15 @@ pub const NodeFS = struct {
             dirent_path.deref();
         }
 
-        var iterator = DirIterator.iterate(dir, comptime if (is_u16) .u16 else .u8);
+        var iterator = DirIterator.iterate(fd, comptime if (is_u16) .u16 else .u8);
         var entry = iterator.next();
 
         const re_encoding_buffer: ?*bun.PathBuffer = if (is_u16 and args.encoding != .utf8)
-            bun.PathBufferPool.get()
+            bun.path_buffer_pool.get()
         else
             null;
         defer if (is_u16 and args.encoding != .utf8)
-            bun.PathBufferPool.put(re_encoding_buffer.?);
+            bun.path_buffer_pool.put(re_encoding_buffer.?);
 
         while (switch (entry) {
             .err => |err| {
@@ -4516,7 +4496,7 @@ pub const NodeFS = struct {
                     JSC.Node.Dirent => {
                         dirent_path.ref();
                         entries.append(.{
-                            .name = bun.String.createUTF16(utf16_name),
+                            .name = bun.String.cloneUTF16(utf16_name),
                             .path = dirent_path,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
@@ -4525,7 +4505,7 @@ pub const NodeFS = struct {
                         .buffer => unreachable,
                         // in node.js, libuv converts to utf8 before node.js converts those bytes into other stuff
                         // all encodings besides hex, base64, and base64url are mis-interpreting filesystem bytes.
-                        .utf8 => entries.append(bun.String.createUTF16(utf16_name)) catch bun.outOfMemory(),
+                        .utf8 => entries.append(bun.String.cloneUTF16(utf16_name)) catch bun.outOfMemory(),
                         else => |enc| {
                             const utf8_path = bun.strings.fromWPath(re_encoding_buffer.?, utf16_name);
                             entries.append(JSC.WebCore.encoding.toBunString(utf8_path, enc)) catch bun.outOfMemory();
@@ -4591,7 +4571,7 @@ pub const NodeFS = struct {
             }
         }
 
-        var iterator = DirIterator.iterate(fd.stdDir(), .u8);
+        var iterator = DirIterator.iterate(fd, .u8);
         var entry = iterator.next();
         var dirent_path_prev: bun.String = bun.String.empty;
         defer {
@@ -4652,12 +4632,12 @@ pub const NodeFS = struct {
                     const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
                     if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
                         dirent_path_prev.deref();
-                        dirent_path_prev = bun.String.createUTF8(path_u8);
+                        dirent_path_prev = bun.String.cloneUTF8(path_u8);
                     }
                     dirent_path_prev.ref();
 
                     entries.append(.{
-                        .name = bun.String.createUTF8(utf8_name),
+                        .name = bun.String.cloneUTF8(utf8_name),
                         .path = dirent_path_prev,
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
@@ -4666,7 +4646,7 @@ pub const NodeFS = struct {
                     entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                 },
                 bun.String => {
-                    entries.append(bun.String.createUTF8(name_to_copy)) catch bun.outOfMemory();
+                    entries.append(bun.String.cloneUTF8(name_to_copy)) catch bun.outOfMemory();
                 },
                 else => bun.outOfMemory(),
             }
@@ -4745,7 +4725,7 @@ pub const NodeFS = struct {
                 }
             }
 
-            var iterator = DirIterator.iterate(fd.stdDir(), .u8);
+            var iterator = DirIterator.iterate(fd, .u8);
             var entry = iterator.next();
             var dirent_path_prev: bun.String = bun.String.dead;
             defer {
@@ -5057,7 +5037,7 @@ pub const NodeFS = struct {
                             if (this.vm) |vm| {
                                 // Attempt to create the buffer in JSC's heap.
                                 // This avoids creating a WastefulTypedArray.
-                                const array_buffer = JSC.ArrayBuffer.createBuffer(vm.global, temporary_read_buffer);
+                                const array_buffer = JSC.ArrayBuffer.createBuffer(vm.global, temporary_read_buffer) catch .zero; // TODO: properly propagate exception upwards
                                 array_buffer.ensureStillAlive();
                                 return .{
                                     .result = .{
@@ -5401,7 +5381,7 @@ pub const NodeFS = struct {
                     }
                 else
                     .{
-                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(link_path) },
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.cloneUTF8(link_path) },
                     },
             },
         };
@@ -5471,7 +5451,7 @@ pub const NodeFS = struct {
                             }
                         }
                         break :utf8 .{
-                            .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(buf) },
+                            .string = .{ .utf8 = .{}, .underlying = bun.String.cloneUTF8(buf) },
                         };
                     },
                     else => |enc| .{
@@ -5523,7 +5503,7 @@ pub const NodeFS = struct {
                         }
                     }
                     break :utf8 .{
-                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(buf) },
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.cloneUTF8(buf) },
                     };
                 },
                 else => |enc| .{
@@ -5889,7 +5869,7 @@ pub const NodeFS = struct {
                 .code = bun.String.init(@errorName(err)),
                 .path = bun.String.init(args.path.slice()),
             }).toErrorInstance(args.global_this)) catch {};
-            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
+            return Maybe(Return.Watch){ .result = .js_undefined };
         };
         return Maybe(Return.Watch){ .result = watcher };
     }
@@ -5964,11 +5944,7 @@ pub const NodeFS = struct {
     pub fn watch(_: *NodeFS, args: Arguments.Watch, _: Flavor) Maybe(Return.Watch) {
         return switch (args.createFSWatcher()) {
             .result => |result| .{ .result = result.js_this },
-            .err => |err| .{ .err = .{
-                .errno = err.errno,
-                .syscall = err.syscall,
-                .path = if (err.path.len > 0) args.path.slice() else "",
-            } },
+            .err => |err| .{ .err = err },
         };
     }
 
@@ -5995,8 +5971,8 @@ pub const NodeFS = struct {
 
     pub fn osPathIntoSyncErrorBufOverlap(this: *NodeFS, slice: anytype) []const u8 {
         if (Environment.isWindows) {
-            const tmp = bun.OSPathBufferPool.get();
-            defer bun.OSPathBufferPool.put(tmp);
+            const tmp = bun.os_path_buffer_pool.get();
+            defer bun.os_path_buffer_pool.put(tmp);
             @memcpy(tmp[0..slice.len], slice);
             return bun.strings.fromWPath(&this.sync_error_buf, tmp[0..slice.len]);
         }
@@ -6110,10 +6086,7 @@ pub const NodeFS = struct {
             .result => {},
         }
 
-        var iterator = iterator: {
-            const dir = fd.stdDir();
-            break :iterator DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
-        };
+        var iterator = DirIterator.iterate(fd, if (Environment.isWindows) .u16 else .u8);
         var entry = iterator.next();
         while (switch (entry) {
             .err => |err| {
@@ -6505,8 +6478,8 @@ pub const NodeFS = struct {
                     .err => |err| return .{ .err = err },
                     .result => |src_fd| src_fd,
                 };
-                const wbuf = bun.OSPathBufferPool.get();
-                defer bun.OSPathBufferPool.put(wbuf);
+                const wbuf = bun.os_path_buffer_pool.get();
+                defer bun.os_path_buffer_pool.put(wbuf);
                 const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), wbuf, wbuf.len, 0);
                 if (len == 0) {
                     return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse dst_enoent_maybe;

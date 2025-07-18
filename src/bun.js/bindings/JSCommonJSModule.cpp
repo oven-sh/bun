@@ -148,7 +148,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 
         // Using same approach as node, `arguments` in the entry point isn't defined
         // https://github.com/nodejs/node/blob/592c6907bfe1922f36240e9df076be1864c3d1bd/lib/internal/process/execution.js#L92
-        globalObject->putDirect(vm, builtinNames(vm).exportsPublicName(), moduleObject->exportsObject(), 0);
+        auto exports = moduleObject->exportsObject();
+        RETURN_IF_EXCEPTION(scope, {});
+        globalObject->putDirect(vm, builtinNames(vm).exportsPublicName(), exports, 0);
         globalObject->putDirect(vm, builtinNames(vm).requirePublicName(), requireFunction, 0);
         globalObject->putDirect(vm, Identifier::fromString(vm, "module"_s), moduleObject, 0);
         globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
@@ -183,7 +185,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     RETURN_IF_EXCEPTION(scope, false);
 
     MarkedArgumentBuffer args;
-    args.append(moduleObject->exportsObject()); // exports
+    auto exports = moduleObject->exportsObject();
+    RETURN_IF_EXCEPTION(scope, false);
+    args.append(exports); // exports
     args.append(requireFunction); // require
     args.append(moduleObject); // module
     args.append(filename); // filename
@@ -308,7 +312,7 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
     }
     RETURN_IF_EXCEPTION(scope, {});
     Bun::PathResolveModule parent = { .paths = nullptr, .filename = filename, .pathsArrayLazy = true };
-    return JSValue::encode(Bun::resolveLookupPaths(globalObject, requestStr, parent));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::resolveLookupPaths(globalObject, requestStr, parent)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -446,6 +450,9 @@ JSC_DEFINE_CUSTOM_GETTER(getterPath, (JSC::JSGlobalObject * globalObject, JSC::E
 
 JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
@@ -465,6 +472,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     auto idValue = thisObject->m_id.get();
     if (idValue) {
         auto id = idValue->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (id == "."_s) {
             thisObject->m_overriddenParent.set(globalObject->vm(), thisObject, jsNull());
             return JSValue::encode(jsNull());
@@ -560,6 +568,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
 
         // Construct the array
         JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), children);
+        RETURN_IF_EXCEPTION(throwScope, {});
         mod->m_childrenValue.set(globalObject->vm(), mod, array);
 
         mod->m_children.clear();
@@ -968,35 +977,32 @@ void populateESMExports(
     //       it to something that does NOT evaluate to "true" I could find were in
     //       unit tests of build tools. Happy to revisit this if users file an issue.
     bool needsToAssignDefault = true;
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* exports = result.getObject()) {
         bool hasESModuleMarker = false;
         if (!ignoreESModuleAnnotation) {
-            auto catchScope = DECLARE_CATCH_SCOPE(vm);
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
-            if (exports->getPropertySlot(globalObject, esModuleMarker, slot)) {
+            auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
+            scope.assertNoException();
+            if (has) {
                 JSValue value = slot.getValue(globalObject, esModuleMarker);
+                CLEAR_IF_EXCEPTION(scope);
                 if (!value.isUndefinedOrNull()) {
                     if (value.pureToBoolean() == TriState::True) {
                         hasESModuleMarker = true;
                     }
                 }
             }
-            if (catchScope.exception()) {
-                catchScope.clearException();
-            }
         }
 
         auto* structure = exports->structure();
+
         uint32_t size = structure->inlineSize() + structure->outOfLineSize();
         exportNames.reserveCapacity(size + 2);
         exportValues.ensureCapacity(size + 2);
 
-        auto catchScope = DECLARE_CATCH_SCOPE(vm);
-
-        if (catchScope.exception()) {
-            catchScope.clearException();
-        }
+        CLEAR_IF_EXCEPTION(scope);
 
         if (hasESModuleMarker) {
             if (canPerformFastEnumeration(structure)) {
@@ -1016,8 +1022,8 @@ void populateESMExports(
             } else {
                 JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
                 exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
-                if (catchScope.exception()) {
-                    catchScope.clearExceptionExceptTermination();
+                if (scope.exception()) [[unlikely]] {
+                    if (!vm.hasPendingTerminationException()) scope.clearException();
                     return;
                 }
 
@@ -1030,8 +1036,9 @@ void populateESMExports(
                         continue;
 
                     JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
-                    if (!exports->getPropertySlot(globalObject, property, slot))
-                        continue;
+                    auto has = exports->getPropertySlot(globalObject, property, slot);
+                    RETURN_IF_EXCEPTION(scope, );
+                    if (!has) continue;
 
                     // Allow DontEnum properties which are not getter/setters
                     // https://github.com/oven-sh/bun/issues/4432
@@ -1047,8 +1054,8 @@ void populateESMExports(
 
                     // If it throws, we keep them in the exports list, but mark it as undefined
                     // This is consistent with what Node.js does.
-                    if (catchScope.exception()) {
-                        catchScope.clearException();
+                    if (scope.exception()) [[unlikely]] {
+                        scope.clearException();
                         getterResult = jsUndefined();
                     }
 
@@ -1073,8 +1080,8 @@ void populateESMExports(
         } else {
             JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
             exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
-            if (catchScope.exception()) {
-                catchScope.clearExceptionExceptTermination();
+            if (scope.exception()) [[unlikely]] {
+                if (!vm.hasPendingTerminationException()) scope.clearException();
                 return;
             }
 
@@ -1087,8 +1094,9 @@ void populateESMExports(
                     continue;
 
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
-                if (!exports->getPropertySlot(globalObject, property, slot))
-                    continue;
+                auto has = exports->getPropertySlot(globalObject, property, slot);
+                RETURN_IF_EXCEPTION(scope, );
+                if (!has) continue;
 
                 if (slot.attributes() & PropertyAttribute::DontEnum) {
                     // Allow DontEnum properties which are not getter/setters
@@ -1104,8 +1112,8 @@ void populateESMExports(
 
                 // If it throws, we keep them in the exports list, but mark it as undefined
                 // This is consistent with what Node.js does.
-                if (catchScope.exception()) {
-                    catchScope.clearException();
+                if (scope.exception()) [[unlikely]] {
+                    scope.clearException();
                     getterResult = jsUndefined();
                 }
 
@@ -1125,9 +1133,11 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     auto result = this->exportsObject();
+    RETURN_IF_EXCEPTION(scope, );
 
-    populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation);
+    RELEASE_AND_RETURN(scope, populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation));
 }
 
 void JSCommonJSModule::setExportsObject(JSC::JSValue exportsObject)
@@ -1155,7 +1165,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_paths);
     visitor.appendHidden(thisObject->m_overriddenParent);
     visitor.appendHidden(thisObject->m_childrenValue);
-    visitor.appendValues(thisObject->m_children.data(), thisObject->m_children.size());
+    visitor.appendValues(thisObject->m_children.begin(), thisObject->m_children.size());
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);
@@ -1261,14 +1271,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
         if (options.isObject()) {
             JSObject* obj = options.getObject();
             // This getter is expensive and rare.
-            if (auto typeValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->type)) {
+            auto typeValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->type);
+            REQUIRE_CJS_RETURN_IF_EXCEPTION;
+            if (typeValue) {
                 if (typeValue.isString()) {
                     typeAttribute = typeValue.toWTFString(globalObject);
-                    RETURN_IF_EXCEPTION(throwScope, {});
+                    REQUIRE_CJS_RETURN_IF_EXCEPTION;
                     typeAttributeStr = Bun::toString(typeAttribute);
                 }
             }
-            REQUIRE_CJS_RETURN_IF_EXCEPTION;
         }
     }
 
@@ -1304,7 +1315,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     res.success = false;
     memset(&res.result, 0, sizeof res.result);
     BunString specifierStr = Bun::toString(specifier);
-    if (auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res)) {
+    auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (result) {
         if (res.success)
             return JSC::JSValue::encode(result);
     }
@@ -1410,10 +1423,13 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     ResolvedSource& source,
     bool isBuiltIn)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSCommonJSModule* moduleObject = nullptr;
     WTF::String sourceURL = source.source_url.toWTFString();
 
     JSValue entry = globalObject->requireMap()->get(globalObject, requireMapKey);
+    RETURN_IF_EXCEPTION(scope, {});
     bool ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     SourceOrigin sourceOrigin;
 
@@ -1422,12 +1438,12 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     if (!moduleObject) {
-        VM& vm = JSC::getVM(globalObject);
         size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
         JSString* dirname;
         JSString* filename = requireMapKey;
         if (index != WTF::notFound) {
             dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+            RETURN_IF_EXCEPTION(scope, {});
         } else {
             dirname = jsEmptyString(vm);
         }
@@ -1457,6 +1473,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
 
         requireMap->set(globalObject, filename, moduleObject);
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         sourceOrigin = Zig::toSourceOrigin(sourceURL, isBuiltIn);
     }
@@ -1471,14 +1488,15 @@ std::optional<JSC::SourceCode> createCommonJSModule(
                 JSC::MarkedArgumentBuffer& exportValues) -> void {
                 auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
                 auto& vm = JSC::getVM(globalObject);
+                auto scope = DECLARE_THROW_SCOPE(vm);
 
                 JSValue keyValue = identifierToJSValue(vm, moduleKey);
                 JSValue entry = globalObject->requireMap()->get(globalObject, keyValue);
+                RETURN_IF_EXCEPTION(scope, {});
 
                 if (entry) {
                     if (auto* moduleObject = jsDynamicCast<JSCommonJSModule*>(entry)) {
                         if (!moduleObject->hasEvaluated) {
-                            auto scope = DECLARE_THROW_SCOPE(vm);
                             evaluateCommonJSModuleOnce(
                                 vm,
                                 globalObject,
@@ -1491,6 +1509,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
                                 // On error, remove the module from the require map
                                 // so that it can be re-evaluated on the next require.
                                 globalObject->requireMap()->remove(globalObject, moduleObject->filename());
+                                RETURN_IF_EXCEPTION(scope, {});
 
                                 scope.throwException(globalObject, exception);
                                 return;
@@ -1498,6 +1517,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
                         }
 
                         moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
+                        RETURN_IF_EXCEPTION(scope, {});
                     }
                 } else {
                     // require map was cleared of the entry
@@ -1512,12 +1532,14 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
     ASSERT(!pathString.startsWith("file://"_s));
 
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSString* filename = JSC::jsStringWithCache(vm, pathString);
     auto index = pathString.reverseFind(PLATFORM_SEP, pathString.length());
     JSString* dirname;
     if (index != WTF::notFound) {
         dirname = JSC::jsSubstring(globalObject, filename, 0, index);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     } else {
         dirname = jsEmptyString(vm);
     }
@@ -1532,12 +1554,14 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         globalObject->requireFunctionUnbound(),
         moduleObject,
         ArgList(), 1, globalObject->commonStrings().requireString(globalObject));
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
         moduleObject->filename(),
         ArgList(), 1, globalObject->commonStrings().resolveString(globalObject));
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
 

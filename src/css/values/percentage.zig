@@ -13,8 +13,9 @@ pub const Percentage = struct {
     pub fn parse(input: *css.Parser) Result(Percentage) {
         if (input.tryParse(Calc(Percentage).parse, .{}).asValue()) |calc_value| {
             if (calc_value == .value) return .{ .result = calc_value.value.* };
-            // Percentages are always compatible, so they will always compute to a value.
-            bun.unreachablePanic("Percentages are always compatible, so they will always compute to a value.", .{});
+            // Handle calc() expressions that can't be reduced to a simple value (e.g., containing NaN, variables, etc.)
+            // Return an error since we can't determine the percentage value at parse time
+            return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
         }
 
         const percent = switch (input.expectPercentage()) {
@@ -331,38 +332,10 @@ pub fn DimensionPercentage(comptime D: type) type {
                 std.mem.swap(This, &a, &b);
             }
 
-            if (a == .calc and b == .calc) {
-                return .{ .calc = bun.create(allocator, Calc(DimensionPercentage(D)), a.calc.add(allocator, b.calc.*)) };
-            } else if (a == .calc) {
-                if (a.calc.* == .value) {
-                    return a.calc.value.addImpl(allocator, b);
-                } else {
-                    return .{
-                        .calc = bun.create(
-                            allocator,
-                            Calc(DimensionPercentage(D)),
-                            .{ .sum = .{
-                                .left = bun.create(allocator, Calc(DimensionPercentage(D)), a.calc.*),
-                                .right = bun.create(allocator, Calc(DimensionPercentage(D)), b.intoCalc(allocator)),
-                            } },
-                        ),
-                    };
-                }
-            } else if (b == .calc) {
-                if (b.calc.* == .value) {
-                    return a.addImpl(allocator, b.calc.value.*);
-                } else {
-                    return .{
-                        .calc = bun.create(
-                            allocator,
-                            Calc(DimensionPercentage(D)),
-                            .{ .sum = .{
-                                .left = bun.create(allocator, Calc(DimensionPercentage(D)), a.intoCalc(allocator)),
-                                .right = bun.create(allocator, Calc(DimensionPercentage(D)), b.calc.*),
-                            } },
-                        ),
-                    };
-                }
+            if (a == .calc and a.calc.* == .value and b != .calc) {
+                return a.calc.value.addImpl(allocator, b);
+            } else if (b == .calc and b.calc.* == .value and a != .calc) {
+                return a.addImpl(allocator, b.calc.value.*);
             } else {
                 return .{
                     .calc = bun.create(

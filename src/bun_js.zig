@@ -308,6 +308,28 @@ pub const Run = struct {
             }
         }
 
+        do_postgres_preconnect: {
+            if (this.ctx.runtime_options.sql_preconnect) {
+                const global = vm.global;
+                const bun_object = vm.global.toJSValue().get(global, "Bun") catch |err| {
+                    global.reportActiveExceptionAsUnhandled(err);
+                    break :do_postgres_preconnect;
+                } orelse break :do_postgres_preconnect;
+                const sql_object = bun_object.get(global, "sql") catch |err| {
+                    global.reportActiveExceptionAsUnhandled(err);
+                    break :do_postgres_preconnect;
+                } orelse break :do_postgres_preconnect;
+                const connect_fn = sql_object.get(global, "connect") catch |err| {
+                    global.reportActiveExceptionAsUnhandled(err);
+                    break :do_postgres_preconnect;
+                } orelse break :do_postgres_preconnect;
+                _ = connect_fn.call(global, sql_object, &.{}) catch |err| {
+                    global.reportActiveExceptionAsUnhandled(err);
+                    break :do_postgres_preconnect;
+                };
+            }
+        }
+
         switch (this.ctx.debug.hot_reload) {
             .hot => JSC.hot_reloader.HotReloader.enableHotModuleReloading(vm),
             .watch => JSC.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
@@ -413,11 +435,11 @@ pub const Run = struct {
 
                 if (this.ctx.runtime_options.eval.eval_and_print) {
                     const to_print = brk: {
-                        const result = vm.entry_point_result.value.get() orelse .undefined;
+                        const result: JSC.JSValue = vm.entry_point_result.value.get() orelse .js_undefined;
                         if (result.asAnyPromise()) |promise| {
                             switch (promise.status(vm.jsc)) {
                                 .pending => {
-                                    result._then2(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
+                                    result._then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
 
                                     vm.tick();
                                     vm.eventLoop().autoTickActive();
@@ -490,7 +512,7 @@ pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callfr
     const result = arguments[0];
     result.print(global, .Log, .Log);
     Global.exit(global.bunVM().exit_handler.exit_code);
-    return .undefined;
+    return .js_undefined;
 }
 
 pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) noreturn {
@@ -498,7 +520,7 @@ pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callfra
     const result = arguments[0];
     result.print(global, .Log, .Log);
     Global.exit(global.bunVM().exit_handler.exit_code);
-    return .undefined;
+    return .js_undefined;
 }
 
 noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {

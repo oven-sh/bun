@@ -92,7 +92,7 @@ static const WTF::String toString(ZigString str)
         return !isTaggedUTF16Ptr(str.ptr)
             ? WTF::String(WTF::ExternalStringImpl::create({ untag(str.ptr), str.len }, untagVoid(str.ptr), free_global_string))
             : WTF::String(WTF::ExternalStringImpl::create(
-                  { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
+                  { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
@@ -103,7 +103,7 @@ static const WTF::String toString(ZigString str)
     return !isTaggedUTF16Ptr(str.ptr)
         ? WTF::String(WTF::StringImpl::createWithoutCopying({ untag(str.ptr), str.len }))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
-              { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }));
+              { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
 }
 
 static WTF::AtomString toAtomString(ZigString str)
@@ -112,7 +112,7 @@ static WTF::AtomString toAtomString(ZigString str)
     if (!isTaggedUTF16Ptr(str.ptr)) {
         return makeAtomString(untag(str.ptr), str.len);
     } else {
-        return makeAtomString(reinterpret_cast<const UChar*>(untag(str.ptr)), str.len);
+        return makeAtomString(reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len);
     }
 }
 
@@ -133,7 +133,7 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
     return !isTaggedUTF16Ptr(str.ptr)
         ? WTF::String(WTF::StringImpl::createWithoutCopying({ &untag(str.ptr)[ptr.off], ptr.len }))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
-              { &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len }));
+              { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
 static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
@@ -153,7 +153,7 @@ static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
     return !isTaggedUTF16Ptr(str.ptr)
         ? WTF::String(WTF::StringImpl::create(std::span { &untag(str.ptr)[ptr.off], ptr.len }))
         : WTF::String(WTF::StringImpl::create(
-              std::span { &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len }));
+              std::span { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
 static const WTF::String toStringCopy(ZigString str)
@@ -166,12 +166,12 @@ static const WTF::String toStringCopy(ZigString str)
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
-        std::span<UChar> out;
+        std::span<char16_t> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
         if (!impl) [[unlikely]] {
             return WTF::String();
         }
-        memcpy(out.data(), untag(str.ptr), str.len * sizeof(UChar));
+        memcpy(out.data(), untag(str.ptr), str.len * sizeof(char16_t));
         return WTF::String(WTFMove(impl));
     } else {
         std::span<LChar> out;
@@ -201,7 +201,7 @@ static const ZigString ZigStringCwd = ZigString { &__dot_char, 1 };
 static const BunString BunStringCwd = BunString { BunStringTag::StaticZigString, ZigStringCwd };
 static const BunString BunStringEmpty = BunString { BunStringTag::Empty, nullptr };
 
-static const unsigned char* taggedUTF16Ptr(const UChar* ptr)
+static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
 {
     return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
 }
@@ -273,7 +273,7 @@ static WTF::StringView toStringView(ZigString str)
 static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlobalObject* global)
 {
     scope.throwException(global,
-        JSC::Exception::create(global->vm(), JSC::JSValue((JSC::JSCell*)err.ptr)));
+        JSC::Exception::create(global->vm(), JSC::JSValue::decode(err.value)));
 }
 
 static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
@@ -281,14 +281,14 @@ static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
     auto scope = DECLARE_THROW_SCOPE(global->vm());
     auto* str = val.toString(global);
 
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         scope.clearException();
         scope.release();
         return ZigStringEmpty;
     }
 
     auto view = str->view(global);
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         scope.clearException();
         scope.release();
         return ZigStringEmpty;
@@ -307,7 +307,7 @@ static const WTF::String toStringStatic(ZigString str)
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
-        return WTF::String(AtomStringImpl::add(std::span { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }));
+        return WTF::String(AtomStringImpl::add(std::span { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
     }
 
     auto* untagged = untag(str.ptr);
@@ -321,13 +321,13 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* 
     WTF::String message = toString(*str);
     if (message.isNull() && str->len > 0) [[unlikely]] {
         // pending exception while creating an error.
-        return JSC::JSValue();
+        return {};
     }
 
     JSC::JSObject* result = JSC::createError(globalObject, message);
     JSC::EnsureStillAliveScope ensureAlive(result);
 
-    return JSC::JSValue(result);
+    return result;
 }
 
 static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
@@ -335,7 +335,7 @@ static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObje
     JSC::JSObject* result = JSC::createTypeError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
-    return JSC::JSValue(result);
+    return result;
 }
 
 static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
@@ -343,7 +343,7 @@ static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalOb
     JSC::JSObject* result = JSC::createSyntaxError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
-    return JSC::JSValue(result);
+    return result;
 }
 
 static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
@@ -351,7 +351,7 @@ static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObj
     JSC::JSObject* result = JSC::createRangeError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
-    return JSC::JSValue(result);
+    return result;
 }
 
 static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)

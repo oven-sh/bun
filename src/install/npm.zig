@@ -170,8 +170,8 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     }
 
     var log = logger.Log.init(allocator);
-    const source = logger.Source.initPathString("???", response_buf.list.items);
-    const json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+    const source = &logger.Source.initPathString("???", response_buf.list.items);
+    const json = JSON.parseUTF8(source, &log, allocator) catch |err| {
         switch (err) {
             error.OutOfMemory => |oom| return oom,
             else => {
@@ -199,8 +199,8 @@ pub fn responseError(
 ) OOM!noreturn {
     const message = message: {
         var log = logger.Log.init(allocator);
-        const source = logger.Source.initPathString("???", response_body.list.items);
-        const json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+        const source = &logger.Source.initPathString("???", response_body.list.items);
+        const json = JSON.parseUTF8(source, &log, allocator) catch |err| {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
                 else => break :message null,
@@ -724,8 +724,8 @@ pub const OperatingSystem = enum(u16) {
     pub fn jsFunctionOperatingSystemIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callframe.arguments_old(1);
         var operating_system = negatable(.none);
-        var iter = args.ptr[0].arrayIterator(globalObject);
-        while (iter.next()) |item| {
+        var iter = try args.ptr[0].arrayIterator(globalObject);
+        while (try iter.next()) |item| {
             const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             operating_system.apply(slice.slice());
@@ -841,8 +841,8 @@ pub const Architecture = enum(u16) {
     pub fn jsFunctionArchitectureIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callframe.arguments_old(1);
         var architecture = negatable(.none);
-        var iter = args.ptr[0].arrayIterator(globalObject);
-        while (iter.next()) |item| {
+        var iter = try args.ptr[0].arrayIterator(globalObject);
+        while (try iter.next()) |item| {
             const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             architecture.apply(slice.slice());
@@ -1423,7 +1423,7 @@ pub const PackageManifest = struct {
                     try writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)});
             }
 
-            var result = bun.String.fromUTF8(buf.items);
+            var result = bun.String.borrowUTF8(buf.items);
             defer result.deref();
 
             return result.toJSByParseJSON(global);
@@ -1563,20 +1563,27 @@ pub const PackageManifest = struct {
         etag: []const u8,
         public_max_age: u32,
     ) !?PackageManifest {
-        const source = logger.Source.initPathString(expected_name, json_buffer);
+        const source = &logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
         var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
         const json = JSON.parseUTF8(
-            &source,
+            source,
             log,
             arena.allocator(),
-        ) catch return null;
+        ) catch {
+            // don't use the arena memory!
+            var cloned_log: logger.Log = .init(bun.default_allocator);
+            try log.cloneToWithRecycled(&cloned_log, true);
+            log.* = cloned_log;
+
+            return null;
+        };
 
         if (json.asProperty("error")) |error_q| {
             if (error_q.expr.asString(allocator)) |err| {
-                log.addErrorFmt(&source, logger.Loc.Empty, allocator, "npm error: {s}", .{err}) catch unreachable;
+                log.addErrorFmt(source, logger.Loc.Empty, allocator, "npm error: {s}", .{err}) catch unreachable;
                 return null;
             }
         }
@@ -1647,7 +1654,7 @@ pub const PackageManifest = struct {
 
                     if (Environment.allow_assert) bun.assertWithLocation(parsed_version.valid, @src());
                     if (!parsed_version.valid) {
-                        log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
+                        log.addErrorFmt(source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
                         continue;
                     }
 
@@ -2450,4 +2457,3 @@ pub const PackageManifest = struct {
         return result;
     }
 };
-

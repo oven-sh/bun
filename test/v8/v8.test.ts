@@ -19,9 +19,13 @@ enum BuildMode {
 // test environment
 delete bunEnv.CC;
 delete bunEnv.CXX;
+
+// Node.js 24.3.0 requires C++20
+bunEnv.CXXFLAGS ??= "";
 if (process.platform == "darwin") {
-  bunEnv.CXXFLAGS ??= "";
-  bunEnv.CXXFLAGS += "-std=gnu++17";
+  bunEnv.CXXFLAGS += " -std=gnu++20";
+} else {
+  bunEnv.CXXFLAGS += " -std=c++20";
 }
 // https://github.com/isaacs/node-tar/blob/bef7b1e4ffab822681fea2a9b22187192ed14717/lib/get-write-flag.js
 // prevent node-tar from using UV_FS_O_FILEMAP
@@ -62,8 +66,17 @@ async function build(
   const build = spawn({
     cmd:
       runtime == Runtime.bun
-        ? [bunExe(), "x", "--bun", "node-gyp", "rebuild", buildMode == BuildMode.debug ? "--debug" : "--release"]
-        : [bunExe(), "x", "node-gyp", "rebuild", "--release"], // for node.js we don't bother with debug mode
+        ? [
+            bunExe(),
+            "--bun",
+            "run",
+            "node-gyp",
+            "rebuild",
+            buildMode == BuildMode.debug ? "--debug" : "--release",
+            "-j",
+            "max",
+          ]
+        : [bunExe(), "run", "node-gyp", "rebuild", "--release", "-j", "max"], // for node.js we don't bother with debug mode
     cwd: tmpDir,
     env: bunEnv,
     stdin: "inherit",
@@ -78,14 +91,16 @@ async function build(
   if (exitCode !== 0) {
     console.error(err);
     console.log(out);
-    throw new Error(`build failed: ${exitCode}`);
+    console.error(`build failed: ${exitCode}, bailing out`);
+    process.exit(1);
   }
 
-  return {
-    out,
-    err,
-    description: `build ${basename(srcDir)} with ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`,
-  };
+  const description = `build ${basename(srcDir)} with ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`;
+
+  console.log(description, "stdout:");
+  console.log(out);
+  console.log(description, "stderr:");
+  console.log(err);
 }
 
 describe.todoIf(isBroken && isMusl)("node:v8", () => {
@@ -101,18 +116,10 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     await install(srcDir, directories.node, Runtime.node);
     await install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node);
 
-    const results = await Promise.all([
-      build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
-      build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
-      build(srcDir, directories.node, Runtime.node, BuildMode.release),
-      build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
-    ]);
-    for (const r of results) {
-      console.log(r.description, "stdout:");
-      console.log(r.out);
-      console.log(r.description, "stderr:");
-      console.log(r.err);
-    }
+    await build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release);
+    await build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug);
+    await build(srcDir, directories.node, Runtime.node, BuildMode.release);
+    await build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release);
   });
 
   describe("module lifecycle", () => {
@@ -167,15 +174,41 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     });
   });
 
+  describe("Value", () => {
+    it("can compare values using StrictEquals", async () => {
+      await checkSameOutput("test_v8_strict_equals", []);
+    });
+  });
+
   describe("Object", () => {
     it("can create an object and set properties", async () => {
       await checkSameOutput("test_v8_object", []);
     });
+    it("can get properties by key using Object::Get(context, key)", async () => {
+      await checkSameOutput("test_v8_object_get_by_key", []);
+    });
+    it("can get array elements by index using Object::Get(context, index)", async () => {
+      await checkSameOutput("test_v8_object_get_by_index", []);
+    });
+    it("correctly handles exceptions from get and set", async () => {
+      await checkSameOutput("test_v8_object_get_set_exceptions", []);
+    });
   });
   describe("Array", () => {
-    // v8::Array::New is broken as it still tries to reinterpret locals as JSValues
-    it.skip("can create an array from a C array of Locals", async () => {
+    it("can create an array from a C array of Locals", async () => {
       await checkSameOutput("test_v8_array_new", []);
+    });
+    it("can create an array with a specific length", async () => {
+      await checkSameOutput("test_v8_array_new_with_length", []);
+    });
+    it("can create an array from a callback", async () => {
+      await checkSameOutput("test_v8_array_new_with_callback", []);
+    });
+    it("correctly reports array length", async () => {
+      await checkSameOutput("test_v8_array_length", []);
+    });
+    it("can iterate over array elements with callbacks", async () => {
+      await checkSameOutput("test_v8_array_iterate", []);
     });
   });
 
@@ -234,6 +267,12 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
   describe("EscapableHandleScope", () => {
     it("keeps handles alive in the outer scope", async () => {
       await checkSameOutput("test_v8_escapable_handle_scope", []);
+    });
+  });
+
+  describe("MaybeLocal", () => {
+    it("correctly handles ToLocal and ToLocalChecked operations", async () => {
+      await checkSameOutput("test_v8_maybe_local", []);
     });
   });
 
@@ -308,11 +347,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
     env: bunEnv,
     stdio: ["inherit", "pipe", "pipe"],
   });
-  const [exitCode, out, err] = await Promise.all([
-    proc.exited,
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
+  const [exitCode, out, err] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
   const crashMsg = `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`;
   if (exitCode !== 0) {
     throw new Error(`${crashMsg}: ${err}\n${out}`.trim());

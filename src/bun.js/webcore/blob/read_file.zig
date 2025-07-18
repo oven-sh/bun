@@ -36,7 +36,7 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
                         blob.size = @min(@as(SizeType, @truncate(bytes.len)), blob.size);
                     const WrappedFn = struct {
                         pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) JSC.JSValue {
-                            return JSC.toJSHostValue(g, Function(b, g, by, .temporary));
+                            return JSC.toJSHostCall(g, @src(), Function, .{ b, g, by, .temporary });
                         }
                     };
 
@@ -238,7 +238,7 @@ pub const ReadFile = struct {
                             this.system_error = err.toSystemError();
                             if (this.system_error.?.path.isEmpty()) {
                                 this.system_error.?.path = if (this.file_store.pathlike == .path)
-                                    bun.String.createUTF8(this.file_store.pathlike.path.slice())
+                                    bun.String.cloneUTF8(this.file_store.pathlike.path.slice())
                                 else
                                     bun.String.empty;
                             }
@@ -351,7 +351,7 @@ pub const ReadFile = struct {
             this.system_error = JSC.SystemError{
                 .code = bun.String.static("EISDIR"),
                 .path = if (this.file_store.pathlike == .path)
-                    bun.String.createUTF8(this.file_store.pathlike.path.slice())
+                    bun.String.cloneUTF8(this.file_store.pathlike.path.slice())
                 else
                     bun.String.empty,
                 .message = bun.String.static("Directories cannot be read like files"),
@@ -665,7 +665,7 @@ pub const ReadFileUV = struct {
             this.system_error = JSC.SystemError{
                 .code = bun.String.static("EISDIR"),
                 .path = if (this.file_store.pathlike == .path)
-                    bun.String.createUTF8(this.file_store.pathlike.path.slice())
+                    bun.String.cloneUTF8(this.file_store.pathlike.path.slice())
                 else
                     bun.String.empty,
                 .message = bun.String.static("Directories cannot be read like files"),

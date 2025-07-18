@@ -8,8 +8,6 @@ const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
-
-
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const LengthPercentage = css.css_values.length.LengthPercentage;
 const CustomIdent = css.css_values.ident.CustomIdent;
@@ -17,8 +15,6 @@ const CSSNumber = css.css_values.number.CSSNumber;
 const CustomIdentList = css.css_values.ident.CustomIdentList;
 const CSSInteger = css.css_values.number.CSSInteger;
 const BabyList = bun.BabyList;
-
-
 
 /// A [track sizing](https://drafts.csswg.org/css-grid-2/#track-sizing) value
 /// for the `grid-template-rows` and `grid-template-columns` properties.

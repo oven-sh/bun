@@ -125,22 +125,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
         // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/doc/api/util.md#L2923
         // util.isError is deprecated and removed in node 23
         PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        if (object->getPropertySlot(globalObject,
-                vm.propertyNames->toStringTagSymbol, slot)) {
-            EXCEPTION_ASSERT(!scope.exception());
+        bool has = object->getPropertySlot(globalObject, vm.propertyNames->toStringTagSymbol, slot);
+        scope.assertNoException();
+        if (has) {
             if (slot.isValue()) {
                 JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
                 if (value.isString()) {
                     String tag = asString(value)->value(globalObject);
-                    if (scope.exception()) [[unlikely]]
-                        scope.clearException();
+                    CLEAR_IF_EXCEPTION(scope);
                     if (tag == "Error"_s)
                         return JSValue::encode(jsBoolean(true));
                 }
             }
         }
 
-        JSValue proto = object->getPrototype(vm, globalObject);
+        JSValue proto = object->getPrototype(globalObject);
         if (proto.isCell() && (proto.inherits<JSC::ErrorInstance>() || proto.asCell()->type() == ErrorInstanceType || proto.inherits<JSC::ErrorPrototype>()))
             return JSValue::encode(jsBoolean(true));
     }
@@ -182,7 +181,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
     GET_FIRST_VALUE
 
     auto* function = jsDynamicCast<JSFunction*>(value);
-    if (!function)
+    if (!function || function->isHostFunction())
         return JSValue::encode(jsBoolean(false));
 
     auto* executable = function->jsExecutable();
@@ -193,8 +192,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
         return JSValue::encode(jsBoolean(true));
     }
 
-    auto& vm = JSC::getVM(globalObject);
-    auto proto = function->getPrototype(vm, globalObject);
+    auto proto = function->getPrototype(globalObject);
     if (!proto.isCell()) {
         return JSValue::encode(jsBoolean(false));
     }
@@ -209,7 +207,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorFunction,
 {
     GET_FIRST_VALUE
     auto* function = jsDynamicCast<JSFunction*>(value);
-    if (!function)
+    if (!function || function->isHostFunction())
         return JSValue::encode(jsBoolean(false));
 
     auto* executable = function->jsExecutable();

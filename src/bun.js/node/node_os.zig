@@ -9,8 +9,8 @@ const gen = bun.gen.node_os;
 const sys = bun.sys;
 const c = bun.c;
 
-pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
-    return JSC.JSObject.create(.{
+pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    return (try JSC.JSObject.create(.{
         .cpus = gen.createCpusCallback(global),
         .freemem = gen.createFreememCallback(global),
         .getPriority = gen.createGetPriorityCallback(global),
@@ -24,7 +24,7 @@ pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
         .userInfo = gen.createUserInfoCallback(global),
         .version = gen.createVersionCallback(global),
         .setPriority = gen.createSetPriorityCallback(global),
-    }, global).toJS();
+    }, global)).toJS();
 }
 
 const CPUTimes = struct {
@@ -63,7 +63,7 @@ pub fn cpus(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
 
 fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     // Create the return array
-    const values = JSC.JSValue.createEmptyArray(globalThis, 0);
+    const values = try JSC.JSValue.createEmptyArray(globalThis, 0);
     var num_cpus: u32 = 0;
 
     var stack_fallback = std.heap.stackFallback(1024 * 8, bun.default_allocator);
@@ -105,7 +105,7 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
             // Actually create the JS object representing the CPU
             const cpu = JSC.JSValue.createEmptyObject(globalThis, 3);
             cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
-            values.putIndex(globalThis, num_cpus, cpu);
+            try values.putIndex(globalThis, num_cpus, cpu);
 
             num_cpus += 1;
         }
@@ -129,7 +129,7 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         while (line_iter.next()) |line| {
             if (strings.hasPrefixComptime(line, key_processor)) {
                 if (!has_model_name) {
-                    const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                    const cpu = try values.getIndex(globalThis, cpu_index);
                     cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toJS(globalThis));
                 }
                 // If this line starts a new processor, parse the index from the line
@@ -140,26 +140,26 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
             } else if (strings.hasPrefixComptime(line, key_model_name)) {
                 // If this is the model name, extract it and store on the current cpu
                 const model_name = line[key_model_name.len..];
-                const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                const cpu = try values.getIndex(globalThis, cpu_index);
                 cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.init(model_name).withEncoding().toJS(globalThis));
                 has_model_name = true;
             }
         }
         if (!has_model_name) {
-            const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+            const cpu = try values.getIndex(globalThis, cpu_index);
             cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toJS(globalThis));
         }
     } else |_| {
         // Initialize model name to "unknown"
-        var it = values.arrayIterator(globalThis);
-        while (it.next()) |cpu| {
+        var it = try values.arrayIterator(globalThis);
+        while (try it.next()) |cpu| {
             cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toJS(globalThis));
         }
     }
 
     // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
     for (0..num_cpus) |cpu_index| {
-        const cpu = JSC.JSObject.getIndex(values, globalThis, @truncate(cpu_index));
+        const cpu = try values.getIndex(globalThis, @truncate(cpu_index));
 
         var path_buf: [128]u8 = undefined;
         const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
@@ -235,7 +235,7 @@ fn cpusImplDarwin(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     const multiplier = 1000 / @as(u64, @intCast(ticks));
 
     // Set up each CPU value in the return
-    const values = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @intCast(num_cpus)));
+    const values = try JSC.JSValue.createEmptyArray(globalThis, @as(u32, @intCast(num_cpus)));
     var cpu_index: u32 = 0;
     while (cpu_index < num_cpus) : (cpu_index += 1) {
         const times = CPUTimes{
@@ -251,7 +251,7 @@ fn cpusImplDarwin(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         cpu.put(globalThis, JSC.ZigString.static("model"), model_name);
         cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
 
-        values.putIndex(globalThis, cpu_index, cpu);
+        try values.putIndex(globalThis, cpu_index, cpu);
     }
     return values;
 }
@@ -265,7 +265,7 @@ pub fn cpusImplWindows(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     }
     defer libuv.uv_free_cpu_info(cpu_infos, count);
 
-    const values = JSC.JSValue.createEmptyArray(globalThis, @intCast(count));
+    const values = try JSC.JSValue.createEmptyArray(globalThis, @intCast(count));
 
     for (cpu_infos[0..@intCast(count)], 0..@intCast(count)) |cpu_info, i| {
         const times = CPUTimes{
@@ -281,7 +281,7 @@ pub fn cpusImplWindows(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(cpu_info.speed));
         cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
 
-        values.putIndex(globalThis, @intCast(i), cpu);
+        try values.putIndex(globalThis, @intCast(i), cpu);
     }
 
     return values;
@@ -318,9 +318,9 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
         var out: bun.PathBuffer = undefined;
         var size: usize = out.len;
         if (libuv.uv_os_homedir(&out, &size).toError(.uv_os_homedir)) |err| {
-            return global.throwValue(err.toJSC(global));
+            return global.throwValue(err.toJS(global));
         }
-        return bun.String.createUTF8(out[0..size]);
+        return bun.String.cloneUTF8(out[0..size]);
     } else {
 
         // The posix implementation of uv_os_homedir first checks the HOME
@@ -372,7 +372,7 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
             return global.throwValue(bun.sys.Error.fromCode(
                 @enumFromInt(ret),
                 .uv_os_homedir,
-            ).toJSC(global));
+            ).toJS(global));
         }
 
         if (result == null) {
@@ -380,11 +380,11 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
             return global.throwValue(bun.sys.Error.fromCode(
                 .NOENT,
                 .uv_os_homedir,
-            ).toJSC(global));
+            ).toJS(global));
         }
 
         return if (pw.pw_dir) |dir|
-            bun.String.createUTF8(bun.span(dir))
+            bun.String.cloneUTF8(bun.span(dir))
         else
             bun.String.empty;
     }
@@ -394,7 +394,7 @@ pub fn hostname(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     if (Environment.isWindows) {
         var name_buffer: [129:0]u16 = undefined;
         if (bun.windows.GetHostNameW(&name_buffer, name_buffer.len) == 0) {
-            const str = bun.String.createUTF16(bun.sliceTo(&name_buffer, 0));
+            const str = bun.String.cloneUTF16(bun.sliceTo(&name_buffer, 0));
             defer str.deref();
             return str.toJS(global);
         }
@@ -402,7 +402,7 @@ pub fn hostname(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         var result: std.os.windows.ws2_32.WSADATA = undefined;
         if (std.os.windows.ws2_32.WSAStartup(0x202, &result) == 0) {
             if (bun.windows.GetHostNameW(&name_buffer, name_buffer.len) == 0) {
-                var y = bun.String.createUTF16(bun.sliceTo(&name_buffer, 0));
+                var y = bun.String.cloneUTF16(bun.sliceTo(&name_buffer, 0));
                 defer y.deref();
                 return y.toJS(global);
             }
@@ -628,19 +628,19 @@ fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSVal
 
         // scopeid <number> The numeric IPv6 scope ID (only specified when family is IPv6)
         if (addr.any.family == std.posix.AF.INET6) {
-            interface.put(globalThis, JSC.ZigString.static("scope_id"), JSC.JSValue.jsNumber(addr.in6.sa.scope_id));
+            interface.put(globalThis, JSC.ZigString.static("scopeid"), JSC.JSValue.jsNumber(addr.in6.sa.scope_id));
         }
 
         // Does this entry already exist?
-        if (ret.get_unsafe(globalThis, interface_name)) |array| {
+        if (try ret.get(globalThis, interface_name)) |array| {
             // Add this interface entry to the existing array
-            const next_index = @as(u32, @intCast(array.getLength(globalThis)));
-            array.putIndex(globalThis, next_index, interface);
+            const next_index: u32 = @intCast(try array.getLength(globalThis));
+            try array.putIndex(globalThis, next_index, interface);
         } else {
             // Add it as an array with this interface as an element
             const member_name = JSC.ZigString.init(interface_name);
-            var array = JSC.JSValue.createEmptyArray(globalThis, 1);
-            array.putIndex(globalThis, 0, interface);
+            var array = try JSC.JSValue.createEmptyArray(globalThis, 1);
+            try array.putIndex(globalThis, 0, interface);
             ret.put(globalThis, &member_name, array);
         }
     }
@@ -746,15 +746,15 @@ fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSV
 
         // Does this entry already exist?
         const interface_name = bun.span(iface.name);
-        if (ret.get_unsafe(globalThis, interface_name)) |array| {
+        if (try ret.get(globalThis, interface_name)) |array| {
             // Add this interface entry to the existing array
-            const next_index = @as(u32, @intCast(array.getLength(globalThis)));
-            array.putIndex(globalThis, next_index, interface);
+            const next_index: u32 = @intCast(try array.getLength(globalThis));
+            try array.putIndex(globalThis, next_index, interface);
         } else {
             // Add it as an array with this interface as an element
             const member_name = JSC.ZigString.init(interface_name);
-            var array = JSC.JSValue.createEmptyArray(globalThis, 1);
-            array.putIndex(globalThis, 0, interface);
+            var array = try JSC.JSValue.createEmptyArray(globalThis, 1);
+            try array.putIndex(globalThis, 0, interface);
             ret.put(globalThis, &member_name, array);
         }
     }
@@ -801,7 +801,7 @@ pub fn release() bun.String {
         else => @compileError("unsupported os"),
     };
 
-    return bun.String.createUTF8(value);
+    return bun.String.cloneUTF8(value);
 }
 
 pub extern fn set_process_priority(pid: i32, priority: i32) i32;
@@ -1004,7 +1004,7 @@ pub fn version() bun.JSError!bun.String {
         else => @compileError("unsupported os"),
     };
 
-    return bun.String.createUTF8(slice);
+    return bun.String.cloneUTF8(slice);
 }
 
 /// Given a netmask returns a CIDR suffix.  Returns null if the mask is not valid.

@@ -401,16 +401,19 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_getAllBody(JSC:
     RETURN_IF_EXCEPTION(throwScope, {});
     auto entries = impl.getAll(name);
     JSC::JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(throwScope, {});
     for (auto entry : entries) {
         if (auto string = std::get_if<String>(&entry)) {
             result->push(lexicalGlobalObject, jsString(vm, *string));
+            RETURN_IF_EXCEPTION(throwScope, {});
         } else {
             auto blob = std::get<RefPtr<Blob>>(entry);
             result->push(lexicalGlobalObject, toJS(lexicalGlobalObject, castedThis->globalObject(), blob.get()));
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_getAll, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

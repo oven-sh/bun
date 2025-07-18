@@ -30,7 +30,7 @@ public:
         return Local<U>(m_location);
     }
 
-    TaggedPointer tagged() const
+    TaggedPointer& tagged() const
     {
         return *m_location;
     }

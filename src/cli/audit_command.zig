@@ -62,19 +62,32 @@ const AuditResult = struct {
 };
 
 pub const AuditCommand = struct {
+    pub fn exec(ctx: Command.Context) !noreturn {
+        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .audit);
+        const manager, _ = PackageManager.init(ctx, cli, .audit) catch |err| {
+            if (err == error.MissingPackageJSON) {
+                var cwd_buf: bun.PathBuffer = undefined;
+                if (bun.getcwd(&cwd_buf)) |cwd| {
+                    Output.errGeneric("No package.json was found for directory \"{s}\"", .{cwd});
+                } else |_| {
+                    Output.errGeneric("No package.json was found", .{});
+                }
+                Output.note("Run \"bun init\" to initialize a project", .{});
+                Global.exit(1);
+            }
+
+            return err;
+        };
+
+        const code = try audit(ctx, manager, manager.options.json_output);
+        Global.exit(code);
+    }
+
     /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.
     /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
     /// for the audit information"
-    pub fn exec(ctx: Command.Context, pm: *PackageManager, args: [][:0]u8) bun.OOM!u32 {
-        var json_output = false;
-        for (args) |arg| {
-            if (std.mem.eql(u8, arg, "--json")) {
-                json_output = true;
-                break;
-            }
-        }
-
-        Output.prettyError(comptime Output.prettyFmt("<r><b>bun pm audit <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", true), .{});
+    pub fn audit(ctx: Command.Context, pm: *PackageManager, json_output: bool) bun.OOM!u32 {
+        Output.prettyError(comptime Output.prettyFmt("<r><b>bun audit <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", true), .{});
         Output.flush();
 
         const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
@@ -98,6 +111,26 @@ pub const AuditCommand = struct {
         if (json_output) {
             Output.writer().writeAll(response_text) catch {};
             Output.writer().writeByte('\n') catch {};
+
+            if (response_text.len > 0) {
+                const source = &logger.Source.initPathString("audit-response.json", response_text);
+                var log = logger.Log.init(ctx.allocator);
+                defer log.deinit();
+
+                const expr = @import("../json_parser.zig").parse(source, &log, ctx.allocator, true) catch {
+                    Output.prettyErrorln("<red>error<r>: audit request failed to parse json. Is the registry down?", .{});
+                    return 1; // If we can't parse then safe to assume a similar failure
+                };
+
+                // If the response is an empty object, no vulnerabilities
+                if (expr.data == .e_object and expr.data.e_object.properties.len == 0) {
+                    return 0;
+                }
+
+                // If there's any content in the response, there are vulnerabilities
+                return 1;
+            }
+
             return 0;
         } else if (response_text.len > 0) {
             const exit_code = try printEnhancedAuditReport(ctx.allocator, response_text, pm, &dependency_tree);
@@ -301,6 +334,8 @@ fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []c
     defer allocator.free(url_str);
     const url = URL.parse(url_str);
 
+    const http_proxy = pm.env.getHttpProxyFor(url);
+
     var response_buf = try MutableString.init(allocator, 1024);
     var req = http.AsyncHTTP.initSync(
         allocator,
@@ -310,7 +345,7 @@ fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []c
         headers.content.ptr.?[0..headers.content.len],
         &response_buf,
         final_compressed_body,
-        null,
+        http_proxy,
         null,
         .follow,
     );
@@ -510,11 +545,11 @@ fn printEnhancedAuditReport(
     pm: *PackageManager,
     dependency_tree: *const bun.StringHashMap(std.ArrayList([]const u8)),
 ) bun.OOM!u32 {
-    const source = logger.Source.initPathString("audit-response.json", response_text);
+    const source = &logger.Source.initPathString("audit-response.json", response_text);
     var log = logger.Log.init(allocator);
     defer log.deinit();
 
-    const expr = @import("../json_parser.zig").parse(&source, &log, allocator, true) catch {
+    const expr = @import("../json_parser.zig").parse(source, &log, allocator, true) catch {
         Output.writer().writeAll(response_text) catch {};
         Output.writer().writeByte('\n') catch {};
         return 1;

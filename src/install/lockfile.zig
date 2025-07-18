@@ -26,15 +26,30 @@ patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
 
+pub const DepSorter = struct {
+    lockfile: *const Lockfile,
+
+    pub fn isLessThan(sorter: @This(), l: DependencyID, r: DependencyID) bool {
+        const deps_buf = sorter.lockfile.buffers.dependencies.items;
+        const string_buf = sorter.lockfile.buffers.string_bytes.items;
+
+        const l_dep = &deps_buf[l];
+        const r_dep = &deps_buf[r];
+
+        return switch (l_dep.behavior.cmp(r_dep.behavior)) {
+            .lt => true,
+            .gt => false,
+            .eq => strings.order(l_dep.name.slice(string_buf), r_dep.name.slice(string_buf)) == .lt,
+        };
+    }
+};
+
 pub const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
 
 pub const Scripts = struct {
     const MAX_PARALLEL_PROCESSES = 10;
-    pub const Entry = struct {
-        script: string,
-    };
-    pub const Entries = std.ArrayListUnmanaged(Entry);
+    pub const Entries = std.ArrayListUnmanaged(string);
 
     pub const names = [_]string{
         "preinstall",
@@ -73,7 +88,7 @@ pub const Scripts = struct {
         inline for (Scripts.names) |hook| {
             const list = &@field(this, hook);
             for (list.items) |entry| {
-                allocator.free(entry.script);
+                allocator.free(entry);
             }
             list.deinit(allocator);
         }
@@ -137,7 +152,7 @@ pub const LoadResult = union(enum) {
                 return if (save_text_lockfile) .text else .binary;
             },
             .err => |err| {
-                // an error occured, but we still loaded from an existing lockfile
+                // an error occurred, but we still loaded from an existing lockfile
                 if (options.save_text_lockfile) |save_text_lockfile| {
                     if (save_text_lockfile) {
                         return .text;
@@ -244,9 +259,9 @@ pub fn loadFromDir(
     };
 
     if (lockfile_format == .text) {
-        const source = logger.Source.initPathString("bun.lock", buf);
+        const source = &logger.Source.initPathString("bun.lock", buf);
         initializeStore();
-        const json = JSON.parsePackageJSONUTF8(&source, log, allocator) catch |err| {
+        const json = JSON.parsePackageJSONUTF8(source, log, allocator) catch |err| {
             return .{
                 .err = .{
                     .step = .parse_file,
@@ -257,7 +272,7 @@ pub fn loadFromDir(
             };
         };
 
-        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log, manager) catch |err| {
+        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log, manager) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 else => {
@@ -306,13 +321,13 @@ pub fn loadFromDir(
 
                 const text_lockfile_bytes = writer_buf.list.items;
 
-                const source = logger.Source.initPathString("bun.lock", text_lockfile_bytes);
+                const source = &logger.Source.initPathString("bun.lock", text_lockfile_bytes);
                 initializeStore();
-                const json = JSON.parsePackageJSONUTF8(&source, log, allocator) catch |err| {
+                const json = JSON.parsePackageJSONUTF8(source, log, allocator) catch |err| {
                     Output.panic("failed to print valid json from binary lockfile: {s}", .{@errorName(err)});
                 };
 
-                TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log, manager) catch |err| {
+                TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log, manager) catch |err| {
                     Output.panic("failed to parse text lockfile converted from binary lockfile: {s}", .{@errorName(err)});
                 };
 
@@ -556,7 +571,7 @@ pub fn getWorkspacePkgIfWorkspaceDep(this: *const Lockfile, id: DependencyID) Pa
 /// Does this tree id belong to a workspace (including workspace root)?
 /// TODO(dylan-conway) fix!
 pub fn isWorkspaceTreeId(this: *const Lockfile, id: Tree.Id) bool {
-    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspaceOnly();
+    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspace();
 }
 
 /// Returns the package id of the workspace the install is taking place in.
@@ -873,8 +888,6 @@ pub fn hoist(
     const allocator = lockfile.allocator;
     var slice = lockfile.packages.slice();
 
-    var path_buf: bun.PathBuffer = undefined;
-
     var builder = Tree.Builder(method){
         .name_hashes = slice.items(.name_hash),
         .queue = .init(allocator),
@@ -885,7 +898,6 @@ pub fn hoist(
         .log = log,
         .lockfile = lockfile,
         .manager = manager,
-        .path_buf = &path_buf,
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
     };
@@ -895,7 +907,6 @@ pub fn hoist(
         Tree.invalid_id,
         method,
         &builder,
-        if (method == .filter) manager.options.log_level,
     );
 
     // This goes breadth-first
@@ -905,7 +916,6 @@ pub fn hoist(
             item.hoist_root_id,
             method,
             &builder,
-            if (method == .filter) manager.options.log_level,
         );
     }
 
@@ -998,7 +1008,7 @@ pub const Printer = struct {
             .ok => {},
         }
 
-        const writer = Output.writer();
+        const writer = Output.writerBuffered();
         try printWithLockfile(allocator, lockfile, format, @TypeOf(writer), writer);
         Output.flush();
     }
@@ -1807,8 +1817,8 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
     inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
         const scripts = @field(this.scripts, field_name);
         for (scripts.items) |script| {
-            if (script.script.len > 0) {
-                string_builder.fmtCount("{s}: {s}\n", .{ field_name, script.script });
+            if (script.len > 0) {
+                string_builder.fmtCount("{s}: {s}\n", .{ field_name, script });
                 has_scripts = true;
             }
         }
@@ -1843,8 +1853,8 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
         inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
             const scripts = @field(this.scripts, field_name);
             for (scripts.items) |script| {
-                if (script.script.len > 0) {
-                    _ = string_builder.fmt("{s}: {s}\n", .{ field_name, script.script });
+                if (script.len > 0) {
+                    _ = string_builder.fmt("{s}: {s}\n", .{ field_name, script });
                 }
             }
         }
@@ -1952,17 +1962,17 @@ pub const default_trusted_dependencies = brk: {
             @compileError("default-trusted-dependencies.txt is too large, please increase 'max_default_trusted_dependencies' in lockfile.zig");
         }
 
-        // just in case there's duplicates from truncating
-        if (map.has(dep)) @compileError("Duplicate hash due to u64 -> u32 truncation");
-
-        map.putAssumeCapacity(dep, {});
+        const entry = map.getOrPutAssumeCapacity(dep);
+        if (entry.found_existing) {
+            @compileError("Duplicate trusted dependency: " ++ dep);
+        }
     }
 
     const final = map;
     break :brk &final;
 };
 
-pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
+pub fn hasTrustedDependency(this: *const Lockfile, name: []const u8) bool {
     if (this.trusted_dependencies) |trusted_dependencies| {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
         return trusted_dependencies.contains(hash);

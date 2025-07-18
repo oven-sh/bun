@@ -68,7 +68,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject
 
     const size_t numCurves = EC_get_builtin_curves(nullptr, 0);
     Vector<EC_builtin_curve> curves(numCurves);
-    EC_get_builtin_curves(curves.data(), numCurves);
+    EC_get_builtin_curves(curves.begin(), numCurves);
 
     JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, numCurves);
     RETURN_IF_EXCEPTION(scope, {});
@@ -99,7 +99,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCiphers, (JSC::JSGlobalObject * lexicalGlobalObjec
         JSC::JSArray* array;
         int index;
         JSC::VM& vm;
-        bool hasException;
+        JSC::ThrowScope& scope;
     };
 
     CipherPushContext ctx = {
@@ -107,23 +107,19 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCiphers, (JSC::JSGlobalObject * lexicalGlobalObjec
         result,
         0,
         vm,
-        false
+        scope,
     };
 
     auto callback = [](const EVP_CIPHER* cipher, const char* name, const char* /*unused*/, void* arg) {
         auto* ctx = static_cast<CipherPushContext*>(arg);
-        if (ctx->hasException)
-            return;
-
+        RETURN_IF_EXCEPTION(ctx->scope, );
         auto cipherStr = JSC::jsString(ctx->vm, String::fromUTF8(name));
-        if (!ctx->array->putDirectIndex(ctx->globalObject, ctx->index++, cipherStr))
-            ctx->hasException = true;
+        ctx->array->putDirectIndex(ctx->globalObject, ctx->index++, cipherStr);
+        RETURN_IF_EXCEPTION(ctx->scope, );
     };
 
     EVP_CIPHER_do_all_sorted(callback, &ctx);
-
-    if (ctx.hasException)
-        return JSValue::encode({});
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(result);
 }
@@ -202,6 +198,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
     }
 
     auto* bufferResult = JSC::JSUint8Array::create(lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(result), 0, cert.len);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(bufferResult);
 }

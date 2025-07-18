@@ -10,6 +10,7 @@ src/codegen/class-definitions.ts
 src/codegen/client-js.ts
 src/codegen/create-hash-table.ts
 src/codegen/generate-classes.ts
+src/codegen/generate-compact-string-table.ts
 src/codegen/generate-js2native.ts
 src/codegen/generate-jssink.ts
 src/codegen/generate-node-errors.ts

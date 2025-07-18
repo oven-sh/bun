@@ -1,4 +1,4 @@
-import { readableStreamToText, spawn } from "bun";
+import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, DirectoryTree, gunzipJsonRequest, lazyPromiseLike, tempDirWithFiles } from "harness";
 import { join } from "node:path";
@@ -47,9 +47,9 @@ function doAuditTest(
   },
 ) {
   test(label, async () => {
-    const dir = tempDirWithFiles("bun-test-pm-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
+    const dir = tempDirWithFiles("bun-test-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
 
-    const cmd = [bunExe(), "pm", "audit", ...(options.args ?? [])];
+    const cmd = [bunExe(), "audit", ...(options.args ?? [])];
 
     const url = server.url.toString().slice(0, -1);
 
@@ -64,8 +64,8 @@ function doAuditTest(
       },
     });
 
-    const stdout = lazyPromiseLike(() => readableStreamToText(proc.stdout));
-    const stderr = lazyPromiseLike(() => readableStreamToText(proc.stderr));
+    const stdout = lazyPromiseLike(() => proc.stdout.text());
+    const stderr = lazyPromiseLike(() => proc.stderr.text());
 
     const exitCode = await proc.exited;
 
@@ -87,7 +87,7 @@ function doAuditTest(
   });
 }
 
-describe("`bun pm audit`", () => {
+describe("`bun audit`", () => {
   doAuditTest("should fail with no package.json", {
     exitCode: 1,
     files: {
@@ -164,8 +164,8 @@ describe("`bun pm audit`", () => {
     },
   });
 
-  doAuditTest("should print valid JSON and exit 0 when --json is passed and there are vulnerabilities", {
-    exitCode: 0,
+  doAuditTest("should print valid JSON and exit 1 when --json is passed and there are vulnerabilities", {
+    exitCode: 1,
     files: fixture("express@3"),
     args: ["--json"],
     fn: async ({ stdout }) => {

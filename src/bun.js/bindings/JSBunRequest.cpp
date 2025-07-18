@@ -64,20 +64,20 @@ void JSBunRequest::setParams(JSObject* params)
 
 JSObject* JSBunRequest::cookies() const
 {
-    if (m_cookies) {
-        return m_cookies.get();
-    }
-    return nullptr;
+    return m_cookies.get();
 }
 
 extern "C" void* Request__clone(void* internalZigRequestPointer, JSGlobalObject* globalObject);
 
 JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
 {
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto* structure = createJSBunRequestStructure(vm, defaultGlobalObject(globalObject));
-    auto* clone = this->create(vm, structure, Request__clone(this->wrapped(), globalObject), nullptr);
+    auto* raw = Request__clone(this->wrapped(), globalObject);
+    EXCEPTION_ASSERT(!!raw == !throwScope.exception());
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+    auto* clone = this->create(vm, structure, raw, nullptr);
 
     // Cookies and params are deep copied as they can be changed between the clone and original
     if (auto* params = this->params()) {
@@ -88,6 +88,7 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
 
         auto propertyNames = PropertyNameArray(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
         JSObject::getOwnPropertyNames(params, globalObject, propertyNames, JSC::DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
 
         for (auto& property : propertyNames) {
             auto value = params->get(globalObject, property);
@@ -98,11 +99,13 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
         clone->setParams(paramsClone);
     }
 
-    if (auto* wrapper = jsDynamicCast<JSCookieMap*>(this->cookies())) {
-        auto cookieMap = wrapper->protectedWrapped();
-        auto cookieMapClone = cookieMap->clone();
-        auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(cookieMapClone));
-        clone->setCookies(cookies.getObject());
+    if (auto* cookiesObject = cookies()) {
+        if (auto* wrapper = jsDynamicCast<JSCookieMap*>(cookiesObject)) {
+            auto cookieMap = wrapper->protectedWrapped();
+            auto cookieMapClone = cookieMap->clone();
+            auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(cookieMapClone));
+            clone->setCookies(cookies.getObject());
+        }
     }
 
     RELEASE_AND_RETURN(throwScope, clone);
@@ -218,8 +221,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * global
         JSC::JSValue headersValue = request->get(globalObject, names.headersPublicName());
         RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
         auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(headersValue);
-        if (!headers)
-            return JSValue::encode(jsUndefined());
+        if (!headers) return JSValue::encode(jsUndefined());
 
         auto& fetchHeaders = headers->wrapped();
 
@@ -230,7 +232,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * global
         RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
         if (cookieMapResult.hasException()) {
             WebCore::propagateException(*globalObject, throwScope, cookieMapResult.releaseException());
-            return JSValue::encode(jsUndefined());
+            RELEASE_AND_RETURN(throwScope, {});
         }
 
         auto cookieMap = cookieMapResult.releaseReturnValue();
@@ -257,8 +259,8 @@ JSC_DEFINE_HOST_FUNCTION(jsJSBunRequestClone, (JSC::JSGlobalObject * globalObjec
     }
 
     auto clone = request->clone(vm, globalObject);
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(clone));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return JSValue::encode(clone);
 }
 
 Structure* createJSBunRequestStructure(JSC::VM& vm, Zig::GlobalObject* globalObject)
@@ -279,7 +281,7 @@ extern "C" EncodedJSValue Bun__getParamsIfBunRequest(JSC::EncodedJSValue thisVal
         return JSValue::encode(params);
     }
 
-    return JSValue::encode({});
+    return {};
 }
 
 } // namespace Bun

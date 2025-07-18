@@ -1,28 +1,30 @@
-name: format
+name: autofix.ci
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   workflow_call:
   workflow_dispatch:
   pull_request:
   merge_group:
-
+  push:
+    branches: ["main"]
 env:
   BUN_VERSION: "1.2.11"
   LLVM_VERSION: "19.1.7"
   LLVM_VERSION_MAJOR: "19"
 
 jobs:
-  format:
+  autofix:
     name: Format
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Configure Git
         run: |
           git config --global core.autocrlf true
@@ -45,22 +47,13 @@ jobs:
       - name: Zig Format
         run: |
           bun scripts/zig-remove-unreferenced-top-level-decls.ts src/
-          zig fmt src/**.zig
-      - name: Commit
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "`bun run zig-format`"
+          zig fmt src
+          bun scripts/sortImports src
+          zig fmt src
       - name: Prettier Format
         run: |
           bun run prettier
-      - name: Commit
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "`bun run prettier`"
       - name: Clang Format
         run: |
           bun run clang-format
-      - name: Commit
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "`bun run clang-format`"
+      - uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27

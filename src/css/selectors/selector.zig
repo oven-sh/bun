@@ -1511,11 +1511,15 @@ pub fn shouldUnwrapIs(selectors: []const parser.Selector) bool {
 
 fn hasTypeSelector(selector: *const parser.Selector) bool {
     var iter = selector.iterRawParseOrderFrom(0);
-    const first = iter.next();
-
-    if (isNamespace(if (first) |*f| f else null)) return isTypeSelector(if (iter.next()) |*n| n else null);
-
-    return isTypeSelector(if (first) |*f| f else null);
+    
+    // Check all components in the selector to find any type selectors
+    while (iter.next()) |component| {
+        if (isTypeSelector(&component)) {
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 fn isNamespace(component: ?*const parser.Component) bool {

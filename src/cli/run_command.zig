@@ -1190,12 +1190,12 @@ pub const RunCommand = struct {
         const examples_text =
             \\<b>Examples:<r>
             \\  <d>Run a JavaScript or TypeScript file<r>
-            \\  <b><green>bun run<r> <blue>./index.js<r>
-            \\  <b><green>bun run<r> <blue>./index.tsx<r>
+            \\  <b><green>bun run<r> <b><blue>./index.js<r>
+            \\  <b><green>bun run<r> <b><blue>./index.tsx<r>
             \\
             \\  <d>Run a package.json script<r>
-            \\  <b><green>bun run<r> <blue>dev<r>
-            \\  <b><green>bun run<r> <blue>lint<r>
+            \\  <b><green>bun run<r> <b><blue>dev<r>
+            \\  <b><green>bun run<r> <b><blue>lint<r>
             \\
             \\Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             \\
@@ -1223,7 +1223,7 @@ pub const RunCommand = struct {
                     // Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n", .{display_name});
                     while (iterator.next()) |entry| {
                         Output.prettyln("\n", .{});
-                        Output.prettyln("  <d>$</r> bun run<r> <blue>{s}<r>\n", .{entry.key_ptr.*});
+                        Output.prettyln("  <d>$</r> bun run<r> <b><blue>{s}<r>\n", .{entry.key_ptr.*});
                         Output.prettyln("  <d>  {s}<r>\n", .{entry.value_ptr.*});
                     }
 

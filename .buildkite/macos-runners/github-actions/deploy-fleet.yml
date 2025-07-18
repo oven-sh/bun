@@ -312,25 +312,26 @@ jobs:
     
     steps:
       - name: Notify success
-        uses: 8398a7/action-slack@v3
+        uses: sarisia/actions-status-discord@v1
         with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: success
-          channel: '#ci-updates'
-          text: |
-            🚀 macOS runner fleet deployed successfully
+          title: "macOS runner fleet deployed successfully"
+          description: |
+            🚀 **macOS runner fleet deployed successfully**
             
-            Environment: ${{ github.event.inputs.environment }}
-            Total VMs: ${{ needs.validate-inputs.outputs.total_vms }}
+            **Environment:** ${{ github.event.inputs.environment }}
+            **Total VMs:** ${{ needs.validate-inputs.outputs.total_vms }}
             
-            Fleet composition:
+            **Fleet composition:**
             - macOS 13: ${{ github.event.inputs.fleet_size_macos_13 }} VMs
             - macOS 14: ${{ github.event.inputs.fleet_size_macos_14 }} VMs
             - macOS 15: ${{ github.event.inputs.fleet_size_macos_15 }} VMs
             
-            Repository: ${{ github.repository }}
-            Deployment: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+            **Repository:** ${{ github.repository }}
+            [View Deployment](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          color: 0x00ff00
+          username: "GitHub Actions"
 
   notify-failure:
     runs-on: ubuntu-latest
@@ -339,22 +340,23 @@ jobs:
     
     steps:
       - name: Notify failure
-        uses: 8398a7/action-slack@v3
+        uses: sarisia/actions-status-discord@v1
         with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: failure
-          channel: '#ci-alerts'
-          text: |
-            🔴 macOS runner fleet deployment failed
+          title: "macOS runner fleet deployment failed"
+          description: |
+            🔴 **macOS runner fleet deployment failed**
             
-            Environment: ${{ github.event.inputs.environment }}
-            Failed stage: ${{ needs.validate-inputs.result == 'failure' && 'Validation' || needs.plan-deployment.result == 'failure' && 'Planning' || 'Deployment' }}
+            **Environment:** ${{ github.event.inputs.environment }}
+            **Failed stage:** ${{ needs.validate-inputs.result == 'failure' && 'Validation' || needs.plan-deployment.result == 'failure' && 'Planning' || 'Deployment' }}
             
-            Repository: ${{ github.repository }}
-            Deployment: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            **Repository:** ${{ github.repository }}
+            [View Deployment](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
             
             Please check the logs for more details.
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          color: 0xff0000
+          username: "GitHub Actions"
 
   notify-no-changes:
     runs-on: ubuntu-latest
@@ -363,15 +365,12 @@ jobs:
     
     steps:
       - name: Notify no changes
-        uses: 8398a7/action-slack@v3
+        uses: sarisia/actions-status-discord@v1
         with:
-          status: custom
-          custom_payload: |
-            {
-              channel: '#ci-updates',
-              username: 'GitHub Actions',
-              icon_emoji: ':information_source:',
-              text: 'ℹ️ macOS runner fleet deployment skipped - no changes detected in Terraform plan'
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: cancelled
+          title: "macOS runner fleet deployment skipped"
+          description: |
+            ℹ️ **macOS runner fleet deployment skipped** - no changes detected in Terraform plan
+          color: 0x808080
+          username: "GitHub Actions"

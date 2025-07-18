@@ -76,7 +76,7 @@ Configure the following secrets in your GitHub repository:
 - `GITHUB_TOKEN`: GitHub personal access token (for private repositories)
 
 ### Notifications
-- `SLACK_WEBHOOK_URL`: Slack webhook URL for notifications
+- `DISCORD_WEBHOOK_URL`: Discord webhook URL for notifications
 
 ## Quick Start
 
@@ -178,16 +178,15 @@ Each VM image includes:
 
 ### Development Tools
 - Xcode Command Line Tools
-- LLVM/Clang 19
-- GCC 13 (on supported versions)
-- CMake 3.30+
+- LLVM/Clang 19.1.7 (exact version)
+- CMake 3.30.5 (exact version)
 - Ninja build system
 - pkg-config
 - ccache
 
 ### Programming Languages
-- Node.js 24.3.0
-- Bun 1.2.17
+- Node.js 24.3.0 (exact version, matches bootstrap.sh)
+- Bun 1.2.17 (exact version, matches bootstrap.sh)
 - Python 3.11 and 3.12
 - Go (latest)
 - Rust (latest stable)
@@ -220,7 +219,16 @@ Each VM image includes:
 
 ### Development Dependencies
 - Docker Desktop
+- Tailscale (for VPN connectivity)
+- Age (for encryption)
+- macFUSE (for filesystem testing)
+- Chromium (for browser testing)
 - Various system libraries and headers
+
+### Quality Assurance
+- **Flakiness Testing**: Each image undergoes multiple test iterations to ensure reliability
+- **Software Validation**: All tools are tested for proper installation and functionality
+- **Version Verification**: Exact version matching ensures consistency with bootstrap.sh
 
 ## User Isolation
 

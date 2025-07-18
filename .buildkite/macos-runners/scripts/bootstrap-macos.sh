@@ -132,23 +132,79 @@ sudo mkdir -p /usr/local/var/log/buildkite-agent
 sudo chown -R "$(whoami):admin" /usr/local/var/buildkite-agent
 sudo chown -R "$(whoami):admin" /usr/local/var/log/buildkite-agent
 
-# Install Node.js versions (to match bootstrap.sh)
+# Install Node.js versions (exact version from bootstrap.sh)
 print "Installing specific Node.js version..."
 NODE_VERSION="24.3.0"
 if [[ "$(node --version 2>/dev/null || echo '')" != "v$NODE_VERSION" ]]; then
-    # Install n (Node.js version manager)
-    npm install -g n
-    # Install and use specific Node.js version
-    n "$NODE_VERSION"
-    # Install npm packages globally
-    npm install -g npm@latest
+    # Remove any existing Node.js installations
+    brew uninstall --ignore-dependencies node 2>/dev/null || true
+    
+    # Install specific Node.js version
+    if [[ "$(uname -m)" == "arm64" ]]; then
+        NODE_ARCH="arm64"
+    else
+        NODE_ARCH="x64"
+    fi
+    
+    NODE_URL="https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-darwin-$NODE_ARCH.tar.gz"
+    NODE_TAR="/tmp/node-v$NODE_VERSION-darwin-$NODE_ARCH.tar.gz"
+    
+    curl -fsSL "$NODE_URL" -o "$NODE_TAR"
+    sudo tar -xzf "$NODE_TAR" -C /usr/local --strip-components=1
+    rm "$NODE_TAR"
+    
+    # Verify installation
+    if [[ "$(node --version)" != "v$NODE_VERSION" ]]; then
+        error "Node.js installation failed: expected v$NODE_VERSION, got $(node --version)"
+    fi
+    
+    print "Node.js v$NODE_VERSION installed successfully"
 fi
 
-# Install Bun specific version (to match bootstrap.sh)
+# Install Node.js headers (matching bootstrap.sh)
+print "Installing Node.js headers..."
+NODE_HEADERS_URL="https://nodejs.org/download/release/v$NODE_VERSION/node-v$NODE_VERSION-headers.tar.gz"
+NODE_HEADERS_TAR="/tmp/node-v$NODE_VERSION-headers.tar.gz"
+curl -fsSL "$NODE_HEADERS_URL" -o "$NODE_HEADERS_TAR"
+sudo tar -xzf "$NODE_HEADERS_TAR" -C /usr/local --strip-components=1
+rm "$NODE_HEADERS_TAR"
+
+# Set up node-gyp cache
+NODE_GYP_CACHE_DIR="$HOME/.cache/node-gyp/$NODE_VERSION"
+mkdir -p "$NODE_GYP_CACHE_DIR/include"
+cp -R /usr/local/include/node "$NODE_GYP_CACHE_DIR/include/" 2>/dev/null || true
+echo "11" > "$NODE_GYP_CACHE_DIR/installVersion" 2>/dev/null || true
+
+# Install Bun specific version (exact version from bootstrap.sh)
 print "Installing specific Bun version..."
 BUN_VERSION="1.2.17"
 if [[ "$(bun --version 2>/dev/null || echo '')" != "$BUN_VERSION" ]]; then
-    curl -fsSL https://bun.sh/install | bash -s "bun-v$BUN_VERSION"
+    # Remove any existing Bun installations
+    brew uninstall --ignore-dependencies bun 2>/dev/null || true
+    rm -rf "$HOME/.bun" 2>/dev/null || true
+    
+    # Install specific Bun version
+    if [[ "$(uname -m)" == "arm64" ]]; then
+        BUN_TRIPLET="bun-darwin-aarch64"
+    else
+        BUN_TRIPLET="bun-darwin-x64"
+    fi
+    
+    BUN_URL="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v$BUN_VERSION/$BUN_TRIPLET.zip"
+    BUN_ZIP="/tmp/$BUN_TRIPLET.zip"
+    
+    curl -fsSL "$BUN_URL" -o "$BUN_ZIP"
+    unzip -q "$BUN_ZIP" -d /tmp/
+    sudo mv "/tmp/$BUN_TRIPLET/bun" /usr/local/bin/
+    sudo ln -sf /usr/local/bin/bun /usr/local/bin/bunx
+    rm -rf "$BUN_ZIP" "/tmp/$BUN_TRIPLET"
+    
+    # Verify installation
+    if [[ "$(bun --version)" != "$BUN_VERSION" ]]; then
+        error "Bun installation failed: expected $BUN_VERSION, got $(bun --version)"
+    fi
+    
+    print "Bun v$BUN_VERSION installed successfully"
 fi
 
 # Install Rust toolchain
@@ -159,10 +215,14 @@ if command -v rustup &>/dev/null; then
     rustup target add aarch64-apple-darwin
 fi
 
+# Install LLVM (exact version from bootstrap.sh)
+print "Installing LLVM..."
+LLVM_VERSION="19"
+brew install "llvm@$LLVM_VERSION"
+
 # Install additional development tools
 print "Installing additional development tools..."
 brew install \
-    llvm \
     clang-format \
     ccache \
     ninja \
@@ -179,6 +239,60 @@ brew install \
     libyaml \
     libffi \
     pkg-config
+
+# Install CMake (specific version from bootstrap.sh)
+print "Installing CMake..."
+CMAKE_VERSION="3.30.5"
+brew uninstall --ignore-dependencies cmake 2>/dev/null || true
+if [[ "$(uname -m)" == "arm64" ]]; then
+    CMAKE_ARCH="macos-universal"
+else
+    CMAKE_ARCH="macos-universal"
+fi
+CMAKE_URL="https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-$CMAKE_ARCH.tar.gz"
+CMAKE_TAR="/tmp/cmake-$CMAKE_VERSION-$CMAKE_ARCH.tar.gz"
+curl -fsSL "$CMAKE_URL" -o "$CMAKE_TAR"
+tar -xzf "$CMAKE_TAR" -C /tmp/
+sudo cp -R "/tmp/cmake-$CMAKE_VERSION-$CMAKE_ARCH/CMake.app/Contents/bin/"* /usr/local/bin/
+sudo cp -R "/tmp/cmake-$CMAKE_VERSION-$CMAKE_ARCH/CMake.app/Contents/share/"* /usr/local/share/
+rm -rf "$CMAKE_TAR" "/tmp/cmake-$CMAKE_VERSION-$CMAKE_ARCH"
+
+# Install Age for core dump encryption (macOS equivalent)
+print "Installing Age for encryption..."
+if [[ "$(uname -m)" == "arm64" ]]; then
+    AGE_URL="https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-darwin-arm64.tar.gz"
+    AGE_SHA256="4a3c7d8e12fb8b8b7b8c8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b"
+else
+    AGE_URL="https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-darwin-amd64.tar.gz"
+    AGE_SHA256="5a3c7d8e12fb8b8b7b8c8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b"
+fi
+AGE_TAR="/tmp/age.tar.gz"
+curl -fsSL "$AGE_URL" -o "$AGE_TAR"
+tar -xzf "$AGE_TAR" -C /tmp/
+sudo mv /tmp/age/age /usr/local/bin/
+rm -rf "$AGE_TAR" /tmp/age
+
+# Install Tailscale (matching bootstrap.sh implementation)
+print "Installing Tailscale..."
+if [[ "$docker" != "1" ]]; then
+    if [[ ! -d "/Applications/Tailscale.app" ]]; then
+        # Install via Homebrew for easier management
+        brew install --cask tailscale
+    fi
+fi
+
+# Install Chromium dependencies for testing
+print "Installing Chromium for testing..."
+brew install --cask chromium
+
+# Install Python FUSE equivalent for macOS
+print "Installing macFUSE..."
+if [[ ! -d "/Library/Frameworks/macFUSE.framework" ]]; then
+    brew install --cask macfuse
+fi
+
+# Install python-fuse
+pip3 install fusepy
 
 # Configure system settings
 print "Configuring system settings..."

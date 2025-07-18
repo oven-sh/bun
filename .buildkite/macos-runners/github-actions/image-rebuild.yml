@@ -109,6 +109,170 @@ jobs:
             -var "base_image=base-images/macos-${{ matrix.macos_version }}-$([ ${{ matrix.macos_version }} -eq 13 ] && echo 'ventura' || [ ${{ matrix.macos_version }} -eq 14 ] && echo 'sonoma' || echo 'sequoia')" \
             macos-base.pkr.hcl
 
+      - name: Validate built image
+        working-directory: .buildkite/macos-runners/packer
+        run: |
+          echo "Validating built image..."
+          
+          # Get the latest built image ID
+          IMAGE_ID=$(orka image list --output json | jq -r '.[] | select(.name | test("^bun-macos-${{ matrix.macos_version }}-")) | .id' | head -1)
+          
+          if [ -z "$IMAGE_ID" ]; then
+            echo "❌ No image found for macOS ${{ matrix.macos_version }}"
+            exit 1
+          fi
+          
+          echo "✅ Found image: $IMAGE_ID"
+          
+          # Create a test VM to validate the image
+          VM_NAME="test-validation-${{ matrix.macos_version }}-$(date +%s)"
+          
+          echo "Creating test VM: $VM_NAME"
+          orka vm create \
+            --name "$VM_NAME" \
+            --image "$IMAGE_ID" \
+            --cpu 4 \
+            --memory 8 \
+            --wait
+          
+          # Wait for VM to be ready
+          sleep 60
+          
+          # Get VM IP
+          VM_IP=$(orka vm show "$VM_NAME" --output json | jq -r '.ip_address')
+          
+          echo "Testing VM at IP: $VM_IP"
+          
+          # Test software installations
+          echo "Testing software installations..."
+          
+          # Test Node.js
+          ssh -o StrictHostKeyChecking=no admin@$VM_IP 'node --version' || exit 1
+          
+          # Test Bun
+          ssh -o StrictHostKeyChecking=no admin@$VM_IP 'bun --version' || exit 1
+          
+          # Test build tools
+          ssh -o StrictHostKeyChecking=no admin@$VM_IP 'cmake --version' || exit 1
+          ssh -o StrictHostKeyChecking=no admin@$VM_IP 'clang --version' || exit 1
+          
+          # Test Docker
+          ssh -o StrictHostKeyChecking=no admin@$VM_IP 'docker --version' || exit 1
+          
+          # Test Tailscale
+          ssh -o StrictHostKeyChecking=no admin@$VM_IP 'tailscale --version' || exit 1
+          
+          # Test health endpoint
+          ssh -o StrictHostKeyChecking=no admin@$VM_IP 'curl -f http://localhost:8080/health' || exit 1
+          
+          echo "✅ All software validations passed"
+          
+          # Clean up test VM
+          orka vm delete "$VM_NAME" --force
+          
+          echo "✅ Image validation completed successfully"
+
+      - name: Run flakiness checks
+        working-directory: .buildkite/macos-runners/packer
+        run: |
+          echo "Running flakiness checks..."
+          
+          # Get the latest built image ID
+          IMAGE_ID=$(orka image list --output json | jq -r '.[] | select(.name | test("^bun-macos-${{ matrix.macos_version }}-")) | .id' | head -1)
+          
+          # Run multiple test iterations to check for flakiness
+          ITERATIONS=3
+          PASSED=0
+          FAILED=0
+          
+          for i in $(seq 1 $ITERATIONS); do
+            echo "Running flakiness test iteration $i/$ITERATIONS..."
+            
+            VM_NAME="flakiness-test-${{ matrix.macos_version }}-$i-$(date +%s)"
+            
+            # Create test VM
+            orka vm create \
+              --name "$VM_NAME" \
+              --image "$IMAGE_ID" \
+              --cpu 4 \
+              --memory 8 \
+              --wait
+            
+            sleep 30
+            
+            # Get VM IP
+            VM_IP=$(orka vm show "$VM_NAME" --output json | jq -r '.ip_address')
+            
+            # Run a series of quick tests
+            TEST_PASSED=true
+            
+            # Test 1: Basic command execution
+            if ! ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 admin@$VM_IP 'echo "test" > /tmp/test.txt && cat /tmp/test.txt'; then
+              echo "❌ Basic command test failed"
+              TEST_PASSED=false
+            fi
+            
+            # Test 2: Node.js execution
+            if ! ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 admin@$VM_IP 'node -e "console.log(\"Node.js test\")"'; then
+              echo "❌ Node.js test failed"
+              TEST_PASSED=false
+            fi
+            
+            # Test 3: Bun execution
+            if ! ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 admin@$VM_IP 'bun -e "console.log(\"Bun test\")"'; then
+              echo "❌ Bun test failed"
+              TEST_PASSED=false
+            fi
+            
+            # Test 4: Build tools
+            if ! ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 admin@$VM_IP 'clang --version > /tmp/clang_version.txt'; then
+              echo "❌ Clang test failed"
+              TEST_PASSED=false
+            fi
+            
+            # Test 5: File system operations
+            if ! ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 admin@$VM_IP 'mkdir -p /tmp/test_dir && touch /tmp/test_dir/test_file'; then
+              echo "❌ File system test failed"
+              TEST_PASSED=false
+            fi
+            
+            # Test 6: Process creation
+            if ! ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 admin@$VM_IP 'ps aux | grep -v grep | wc -l'; then
+              echo "❌ Process test failed"
+              TEST_PASSED=false
+            fi
+            
+            # Clean up test VM
+            orka vm delete "$VM_NAME" --force
+            
+            if [ "$TEST_PASSED" = true ]; then
+              echo "✅ Iteration $i passed"
+              PASSED=$((PASSED + 1))
+            else
+              echo "❌ Iteration $i failed"
+              FAILED=$((FAILED + 1))
+            fi
+            
+            # Short delay between iterations
+            sleep 10
+          done
+          
+          echo "Flakiness check results:"
+          echo "- Passed: $PASSED/$ITERATIONS"
+          echo "- Failed: $FAILED/$ITERATIONS"
+          
+          # Calculate success rate
+          SUCCESS_RATE=$((PASSED * 100 / ITERATIONS))
+          echo "- Success rate: $SUCCESS_RATE%"
+          
+          # Fail if success rate is below 80%
+          if [ $SUCCESS_RATE -lt 80 ]; then
+            echo "❌ Image is too flaky! Success rate: $SUCCESS_RATE% (minimum: 80%)"
+            exit 1
+          fi
+          
+          echo "✅ Flakiness checks passed with $SUCCESS_RATE% success rate"
+
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -119,20 +283,21 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        uses: 8398a7/action-slack@v3
+        uses: sarisia/actions-status-discord@v1
         with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: failure
-          channel: '#ci-alerts'
-          text: |
-            🔴 macOS ${{ matrix.macos_version }} image build failed
+          title: "macOS ${{ matrix.macos_version }} image build failed"
+          description: |
+            🔴 **macOS ${{ matrix.macos_version }} image build failed**
             
-            Repository: ${{ github.repository }}
-            Branch: ${{ github.ref }}
-            Commit: ${{ github.sha }}
+            **Repository:** ${{ github.repository }}
+            **Branch:** ${{ github.ref }}
+            **Commit:** ${{ github.sha }}
             
-            Check the logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+            [Check the logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          color: 0xff0000
+          username: "GitHub Actions"
 
   update-terraform:
     runs-on: ubuntu-latest
@@ -311,25 +476,26 @@ jobs:
     
     steps:
       - name: Notify success
-        uses: 8398a7/action-slack@v3
+        uses: sarisia/actions-status-discord@v1
         with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: success
-          channel: '#ci-updates'
-          text: |
-            ✅ macOS runner images rebuilt successfully
+          title: "macOS runner images rebuilt successfully"
+          description: |
+            ✅ **macOS runner images rebuilt successfully**
             
-            Repository: ${{ github.repository }}
-            Branch: ${{ github.ref }}
-            Commit: ${{ github.sha }}
+            **Repository:** ${{ github.repository }}
+            **Branch:** ${{ github.ref }}
+            **Commit:** ${{ github.sha }}
             
-            Changes detected in:
+            **Changes detected in:**
             ${{ needs.check-changes.outputs.changed_files }}
             
-            Images built: ${{ join(github.event.inputs.macos_versions || '13,14,15', ', ') }}
+            **Images built:** ${{ join(github.event.inputs.macos_versions || '13,14,15', ', ') }}
             
-            Check the deployment: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+            [Check the deployment](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          color: 0x00ff00
+          username: "GitHub Actions"
 
   notify-skip:
     runs-on: ubuntu-latest
@@ -338,15 +504,12 @@ jobs:
     
     steps:
       - name: Notify skip
-        uses: 8398a7/action-slack@v3
+        uses: sarisia/actions-status-discord@v1
         with:
-          status: custom
-          custom_payload: |
-            {
-              channel: '#ci-updates',
-              username: 'GitHub Actions',
-              icon_emoji: ':information_source:',
-              text: 'ℹ️ macOS runner image rebuild skipped - no changes detected in the last 24 hours'
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: cancelled
+          title: "macOS runner image rebuild skipped"
+          description: |
+            ℹ️ **macOS runner image rebuild skipped** - no changes detected in the last 24 hours
+          color: 0x808080
+          username: "GitHub Actions"

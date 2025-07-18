@@ -254,8 +254,8 @@ This guide provides step-by-step instructions for deploying the macOS runner inf
    - Create custom dashboards for VM metrics
    - Set up alarms for critical thresholds
 
-2. **Slack Notifications**
-   - Configure Slack webhook for alerts
+2. **Discord Notifications**
+   - Configure Discord webhook for alerts
    - Test notification delivery
 
 ### 2. Backup Configuration
@@ -304,7 +304,7 @@ This guide provides step-by-step instructions for deploying the macOS runner inf
    - Cleanup processes (automatic)
 
 2. **Manual Monitoring**
-   - Check Slack notifications
+   - Check Discord notifications
    - Review CloudWatch metrics
    - Monitor Buildkite queue
 

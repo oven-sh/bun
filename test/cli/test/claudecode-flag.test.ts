@@ -2,41 +2,6 @@ import { spawnSync } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
 
-test("CLAUDECODE=0 shows normal test output", async () => {
-  const dir = tempDirWithFiles("claudecode-test-normal", {
-    "test1.test.js": `
-      import { test, expect } from "bun:test";
-      
-      test("passing test", () => {
-        expect(1).toBe(1);
-      });
-      
-      test("failing test", () => {
-        expect(1).toBe(2);
-      });
-      
-      test.skip("skipped test", () => {
-        expect(1).toBe(1);
-      });
-      
-      test.todo("todo test");
-    `,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "test1.test.js"],
-    env: { ...bunEnv, CLAUDECODE: "0" },
-    cwd: dir,
-  });
-
-  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-
-  const output = stderr + stdout;
-  const normalized = normalizeBunSnapshot(output, dir);
-
-  expect(normalized).toMatchSnapshot();
-});
-
 test("CLAUDECODE=1 shows quiet test output (only failures)", async () => {
   const dir = tempDirWithFiles("claudecode-test-quiet", {
     "test2.test.js": `
@@ -62,9 +27,11 @@ test("CLAUDECODE=1 shows quiet test output (only failures)", async () => {
     cmd: [bunExe(), "test", "test2.test.js"],
     env: { ...bunEnv, CLAUDECODE: "1" },
     cwd: dir,
+    stderr: "pipe",
+    stdout: "pipe",
   });
 
-  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
 
   const output = stderr + stdout;
   const normalized = normalizeBunSnapshot(output, dir);
@@ -132,4 +99,41 @@ test("CLAUDECODE=1 vs CLAUDECODE=0 comparison", async () => {
   expect(quietOutput).toContain("2 pass");
   expect(quietOutput).toContain("1 skip");
   expect(quietOutput).toContain("1 todo");
+
+  expect(normalizeBunSnapshot(normalOutput, dir)).toMatchSnapshot("normal");
+  expect(normalizeBunSnapshot(quietOutput, dir)).toMatchSnapshot("quiet");
+});
+
+test("CLAUDECODE flag handles no test files found", () => {
+  const dir = tempDirWithFiles("empty-project", {
+    "package.json": `{
+      "name": "empty-project",
+      "version": "1.0.0"
+    }`,
+    "src/index.js": `console.log("hello world");`,
+  });
+
+  // Run with CLAUDECODE=0 (normal output) - no test files
+  const result1 = spawnSync({
+    cmd: [bunExe(), "test"],
+    env: { ...bunEnv, CLAUDECODE: "0" },
+    cwd: dir,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  // Run with CLAUDECODE=1 (quiet output) - no test files
+  const result2 = spawnSync({
+    cmd: [bunExe(), "test"],
+    env: { ...bunEnv, CLAUDECODE: "1" },
+    cwd: dir,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const normalOutput = result1.stderr.toString() + result1.stdout.toString();
+  const quietOutput = result2.stderr.toString() + result2.stdout.toString();
+
+  expect(normalizeBunSnapshot(normalOutput, dir)).toMatchSnapshot("no-tests-normal");
+  expect(normalizeBunSnapshot(quietOutput, dir)).toMatchSnapshot("no-tests-quiet");
 });

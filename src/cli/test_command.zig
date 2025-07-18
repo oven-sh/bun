@@ -97,8 +97,8 @@ fn fmtStatusTextLine(comptime status: @Type(.enum_literal), comptime emoji_or_co
 }
 
 fn writeTestStatusLine(comptime status: @Type(.enum_literal), writer: anytype) void {
-    // In quiet mode (CLAUDECODE=1), only print failures
-    if (bun.getRuntimeFeatureFlag(.CLAUDECODE) and status != .fail) {
+    // When using AI agents, only print failures
+    if (Output.isAIAgent() and status != .fail) {
         return;
     }
 
@@ -607,6 +607,55 @@ pub const JunitReporter = struct {
     }
 };
 
+const CurrentFile = struct {
+    title: string = "",
+    prefix: string = "",
+    repeat_info: struct {
+        count: u32 = 0,
+        index: u32 = 0,
+    } = .{},
+    has_printed_filename: bool = false,
+
+    pub fn set(this: *CurrentFile, title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
+        if (Output.isAIAgent()) {
+            this.freeAndClear();
+            this.title = bun.default_allocator.dupe(u8, title) catch bun.outOfMemory();
+            this.prefix = bun.default_allocator.dupe(u8, prefix) catch bun.outOfMemory();
+            this.repeat_info.count = repeat_count;
+            this.repeat_info.index = repeat_index;
+            this.has_printed_filename = false;
+            return;
+        }
+
+        print(title, prefix, repeat_count, repeat_index);
+    }
+
+    fn freeAndClear(this: *CurrentFile) void {
+        bun.default_allocator.free(this.title);
+        bun.default_allocator.free(this.prefix);
+    }
+
+    fn print(title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
+        if (repeat_count > 0) {
+            if (repeat_count > 1) {
+                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ prefix, title, repeat_index + 1 });
+            } else {
+                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
+            }
+        } else {
+            Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
+        }
+
+        Output.flush();
+    }
+
+    pub fn printIfNeeded(this: *CurrentFile) void {
+        if (this.has_printed_filename) return;
+        this.has_printed_filename = true;
+        print(this.title, this.prefix, this.repeat_info.count, this.repeat_info.index);
+    }
+};
+
 pub const CommandLineReporter = struct {
     jest: TestRunner,
     callback: TestRunner.Callback,
@@ -620,14 +669,7 @@ pub const CommandLineReporter = struct {
 
     file_reporter: ?FileReporter = null,
 
-    // Track current file info for CLAUDECODE mode
-    current_file_title: ?string = null,
-    current_file_prefix: ?string = null,
-    current_repeat_info: ?struct {
-        count: u32,
-        index: u32,
-    } = null,
-    filename_printed_for_current_file: bool = false,
+    current_file: CurrentFile = .{},
 
     pub const FileReporter = union(enum) {
         junit: *JunitReporter,
@@ -669,11 +711,8 @@ pub const CommandLineReporter = struct {
         const scopes: []*jest.DescribeScope = scopes_stack.slice();
         const display_label = if (label.len > 0) label else "test";
 
-        // In quiet mode (CLAUDECODE=1), only print failures to console
-        // but still handle JUnit reporting normally below
-        if (bun.getRuntimeFeatureFlag(.CLAUDECODE) and status != .fail) {
-            // Skip console output but continue to JUnit reporting
-        } else {
+        // Quieter output when claude code is in use.
+        if (!Output.isAIAgent() or status == .fail) {
             const color_code = comptime if (skip) "<d>" else "";
 
             if (Output.enable_ansi_colors_stderr) {
@@ -842,27 +881,6 @@ pub const CommandLineReporter = struct {
         return &this.jest.summary;
     }
 
-    pub fn printFilenameIfNeeded(this: *CommandLineReporter) void {
-        if (this.filename_printed_for_current_file) return;
-
-        if (this.current_file_title) |file_title| {
-            const file_prefix = this.current_file_prefix orelse "";
-
-            if (this.current_repeat_info) |repeat_info| {
-                if (repeat_info.count > 1) {
-                    Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_info.index + 1 });
-                } else {
-                    Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
-                }
-            } else {
-                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
-            }
-
-            Output.flush();
-            this.filename_printed_for_current_file = true;
-        }
-    }
-
     pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         const writer = Output.errorWriterBuffered();
         defer Output.flush();
@@ -884,10 +902,7 @@ pub const CommandLineReporter = struct {
         defer Output.flush();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
-        // In CLAUDECODE mode, print filename before first failure
-        if (bun.getRuntimeFeatureFlag(.CLAUDECODE)) {
-            this.printFilenameIfNeeded();
-        }
+        this.current_file.printIfNeeded();
 
         // when the tests fail, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
@@ -1352,9 +1367,11 @@ pub const TestCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         Output.is_github_action = Output.isGithubAction();
 
-        // print the version so you know its doing stuff if it takes a sec
-        Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        Output.flush();
+        if (!Output.isAIAgent()) {
+            // print the version so you know its doing stuff if it takes a sec
+            Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+            Output.flush();
+        }
 
         var env_loader = brk: {
             const map = try ctx.allocator.create(DotEnv.Map);
@@ -1616,16 +1633,24 @@ pub const TestCommand = struct {
         if (test_files.len == 0) {
             failed_to_find_any_tests = true;
 
-            if (ctx.positionals.len == 0) {
-                Output.prettyErrorln(
-                    \\<yellow>No tests found!<r>
-                    \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
-                    \\
-                , .{});
+            // "bun test" - positionals[0] == "test"
+            // Therefore positionals starts at [1].
+            if (ctx.positionals.len < 2) {
+                if (Output.isAIAgent()) {
+                    // Be very clear to ai.
+                    Output.errGeneric("0 test files matching **.{{test,spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} found in cwd {}", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
+                } else {
+                    // Be friendlier to humans.
+                    Output.prettyErrorln(
+                        \\<yellow>No tests found!<r>
+                        \\
+                        \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                        \\
+                    , .{});
+                }
             } else {
                 Output.prettyErrorln("<yellow>The following filters did not match any test files:<r>", .{});
                 var has_file_like: ?usize = null;
-                Output.prettyError(" ", .{});
                 for (ctx.positionals[1..], 1..) |filter, i| {
                     Output.prettyError(" {s}", .{filter});
 
@@ -1656,10 +1681,12 @@ pub const TestCommand = struct {
                     , .{ ctx.positionals[i], ctx.positionals[i] });
                 }
             }
-            Output.prettyError(
-                \\
-                \\Learn more about the test runner: <magenta>https://bun.com/docs/cli/test<r>
-            , .{});
+            if (!Output.isAIAgent()) {
+                Output.prettyError(
+                    \\
+                    \\Learn more about bun test: <magenta>https://bun.com/docs/cli/test<r>
+                , .{});
+            }
         } else {
             Output.prettyError("\n", .{});
 
@@ -1886,25 +1913,7 @@ pub const TestCommand = struct {
         vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
-            // Store filename info for CLAUDECODE mode
-            reporter.current_file_title = file_title;
-            reporter.current_file_prefix = file_prefix;
-            reporter.current_repeat_info = if (repeat_count > 1) .{ .count = repeat_count, .index = repeat_index } else null;
-            reporter.filename_printed_for_current_file = false;
-
-            if (bun.getRuntimeFeatureFlag(.CLAUDECODE)) {
-                // In CLAUDECODE mode, don't print filename immediately
-                // It will be printed by printFilenameIfNeeded when first failure occurs
-            } else {
-                // Normal mode - print filename immediately
-                if (repeat_count > 1) {
-                    Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });
-                } else {
-                    Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
-                }
-                Output.flush();
-                reporter.filename_printed_for_current_file = true;
-            }
+            reporter.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
 
             var promise = try vm.loadEntryPointForTestRunner(file_path);
             reporter.summary().files += 1;

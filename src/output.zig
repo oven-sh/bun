@@ -462,6 +462,55 @@ pub fn isGithubAction() bool {
     return false;
 }
 
+pub fn isAIAgent() bool {
+    const get_is_agent = struct {
+        var value = false;
+        fn evaluate() bool {
+            if (bun.getenvZ("IS_CODE_AGENT")) |env| {
+                return strings.eqlComptime(env, "1");
+            }
+
+            if (isVerbose()) {
+                return false;
+            }
+
+            // Claude Code.
+            if (bun.getenvTruthy("CLAUDECODE")) {
+                return true;
+            }
+
+            // Replit.
+            if (bun.getenvTruthy("REPL_ID")) {
+                return true;
+            }
+
+            // TODO: add environment variable for Gemini
+            // Gemini does not appear to add any environment variables to identify it.
+
+            // TODO: add environment variable for Codex
+            // codex does not appear to add any environment variables to identify it.
+
+            // TODO: add environment variable for Cursor Background Agents
+            // cursor does not appear to add any environment variables to identify it.
+
+            return false;
+        }
+
+        fn setValue() void {
+            value = evaluate();
+        }
+
+        var once = std.once(setValue);
+
+        pub fn isEnabled() bool {
+            once.call();
+            return value;
+        }
+    };
+
+    return get_is_agent.isEnabled();
+}
+
 pub fn isVerbose() bool {
     // Set by Github Actions when a workflow is run using debug mode.
     if (bun.getenvZ("RUNNER_DEBUG")) |value| {

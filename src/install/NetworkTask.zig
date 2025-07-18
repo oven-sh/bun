@@ -341,7 +341,6 @@ pub fn forTarball(
 const std = @import("std");
 
 const bun = @import("bun");
-const Environment = bun.Environment;
 const GlobalStringBuilder = bun.StringBuilder;
 const IdentityContext = bun.IdentityContext;
 const MutableString = bun.MutableString;

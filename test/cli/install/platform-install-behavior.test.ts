@@ -1,7 +1,7 @@
-import { spawn, env } from "bun";
+import { env, spawn } from "bun";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { existsSync } from "node:fs";
-import { writeFile, readdir, rm } from "node:fs/promises";
+import { readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 let package_dir = tmpdirSync();

@@ -43,12 +43,12 @@ $ bun build --compile --define BUILD_VERSION='"1.0.0"' --define BUILD_TIME='"202
 
 ```ts
 await Bun.build({
-  entrypoints: ['./src/index.ts'],
-  outdir: './dist',
+  entrypoints: ["./src/index.ts"],
+  outdir: "./dist",
   define: {
     BUILD_VERSION: '"1.0.0"',
     BUILD_TIME: '"2024-01-15T10:30:00Z"',
-    DEBUG: 'false',
+    DEBUG: "false",
   },
 });
 ```
@@ -100,12 +100,12 @@ declare const ENABLE_DEBUG: boolean;
 function trackEvent(event: string) {
   if (ENABLE_ANALYTICS) {
     // This entire block is removed if ENABLE_ANALYTICS is false
-    console.log('Tracking:', event);
+    console.log("Tracking:", event);
   }
 }
 
 if (ENABLE_DEBUG) {
-  console.log('Debug mode enabled');
+  console.log("Debug mode enabled");
 }
 ```
 
@@ -175,15 +175,15 @@ Create a build script that automatically injects build metadata:
 
 ```ts
 // build.ts
-import { $ } from 'bun';
+import { $ } from "bun";
 
 const version = await $`git describe --tags --always`.text();
 const buildTime = new Date().toISOString();
 const gitCommit = await $`git rev-parse HEAD`.text();
 
 await Bun.build({
-  entrypoints: ['./src/cli.ts'],
-  outdir: './dist',
+  entrypoints: ["./src/cli.ts"],
+  outdir: "./dist",
   define: {
     BUILD_VERSION: JSON.stringify(version.trim()),
     BUILD_TIME: JSON.stringify(buildTime),
@@ -244,17 +244,17 @@ This is particularly useful for environment variables:
 
 ```ts
 // Before compilation
-if (process.env.NODE_ENV === 'production') {
-  console.log('Production mode');
+if (process.env.NODE_ENV === "production") {
+  console.log("Production mode");
 }
 
 // After compilation with --define 'process.env.NODE_ENV="production"'
-if ("production" === 'production') {
-  console.log('Production mode');
+if ("production" === "production") {
+  console.log("Production mode");
 }
 
 // After optimization
-console.log('Production mode');
+console.log("Production mode");
 ```
 
 ### TypeScript declarations
@@ -265,7 +265,7 @@ For TypeScript projects, declare your constants to avoid type errors:
 // types/build-constants.d.ts
 declare const BUILD_VERSION: string;
 declare const BUILD_TIME: string;
-declare const NODE_ENV: 'development' | 'staging' | 'production';
+declare const NODE_ENV: "development" | "staging" | "production";
 declare const DEBUG: boolean;
 ```
 

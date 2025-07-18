@@ -45,6 +45,7 @@ pub const DiffFormatter = struct {
                 .ordered_properties = true,
                 .quote_strings = true,
                 .max_depth = 100,
+                .multiline_strings = true,
             };
             ConsoleObject.format2(
                 .Debug,

@@ -2,16 +2,10 @@ import { expect, test } from "bun:test";
 import { bunExe } from "harness";
 
 test("Bun.inspect", async () => {
-  expect(Bun.inspect("abc\ndef\nghi")).toMatchInlineSnapshot(`
-    ""abc
-     def
-     ghi""
-  `);
+  expect(Bun.inspect("abc\ndef\nghi")).toMatchInlineSnapshot(`""abc\\ndef\\nghi""`);
   expect(Bun.inspect({ a: "abc\ndef\nghi" })).toMatchInlineSnapshot(`
     "{
-      a: "abc
-       def
-       ghi",
+      a: "abc\\ndef\\nghi",
     }"
   `);
 });
@@ -29,10 +23,8 @@ test("console.log output", async () => {
   expect(stdout).toMatchInlineSnapshot(`
     "--- begin ---
     {
-      a: a,
-      multiline: "pub fn main() !void {
-           std.log.info(\\"Hello, {s}\\", .{name});
-       }",
+      a: "a",
+      multiline: "pub fn main() !void {\\n    std.log.info(\\"Hello, {s}\\", .{name});\\n}",
     }
     --- end ---
     "

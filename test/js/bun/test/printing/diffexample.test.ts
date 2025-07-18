@@ -32,17 +32,17 @@ test("no color", async () => {
                                    ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
       "a
-    -  b
+    - d
+    + b
+      c
+    - d
     +  d
-       c
-    -   d
-    +  d
-       e"
+      e"
 
+    - Expected  - 2
+    + Received  + 2
 
 
           at <anonymous> (FILE:LINE)
@@ -56,19 +56,19 @@ test("no color", async () => {
               ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
       {
-        object1: a,
-    -   object2: b,
-    +   object2:  b,
+        object1: "a",
+    -   object2: " b",
+    +   object2: "b",
         object3: "c
-    -    d
-    -    e",
-    +    d",
+    -   d",
+    +   d
+    +   e",
       }
 
+    - Expected  - 2
+    + Received  + 3
 
 
           at <anonymous> (FILE:LINE)
@@ -82,45 +82,45 @@ test("no color", async () => {
                                   ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
     @@ -98,7 +98,7 @@
-       line 98
-       line 99
-       line 100
-    +  line 101 - INSERTED
-       line 101
-       line 102
-       line 103
+      line 98
+      line 99
+      line 100
+    - line 101 - INSERTED
+      line 101
+      line 102
+      line 103
     @@ -498,7 +498,7 @@
-       line 497
-       line 498
-       line 499
-    -  line 500
-    +  line 500 - CHANGED
-       line 501
-       line 502
-       line 503
+      line 497
+      line 498
+      line 499
+    - line 500 - CHANGED
+    + line 500
+      line 501
+      line 502
+      line 503
     @@ -749,7 +749,7 @@
-       line 748
-       line 749
-       line 750
-    -  line 751
-    +  line 751 - MODIFIED
-       line 752
-       line 753
-       line 754
+      line 748
+      line 749
+      line 750
+    - line 751 - MODIFIED
+    + line 751
+      line 752
+      line 753
+      line 754
     @@ -899,7 +899,7 @@
-       line 898
-       line 899
-       line 900
-    -  line 901
-    +  line 901 - DIFFERENT
-       line 902
-       line 903
-       line 904
+      line 898
+      line 899
+      line 900
+    - line 901 - DIFFERENT
+    + line 901
+      line 902
+      line 903
+      line 904
 
+    - Expected  - 4
+    + Received  + 3
 
 
           at <anonymous> (FILE:LINE)
@@ -134,12 +134,12 @@ test("no color", async () => {
                                           ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
-    - \\u001B[31mhello\\u001B[0m
-    + \\u001B[32mhello\\u001B[0m
+    - "\\u001B[32mhello\\u001B[0m"
+    + "\\u001B[31mhello\\u001B[0m"
 
+    - Expected  - 0
+    + Received  + 0
 
 
           at <anonymous> (FILE:LINE)
@@ -153,12 +153,12 @@ test("no color", async () => {
                                    ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
-    - Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0D
-    + Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0E
+    - "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0E"
+    + "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0D"
 
+    - Expected  - 0
+    + Received  + 0
 
 
           at <anonymous> (FILE:LINE)
@@ -172,14 +172,14 @@ test("no color", async () => {
                                                                     ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
       "Line 1: 你好
-       Line 2: مرحبا
-    -  Line 3: Здравствуйте"
-    +  Line 3: Привет"
+      Line 2: مرحبا
+    - Line 3: Привет"
+    + Line 3: Здравствуйте"
 
+    - Expected  - 0
+    + Received  + 0
 
 
           at <anonymous> (FILE:LINE)
@@ -193,18 +193,18 @@ test("no color", async () => {
               ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
       {
-        arabic: اختبار,
-    -   chinese: 测试字符串,
-    +   chinese: 测试文本,
-        emoji: \\uD83D\\uDD25\\uD83D\\uDCA7\\uD83C\\uDF0A,
-    -   mixed: Hello 世界 \\uD83C\\uDF0D,
-    +   mixed: Hello 世界 \\uD83C\\uDF0E,
+        arabic: "اختبار",
+    -   chinese: "测试文本",
+    +   chinese: "测试字符串",
+        emoji: "\\uD83D\\uDD25\\uD83D\\uDCA7\\uD83C\\uDF0A",
+    -   mixed: "Hello 世界 \\uD83C\\uDF0E",
+    +   mixed: "Hello 世界 \\uD83C\\uDF0D",
       }
 
+    - Expected  - 2
+    + Received  + 2
 
 
           at <anonymous> (FILE:LINE)
@@ -218,12 +218,12 @@ test("no color", async () => {
                                       ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
-    - café résumé naïve
-    + café resumé naive
+    - "café resumé naive"
+    + "café résumé naïve"
 
+    - Expected  - 0
+    + Received  + 0
 
 
           at <anonymous> (FILE:LINE)
@@ -238,14 +238,14 @@ test("no color", async () => {
                                                                   ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
       "Línea 1: ñoño
-       Línea 2: àèìòù
-    -  Línea 3: äëïöü"
-    +  Línea 3: aeiou"
+      Línea 2: àèìòù
+    - Línea 3: aeiou"
+    + Línea 3: äëïöü"
 
+    - Expected  - 0
+    + Received  + 0
 
 
           at <anonymous> (FILE:LINE)
@@ -259,16 +259,16 @@ test("no color", async () => {
               ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
       {
-    -   french: crème brûlée,
-    +   french: crème brulée,
-        spanish: niño español,
-        special: ½ ¼ ¾ ± × ÷,
+    -   french: "crème brulée",
+    +   french: "crème brûlée",
+        spanish: "niño español",
+        special: "½ ¼ ¾ ± × ÷",
       }
 
+    - Expected  - 1
+    + Received  + 1
 
 
           at <anonymous> (FILE:LINE)
@@ -282,34 +282,52 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
-    @@ -1,12 +1,12 @@
       "line one
-       line two
-    -  line three!
-    +  line three
-       line four
-       line five
-    -  !-!six
-    +  line six
-       line seven
-       line eight
-    +  line nine (inserted only)
-       line ten
-       line 11
-       line 12
-    @@ -25,7 +25,7 @@
-       line 25
-       line 26
-       line 27
-    -  line 28!
-    +  line 28
-       line 29
-       line 30
-       line 31
+      line two
+    - line three
+    + line three!
+      line four
+      line five
+    - line six
+    + !-!six
+      line seven
+      line eight
+    - line nine (inserted only)
+      line ten
+      line 11
+      line 12
+      line 13
+      line 14
+      line 15
+      line 16
+      line 17
+      line 18
+      line 19
+      line 20
+      line 21
+      line 22
+      line 23
+      line 24
+      line 25
+      line 26
+      line 27
+    - line 28
+    + line 28!
+      line 29
+      line 30
+      line 31
+      line 32
+      line 33
+      line 34
+      line 35
+      line 36
+      line 37
+      line 38
+      line 39"
 
+    - Expected  - 4
+    + Received  + 3
 
 
           at <anonymous> (FILE:LINE)
@@ -323,61 +341,61 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
       "=== diffdiff ===
-       line one
-    -  line two!
-    +  line two
-    +  line three
-    +  line four
-    +  line five
-       line six
-       line seven
-       
-       === each line changed ===
-    -  line one?
-    -  line two
-    -  line three?
-    -  line four?
-    +  line one
-    +  line two!
-    +  line three
-    +  line four!
-       
-       === deleted ===
-       line one
-       line two
-    -  line three
-    -  line four
-    -  line five
-       line six
-       line seven
-       
-       === inserted ===
-       line one
-       line two
-    +  line three
-    +  line four
-    +  line five
-       line six
-       line seven
-       
-       === inserted newline ===
-       line one
-       line two
-    +  
-       line three
-       line four
-       line five
-       line six
-       line seven
-       
-    -  === has newline at end vs doesn't ==="
-    +  === has newline at end vs doesn't ===
-    +  "
+      line one
+    - line two
+    - line three
+    - line four
+    - line five
+    + line two!
+      line six
+      line seven
+      
+      === each line changed ===
+    - line one
+    - line two!
+    - line three
+    - line four!
+    + line one?
+    + line two
+    + line three?
+    + line four?
+      
+      === deleted ===
+      line one
+      line two
+    + line three
+    + line four
+    + line five
+      line six
+      line seven
+      
+      === inserted ===
+      line one
+      line two
+    - line three
+    - line four
+    - line five
+      line six
+      line seven
+      
+      === inserted newline ===
+      line one
+      line two
+    - 
+      line three
+      line four
+      line five
+      line six
+      line seven
+      
+    - === has newline at end vs doesn't ===
+    - "
+    + === has newline at end vs doesn't ==="
 
+    - Expected  - 13
+    + Received  + 8
 
 
           at <anonymous> (FILE:LINE)
@@ -391,12 +409,12 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
-    - \\"¡hello, world\\"
-    + \\"hello, world!\\"
+    - "\\"hello, world!\\""
+    + "\\"¡hello, world\\""
 
+    - Expected  - 0
+    + Received  + 0
 
 
           at <anonymous> (FILE:LINE)
@@ -410,12 +428,12 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
-    - Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0E!
-    + Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0D!
+    - "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0D!"
+    + "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0E!"
 
+    - Expected  - 0
+    + Received  + 0
 
 
           at <anonymous> (FILE:LINE)
@@ -429,18 +447,18 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
       "function main() {
-    -      if (true) {
-    -          print(\\"Hello, world!\\");
-    -          print(\\"Goodbye, world!\\");
-    -      }
-    +      print(\\"Hello, world!\\");
-    +      print(\\"Goodbye, world!\\");
-       }"
+    -     print(\\"Hello, world!\\");
+    -     print(\\"Goodbye, world!\\");
+    +     if (true) {
+    +         print(\\"Hello, world!\\");
+    +         print(\\"Goodbye, world!\\");
+    +     }
+      }"
 
+    - Expected  - 2
+    + Received  + 4
 
 
           at <anonymous> (FILE:LINE)
@@ -454,45 +472,45 @@ test("no color", async () => {
                                    ^
     error: expect(received).toEqual(expected)
 
-    - Received
-    + Expected
 
     @@ -98,7 +98,7 @@
-       line 97
-       line 98
-       line 99
-    -  line 100 - inserted
-    +  line 100
-       line 101
-       line 102
-       line 103
+      line 97
+      line 98
+      line 99
+    - line 100
+    + line 100 - inserted
+      line 101
+      line 102
+      line 103
     @@ -198,7 +198,7 @@
-       line 197
-       line 198
-       line 199
-    -  line 200
-    +  line 200 - deleted
-       line 201
-       line 202
-       line 203
+      line 197
+      line 198
+      line 199
+    - line 200 - deleted
+    + line 200
+      line 201
+      line 202
+      line 203
     @@ -298,7 +298,7 @@
-       line 297
-       line 298
-       line 299
-    -  line 300 - modified
-    +  modified - line 300
-       line 301
-       line 302
-       line 303
+      line 297
+      line 298
+      line 299
+    - modified - line 300
+    + line 300 - modified
+      line 301
+      line 302
+      line 303
     @@ -399,7 +399,7 @@
-       line 398
-       line 399
-       line 400
-    -  extra line!
-       line 401
-       line 402
-       line 403
+      line 398
+      line 399
+      line 400
+    + extra line!
+      line 401
+      line 402
+      line 403
 
+    - Expected  - 3
+    + Received  + 4
 
 
           at <anonymous> (FILE:LINE)
@@ -546,16 +564,17 @@ test("color", async () => {
                                  \x1B[31m\x1B[1m^\x1B[0m
     \x1B[0m\x1B[31merror\x1B[0m\x1B[2m:\x1B[0m \x1B[1m\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
-    \x1B[31m- Received\x1B[0m
-    \x1B[32m+ Expected\x1B[0m
 
       \x1B[0m\x1B[2m"a\x1B[0m
-    \x1B[31m- \x1B[0m\x1B[31m \x1B[0m\x1B[41mb\x1B[0m
-    \x1B[32m+ \x1B[0m\x1B[32m \x1B[0m\x1B[42md\x1B[0m
-      \x1B[0m\x1B[2m c\x1B[0m
-    \x1B[31m- \x1B[0m\x1B[41m \x1B[0m\x1B[31m d\x1B[0m
-    \x1B[32m+ \x1B[0m\x1B[32m d\x1B[0m
-      \x1B[0m\x1B[2m e"\x1B[0m"
+    \x1B[32m- \x1B[0m\x1B[42md\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[41mb\x1B[0m
+      \x1B[0m\x1B[2mc\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32md\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[41m \x1B[0m\x1B[31md\x1B[0m
+      \x1B[0m\x1B[2me"\x1B[0m
+
+    \x1B[32m- Expected  - 2\x1B[0m
+    \x1B[31m+ Received  + 2\x1B[0m"
   `);
   expect(await spawn.stdout.text()).toMatchInlineSnapshot(`""`);
   expect(spawn.exitCode).toBe(1);

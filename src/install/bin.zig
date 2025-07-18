@@ -704,7 +704,13 @@ pub const Bin = extern struct {
             defer bunx_file.close();
 
             const rel_target = path.relativeBufZ(this.rel_buf, path.dirname(abs_dest, .auto), abs_target);
-            bun.assertWithLocation(strings.hasPrefixComptime(rel_target, "..\\"), @src());
+            
+            if (!strings.hasPrefixComptime(rel_target, "..\\")) {
+                // This could happen if the target is not in a parent directory relative to the .bin directory
+                // which might indicate a malformed package or filesystem corruption
+                this.err = error.InvalidBinPath;
+                return;
+            }
 
             const rel_target_w = strings.toWPathNormalized(&target_buf, rel_target["..\\".len..]);
 
@@ -772,7 +778,12 @@ pub const Bin = extern struct {
             const abs_dest_dir = path.dirname(abs_dest, .auto);
             const rel_target = path.relativeBufZ(this.rel_buf, abs_dest_dir, abs_target);
 
-            bun.assertWithLocation(strings.hasPrefixComptime(rel_target, ".."), @src());
+            if (!strings.hasPrefixComptime(rel_target, "..")) {
+                // This could happen if the target is not in a parent directory relative to the .bin directory
+                // which might indicate a malformed package or filesystem corruption
+                this.err = error.InvalidBinPath;
+                return;
+            }
 
             switch (bun.sys.symlink(rel_target, abs_dest)) {
                 .err => |err| {

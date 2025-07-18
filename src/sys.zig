@@ -3802,7 +3802,7 @@ pub fn link(comptime T: type, src: [:0]const T, dest: [:0]const T) Maybe(void) {
     }
 
     const ret = std.c.link(src, dest);
-    if (Maybe(void).errnoSysP(ret, .link, src)) |err| {
+    if (Maybe(void).errnoSysPD(ret, .link, src, dest)) |err| {
         log("link({s}, {s}) = {s}", .{ src, dest, @tagName(err.getErrno()) });
         return err;
     }

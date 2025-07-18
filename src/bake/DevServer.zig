@@ -4183,8 +4183,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 const prev_dependency = &g.edges.items[prev.get()];
                 prev_dependency.next_dependency = edge.next_dependency;
             } else {
-                assert_eql(g.first_dep.items[edge.imported.get()].unwrap(), edge_index);
-                g.first_dep.items[edge.imported.get()] = .none;
+                // Only update first_dep if this edge is actually still the first dependency.
+                // This avoids assertion failures when an edge has already been disconnected.
+                if (g.first_dep.items[edge.imported.get()].unwrap()) |first_edge| {
+                    if (first_edge == edge_index) {
+                        g.first_dep.items[edge.imported.get()] = edge.next_dependency;
+                    }
+                }
             }
             if (edge.next_dependency.unwrap()) |next| {
                 const next_dependency = &g.edges.items[next.get()];

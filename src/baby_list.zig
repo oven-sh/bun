@@ -39,8 +39,8 @@ pub fn BabyList(comptime Type: type) type {
         }
         pub fn set(this: *@This(), slice_: []Type) void {
             this.ptr = slice_.ptr;
-            this.len = @as(u32, @truncate(slice_.len));
-            this.cap = @as(u32, @truncate(slice_.len));
+            this.len = @intCast(slice_.len);
+            this.cap = @intCast(slice_.len);
         }
 
         pub fn available(this: *@This()) []Type {
@@ -85,8 +85,8 @@ pub fn BabyList(comptime Type: type) type {
             return ListType{
                 // Remove the const qualifier from the items
                 .ptr = @constCast(items.ptr),
-                .len = @as(u32, @truncate(items.len)),
-                .cap = @as(u32, @truncate(items.len)),
+                .len = @intCast(items.len),
+                .cap = @intCast(items.len),
             };
         }
 
@@ -106,8 +106,8 @@ pub fn BabyList(comptime Type: type) type {
             const copy = try this.list().clone(allocator);
             return ListType{
                 .ptr = copy.items.ptr,
-                .len = @as(u32, @truncate(copy.items.len)),
-                .cap = @as(u32, @truncate(copy.capacity)),
+                .len = @intCast(copy.items.len),
+                .cap = @intCast(copy.capacity),
             };
         }
 
@@ -167,7 +167,7 @@ pub fn BabyList(comptime Type: type) type {
         pub fn writableSlice(this: *@This(), allocator: std.mem.Allocator, cap: usize) ![]Type {
             var list_ = this.listManaged(allocator);
             try list_.ensureUnusedCapacity(cap);
-            const writable = list_.items.ptr[this.len .. this.len + @as(u32, @truncate(cap))];
+            const writable = list_.items.ptr[this.len .. this.len + @as(u32, @intCast(cap))];
             list_.items.len += cap;
             this.update(list_);
             return writable;
@@ -175,9 +175,9 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn appendSliceAssumeCapacity(this: *@This(), values: []const Type) void {
             const tail = this.ptr[this.len .. this.len + values.len];
-            bun.assert(this.cap >= this.len + @as(u32, @truncate(values.len)));
+            bun.assert(this.cap >= this.len + @as(u32, @intCast(values.len)));
             bun.copy(Type, tail, values);
-            this.len += @as(u32, @truncate(values.len));
+            this.len += @intCast(values.len);
             bun.assert(this.cap >= this.len);
         }
 
@@ -191,7 +191,7 @@ pub fn BabyList(comptime Type: type) type {
             return ListType{
                 .ptr = buffer.ptr,
                 .len = 0,
-                .cap = @as(u32, @truncate(buffer.len)),
+                .cap = @intCast(buffer.len),
             };
         }
 
@@ -199,8 +199,8 @@ pub fn BabyList(comptime Type: type) type {
             @setRuntimeSafety(false);
             return ListType{
                 .ptr = @constCast(items.ptr),
-                .len = @as(u32, @truncate(items.len)),
-                .cap = @as(u32, @truncate(items.len)),
+                .len = @intCast(items.len),
+                .cap = @intCast(items.len),
             };
         }
 
@@ -219,8 +219,8 @@ pub fn BabyList(comptime Type: type) type {
 
             return ListType{
                 .ptr = list_.items.ptr,
-                .len = @as(u32, @truncate(list_.items.len)),
-                .cap = @as(u32, @truncate(list_.capacity)),
+                .len = @intCast(list_.items.len),
+                .cap = @intCast(list_.capacity),
             };
         }
 
@@ -230,8 +230,8 @@ pub fn BabyList(comptime Type: type) type {
 
             return ListType{
                 .ptr = allocated.ptr,
-                .len = @as(u32, @truncate(allocated.len)),
-                .cap = @as(u32, @truncate(allocated.len)),
+                .len = @intCast(allocated.len),
+                .cap = @intCast(allocated.len),
                 .alloc_ptr = .init(allocator),
             };
         }
@@ -245,8 +245,8 @@ pub fn BabyList(comptime Type: type) type {
         pub fn update(this: *ListType, list_: anytype) void {
             this.* = .{
                 .ptr = list_.items.ptr,
-                .len = @as(u32, @truncate(list_.items.len)),
-                .cap = @as(u32, @truncate(list_.capacity)),
+                .len = @intCast(list_.items.len),
+                .cap = @intCast(list_.capacity),
             };
 
             if (comptime Environment.allow_assert) {

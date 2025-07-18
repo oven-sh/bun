@@ -33,7 +33,7 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
     const actual = uws.Loop.get();
     this.gc_timer = uws.Timer.createFallthrough(actual, this);
     this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
-    actual.internal_loop_data.jsc_vm = vm.jsc;
+    actual.internal_loop_data.jsc_vm = vm.jsc.get();
 
     if (comptime Environment.isDebug) {
         if (bun.getenvZ("BUN_TRACK_LAST_FN_NAME") != null) {
@@ -114,7 +114,7 @@ pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.C) void {
 
 pub fn processGCTimer(this: *GarbageCollectionController) void {
     if (this.disabled) return;
-    var vm = this.bunVM().jsc;
+    var vm = this.bunVM().jsc.get();
     this.processGCTimerWithHeapSize(vm, vm.blockBytesAllocated());
 }
 
@@ -155,7 +155,7 @@ fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *JSC.VM, t
 
 pub fn performGC(this: *GarbageCollectionController) void {
     if (this.disabled) return;
-    var vm = this.bunVM().jsc;
+    var vm = this.bunVM().jsc.get();
     vm.collectAsync();
     this.gc_last_heap_size = vm.blockBytesAllocated();
 }

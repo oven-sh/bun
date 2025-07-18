@@ -46,7 +46,7 @@ dns_result_order: DNSResolver.Order = .verbatim,
 counters: Counters = .{},
 
 hot_reload: bun.CLI.Command.HotReload = .none,
-jsc: *VM = undefined,
+jsc: CheckedUninit(*VM) = .{},
 
 /// hide bun:wrap from stack traces
 /// bun:wrap is very noisy
@@ -1018,8 +1018,8 @@ pub fn initWithModuleGraph(
         null,
     );
     vm.regular_event_loop.global = vm.global;
-    vm.jsc = vm.global.vm();
-    uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
+    vm.jsc.set(vm.global.vm());
+    uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc.get();
 
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
@@ -1136,8 +1136,8 @@ pub fn init(opts: Options) !*VirtualMachine {
         null,
     );
     vm.regular_event_loop.global = vm.global;
-    vm.jsc = vm.global.vm();
-    uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
+    vm.jsc.set(vm.global.vm());
+    uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc.get();
     vm.smol = opts.smol;
     vm.dns_result_order = opts.dns_result_order;
 
@@ -1299,8 +1299,8 @@ pub fn initWorker(
         worker.cpp_worker,
     );
     vm.regular_event_loop.global = vm.global;
-    vm.jsc = vm.global.vm();
-    uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
+    vm.jsc.set(vm.global.vm());
+    uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc.get();
     vm.transpiler.setAllocator(allocator);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
@@ -1945,7 +1945,7 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
 
     const writer = buffered_writer.writer();
 
-    if (result.asException(this.jsc)) |exception| {
+    if (result.asException(this.jsc.get())) |exception| {
         this.printException(
             exception,
             exception_list,
@@ -3680,3 +3680,4 @@ const DotEnv = bun.DotEnv;
 const HotReloader = JSC.hot_reloader.HotReloader;
 const Body = webcore.Body;
 const Counters = @import("./Counters.zig");
+const CheckedUninit = bun.CheckedUninit;

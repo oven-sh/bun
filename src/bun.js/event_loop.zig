@@ -70,7 +70,7 @@ pub fn exit(this: *EventLoop) void {
     defer this.debug.exit();
 
     if (count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
-        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc) catch {};
+        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc.get()) catch {};
     }
 
     this.entered_event_loop_count -= 1;
@@ -83,7 +83,7 @@ pub fn exitMaybeDrainMicrotasks(this: *EventLoop, allow_drain_microtask: bool) b
     defer this.debug.exit();
 
     if (allow_drain_microtask and count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
-        try this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+        try this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc.get());
     }
 
     this.entered_event_loop_count -= 1;
@@ -127,13 +127,13 @@ pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalOb
 }
 
 pub fn drainMicrotasks(this: *EventLoop) bun.JSExecutionTerminated!void {
-    try this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+    try this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc.get());
 }
 
 // should be called after exit()
 pub fn maybeDrainMicrotasks(this: *EventLoop) void {
     if (this.entered_event_loop_count == 0 and !this.virtual_machine.is_inside_deferred_task_queue) {
-        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc) catch {};
+        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc.get()) catch {};
     }
 }
 
@@ -463,7 +463,7 @@ pub fn tick(this: *EventLoop) void {
     this.processGCTimer();
 
     const global = ctx.global;
-    const global_vm = ctx.jsc;
+    const global_vm = ctx.jsc.get();
 
     while (true) {
         while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
@@ -485,7 +485,7 @@ pub fn tick(this: *EventLoop) void {
 }
 
 pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
-    const jsc_vm = this.virtual_machine.jsc;
+    const jsc_vm = this.virtual_machine.jsc.get();
     switch (promise.status(jsc_vm)) {
         .pending => {
             while (promise.status(jsc_vm) == .pending) {
@@ -502,7 +502,7 @@ pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
 
 pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) void {
     const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
-    const jsc_vm = this.virtual_machine.jsc;
+    const jsc_vm = this.virtual_machine.jsc.get();
     switch (promise.status(jsc_vm)) {
         .pending => {
             while (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {

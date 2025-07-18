@@ -319,6 +319,7 @@ src/bundler/ServerComponentParseTask.zig
 src/bundler/ThreadPool.zig
 src/bunfig.zig
 src/cache.zig
+src/CheckedUninit.zig
 src/ci_info.zig
 src/cli.zig
 src/cli/add_command.zig

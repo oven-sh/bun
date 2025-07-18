@@ -2250,7 +2250,7 @@ pub fn spawnMaybeSync(
         !stdio[2].isPiped() and
         extra_fds.items.len == 0 and
         !jsc_vm.auto_killer.enabled and
-        !jsc_vm.jsc.hasExecutionTimeLimit() and
+        !jsc_vm.jsc.get().hasExecutionTimeLimit() and
         !jsc_vm.isInspectorEnabled() and
         !bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH);
 

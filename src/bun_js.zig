@@ -437,7 +437,7 @@ pub const Run = struct {
                     const to_print = brk: {
                         const result: JSC.JSValue = vm.entry_point_result.value.get() orelse .js_undefined;
                         if (result.asAnyPromise()) |promise| {
-                            switch (promise.status(vm.jsc)) {
+                            switch (promise.status(vm.jsc.get())) {
                                 .pending => {
                                     result._then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
 
@@ -451,7 +451,7 @@ pub const Run = struct {
 
                                     break :brk result;
                                 },
-                                else => break :brk promise.result(vm.jsc),
+                                else => break :brk promise.result(vm.jsc.get()),
                             }
                         }
 

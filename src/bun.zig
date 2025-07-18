@@ -3767,3 +3767,5 @@ pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item)
         else => std.mem.indexOfScalar(T, list.items, item) != null,
     };
 }
+
+pub const CheckedUninit = @import("./CheckedUninit.zig").CheckedUninit;

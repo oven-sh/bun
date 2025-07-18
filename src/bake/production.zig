@@ -40,7 +40,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     // that bypass Bun's normal module resolver and plugin system.
     vm.global = BakeCreateProdGlobal(vm.console);
     vm.regular_event_loop.global = vm.global;
-    vm.jsc = vm.global.vm();
+    vm.jsc.set(vm.global.vm());
     vm.event_loop.ensureWaker();
     const b = &vm.transpiler;
     vm.preload = ctx.preloads;
@@ -80,7 +80,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     vm.is_main_thread = true;
     JSC.VirtualMachine.is_main_thread_vm = true;
 
-    const api_lock = vm.jsc.getAPILock();
+    const api_lock = vm.jsc.get().getAPILock();
     defer api_lock.release();
     buildWithVm(ctx, cwd, vm) catch |err| switch (err) {
         error.JSError => |e| {
@@ -136,9 +136,9 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         return error.JSError;
     };
 
-    config_promise.setHandled(vm.jsc);
+    config_promise.setHandled(vm.jsc.get());
     vm.waitForPromise(.{ .internal = config_promise });
-    var options = switch (config_promise.unwrap(vm.jsc, .mark_handled)) {
+    var options = switch (config_promise.unwrap(vm.jsc.get(), .mark_handled)) {
         .pending => unreachable,
         .fulfilled => |resolved| config: {
             bun.assert(resolved.isUndefined());
@@ -549,9 +549,9 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         route_param_info,
         route_style_references,
     );
-    render_promise.setHandled(vm.jsc);
+    render_promise.setHandled(vm.jsc.get());
     vm.waitForPromise(.{ .normal = render_promise });
-    switch (render_promise.unwrap(vm.jsc, .mark_handled)) {
+    switch (render_promise.unwrap(vm.jsc.get(), .mark_handled)) {
         .pending => unreachable,
         .fulfilled => {
             Output.prettyln("done", .{});
@@ -568,9 +568,9 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
 /// quits the process on exception
 fn loadModule(vm: *VirtualMachine, global: *JSC.JSGlobalObject, key: JSValue) !JSValue {
     const promise = BakeLoadModuleByKey(global, key).asAnyPromise().?.internal;
-    promise.setHandled(vm.jsc);
+    promise.setHandled(vm.jsc.get());
     vm.waitForPromise(.{ .internal = promise });
-    switch (promise.unwrap(vm.jsc, .mark_handled)) {
+    switch (promise.unwrap(vm.jsc.get(), .mark_handled)) {
         .pending => unreachable,
         .fulfilled => |val| {
             bun.assert(val.isUndefined());

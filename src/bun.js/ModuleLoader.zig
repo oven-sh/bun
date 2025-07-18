@@ -2144,7 +2144,7 @@ pub const RuntimeTranspilerStore = struct {
 
     pub fn runFromJSThread(this: *RuntimeTranspilerStore, event_loop: *JSC.EventLoop, global: *JSC.JSGlobalObject, vm: *JSC.VirtualMachine) void {
         var batch = this.queue.popBatch();
-        const jsc_vm = vm.jsc;
+        const jsc_vm = vm.jsc.get();
         var iter = batch.iterator();
         if (iter.next()) |job| {
             // we run just one job first to see if there are more

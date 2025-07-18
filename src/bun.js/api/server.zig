@@ -2239,7 +2239,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             const ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
             ctx.create(this, req, resp, should_deinit_context, method);
-            this.vm.jsc.reportExtraMemory(@sizeOf(RequestContext));
+            this.vm.jsc.get().reportExtraMemory(@sizeOf(RequestContext));
             const body = this.vm.initRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;

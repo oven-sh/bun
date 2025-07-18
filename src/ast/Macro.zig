@@ -198,7 +198,7 @@ pub fn init(
 
     const loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
 
-    switch (loaded_result.unwrap(vm.jsc, .leave_unhandled)) {
+    switch (loaded_result.unwrap(vm.jsc.get(), .leave_unhandled)) {
         .rejected => |result| {
             vm.unhandledRejection(vm.global, result, loaded_result.asValue());
             vm.disableMacroMode();
@@ -502,8 +502,8 @@ pub const Runner = struct {
 
                     this.macro.vm.waitForPromise(promise);
 
-                    const promise_result = promise.result(this.macro.vm.jsc);
-                    const rejected = promise.status(this.macro.vm.jsc) == .rejected;
+                    const promise_result = promise.result(this.macro.vm.jsc.get());
+                    const rejected = promise.status(this.macro.vm.jsc.get()) == .rejected;
 
                     if (promise_result.isUndefined() and this.is_top_level) {
                         this.is_top_level = false;

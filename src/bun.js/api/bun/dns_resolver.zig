@@ -1871,7 +1871,7 @@ pub const DNSResolver = struct {
     options: c_ares.ChannelOptions = .{},
 
     event_loop_timer: EventLoopTimer = .{
-        .next = .{},
+        .next = .epoch,
         .tag = .DNSResolver,
     },
 

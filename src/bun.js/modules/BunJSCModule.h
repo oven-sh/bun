@@ -644,9 +644,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (callbackValue.isUndefinedOrNull() || !callbackValue.isCallable()) {
-        throwException(
-            globalObject, throwScope,
-            createTypeError(globalObject, "First argument must be a function."_s));
+        throwException(globalObject, throwScope, createTypeError(globalObject, "First argument must be a function."_s));
         return JSValue::encode(JSValue {});
     }
 
@@ -654,8 +652,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
     if (sampleValue.isNumber()) {
         unsigned sampleInterval = sampleValue.toUInt32(globalObject);
-        samplingProfiler.setTimingInterval(
-            Seconds::fromMicroseconds(sampleInterval));
+        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval));
     }
 
     const auto report = [](JSC::VM& vm,
@@ -669,19 +666,15 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         StringPrintStream byteCodes;
         samplingProfiler.reportTopBytecodes(byteCodes);
 
-        JSValue stackTraces = JSONParse(
-            globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
+        JSValue stackTraces = JSONParse(globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
 
         samplingProfiler.shutdown();
         RETURN_IF_EXCEPTION(throwScope, {});
 
         JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-        result->putDirect(vm, Identifier::fromString(vm, "functions"_s),
-            jsString(vm, topFunctions.toString()));
-        result->putDirect(vm, Identifier::fromString(vm, "bytecodes"_s),
-            jsString(vm, byteCodes.toString()));
-        result->putDirect(vm, Identifier::fromString(vm, "stackTraces"_s),
-            stackTraces);
+        result->putDirect(vm, Identifier::fromString(vm, "functions"_s), jsString(vm, topFunctions.toString()));
+        result->putDirect(vm, Identifier::fromString(vm, "bytecodes"_s), jsString(vm, byteCodes.toString()));
+        result->putDirect(vm, Identifier::fromString(vm, "stackTraces"_s), stackTraces);
 
         return result;
     };
@@ -712,8 +705,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         JSNativeStdFunction* resolve = JSNativeStdFunction::create(
             vm, globalObject, 0, "resolve"_s,
             [report](JSGlobalObject* globalObject, CallFrame* callFrame) {
-                return JSValue::encode(JSPromise::resolvedPromise(
-                    globalObject, report(globalObject->vm(), globalObject)));
+                return JSValue::encode(JSPromise::resolvedPromise(globalObject, report(globalObject->vm(), globalObject)));
             });
         JSNativeStdFunction* reject = JSNativeStdFunction::create(
             vm, globalObject, 0, "reject"_s,
@@ -724,8 +716,8 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
                 throwException(globalObject, scope, error.value());
                 return JSValue::encode({});
             });
-        promise->performPromiseThen(globalObject, resolve, reject,
-            afterOngoingPromiseCapability);
+        promise->performPromiseThen(globalObject, resolve, reject, afterOngoingPromiseCapability);
+        RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(afterOngoingPromiseCapability);
     }
 

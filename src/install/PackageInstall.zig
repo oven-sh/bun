@@ -71,7 +71,7 @@ pub const PackageInstall = struct {
         packages_with_blocked_scripts: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, usize) = .{},
     };
 
-    pub const Method = enum {
+    pub const Method = enum(u8) {
         clonefile,
 
         /// Slower than clonefile

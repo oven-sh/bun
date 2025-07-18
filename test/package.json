@@ -101,7 +101,9 @@
   },
   "private": true,
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bd:v": "(bun run --silent --cwd=../ build:debug &> /tmp/bun.debug.build.log || (cat /tmp/bun.debug.build.log && rm -rf /tmp/bun.debug.build.log && exit 1)) && rm -f /tmp/bun.debug.build.log && ../build/debug/bun-debug",
+    "bd": "BUN_DEBUG_QUIET_LOGS=1 bun --silent bd:v"
   },
   "resolutions": {
     "react": "../node_modules/react"

@@ -256,6 +256,10 @@ pub const ParserError = union(enum) {
     unexpected_token: css.Token,
     /// Maximum nesting depth was reached.
     maximum_nesting_depth,
+    unexpected_value: struct {
+        expected: []const u8,
+        received: []const u8,
+    },
 
     pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (this) {
@@ -275,6 +279,7 @@ pub const ParserError = union(enum) {
             .unexpected_namespace_rule => writer.writeAll("@namespace rules must come before any other rules except @charset, @import, and @layer"),
             .unexpected_token => |token| writer.print("Unexpected token: {}", .{token}),
             .maximum_nesting_depth => writer.writeAll("Maximum CSS nesting depth exceeded"),
+            .unexpected_value => |v| writer.print("Expected {s}, received {s}", .{ v.expected, v.received }),
         };
     }
 };

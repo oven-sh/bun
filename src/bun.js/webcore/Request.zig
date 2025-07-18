@@ -7,6 +7,7 @@ _headers: ?*FetchHeaders = null,
 signal: ?*AbortSignal = null,
 body: *Body.Value.HiveRef,
 method: Method = Method.GET,
+redirect: FetchRedirect = .follow,
 request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
 https: bool = false,
 weak_ptr_data: WeakRef.Data = .empty,
@@ -66,8 +67,8 @@ pub export fn Request__setTimeout(this: *Request, seconds: JSC.JSValue, globalTh
     this.setTimeout(seconds.to(c_uint));
 }
 
-pub export fn Request__clone(this: *Request, globalThis: *JSC.JSGlobalObject) *Request {
-    return this.clone(bun.default_allocator, globalThis);
+pub export fn Request__clone(this: *Request, globalThis: *JSC.JSGlobalObject) ?*Request {
+    return this.clone(bun.default_allocator, globalThis) catch null;
 }
 
 comptime {
@@ -217,7 +218,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
-        try formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+        try formatter.printAs(.Private, Writer, writer, try this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
 
         if (this.body.value == .Blob) {
             try writer.writeAll("\n");
@@ -348,10 +349,12 @@ pub fn finalize(this: *Request) void {
 }
 
 pub fn getRedirect(
-    _: *Request,
+    this: *Request,
     globalThis: *JSC.JSGlobalObject,
 ) JSC.JSValue {
-    return ZigString.init("follow").toJS(globalThis);
+    return switch (this.redirect) {
+        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
+    };
 }
 pub fn getReferrer(
     this: *Request,
@@ -499,7 +502,7 @@ const Fields = enum {
     // referrerPolicy,
     // mode,
     // credentials,
-    // redirect,
+    redirect,
     // integrity,
     // keepalive,
     signal,
@@ -568,7 +571,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
         if (value_type == .DOMWrapper) {
             if (value.asDirect(Request)) |request| {
                 if (values_to_try.len == 1) {
-                    request.cloneInto(&req, globalThis.allocator(), globalThis, fields.contains(.url));
+                    try request.cloneInto(&req, globalThis.allocator(), globalThis, fields.contains(.url));
                     success = true;
                     return req;
                 }
@@ -578,8 +581,13 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
                     fields.insert(.method);
                 }
 
+                if (!fields.contains(.redirect)) {
+                    req.redirect = request.redirect;
+                    fields.insert(.redirect);
+                }
+
                 if (!fields.contains(.headers)) {
-                    if (request.cloneHeaders(globalThis)) |headers| {
+                    if (try request.cloneHeaders(globalThis)) |headers| {
                         req._headers = headers;
                         fields.insert(.headers);
                     }
@@ -591,8 +599,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
                     switch (request.body.value) {
                         .Null, .Empty, .Used => {},
                         else => {
-                            req.body.value = request.body.value.clone(globalThis);
-                            if (globalThis.hasException()) return error.JSError;
+                            req.body.value = try request.body.value.clone(globalThis);
                             fields.insert(.body);
                         },
                     }
@@ -607,7 +614,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
 
                 if (!fields.contains(.headers)) {
                     if (response.init.headers) |headers| {
-                        req._headers = headers.cloneThis(globalThis);
+                        req._headers = try headers.cloneThis(globalThis);
                         fields.insert(.headers);
                     }
                 }
@@ -623,7 +630,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
                     switch (response.body.value) {
                         .Null, .Empty, .Used => {},
                         else => {
-                            req.body.value = response.body.value.clone(globalThis);
+                            req.body.value = try response.body.value.clone(globalThis);
                             fields.insert(.body);
                         },
                     }
@@ -706,6 +713,14 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
 
             if (globalThis.hasException()) return error.JSError;
         }
+
+        // Extract redirect option
+        if (!fields.contains(.redirect)) {
+            if (try value.getOptionalEnum(globalThis, "redirect", FetchRedirect)) |redirect_value| {
+                req.redirect = redirect_value;
+                fields.insert(.redirect);
+            }
+        }
     }
 
     if (globalThis.hasException()) {
@@ -740,7 +755,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
         req.body.value.Blob.content_type.len > 0 and
         !req._headers.?.fastHas(.ContentType))
     {
-        req._headers.?.put(.ContentType, req.body.value.Blob.content_type, globalThis);
+        try req._headers.?.put(.ContentType, req.body.value.Blob.content_type, globalThis);
     }
 
     req.calculateEstimatedByteSize();
@@ -769,12 +784,7 @@ pub fn doClone(
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
     const this_value = callframe.this();
-    var cloned = this.clone(bun.default_allocator, globalThis);
-
-    if (globalThis.hasException()) {
-        cloned.finalize();
-        return .zero;
-    }
+    const cloned = try this.clone(bun.default_allocator, globalThis);
 
     const js_wrapper = cloned.toJS(globalThis);
     if (js_wrapper != .zero) {
@@ -819,7 +829,7 @@ pub fn setFetchHeaders(
 pub fn ensureFetchHeaders(
     this: *Request,
     globalThis: *JSC.JSGlobalObject,
-) *FetchHeaders {
+) bun.JSError!*FetchHeaders {
     if (this._headers) |headers| {
         // headers is already set
         return headers;
@@ -841,8 +851,9 @@ pub fn ensureFetchHeaders(
         };
 
         if (content_type) |content_type_| {
-            if (content_type_.len > 0)
-                this._headers.?.put(.ContentType, content_type_, globalThis);
+            if (content_type_.len > 0) {
+                try this._headers.?.put(.ContentType, content_type_, globalThis);
+            }
         }
     }
 
@@ -877,11 +888,11 @@ pub fn getFetchHeaders(
 pub fn getHeaders(
     this: *Request,
     globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    return this.ensureFetchHeaders(globalThis).toJS(globalThis);
+) bun.JSError!JSC.JSValue {
+    return (try this.ensureFetchHeaders(globalThis)).toJS(globalThis);
 }
 
-pub fn cloneHeaders(this: *Request, globalThis: *JSGlobalObject) ?*FetchHeaders {
+pub fn cloneHeaders(this: *Request, globalThis: *JSGlobalObject) bun.JSError!?*FetchHeaders {
     if (this._headers == null) {
         if (this.request_context.getRequest()) |uws_req| {
             this._headers = FetchHeaders.createFromUWS(uws_req);
@@ -905,23 +916,24 @@ pub fn cloneInto(
     allocator: std.mem.Allocator,
     globalThis: *JSGlobalObject,
     preserve_url: bool,
-) void {
+) bun.JSError!void {
     _ = allocator;
     this.ensureURL() catch {};
     const vm = globalThis.bunVM();
-    const body = vm.initRequestBodyValue(this.body.value.clone(globalThis)) catch {
-        if (!globalThis.hasException()) {
-            globalThis.throw("Failed to clone request", .{}) catch {};
-        }
-        return;
-    };
-    const original_url = req.url;
+    var body_ = try this.body.value.clone(globalThis);
+    errdefer body_.deinit();
+    const body = try vm.initRequestBodyValue(body_);
+    const url = if (preserve_url) req.url else this.url.dupeRef();
+    errdefer if (!preserve_url) url.deref();
+    const _headers = try this.cloneHeaders(globalThis);
+    errdefer if (_headers) |_h| _h.deref();
 
     req.* = Request{
         .body = body,
-        .url = if (preserve_url) original_url else this.url.dupeRef(),
+        .url = url,
         .method = this.method,
-        ._headers = this.cloneHeaders(globalThis),
+        .redirect = this.redirect,
+        ._headers = _headers,
     };
 
     if (this.signal) |signal| {
@@ -929,9 +941,10 @@ pub fn cloneInto(
     }
 }
 
-pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Request {
+pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) bun.JSError!*Request {
     const req = Request.new(undefined);
-    this.cloneInto(req, allocator, globalThis, false);
+    errdefer bun.destroy(req);
+    try this.cloneInto(req, allocator, globalThis, false);
     return req;
 }
 
@@ -948,6 +961,7 @@ const MimeType = bun.http.MimeType;
 const JSC = bun.JSC;
 
 const Method = @import("../../http/Method.zig").Method;
+const FetchRedirect = @import("../../http/FetchRedirect.zig").FetchRedirect;
 const FetchHeaders = bun.webcore.FetchHeaders;
 const AbortSignal = JSC.WebCore.AbortSignal;
 const Output = bun.Output;

@@ -558,8 +558,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
     // (bun/src/env.zig:36) and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
-    auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(
-        dlsym(handle, "napi_register_module_v1"));
+    auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(handle, "napi_register_module_v1"));
 
     auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
 
@@ -1114,9 +1113,9 @@ extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGl
     }
 
     if (decodedReason.isInt32())
-        return JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject)));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject))));
     if (decodedReason.isDouble())
-        return JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject)));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject))));
     if (decodedReason.isTrue())
         return JSC::JSValue::encode(vm.smallStrings.trueString());
     if (decodedReason.isFalse())
@@ -1128,7 +1127,7 @@ extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGl
     if (decodedReason.isString())
         return JSC::JSValue::encode(decodedReason);
     if (decodedReason.isBigInt())
-        return JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject)));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject))));
     return JSC::JSValue::encode(vm.smallStrings.objectObjectString());
 }
 
@@ -2800,7 +2799,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "contextify"_s) PROCESS_BINDING_NOT_IMPLEMENTED("contextify");
     if (moduleName == "crypto"_s) PROCESS_BINDING_NOT_IMPLEMENTED("crypto");
     if (moduleName == "crypto/x509"_s) return JSValue::encode(createCryptoX509Object(globalObject));
-    if (moduleName == "fs"_s) return JSValue::encode(globalObject->processBindingFs());
+    if (moduleName == "fs"_s) RELEASE_AND_RETURN(throwScope, JSValue::encode(globalObject->processBindingFs()));
     if (moduleName == "fs_event_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("fs_event_wrap");
     if (moduleName == "http_parser"_s) return JSValue::encode(globalObject->processBindingHTTPParser());
     if (moduleName == "icu"_s) PROCESS_BINDING_NOT_IMPLEMENTED("icu");

@@ -152,6 +152,7 @@ pub const Subcommand = enum {
     publish,
     audit,
     info,
+    why,
 
     // bin,
     // hash,

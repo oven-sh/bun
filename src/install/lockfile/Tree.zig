@@ -371,7 +371,7 @@ pub fn isFilteredDependencyOrWorkspace(
         return false;
     }
 
-    if (!dep.behavior.isWorkspaceOnly()) {
+    if (!dep.behavior.isWorkspace()) {
         if (!install_root_dependencies) {
             return true;
         }

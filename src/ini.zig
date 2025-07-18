@@ -1031,9 +1031,49 @@ pub fn loadNpmrc(
         }
     }
 
-    if (out.get("ignore-scripts")) |ignore_scripts| {
-        if (ignore_scripts.isBoolean()) {
-            install.ignore_scripts = ignore_scripts.data.e_boolean.value;
+    if (out.get("ignore-scripts")) |*ignore_scripts| {
+        if (ignore_scripts.asBool()) |ignore| {
+            install.ignore_scripts = ignore;
+        }
+    }
+
+    if (out.get("link-workspace-packages")) |*link_workspace_packages| {
+        if (link_workspace_packages.asBool()) |link| {
+            install.link_workspace_packages = link;
+        }
+    }
+
+    if (out.get("save-exact")) |*save_exact| {
+        if (save_exact.asBool()) |exact| {
+            install.exact = exact;
+        }
+    }
+
+    if (out.get("install-strategy")) |install_strategy_expr| {
+        if (install_strategy_expr.asString(allocator)) |install_strategy_str| {
+            if (bun.strings.eqlComptime(install_strategy_str, "hoisted")) {
+                install.node_linker = .hoisted;
+            } else if (bun.strings.eqlComptime(install_strategy_str, "linked")) {
+                install.node_linker = .isolated;
+            } else if (bun.strings.eqlComptime(install_strategy_str, "nested")) {
+                // TODO
+            } else if (bun.strings.eqlComptime(install_strategy_str, "shallow")) {
+                // TODO
+            }
+        }
+    }
+
+    if (out.get("node-linker")) |node_linker_expr| {
+        if (node_linker_expr.asString(allocator)) |node_linker_str| {
+            install.node_linker = bun.install.PackageManager.Options.NodeLinker.fromStr(node_linker_str) orelse
+                if (bun.strings.eqlComptime(node_linker_str, "pnpm"))
+                    // yarn
+                    .isolated
+                else if (bun.strings.eqlComptime(node_linker_str, "node-modules"))
+                    // yarn
+                    .hoisted
+                else
+                    null;
         }
     }
 

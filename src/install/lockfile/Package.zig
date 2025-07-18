@@ -527,7 +527,6 @@ pub const Package = extern struct {
             update: u32 = 0,
             overrides_changed: bool = false,
             catalogs_changed: bool = false,
-            node_linker_changed: bool = false,
 
             // bool for if this dependency should be added to lockfile trusted dependencies.
             // it is false when the new trusted dependency is coming from the default list.
@@ -544,7 +543,6 @@ pub const Package = extern struct {
 
             pub inline fn hasDiffs(this: Summary) bool {
                 return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed or this.catalogs_changed or
-                    this.node_linker_changed or
                     this.added_trusted_dependencies.count() > 0 or
                     this.removed_trusted_dependencies.count() > 0 or
                     this.patched_dependencies_changed;
@@ -659,10 +657,6 @@ pub const Package = extern struct {
                             break :catalogs;
                         }
                     }
-                }
-
-                if (from_lockfile.node_linker != to_lockfile.node_linker) {
-                    summary.node_linker_changed = true;
                 }
             }
 
@@ -795,14 +789,10 @@ pub const Package = extern struct {
                     // - shifted by a constant offset
                     while (to_i < to_deps.len) : (to_i += 1) {
                         if (from_dep.name_hash == to_deps[to_i].name_hash) {
-                            const from_is_workspace_only = from_dep.behavior.isWorkspaceOnly();
-                            const to_is_workspace_only = to_deps[to_i].behavior.isWorkspaceOnly();
+                            const from_behavior = from_dep.behavior;
+                            const to_behavior = to_deps[to_i].behavior;
 
-                            if (from_is_workspace_only and to_is_workspace_only) {
-                                break :found;
-                            }
-
-                            if (from_is_workspace_only or to_is_workspace_only) {
+                            if (from_behavior != to_behavior) {
                                 continue;
                             }
 
@@ -814,14 +804,10 @@ pub const Package = extern struct {
                     to_i = 0;
                     while (to_i < prev_i) : (to_i += 1) {
                         if (from_dep.name_hash == to_deps[to_i].name_hash) {
-                            const from_is_workspace_only = from_dep.behavior.isWorkspaceOnly();
-                            const to_is_workspace_only = to_deps[to_i].behavior.isWorkspaceOnly();
+                            const from_behavior = from_dep.behavior;
+                            const to_behavior = to_deps[to_i].behavior;
 
-                            if (from_is_workspace_only and to_is_workspace_only) {
-                                break :found;
-                            }
-
-                            if (from_is_workspace_only or to_is_workspace_only) {
+                            if (from_behavior != to_behavior) {
                                 continue;
                             }
 
@@ -852,62 +838,69 @@ pub const Package = extern struct {
                     }
 
                     if (id_mapping) |mapping| {
-                        const version = to_deps[to_i].version;
-                        const update_mapping = switch (version.tag) {
-                            .workspace => if (to_lockfile.workspace_paths.getPtr(from_dep.name_hash)) |path_ptr| brk: {
-                                const path = to_lockfile.str(path_ptr);
-                                var local_buf: bun.PathBuffer = undefined;
-                                const package_json_path = Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &local_buf, &.{ path, "package.json" }, .auto);
+                        const update_mapping = update_mapping: {
+                            if (!is_root or !from_dep.behavior.isWorkspace()) {
+                                break :update_mapping true;
+                            }
 
-                                const source = &(bun.sys.File.toSource(package_json_path, allocator, .{}).unwrap() catch {
-                                    // Can't guarantee this workspace still exists
-                                    break :brk false;
+                            const workspace_path = to_lockfile.workspace_paths.getPtr(from_dep.name_hash) orelse {
+                                break :update_mapping false;
+                            };
+
+                            var package_json_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+                            defer package_json_path.deinit();
+
+                            package_json_path.append(workspace_path.slice(to_lockfile.buffers.string_bytes.items));
+                            package_json_path.append("package.json");
+
+                            const source = &(bun.sys.File.toSource(package_json_path.sliceZ(), allocator, .{}).unwrap() catch {
+                                break :update_mapping false;
+                            });
+
+                            var workspace_pkg: Package = .{};
+
+                            const json = pm.workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch {
+                                break :update_mapping false;
+                            };
+
+                            var resolver: void = {};
+                            try workspace_pkg.parseWithJSON(
+                                to_lockfile,
+                                pm,
+                                allocator,
+                                log,
+                                source,
+                                json.root,
+                                void,
+                                &resolver,
+                                Features.workspace,
+                            );
+
+                            to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
+
+                            var from_pkg = from_lockfile.packages.get(from_resolutions[i]);
+                            const diff = try generate(
+                                pm,
+                                allocator,
+                                log,
+                                from_lockfile,
+                                to_lockfile,
+                                &from_pkg,
+                                &workspace_pkg,
+                                update_requests,
+                                null,
+                            );
+
+                            if (pm.options.log_level.isVerbose() and (diff.add + diff.remove + diff.update) > 0) {
+                                Output.prettyErrorln("Workspace package \"{s}\" has added <green>{d}<r> dependencies, removed <red>{d}<r> dependencies, and updated <cyan>{d}<r> dependencies", .{
+                                    workspace_path.slice(to_lockfile.buffers.string_bytes.items),
+                                    diff.add,
+                                    diff.remove,
+                                    diff.update,
                                 });
+                            }
 
-                                var workspace = Package{};
-
-                                const json = pm.workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
-
-                                var resolver: void = {};
-                                try workspace.parseWithJSON(
-                                    to_lockfile,
-                                    pm,
-                                    allocator,
-                                    log,
-                                    source,
-                                    json.root,
-                                    void,
-                                    &resolver,
-                                    Features.workspace,
-                                );
-
-                                to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
-
-                                var from_pkg = from_lockfile.packages.get(from_resolutions[i]);
-                                const diff = try generate(
-                                    pm,
-                                    allocator,
-                                    log,
-                                    from_lockfile,
-                                    to_lockfile,
-                                    &from_pkg,
-                                    &workspace,
-                                    update_requests,
-                                    null,
-                                );
-
-                                if (PackageManager.verbose_install and (diff.add + diff.remove + diff.update) > 0) {
-                                    Output.prettyErrorln("Workspace package \"{s}\" has added <green>{d}<r> dependencies, removed <red>{d}<r> dependencies, and updated <cyan>{d}<r> dependencies", .{
-                                        path,
-                                        diff.add,
-                                        diff.remove,
-                                        diff.update,
-                                    });
-                                }
-
-                                break :brk !diff.hasDiffs();
-                            } else false,
-                            else => true,
+                            break :update_mapping !diff.hasDiffs();
                         };
 
                         if (update_mapping) {
@@ -994,7 +987,6 @@ pub const Package = extern struct {
         comptime features: Features,
         package_dependencies: []Dependency,
         dependencies_count: u32,
-        in_workspace: bool,
         comptime tag: ?Dependency.Version.Tag,
         workspace_ver: ?Semver.Version,
         external_alias: ExternalString,
@@ -1112,9 +1104,9 @@ pub const Package = extern struct {
                     } else {
                         // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
                         for (package_dependencies[0..dependencies_count]) |*dep| {
-                            if (dep.name_hash == name_hash and dep.version.tag == .workspace) {
+                            if (dep.name_hash == name_hash and dep.behavior.isWorkspace()) {
                                 dep.* = .{
-                                    .behavior = if (in_workspace) group.behavior.add(.workspace) else group.behavior,
+                                    .behavior = group.behavior,
                                     .name = external_alias.value,
                                     .name_hash = external_alias.hash,
                                     .version = dependency_version,
@@ -1226,7 +1218,7 @@ pub const Package = extern struct {
         }
 
         const this_dep = Dependency{
-            .behavior = if (in_workspace) group.behavior.add(.workspace) else group.behavior,
+            .behavior = group.behavior,
             .name = external_alias.value,
             .name_hash = external_alias.hash,
             .version = dependency_version,
@@ -1582,19 +1574,6 @@ pub const Package = extern struct {
 
             if (json.get("workspaces")) |workspaces_expr| {
                 lockfile.catalogs.parseCount(lockfile, workspaces_expr, &string_builder);
-
-                if (workspaces_expr.get("nodeLinker")) |node_linker_expr| {
-                    if (!node_linker_expr.isString()) {
-                        try log.addError(source, node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
-                        return error.InvalidPackageJSON;
-                    }
-
-                    const node_linker_str = node_linker_expr.data.e_string.slice(allocator);
-                    lockfile.node_linker = Lockfile.NodeLinker.fromStr(node_linker_str) orelse {
-                        try log.addError(source, node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
-                        return error.InvalidPackageJSON;
-                    };
-                }
             }
         }
 
@@ -1777,7 +1756,6 @@ pub const Package = extern struct {
         }
 
         total_dependencies_count = 0;
-        const in_workspace = lockfile.workspace_paths.contains(package.name_hash);
 
         inline for (dependency_groups) |group| {
             if (group.behavior.isWorkspace()) {
@@ -1866,7 +1844,6 @@ pub const Package = extern struct {
                         features,
                         package_dependencies,
                         total_dependencies_count,
-                        in_workspace,
                         .workspace,
                         workspace_version,
                         external_name,
@@ -1909,7 +1886,6 @@ pub const Package = extern struct {
                                     features,
                                     package_dependencies,
                                     total_dependencies_count,
-                                    in_workspace,
                                     null,
                                     null,
                                     external_name,
@@ -1958,8 +1934,19 @@ pub const Package = extern struct {
         // This function depends on package.dependencies being set, so it is done at the very end.
         if (comptime features.is_main) {
             try lockfile.overrides.parseAppend(pm, lockfile, package, log, source, json, &string_builder);
+            var found_any_catalog_or_catalog_object = false;
+            var has_workspaces = false;
             if (json.get("workspaces")) |workspaces_expr| {
-                try lockfile.catalogs.parseAppend(pm, lockfile, log, source, workspaces_expr, &string_builder);
+                found_any_catalog_or_catalog_object = try lockfile.catalogs.parseAppend(pm, lockfile, log, source, workspaces_expr, &string_builder);
+                has_workspaces = true;
+            }
+
+            // `"workspaces"` being an object instead of an array is sometimes
+            // unexpected to people. therefore if you also are using workspaces,
+            // allow "catalog" and "catalogs" in top-level "package.json"
+            // so it's easier to guess.
+            if (!found_any_catalog_or_catalog_object and has_workspaces) {
+                _ = try lockfile.catalogs.parseAppend(pm, lockfile, log, source, json, &string_builder);
             }
         }
 

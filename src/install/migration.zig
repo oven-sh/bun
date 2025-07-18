@@ -750,8 +750,6 @@ pub fn migrateNPMLockfile(
 
                             const id = found.new_package_id;
 
-                            const is_workspace = resolutions[id].tag == .workspace;
-
                             dependencies_buf[0] = Dependency{
                                 .name = dep_name,
                                 .name_hash = name_hash,
@@ -761,7 +759,7 @@ pub fn migrateNPMLockfile(
                                     .optional = dep_key == .optionalDependencies,
                                     .dev = dep_key == .devDependencies,
                                     .peer = dep_key == .peerDependencies,
-                                    .workspace = is_workspace,
+                                    .workspace = false,
                                 },
                             };
                             resolutions_buf[0] = id;

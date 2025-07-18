@@ -35,7 +35,7 @@ pub const StatWatcherScheduler = struct {
     watchers: WatcherQueue = WatcherQueue{},
 
     event_loop_timer: EventLoopTimer = .{
-        .next = .{},
+        .next = .epoch,
         .tag = .StatWatcherScheduler,
     },
 

@@ -165,12 +165,6 @@ pub fn toExternal(this: Dependency) External {
     return bytes;
 }
 
-// Needed when a dependency uses workspace: protocol and isn't
-// marked with workspace behavior.
-pub fn isWorkspaceDep(this: *const Dependency) bool {
-    return this.behavior.isWorkspace() or this.version.tag == .workspace;
-}
-
 pub inline fn isSCPLikePath(dependency: string) bool {
     // Shortest valid expression: h:p
     if (dependency.len < 3) return false;
@@ -1376,10 +1370,6 @@ pub const Behavior = packed struct(u8) {
         return this.bundled;
     }
 
-    pub inline fn isWorkspaceOnly(this: Behavior) bool {
-        return this.workspace and !this.dev and !this.prod and !this.optional and !this.peer;
-    }
-
     pub inline fn eq(lhs: Behavior, rhs: Behavior) bool {
         return @as(u8, @bitCast(lhs)) == @as(u8, @bitCast(rhs));
     }
@@ -1405,9 +1395,23 @@ pub const Behavior = packed struct(u8) {
             return .eq;
         }
 
-        if (lhs.isWorkspaceOnly() != rhs.isWorkspaceOnly()) {
-            // ensure isWorkspaceOnly deps are placed at the beginning
-            return if (lhs.isWorkspaceOnly())
+        if (lhs.isWorkspace() != rhs.isWorkspace()) {
+            // ensure workspaces are placed at the beginning
+            return if (lhs.isWorkspace())
+                .lt
+            else
+                .gt;
+        }
+
+        if (lhs.isDev() != rhs.isDev()) {
+            return if (lhs.isDev())
+                .lt
+            else
+                .gt;
+        }
+
+        if (lhs.isOptional() != rhs.isOptional()) {
+            return if (lhs.isOptional())
                 .lt
             else
                 .gt;
@@ -1415,37 +1419,16 @@ pub const Behavior = packed struct(u8) {
 
         if (lhs.isProd() != rhs.isProd()) {
             return if (lhs.isProd())
-                .gt
+                .lt
             else
-                .lt;
-        }
-
-        if (lhs.isDev() != rhs.isDev()) {
-            return if (lhs.isDev())
-                .gt
-            else
-                .lt;
-        }
-
-        if (lhs.isOptional() != rhs.isOptional()) {
-            return if (lhs.isOptional())
-                .gt
-            else
-                .lt;
+                .gt;
         }
 
         if (lhs.isPeer() != rhs.isPeer()) {
             return if (lhs.isPeer())
-                .gt
+                .lt
             else
-                .lt;
-        }
-
-        if (lhs.isWorkspace() != rhs.isWorkspace()) {
-            return if (lhs.isWorkspace())
-                .gt
-            else
-                .lt;
+                .gt;
         }
 
         return .eq;
@@ -1460,7 +1443,7 @@ pub const Behavior = packed struct(u8) {
             (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
-            (features.workspaces and this.isWorkspaceOnly());
+            (features.workspaces and this.isWorkspace());
     }
 
     comptime {

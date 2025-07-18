@@ -97,15 +97,15 @@ pub fn byNameHashAllowExpired(
 
 const std = @import("std");
 
+const install = @import("./install.zig");
+const Npm = install.Npm;
+const PackageManager = install.PackageManager;
+const PackageManifestMap = install.PackageManifestMap;
+const PackageNameHash = install.PackageNameHash;
+
 const bun = @import("bun");
 const IdentityContext = bun.IdentityContext;
 const string = bun.string;
 
 const Semver = bun.Semver;
 const String = Semver.String;
-
-const install = @import("./install.zig");
-const Npm = install.Npm;
-const PackageManager = install.PackageManager;
-const PackageManifestMap = install.PackageManifestMap;
-const PackageNameHash = install.PackageNameHash;

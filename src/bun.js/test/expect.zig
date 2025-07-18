@@ -666,7 +666,7 @@ pub const Expect = struct {
                 .expected = expected,
                 .pass = &pass,
             };
-            list_value.forEach(globalThis, &expected_entry, struct {
+            try list_value.forEach(globalThis, &expected_entry, struct {
                 pub fn sameValueIterator(
                     _: *JSC.VM,
                     _: *JSGlobalObject,
@@ -762,7 +762,7 @@ pub const Expect = struct {
                 .expected = expected,
                 .pass = &pass,
             };
-            value.forEach(globalThis, &expected_entry, struct {
+            try value.forEach(globalThis, &expected_entry, struct {
                 pub fn sameValueIterator(
                     _: *JSC.VM,
                     _: *JSGlobalObject,
@@ -1360,7 +1360,7 @@ pub const Expect = struct {
                 .expected = expected,
                 .pass = &pass,
             };
-            value.forEach(globalThis, &expected_entry, struct {
+            try value.forEach(globalThis, &expected_entry, struct {
                 pub fn deepEqualsIterator(
                     _: *JSC.VM,
                     _: *JSGlobalObject,
@@ -2286,7 +2286,7 @@ pub const Expect = struct {
             if (!result.isInstanceOf(globalThis, expected_value)) return .js_undefined;
 
             var expected_class = ZigString.Empty;
-            expected_value.getClassName(globalThis, &expected_class);
+            try expected_value.getClassName(globalThis, &expected_class);
             const received_message: JSValue = (try result.fastGet(globalThis, .message)) orelse .js_undefined;
             return this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{any}<r>\n", .{ expected_class, received_message.toFmt(&formatter) });
         }
@@ -2410,8 +2410,8 @@ pub const Expect = struct {
             defer formatter.deinit();
             var expected_class = ZigString.Empty;
             var received_class = ZigString.Empty;
-            expected_value.getClassName(globalThis, &expected_class);
-            result.getClassName(globalThis, &received_class);
+            try expected_value.getClassName(globalThis, &expected_class);
+            try result.getClassName(globalThis, &received_class);
             const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
             const fmt = signature ++ "\n\nExpected constructor: <green>{s}<r>\nReceived constructor: <red>{s}<r>\n\n";
 
@@ -2466,7 +2466,7 @@ pub const Expect = struct {
 
         const expected_fmt = "\n\nExpected constructor: <green>{s}<r>\n\n" ++ received_line;
         var expected_class = ZigString.Empty;
-        expected_value.getClassName(globalThis, &expected_class);
+        try expected_value.getClassName(globalThis, &expected_class);
         return this.throw(globalThis, signature, expected_fmt, .{ expected_class, result.toFmt(&formatter) });
     }
     fn getValueAsToThrow(this: *Expect, globalThis: *JSGlobalObject, value: JSValue) bun.JSError!struct { ?JSValue, JSValue } {
@@ -2980,7 +2980,7 @@ pub const Expect = struct {
             if (value.jsTypeLoose().isObject()) {
                 if (try value.isIterable(globalThis)) {
                     var any_properties_in_iterator = false;
-                    value.forEach(globalThis, &any_properties_in_iterator, struct {
+                    try value.forEach(globalThis, &any_properties_in_iterator, struct {
                         pub fn anythingInIterator(
                             _: *JSC.VM,
                             _: *JSGlobalObject,
@@ -3936,7 +3936,7 @@ pub const Expect = struct {
         const result = predicate.call(globalThis, .js_undefined, &.{value}) catch |e| {
             const err = globalThis.takeException(e);
             const fmt = ZigString.init("toSatisfy() predicate threw an exception");
-            return globalThis.throwValue(globalThis.createAggregateError(&.{err}, &fmt));
+            return globalThis.throwValue(try globalThis.createAggregateError(&.{err}, &fmt));
         };
 
         const not = this.flags.not;
@@ -4179,10 +4179,9 @@ pub const Expect = struct {
 
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalled", "");
 
-        const calls = JSMockFunction__getCalls(value);
+        const calls = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getCalls, .{value});
         incrementExpectCallCounter();
-
-        if (calls == .zero or !calls.jsType().isArray()) {
+        if (!calls.jsType().isArray()) {
             return globalThis.throw("Expected value must be a mock function: {}", .{value});
         }
 
@@ -4212,9 +4211,8 @@ pub const Expect = struct {
 
         incrementExpectCallCounter();
 
-        const calls = JSMockFunction__getCalls(value);
-
-        if (calls == .zero or !calls.jsType().isArray()) {
+        const calls = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getCalls, .{value});
+        if (!calls.jsType().isArray()) {
             return globalThis.throw("Expected value must be a mock function: {}", .{value});
         }
 
@@ -4246,9 +4244,8 @@ pub const Expect = struct {
 
         incrementExpectCallCounter();
 
-        const calls = JSMockFunction__getCalls(value);
-
-        if (calls == .zero or !calls.jsType().isArray()) {
+        const calls = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getCalls, .{value});
+        if (!calls.jsType().isArray()) {
             return globalThis.throw("Expected value must be a mock function: {}", .{value});
         }
 
@@ -4342,9 +4339,8 @@ pub const Expect = struct {
 
         incrementExpectCallCounter();
 
-        const calls = JSMockFunction__getCalls(value);
-
-        if (calls == .zero or !calls.jsType().isArray()) {
+        const calls = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getCalls, .{value});
+        if (!calls.jsType().isArray()) {
             return globalThis.throw("Expected value must be a mock function: {}", .{value});
         }
 
@@ -4401,9 +4397,8 @@ pub const Expect = struct {
 
         incrementExpectCallCounter();
 
-        const calls = JSMockFunction__getCalls(value);
-
-        if (calls == .zero or !calls.jsType().isArray()) {
+        const calls = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getCalls, .{value});
+        if (!calls.jsType().isArray()) {
             return globalThis.throw("Expected value must be a mock function: {}", .{value});
         }
 
@@ -4460,9 +4455,8 @@ pub const Expect = struct {
 
         incrementExpectCallCounter();
 
-        const calls = JSMockFunction__getCalls(value);
-
-        if (calls == .zero or !calls.jsType().isArray()) {
+        const calls = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getCalls, .{value});
+        if (!calls.jsType().isArray()) {
             return globalThis.throw("Expected value must be a mock function: {}", .{value});
         }
 
@@ -4535,11 +4529,8 @@ pub const Expect = struct {
 
         incrementExpectCallCounter();
 
-        const returns = JSMockFunction__getReturns(value);
-
-        if (returns == .zero or !returns.jsType().isArray()) {
-            return globalThis.throw("Expected value must be a mock function: {}", .{value});
-        }
+        const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
+        if (!returns.jsType().isArray()) return globalThis.throw("Expected value must be a mock function: {}", .{value});
 
         const return_count: i32 = if (known_index) |index| index else brk: {
             if (arguments.len < 1 or !arguments[0].isUInt32AsAnyInt()) {

@@ -2329,7 +2329,6 @@ pub const startsWithWindowsDriveLetter = _paths.startsWithWindowsDriveLetter;
 pub const startsWithWindowsDriveLetterT = _paths.startsWithWindowsDriveLetterT;
 pub const toExtendedPathNormalized = _paths.toExtendedPathNormalized;
 pub const toKernel32Path = _paths.toKernel32Path;
-pub const toNTMaxPath = _paths.toNTMaxPath;
 pub const toNTPath = _paths.toNTPath;
 pub const toNTPath16 = _paths.toNTPath16;
 pub const toPath = _paths.toPath;
@@ -2347,6 +2346,7 @@ pub const withoutLeadingSlash = _paths.withoutLeadingSlash;
 pub const withoutNTPrefix = _paths.withoutNTPrefix;
 pub const withoutTrailingSlash = _paths.withoutTrailingSlash;
 pub const withoutTrailingSlashWindowsPath = _paths.withoutTrailingSlashWindowsPath;
+pub const basename = _paths.basename;
 
 pub const log = bun.Output.scoped(.STR, true);
 pub const grapheme = @import("./grapheme.zig");

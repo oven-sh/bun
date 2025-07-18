@@ -156,7 +156,7 @@ pub const PathWatcher = struct {
             if (event.emit(hash, timestamp, event_type)) {
                 const ctx: *FSWatcher = @alignCast(@ptrCast(this.handlers.keys()[i]));
                 onPathUpdateFn(ctx, event_type.toEvent(switch (ctx.encoding) {
-                    .utf8 => .{ .string = bun.String.createUTF8(path) },
+                    .utf8 => .{ .string = bun.String.cloneUTF8(path) },
                     else => .{ .bytes_to_free = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory() },
                 }), is_file);
                 if (comptime bun.Environment.isDebug)

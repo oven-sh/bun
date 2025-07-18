@@ -291,8 +291,8 @@ pub fn processPeerDependencyList(
 pub fn processDependencyList(
     this: *PackageManager,
     dep_list: TaskCallbackList,
-    comptime Context: type,
-    ctx: Context,
+    comptime Ctx: type,
+    ctx: Ctx,
     comptime callbacks: anytype,
     install_peer: bool,
 ) !void {

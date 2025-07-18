@@ -9,7 +9,7 @@
 // To clear your DNS cache on Windows:
 //   ipconfig /flushdns
 //
-const url = new URL(process.argv.length > 2 ? process.argv.at(-1) : "https://bun.sh");
+const url = new URL(process.argv.length > 2 ? process.argv.at(-1) : "https://bun.com");
 const hostname = url.hostname;
 const port = url.port ? parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80;
 

@@ -3,7 +3,7 @@ Bun implements the `node:dns` module.
 ```ts
 import * as dns from "node:dns";
 
-const addrs = await dns.promises.resolve4("bun.sh", { ttl: true });
+const addrs = await dns.promises.resolve4("bun.com", { ttl: true });
 console.log(addrs);
 // => [{ address: "172.67.161.226", family: 4, ttl: 0 }, ...]
 ```
@@ -54,10 +54,10 @@ Here's an example:
 ```ts
 import { dns } from "bun";
 
-dns.prefetch("bun.sh", 443);
+dns.prefetch("bun.com", 443);
 //
 // ... sometime later ...
-await fetch("https://bun.sh");
+await fetch("https://bun.com");
 ```
 
 ### `dns.getCacheStats()`

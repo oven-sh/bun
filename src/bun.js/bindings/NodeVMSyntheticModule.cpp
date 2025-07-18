@@ -67,15 +67,20 @@ NodeVMSyntheticModule* NodeVMSyntheticModule::create(VM& vm, JSGlobalObject* glo
     WTF::HashSet<String> exportNames;
     for (unsigned i = 0; i < exportNamesArray->getArrayLength(); i++) {
         JSValue exportNameValue = exportNamesArray->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         if (!exportNameValue.isString()) {
             throwArgumentTypeError(*globalObject, scope, 2, "exportNames"_s, "Module"_s, "Module"_s, "string[]"_s);
+            return nullptr;
         }
         exportNames.addVoid(exportNameValue.toWTFString(globalObject));
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     auto* structure = zigGlobalObject->NodeVMSyntheticModuleStructure();
-    auto* ptr = new (NotNull, allocateCell<NodeVMSyntheticModule>(vm)) NodeVMSyntheticModule(vm, structure, identifierValue.toWTFString(globalObject), contextValue, moduleWrapperValue, WTFMove(exportNames), syntheticEvaluationStepsValue);
+    WTF::String identifier = identifierValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* ptr = new (NotNull, allocateCell<NodeVMSyntheticModule>(vm)) NodeVMSyntheticModule(vm, structure, WTFMove(identifier), contextValue, moduleWrapperValue, WTFMove(exportNames), syntheticEvaluationStepsValue);
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -204,8 +209,11 @@ void NodeVMSyntheticModule::setExport(JSGlobalObject* globalObject, WTF::String 
     }
 
     ensureModuleRecord(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
     JSModuleNamespaceObject* namespaceObject = m_moduleRecord->getModuleNamespace(globalObject, false);
+    RETURN_IF_EXCEPTION(scope, );
     namespaceObject->overrideExportValue(globalObject, Identifier::fromString(vm, exportName), value);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 JSObject* NodeVMSyntheticModule::createPrototype(VM& vm, JSGlobalObject* globalObject)

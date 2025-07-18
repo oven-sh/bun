@@ -339,7 +339,7 @@ pub const UDPSocket = struct {
                     .message = bun.String.createFormat("bind {s} {s}", .{ code, config.hostname }) catch bun.outOfMemory(),
                 };
                 const error_value = sys_err.toErrorInstance(globalThis);
-                error_value.put(globalThis, "address", bun.String.createUTF8ForJS(globalThis, config.hostname));
+                error_value.put(globalThis, "address", try bun.String.createUTF8ForJS(globalThis, config.hostname));
                 return globalThis.throwValue(error_value);
             }
             return globalThis.throw("Failed to bind socket", .{});

@@ -417,6 +417,10 @@ pub fn BabyList(comptime Type: type) type {
             @as([*]align(1) Int, @ptrCast(this.ptr[this.len .. this.len + @sizeOf(Int)]))[0] = int;
             this.len += @sizeOf(Int);
         }
+
+        pub fn memoryCost(self: *const @This()) usize {
+            return self.cap;
+        }
     };
 }
 

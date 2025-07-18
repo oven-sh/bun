@@ -135,7 +135,7 @@ pub const String = extern struct {
         str: *const String,
         buf: string,
 
-        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
             const str = formatter.str;
             try writer.writeAll(str.slice(formatter.buf));
         }
@@ -159,8 +159,30 @@ pub const String = extern struct {
             quote: bool = true,
         };
 
-        pub fn format(formatter: JsonFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: JsonFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
             try writer.print("{}", .{bun.fmt.formatJSONStringUTF8(formatter.str.slice(formatter.buf), .{ .quote = formatter.opts.quote })});
+        }
+    };
+
+    pub inline fn fmtStorePath(self: *const String, buf: []const u8) StorePathFormatter {
+        return .{
+            .buf = buf,
+            .str = self,
+        };
+    }
+
+    pub const StorePathFormatter = struct {
+        str: *const String,
+        buf: string,
+
+        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            for (this.str.slice(this.buf)) |c| {
+                switch (c) {
+                    '/' => try writer.writeByte('+'),
+                    '\\' => try writer.writeByte('+'),
+                    else => try writer.writeByte(c),
+                }
+            }
         }
     };
 
@@ -429,7 +451,7 @@ pub const String = extern struct {
         return @as(Pointer, @bitCast(@as(u64, @as(u63, @truncate(@as(u64, @bitCast(this)))))));
     }
 
-    pub fn toJS(this: *const String, buffer: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: *const String, buffer: []const u8, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return bun.String.createUTF8ForJS(globalThis, this.slice(buffer));
     }
 

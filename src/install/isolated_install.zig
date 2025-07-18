@@ -748,6 +748,10 @@ pub fn installIsolatedPackages(
 
                     const missing_from_cache = switch (manager.getPreinstallState(pkg_id)) {
                         .done => false,
+
+                        // Ensure we go through the task queue if the package is already downloading.
+                        .extract, .extracting => true,
+
                         else => missing_from_cache: {
                             if (patch_info == .none) {
                                 const exists = switch (pkg_res_tag) {

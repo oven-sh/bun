@@ -2,6 +2,13 @@
 import { expect } from "bun:test";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
+const platformPath = (path: string) => {
+  if (process.platform === "win32") {
+    return path.replace(/\//g, "\\");
+  }
+  return path;
+};
+
 devTest("import.meta properties are inlined in bake", {
   framework: minimalFramework,
   files: {
@@ -35,12 +42,12 @@ export default function (req, meta) {
     expect(json.file).toBe("index.ts");
 
     // Check that path contains the full path including filename
-    expect(json.path).toContain("routes/index.ts");
+    expect(json.path).toContain(platformPath("routes/index.ts"));
     expect(json.path).toEndWith("index.ts");
 
     // Check that url is a file:// URL
     expect(json.url).toStartWith("file://");
-    expect(json.url).toContain("routes/index.ts");
+    expect(json.url).toContain(platformPath("routes/index.ts"));
   },
 });
 
@@ -66,7 +73,7 @@ export default function (req, meta) {
     expect(text).toContain("dir: ");
     expect(text).toContain("file: test.ts");
     expect(text).toContain("path: ");
-    expect(text).toContain("routes/test.ts");
+    expect(text).toContain(platformPath("routes/test.ts"));
 
     // Update the file with a meaningful change
     await dev.patch("routes/test.ts", {
@@ -81,7 +88,7 @@ export default function (req, meta) {
     expect(text2).toContain("directory: ");
     expect(text2).toContain("file: test.ts");
     expect(text2).toContain("path: ");
-    expect(text2).toContain("routes/test.ts");
+    expect(text2).toContain(platformPath("routes/test.ts"));
   },
 });
 
@@ -104,9 +111,13 @@ export default function (req, meta) {
     const json = await response.json();
 
     expect(json.file).toBe("handler.ts");
-    expect(json.path).toContain("routes/api/v1/handler.ts");
-    expect(json.dir).toContain("routes/api/v1");
-    expect(json.url).toMatch(/^file:\/\/.*routes\/api\/v1\/handler\.ts$/);
+    expect(json.path).toContain(platformPath("routes/api/v1/handler.ts"));
+    expect(json.dir).toContain(platformPath("routes/api/v1"));
+    expect(json.url).toMatch(
+      process.platform === "win32"
+        ? /^file:\/\/.*routes\\api\\v1\\handler\.ts$/
+        : /^file:\/\/.*routes\/api\/v1\/handler\.ts$/,
+    );
   },
 });
 
@@ -185,9 +196,13 @@ export default function BlogPost(req, meta) {
     expect(json1.meta.file).toBe("[...slug].ts");
     expect(json1.meta.dir).toContain("routes/blog");
     expect(json1.meta.dirname).toBe(json1.meta.dir);
-    expect(json1.meta.path).toContain("routes/blog/[...slug].ts");
+    expect(json1.meta.path).toContain(platformPath("routes/blog/[...slug].ts"));
     // url encoded!
-    expect(json1.meta.url).toMatch(/^file:\/\/.*routes\/blog\/%5B\.\.\.slug%5D\.ts$/);
+    expect(json1.meta.url).toMatch(
+      process.platform === "win32"
+        ? /^file:\/\/.*routes\\blog\\%5B\\.\\.\\.slug%5D\\.ts$/
+        : /^file:\/\/.*routes\/blog\/%5B\.\.\.slug%5D\.ts$/,
+    );
 
     // Test multiple segments
     const post2 = await dev.fetch("/blog/2024/tech/bun-framework");
@@ -199,7 +214,7 @@ export default function BlogPost(req, meta) {
 
     // Meta properties should be the same regardless of the route
     expect(json2.meta.file).toBe("[...slug].ts");
-    expect(json2.meta.path).toContain("routes/blog/[...slug].ts");
+    expect(json2.meta.path).toContain(platformPath("routes/blog/[...slug].ts"));
 
     // Test empty slug (just /blog/)
     const post3 = await dev.fetch("/blog/");
@@ -259,8 +274,8 @@ export default function GettingStarted(req, meta) {
     expect(apiJson.type).toBe("static");
     expect(apiJson.page).toBe("API Documentation");
     expect(apiJson.file).toBe("api.ts");
-    expect(apiJson.dir).toContain("routes/docs");
-    expect(apiJson.fullPath).toContain("routes/docs/api.ts");
+    expect(apiJson.dir).toContain(platformPath("routes/docs"));
+    expect(apiJson.fullPath).toContain(platformPath("routes/docs/api.ts"));
 
     // Test another static route
     const startResponse = await dev.fetch("/docs/getting-started");
@@ -269,7 +284,7 @@ export default function GettingStarted(req, meta) {
     expect(startJson.type).toBe("static");
     expect(startJson.page).toBe("Getting Started");
     expect(startJson.file).toBe("getting-started.ts");
-    expect(startJson.fullPath).toContain("routes/docs/getting-started.ts");
+    expect(startJson.fullPath).toContain(platformPath("routes/docs/getting-started.ts"));
 
     // Test catch-all route - should match for non-static paths
     const guideResponse = await dev.fetch("/docs/guides/advanced/optimization");
@@ -279,8 +294,8 @@ export default function GettingStarted(req, meta) {
     expect(guideJson.type).toBe("catch-all");
     expect(guideJson.path).toEqual(["guides", "advanced", "optimization"]);
     expect(guideJson.file).toBe("[...path].ts");
-    expect(guideJson.dir).toContain("routes/docs");
-    expect(guideJson.fullPath).toContain("routes/docs/[...path].ts");
+    expect(guideJson.dir).toContain(platformPath("routes/docs"));
+    expect(guideJson.fullPath).toContain(platformPath("routes/docs/[...path].ts"));
 
     // Update catch-all route and verify import.meta values remain inlined
     await dev.patch("routes/docs/[...path].ts", {
@@ -293,6 +308,6 @@ export default function GettingStarted(req, meta) {
 
     expect(updatedJson.type).toBe("dynamic-catch-all");
     expect(updatedJson.file).toBe("[...path].ts");
-    expect(updatedJson.fullPath).toContain("routes/docs/[...path].ts");
+    expect(updatedJson.fullPath).toContain(platformPath("routes/docs/[...path].ts"));
   },
 });

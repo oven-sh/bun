@@ -1585,7 +1585,7 @@ pub const TestCommand = struct {
             if (ctx.positionals.len < 2) {
                 if (Output.isAIAgent()) {
                     // Be very clear to ai.
-                    Output.errGeneric("0 test files matching **.{{test,spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} found in cwd {}", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
+                    Output.errGeneric("0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
                 } else {
                     // Be friendlier to humans.
                     Output.prettyErrorln(

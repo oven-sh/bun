@@ -226,7 +226,13 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 // TODO: remove this entire method
 extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
 {
-    JSC::VM& vm = JSC::VM::create(JSC::HeapType::Large).leakRef();
+    RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(JSC::HeapType::Large);
+    // We need to unsafely ref this so it stays alive, later in
+    // `Zig__GlobalObject__destructOnExit` will call
+    // `vm.derefSuppressingSaferCPPChecking()` to free it.
+    vmPtr->refSuppressingSaferCPPChecking();
+    JSC::VM& vm = *vmPtr;
+
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
     BunVirtualMachine* bunVM = Bun__getVM();

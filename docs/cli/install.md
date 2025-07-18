@@ -160,7 +160,7 @@ $ bun install --omit=dev --omit=peer --omit=optional
 
 ## Platform-specific installation
 
-To add packages for a specific platform and omit dowloading the rest:
+To add packages for a specific platform and omit downloading the rest:
 
 ```bash
 $ bun install --os=win32                          # i.e @oven/bun-windows-x64

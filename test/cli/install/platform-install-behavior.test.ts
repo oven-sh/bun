@@ -58,7 +58,9 @@ describe("platform overrides", () => {
     expect(stdout.text()).resolves.toContain("installed");
 
     const imgDir = await readdir(join(package_dir, "node_modules", "@img"));
-    expect(imgDir).toEqual(["sharp-linux-x64", "sharp-libvips-linux-x64"]);
+    expect(imgDir).toHaveLength(2);
+    expect(imgDir).toContain("sharp-linux-x64");
+    expect(imgDir).toContain("sharp-libvips-linux-x64");
   }, 10_000);
 
   it("should handle packages without platform constraints", async () => {

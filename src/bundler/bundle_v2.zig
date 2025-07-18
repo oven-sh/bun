@@ -2212,8 +2212,8 @@ pub const BundleV2 = struct {
             on_parse_finalizers.deinit(bun.default_allocator);
         }
 
-        defer this.graph.ast.deinit(bun.default_allocator);
-        defer this.graph.input_files.deinit(bun.default_allocator);
+        defer this.graph.ast.deinit(this.graph.allocator);
+        defer this.graph.input_files.deinit(this.graph.allocator);
         if (this.graph.pool.workers_assignments.count() > 0) {
             {
                 this.graph.pool.workers_assignments_lock.lock();

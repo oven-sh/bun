@@ -15,7 +15,7 @@ pub const DiffFormatter = struct {
             const received = this.received_string.?;
             const expected = this.expected_string.?;
 
-            try printDiff(allocator, this.not, received, expected, writer);
+            try printDiffMain(allocator, this.not, received, expected, writer, Output.enable_ansi_colors);
             return;
         }
 
@@ -74,46 +74,14 @@ pub const DiffFormatter = struct {
         const received_slice = received_buf.slice();
         const expected_slice = expected_buf.slice();
 
-        try printDiff(allocator, this.not, received_slice, expected_slice, writer);
+        try printDiffMain(allocator, this.not, received_slice, expected_slice, writer, Output.enable_ansi_colors);
     }
 };
 
-fn printDiff(allocator: std.mem.Allocator, not: bool, received_slice: string, expected_slice: string, writer: anytype) !void {
-    if (not) {
-        const not_fmt = "Expected: not <green>{s}<r>";
-        switch (Output.enable_ansi_colors) {
-            inline else => |enable_ansi_colors| try writer.print(Output.prettyFmt(not_fmt, enable_ansi_colors), .{expected_slice}),
-        }
-        return;
-    }
-
-    // Always use line-based diff for consistency
-    var dmp = DiffMatchPatch.default;
-    dmp.diff_timeout = 200;
-    var diffs = try dmp.diff(allocator, received_slice, expected_slice, received_slice.len > 300 or expected_slice.len > 300);
-    defer diffs.deinit(allocator);
-
-    var has_changes = false;
-    for (diffs.items) |diff| {
-        if (diff.operation != .equal) {
-            has_changes = true;
-            break;
-        }
-    }
-
-    if (!has_changes) return;
-
-    switch (Output.enable_ansi_colors) {
-        inline else => |enable_ansi_colors| try writer.print(Output.prettyFmt("Difference:\n\n<red>- Received<r>\n<green>+ Expected<r>\n\n", enable_ansi_colors), .{}),
-    }
-
-    try @import("printDiff.zig").printDiff(allocator, writer, diffs.items, Output.enable_ansi_colors);
-}
-
 // @sortImports
 
-const DiffMatchPatch = @import("../../deps/diffz/DiffMatchPatch.zig");
 const std = @import("std");
+const printDiffMain = @import("diff/printDiff.zig").printDiffMain;
 
 const bun = @import("bun");
 const MutableString = bun.MutableString;

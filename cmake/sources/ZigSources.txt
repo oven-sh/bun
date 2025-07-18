@@ -237,10 +237,11 @@ src/bun.js/RuntimeTranspilerCache.zig
 src/bun.js/SavedSourceMap.zig
 src/bun.js/Strong.zig
 src/bun.js/test/diff_format.zig
+src/bun.js/test/diff/diff_match_patch.zig
+src/bun.js/test/diff/printDiff.zig
 src/bun.js/test/expect.zig
 src/bun.js/test/jest.zig
 src/bun.js/test/pretty_format.zig
-src/bun.js/test/printDiff.zig
 src/bun.js/test/snapshot.zig
 src/bun.js/test/test.zig
 src/bun.js/unbounded_queue.zig
@@ -466,7 +467,6 @@ src/defines.zig
 src/deps/boringssl.translated.zig
 src/deps/brotli_c.zig
 src/deps/c_ares.zig
-src/deps/diffz/DiffMatchPatch.zig
 src/deps/libdeflate.zig
 src/deps/libuv.zig
 src/deps/lol-html.zig

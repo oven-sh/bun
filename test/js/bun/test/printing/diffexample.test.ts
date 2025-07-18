@@ -37,7 +37,6 @@ test("no color", async () => {
     - Received
     + Expected
 
-    @@ -1,5 +1,5 @@
       "a
     -  b
     +  d
@@ -45,6 +44,7 @@ test("no color", async () => {
     -   d
     +  d
        e"
+
 
 
           at <anonymous> (FILE:LINE)
@@ -63,16 +63,16 @@ test("no color", async () => {
     - Received
     + Expected
 
-    @@ -1,7 +1,7 @@
       {
         object1: a,
     -   object2: b,
     +   object2:  b,
         object3: "c
-         d
+    -    d
     -    e",
-    + ",
+    +    d",
       }
+
 
 
           at <anonymous> (FILE:LINE)
@@ -91,23 +91,15 @@ test("no color", async () => {
     - Received
     + Expected
 
-    @@ -96,11 +96,12 @@
-       line 96
-       line 97
+    @@ -98,7 +98,7 @@
        line 98
        line 99
        line 100
-    -  line 101
     +  line 101 - INSERTED
-    +  line 101
+       line 101
        line 102
        line 103
-       line 104
-       line 105
-       line 106
-    @@ -495,11 +496,11 @@
-       line 495
-       line 496
+    @@ -498,7 +498,7 @@
        line 497
        line 498
        line 499
@@ -116,11 +108,7 @@ test("no color", async () => {
        line 501
        line 502
        line 503
-       line 504
-       line 505
-    @@ -746,11 +747,11 @@
-       line 746
-       line 747
+    @@ -749,7 +749,7 @@
        line 748
        line 749
        line 750
@@ -129,11 +117,7 @@ test("no color", async () => {
        line 752
        line 753
        line 754
-       line 755
-       line 756
-    @@ -896,11 +897,11 @@
-       line 896
-       line 897
+    @@ -899,7 +899,7 @@
        line 898
        line 899
        line 900
@@ -142,8 +126,7 @@ test("no color", async () => {
        line 902
        line 903
        line 904
-       line 905
-       line 906
+
 
 
           at <anonymous> (FILE:LINE)
@@ -162,9 +145,9 @@ test("no color", async () => {
     - Received
     + Expected
 
-    @@ -1 +1 @@
     - \\u001B[31mhello\\u001B[0m
     + \\u001B[32mhello\\u001B[0m
+
 
 
           at <anonymous> (FILE:LINE)
@@ -183,9 +166,9 @@ test("no color", async () => {
     - Received
     + Expected
 
-    @@ -1 +1 @@
     - Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0D
     + Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0E
+
 
 
           at <anonymous> (FILE:LINE)
@@ -204,11 +187,11 @@ test("no color", async () => {
     - Received
     + Expected
 
-    @@ -1,3 +1,3 @@
       "Line 1: 你好
        Line 2: مرحبا
     -  Line 3: Здравствуйте"
     +  Line 3: Привет"
+
 
 
           at <anonymous> (FILE:LINE)
@@ -227,7 +210,6 @@ test("no color", async () => {
     - Received
     + Expected
 
-    @@ -1,6 +1,6 @@
       {
         arabic: اختبار,
     -   chinese: 测试字符串,
@@ -236,6 +218,7 @@ test("no color", async () => {
     -   mixed: Hello 世界 \\uD83C\\uDF0D,
     +   mixed: Hello 世界 \\uD83C\\uDF0E,
       }
+
 
 
           at <anonymous> (FILE:LINE)
@@ -254,9 +237,9 @@ test("no color", async () => {
     - Received
     + Expected
 
-    @@ -1 +1 @@
     - café résumé naïve
     + café resumé naive
+
 
 
           at <anonymous> (FILE:LINE)
@@ -276,11 +259,11 @@ test("no color", async () => {
     - Received
     + Expected
 
-    @@ -1,3 +1,3 @@
       "Línea 1: ñoño
        Línea 2: àèìòù
     -  Línea 3: äëïöü"
     +  Línea 3: aeiou"
+
 
 
           at <anonymous> (FILE:LINE)
@@ -299,13 +282,13 @@ test("no color", async () => {
     - Received
     + Expected
 
-    @@ -1,5 +1,5 @@
       {
     -   french: crème brûlée,
     +   french: crème brulée,
         spanish: niño español,
         special: ½ ¼ ¾ ± × ÷,
       }
+
 
 
           at <anonymous> (FILE:LINE)
@@ -360,14 +343,13 @@ test("color", async () => {
     \x1B[31m- Received\x1B[0m
     \x1B[32m+ Expected\x1B[0m
 
-    \x1B[36m@@ -1,5 +1,5 @@\x1B[0m
-      \x1B[2m"a\x1B[0m
-    \x1B[31m-\x1B[0m \x1B[2m \x1B[0m\x1B[41mb\x1B[0m
-    \x1B[32m+\x1B[0m \x1B[2m \x1B[0m\x1B[42md\x1B[0m
-      \x1B[2m c\x1B[0m
-    \x1B[31m-\x1B[0m \x1B[41m \x1B[0m\x1B[2m d\x1B[0m
-    \x1B[32m+\x1B[0m \x1B[2m d\x1B[0m
-      \x1B[2m e"\x1B[0m"
+      \x1B[0m\x1B[2m"a\x1B[0m
+    \x1B[31m- \x1B[0m\x1B[31m \x1B[0m\x1B[41mb\x1B[0m
+    \x1B[32m+ \x1B[0m\x1B[32m \x1B[0m\x1B[42md\x1B[0m
+      \x1B[0m\x1B[2m c\x1B[0m
+    \x1B[31m- \x1B[0m\x1B[41m \x1B[0m\x1B[31m d\x1B[0m
+    \x1B[32m+ \x1B[0m\x1B[32m d\x1B[0m
+      \x1B[0m\x1B[2m e"\x1B[0m"
   `);
   expect(await spawn.stdout.text()).toMatchInlineSnapshot(`""`);
   expect(spawn.exitCode).toBe(1);

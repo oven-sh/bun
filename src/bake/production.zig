@@ -38,9 +38,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     defer vm.deinit();
     // A special global object is used to allow registering virtual modules
     // that bypass Bun's normal module resolver and plugin system.
-    vm.global = BakeCreateProdGlobal(vm.console);
     vm.regular_event_loop.global = vm.global;
-    vm.jsc = vm.global.vm();
     vm.event_loop.ensureWaker();
     const b = &vm.transpiler;
     vm.preload = ctx.preloads;
@@ -757,8 +755,6 @@ extern fn BakeRenderRoutesForProdStatic(
     /// CSS URLs per route (e.g., [["/main.css"], ["/main.css", "/blog.css"]])
     styles: JSValue,
 ) *JSC.JSPromise;
-
-extern fn BakeCreateProdGlobal(console_ptr: *anyopaque) *JSC.JSGlobalObject;
 
 /// The result of this function is a JSValue that wont be garbage collected, as
 /// it will always have at least one reference by the module loader.

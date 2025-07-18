@@ -1541,7 +1541,7 @@ pub const TestCommand = struct {
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
         var coverage_options = ctx.test_options.coverage;
-        if (reporter.summary().pass > 20) {
+        if (reporter.summary().pass > 20 and !Output.isAIAgent()) {
             if (reporter.summary().skip > 0) {
                 Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary().skip});
                 Output.flush();

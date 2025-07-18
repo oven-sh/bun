@@ -293,11 +293,247 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 11 - Latin-1 in objects [DURATION]
+    157 | line 35
+    158 | line 36
+    159 | line 37
+    160 | line 38
+    161 | line 39\`;
+    162 |   expect(received).toEqual(expected);
+                             ^
+    error: expect(received).toEqual(expected)
+
+    Difference:
+
+    - Received
+    + Expected
+
+    @@ -1,12 +1,12 @@
+      "line one
+       line two
+    -  line three!
+    +  line three
+       line four
+       line five
+    -  !-!six
+    +  line six
+       line seven
+       line eight
+    +  line nine (inserted only)
+       line ten
+       line 11
+       line 12
+    @@ -25,7 +25,7 @@
+       line 25
+       line 26
+       line 27
+    -  line 28!
+    +  line 28
+       line 29
+       line 30
+       line 31
+
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 12 - zig large multiline diff [DURATION]
+    240 | line six
+    241 | line seven
+    242 | 
+    243 | === has newline at end vs doesn't ===
+    244 | \`;
+    245 |   expect(received).toEqual(expected);
+                             ^
+    error: expect(received).toEqual(expected)
+
+    Difference:
+
+    - Received
+    + Expected
+
+      "=== diffdiff ===
+       line one
+    -  line two!
+    +  line two
+    +  line three
+    +  line four
+    +  line five
+       line six
+       line seven
+       
+       === each line changed ===
+    -  line one?
+    -  line two
+    -  line three?
+    -  line four?
+    +  line one
+    +  line two!
+    +  line three
+    +  line four!
+       
+       === deleted ===
+       line one
+       line two
+    -  line three
+    -  line four
+    -  line five
+       line six
+       line seven
+       
+       === inserted ===
+       line one
+       line two
+    +  line three
+    +  line four
+    +  line five
+       line six
+       line seven
+       
+       === inserted newline ===
+       line one
+       line two
+    +  
+       line three
+       line four
+       line five
+       line six
+       line seven
+       
+    -  === has newline at end vs doesn't ==="
+    +  === has newline at end vs doesn't ===
+    +  "
+
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 13 - zig simple multiline diff with sections [DURATION]
+    246 | });
+    247 | 
+    248 | test("example 14 - zig single line diff", () => {
+    249 |   const received = \`"¡hello, world"\`;
+    250 |   const expected = \`"hello, world!"\`;
+    251 |   expect(received).toEqual(expected);
+                             ^
+    error: expect(received).toEqual(expected)
+
+    Difference:
+
+    - Received
+    + Expected
+
+    - \\"¡hello, world\\"
+    + \\"hello, world!\\"
+
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 14 - zig single line diff [DURATION]
+    252 | });
+    253 | 
+    254 | test("example 15 - zig unicode char diff", () => {
+    255 |   const received = \`Hello 👋 世界 🌎!\`;
+    256 |   const expected = \`Hello 👋 世界 🌍!\`;
+    257 |   expect(received).toEqual(expected);
+                             ^
+    error: expect(received).toEqual(expected)
+
+    Difference:
+
+    - Received
+    + Expected
+
+    - Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0E!
+    + Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0D!
+
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 15 - zig unicode char diff [DURATION]
+    266 | }\`;
+    267 |   const expected = \`function main() {
+    268 |     print("Hello, world!");
+    269 |     print("Goodbye, world!");
+    270 | }\`;
+    271 |   expect(received).toEqual(expected);
+                             ^
+    error: expect(received).toEqual(expected)
+
+    Difference:
+
+    - Received
+    + Expected
+
+      "function main() {
+    -      if (true) {
+    -          print(\\"Hello, world!\\");
+    -          print(\\"Goodbye, world!\\");
+    -      }
+    +      print(\\"Hello, world!\\");
+    +      print(\\"Goodbye, world!\\");
+       }"
+
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 16 - zig indentation change diff [DURATION]
+    302 |   }
+    303 | 
+    304 |   // The Zig code adds a trailing newline to each string.
+    305 |   const receivedString = receivedLines.join("\\n") + "\\n";
+    306 |   const expectedString = expectedLines.join("\\n") + "\\n";
+    307 |   expect(receivedString).toEqual(expectedString);
+                                   ^
+    error: expect(received).toEqual(expected)
+
+    Difference:
+
+    - Received
+    + Expected
+
+    @@ -98,7 +98,7 @@
+       line 97
+       line 98
+       line 99
+    -  line 100 - inserted
+    +  line 100
+       line 101
+       line 102
+       line 103
+    @@ -198,7 +198,7 @@
+       line 197
+       line 198
+       line 199
+    -  line 200
+    +  line 200 - deleted
+       line 201
+       line 202
+       line 203
+    @@ -298,7 +298,7 @@
+       line 297
+       line 298
+       line 299
+    -  line 300 - modified
+    +  modified - line 300
+       line 301
+       line 302
+       line 303
+    @@ -399,7 +399,7 @@
+       line 398
+       line 399
+       line 400
+    -  extra line!
+       line 401
+       line 402
+       line 403
+
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 17 - zig very long string [DURATION]
 
      1 pass
-     10 fail
-     11 expect() calls
-    Ran 11 tests across 1 file. [DURATION]
+     16 fail
+     17 expect() calls
+    Ran 17 tests across 1 file. [DURATION]
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);

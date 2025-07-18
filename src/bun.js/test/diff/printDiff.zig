@@ -85,18 +85,28 @@ pub fn printDiffMain(arena: std.mem.Allocator, not: bool, received_slice: []cons
 
     const CONTEXT_LINES = 3;
     // unskip segments within CONTEXT_LINES of a non-equal segment
+
+    // Forward pass: unskip segments after non-equal segments
     for (new_diff_segments.items, 0..) |segment, i| {
         if (segment.mode != .equal) {
-            // Unskip segments within CONTEXT_LINES before this non-equal segment
-            const start = if (i >= CONTEXT_LINES) i - CONTEXT_LINES else 0;
-            for (new_diff_segments.items[start..i]) |*seg| {
-                seg.skip = false;
-            }
-
-            // Unskip segments within CONTEXT_LINES after this non-equal segment
             const end = @min(i + CONTEXT_LINES + 1, new_diff_segments.items.len);
             for (new_diff_segments.items[i..end]) |*seg| {
                 seg.skip = false;
+            }
+        }
+    }
+
+    {
+        // Reverse pass: unskip segments before non-equal segments
+        var i = new_diff_segments.items.len;
+        while (i > 0) {
+            i -= 1;
+            const segment = new_diff_segments.items[i];
+            if (segment.mode != .equal) {
+                const start = if (i >= CONTEXT_LINES) i - CONTEXT_LINES else 0;
+                for (new_diff_segments.items[start .. i + 1]) |*seg| {
+                    seg.skip = false;
+                }
             }
         }
     }

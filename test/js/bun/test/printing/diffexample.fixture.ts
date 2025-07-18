@@ -80,3 +80,229 @@ test("example 11 - Latin-1 in objects", () => {
     special: "½ ¼ ¾ ± × ÷",
   });
 });
+
+test("example 12 - zig large multiline diff", () => {
+  const received = `line one
+line two
+line three!
+line four
+line five
+!-!six
+line seven
+line eight
+line ten
+line 11
+line 12
+line 13
+line 14
+line 15
+line 16
+line 17
+line 18
+line 19
+line 20
+line 21
+line 22
+line 23
+line 24
+line 25
+line 26
+line 27
+line 28!
+line 29
+line 30
+line 31
+line 32
+line 33
+line 34
+line 35
+line 36
+line 37
+line 38
+line 39`;
+  const expected = `line one
+line two
+line three
+line four
+line five
+line six
+line seven
+line eight
+line nine (inserted only)
+line ten
+line 11
+line 12
+line 13
+line 14
+line 15
+line 16
+line 17
+line 18
+line 19
+line 20
+line 21
+line 22
+line 23
+line 24
+line 25
+line 26
+line 27
+line 28
+line 29
+line 30
+line 31
+line 32
+line 33
+line 34
+line 35
+line 36
+line 37
+line 38
+line 39`;
+  expect(received).toEqual(expected);
+});
+
+test("example 13 - zig simple multiline diff with sections", () => {
+  const received = `=== diffdiff ===
+line one
+line two!
+line six
+line seven
+
+=== each line changed ===
+line one?
+line two
+line three?
+line four?
+
+=== deleted ===
+line one
+line two
+line three
+line four
+line five
+line six
+line seven
+
+=== inserted ===
+line one
+line two
+line six
+line seven
+
+=== inserted newline ===
+line one
+line two
+line three
+line four
+line five
+line six
+line seven
+
+=== has newline at end vs doesn't ===`;
+  const expected = `=== diffdiff ===
+line one
+line two
+line three
+line four
+line five
+line six
+line seven
+
+=== each line changed ===
+line one
+line two!
+line three
+line four!
+
+=== deleted ===
+line one
+line two
+line six
+line seven
+
+=== inserted ===
+line one
+line two
+line three
+line four
+line five
+line six
+line seven
+
+=== inserted newline ===
+line one
+line two
+
+line three
+line four
+line five
+line six
+line seven
+
+=== has newline at end vs doesn't ===
+`;
+  expect(received).toEqual(expected);
+});
+
+test("example 14 - zig single line diff", () => {
+  const received = `"¡hello, world"`;
+  const expected = `"hello, world!"`;
+  expect(received).toEqual(expected);
+});
+
+test("example 15 - zig unicode char diff", () => {
+  const received = `Hello 👋 世界 🌎!`;
+  const expected = `Hello 👋 世界 🌍!`;
+  expect(received).toEqual(expected);
+});
+
+test("example 16 - zig indentation change diff", () => {
+  const received = `function main() {
+    if (true) {
+        print("Hello, world!");
+        print("Goodbye, world!");
+    }
+}`;
+  const expected = `function main() {
+    print("Hello, world!");
+    print("Goodbye, world!");
+}`;
+  expect(received).toEqual(expected);
+});
+
+test("example 17 - zig very long string", () => {
+  const receivedLines = [];
+  const expectedLines = [];
+  for (let i = 0; i < 1000; i++) {
+    if (i === 100) {
+      receivedLines.push(`line ${i} - inserted`);
+      expectedLines.push(`line ${i}`);
+      continue;
+    }
+    if (i === 200) {
+      receivedLines.push(`line ${i}`);
+      expectedLines.push(`line ${i} - deleted`);
+      continue;
+    }
+    if (i === 300) {
+      receivedLines.push(`line ${i} - modified`);
+      expectedLines.push(`modified - line ${i}`);
+      continue;
+    }
+    if (i === 400) {
+      receivedLines.push(`line ${i}`);
+      receivedLines.push(`extra line!`);
+      expectedLines.push(`line ${i}`);
+      continue;
+    }
+
+    receivedLines.push(`line ${i}`);
+    expectedLines.push(`line ${i}`);
+  }
+
+  // The Zig code adds a trailing newline to each string.
+  const receivedString = receivedLines.join("\n") + "\n";
+  const expectedString = expectedLines.join("\n") + "\n";
+  expect(receivedString).toEqual(expectedString);
+});

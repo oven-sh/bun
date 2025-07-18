@@ -30,7 +30,6 @@ pub const TerminalHyperlink = struct {
 };
 
 pub const UpdateInteractiveCommand = struct {
-    
     const OutdatedPackage = struct {
         name: []const u8,
         current_version: []const u8,
@@ -598,7 +597,7 @@ pub const UpdateInteractiveCommand = struct {
             } else if (pkg.behavior.optional) {
                 dev_tag_len = 9; // " optional"
             }
-            
+
             max_name_len = @max(max_name_len, pkg.name.len + dev_tag_len);
             max_current_len = @max(max_current_len, pkg.current_version.len);
             max_target_len = @max(max_target_len, pkg.update_version.len);

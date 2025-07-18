@@ -49,10 +49,10 @@ describe("bun update --interactive snapshots", () => {
 
     // Replace version numbers and paths to avoid flakiness
     const normalizedOutput = normalizeOutput(stdout);
-    
+
     // The output should show proper column spacing and formatting
     expect(normalizedOutput).toMatchSnapshot("update-interactive-no-crash");
-    
+
     // Should not crash or have formatting errors
     expect(stderr).not.toContain("panic");
     expect(stderr).not.toContain("underflow");
@@ -88,7 +88,7 @@ describe("bun update --interactive snapshots", () => {
     const stderr = await new Response(result.stderr).text();
 
     const normalizedOutput = normalizeOutput(stdout);
-    
+
     // Should not crash
     expect(normalizedOutput).toMatchSnapshot("update-interactive-long-names");
     expect(stderr).not.toContain("panic");
@@ -124,7 +124,7 @@ describe("bun update --interactive snapshots", () => {
     const stderr = await new Response(result.stderr).text();
 
     const normalizedOutput = normalizeOutput(stdout);
-    
+
     // Should not crash
     expect(normalizedOutput).toMatchSnapshot("update-interactive-complex-versions");
     expect(stderr).not.toContain("panic");
@@ -135,18 +135,18 @@ describe("bun update --interactive snapshots", () => {
 function normalizeOutput(output: string): string {
   // Remove Bun version to avoid test flakiness
   let normalized = output.replace(/bun update --interactive v\d+\.\d+\.\d+[^\n]*/g, "bun update --interactive vX.X.X");
-  
+
   // Normalize any absolute paths
   normalized = normalized.replace(/\/tmp\/[^\/\s]+/g, "/tmp/test-dir");
-  
+
   // Remove ANSI color codes for cleaner snapshots
   normalized = normalized.replace(/\x1b\[[0-9;]*m/g, "");
-  
+
   // Remove progress indicators and timing info
   normalized = normalized.replace(/[\r\n]*\s*\([0-9.]+ms\)/g, "");
-  
+
   // Normalize whitespace
   normalized = normalized.replace(/\r\n/g, "\n");
-  
+
   return normalized.trim();
 }

@@ -189,6 +189,8 @@ commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.C
 /// The value is decremented when defaults are restored.
 has_mutated_built_in_extensions: u32 = 0,
 
+initial_script_execution_context_identifier: i32,
+
 pub const ProcessAutoKiller = @import("ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
@@ -980,6 +982,7 @@ pub fn initWithModuleGraph(
         .standalone_module_graph = opts.graph.?,
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+        .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1012,7 +1015,7 @@ pub fn initWithModuleGraph(
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
-        if (opts.is_main_thread) 1 else std.math.maxInt(i32),
+        vm.initial_script_execution_context_identifier,
         false,
         false,
         null,
@@ -1101,6 +1104,7 @@ pub fn init(opts: Options) !*VirtualMachine {
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+        .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1130,7 +1134,7 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
-        if (opts.is_main_thread) 1 else std.math.maxInt(i32),
+        vm.initial_script_execution_context_identifier,
         opts.smol,
         opts.eval,
         null,
@@ -1260,6 +1264,7 @@ pub fn initWorker(
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         // This option is irrelevant for Workers
         .destruct_main_thread_on_exit = false,
+        .initial_script_execution_context_identifier = @as(i32, @intCast(worker.execution_context_id)),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1293,7 +1298,7 @@ pub fn initWorker(
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
-        @as(i32, @intCast(worker.execution_context_id)),
+        vm.initial_script_execution_context_identifier,
         worker.mini,
         opts.eval,
         worker.cpp_worker,
@@ -1349,6 +1354,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+        .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(

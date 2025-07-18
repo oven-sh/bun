@@ -81,11 +81,14 @@ assert.strictEqual(d.length, 0);
 }
 
 // Test invalid encoding for Buffer.toString
-assert.throws(() => b.toString('invalid'), /Unknown encoding: invalid/);
+assert.throws(() => b.toString('invalid'),
+              /Unknown encoding: invalid/);
 // Invalid encoding for Buffer.write
-assert.throws(() => b.write('test string', 0, 5, 'invalid'), /Unknown encoding: invalid/);
+assert.throws(() => b.write('test string', 0, 5, 'invalid'),
+              /Unknown encoding: invalid/);
 // Unsupported arguments for Buffer.write
-assert.throws(() => b.write('test', 'utf8', 0), { code: 'ERR_INVALID_ARG_TYPE' });
+assert.throws(() => b.write('test', 'utf8', 0),
+              { code: 'ERR_INVALID_ARG_TYPE' });
 
 // Try to create 0-length buffers. Should not throw.
 Buffer.from('');
@@ -677,7 +680,7 @@ function buildBuffer(data) {
 
 const x = buildBuffer([0x81, 0xa3, 0x66, 0x6f, 0x6f, 0xa3, 0x62, 0x61, 0x72]);
 
-// assert.strictEqual(x.inspect(), '<Buffer 81 a3 66 6f 6f a3 62 61 72>');
+assert.strictEqual(x.inspect(), '<Buffer 81 a3 66 6f 6f a3 62 61 72>');
 
 {
   const z = x.slice(4);

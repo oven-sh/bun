@@ -121,12 +121,13 @@ const { subtle } = globalThis.crypto;
       name: 'Ed25519',
     }, publicKey, signature, ec.encode(data)));
   }
-
-  test('hello world').then(common.mustCall());
+  if (!process.features.openssl_is_boringssl) {
+    test('hello world').then(common.mustCall());
+  }
 }
 
 // Test Sign/Verify Ed448
-if (!common.openSSLIsBoringSSL){
+{
   async function test(data) {
     const ec = new TextEncoder();
     const { publicKey, privateKey } = await subtle.generateKey({
@@ -142,5 +143,7 @@ if (!common.openSSLIsBoringSSL){
     }, publicKey, signature, ec.encode(data)));
   }
 
-  test('hello world').then(common.mustCall());
+  if (!process.features.openssl_is_boringssl) {
+    test('hello world').then(common.mustCall());
+  }
 }

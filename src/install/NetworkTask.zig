@@ -43,8 +43,10 @@ pub const Authorization = enum {
 // https://github.com/oven-sh/bun/issues/341
 // https://www.jfrog.com/jira/browse/RTFACT-18398
 const accept_header_value = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
+const accept_header_value_unoptimised = "application/json; q=1.0, */*";
 
 const default_headers_buf: string = "Accept" ++ accept_header_value;
+const default_headers_buf_unoptimised: string = "Accept" ++ accept_header_value_unoptimised;
 
 fn appendAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) void {
     if (scope.token.len > 0) {
@@ -68,6 +70,35 @@ fn countAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) v
         return;
     }
     header_builder.count("npm-auth-type", "legacy");
+}
+
+// if this package is likely to have a "libc" field in its package.json.
+// npm's optimised response doesn't include it, so we need to use the unoptimised one
+fn isPlatformSpecificPackage(name: string) bool {
+    if (name.len < 5) return false;
+    const platform_keywords = [_][]const u8{
+        "musl", "linux", "x64", "aarch64", "glibc", "arm64",
+    };
+
+    if (name[0] == '@') {
+        if (strings.indexOfChar(name, '/')) |i| {
+            const scope_and_pkg = name[i + 1 ..];
+            inline for (platform_keywords) |keyword| {
+                if (strings.containsComptime(scope_and_pkg, keyword)) {
+                    return true;
+                }
+            }
+        }
+    } else if (strings.indexOfChar(name, '-')) |i| {
+        const pkg_name = name[i + 1 ..];
+        inline for (platform_keywords) |keyword| {
+            if (strings.containsComptime(pkg_name, keyword)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 pub fn forManifest(
@@ -163,8 +194,12 @@ pub fn forManifest(
         header_builder.count("If-Modified-Since", last_modified);
     }
 
+    const use_unoptimized = is_optional and isPlatformSpecificPackage(name);
+    const accept_value = if (use_unoptimized) accept_header_value_unoptimised else accept_header_value;
+    const accept_buf = if (use_unoptimized) default_headers_buf_unoptimised else default_headers_buf;
+
     if (header_builder.header_count > 0) {
-        header_builder.count("Accept", accept_header_value);
+        header_builder.count("Accept", accept_value);
         if (last_modified.len > 0 and etag.len > 0) {
             header_builder.content.count(last_modified);
         }
@@ -178,7 +213,7 @@ pub fn forManifest(
             header_builder.append("If-Modified-Since", last_modified);
         }
 
-        header_builder.append("Accept", accept_header_value);
+        header_builder.append("Accept", accept_value);
 
         if (last_modified.len > 0 and etag.len > 0) {
             last_modified = header_builder.content.append(last_modified);
@@ -188,11 +223,11 @@ pub fn forManifest(
             allocator,
             .{
                 .name = .{ .offset = 0, .length = @as(u32, @truncate("Accept".len)) },
-                .value = .{ .offset = "Accept".len, .length = @as(u32, @truncate(default_headers_buf.len - "Accept".len)) },
+                .value = .{ .offset = "Accept".len, .length = @as(u32, @truncate(accept_buf.len - "Accept".len)) },
             },
         );
         header_builder.header_count = 1;
-        header_builder.content = GlobalStringBuilder{ .ptr = @as([*]u8, @ptrFromInt(@intFromPtr(bun.span(default_headers_buf).ptr))), .len = default_headers_buf.len, .cap = default_headers_buf.len };
+        header_builder.content = GlobalStringBuilder{ .ptr = @as([*]u8, @ptrFromInt(@intFromPtr(bun.span(accept_buf).ptr))), .len = accept_buf.len, .cap = accept_buf.len };
     }
 
     this.response_buffer = try MutableString.init(allocator, 0);
@@ -306,6 +341,7 @@ pub fn forTarball(
 const std = @import("std");
 
 const bun = @import("bun");
+const Environment = bun.Environment;
 const GlobalStringBuilder = bun.StringBuilder;
 const IdentityContext = bun.IdentityContext;
 const MutableString = bun.MutableString;

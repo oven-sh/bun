@@ -453,7 +453,7 @@ pub const Stringifier = struct {
                         TreeDepsSortCtx.isLessThan,
                     );
 
-                    // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+                    // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc, bin, binDir }
 
                     // first index is resolution for each type of package
                     // npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
@@ -656,7 +656,7 @@ pub const Stringifier = struct {
         try writer.writeAll("}\n");
     }
 
-    /// Writes a single line object. Contains dependencies, os, cpu, libc (soon), and bin
+    /// Writes a single line object. Contains dependencies, os, cpu, libc), and bin
     /// { "devDependencies": { "one": "1.1.1", "two": "2.2.2" }, "os": "none" }
     fn writePackageInfoObject(
         writer: anytype,
@@ -751,14 +751,15 @@ pub const Stringifier = struct {
             );
         }
 
-        // TODO(dylan-conway)
-        // if (meta.libc != .all) {
-        //     try writer.writeAll(
-        //         \\"libc": [
-        //     );
-        //     try Negatable(Npm.Libc).toJson(meta.libc, writer);
-        //     try writer.writeAll("], ");
-        // }
+        if (meta.libc != .all) {
+            if (any) {
+                try writer.writeByte(',');
+            } else {
+                any = true;
+            }
+            try writer.writeAll(" \"libc\": ");
+            try Negatable(Npm.Libc).toJson(meta.libc, writer);
+        }
 
         if (meta.os != .all) {
             if (any) {
@@ -1798,10 +1799,9 @@ pub fn parseIntoBinaryLockfile(
                         if (deps_os_cpu_libc_bin_bundle_obj.get("cpu")) |arch| {
                             pkg.meta.arch = try Negatable(Npm.Architecture).fromJson(allocator, arch);
                         }
-                        // TODO(dylan-conway)
-                        // if (os_cpu_libc_obj.get("libc")) |libc| {
-                        //     pkg.meta.libc = Negatable(Npm.Libc).fromJson(allocator, libc);
-                        // }
+                        if (deps_os_cpu_libc_bin_bundle_obj.get("libc")) |libc| {
+                            pkg.meta.libc = try Negatable(Npm.Libc).fromJson(allocator, libc);
+                        }
                     }
                 },
                 .root => {

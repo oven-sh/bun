@@ -337,17 +337,27 @@ pub fn isFilteredDependencyOrWorkspace(
     const res = &pkg_resolutions[pkg_id];
     const parent_res = &pkg_resolutions[parent_pkg_id];
 
-    if (pkg_metas[pkg_id].isDisabled()) {
+    if (pkg_metas[pkg_id].isDisabledWithTarget(manager.options.target_os, manager.options.target_cpu, manager.options.target_libc)) {
         if (manager.options.log_level.isVerbose()) {
             const meta = &pkg_metas[pkg_id];
             const name = lockfile.str(&pkg_names[pkg_id]);
-            if (!meta.os.isMatch() and !meta.arch.isMatch()) {
-                Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu & os mismatch<r>", .{name});
-            } else if (!meta.os.isMatch()) {
-                Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- os mismatch<r>", .{name});
-            } else if (!meta.arch.isMatch()) {
-                Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu mismatch<r>", .{name});
+            const os_match = if (manager.options.target_os) |os| meta.os.isMatchWithTarget(os) else true;
+            const arch_match = if (manager.options.target_cpu) |cpu| meta.arch.isMatchWithTarget(cpu) else true;
+            const libc_match = if (manager.options.target_libc) |libc| meta.libc.isMatchWithTarget(libc) else true;
+
+            Output.prettyError("<d>Skip installing<r> <b>{s}<r> <d>- ", .{name});
+            if (!os_match) {
+                Output.prettyError("os", .{});
             }
+            if (!arch_match) {
+                if (!os_match) Output.prettyError(" & ", .{});
+                Output.prettyError("cpu", .{});
+            }
+            if (!libc_match) {
+                if (!os_match or !arch_match) Output.prettyError(" & ", .{});
+                Output.prettyError("libc", .{});
+            }
+            Output.prettyErrorln(" mismatch<r>", .{});
         }
         return true;
     }

@@ -458,18 +458,32 @@ pub fn migrateNPMLockfile(
                     break :arch arch.combine();
                 } else .all,
 
-                .os = if (pkg.get("os")) |cpu_array| arch: {
+                .os = if (pkg.get("os")) |os_array| os: {
                     var os = Npm.OperatingSystem.none.negatable();
-                    if (cpu_array.data != .e_array) return error.InvalidNPMLockfile;
-                    if (cpu_array.data.e_array.items.len == 0) {
-                        break :arch .all;
+                    if (os_array.data != .e_array) return error.InvalidNPMLockfile;
+                    if (os_array.data.e_array.items.len == 0) {
+                        break :os .all;
                     }
 
-                    for (cpu_array.data.e_array.items.slice()) |item| {
+                    for (os_array.data.e_array.items.slice()) |item| {
                         if (item.data != .e_string) return error.InvalidNPMLockfile;
                         os.apply(item.data.e_string.data);
                     }
-                    break :arch os.combine();
+                    break :os os.combine();
+                } else .all,
+
+                .libc = if (pkg.get("libc")) |libc_array| libc: {
+                    var libc = Npm.Libc.none.negatable();
+                    if (libc_array.data != .e_array) return error.InvalidNPMLockfile;
+                    if (libc_array.data.e_array.items.len == 0) {
+                        break :libc .all;
+                    }
+
+                    for (libc_array.data.e_array.items.slice()) |item| {
+                        if (item.data != .e_string) return error.InvalidNPMLockfile;
+                        libc.apply(item.data.e_string.data);
+                    }
+                    break :libc libc.combine();
                 } else .all,
 
                 .man_dir = String{},

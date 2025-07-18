@@ -158,6 +158,18 @@ $ bun install --omit dev
 $ bun install --omit=dev --omit=peer --omit=optional
 ```
 
+## Platform-specific installation
+
+To add packages for a specific platform and omit dowloading the rest:
+
+```bash
+$ bun install --os=win32                          # i.e @oven/bun-windows-x64
+$ bun install --os=darwin --cpu=arm64             # i.e @oven/bun-darwin-aarch64
+$ bun install --os=linux --cpu=x64 --libc=glibc   # i.e @oven/bun-linux-x64
+$ bun install --os=linux --cpu=arm64 --libc=musl  # i.e @oven/bun-linux-aarch64-musl
+$ bun install --os=* --cpu=* --libc=*             # <everything>
+```
+
 ## Dry run
 
 To perform a dry run (i.e. don't actually install anything):

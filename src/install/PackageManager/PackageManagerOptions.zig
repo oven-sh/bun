@@ -71,6 +71,11 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
+target_os: ?Npm.OperatingSystem = null,
+target_cpu: ?Npm.Architecture = null,
+target_libc: ?Npm.Libc = null,
+target_os_is_linux: bool = Environment.isLinux,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -537,6 +542,39 @@ pub fn load(
 
         if (cli.node_linker) |node_linker| {
             this.node_linker = node_linker;
+        }
+
+        if (cli.target_os) |os_str| {
+            if (strings.eqlComptime(os_str, "*")) {
+                this.target_os = Npm.OperatingSystem.all;
+            } else if (Npm.OperatingSystem.NameMap.get(os_str)) |os_value| {
+                this.target_os = @enumFromInt(os_value);
+            } else {
+                Output.errGeneric("invalid --os value: '{s}'. Valid values are: " ++ Npm.OperatingSystem.validValuesString ++ ", *", .{os_str});
+                bun.Global.exit(1);
+            }
+        }
+
+        if (cli.target_cpu) |cpu_str| {
+            if (strings.eqlComptime(cpu_str, "*")) {
+                this.target_cpu = Npm.Architecture.all;
+            } else if (Npm.Architecture.NameMap.get(cpu_str)) |cpu_value| {
+                this.target_cpu = @enumFromInt(cpu_value);
+            } else {
+                Output.errGeneric("invalid --cpu value: '{s}'. Valid values are: " ++ Npm.Architecture.validValuesString ++ ", *", .{cpu_str});
+                bun.Global.exit(1);
+            }
+        }
+
+        if (cli.target_libc) |libc_str| {
+            if (strings.eqlComptime(libc_str, "*")) {
+                this.target_libc = Npm.Libc.all;
+            } else if (Npm.Libc.NameMap.get(libc_str)) |libc_value| {
+                this.target_libc = @enumFromInt(libc_value);
+            } else {
+                Output.errGeneric("invalid --libc value: '{s}'. Valid values are: " ++ Npm.Libc.validValuesString ++ ", *", .{libc_str});
+                bun.Global.exit(1);
+            }
         }
 
         const disable_progress_bar = default_disable_progress_bar or cli.no_progress;

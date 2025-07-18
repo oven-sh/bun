@@ -8007,7 +8007,7 @@ declare module "bun" {
 
     /**
      * ```
-     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc, bin, binDir }
      *
      * // first index is resolution for each type of package
      * npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
@@ -8043,6 +8043,7 @@ declare module "bun" {
   type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
     os?: string | string[];
     cpu?: string | string[];
+    libc?: string | string[];
     bundled?: true;
   };
 

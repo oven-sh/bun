@@ -1511,14 +1511,14 @@ pub fn shouldUnwrapIs(selectors: []const parser.Selector) bool {
 
 fn hasTypeSelector(selector: *const parser.Selector) bool {
     var iter = selector.iterRawParseOrderFrom(0);
-    
+
     // Check all components in the selector to find any type selectors
     while (iter.next()) |component| {
         if (isTypeSelector(&component)) {
             return true;
         }
     }
-    
+
     return false;
 }
 

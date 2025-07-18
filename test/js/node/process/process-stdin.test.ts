@@ -47,7 +47,7 @@ test("stdin with 'readable' event handler should receive data when paused", asyn
       
       setTimeout(() => {
         process.exit(1);
-      }, 2000);
+      }, 1000);
       `,
     ],
     stdin: "pipe",
@@ -84,7 +84,7 @@ test("stdin with 'data' event handler should NOT receive data when paused", asyn
       
       setTimeout(() => {
         process.exit(1);
-      }, 2000);
+      }, 1000);
       `,
     ],
     stdin: "pipe",
@@ -140,7 +140,7 @@ test("stdin should not allow process to exit when not paused", async () => {
     env: bunEnv,
   });
 
-  await Bun.sleep(2000);
+  await Bun.sleep(1000);
   expect(proc.exitCode).toBe(null);
   proc.kill();
   await proc.exited;

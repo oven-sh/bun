@@ -46,7 +46,7 @@ dns_result_order: DNSResolver.Order = .verbatim,
 counters: Counters = .{},
 
 hot_reload: bun.CLI.Command.HotReload = .none,
-jsc: CheckedUninit(*VM) = .{},
+jsc: CheckedField(*VM) = .{},
 
 /// hide bun:wrap from stack traces
 /// bun:wrap is very noisy
@@ -1127,17 +1127,22 @@ pub fn init(opts: Options) !*VirtualMachine {
 
     vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
-    vm.global = JSGlobalObject.create(
+    vm.global = JSGlobalObject.createEnsureWaker(
         vm,
         vm.console,
         if (opts.is_main_thread) 1 else std.math.maxInt(i32),
         opts.smol,
         opts.eval,
         null,
+        // DO NOT call `.ensureWaker()` as this accesses `vm.jsc` which is not
+        // initialized yet.
+        false,
     );
     vm.regular_event_loop.global = vm.global;
     vm.jsc.set(vm.global.vm());
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc.get();
+    // NOW call ensure waker since everything is set
+    vm.eventLoop().ensureWaker();
     vm.smol = opts.smol;
     vm.dns_result_order = opts.dns_result_order;
 
@@ -3680,4 +3685,4 @@ const DotEnv = bun.DotEnv;
 const HotReloader = JSC.hot_reloader.HotReloader;
 const Body = webcore.Body;
 const Counters = @import("./Counters.zig");
-const CheckedUninit = bun.CheckedUninit;
+const CheckedField = bun.CheckedField;

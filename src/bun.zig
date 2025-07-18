@@ -3768,4 +3768,4 @@ pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item)
     };
 }
 
-pub const CheckedUninit = @import("./CheckedUninit.zig").CheckedUninit;
+pub const CheckedField = @import("./CheckedField.zig").CheckedField;

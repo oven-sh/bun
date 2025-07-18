@@ -33,10 +33,10 @@
 /// };
 /// ```
 ///
-/// And use `CheckedUninit(T)` instead!
+/// And use `CheckedField(T)` instead!
 /// ```zig
 /// const VirtualMachine = struct {
-///     jsc: CheckedUninit(*VM) = .{},
+///     jsc: CheckedField(*VM) = .{},
 /// };
 /// ```
 ///
@@ -44,7 +44,7 @@
 /// `this.jsc.get()` to get the value.
 ///
 /// Congratulations! You've just saved everyone's time!
-pub fn CheckedUninit(comptime T: type) type {
+pub fn CheckedField(comptime T: type) type {
     const enabled = bun.Environment.isDebug;
     return struct {
         __value: T = undefined,
@@ -77,7 +77,7 @@ pub fn CheckedUninit(comptime T: type) type {
         pub inline fn assertInitialized(this: *const This) void {
             if (comptime enabled) {
                 if (!this.__is_init) {
-                    @panic("CheckedUninit: Not initialized");
+                    @panic("MaybeUninit: Not initialized");
                 }
             }
         }

@@ -774,10 +774,21 @@ pub const JSGlobalObject = opaque {
         eval_mode: bool,
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
+        return createEnsureWaker(v, console, context_id, mini_mode, eval_mode, worker_ptr, true);
+    }
+    pub fn createEnsureWaker(
+        v: *JSC.VirtualMachine,
+        console: *anyopaque,
+        context_id: i32,
+        mini_mode: bool,
+        eval_mode: bool,
+        worker_ptr: ?*anyopaque,
+        ensure_waker: bool,
+    ) *JSGlobalObject {
         const trace = bun.perf.trace("JSGlobalObject.create");
         defer trace.end();
 
-        v.eventLoop().ensureWaker();
+        if (ensure_waker) v.eventLoop().ensureWaker();
         const global = Zig__GlobalObject__create(console, context_id, mini_mode, eval_mode, worker_ptr);
 
         // JSC might mess with the stack size.

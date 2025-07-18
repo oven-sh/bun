@@ -30,9 +30,9 @@ import {
 import { readFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
-import { parseArgs } from "node:util";
-import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { createInterface } from "node:readline";
+import { setTimeout as setTimeoutPromise } from "node:timers/promises";
+import { parseArgs } from "node:util";
 import {
   getAbi,
   getAbiVersion,

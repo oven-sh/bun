@@ -1247,7 +1247,7 @@ function parseTestStdout(stdout, testPath) {
  */
 async function spawnBunInstall(execPath, options) {
   const { ok, error, stdout, duration } = await spawnBun(execPath, {
-    args: ["install"],
+    args: ["install", "--verbose"],
     timeout: testTimeout,
     ...options,
   });

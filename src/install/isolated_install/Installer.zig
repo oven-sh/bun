@@ -444,6 +444,23 @@ pub const Installer = struct {
                                             if (err.getErrno() == .XDEV) {
                                                 continue :backend .copyfile;
                                             }
+
+                                            if (PackageManager.verbose_install) {
+                                                Output.prettyErrorln(
+                                                    \\<red><b>error<r><d>:<r>Failed to hardlink package
+                                                    \\{}
+                                                    \\<d>From: {s}<r>
+                                                    \\<d>  To: {}<r>
+                                                    \\<r>
+                                                ,
+                                                    .{
+                                                        err,
+                                                        bun.fmt.fmtOSPath(src.slice(), .{ .path_sep = .auto }),
+                                                        bun.fmt.fmtOSPath(dest.slice(), .{ .path_sep = .auto }),
+                                                    },
+                                                );
+                                                Output.flush();
+                                            }
                                             return .failure(.{ .link_package = err });
                                         },
                                     }
@@ -485,6 +502,22 @@ pub const Installer = struct {
                                     switch (try file_copier.copy(&.{})) {
                                         .result => {},
                                         .err => |err| {
+                                            if (PackageManager.verbose_install) {
+                                                Output.prettyErrorln(
+                                                    \\<red><b>error<r><d>:<r>Failed to copy package
+                                                    \\{}
+                                                    \\<d>From: {s}<r>
+                                                    \\<d>  To: {}<r>
+                                                    \\<r>
+                                                ,
+                                                    .{
+                                                        err,
+                                                        bun.fmt.fmtOSPath(src_path.slice(), .{ .path_sep = .auto }),
+                                                        bun.fmt.fmtOSPath(dest.slice(), .{ .path_sep = .auto }),
+                                                    },
+                                                );
+                                                Output.flush();
+                                            }
                                             return .failure(.{ .link_package = err });
                                         },
                                     }
@@ -552,6 +585,15 @@ pub const Installer = struct {
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {
                                 .result => |fd| fd,
                                 .err => |err| {
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyErrorln(
+                                            "Failed to open cache directory for hardlink: {s}",
+                                            .{
+                                                pkg_cache_dir_subpath.slice(),
+                                            },
+                                        );
+                                        Output.flush();
+                                    }
                                     return .failure(.{ .link_package = err });
                                 },
                             };
@@ -573,6 +615,22 @@ pub const Installer = struct {
                                         installer.supported_backend.store(.copyfile, .monotonic);
                                         continue :backend .copyfile;
                                     }
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyErrorln(
+                                            \\<red><b>error<r><d>:<r>Failed to hardlink package
+                                            \\{}
+                                            \\<d>From: {s}<r>
+                                            \\<d>  To: {}<r>
+                                            \\<r>
+                                        ,
+                                            .{
+                                                err,
+                                                pkg_cache_dir_subpath.slice(),
+                                                bun.fmt.fmtOSPath(dest_subpath.slice(), .{ .path_sep = .auto }),
+                                            },
+                                        );
+                                        Output.flush();
+                                    }
                                     return .failure(.{ .link_package = err });
                                 },
                             }
@@ -585,6 +643,22 @@ pub const Installer = struct {
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {
                                 .result => |fd| fd,
                                 .err => |err| {
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyErrorln(
+                                            \\<red><b>error<r><d>:<r>Failed to open cache directory for copyfile
+                                            \\{}
+                                            \\<d>From: {s}<r>
+                                            \\<d>  To: {}<r>
+                                            \\<r>
+                                        ,
+                                            .{
+                                                err,
+                                                pkg_cache_dir_subpath.slice(),
+                                                bun.fmt.fmtOSPath(dest_subpath.slice(), .{ .path_sep = .auto }),
+                                            },
+                                        );
+                                        Output.flush();
+                                    }
                                     return .failure(.{ .link_package = err });
                                 },
                             };
@@ -602,6 +676,22 @@ pub const Installer = struct {
                             switch (try file_copier.copy(&.{})) {
                                 .result => {},
                                 .err => |err| {
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyErrorln(
+                                            \\<red><b>error<r><d>:<r>Failed to copy package
+                                            \\{}
+                                            \\<d>From: {s}<r>
+                                            \\<d>  To: {}<r>
+                                            \\<r>
+                                        ,
+                                            .{
+                                                err,
+                                                pkg_cache_dir_subpath.slice(),
+                                                bun.fmt.fmtOSPath(dest_subpath.slice(), .{ .path_sep = .auto }),
+                                            },
+                                        );
+                                        Output.flush();
+                                    }
                                     return .failure(.{ .link_package = err });
                                 },
                             }

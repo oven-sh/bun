@@ -40,7 +40,7 @@ pub fn runOnJSThread(this: *DeferredBatchTask) void {
             completion.result == .err
         else
             false,
-    );
+    ) catch return;
 }
 
 const bun = @import("bun");

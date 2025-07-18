@@ -1847,7 +1847,9 @@ pub const Loader = bundle_v2.Loader;
 pub const BundleV2 = bundle_v2.BundleV2;
 pub const ParseTask = bundle_v2.ParseTask;
 
-pub const Mutex = @import("./Mutex.zig");
+pub const threading = @import("./threading.zig");
+pub const Mutex = threading.Mutex;
+pub const Futex = threading.Futex;
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 
 pub fn threadlocalAllocator() std.mem.Allocator {
@@ -2975,8 +2977,6 @@ pub fn SliceIterator(comptime T: type) type {
     };
 }
 
-pub const Futex = @import("./futex.zig");
-
 // TODO: migrate
 pub const ArenaAllocator = std.heap.ArenaAllocator;
 
@@ -3150,7 +3150,7 @@ pub fn getRoughTickCount() timespec {
         const clocky = struct {
             pub var clock_id: std.c.CLOCK = .REALTIME;
             pub fn get() void {
-                var res = timespec{};
+                var res: timespec = undefined;
                 _ = std.c.clock_getres(.MONOTONIC_RAW_APPROX, @ptrCast(&res));
                 if (res.ms() <= 1) {
                     clock_id = .MONOTONIC_RAW_APPROX;
@@ -3176,7 +3176,7 @@ pub fn getRoughTickCount() timespec {
         const clocky = struct {
             pub var clock_id: std.os.linux.CLOCK = .REALTIME;
             pub fn get() void {
-                var res = timespec{};
+                var res: timespec = undefined;
                 std.posix.clock_getres(.MONOTONIC_COARSE, @ptrCast(&res)) catch {};
                 if (res.ms() <= 1) {
                     clock_id = .MONOTONIC_COARSE;
@@ -3221,8 +3221,10 @@ pub fn getRoughTickCountMs() u64 {
 }
 
 pub const timespec = extern struct {
-    sec: isize = 0,
-    nsec: isize = 0,
+    sec: isize,
+    nsec: isize,
+
+    pub const epoch: timespec = .{ .sec = 0, .nsec = 0 };
 
     pub fn eql(this: *const timespec, other: *const timespec) bool {
         return this.sec == other.sec and this.nsec == other.nsec;
@@ -3750,6 +3752,7 @@ pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
 
 pub const server = @import("./bun.js/api/server.zig");
 pub const macho = @import("./macho.zig");
+pub const pe = @import("./pe.zig");
 pub const valkey = @import("./valkey/index.zig");
 pub const highway = @import("./highway.zig");
 

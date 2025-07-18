@@ -984,6 +984,7 @@ install_build_essentials() {
 			xz-utils \
 			pkg-config \
 			golang
+		install_packages apache2-utils
 		;;
 	dnf | yum)
 		install_packages \
@@ -1011,6 +1012,7 @@ install_build_essentials() {
 			ninja \
 			go \
 			xz
+		install_packages apache2-utils
 		;;
 	esac
 

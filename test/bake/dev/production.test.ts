@@ -229,6 +229,8 @@ export default function GettingStarted() {
 `,
     });
 
+    console.error("DIR", dir);
+
     // Run the build command
     const buildProc = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
       .cwd(dir)
@@ -398,14 +400,23 @@ export default function IndexPage() {
 
     // The build should succeed - client components should support default imports
     expect(stderr.toString()).toContain(
-      '"useState" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component.',
+      '"useState" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding `"use client";` to the top of the file).',
     );
     expect(exitCode).toBe(1);
   });
 
   test("importing useState from client component", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-client-useState", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "src/index.tsx": `
+ const bundlerOptions = {
+  sourcemap: "inline",
+  minify: {
+    whitespace: false,
+    identifiers: false,
+    syntax: false,
+  },
+};     
+export default { app: { framework: "react", bundlerOptions: { server: bundlerOptions, client: bundlerOptions, ssr: bundlerOptions } } };`,
       "pages/index.tsx": `import Counter from "../components/Counter";
 
 export default function IndexPage() {

@@ -77,7 +77,7 @@ pub fn CheckedField(comptime T: type) type {
         pub inline fn assertInitialized(this: *const This) void {
             if (comptime enabled) {
                 if (!this.__is_init) {
-                    @panic("MaybeUninit: Not initialized");
+                    @panic("CheckedField: Not initialized");
                 }
             }
         }

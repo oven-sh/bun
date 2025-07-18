@@ -447,7 +447,7 @@ pub const Installer = struct {
 
                                             if (PackageManager.verbose_install) {
                                                 Output.prettyErrorln(
-                                                    \\<red><b>error<r><d>:<r>Failed to hardlink package
+                                                    \\<red><b>error<r><d>:<r>Failed to hardlink package folder
                                                     \\{}
                                                     \\<d>From: {s}<r>
                                                     \\<d>  To: {}<r>

@@ -225,7 +225,7 @@ pub const HelpCommand = struct {
     const cli_helptext_footer =
         \\
         \\Learn more about Bun:            <magenta>https://bun.com/docs<r>
-        \\Join our Discord community:      <blue>https://bun.com/discord<r>
+        \\Join our Discord community:      <b><blue>https://bun.com/discord<r>
         \\
     ;
 

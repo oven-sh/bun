@@ -160,7 +160,9 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "BakeGlobalObject does not have per-thread data configured"_s));
     }
 
-    return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, key, parameters, script);
+    auto result = Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, key, parameters, script);
+    RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
+    return result;
 }
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure,

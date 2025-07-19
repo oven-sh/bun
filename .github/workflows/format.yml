@@ -49,6 +49,7 @@ jobs:
           bun scripts/zig-remove-unreferenced-top-level-decls.ts src/
           zig fmt src
           bun scripts/sortImports src
+          ./scripts/normalize-imports src
           zig fmt src
       - name: Prettier Format
         run: |

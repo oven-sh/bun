@@ -716,6 +716,14 @@ pub const StandaloneModuleGraph = struct {
                 };
                 input_result.bytes.deinit();
 
+                if (inject_options.windows_hide_console) {
+                    pe_file.setSubsystem(2) catch |err| {
+                        Output.prettyErrorln("Error setting subsystem in PE file: {}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        Global.exit(1);
+                    };
+                }
+
                 switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
                     .err => |err| {
                         Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
@@ -801,15 +809,6 @@ pub const StandaloneModuleGraph = struct {
                     _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
                 }
             },
-        }
-
-        if (Environment.isWindows and inject_options.windows_hide_console) {
-            bun.windows.editWin32BinarySubsystem(.{ .handle = cloned_executable_fd }, .windows_gui) catch |err| {
-                Output.err(err, "failed to disable console on executable", .{});
-                cleanup(zname, cloned_executable_fd);
-
-                Global.exit(1);
-            };
         }
 
         return cloned_executable_fd;

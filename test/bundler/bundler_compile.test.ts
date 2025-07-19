@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
-import { rmSync, readFileSync } from "fs";
+import { readFileSync, rmSync } from "fs";
 import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
 
@@ -643,7 +643,6 @@ error: Hello World`,
       onAfterBundle(api) {
         const file = readFileSync(api.outfile);
 
-        // see windows.zig editWin32BinarySubsystem()
         const PE_HEADER_OFFSET_LOCATION = 0x3c;
         const SUBSYSTEM_OFFSET = 0x5c;
 

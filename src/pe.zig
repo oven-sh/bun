@@ -336,6 +336,13 @@ pub const PEFile = struct {
         return error.BunSectionNotFound;
     }
 
+    /// Set the subsystem for the PE file (e.g., console or GUI)
+    /// Subsystem values: 2 = Windows GUI, 3 = Windows CUI
+    pub fn setSubsystem(self: *const PEFile, subsystem: u16) !void {
+        const optional_header = self.getOptionalHeader();
+        optional_header.subsystem = subsystem;
+    }
+
     /// Write the modified PE file
     pub fn write(self: *const PEFile, writer: anytype) !void {
         try writer.writeAll(self.data.items);

@@ -1,28 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
-pub const css = @import("./css_parser.zig");
-pub const Error = css.Error;
-const ArrayList = std.ArrayListUnmanaged;
-
-const Length = css.css_values.length.Length;
-const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const CSSInteger = css.css_values.number.CSSInteger;
-const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
-const Resolution = css.css_values.resolution.Resolution;
-const Ratio = css.css_values.ratio.Ratio;
-const Ident = css.css_values.ident.Ident;
-const IdentFns = css.css_values.ident.IdentFns;
-const EnvironmentVariable = css.css_properties.custom.EnvironmentVariable;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const DashedIdentFns = css.css_values.ident.DashedIdentFns;
-
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Result = css.Result;
-
 pub fn ValidQueryCondition(comptime T: type) void {
     //   fn parse_feature<'t>(input: &mut Parser<'i, 't>) -> Result<Self, ParseError<'i, ParserError<'i>>>;
     _ = T.parseFeature;
@@ -1572,3 +1547,29 @@ fn writeMinMax(
 
     return dest.writeChar(')');
 }
+
+const bun = @import("bun");
+
+pub const css = @import("./css_parser.zig");
+pub const Error = css.Error;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const EnvironmentVariable = css.css_properties.custom.EnvironmentVariable;
+const Length = css.css_values.length.Length;
+const Ratio = css.css_values.ratio.Ratio;
+const Resolution = css.css_values.resolution.Resolution;
+
+const DashedIdent = css.css_values.ident.DashedIdent;
+const DashedIdentFns = css.css_values.ident.DashedIdentFns;
+const Ident = css.css_values.ident.Ident;
+const IdentFns = css.css_values.ident.IdentFns;
+
+const CSSInteger = css.css_values.number.CSSInteger;
+const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
+const CSSNumber = css.css_values.number.CSSNumber;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

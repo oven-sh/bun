@@ -1,14 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
-const Result = css.Result;
-const Printer = css.Printer;
-const Maybe = css.Maybe;
-const PrintErr = css.PrintErr;
-const Location = css.css_rules.Location;
-const SyntaxString = css.css_values.syntax.SyntaxString;
-const ParsedComponent = css.css_values.syntax.ParsedComponent;
-
 pub const PropertyRule = struct {
     name: css.css_values.ident.DashedIdent,
     syntax: SyntaxString,
@@ -222,3 +211,16 @@ pub const PropertyRuleDeclarationParser = struct {
         }
     };
 };
+
+const bun = @import("bun");
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const Maybe = css.Maybe;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const Location = css.css_rules.Location;
+
+const ParsedComponent = css.css_values.syntax.ParsedComponent;
+const SyntaxString = css.css_values.syntax.SyntaxString;

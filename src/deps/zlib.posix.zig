@@ -52,9 +52,6 @@ pub const zStream_struct = extern struct {
 pub const z_stream = zStream_struct;
 pub const z_streamp = *z_stream;
 
-pub const DataType = @import("./zlib.shared.zig").DataType;
-pub const FlushValue = @import("./zlib.shared.zig").FlushValue;
-pub const ReturnCode = @import("./zlib.shared.zig").ReturnCode;
 pub extern fn zlibVersion() [*c]const u8;
 
 pub extern fn deflateInit_(strm: z_streamp, level: c_int, version: [*c]const u8, stream_size: c_int) ReturnCode;
@@ -78,3 +75,7 @@ pub inline fn inflateInit2(strm: anytype, windowBits: anytype) ReturnCode {
 pub inline fn inflateBackInit(strm: anytype, windowBits: anytype, window: anytype) ReturnCode {
     return inflateBackInit_(strm, windowBits, window, zlibVersion(), @import("std").zig.c_translation.cast(c_int, @import("std").zig.c_translation.sizeof(z_stream)));
 }
+
+pub const DataType = @import("./zlib.shared.zig").DataType;
+pub const FlushValue = @import("./zlib.shared.zig").FlushValue;
+pub const ReturnCode = @import("./zlib.shared.zig").ReturnCode;

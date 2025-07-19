@@ -1,35 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Environment = bun.Environment;
-
-const Snapshots = @import("./snapshot.zig").Snapshots;
-const expect = @import("./expect.zig");
-const Counter = expect.Counter;
-const Expect = expect.Expect;
-
-const JSC = bun.JSC;
-
-const logger = bun.logger;
-
-const ObjectPool = @import("../../pool.zig").ObjectPool;
-
-const Output = bun.Output;
-const MutableString = bun.MutableString;
-const string = bun.string;
-const default_allocator = bun.default_allocator;
-const RegularExpression = bun.RegularExpression;
-
-const ZigString = JSC.ZigString;
-const JSInternalPromise = JSC.JSInternalPromise;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const CallFrame = JSC.CallFrame;
-
-const VirtualMachine = JSC.VirtualMachine;
-const Fs = bun.fs;
-
-const ArrayIdentityContext = bun.ArrayIdentityContext;
-
 pub const Tag = enum(u3) {
     pass,
     fail,
@@ -2441,8 +2409,6 @@ fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalO
     return function.call(globalObject, .js_undefined, args) catch |err| globalObject.takeException(err);
 }
 
-const assert = bun.assert;
-
 extern fn Bun__CallFrame__getLineNumber(callframe: *JSC.CallFrame, globalObject: *JSC.JSGlobalObject) u32;
 
 fn captureTestLineNumber(callframe: *JSC.CallFrame, globalThis: *JSGlobalObject) u32 {
@@ -2453,3 +2419,31 @@ fn captureTestLineNumber(callframe: *JSC.CallFrame, globalThis: *JSGlobalObject)
     }
     return 0;
 }
+
+const std = @import("std");
+const ObjectPool = @import("../../pool.zig").ObjectPool;
+const Snapshots = @import("./snapshot.zig").Snapshots;
+
+const expect = @import("./expect.zig");
+const Counter = expect.Counter;
+const Expect = expect.Expect;
+
+const bun = @import("bun");
+const ArrayIdentityContext = bun.ArrayIdentityContext;
+const Environment = bun.Environment;
+const Fs = bun.fs;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const RegularExpression = bun.RegularExpression;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
+const string = bun.string;
+
+const JSC = bun.JSC;
+const CallFrame = JSC.CallFrame;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSInternalPromise = JSC.JSInternalPromise;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;
+const ZigString = JSC.ZigString;

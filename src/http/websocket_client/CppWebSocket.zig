@@ -69,8 +69,9 @@ pub const CppWebSocket = opaque {
     }
 };
 
-const uws = bun.uws;
-const JSC = bun.JSC;
-const ErrorCode = @import("../websocket_client.zig").ErrorCode;
-const bun = @import("bun");
 const WebSocketDeflate = @import("./WebSocketDeflate.zig");
+const ErrorCode = @import("../websocket_client.zig").ErrorCode;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const uws = bun.uws;

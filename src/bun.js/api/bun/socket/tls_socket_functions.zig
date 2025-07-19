@@ -1,5 +1,3 @@
-const This = JSC.API.TLSSocket;
-
 pub fn getServername(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     const ssl_ptr = this.socket.ssl();
 
@@ -645,14 +643,17 @@ noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []c
     return exception;
 }
 
-const default_allocator = bun.default_allocator;
-const bun = @import("bun");
-const strings = bun.strings;
-const string = bun.string;
-const std = @import("std");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ZigString = JSC.ZigString;
-const BoringSSL = bun.BoringSSL.c;
 const X509 = @import("../x509.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+const BoringSSL = bun.BoringSSL.c;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
+const This = JSC.API.TLSSocket;

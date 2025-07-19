@@ -32,8 +32,6 @@ pub fn decodeInternal(
     }
 }
 
-// @sortImports
-
 const std = @import("std");
 const NewReader = @import("./NewReader.zig").NewReader;
 

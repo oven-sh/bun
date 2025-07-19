@@ -559,44 +559,37 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
     return output_files;
 }
 
-const bun = @import("bun");
-const strings = bun.strings;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Part = bun.bundle_v2.Part;
-const Loader = bun.Loader;
-const std = @import("std");
-const debug = LinkerContext.debug;
-
-const Environment = bun.Environment;
-const Logger = bun.logger;
-const options = bun.options;
-
-pub const ThreadPool = bun.bundle_v2.ThreadPool;
-
-const Loc = Logger.Loc;
-const Chunk = bun.bundle_v2.Chunk;
-
-const sync = bun.ThreadPool;
-const GenerateChunkCtx = LinkerContext.GenerateChunkCtx;
-const CompileResult = LinkerContext.CompileResult;
-const PendingPartRange = LinkerContext.PendingPartRange;
-
-const Output = bun.Output;
 const debugPartRanges = Output.scoped(.PartRanges, true);
 
-const generateCompileResultForJSChunk = LinkerContext.generateCompileResultForJSChunk;
-const generateCompileResultForCssChunk = LinkerContext.generateCompileResultForCssChunk;
-const generateCompileResultForHtmlChunk = LinkerContext.generateCompileResultForHtmlChunk;
-const generateChunk = LinkerContext.generateChunk;
+const std = @import("std");
 
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const Loader = bun.Loader;
+const Output = bun.Output;
+pub const ThreadPoolLib = bun.ThreadPool;
+const base64 = bun.base64;
+const options = bun.options;
+const strings = bun.strings;
+const sync = bun.ThreadPool;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 
+const Chunk = bun.bundle_v2.Chunk;
 const ContentHasher = bun.bundle_v2.ContentHasher;
-
+const Part = bun.bundle_v2.Part;
+pub const ThreadPool = bun.bundle_v2.ThreadPool;
 const cheapPrefixNormalizer = bun.bundle_v2.cheapPrefixNormalizer;
 
-const base64 = bun.base64;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const CompileResult = LinkerContext.CompileResult;
+const GenerateChunkCtx = LinkerContext.GenerateChunkCtx;
+const PendingPartRange = LinkerContext.PendingPartRange;
+const debug = LinkerContext.debug;
+const generateChunk = LinkerContext.generateChunk;
+const generateCompileResultForCssChunk = LinkerContext.generateCompileResultForCssChunk;
+const generateCompileResultForHtmlChunk = LinkerContext.generateCompileResultForHtmlChunk;
+const generateCompileResultForJSChunk = LinkerContext.generateCompileResultForJSChunk;
 
-const JSC = bun.JSC;
-
-pub const ThreadPoolLib = bun.ThreadPool;
+const Logger = bun.logger;
+const Loc = Logger.Loc;

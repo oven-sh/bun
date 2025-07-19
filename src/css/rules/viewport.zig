@@ -1,9 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Location = css.css_rules.Location;
-
 /// A [@viewport](https://drafts.csswg.org/css-device-adapt/#atviewport-rule) rule.
 pub const ViewportRule = struct {
     /// The vendor prefix for this rule, e.g. `@-ms-viewport`.
@@ -28,3 +22,10 @@ pub const ViewportRule = struct {
         return css.implementDeepClone(@This(), this, allocator);
     }
 };
+
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Location = css.css_rules.Location;

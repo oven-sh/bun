@@ -1,12 +1,3 @@
-const std = @import("std");
-const logger = bun.logger;
-const js_ast = bun.JSAst;
-
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const CodePoint = bun.CodePoint;
-
 pub const T = enum {
     t_end_of_file,
 
@@ -1245,3 +1236,12 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
 inline fn float64(num: anytype) f64 {
     return @as(f64, @floatFromInt(num));
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const CodePoint = bun.CodePoint;
+const js_ast = bun.JSAst;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;

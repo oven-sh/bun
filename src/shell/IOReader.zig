@@ -2,6 +2,7 @@
 //!
 //! *NOTE* This type is reference counted, but deinitialization is queued onto
 //! the event loop. This was done to prevent bugs.
+
 pub const IOReader = @This();
 
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", asyncDeinit, .{});
@@ -21,7 +22,6 @@ async_deinit: AsyncDeinitReader,
 is_reading: if (bun.Environment.isWindows) bool else u0 = if (bun.Environment.isWindows) false else 0,
 
 pub const ChildPtr = IOReaderChildPtr;
-pub const ReaderImpl = bun.io.BufferedReader;
 
 const InitFlags = packed struct(u8) {
     pollable: bool = false,
@@ -262,14 +262,14 @@ pub const AsyncDeinitReader = struct {
     }
 };
 
-const SmolList = bun.shell.SmolList;
-
 const std = @import("std");
+
 const bun = @import("bun");
-const shell = bun.shell;
-const Yield = shell.Yield;
-
-const Interpreter = bun.shell.Interpreter;
-const log = bun.shell.interpret.log;
-
 const JSC = bun.JSC;
+pub const ReaderImpl = bun.io.BufferedReader;
+
+const shell = bun.shell;
+const Interpreter = bun.shell.Interpreter;
+const SmolList = bun.shell.SmolList;
+const Yield = shell.Yield;
+const log = bun.shell.interpret.log;

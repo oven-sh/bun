@@ -1,22 +1,3 @@
-const std = @import("std");
-const Api = @import("./api/schema.zig").Api;
-const js = bun.JSC;
-const ImportKind = @import("./import_record.zig").ImportKind;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const JSC = bun.JSC;
-const fs = @import("fs.zig");
-const assert = bun.assert;
-const StringBuilder = bun.StringBuilder;
-const Index = @import("./ast/base.zig").Index;
-const OOM = bun.OOM;
-const JSError = bun.JSError;
-
 pub const Kind = enum(u8) {
     err = 0,
     warn = 1,
@@ -1621,3 +1602,22 @@ pub const Source = struct {
 pub fn rangeData(source: ?*const Source, r: Range, text: string) Data {
     return Data{ .text = text, .location = Location.initOrNull(source, r) };
 }
+
+const fs = @import("./fs.zig");
+const std = @import("std");
+const Api = @import("./api/schema.zig").Api;
+const ImportKind = @import("./import_record.zig").ImportKind;
+const Index = @import("./ast/base.zig").Index;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const JSError = bun.JSError;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const StringBuilder = bun.StringBuilder;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const js = bun.JSC;
+const string = bun.string;
+const strings = bun.strings;

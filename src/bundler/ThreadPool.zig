@@ -290,23 +290,24 @@ pub const ThreadPool = struct {
     };
 };
 
-const Transpiler = bun.Transpiler;
-const bun = @import("bun");
-const Output = bun.Output;
-const Environment = bun.Environment;
-const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
-
-const std = @import("std");
 const Logger = @import("../logger.zig");
+const ThreadPoolLib = @import("../thread_pool.zig");
+const allocators = @import("../allocators.zig");
 const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
-pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = @import("../thread_pool.zig");
+const std = @import("std");
 const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-const allocators = @import("../allocators.zig");
 
 pub const Index = @import("../ast/base.zig").Index;
+pub const Ref = @import("../ast/base.zig").Ref;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Output = bun.Output;
+const Transpiler = bun.Transpiler;
+const default_allocator = bun.default_allocator;
+
 const BundleV2 = bun.bundle_v2.BundleV2;
-const ParseTask = bun.bundle_v2.ParseTask;
 const LinkerContext = bun.bundle_v2.LinkerContext;
+const ParseTask = bun.bundle_v2.ParseTask;

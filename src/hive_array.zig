@@ -1,10 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const assert = bun.assert;
-const mem = std.mem;
-const testing = std.testing;
-const OOM = bun.OOM;
-
 /// An array that efficiently tracks which elements are in use.
 /// The pointers are intended to be stable
 /// Sorta related to https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2021/p0447r15.html
@@ -178,3 +171,11 @@ test "HiveArray" {
         }
     }
 }
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const assert = bun.assert;
+
+const std = @import("std");
+const mem = std.mem;
+const testing = std.testing;

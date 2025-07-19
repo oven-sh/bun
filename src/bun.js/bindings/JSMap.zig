@@ -1,8 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-
 pub const JSMap = opaque {
     extern fn JSC__JSMap__create(*JSGlobalObject) JSValue;
     extern fn JSC__JSMap__get_(?*JSMap, *JSGlobalObject, JSValue) JSValue;
@@ -46,3 +41,9 @@ pub const JSMap = opaque {
         return null;
     }
 };
+
+const bun = @import("bun");
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

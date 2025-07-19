@@ -1,3 +1,5 @@
+const Pwd = @This();
+
 state: union(enum) {
     idle,
     waiting_io: struct {
@@ -78,13 +80,15 @@ pub inline fn bltn(this: *Pwd) *Builtin {
 }
 
 // --
-const bun = @import("bun");
-const shell = bun.shell;
-const Yield = shell.Yield;
+
 const interpreter = @import("../interpreter.zig");
+
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const Pwd = @This();
-const JSC = bun.JSC;
 
+const bun = @import("bun");
+const JSC = bun.JSC;
 const assert = bun.assert;
+
+const shell = bun.shell;
+const Yield = shell.Yield;

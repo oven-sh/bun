@@ -3211,8 +3211,6 @@ fn stringToEquivalentNumberValue(str: []const u8) f64 {
     return JSC__jsToNumber(str.ptr, str.len);
 }
 
-// @sortImports
-
 const JSPrinter = @import("../js_printer.zig");
 const std = @import("std");
 

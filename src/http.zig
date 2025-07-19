@@ -1,3 +1,5 @@
+const HTTPClient = @This();
+
 // This becomes Arena.allocator
 pub var default_allocator: std.mem.Allocator = undefined;
 pub var default_arena: Arena = undefined;
@@ -287,8 +289,6 @@ pub const SOCKET_FLAGS: u32 = if (Environment.isLinux)
 else
     SOCK.CLOEXEC;
 
-pub const OPEN_SOCKET_FLAGS = SOCK.CLOEXEC;
-
 pub const extremely_verbose = false;
 
 fn writeProxyConnect(
@@ -511,7 +511,6 @@ const host_header_name = "Host";
 const content_length_header_name = "Content-Length";
 const chunked_encoded_header = picohttp.Header{ .name = "Transfer-Encoding", .value = "chunked" };
 const connection_header = picohttp.Header{ .name = "Connection", .value = "keep-alive" };
-const connection_closing_header = picohttp.Header{ .name = "Connection", .value = "close" };
 const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
 
 const accept_encoding_no_compression = "identity";
@@ -529,8 +528,6 @@ const user_agent_header = picohttp.Header{ .name = "User-Agent", .value = Global
 pub fn headerStr(this: *const HTTPClient, ptr: Api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
 }
-
-pub const HeaderBuilder = @import("./http/HeaderBuilder.zig");
 
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;
@@ -2415,8 +2412,6 @@ pub fn handleResponseMetadata(
     }
 }
 
-const assert = bun.assert;
-
 // Exists for heap stats reasons.
 pub const ThreadlocalAsyncHTTP = struct {
     pub const new = bun.TrivialNew(@This());
@@ -2425,46 +2420,49 @@ pub const ThreadlocalAsyncHTTP = struct {
     async_http: AsyncHTTP,
 };
 
-const bun = @import("bun");
-const picohttp = bun.picohttp;
-const JSC = bun.JSC;
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const FeatureFlags = bun.FeatureFlags;
-
-const std = @import("std");
-const URL = @import("./url.zig").URL;
-
-pub const Method = @import("./http/Method.zig").Method;
-const Api = @import("./api/schema.zig").Api;
-const HTTPClient = @This();
-const StringBuilder = bun.StringBuilder;
-const posix = std.posix;
-const SOCK = posix.SOCK;
-const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
-const BoringSSL = bun.BoringSSL.c;
-const Progress = bun.Progress;
-const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
-const uws = bun.uws;
+pub const AsyncHTTP = @import("./http/AsyncHTTP.zig");
+pub const CertificateInfo = @import("./http/CertificateInfo.zig");
 const HTTPCertError = @import("./http/HTTPCertError.zig");
-const ProxyTunnel = @import("./http/ProxyTunnel.zig");
+pub const HTTPThread = @import("./http/HTTPThread.zig");
+pub const HeaderBuilder = @import("./http/HeaderBuilder.zig");
 pub const Headers = @import("./http/Headers.zig");
+pub const InternalState = @import("./http/InternalState.zig");
 pub const MimeType = @import("./http/MimeType.zig");
-pub const URLPath = @import("./http/URLPath.zig");
-pub const Encoding = @import("./http/Encoding.zig").Encoding;
-pub const Decompressor = @import("./http/Decompressor.zig").Decompressor;
+const ProxyTunnel = @import("./http/ProxyTunnel.zig");
+pub const SendFile = @import("./http/SendFile.zig");
 pub const Signals = @import("./http/Signals.zig");
 pub const ThreadSafeStreamBuffer = @import("./http/ThreadSafeStreamBuffer.zig");
-pub const HTTPThread = @import("./http/HTTPThread.zig");
-pub const NewHTTPContext = @import("./http/HTTPContext.zig").NewHTTPContext;
-pub const AsyncHTTP = @import("./http/AsyncHTTP.zig");
-pub const InternalState = @import("./http/InternalState.zig");
-pub const CertificateInfo = @import("./http/CertificateInfo.zig");
+pub const URLPath = @import("./http/URLPath.zig");
+const Api = @import("./api/schema.zig").Api;
+const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
+pub const Decompressor = @import("./http/Decompressor.zig").Decompressor;
+pub const Encoding = @import("./http/Encoding.zig").Encoding;
 pub const FetchRedirect = @import("./http/FetchRedirect.zig").FetchRedirect;
-pub const InitError = @import("./http/InitError.zig").InitError;
 pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;
-pub const SendFile = @import("./http/SendFile.zig");
+pub const InitError = @import("./http/InitError.zig").InitError;
+pub const Method = @import("./http/Method.zig").Method;
+pub const NewHTTPContext = @import("./http/HTTPContext.zig").NewHTTPContext;
+const URL = @import("./url.zig").URL;
+const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Global = bun.Global;
+const JSC = bun.JSC;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const StringBuilder = bun.StringBuilder;
+const assert = bun.assert;
+const picohttp = bun.picohttp;
+const string = bun.string;
+const strings = bun.strings;
+const uws = bun.uws;
+const BoringSSL = bun.BoringSSL.c;
+
+const std = @import("std");
+const posix = std.posix;
+
+const SOCK = posix.SOCK;
+pub const OPEN_SOCKET_FLAGS = SOCK.CLOEXEC;

@@ -1,21 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-
-const ArrayList = std.ArrayListUnmanaged;
-
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
-const css_values = css.css_values;
-const LengthPercentage = css_values.length.LengthPercentage;
-const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const Percentage = css.css_values.percentage.Percentage;
-const Angle = css.css_values.angle.Angle;
-
 /// A value for the [font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop) property.
 pub const FontWeight = union(enum) {
     /// An absolute font weight.
@@ -1058,3 +1040,20 @@ inline fn isFontProperty(property_id: css.PropertyId) bool {
         else => false,
     };
 }
+
+const bun = @import("bun");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const css_values = css.css_values;
+const Angle = css.css_values.angle.Angle;
+const LengthPercentage = css_values.length.LengthPercentage;
+const Percentage = css.css_values.percentage.Percentage;
+
+const CSSNumber = css.css_values.number.CSSNumber;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

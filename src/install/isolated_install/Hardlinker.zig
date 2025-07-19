@@ -117,8 +117,6 @@ pub const Hardlinker = struct {
     }
 };
 
-// @sortImports
-
 const Walker = @import("../../walker_skippable.zig");
 
 const bun = @import("bun");

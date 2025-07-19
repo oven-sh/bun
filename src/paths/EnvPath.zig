@@ -1,10 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const AbsPath = bun.AbsPath;
-const string = bun.string;
-const strings = bun.strings;
-const OOM = bun.OOM;
-
 pub const EnvPathOptions = struct {
     //
 };
@@ -88,3 +81,11 @@ pub fn EnvPath(comptime opts: EnvPathOptions) type {
         }
     };
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const AbsPath = bun.AbsPath;
+const OOM = bun.OOM;
+const string = bun.string;
+const strings = bun.strings;

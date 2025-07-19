@@ -1,5 +1,3 @@
-const bun = @import("bun");
-
 pub const ACL = enum {
     /// Owner gets FULL_CONTROL. No one else has access rights (default).
     private,
@@ -41,3 +39,5 @@ pub const ACL = enum {
         .{ "log-delivery-write", .log_delivery_write },
     });
 };
+
+const bun = @import("bun");

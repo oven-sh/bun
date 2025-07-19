@@ -87,8 +87,6 @@ pub const B = union(Binding.Tag) {
     }
 };
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

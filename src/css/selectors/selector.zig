@@ -1,23 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const bits = bun.bits;
-
-pub const css = @import("../css_parser.zig");
-const CSSString = css.CSSString;
-const CSSStringFns = css.CSSStringFns;
-
-pub const Printer = css.Printer;
-pub const PrintErr = css.PrintErr;
-
-const ArrayList = std.ArrayListUnmanaged;
-
-pub const Selector = parser.Selector;
-pub const SelectorList = parser.SelectorList;
-pub const Component = parser.Component;
-pub const PseudoClass = parser.PseudoClass;
-pub const PseudoElement = parser.PseudoElement;
-
 const debug = bun.Output.scoped(.CSS_SELECTORS, false);
 
 /// Our implementation of the `SelectorImpl` interface
@@ -48,8 +28,6 @@ pub const impl = struct {
         };
     };
 };
-
-pub const parser = @import("./parser.zig");
 
 /// Returns whether two selector lists are equivalent, i.e. the same minus any vendor prefix differences.
 pub fn isEquivalent(selectors: []const Selector, other: []const Selector) bool {
@@ -1623,3 +1601,23 @@ const CompoundSelectorIter = struct {
         return null;
     }
 };
+
+pub const css = @import("../css_parser.zig");
+const CSSString = css.CSSString;
+const CSSStringFns = css.CSSStringFns;
+pub const PrintErr = css.PrintErr;
+pub const Printer = css.Printer;
+
+pub const parser = @import("./parser.zig");
+pub const Component = parser.Component;
+pub const PseudoClass = parser.PseudoClass;
+pub const PseudoElement = parser.PseudoElement;
+pub const Selector = parser.Selector;
+pub const SelectorList = parser.SelectorList;
+
+const bun = @import("bun");
+const bits = bun.bits;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

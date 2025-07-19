@@ -1,14 +1,8 @@
+const ThreadPool = @This();
+
 // Thank you @kprotty.
 // https://github.com/kprotty/zap/blob/blog/src/thread_pool.zig
 
-const std = @import("std");
-const bun = @import("bun");
-const ThreadPool = @This();
-const Futex = bun.threading.Futex;
-
-const Environment = bun.Environment;
-const assert = bun.assert;
-const Atomic = std.atomic.Value;
 pub const OnSpawnCallback = *const fn (ctx: ?*anyopaque) ?*anyopaque;
 
 sleep_on_idle_network_thread: bool = true,
@@ -643,8 +637,6 @@ fn join(self: *ThreadPool) void {
     thread.join_event.notify();
 }
 
-const Output = bun.Output;
-
 pub const Thread = struct {
     next: ?*Thread = null,
     target: ?*Thread = null,
@@ -1155,3 +1147,12 @@ pub const Node = struct {
         }
     };
 };
+
+const std = @import("std");
+const Atomic = std.atomic.Value;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const assert = bun.assert;
+const Futex = bun.threading.Futex;

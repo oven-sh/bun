@@ -1,31 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-
-pub const css = @import("../css_parser.zig");
-
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const Image = css.css_values.image.Image;
-const Rect = css.css_values.rect.Rect;
-const Url = css.css_values.url.Url;
-const LengthOrNumber = css.css_values.length.LengthOrNumber;
-const Position = css.css_values.position.Position;
-
-const BorderRadius = css.css_properties.border_radius.BorderRadius;
-const FillRule = css.css_properties.shape.FillRule;
-
-const BackgroundSize = css.css_properties.background.BackgroundSize;
-const BackgroundRepeat = css.css_properties.background.BackgroundRepeat;
-const BorderImageSlice = css.css_properties.border_image.BorderImageSlice;
-const BorderImageSideWidth = css.css_properties.border_image.BorderImageSideWidth;
-const BorderImageRepeat = css.css_properties.border_image.BorderImageRepeat;
-const BorderImage = css.css_properties.border_image.BorderImage;
-
-const VendorPrefix = css.VendorPrefix;
-
 /// A value for the [clip-path](https://www.w3.org/TR/css-masking-1/#the-clip-path) property.
 const ClipPath = union(enum) {
     /// No clip path.
@@ -571,3 +543,29 @@ pub fn getWebkitMaskProperty(property_id: *const css.PropertyId) ?css.PropertyId
         else => null,
     };
 }
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const VendorPrefix = css.VendorPrefix;
+const BorderRadius = css.css_properties.border_radius.BorderRadius;
+const FillRule = css.css_properties.shape.FillRule;
+const Image = css.css_values.image.Image;
+const Position = css.css_values.position.Position;
+const Rect = css.css_values.rect.Rect;
+const Url = css.css_values.url.Url;
+
+const BackgroundRepeat = css.css_properties.background.BackgroundRepeat;
+const BackgroundSize = css.css_properties.background.BackgroundSize;
+
+const BorderImage = css.css_properties.border_image.BorderImage;
+const BorderImageRepeat = css.css_properties.border_image.BorderImageRepeat;
+const BorderImageSideWidth = css.css_properties.border_image.BorderImageSideWidth;
+const BorderImageSlice = css.css_properties.border_image.BorderImageSlice;
+
+const LengthOrNumber = css.css_values.length.LengthOrNumber;
+const LengthPercentage = css.css_values.length.LengthPercentage;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

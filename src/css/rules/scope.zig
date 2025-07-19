@@ -1,11 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Location = css.css_rules.Location;
-const style = css.css_rules.style;
-const CssRuleList = css.CssRuleList;
-
 /// A [@scope](https://drafts.csswg.org/css-cascade-6/#scope-atrule) rule.
 ///
 /// @scope (<scope-start>) [to (<scope-end>)]? {
@@ -73,3 +65,13 @@ pub fn ScopeRule(comptime R: type) type {
         }
     };
 }
+
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const CssRuleList = css.CssRuleList;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+
+const Location = css.css_rules.Location;
+const style = css.css_rules.style;

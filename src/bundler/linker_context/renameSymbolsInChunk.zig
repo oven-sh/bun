@@ -252,23 +252,24 @@ pub fn renameSymbolsInChunk(
     return r.toRenamer();
 }
 
-const bun = @import("bun");
-const LinkerContext = bun.bundle_v2.LinkerContext;
-
 const std = @import("std");
-const Part = js_ast.Part;
-const js_ast = bun.js_ast;
+
+const bun = @import("bun");
 const ImportRecord = bun.ImportRecord;
 
-const renamer = bun.renamer;
-const StableSymbolCount = renamer.StableSymbolCount;
-const MinifyRenamer = renamer.MinifyRenamer;
 const bundler = bun.bundle_v2;
-
-pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
-pub const ThreadPool = bun.bundle_v2.ThreadPool;
-pub const ParseTask = bun.bundle_v2.ParseTask;
 const Chunk = bundler.Chunk;
+pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 const JSMeta = bundler.JSMeta;
-const StableRef = bundler.StableRef;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+pub const ParseTask = bun.bundle_v2.ParseTask;
 const Ref = bun.bundle_v2.Ref;
+const StableRef = bundler.StableRef;
+pub const ThreadPool = bun.bundle_v2.ThreadPool;
+
+const js_ast = bun.js_ast;
+const Part = js_ast.Part;
+
+const renamer = bun.renamer;
+const MinifyRenamer = renamer.MinifyRenamer;
+const StableSymbolCount = renamer.StableSymbolCount;

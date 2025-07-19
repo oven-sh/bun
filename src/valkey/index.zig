@@ -6,16 +6,19 @@
 // - Valkey protocol implementation in valkey_protocol.zig
 
 // Import modules
-pub const valkey = @import("valkey.zig");
-pub const js_valkey = @import("js_valkey.zig");
-pub const protocol = @import("valkey_protocol.zig");
 
 // Export JS client
-pub const JSValkeyClient = js_valkey.JSValkeyClient;
 
 // Re-export key types for easy access
-pub const ValkeyClient = valkey.ValkeyClient;
+
+pub const Command = @import("./ValkeyCommand.zig");
+pub const protocol = @import("./valkey_protocol.zig");
+
+pub const js_valkey = @import("./js_valkey.zig");
+pub const JSValkeyClient = js_valkey.JSValkeyClient;
+
+pub const valkey = @import("./valkey.zig");
+pub const Options = valkey.Options;
 pub const Protocol = valkey.Protocol;
 pub const Status = valkey.Status;
-pub const Options = valkey.Options;
-pub const Command = @import("ValkeyCommand.zig");
+pub const ValkeyClient = valkey.ValkeyClient;

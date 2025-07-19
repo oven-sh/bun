@@ -2,6 +2,8 @@
 //!
 //! N args => returns absolute path of each separated by newline, if any path is not found, exit code becomes 1, but continues execution until all args are processed
 
+const Which = @This();
+
 state: union(enum) {
     idle,
     one_arg,
@@ -135,17 +137,19 @@ pub inline fn bltn(this: *Which) *Builtin {
 
 // --
 const log = bun.Output.scoped(.which, true);
-const Which = @This();
 
 const std = @import("std");
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
-const JSC = bun.JSC;
-const assert = bun.assert;
 
 const interpreter = @import("../interpreter.zig");
+const EnvStr = interpreter.EnvStr;
+
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const EnvStr = interpreter.EnvStr;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const assert = bun.assert;
 const which = bun.which;
+
+const shell = bun.shell;
+const Yield = bun.shell.Yield;

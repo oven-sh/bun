@@ -1,13 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const JSC = bun.JSC;
-const String = bun.String;
-const ZigURL = @import("../../url.zig").URL;
-const ZigStackFrameCode = JSC.ZigStackFrameCode;
-const ZigStackFramePosition = JSC.ZigStackFramePosition;
-const Output = bun.Output;
-const strings = bun.strings;
-const Api = @import("../../api/schema.zig").Api;
 const string = []const u8;
 
 /// Represents a single frame in a stack trace
@@ -207,3 +197,16 @@ pub const ZigStackFrame = extern struct {
         };
     }
 };
+
+const std = @import("std");
+const Api = @import("../../api/schema.zig").Api;
+const ZigURL = @import("../../url.zig").URL;
+
+const bun = @import("bun");
+const Output = bun.Output;
+const String = bun.String;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const ZigStackFrameCode = JSC.ZigStackFrameCode;
+const ZigStackFramePosition = JSC.ZigStackFramePosition;

@@ -1,33 +1,5 @@
 const uws = @This();
 
-pub const us_socket_t = @import("uws/us_socket_t.zig").us_socket_t;
-pub const SocketTLS = @import("./uws/socket.zig").SocketTLS;
-pub const SocketTCP = @import("./uws/socket.zig").SocketTCP;
-pub const InternalSocket = @import("./uws/socket.zig").InternalSocket;
-pub const Socket = us_socket_t;
-pub const Timer = @import("./uws/Timer.zig").Timer;
-pub const SocketContext = @import("./uws/SocketContext.zig").SocketContext;
-pub const ConnectingSocket = @import("./uws/ConnectingSocket.zig").ConnectingSocket;
-pub const InternalLoopData = @import("./uws/InternalLoopData.zig").InternalLoopData;
-pub const WindowsNamedPipe = @import("./uws/WindowsNamedPipe.zig");
-pub const PosixLoop = @import("./uws/Loop.zig").PosixLoop;
-pub const WindowsLoop = @import("./uws/Loop.zig").WindowsLoop;
-pub const Request = @import("./uws/Request.zig").Request;
-pub const AnyResponse = @import("./uws/Response.zig").AnyResponse;
-pub const NewApp = @import("./uws/App.zig").NewApp;
-pub const uws_res = @import("./uws/Response.zig").uws_res;
-pub const RawWebSocket = @import("./uws/WebSocket.zig").RawWebSocket;
-pub const AnyWebSocket = @import("./uws/WebSocket.zig").AnyWebSocket;
-pub const WebSocketBehavior = @import("./uws/WebSocket.zig").WebSocketBehavior;
-pub const AnySocket = @import("./uws/socket.zig").AnySocket;
-pub const NewSocketHandler = @import("./uws/socket.zig").NewSocketHandler;
-pub const UpgradedDuplex = @import("./uws/UpgradedDuplex.zig");
-pub const ListenSocket = @import("./uws/ListenSocket.zig").ListenSocket;
-pub const State = @import("./uws/Response.zig").State;
-pub const Loop = @import("./uws/Loop.zig").Loop;
-pub const udp = @import("./uws/udp.zig");
-pub const BodyReaderMixin = @import("./uws/BodyReaderMixin.zig").BodyReaderMixin;
-
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(i32, 4);
 pub const LIBUS_RECV_BUFFER_PADDING = @as(i32, 32);
 pub const LIBUS_EXT_ALIGNMENT = @as(i32, 16);
@@ -143,6 +115,39 @@ pub const LIBUS_SOCKET_DESCRIPTOR = switch (bun.Environment.isWindows) {
     true => *anyopaque,
     false => i32,
 };
+
+pub const UpgradedDuplex = @import("./uws/UpgradedDuplex.zig");
+pub const WindowsNamedPipe = @import("./uws/WindowsNamedPipe.zig");
+pub const udp = @import("./uws/udp.zig");
+pub const BodyReaderMixin = @import("./uws/BodyReaderMixin.zig").BodyReaderMixin;
+pub const ConnectingSocket = @import("./uws/ConnectingSocket.zig").ConnectingSocket;
+pub const InternalLoopData = @import("./uws/InternalLoopData.zig").InternalLoopData;
+pub const ListenSocket = @import("./uws/ListenSocket.zig").ListenSocket;
+pub const NewApp = @import("./uws/App.zig").NewApp;
+pub const Request = @import("./uws/Request.zig").Request;
+pub const SocketContext = @import("./uws/SocketContext.zig").SocketContext;
+pub const Timer = @import("./uws/Timer.zig").Timer;
+
+pub const Loop = @import("./uws/Loop.zig").Loop;
+pub const PosixLoop = @import("./uws/Loop.zig").PosixLoop;
+pub const WindowsLoop = @import("./uws/Loop.zig").WindowsLoop;
+
+pub const AnyResponse = @import("./uws/Response.zig").AnyResponse;
+pub const State = @import("./uws/Response.zig").State;
+pub const uws_res = @import("./uws/Response.zig").uws_res;
+
+pub const AnyWebSocket = @import("./uws/WebSocket.zig").AnyWebSocket;
+pub const RawWebSocket = @import("./uws/WebSocket.zig").RawWebSocket;
+pub const WebSocketBehavior = @import("./uws/WebSocket.zig").WebSocketBehavior;
+
+pub const AnySocket = @import("./uws/socket.zig").AnySocket;
+pub const InternalSocket = @import("./uws/socket.zig").InternalSocket;
+pub const NewSocketHandler = @import("./uws/socket.zig").NewSocketHandler;
+pub const SocketTCP = @import("./uws/socket.zig").SocketTCP;
+pub const SocketTLS = @import("./uws/socket.zig").SocketTLS;
+
+pub const Socket = us_socket_t;
+pub const us_socket_t = @import("./uws/us_socket_t.zig").us_socket_t;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

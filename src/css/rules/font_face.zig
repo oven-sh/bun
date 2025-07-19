@@ -1,23 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
-const ArrayList = std.ArrayListUnmanaged;
-const Printer = css.Printer;
-const Maybe = css.Maybe;
-const PrintErr = css.PrintErr;
-const Url = css.css_values.url.Url;
-const Size2D = css.css_values.size.Size2D;
-const fontprops = css.css_properties.font;
-const Location = css.css_rules.Location;
-const Angle = css.css_values.angle.Angle;
-const FontStyleProperty = css.css_properties.font.FontStyle;
-const FontFamily = css.css_properties.font.FontFamily;
-const FontWeight = css.css_properties.font.FontWeight;
-const FontStretch = css.css_properties.font.FontStretch;
-const CustomProperty = css.css_properties.custom.CustomProperty;
-const CustomPropertyName = css.css_properties.custom.CustomPropertyName;
-const Result = css.Result;
-
 /// A property within an `@font-face` rule.
 ///
 /// See [FontFaceRule](FontFaceRule).
@@ -734,3 +714,27 @@ pub const FontFaceDeclarationParser = struct {
         }
     };
 };
+
+const bun = @import("bun");
+
+pub const css = @import("../css_parser.zig");
+const Maybe = css.Maybe;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const Location = css.css_rules.Location;
+const Angle = css.css_values.angle.Angle;
+const Size2D = css.css_values.size.Size2D;
+const Url = css.css_values.url.Url;
+
+const CustomProperty = css.css_properties.custom.CustomProperty;
+const CustomPropertyName = css.css_properties.custom.CustomPropertyName;
+
+const fontprops = css.css_properties.font;
+const FontFamily = css.css_properties.font.FontFamily;
+const FontStretch = css.css_properties.font.FontStretch;
+const FontStyleProperty = css.css_properties.font.FontStyle;
+const FontWeight = css.css_properties.font.FontWeight;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

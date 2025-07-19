@@ -1,8 +1,3 @@
-pub const css = @import("../css_parser.zig");
-pub const Result = css.Result;
-pub const Printer = css.Printer;
-pub const PrintErr = css.PrintErr;
-
 /// A quoted CSS string.
 pub const CSSString = []const u8;
 pub const CSSStringFns = struct {
@@ -14,3 +9,8 @@ pub const CSSStringFns = struct {
         return css.serializer.serializeString(this.*, dest) catch return dest.addFmtError();
     }
 };
+
+pub const css = @import("../css_parser.zig");
+pub const PrintErr = css.PrintErr;
+pub const Printer = css.Printer;
+pub const Result = css.Result;

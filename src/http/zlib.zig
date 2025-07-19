@@ -1,8 +1,3 @@
-const std = @import("std");
-const MutableString = bun.MutableString;
-const Zlib = @import("../zlib.zig");
-const bun = @import("bun");
-
 fn initMutableString(allocator: std.mem.Allocator) anyerror!MutableString {
     return MutableString.initEmpty(allocator);
 }
@@ -31,3 +26,9 @@ pub fn decompress(compressed_data: []const u8, output: *MutableString, allocator
     try reader.readAll();
     reader.deinit();
 }
+
+const Zlib = @import("../zlib.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const MutableString = bun.MutableString;

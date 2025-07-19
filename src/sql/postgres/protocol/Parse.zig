@@ -1,3 +1,5 @@
+const Parse = @This();
+
 name: []const u8 = "",
 query: []const u8 = "",
 params: []const int4 = &.{},
@@ -27,9 +29,6 @@ pub fn writeInternal(
 
 pub const write = WriteWrap(@This(), writeInternal).write;
 
-// @sortImports
-
-const Parse = @This();
 const std = @import("std");
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const WriteWrap = @import("./WriteWrap.zig").WriteWrap;

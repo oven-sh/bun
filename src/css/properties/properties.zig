@@ -1,47 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const css = @import("../css_parser.zig");
-const Position = position.Position;
-const Error = css.Error;
-const ArrayList = std.ArrayListUnmanaged;
-const SmallList = css.SmallList;
-
-pub const CustomPropertyName = @import("./custom.zig").CustomPropertyName;
-
 pub const @"align" = @import("./align.zig");
-pub const animation = @import("./animation.zig");
-pub const background = @import("./background.zig");
-pub const border = @import("./border.zig");
-pub const border_image = @import("./border_image.zig");
-pub const border_radius = @import("./border_radius.zig");
-pub const box_shadow = @import("./box_shadow.zig");
-pub const contain = @import("./contain.zig");
-pub const css_modules = @import("./css_modules.zig");
-pub const custom = @import("./custom.zig");
-pub const display = @import("./display.zig");
-pub const effects = @import("./effects.zig");
-pub const flex = @import("./flex.zig");
-pub const font = @import("./font.zig");
-pub const grid = @import("./grid.zig");
-pub const list = @import("./list.zig");
-pub const margin_padding = @import("./margin_padding.zig");
-pub const masking = @import("./masking.zig");
-pub const outline = @import("./outline.zig");
-pub const overflow = @import("./overflow.zig");
-pub const position = @import("./position.zig");
-pub const prefix_handler = @import("./prefix_handler.zig");
-pub const shape = @import("./shape.zig");
-pub const size = @import("./size.zig");
-pub const svg = @import("./svg.zig");
-pub const text = @import("./text.zig");
-pub const transform = @import("./transform.zig");
-pub const transition = @import("./transition.zig");
-pub const ui = @import("./ui.zig");
-
-const generated = @import("./properties_generated.zig");
-pub const PropertyId = generated.PropertyId;
-pub const Property = generated.Property;
-pub const PropertyIdTag = generated.PropertyIdTag;
 
 /// A [CSS-wide keyword](https://drafts.csswg.org/css-cascade-5/#defaulting-keywords).
 pub const CSSWideKeyword = enum {
@@ -1881,3 +1838,49 @@ pub const CSSWideKeyword = enum {
 //         .ty = ColorScheme,
 //     },
 // });
+
+pub const animation = @import("./animation.zig");
+pub const background = @import("./background.zig");
+pub const border = @import("./border.zig");
+pub const border_image = @import("./border_image.zig");
+pub const border_radius = @import("./border_radius.zig");
+pub const box_shadow = @import("./box_shadow.zig");
+const bun = @import("bun");
+pub const contain = @import("./contain.zig");
+pub const css_modules = @import("./css_modules.zig");
+pub const display = @import("./display.zig");
+pub const effects = @import("./effects.zig");
+pub const flex = @import("./flex.zig");
+pub const font = @import("./font.zig");
+pub const grid = @import("./grid.zig");
+pub const list = @import("./list.zig");
+pub const margin_padding = @import("./margin_padding.zig");
+pub const masking = @import("./masking.zig");
+pub const outline = @import("./outline.zig");
+pub const overflow = @import("./overflow.zig");
+pub const prefix_handler = @import("./prefix_handler.zig");
+pub const shape = @import("./shape.zig");
+pub const size = @import("./size.zig");
+pub const svg = @import("./svg.zig");
+pub const text = @import("./text.zig");
+pub const transform = @import("./transform.zig");
+pub const transition = @import("./transition.zig");
+pub const ui = @import("./ui.zig");
+
+const css = @import("../css_parser.zig");
+const Error = css.Error;
+const SmallList = css.SmallList;
+
+pub const custom = @import("./custom.zig");
+pub const CustomPropertyName = @import("./custom.zig").CustomPropertyName;
+
+pub const position = @import("./position.zig");
+const Position = position.Position;
+
+const generated = @import("./properties_generated.zig");
+pub const Property = generated.Property;
+pub const PropertyId = generated.PropertyId;
+pub const PropertyIdTag = generated.PropertyIdTag;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

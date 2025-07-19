@@ -1,21 +1,5 @@
-const std = @import("std");
-const JSC = bun.JSC;
-const bun = @import("bun");
-const Path = @import("../../resolver/resolve_path.zig");
-const Encoder = JSC.WebCore.encoding;
-const Mutex = bun.Mutex;
-
-const VirtualMachine = JSC.VirtualMachine;
-const EventLoop = JSC.EventLoop;
-const PathLike = JSC.Node.PathLike;
-const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
-const Output = bun.Output;
-const string = bun.string;
-const Environment = bun.Environment;
-const Async = bun.Async;
 const log = Output.scoped(.@"fs.watch", true);
 const PathWatcher = if (Environment.isWindows) @import("./win_watcher.zig") else @import("./path_watcher.zig");
-const webcore = bun.webcore;
 
 // TODO: make this a top-level struct
 pub const FSWatcher = struct {
@@ -710,3 +694,21 @@ pub const FSWatcher = struct {
         return .{ .result = ctx };
     }
 };
+
+const Path = @import("../../resolver/resolve_path.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const Mutex = bun.Mutex;
+const Output = bun.Output;
+const string = bun.string;
+const webcore = bun.webcore;
+
+const JSC = bun.JSC;
+const EventLoop = JSC.EventLoop;
+const VirtualMachine = JSC.VirtualMachine;
+const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
+const Encoder = JSC.WebCore.encoding;
+const PathLike = JSC.Node.PathLike;

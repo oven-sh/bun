@@ -124,8 +124,6 @@ pub fn compile(this: *const CharFreq, allocator: std.mem.Allocator) NameMinifier
     return minifier;
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

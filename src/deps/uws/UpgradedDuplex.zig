@@ -11,6 +11,7 @@
 //! The duplex stream manages the SSL handshake, certificate validation, encryption/decryption,
 //! and integrates with Bun's event loop for timeouts and async operations. It maintains
 //! JavaScript callbacks for handling connection events and errors.
+
 const UpgradedDuplex = @This();
 
 wrapper: ?WrapperType,
@@ -477,11 +478,14 @@ pub fn deinit(this: *UpgradedDuplex) void {
     this.ssl_error = .{};
 }
 
+const log = bun.Output.scoped(.UpgradedDuplex, false);
+
+const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+
 const bun = @import("bun");
 const JSC = bun.JSC;
-const uws = bun.uws;
 const BoringSSL = bun.BoringSSL.c;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
+
+const uws = bun.uws;
 const us_bun_verify_error_t = uws.us_bun_verify_error_t;
-const log = bun.Output.scoped(.UpgradedDuplex, false);
-const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;

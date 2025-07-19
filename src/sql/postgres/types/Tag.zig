@@ -393,8 +393,6 @@ pub const Tag = enum(short) {
 
 const @"bool" = @import("./bool.zig");
 
-// @sortImports
-
 const bun = @import("bun");
 const bytea = @import("./bytea.zig");
 const date = @import("./date.zig");

@@ -1,25 +1,3 @@
-const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
-const bun = @import("bun");
-const string = bun.string;
-const JSC = bun.JSC;
-const WebCore = bun.webcore;
-const Transpiler = bun.transpiler;
-const options = @import("../../options.zig");
-const resolve_path = @import("../../resolver/resolve_path.zig");
-const ZigString = JSC.ZigString;
-const Fs = @import("../../fs.zig");
-const JSValue = bun.JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const strings = bun.strings;
-const JSError = bun.JSError;
-
-const String = bun.String;
-const logger = bun.logger;
-const Loader = options.Loader;
-const Target = options.Target;
-const Index = @import("../../ast/base.zig").Index;
-
 const debug = bun.Output.scoped(.Transpiler, false);
 
 pub const JSBundler = struct {
@@ -1068,7 +1046,6 @@ pub const JSBundler = struct {
     };
 };
 
-const Blob = JSC.WebCore.Blob;
 pub const BuildArtifact = struct {
     pub const js = JSC.Codegen.JSBuildArtifact;
     pub const toJS = js.toJS;
@@ -1302,5 +1279,29 @@ pub const BuildArtifact = struct {
     }
 };
 
+const Fs = @import("../../fs.zig");
+const resolve_path = @import("../../resolver/resolve_path.zig");
+const std = @import("std");
+const Api = @import("../../api/schema.zig").Api;
+const Index = @import("../../ast/base.zig").Index;
+
+const options = @import("../../options.zig");
+const Loader = options.Loader;
+const Target = options.Target;
+
+const bun = @import("bun");
+const JSError = bun.JSError;
 const Output = bun.Output;
+const String = bun.String;
+const Transpiler = bun.transpiler;
+const WebCore = bun.webcore;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
 const BundleV2 = bun.bundle_v2.BundleV2;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = bun.JSC.JSValue;
+const ZigString = JSC.ZigString;
+const Blob = JSC.WebCore.Blob;

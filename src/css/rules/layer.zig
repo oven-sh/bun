@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-pub const css = @import("../css_parser.zig");
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Location = css.css_rules.Location;
-const Result = css.Result;
-
 /// Stored as a list of strings as dot notation can be used
 /// to create sublayers
 pub const LayerName = struct {
@@ -207,3 +199,12 @@ pub const LayerStatementRule = struct {
         return css.implementDeepClone(@This(), this, allocator);
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const Location = css.css_rules.Location;

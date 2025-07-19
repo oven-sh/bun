@@ -1,12 +1,3 @@
-const bun = @import("bun");
-const Output = bun.Output;
-const JSC = bun.JSC;
-const uws = bun.uws;
-const Environment = bun.Environment;
-const std = @import("std");
-
-pub const Loop = uws.Loop;
-
 /// Track if an object whose file descriptor is being watched should keep the event loop alive.
 /// This is not reference counted. It only tracks active or inactive.
 pub const KeepAlive = struct {
@@ -1229,3 +1220,13 @@ pub const Closer = struct {
         closer.fd.close();
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const Output = bun.Output;
+
+const uws = bun.uws;
+pub const Loop = uws.Loop;

@@ -1,7 +1,3 @@
-pub const Mode = std.posix.mode_t;
-pub const E = std.posix.E;
-pub const S = std.posix.S;
-
 pub const SystemErrno = enum(u16) {
     SUCCESS = 0,
     EPERM = 1,
@@ -202,5 +198,10 @@ pub fn getErrno(rc: anytype) E {
         return .SUCCESS;
     }
 }
-const std = @import("std");
+
 const bun = @import("bun");
+const std = @import("std");
+
+pub const E = std.posix.E;
+pub const Mode = std.posix.mode_t;
+pub const S = std.posix.S;

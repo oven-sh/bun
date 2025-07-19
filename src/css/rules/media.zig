@@ -1,11 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const MediaList = css.MediaList;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Location = css.css_rules.Location;
-const CssRuleList = css.CssRuleList;
-
 pub fn MediaRule(comptime R: type) type {
     return struct {
         /// The media query list.
@@ -48,3 +40,12 @@ pub fn MediaRule(comptime R: type) type {
         }
     };
 }
+
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const CssRuleList = css.CssRuleList;
+const MediaList = css.MediaList;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Location = css.css_rules.Location;

@@ -1,34 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-
-const string = bun.string;
-const stringZ = bun.stringZ;
-const Output = bun.Output;
-const Global = bun.Global;
-const Progress = bun.Progress;
-const String = bun.Semver.String;
-
-const logger = bun.logger;
-const Loc = logger.Loc;
-
-const PackageManager = bun.PackageManager;
-pub const PackageID = bun.install.PackageID;
-pub const DependencyID = bun.install.DependencyID;
-
-const Task = bun.install.Task;
-pub const Lockfile = @import("./lockfile.zig");
-pub const PatchedDep = Lockfile.PatchedDep;
-
-const ThreadPool = bun.ThreadPool;
-
-pub const Resolution = @import("./resolution.zig").Resolution;
-
-pub const PackageInstall = bun.install.PackageInstall;
-
-const Fs = @import("../fs.zig");
-const FileSystem = Fs.FileSystem;
-
-pub const bun_hash_tag = bun.install.bun_hash_tag;
 pub const max_hex_hash_len: comptime_int = brk: {
     var buf: [128]u8 = undefined;
     break :brk (std.fmt.bufPrint(buf[0..], "{x}", .{std.math.maxInt(u64)}) catch @panic("Buf wasn't big enough.")).len;
@@ -598,3 +567,31 @@ pub const PatchTask = struct {
         return pt;
     }
 };
+
+const std = @import("std");
+pub const Resolution = @import("./resolution.zig").Resolution;
+
+const Fs = @import("../fs.zig");
+const FileSystem = Fs.FileSystem;
+
+pub const Lockfile = @import("./lockfile.zig");
+pub const PatchedDep = Lockfile.PatchedDep;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const PackageManager = bun.PackageManager;
+const Progress = bun.Progress;
+const ThreadPool = bun.ThreadPool;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const String = bun.Semver.String;
+
+pub const DependencyID = bun.install.DependencyID;
+pub const PackageID = bun.install.PackageID;
+pub const PackageInstall = bun.install.PackageInstall;
+const Task = bun.install.Task;
+pub const bun_hash_tag = bun.install.bun_hash_tag;
+
+const logger = bun.logger;
+const Loc = logger.Loc;

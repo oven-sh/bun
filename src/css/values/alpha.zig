@@ -1,11 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const Result = css.Result;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-
 /// A CSS [`<alpha-value>`](https://www.w3.org/TR/css-color-4/#typedef-alpha-value),
 /// used to represent opacity.
 ///
@@ -42,3 +34,12 @@ pub const AlphaValue = struct {
         return css.implementDeepClone(@This(), this, allocator);
     }
 };
+
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;
+const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;

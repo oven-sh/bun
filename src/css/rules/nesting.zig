@@ -1,10 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Location = css.css_rules.Location;
-const style = css.css_rules.style;
-
 /// A [@nest](https://www.w3.org/TR/css-nesting-1/#at-nest) rule.
 pub fn NestingRule(comptime R: type) type {
     return struct {
@@ -29,3 +22,12 @@ pub fn NestingRule(comptime R: type) type {
         }
     };
 }
+
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+
+const Location = css.css_rules.Location;
+const style = css.css_rules.style;

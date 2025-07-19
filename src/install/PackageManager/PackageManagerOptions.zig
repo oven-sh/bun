@@ -687,30 +687,30 @@ pub const Enable = packed struct(u16) {
     _: u7 = 0,
 };
 
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const stringZ = bun.stringZ;
+const CommandLineArguments = @import("./CommandLineArguments.zig");
 const std = @import("std");
-const logger = bun.logger;
-const OOM = bun.OOM;
-const FD = bun.FD;
 
-const Api = bun.Schema.Api;
-const Path = bun.path;
-
+const bun = @import("bun");
 const DotEnv = bun.DotEnv;
+const Environment = bun.Environment;
+const FD = bun.FD;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Path = bun.path;
 const URL = bun.URL;
+const logger = bun.logger;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const strings = bun.strings;
+const Api = bun.Schema.Api;
+
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 
-const Npm = bun.install.Npm;
-
-const patch = bun.install.patch;
 const Features = bun.install.Features;
-const CommandLineArguments = @import("./CommandLineArguments.zig");
-const Subcommand = bun.install.PackageManager.Subcommand;
-const PackageManager = bun.install.PackageManager;
+const Npm = bun.install.Npm;
 const PackageInstall = bun.install.PackageInstall;
+const patch = bun.install.patch;
+
+const PackageManager = bun.install.PackageManager;
+const Subcommand = bun.install.PackageManager.Subcommand;

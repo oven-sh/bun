@@ -1,13 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
-const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
-const Printer = css.Printer;
-const Maybe = css.Maybe;
-const PrintErr = css.PrintErr;
-const Location = css.css_rules.Location;
-
 /// A [page selector](https://www.w3.org/TR/css-page-3/#typedef-page-selector)
 /// within a `@page` rule.
 ///
@@ -380,3 +370,15 @@ pub const PageRuleParser = struct {
         }
     };
 };
+
+const bun = @import("bun");
+
+pub const css = @import("../css_parser.zig");
+const Maybe = css.Maybe;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const Location = css.css_rules.Location;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

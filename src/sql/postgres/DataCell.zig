@@ -1087,8 +1087,6 @@ pub const DataCell = extern struct {
 
 const debug = bun.Output.scoped(.Postgres, false);
 
-// @sortImports
-
 const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");

@@ -1,39 +1,3 @@
-const URL = @import("../url.zig").URL;
-const bun = @import("bun");
-const std = @import("std");
-const MutableString = bun.MutableString;
-const Semver = bun.Semver;
-const ExternalString = Semver.ExternalString;
-const String = Semver.String;
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
-const PackageManager = @import("./install.zig").PackageManager;
-const ExternalStringMap = @import("./install.zig").ExternalStringMap;
-const ExternalPackageNameHashList = bun.install.ExternalPackageNameHashList;
-const PackageNameHash = bun.install.PackageNameHash;
-const ExternalStringList = @import("./install.zig").ExternalStringList;
-const ExternalSlice = @import("./install.zig").ExternalSlice;
-const initializeStore = @import("./install.zig").initializeMiniStore;
-const logger = bun.logger;
-const Output = bun.Output;
-const Global = bun.Global;
-const Integrity = @import("./integrity.zig").Integrity;
-const Bin = @import("./bin.zig").Bin;
-const Environment = bun.Environment;
-const Aligner = @import("./install.zig").Aligner;
-const HTTPClient = bun.http;
-const JSON = bun.JSON;
-const default_allocator = bun.default_allocator;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const SlicedString = Semver.SlicedString;
-const VersionSlice = @import("./install.zig").VersionSlice;
-const ObjectPool = @import("../pool.zig").ObjectPool;
-const Api = @import("../api/schema.zig").Api;
-const DotEnv = @import("../env_loader.zig");
-const http = bun.http;
-const OOM = bun.OOM;
-const File = bun.sys.File;
-
 const Npm = @This();
 
 const WhoamiError = OOM || error{
@@ -2457,3 +2421,43 @@ pub const PackageManifest = struct {
         return result;
     }
 };
+
+const DotEnv = @import("../env_loader.zig");
+const std = @import("std");
+const strings = @import("../string_immutable.zig");
+const Api = @import("../api/schema.zig").Api;
+const Bin = @import("./bin.zig").Bin;
+const IdentityContext = @import("../identity_context.zig").IdentityContext;
+const Integrity = @import("./integrity.zig").Integrity;
+const ObjectPool = @import("../pool.zig").ObjectPool;
+const URL = @import("../url.zig").URL;
+const string = @import("../string_types.zig").string;
+
+const Aligner = @import("./install.zig").Aligner;
+const ExternalSlice = @import("./install.zig").ExternalSlice;
+const ExternalStringList = @import("./install.zig").ExternalStringList;
+const ExternalStringMap = @import("./install.zig").ExternalStringMap;
+const PackageManager = @import("./install.zig").PackageManager;
+const VersionSlice = @import("./install.zig").VersionSlice;
+const initializeStore = @import("./install.zig").initializeMiniStore;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const HTTPClient = bun.http;
+const JSON = bun.JSON;
+const MutableString = bun.MutableString;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const http = bun.http;
+const logger = bun.logger;
+const File = bun.sys.File;
+
+const Semver = bun.Semver;
+const ExternalString = Semver.ExternalString;
+const SlicedString = Semver.SlicedString;
+const String = Semver.String;
+
+const ExternalPackageNameHashList = bun.install.ExternalPackageNameHashList;
+const PackageNameHash = bun.install.PackageNameHash;

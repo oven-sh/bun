@@ -509,10 +509,12 @@ comptime {
 }
 
 const std = @import("std");
-const JSC = bun.JSC;
-const Encoding = JSC.Node.Encoding;
+
 const bun = @import("bun");
-const strings = bun.strings;
 const string = bun.string;
-const JSValue = JSC.JSValue;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const Encoding = JSC.Node.Encoding;

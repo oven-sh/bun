@@ -1,22 +1,3 @@
-const bun = @import("bun");
-const logger = bun.logger;
-const Dependency = @import("./dependency.zig");
-const DotEnv = @import("../env_loader.zig");
-const Environment = @import("../env.zig");
-const FileSystem = @import("../fs.zig").FileSystem;
-const Install = @import("./install.zig");
-const ExtractData = Install.ExtractData;
-const PackageManager = Install.PackageManager;
-const Semver = bun.Semver;
-const String = Semver.String;
-const std = @import("std");
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
-const GitSHA = String;
-const Path = bun.path;
-const File = bun.sys.File;
-const OOM = bun.OOM;
-
 threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;
@@ -699,3 +680,25 @@ pub const Repository = extern struct {
         };
     }
 };
+
+const Dependency = @import("./dependency.zig");
+const DotEnv = @import("../env_loader.zig");
+const Environment = @import("../env.zig");
+const std = @import("std");
+const strings = @import("../string_immutable.zig");
+const FileSystem = @import("../fs.zig").FileSystem;
+const string = @import("../string_types.zig").string;
+
+const Install = @import("./install.zig");
+const ExtractData = Install.ExtractData;
+const PackageManager = Install.PackageManager;
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const Path = bun.path;
+const logger = bun.logger;
+const File = bun.sys.File;
+
+const Semver = bun.Semver;
+const GitSHA = String;
+const String = Semver.String;

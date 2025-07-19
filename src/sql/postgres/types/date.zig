@@ -44,8 +44,6 @@ pub fn toJS(
     }
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const std = @import("std");
 const Data = @import("../Data.zig").Data;

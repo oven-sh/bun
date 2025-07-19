@@ -1,20 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-
-const SmallList = css.SmallList;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
-const CssColor = css.css_values.color.CssColor;
-const Length = css.css_values.length.Length;
-
-const VendorPrefix = css.VendorPrefix;
-const Property = css.Property;
-const Feature = css.prefixes.Feature;
-
 /// A value for the [box-shadow](https://drafts.csswg.org/css-backgrounds/#box-shadow) property.
 pub const BoxShadow = struct {
     /// The color of the box shadow.
@@ -257,3 +240,17 @@ pub const BoxShadowHandler = struct {
         this.flushed = true;
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Property = css.Property;
+const SmallList = css.SmallList;
+const VendorPrefix = css.VendorPrefix;
+const Feature = css.prefixes.Feature;
+const CssColor = css.css_values.color.CssColor;
+const Length = css.css_values.length.Length;

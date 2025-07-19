@@ -1,34 +1,4 @@
-const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
-const bun = @import("bun");
-const string = bun.string;
-const JSC = bun.JSC;
-const Transpiler = bun.transpiler;
-const options = @import("../../options.zig");
-const ZigString = JSC.ZigString;
-const JSValue = bun.JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const strings = bun.strings;
-const MacroMap = @import("../../resolver/package_json.zig").MacroMap;
-const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
-const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
-const logger = bun.logger;
-const Loader = options.Loader;
-const Target = options.Target;
-const JSAst = bun.JSAst;
-const JSParser = bun.js_parser;
-const JSPrinter = bun.js_printer;
-const ScanPassResult = JSParser.ScanPassResult;
-const Mimalloc = @import("../../allocators/mimalloc_arena.zig");
-const Runtime = @import("../../runtime.zig").Runtime;
-const JSLexer = bun.js_lexer;
-const Expr = JSAst.Expr;
-
 const JSTranspiler = @This();
-pub const js = JSC.Codegen.JSTranspiler;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
 
 transpiler: bun.transpiler.Transpiler,
 arena: bun.ArenaAllocator,
@@ -1049,8 +1019,6 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
     return bun.String.toJSArray(global, names);
 }
 
-const ImportRecord = @import("../../import_record.zig").ImportRecord;
-
 fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecord) bun.JSError!JSC.JSValue {
     const path_label = JSC.ZigString.static("path");
     const kind_label = JSC.ZigString.static("kind");
@@ -1159,3 +1127,41 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callfra
     );
     return named_imports_value;
 }
+
+const Mimalloc = @import("../../allocators/mimalloc_arena.zig");
+const std = @import("std");
+const Api = @import("../../api/schema.zig").Api;
+const ImportRecord = @import("../../import_record.zig").ImportRecord;
+const Runtime = @import("../../runtime.zig").Runtime;
+const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
+
+const options = @import("../../options.zig");
+const Loader = options.Loader;
+const Target = options.Target;
+
+const MacroMap = @import("../../resolver/package_json.zig").MacroMap;
+const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
+
+const bun = @import("bun");
+const JSLexer = bun.js_lexer;
+const JSPrinter = bun.js_printer;
+const Transpiler = bun.transpiler;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+
+const JSAst = bun.JSAst;
+const Expr = JSAst.Expr;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = bun.JSC.JSValue;
+const ZigString = JSC.ZigString;
+
+pub const js = JSC.Codegen.JSTranspiler;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;
+
+const JSParser = bun.js_parser;
+const ScanPassResult = JSParser.ScanPassResult;

@@ -16,25 +16,6 @@
 //! Meeting all these constraints without extra memmove traffic during parsing
 //! is non-trivial. This module encapsulates those details and presents an
 //! easy-to-use API for the parser.
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
-pub const css = @import("../css_parser.zig");
-
-pub const Printer = css.Printer;
-pub const PrintErr = css.PrintErr;
-
-const ArrayList = std.ArrayListUnmanaged;
-
-const parser = css.selector.parser;
-
-const ValidSelectorImpl = parser.ValidSelectorImpl;
-const GenericComponent = parser.GenericComponent;
-const Combinator = parser.Combinator;
-const SpecificityAndFlags = parser.SpecificityAndFlags;
-const compute_specificity = parser.compute_specificity;
-const SelectorFlags = parser.SelectorFlags;
 
 /// Top-level SelectorBuilder struct. This should be stack-allocated by the
 /// consumer and never moved (because it contains a lot of inline data that
@@ -200,3 +181,21 @@ pub fn SelectorBuilder(comptime Impl: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+
+pub const css = @import("../css_parser.zig");
+pub const PrintErr = css.PrintErr;
+pub const Printer = css.Printer;
+
+const parser = css.selector.parser;
+const Combinator = parser.Combinator;
+const GenericComponent = parser.GenericComponent;
+const SelectorFlags = parser.SelectorFlags;
+const SpecificityAndFlags = parser.SpecificityAndFlags;
+const ValidSelectorImpl = parser.ValidSelectorImpl;
+const compute_specificity = parser.compute_specificity;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

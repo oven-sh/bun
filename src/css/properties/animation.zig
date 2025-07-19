@@ -1,22 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
-pub const css = @import("../css_parser.zig");
-
-const SmallList = css.SmallList;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const CSSNumber = css.css_values.number.CSSNumber;
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Time = css.css_values.time.Time;
-const EasingFunction = css.css_values.easing.EasingFunction;
-
 /// A list of animations.
 pub const AnimationList = SmallList(Animation, 1);
 
@@ -513,3 +494,22 @@ pub const TimelineRangeName = enum {
     /// Represents the range during which the principal box crosses the start border edge.
     exit_crossing,
 };
+
+const bun = @import("bun");
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const SmallList = css.SmallList;
+const CSSNumber = css.css_values.number.CSSNumber;
+const CSSString = css.css_values.string.CSSString;
+const EasingFunction = css.css_values.easing.EasingFunction;
+const Size2D = css.css_values.size.Size2D;
+const Time = css.css_values.time.Time;
+
+const CustomIdent = css.css_values.ident.CustomIdent;
+const DashedIdent = css.css_values.ident.DashedIdent;
+
+const LengthPercentage = css.css_values.length.LengthPercentage;
+const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;

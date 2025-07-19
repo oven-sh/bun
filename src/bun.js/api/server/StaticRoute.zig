@@ -1,5 +1,6 @@
 //! StaticRoute stores and serves a static blob. This can be created out of a JS
 //! Response object, or from globally allocated bytes.
+
 const StaticRoute = @This();
 
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
@@ -306,13 +307,14 @@ pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyRespon
 }
 
 const std = @import("std");
-const bun = @import("bun");
-
 const Api = @import("../../../api/schema.zig").Api;
+const writeStatus = @import("../server.zig").writeStatus;
+
+const bun = @import("bun");
 const JSC = bun.JSC;
-const uws = bun.uws;
 const Headers = bun.http.Headers;
 const AnyServer = JSC.API.AnyServer;
 const AnyBlob = JSC.WebCore.Blob.Any;
-const writeStatus = @import("../server.zig").writeStatus;
+
+const uws = bun.uws;
 const AnyResponse = uws.AnyResponse;

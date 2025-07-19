@@ -3,12 +3,6 @@
 // - These sequence numbers and ACKs shouldn't exist from JavaScript's perspective
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
-const std = @import("std");
-const bun = @import("bun");
-const Environment = bun.Environment;
-const JSC = bun.JSC;
-const Output = bun.Output;
-const ZigString = JSC.ZigString;
 const log = Output.scoped(.IPC, false);
 
 extern fn Bun__Process__queueNextTick1(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) void;
@@ -299,3 +293,12 @@ export fn Bun__shouldIgnoreOneDisconnectEventListener(globalObject: *JSC.JSGloba
     const vm = globalObject.bunVM();
     return vm.channel_ref_should_ignore_one_disconnect_event_listener;
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+
+const JSC = bun.JSC;
+const ZigString = JSC.ZigString;

@@ -1,3 +1,5 @@
+const FieldDescription = @This();
+
 /// JavaScriptCore treats numeric property names differently than string property names.
 /// so we do the work to figure out if the property name is a number ahead of time.
 name_or_index: ColumnIdentifier = .{
@@ -57,9 +59,6 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 
 pub const decode = DecoderWrap(FieldDescription, decodeInternal).decode;
 
-// @sortImports
-
-const FieldDescription = @This();
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const ColumnIdentifier = @import("./ColumnIdentifier.zig").ColumnIdentifier;
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;

@@ -1,24 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-pub const css = @import("../css_parser.zig");
-const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Angle = css.css_values.angle.Angle;
-const Length = css.css_values.length.Length;
-const LengthValue = css.css_values.length.LengthValue;
-const Percentage = css.css_values.percentage.Percentage;
-const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
-const Time = css.css_values.time.Time;
-
-const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-
-const eql = css.generic.eql;
-const deepClone = css.deepClone;
-
 pub fn needsDeinit(comptime V: type) bool {
     return switch (V) {
         Length => true,
@@ -1888,3 +1867,27 @@ pub const Constant = enum {
 fn absf(a: f32) f32 {
     return @abs(a);
 }
+
+const bun = @import("bun");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const deepClone = css.deepClone;
+const eql = css.generic.eql;
+const Angle = css.css_values.angle.Angle;
+const Time = css.css_values.time.Time;
+
+const Length = css.css_values.length.Length;
+const LengthValue = css.css_values.length.LengthValue;
+
+const CSSNumber = css.css_values.number.CSSNumber;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;
+
+const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
+const Percentage = css.css_values.percentage.Percentage;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

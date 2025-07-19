@@ -1,17 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
-const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Location = css.css_rules.Location;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CustomIdentFns = css.css_values.ident.CustomIdentFns;
-const QueryFeature = css.media_query.QueryFeature;
-const QueryConditionFlags = css.media_query.QueryConditionFlags;
-const Operator = css.media_query.Operator;
-
 pub const ContainerName = struct {
     v: css.css_values.ident.CustomIdent,
     pub fn parse(input: *css.Parser) Result(ContainerName) {
@@ -349,3 +335,21 @@ pub fn ContainerRule(comptime R: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const Location = css.css_rules.Location;
+
+const CustomIdent = css.css_values.ident.CustomIdent;
+const CustomIdentFns = css.css_values.ident.CustomIdentFns;
+
+const Operator = css.media_query.Operator;
+const QueryConditionFlags = css.media_query.QueryConditionFlags;
+const QueryFeature = css.media_query.QueryFeature;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

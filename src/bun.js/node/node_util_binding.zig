@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const JSC = bun.JSC;
-const string = bun.string;
-const ZigString = JSC.ZigString;
-const validators = @import("./util/validators.zig");
-const envloader = @import("./../../env_loader.zig");
-
 pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1).slice();
     if (arguments.len < 1) {
@@ -233,3 +224,14 @@ pub fn parseEnv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     }
     return obj;
 }
+
+const envloader = @import("../../env_loader.zig");
+const std = @import("std");
+const validators = @import("./util/validators.zig");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const string = bun.string;
+
+const JSC = bun.JSC;
+const ZigString = JSC.ZigString;

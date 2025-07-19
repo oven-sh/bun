@@ -2,82 +2,10 @@
 //!
 //! If an API can be implemented on multiple platforms,
 //! it does not belong in this namespace.
-const bun = @import("bun");
-const builtin = @import("builtin");
-const Output = bun.Output;
-const windows = std.os.windows;
-const w = std.os.windows;
-const win32 = windows;
-const log = bun.sys.syslog;
-const Maybe = bun.sys.Maybe;
 
-const c = bun.c;
-pub const ntdll = windows.ntdll;
-pub const kernel32 = windows.kernel32;
-pub const GetLastError = kernel32.GetLastError;
-
-pub const PATH_MAX_WIDE = windows.PATH_MAX_WIDE;
-pub const MAX_PATH = windows.MAX_PATH;
-pub const WORD = windows.WORD;
-pub const DWORD = windows.DWORD;
-pub const CHAR = windows.CHAR;
-pub const BOOL = windows.BOOL;
-pub const BOOLEAN = windows.BOOLEAN;
-pub const LPVOID = windows.LPVOID;
-pub const LPCVOID = windows.LPCVOID;
-pub const LPWSTR = windows.LPWSTR;
-pub const LPCWSTR = windows.LPCWSTR;
-pub const LPSTR = windows.LPSTR;
-pub const WCHAR = windows.WCHAR;
-pub const LPCSTR = windows.LPCSTR;
-pub const PWSTR = windows.PWSTR;
-pub const FALSE = windows.FALSE;
-pub const TRUE = windows.TRUE;
-pub const COORD = windows.COORD;
-pub const INVALID_HANDLE_VALUE = windows.INVALID_HANDLE_VALUE;
-pub const FILE_BEGIN = windows.FILE_BEGIN;
-pub const FILE_END = windows.FILE_END;
-pub const FILE_CURRENT = windows.FILE_CURRENT;
-pub const ULONG = windows.ULONG;
-pub const ULONGLONG = windows.ULONGLONG;
-pub const UINT = windows.UINT;
-pub const LARGE_INTEGER = windows.LARGE_INTEGER;
-pub const UNICODE_STRING = windows.UNICODE_STRING;
-pub const NTSTATUS = windows.NTSTATUS;
-pub const NT_SUCCESS = windows.NT_SUCCESS;
-pub const STATUS_SUCCESS = windows.STATUS_SUCCESS;
 pub const MOVEFILE_COPY_ALLOWED = 0x2;
 pub const MOVEFILE_REPLACE_EXISTING = 0x1;
 pub const MOVEFILE_WRITE_THROUGH = 0x8;
-pub const FILETIME = windows.FILETIME;
-
-pub const DUPLICATE_SAME_ACCESS = windows.DUPLICATE_SAME_ACCESS;
-pub const OBJECT_ATTRIBUTES = windows.OBJECT_ATTRIBUTES;
-pub const IO_STATUS_BLOCK = windows.IO_STATUS_BLOCK;
-pub const FILE_INFO_BY_HANDLE_CLASS = windows.FILE_INFO_BY_HANDLE_CLASS;
-pub const FILE_SHARE_READ = windows.FILE_SHARE_READ;
-pub const FILE_SHARE_WRITE = windows.FILE_SHARE_WRITE;
-pub const FILE_SHARE_DELETE = windows.FILE_SHARE_DELETE;
-pub const FILE_ATTRIBUTE_NORMAL = windows.FILE_ATTRIBUTE_NORMAL;
-pub const FILE_ATTRIBUTE_READONLY = windows.FILE_ATTRIBUTE_READONLY;
-pub const FILE_ATTRIBUTE_HIDDEN = windows.FILE_ATTRIBUTE_HIDDEN;
-pub const FILE_ATTRIBUTE_SYSTEM = windows.FILE_ATTRIBUTE_SYSTEM;
-pub const FILE_ATTRIBUTE_DIRECTORY = windows.FILE_ATTRIBUTE_DIRECTORY;
-pub const FILE_ATTRIBUTE_ARCHIVE = windows.FILE_ATTRIBUTE_ARCHIVE;
-pub const FILE_ATTRIBUTE_DEVICE = windows.FILE_ATTRIBUTE_DEVICE;
-pub const FILE_ATTRIBUTE_TEMPORARY = windows.FILE_ATTRIBUTE_TEMPORARY;
-pub const FILE_ATTRIBUTE_SPARSE_FILE = windows.FILE_ATTRIBUTE_SPARSE_FILE;
-pub const FILE_ATTRIBUTE_REPARSE_POINT = windows.FILE_ATTRIBUTE_REPARSE_POINT;
-pub const FILE_ATTRIBUTE_COMPRESSED = windows.FILE_ATTRIBUTE_COMPRESSED;
-pub const FILE_ATTRIBUTE_OFFLINE = windows.FILE_ATTRIBUTE_OFFLINE;
-pub const FILE_ATTRIBUTE_NOT_CONTENT_INDEXED = windows.FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
-pub const FILE_DIRECTORY_FILE = windows.FILE_DIRECTORY_FILE;
-pub const FILE_WRITE_THROUGH = windows.FILE_WRITE_THROUGH;
-pub const FILE_SEQUENTIAL_ONLY = windows.FILE_SEQUENTIAL_ONLY;
-pub const FILE_SYNCHRONOUS_IO_NONALERT = windows.FILE_SYNCHRONOUS_IO_NONALERT;
-pub const FILE_OPEN_REPARSE_POINT = windows.FILE_OPEN_REPARSE_POINT;
-pub const user32 = windows.user32;
-pub const advapi32 = windows.advapi32;
 
 pub const INVALID_FILE_ATTRIBUTES: u32 = std.math.maxInt(u32);
 
@@ -89,14 +17,8 @@ pub const nt_object_prefix_u8 = [4]u8{ '\\', '?', '?', '\\' };
 pub const nt_unc_object_prefix_u8 = [8]u8{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
 pub const long_path_prefix_u8 = [4]u8{ '\\', '\\', '?', '\\' };
 
-const std = @import("std");
-const Environment = bun.Environment;
-
 pub const PathBuffer = if (Environment.isWindows) bun.PathBuffer else void;
 pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
-
-pub const HANDLE = win32.HANDLE;
-pub const HMODULE = win32.HMODULE;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
 pub extern "kernel32" fn GetFileInformationByHandle(
@@ -162,8 +84,6 @@ pub extern "kernel32" fn SetCurrentDirectoryW(
 ) callconv(windows.WINAPI) win32.BOOL;
 pub const SetCurrentDirectory = SetCurrentDirectoryW;
 pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(windows.WINAPI) Win32Error;
-
-const SystemErrno = bun.sys.SystemErrno;
 
 // This was originally copied from Zig's standard library
 /// Codes are from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
@@ -2989,8 +2909,6 @@ pub const Win32Error = enum(u16) {
     }
 };
 
-pub const libuv = @import("./deps/libuv.zig");
-
 pub extern fn GetProcAddress(
     ptr: ?*anyopaque,
     [*:0]const u16,
@@ -3697,8 +3615,6 @@ const watcherChildEnv: [:0]const u16 = bun.strings.toUTF16Literal("_BUN_WATCHER_
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
 pub const watcher_reload_exit: DWORD = 3224497970;
 
-pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
-
 pub fn isWatcherChild() bool {
     var buf: [1]u16 = undefined;
     return c.GetEnvironmentVariableW(@constCast(watcherChildEnv.ptr), &buf, 1) > 0;
@@ -4057,3 +3973,85 @@ pub fn renameAtW(
 
     return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
 }
+
+const builtin = @import("builtin");
+pub const libuv = @import("./deps/libuv.zig");
+const std = @import("std");
+pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const c = bun.c;
+
+const Maybe = bun.sys.Maybe;
+const SystemErrno = bun.sys.SystemErrno;
+const log = bun.sys.syslog;
+
+const w = std.os.windows;
+const win32 = windows;
+const windows = std.os.windows;
+pub const BOOL = windows.BOOL;
+pub const BOOLEAN = windows.BOOLEAN;
+pub const CHAR = windows.CHAR;
+pub const COORD = windows.COORD;
+pub const DUPLICATE_SAME_ACCESS = windows.DUPLICATE_SAME_ACCESS;
+pub const DWORD = windows.DWORD;
+pub const FALSE = windows.FALSE;
+pub const FILETIME = windows.FILETIME;
+pub const FILE_ATTRIBUTE_ARCHIVE = windows.FILE_ATTRIBUTE_ARCHIVE;
+pub const FILE_ATTRIBUTE_COMPRESSED = windows.FILE_ATTRIBUTE_COMPRESSED;
+pub const FILE_ATTRIBUTE_DEVICE = windows.FILE_ATTRIBUTE_DEVICE;
+pub const FILE_ATTRIBUTE_DIRECTORY = windows.FILE_ATTRIBUTE_DIRECTORY;
+pub const FILE_ATTRIBUTE_HIDDEN = windows.FILE_ATTRIBUTE_HIDDEN;
+pub const FILE_ATTRIBUTE_NORMAL = windows.FILE_ATTRIBUTE_NORMAL;
+pub const FILE_ATTRIBUTE_NOT_CONTENT_INDEXED = windows.FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
+pub const FILE_ATTRIBUTE_OFFLINE = windows.FILE_ATTRIBUTE_OFFLINE;
+pub const FILE_ATTRIBUTE_READONLY = windows.FILE_ATTRIBUTE_READONLY;
+pub const FILE_ATTRIBUTE_REPARSE_POINT = windows.FILE_ATTRIBUTE_REPARSE_POINT;
+pub const FILE_ATTRIBUTE_SPARSE_FILE = windows.FILE_ATTRIBUTE_SPARSE_FILE;
+pub const FILE_ATTRIBUTE_SYSTEM = windows.FILE_ATTRIBUTE_SYSTEM;
+pub const FILE_ATTRIBUTE_TEMPORARY = windows.FILE_ATTRIBUTE_TEMPORARY;
+pub const FILE_BEGIN = windows.FILE_BEGIN;
+pub const FILE_CURRENT = windows.FILE_CURRENT;
+pub const FILE_DIRECTORY_FILE = windows.FILE_DIRECTORY_FILE;
+pub const FILE_END = windows.FILE_END;
+pub const FILE_INFO_BY_HANDLE_CLASS = windows.FILE_INFO_BY_HANDLE_CLASS;
+pub const FILE_OPEN_REPARSE_POINT = windows.FILE_OPEN_REPARSE_POINT;
+pub const FILE_SEQUENTIAL_ONLY = windows.FILE_SEQUENTIAL_ONLY;
+pub const FILE_SHARE_DELETE = windows.FILE_SHARE_DELETE;
+pub const FILE_SHARE_READ = windows.FILE_SHARE_READ;
+pub const FILE_SHARE_WRITE = windows.FILE_SHARE_WRITE;
+pub const FILE_SYNCHRONOUS_IO_NONALERT = windows.FILE_SYNCHRONOUS_IO_NONALERT;
+pub const FILE_WRITE_THROUGH = windows.FILE_WRITE_THROUGH;
+pub const HANDLE = win32.HANDLE;
+pub const HMODULE = win32.HMODULE;
+pub const INVALID_HANDLE_VALUE = windows.INVALID_HANDLE_VALUE;
+pub const IO_STATUS_BLOCK = windows.IO_STATUS_BLOCK;
+pub const LARGE_INTEGER = windows.LARGE_INTEGER;
+pub const LPCSTR = windows.LPCSTR;
+pub const LPCVOID = windows.LPCVOID;
+pub const LPCWSTR = windows.LPCWSTR;
+pub const LPSTR = windows.LPSTR;
+pub const LPVOID = windows.LPVOID;
+pub const LPWSTR = windows.LPWSTR;
+pub const MAX_PATH = windows.MAX_PATH;
+pub const NTSTATUS = windows.NTSTATUS;
+pub const NT_SUCCESS = windows.NT_SUCCESS;
+pub const OBJECT_ATTRIBUTES = windows.OBJECT_ATTRIBUTES;
+pub const PATH_MAX_WIDE = windows.PATH_MAX_WIDE;
+pub const PWSTR = windows.PWSTR;
+pub const STATUS_SUCCESS = windows.STATUS_SUCCESS;
+pub const TRUE = windows.TRUE;
+pub const UINT = windows.UINT;
+pub const ULONG = windows.ULONG;
+pub const ULONGLONG = windows.ULONGLONG;
+pub const UNICODE_STRING = windows.UNICODE_STRING;
+pub const WCHAR = windows.WCHAR;
+pub const WORD = windows.WORD;
+pub const advapi32 = windows.advapi32;
+pub const ntdll = windows.ntdll;
+pub const user32 = windows.user32;
+
+pub const kernel32 = windows.kernel32;
+pub const GetLastError = kernel32.GetLastError;

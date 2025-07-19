@@ -1,11 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
-pub const css = @import("./css_parser.zig");
-pub const css_values = @import("./values/values.zig");
-const Url = css_values.url.Url;
-pub const Error = css.Error;
 // const Location = css.Location;
 
 /// Options for `analyze_dependencies` in `PrinterOptions`.
@@ -149,3 +141,12 @@ pub const SourceRange = struct {
         };
     }
 };
+
+const bun = @import("bun");
+pub const css_values = @import("./values/values.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Url = css_values.url.Url;
+
+pub const css = @import("./css_parser.zig");
+pub const Error = css.Error;

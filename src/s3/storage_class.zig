@@ -1,5 +1,3 @@
-const bun = @import("bun");
-
 pub const StorageClass = enum {
     STANDARD,
     STANDARD_IA,
@@ -43,3 +41,5 @@ pub const StorageClass = enum {
         .{ "SNOW", .SNOW },
     });
 };
+
+const bun = @import("bun");

@@ -1,12 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-pub const css_values = @import("../values/values.zig");
-pub const Error = css.Error;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
 /// @tailwind
 /// https://github.com/tailwindlabs/tailwindcss.com/blob/4d6ac11425d96bc963f936e0157df460a364c43b/src/pages/docs/functions-and-directives.mdx?plain=1#L13
 pub const TailwindAtRule = struct {
@@ -55,3 +46,12 @@ pub const TailwindStyleName = enum {
         return css.enum_property_util.toCss(@This(), this, W, dest);
     }
 };
+
+pub const css_values = @import("../values/values.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const css = @import("../css_parser.zig");
+pub const Error = css.Error;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;

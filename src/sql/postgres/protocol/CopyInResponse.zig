@@ -1,3 +1,5 @@
+const CopyInResponse = @This();
+
 pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
     _ = reader;
     _ = this;
@@ -6,9 +8,6 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 
 pub const decode = DecoderWrap(CopyInResponse, decodeInternal).decode;
 
-// @sortImports
-
-const CopyInResponse = @This();
 const bun = @import("bun");
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
 const NewReader = @import("./NewReader.zig").NewReader;

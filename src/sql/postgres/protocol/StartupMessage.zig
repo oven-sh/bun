@@ -38,8 +38,6 @@ pub fn writeInternal(
 
 pub const write = WriteWrap(@This(), writeInternal).write;
 
-// @sortImports
-
 const std = @import("std");
 const Data = @import("../Data.zig").Data;
 const NewWriter = @import("./NewWriter.zig").NewWriter;

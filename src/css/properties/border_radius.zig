@@ -1,19 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const Size2D = css.css_values.size.Size2D;
-const Rect = css.css_values.rect.Rect;
-const Property = css.Property;
-const VendorPrefix = css.VendorPrefix;
-const PropertyIdTag = css.PropertyIdTag;
-
 /// A value for the [border-radius](https://www.w3.org/TR/css-backgrounds-3/#border-radius) property.
 pub const BorderRadius = struct {
     /// The x and y radius values for the top left corner.
@@ -319,3 +303,17 @@ pub fn isLogicalBorderRadiusProperty(property_id: PropertyIdTag) bool {
         else => false,
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Property = css.Property;
+const PropertyIdTag = css.PropertyIdTag;
+const VendorPrefix = css.VendorPrefix;
+const LengthPercentage = css.css_values.length.LengthPercentage;
+const Rect = css.css_values.rect.Rect;
+const Size2D = css.css_values.size.Size2D;

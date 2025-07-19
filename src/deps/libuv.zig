@@ -1,28 +1,8 @@
-const bun = @import("bun");
-const Maybe = bun.JSC.Maybe;
-
 const WORD = c_ushort;
 const LARGE_INTEGER = i64;
-const std = @import("std");
-const windows = bun.windows;
-const HANDLE = windows.HANDLE;
-const DWORD = windows.DWORD;
-const OVERLAPPED = std.os.windows.OVERLAPPED;
-const ULONG_PTR = std.os.windows.ULONG_PTR;
-const HMODULE = HANDLE;
-const ULONG = windows.ULONG;
-const WCHAR = windows.WCHAR;
 const SOCKET = *anyopaque;
 const LPFN_ACCEPTEX = *const anyopaque;
-const WIN32_FIND_DATAW = std.os.windows.WIN32_FIND_DATAW;
 const LPFN_CONNECTEX = *const anyopaque;
-const FILE = std.c.FILE;
-const CRITICAL_SECTION = std.os.windows.CRITICAL_SECTION;
-const INPUT_RECORD = windows.INPUT_RECORD;
-const sockaddr = std.posix.sockaddr;
-const sockaddr_storage = std.os.linux.sockaddr_storage;
-const BOOL = windows.BOOL;
-const Env = bun.Environment;
 
 pub const log = bun.Output.scoped(.uv, true);
 
@@ -309,7 +289,6 @@ pub const uv_random_s = struct_uv_random_s;
 pub const uv_env_item_s = struct_uv_env_item_s;
 pub const uv_cpu_times_s = struct_uv_cpu_times_s;
 pub const uv_cpu_info_s = struct_uv_cpu_info_s;
-pub const uv_interface_address_s = uv_interface_address_s;
 pub const uv_passwd_s = struct_uv_passwd_s;
 pub const uv_group_s = struct_uv_group_s;
 pub const uv_utsname_s = struct_uv_utsname_s;
@@ -555,7 +534,6 @@ pub const struct_uv_idle_s = extern struct {
     }
 };
 pub const uv_idle_t = struct_uv_idle_s;
-pub const uv_mutex_t = CRITICAL_SECTION;
 const union_unnamed_378 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
@@ -759,10 +737,7 @@ pub const uv_buf_t = extern struct {
 };
 pub const uv_file = c_int;
 pub const uv_os_sock_t = SOCKET;
-pub const uv_os_fd_t = HANDLE;
 pub const uv_pid_t = c_int;
-pub const uv_thread_t = HANDLE;
-pub const uv_sem_t = HANDLE;
 // const struct_unnamed_379 = extern struct {
 //     waiters_count: c_uint,
 //     waiters_count_lock: CRITICAL_SECTION,
@@ -2051,8 +2026,6 @@ pub const struct_uv_cpu_info_s = extern struct {
 };
 pub const uv_cpu_info_t = struct_uv_cpu_info_s;
 
-const sockaddr_in = std.os.linux.sockaddr.in;
-const sockaddr_in6 = std.os.linux.sockaddr.in6;
 pub const addr_union = extern union {
     address4: std.os.linux.sockaddr.in,
     address6: std.os.linux.sockaddr.in6,
@@ -2953,8 +2926,6 @@ pub const ReturnCodeI64 = enum(i64) {
     }
 };
 
-pub const addrinfo = std.os.windows.ws2_32.addrinfo;
-
 // https://docs.libuv.org/en/v1.x/stream.html
 fn StreamMixin(comptime Type: type) type {
     return struct {
@@ -3103,3 +3074,34 @@ pub fn StreamWriterMixin(comptime Type: type, comptime pipe_field_name: std.meta
         }
     };
 }
+
+const std = @import("std");
+const FILE = std.c.FILE;
+const sockaddr = std.posix.sockaddr;
+const sockaddr_storage = std.os.linux.sockaddr_storage;
+
+const bun = @import("bun");
+const Env = bun.Environment;
+const Maybe = bun.JSC.Maybe;
+
+const windows = bun.windows;
+const BOOL = windows.BOOL;
+const DWORD = windows.DWORD;
+const HANDLE = windows.HANDLE;
+const HMODULE = HANDLE;
+const INPUT_RECORD = windows.INPUT_RECORD;
+const ULONG = windows.ULONG;
+const WCHAR = windows.WCHAR;
+pub const uv_os_fd_t = HANDLE;
+pub const uv_sem_t = HANDLE;
+pub const uv_thread_t = HANDLE;
+
+const sockaddr_in = std.os.linux.sockaddr.in;
+const sockaddr_in6 = std.os.linux.sockaddr.in6;
+
+const CRITICAL_SECTION = std.os.windows.CRITICAL_SECTION;
+const OVERLAPPED = std.os.windows.OVERLAPPED;
+const ULONG_PTR = std.os.windows.ULONG_PTR;
+const WIN32_FIND_DATAW = std.os.windows.WIN32_FIND_DATAW;
+pub const uv_mutex_t = CRITICAL_SECTION;
+pub const addrinfo = std.os.windows.ws2_32.addrinfo;

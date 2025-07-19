@@ -1,25 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-
-pub const css = @import("../css_parser.zig");
-
-const Property = css.Property;
-const VendorPrefix = css.VendorPrefix;
-const SmallList = css.SmallList;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Image = css.css_values.image.Image;
-const CssColor = css.css_values.color.CssColor;
-const Ratio = css.css_values.ratio.Ratio;
-const HorizontalPosition = css.css_values.position.HorizontalPosition;
-const VerticalPosition = css.css_values.position.VerticalPosition;
-
-const Position = css.css_values.position.Position;
-
 /// A value for the [background](https://www.w3.org/TR/css-backgrounds-3/#background) shorthand property.
 pub const Background = struct {
     /// The background image.
@@ -1063,3 +1041,24 @@ fn isBackgroundProperty(property_id: css.PropertyId) bool {
         else => false,
     };
 }
+
+const bun = @import("bun");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Property = css.Property;
+const SmallList = css.SmallList;
+const VendorPrefix = css.VendorPrefix;
+const CssColor = css.css_values.color.CssColor;
+const Image = css.css_values.image.Image;
+const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
+const Ratio = css.css_values.ratio.Ratio;
+
+const HorizontalPosition = css.css_values.position.HorizontalPosition;
+const Position = css.css_values.position.Position;
+const VerticalPosition = css.css_values.position.VerticalPosition;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

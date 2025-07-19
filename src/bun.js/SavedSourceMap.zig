@@ -79,8 +79,6 @@ pub const SavedMappings = struct {
     }
 };
 
-const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
-
 /// ParsedSourceMap is the canonical form for sourcemaps,
 ///
 /// but `SavedMappings` and `SourceProviderMap` are much cheaper to construct.
@@ -321,16 +319,19 @@ pub fn resolveMapping(
     };
 }
 
-const bun = @import("bun");
-const SourceMap = bun.sourcemap;
-const SourceProviderMap = SourceMap.SourceProviderMap;
-const ParsedSourceMap = SourceMap.ParsedSourceMap;
 const string = []const u8;
-const logger = bun.logger;
-const Environment = bun.Environment;
-const MutableString = bun.MutableString;
-const js_printer = bun.js_printer;
-const Output = bun.Output;
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+
+const SourceMap = bun.sourcemap;
+const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
+const ParsedSourceMap = SourceMap.ParsedSourceMap;
+const SourceProviderMap = SourceMap.SourceProviderMap;

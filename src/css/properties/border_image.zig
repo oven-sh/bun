@@ -1,23 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-
-const SmallList = css.SmallList;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const CSSNumber = css.css_values.number.CSSNumber;
-const LengthOrNumber = css.css_values.length.LengthOrNumber;
-const Image = css.css_values.image.Image;
-const Rect = css.css_values.rect.Rect;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const Percentage = css.css_values.percentage.Percentage;
-const Property = css.Property;
-const VendorPrefix = css.VendorPrefix;
-
 /// A value for the [border-image](https://www.w3.org/TR/css-backgrounds-3/#border-image) shorthand property.
 pub const BorderImage = struct {
     /// The border image.
@@ -636,3 +616,23 @@ pub fn isBorderImageProperty(property_id: css.PropertyId) bool {
         else => false,
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Property = css.Property;
+const SmallList = css.SmallList;
+const VendorPrefix = css.VendorPrefix;
+const CSSNumber = css.css_values.number.CSSNumber;
+const Image = css.css_values.image.Image;
+const Rect = css.css_values.rect.Rect;
+
+const LengthOrNumber = css.css_values.length.LengthOrNumber;
+const LengthPercentage = css.css_values.length.LengthPercentage;
+
+const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
+const Percentage = css.css_values.percentage.Percentage;

@@ -417,28 +417,28 @@ pub fn writeOutputFilesToDisk(
     }
 }
 
+const std = @import("std");
+
 const bun = @import("bun");
-const options = bun.options;
+const JSC = bun.JSC;
 const Loader = bun.Loader;
+const Output = bun.Output;
+const base64 = bun.base64;
+const default_allocator = bun.default_allocator;
+const options = bun.options;
+const sourcemap = bun.sourcemap;
+const string = bun.string;
+const strings = bun.strings;
+
+const bundler = bun.bundle_v2;
+const Chunk = bundler.Chunk;
+pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
+pub const ParseTask = bun.bundle_v2.ParseTask;
+pub const ThreadPool = bun.bundle_v2.ThreadPool;
+const cheapPrefixNormalizer = bundler.cheapPrefixNormalizer;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const debug = LinkerContext.debug;
+
 const Logger = bun.logger;
 const Loc = Logger.Loc;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-
-const string = bun.string;
-const Output = bun.Output;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const sourcemap = bun.sourcemap;
-const base64 = bun.base64;
-
-const JSC = bun.JSC;
-const bundler = bun.bundle_v2;
-
-pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
-pub const ThreadPool = bun.bundle_v2.ThreadPool;
-pub const ParseTask = bun.bundle_v2.ParseTask;
-const Chunk = bundler.Chunk;
-const cheapPrefixNormalizer = bundler.cheapPrefixNormalizer;
-const debug = LinkerContext.debug;

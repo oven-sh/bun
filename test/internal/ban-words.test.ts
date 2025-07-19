@@ -107,17 +107,3 @@ describe("banned words", () => {
     });
   }
 });
-
-describe("files that must have comments at the top", () => {
-  const files = ["src/bun.js/api/BunObject.zig"];
-
-  for (const file of files) {
-    test(file, async () => {
-      const joined = path.join(import.meta.dir, "..", "..", file);
-      const content = await Bun.file(joined).text();
-      if (!content.startsWith("//")) {
-        throw new Error(`Please don't add imports to the top of ${file}. Put them at the bottom.`);
-      }
-    });
-  }
-});

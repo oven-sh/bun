@@ -1,11 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-
-const GenericBorder = css.css_properties.border.GenericBorder;
-const LineStyle = css.css_properties.border.LineStyle;
-
 /// A value for the [outline](https://drafts.csswg.org/css-ui/#outline) shorthand property.
 pub const Outline = GenericBorder(OutlineStyle, 11);
 
@@ -31,3 +23,10 @@ pub const OutlineStyle = union(enum) {
         return css.implementDeepClone(@This(), this, allocator);
     }
 };
+
+pub const css = @import("../css_parser.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const GenericBorder = css.css_properties.border.GenericBorder;
+const LineStyle = css.css_properties.border.LineStyle;

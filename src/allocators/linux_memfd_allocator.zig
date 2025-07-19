@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-
 /// When cloning large amounts of data potentially multiple times, we can
 /// leverage copy-on-write memory to avoid actually copying the data. To do that
 /// on Linux, we need to use a memfd, which is a Linux-specific feature.
@@ -185,3 +182,6 @@ pub const LinuxMemFdAllocator = struct {
         }
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

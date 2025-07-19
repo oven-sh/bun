@@ -1,3 +1,5 @@
+const strings = @This();
+
 /// memmem is provided by libc on posix, but implemented in zig for windows.
 pub const memmem = bun.sys.workaround_symbols.memmem;
 
@@ -1117,8 +1119,6 @@ pub fn index(self: string, str: string) i32 {
     }
 }
 
-const strings = @This();
-
 pub const ascii_vector_size = if (Environment.isWasm) 8 else 16;
 pub const ascii_u16_vector_size = if (Environment.isWasm) 4 else 8;
 pub const AsciiVectorInt = std.meta.Int(.unsigned, ascii_vector_size);
@@ -1928,8 +1928,6 @@ pub fn moveSlice(slice: string, from: string, to: string) string {
     return result;
 }
 
-pub const ExactSizeMatcher = @import("exact_size_matcher.zig").ExactSizeMatcher;
-
 pub const unicode_replacement = 0xFFFD;
 pub const unicode_replacement_str = brk: {
     var out: [std.unicode.utf8CodepointSequenceLength(unicode_replacement) catch unreachable]u8 = undefined;
@@ -2164,8 +2162,6 @@ pub fn withoutPrefixIfPossibleComptime(input: string, comptime prefix: string) ?
     return null;
 }
 
-const assert = bun.assert;
-
 /// Returns the first byte of the string and the rest of the string excluding the first byte
 pub fn splitFirst(self: string) ?struct { first: u8, rest: []const u8 } {
     if (self.len == 0) {
@@ -2220,11 +2216,59 @@ pub fn percentEncodeWrite(
     try writer.appendSlice(remaining);
 }
 
+pub const log = bun.Output.scoped(.STR, true);
+
+const Environment = @import("./env.zig");
+pub const grapheme = @import("./grapheme.zig");
+const js_lexer = @import("./js_lexer.zig");
+const std = @import("std");
+pub const ExactSizeMatcher = @import("./exact_size_matcher.zig").ExactSizeMatcher;
+
+const _escapeHTML = @import("./string/escapeHTML.zig");
+pub const escapeHTMLForLatin1Input = _escapeHTML.escapeHTMLForLatin1Input;
+pub const escapeHTMLForUTF16Input = _escapeHTML.escapeHTMLForUTF16Input;
+
+const _paths = @import("./string/paths.zig");
+pub const addNTPathPrefix = _paths.addNTPathPrefix;
+pub const addNTPathPrefixIfNeeded = _paths.addNTPathPrefixIfNeeded;
+pub const assertIsValidWindowsPath = _paths.assertIsValidWindowsPath;
+pub const basename = _paths.basename;
+pub const charIsAnySlash = _paths.charIsAnySlash;
+pub const cloneNormalizingSeparators = _paths.cloneNormalizingSeparators;
+pub const fromWPath = _paths.fromWPath;
+pub const isWindowsAbsolutePathMissingDriveLetter = _paths.isWindowsAbsolutePathMissingDriveLetter;
+pub const normalizeSlashesOnly = _paths.normalizeSlashesOnly;
+pub const normalizeSlashesOnlyT = _paths.normalizeSlashesOnlyT;
+pub const pathContainsNodeModulesFolder = _paths.pathContainsNodeModulesFolder;
+pub const removeLeadingDotSlash = _paths.removeLeadingDotSlash;
+pub const startsWithWindowsDriveLetter = _paths.startsWithWindowsDriveLetter;
+pub const startsWithWindowsDriveLetterT = _paths.startsWithWindowsDriveLetterT;
+pub const toExtendedPathNormalized = _paths.toExtendedPathNormalized;
+pub const toKernel32Path = _paths.toKernel32Path;
+pub const toNTPath = _paths.toNTPath;
+pub const toNTPath16 = _paths.toNTPath16;
+pub const toPath = _paths.toPath;
+pub const toPathMaybeDir = _paths.toPathMaybeDir;
+pub const toPathNormalized = _paths.toPathNormalized;
+pub const toWDirNormalized = _paths.toWDirNormalized;
+pub const toWDirPath = _paths.toWDirPath;
+pub const toWPath = _paths.toWPath;
+pub const toWPathMaybeDir = _paths.toWPathMaybeDir;
+pub const toWPathNormalizeAutoExtend = _paths.toWPathNormalizeAutoExtend;
+pub const toWPathNormalized = _paths.toWPathNormalized;
+pub const toWPathNormalized16 = _paths.toWPathNormalized16;
+pub const withoutLeadingPathSeparator = _paths.withoutLeadingPathSeparator;
+pub const withoutLeadingSlash = _paths.withoutLeadingSlash;
+pub const withoutNTPrefix = _paths.withoutNTPrefix;
+pub const withoutTrailingSlash = _paths.withoutTrailingSlash;
+pub const withoutTrailingSlashWindowsPath = _paths.withoutTrailingSlashWindowsPath;
+
+const unicode = @import("./string/unicode.zig");
+pub const BOM = unicode.BOM;
 pub const CodepointIterator = unicode.CodepointIterator;
+pub const EncodeIntoResult = unicode.EncodeIntoResult;
 pub const NewCodePointIterator = unicode.NewCodePointIterator;
 pub const UnsignedCodepointIterator = unicode.UnsignedCodepointIterator;
-pub const EncodeIntoResult = unicode.EncodeIntoResult;
-pub const BOM = unicode.BOM;
 pub const allocateLatin1IntoUTF8 = unicode.allocateLatin1IntoUTF8;
 pub const allocateLatin1IntoUTF8WithList = unicode.allocateLatin1IntoUTF8WithList;
 pub const appendUTF8MachineWordToUTF16MachineWord = unicode.appendUTF8MachineWordToUTF16MachineWord;
@@ -2298,7 +2342,6 @@ pub const withoutUTF8BOM = unicode.withoutUTF8BOM;
 pub const wtf8ByteSequenceLength = unicode.wtf8ByteSequenceLength;
 pub const wtf8ByteSequenceLengthWithInvalid = unicode.wtf8ByteSequenceLengthWithInvalid;
 pub const wtf8Sequence = unicode.wtf8Sequence;
-const unicode = @import("./string/unicode.zig");
 
 const _visible = @import("./string/visible.zig");
 pub const isAmgiguousCodepointType = _visible.isAmgiguousCodepointType;
@@ -2309,51 +2352,7 @@ pub const visibleCodepointWidth = _visible.visibleCodepointWidth;
 pub const visibleCodepointWidthMaybeEmoji = _visible.visibleCodepointWidthMaybeEmoji;
 pub const visibleCodepointWidthType = _visible.visibleCodepointWidthType;
 
-const _escapeHTML = @import("./string/escapeHTML.zig");
-pub const escapeHTMLForLatin1Input = _escapeHTML.escapeHTMLForLatin1Input;
-pub const escapeHTMLForUTF16Input = _escapeHTML.escapeHTMLForUTF16Input;
-
-const _paths = @import("./string/paths.zig");
-pub const addNTPathPrefix = _paths.addNTPathPrefix;
-pub const addNTPathPrefixIfNeeded = _paths.addNTPathPrefixIfNeeded;
-pub const assertIsValidWindowsPath = _paths.assertIsValidWindowsPath;
-pub const charIsAnySlash = _paths.charIsAnySlash;
-pub const cloneNormalizingSeparators = _paths.cloneNormalizingSeparators;
-pub const fromWPath = _paths.fromWPath;
-pub const isWindowsAbsolutePathMissingDriveLetter = _paths.isWindowsAbsolutePathMissingDriveLetter;
-pub const normalizeSlashesOnly = _paths.normalizeSlashesOnly;
-pub const normalizeSlashesOnlyT = _paths.normalizeSlashesOnlyT;
-pub const pathContainsNodeModulesFolder = _paths.pathContainsNodeModulesFolder;
-pub const removeLeadingDotSlash = _paths.removeLeadingDotSlash;
-pub const startsWithWindowsDriveLetter = _paths.startsWithWindowsDriveLetter;
-pub const startsWithWindowsDriveLetterT = _paths.startsWithWindowsDriveLetterT;
-pub const toExtendedPathNormalized = _paths.toExtendedPathNormalized;
-pub const toKernel32Path = _paths.toKernel32Path;
-pub const toNTPath = _paths.toNTPath;
-pub const toNTPath16 = _paths.toNTPath16;
-pub const toPath = _paths.toPath;
-pub const toPathMaybeDir = _paths.toPathMaybeDir;
-pub const toPathNormalized = _paths.toPathNormalized;
-pub const toWDirNormalized = _paths.toWDirNormalized;
-pub const toWDirPath = _paths.toWDirPath;
-pub const toWPath = _paths.toWPath;
-pub const toWPathMaybeDir = _paths.toWPathMaybeDir;
-pub const toWPathNormalizeAutoExtend = _paths.toWPathNormalizeAutoExtend;
-pub const toWPathNormalized = _paths.toWPathNormalized;
-pub const toWPathNormalized16 = _paths.toWPathNormalized16;
-pub const withoutLeadingPathSeparator = _paths.withoutLeadingPathSeparator;
-pub const withoutLeadingSlash = _paths.withoutLeadingSlash;
-pub const withoutNTPrefix = _paths.withoutNTPrefix;
-pub const withoutTrailingSlash = _paths.withoutTrailingSlash;
-pub const withoutTrailingSlashWindowsPath = _paths.withoutTrailingSlashWindowsPath;
-pub const basename = _paths.basename;
-
-pub const log = bun.Output.scoped(.STR, true);
-pub const grapheme = @import("./grapheme.zig");
-
-const std = @import("std");
-const Environment = @import("./env.zig");
-const string = bun.string;
 const bun = @import("bun");
-const js_lexer = @import("./js_lexer.zig");
 const OOM = bun.OOM;
+const assert = bun.assert;
+const string = bun.string;

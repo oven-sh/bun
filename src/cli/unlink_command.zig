@@ -130,8 +130,6 @@ fn unlink(ctx: Command.Context) !void {
     }
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

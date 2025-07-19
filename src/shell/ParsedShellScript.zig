@@ -1,7 +1,4 @@
-pub const js = JSC.Codegen.JSParsedShellScript;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
+const ParsedShellScript = @This();
 
 args: ?*ShellArgs = null,
 /// allocated with arena in jsobjs
@@ -163,18 +160,27 @@ pub fn createParsedShellScript(globalThis: *JSC.JSGlobalObject, callframe: *JSC.
     return parsed_shell_script.this_jsvalue;
 }
 
-const ParsedShellScript = @This();
-const bun = @import("bun");
-const shell = bun.shell;
-const Interpreter = shell.Interpreter;
-const interpreter = @import("./interpreter.zig");
-const EnvMap = shell.EnvMap;
-const EnvStr = shell.EnvStr;
-const JSC = bun.JSC;
-const ShellArgs = interpreter.ShellArgs;
 const std = @import("std");
-const JSValue = JSC.JSValue;
+
+const interpreter = @import("./interpreter.zig");
+const ShellArgs = interpreter.ShellArgs;
+
+const bun = @import("bun");
+const assert = bun.assert;
+
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+
 const CallFrame = JSC.CallFrame;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
-const assert = bun.assert;
+
+pub const js = JSC.Codegen.JSParsedShellScript;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;
+
+const shell = bun.shell;
+const EnvMap = shell.EnvMap;
+const EnvStr = shell.EnvStr;
+const Interpreter = shell.Interpreter;

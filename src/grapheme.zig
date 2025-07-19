@@ -1,8 +1,6 @@
 // Adapted from https://github.com/mitchellh/ghostty/blob/fdfa596fdf32c153a812cda7390b4a626040328f/src/unicode/grapheme.zig. Used with permission.
 // Generated portion built with zig-macos-aarch64-0.12.0-dev.2823+955fd65cb.
 
-const std = @import("std");
-
 pub fn graphemeBreak(cp1: u21, cp2: u21, state: *BreakState) bool {
     const value = Precompute.data[
         (Precompute.Key{
@@ -1740,3 +1738,5 @@ const unicode_tables = struct {
         };
     }
 };
+
+const std = @import("std");

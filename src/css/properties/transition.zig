@@ -1,21 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-
-const SmallList = css.SmallList;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
-const Property = css.css_properties.Property;
-const PropertyId = css.css_properties.PropertyId;
-const Time = css.css_values.time.Time;
-const EasingFunction = css.css_values.easing.EasingFunction;
-
-const VendorPrefix = css.VendorPrefix;
-const Feature = css.prefixes.Feature;
-
 /// A value for the [transition](https://www.w3.org/TR/2018/WD-css-transitions-1-20181011/#transition-shorthand-property) property.
 pub const Transition = struct {
     /// The property to transition.
@@ -517,3 +499,19 @@ fn isTransitionProperty(property_id: *const PropertyId) bool {
         else => false,
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const SmallList = css.SmallList;
+const VendorPrefix = css.VendorPrefix;
+const Feature = css.prefixes.Feature;
+const EasingFunction = css.css_values.easing.EasingFunction;
+const Time = css.css_values.time.Time;
+
+const Property = css.css_properties.Property;
+const PropertyId = css.css_properties.PropertyId;

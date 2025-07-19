@@ -1,3 +1,5 @@
+const MaxBuf = @This();
+
 // null after subprocess finalize
 owned_by_subprocess: ?*Subprocess,
 // null after pipereader finalize
@@ -82,4 +84,3 @@ pub const Kind = enum {
 const bun = @import("bun");
 const std = @import("std");
 const Subprocess = bun.JSC.Subprocess;
-const MaxBuf = @This();

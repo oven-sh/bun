@@ -31,8 +31,6 @@ pub const Source = webcore.ReadableStream.NewSource(
 
 const log = Output.scoped(.ByteStream, false);
 
-pub const tag = webcore.ReadableStream.Tag.Bytes;
-
 pub fn setup(this: *ByteStream) void {
     this.* = .{};
 }
@@ -453,12 +451,17 @@ pub fn toBufferedValue(this: *@This(), globalThis: *jsc.JSGlobalObject, action: 
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
 const Output = bun.Output;
-const webcore = bun.webcore;
-const streams = webcore.streams;
+
 const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+
+const webcore = bun.webcore;
 const Blob = webcore.Blob;
 const Pipe = webcore.Pipe;
+pub const tag = webcore.ReadableStream.Tag.Bytes;
+
+const streams = webcore.streams;
 const BufferAction = streams.BufferAction;
-const JSValue = jsc.JSValue;

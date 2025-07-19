@@ -1,12 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
-const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Location = css.css_rules.Location;
-
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
 pub const SupportsCondition = union(enum) {
@@ -418,3 +409,14 @@ pub fn SupportsRule(comptime R: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const Location = css.css_rules.Location;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

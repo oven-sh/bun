@@ -1,11 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Location = css.css_rules.Location;
-const style = css.css_rules.style;
-const CssRuleList = css.CssRuleList;
-
 /// A [@starting-style](https://drafts.csswg.org/css-transitions-2/#defining-before-change-style-the-starting-style-rule) rule.
 pub fn StartingStyleRule(comptime R: type) type {
     return struct {
@@ -36,3 +28,13 @@ pub fn StartingStyleRule(comptime R: type) type {
         }
     };
 }
+
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const CssRuleList = css.CssRuleList;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+
+const Location = css.css_rules.Location;
+const style = css.css_rules.style;

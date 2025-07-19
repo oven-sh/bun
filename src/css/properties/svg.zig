@@ -1,12 +1,3 @@
-const std = @import("std");
-const ArrayList = std.ArrayListUnmanaged;
-
-pub const css = @import("../css_parser.zig");
-
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const CssColor = css.css_values.color.CssColor;
-const Url = css.css_values.url.Url;
-
 /// An SVG [`<paint>`](https://www.w3.org/TR/SVG2/painting.html#SpecifyingPaint) value
 /// used in the `fill` and `stroke` properties.
 const SVGPaint = union(enum) {
@@ -73,3 +64,11 @@ pub const TextRendering = css.DefineEnumProperty(@compileError(css.todo_stuff.de
 
 /// A value for the [image-rendering](https://www.w3.org/TR/SVG2/painting.html#ImageRendering) property.
 pub const ImageRendering = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+
+pub const css = @import("../css_parser.zig");
+const CssColor = css.css_values.color.CssColor;
+const LengthPercentage = css.css_values.length.LengthPercentage;
+const Url = css.css_values.url.Url;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

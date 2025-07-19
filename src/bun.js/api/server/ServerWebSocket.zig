@@ -1,3 +1,5 @@
+const ServerWebSocket = @This();
+
 handler: *WebSocketServer.Handler,
 this_value: JSValue = .zero,
 flags: Flags = .{},
@@ -26,11 +28,6 @@ const Flags = packed struct(u64) {
 inline fn websocket(this: *const ServerWebSocket) uws.AnyWebSocket {
     return this.flags.websocket();
 }
-
-pub const js = JSC.Codegen.JSServerWebSocket;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
 
 pub const new = bun.TrivialNew(ServerWebSocket);
 
@@ -1284,15 +1281,21 @@ const Corker = struct {
 
 extern "c" fn Bun__callNodeHTTPServerSocketOnClose(JSC.JSValue) void;
 
-const ServerWebSocket = @This();
+const string = []const u8;
 
+const std = @import("std");
+const WebSocketServer = @import("../server.zig").WebSocketServerContext;
+
+const bun = @import("bun");
+const Output = bun.Output;
+const uws = bun.uws;
+
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const JSC = bun.JSC;
-const bun = @import("bun");
-const string = []const u8;
-const std = @import("std");
 const ZigString = JSC.ZigString;
-const WebSocketServer = @import("../server.zig").WebSocketServerContext;
-const uws = bun.uws;
-const Output = bun.Output;
+
+pub const js = JSC.Codegen.JSServerWebSocket;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;

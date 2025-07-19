@@ -1,8 +1,7 @@
 //! AllocationScope wraps another allocator, providing leak and invalid free assertions.
 //! It also allows measuring how much memory a scope has allocated.
-const AllocationScope = @This();
 
-pub const enabled = bun.Environment.enableAllocScopes;
+const AllocationScope = @This();
 
 parent: Allocator,
 state: if (enabled) struct {
@@ -253,6 +252,8 @@ pub inline fn downcast(a: Allocator) ?*AllocationScope {
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+
 const bun = @import("bun");
 const Output = bun.Output;
 const StoredTrace = bun.crash_handler.StoredTrace;
+pub const enabled = bun.Environment.enableAllocScopes;

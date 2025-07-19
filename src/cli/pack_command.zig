@@ -1,37 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Global = bun.Global;
-const Output = bun.Output;
-const Command = bun.CLI.Command;
-const Install = bun.install;
-const PackageManager = Install.PackageManager;
-const Lockfile = Install.Lockfile;
-const string = bun.string;
-const stringZ = bun.stringZ;
-const libarchive = @import("../libarchive/libarchive.zig").lib;
-const Archive = libarchive.Archive;
-const Expr = bun.js_parser.Expr;
-const Semver = bun.Semver;
-const File = bun.sys.File;
-const FD = bun.FD;
-const strings = bun.strings;
-const glob = bun.glob;
-const PathBuffer = bun.PathBuffer;
-const DirIterator = bun.DirIterator;
-const Environment = bun.Environment;
-const RunCommand = bun.RunCommand;
-const OOM = bun.OOM;
-const js_printer = bun.js_printer;
-const E = bun.js_parser.E;
-const Progress = bun.Progress;
-const JSON = bun.JSON;
-const sha = bun.sha;
-const LogLevel = PackageManager.Options.LogLevel;
-const FileDescriptor = bun.FileDescriptor;
-const Publish = bun.CLI.PublishCommand;
-const Dependency = Install.Dependency;
-const CowString = bun.ptr.CowString;
-
 pub const PackCommand = struct {
     pub const Context = struct {
         manager: *PackageManager,
@@ -2688,3 +2654,42 @@ pub const bindings = struct {
         return result;
     }
 };
+
+const std = @import("std");
+
+const libarchive = @import("../libarchive/libarchive.zig").lib;
+const Archive = libarchive.Archive;
+
+const bun = @import("bun");
+const DirIterator = bun.DirIterator;
+const Environment = bun.Environment;
+const FD = bun.FD;
+const FileDescriptor = bun.FileDescriptor;
+const Global = bun.Global;
+const JSON = bun.JSON;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const PathBuffer = bun.PathBuffer;
+const Progress = bun.Progress;
+const RunCommand = bun.RunCommand;
+const Semver = bun.Semver;
+const glob = bun.glob;
+const js_printer = bun.js_printer;
+const sha = bun.sha;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const strings = bun.strings;
+const CowString = bun.ptr.CowString;
+const File = bun.sys.File;
+
+const Command = bun.CLI.Command;
+const Publish = bun.CLI.PublishCommand;
+
+const Install = bun.install;
+const Dependency = Install.Dependency;
+const Lockfile = Install.Lockfile;
+const PackageManager = Install.PackageManager;
+const LogLevel = PackageManager.Options.LogLevel;
+
+const E = bun.js_parser.E;
+const Expr = bun.js_parser.Expr;

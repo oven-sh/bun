@@ -1,20 +1,3 @@
-const std = @import("std");
-const Command = @import("../cli.zig").Command;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const options = @import("../options.zig");
-
-const resolve_path = @import("../resolver/resolve_path.zig");
-const transpiler = bun.transpiler;
-
-const fs = @import("../fs.zig");
-const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
-
 pub const BuildCommand = struct {
     const compile_define_keys = &.{
         "process.platform",
@@ -644,3 +627,18 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
         },
     );
 }
+
+const fs = @import("../fs.zig");
+const options = @import("../options.zig");
+const resolve_path = @import("../resolver/resolve_path.zig");
+const std = @import("std");
+const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
+const Command = @import("../cli.zig").Command;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+const transpiler = bun.transpiler;

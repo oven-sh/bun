@@ -2,9 +2,6 @@
 //! combines `Bun.build` and `Bun.serve`, providing a hot-reloading development
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
-pub const production = @import("./production.zig");
-pub const DevServer = @import("./DevServer.zig");
-pub const FrameworkRouter = @import("./FrameworkRouter.zig");
 
 /// export default { app: ... };
 pub const api_name = "app";
@@ -913,6 +910,9 @@ pub fn printWarning() void {
     }
 }
 
+pub const DevServer = @import("./DevServer.zig");
+pub const FrameworkRouter = @import("./FrameworkRouter.zig");
+pub const production = @import("./production.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

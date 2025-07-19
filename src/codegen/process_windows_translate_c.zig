@@ -7,8 +7,6 @@
 // In these cases, it's better to just reference the underlying function
 // directly: SetCurrentDirectoryW. To make the error better, a post
 // processing step is applied to the translate-c file.
-const std = @import("std");
-const mem = std.mem;
 
 const symbol_replacements = std.StaticStringMap([]const u8).initComptime(&.{
     &.{ "NTSTATUS", "@import(\"std\").os.windows.NTSTATUS" },
@@ -70,3 +68,6 @@ pub fn main() !void {
 fn assert(cond: bool) void {
     if (!cond) @panic("unhandled");
 }
+
+const std = @import("std");
+const mem = std.mem;

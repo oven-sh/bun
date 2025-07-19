@@ -1,10 +1,6 @@
 const NodeHTTPResponse = @This();
-const log = bun.Output.scoped(.NodeHTTPResponse, false);
 
-pub const js = JSC.Codegen.JSNodeHTTPResponse;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
+const log = bun.Output.scoped(.NodeHTTPResponse, false);
 
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
@@ -1127,17 +1123,26 @@ pub export fn Bun__NodeHTTPResponse_setClosed(response: *NodeHTTPResponse) void 
     response.flags.socket_closed = true;
 }
 
+const string = []const u8;
+
+const std = @import("std");
+const HTTPStatusText = @import("../server.zig").HTTPStatusText;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const HTTP = bun.http;
+const Output = bun.Output;
+const uws = bun.uws;
+
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const JSC = bun.JSC;
-const bun = @import("bun");
-const string = []const u8;
-const Environment = bun.Environment;
-const std = @import("std");
 const ZigString = JSC.ZigString;
-const uws = bun.uws;
-const Output = bun.Output;
+
 const AnyServer = JSC.API.AnyServer;
-const HTTP = bun.http;
-const HTTPStatusText = @import("../server.zig").HTTPStatusText;
 const ServerWebSocket = JSC.API.ServerWebSocket;
+
+pub const js = JSC.Codegen.JSNodeHTTPResponse;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;

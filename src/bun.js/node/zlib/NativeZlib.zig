@@ -1,19 +1,6 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const CompressionStream = @import("./../node_zlib_binding.zig").CompressionStream;
-const CountedKeepAlive = @import("./../node_zlib_binding.zig").CountedKeepAlive;
-const Error = @import("./../node_zlib_binding.zig").Error;
-const validators = @import("./../util/validators.zig");
-
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
-
-pub const js = JSC.Codegen.JSNativeZlib;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
 
 const impl = CompressionStream(@This());
 pub const write = impl.write;
@@ -364,3 +351,18 @@ const Context = struct {
         this.mode = .NONE;
     }
 };
+
+const std = @import("std");
+const validators = @import("../util/validators.zig");
+
+const CompressionStream = @import("../node_zlib_binding.zig").CompressionStream;
+const CountedKeepAlive = @import("../node_zlib_binding.zig").CountedKeepAlive;
+const Error = @import("../node_zlib_binding.zig").Error;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+
+pub const js = JSC.Codegen.JSNativeZlib;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;

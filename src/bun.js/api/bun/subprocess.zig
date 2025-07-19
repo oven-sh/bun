@@ -1,10 +1,7 @@
 //! The Subprocess object is returned by `Bun.spawn`. This file also holds the
 //! code for `Bun.spawnSync`
 
-pub const js = JSC.Codegen.JSSubprocess;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
+const Subprocess = @This();
 
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
@@ -59,8 +56,6 @@ pub const Flags = packed struct(u8) {
     is_stdin_a_readable_stream: bool = false,
     _: u2 = 0,
 };
-
-pub const SignalCode = bun.SignalCode;
 
 pub const Poll = union(enum) {
     poll_ref: ?*Async.FilePoll,
@@ -2653,8 +2648,6 @@ fn throwCommandNotFound(globalThis: *JSC.JSGlobalObject, command: []const u8) bu
     return globalThis.throwValue(err.toErrorInstance(globalThis));
 }
 
-const node_cluster_binding = @import("./../../node/node_cluster_binding.zig");
-
 pub fn handleIPCMessage(
     this: *Subprocess,
     message: IPC.DecodedIPCMessage,
@@ -2715,33 +2708,42 @@ pub fn getGlobalThis(this: *Subprocess) ?*JSC.JSGlobalObject {
     return this.globalThis;
 }
 
-const default_allocator = bun.default_allocator;
-const bun = @import("bun");
-const Environment = bun.Environment;
-
-const strings = bun.strings;
-const string = bun.string;
-const Output = bun.Output;
-const CowString = bun.ptr.CowString;
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const JSC = bun.JSC;
-const webcore = bun.webcore;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const which = bun.which;
-const Async = bun.Async;
-const IPC = @import("../../ipc.zig");
-const uws = bun.uws;
-const windows = bun.windows;
-const uv = windows.libuv;
 const IPClog = Output.scoped(.IPC, false);
 
-const PosixSpawn = bun.spawn;
-const Rusage = bun.spawn.Rusage;
-const Process = bun.spawn.Process;
-const Stdio = bun.spawn.Stdio;
 const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
 
-const Subprocess = @This();
+const IPC = @import("../../ipc.zig");
+const node_cluster_binding = @import("../../node/node_cluster_binding.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const Output = bun.Output;
+pub const SignalCode = bun.SignalCode;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+const uws = bun.uws;
+const webcore = bun.webcore;
+const which = bun.which;
+const CowString = bun.ptr.CowString;
 pub const MaxBuf = bun.io.MaxBuf;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+
+pub const js = JSC.Codegen.JSSubprocess;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;
+
+const PosixSpawn = bun.spawn;
+const Process = bun.spawn.Process;
+const Rusage = bun.spawn.Rusage;
+const Stdio = bun.spawn.Stdio;
+
+const windows = bun.windows;
+const uv = windows.libuv;

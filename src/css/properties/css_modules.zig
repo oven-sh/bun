@@ -1,18 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
-const CustomIdentFns = css.css_values.ident.CustomIdentFns;
-
-const Location = css.dependencies.Location;
-
 /// A value for the [composes](https://github.com/css-modules/css-modules/#dependencies) property from CSS modules.
 pub const Composes = struct {
     /// A list of class names to compose.
@@ -136,3 +121,16 @@ pub const Specifier = union(enum) {
         return css.implementHash(@This(), this, hasher);
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Location = css.dependencies.Location;
+
+const CustomIdent = css.css_values.ident.CustomIdent;
+const CustomIdentFns = css.css_values.ident.CustomIdentFns;
+const CustomIdentList = css.css_values.ident.CustomIdentList;

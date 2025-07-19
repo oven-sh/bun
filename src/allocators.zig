@@ -1,9 +1,3 @@
-const std = @import("std");
-
-const Environment = @import("./env.zig");
-const bun = @import("bun");
-const OOM = bun.OOM;
-
 pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
     return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
         (@intFromPtr(slice.ptr) + slice.len * @sizeOf(T)) <= (@intFromPtr(buffer.ptr) + buffer.len * @sizeOf(T)));
@@ -289,8 +283,6 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         pub const Pair = struct { index: IndexType, value: *ValueType };
     };
 }
-
-const Mutex = bun.Mutex;
 
 /// Append-only list.
 /// Stores an initial count in .bss section of the object file
@@ -769,3 +761,10 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
     };
 }
+
+const Environment = @import("./env.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Mutex = bun.Mutex;
+const OOM = bun.OOM;

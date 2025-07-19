@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const JSValue = JSC.JSValue;
-const JSError = bun.JSError;
-const JSGlobalObject = JSC.JSGlobalObject;
-const Environment = bun.Environment;
-const uv = bun.windows.libuv;
 const Timer = @This();
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
@@ -540,12 +531,6 @@ pub const All = struct {
     }
 };
 
-pub const EventLoopTimer = @import("./Timer/EventLoopTimer.zig");
-
-pub const TimeoutObject = @import("./Timer/TimeoutObject.zig");
-pub const ImmediateObject = @import("./Timer/ImmediateObject.zig");
-pub const TimerObjectInternals = @import("./Timer/TimerObjectInternals.zig");
-
 pub const Kind = enum(u2) {
     setTimeout = 0,
     setInterval = 1,
@@ -577,11 +562,6 @@ pub const ID = extern struct {
     }
 };
 
-const assert = bun.assert;
-const heap = bun.io.heap;
-
-const timespec = bun.timespec;
-
 /// A timer created by WTF code and invoked by Bun's event loop
 pub const WTFTimer = @import("../WTFTimer.zig");
 
@@ -604,3 +584,22 @@ pub const internal_bindings = struct {
         return .jsNumberFromInt64(now);
     }
 };
+
+pub const EventLoopTimer = @import("./Timer/EventLoopTimer.zig");
+pub const ImmediateObject = @import("./Timer/ImmediateObject.zig");
+pub const TimeoutObject = @import("./Timer/TimeoutObject.zig");
+pub const TimerObjectInternals = @import("./Timer/TimerObjectInternals.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSError = bun.JSError;
+const assert = bun.assert;
+const timespec = bun.timespec;
+const heap = bun.io.heap;
+const uv = bun.windows.libuv;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;

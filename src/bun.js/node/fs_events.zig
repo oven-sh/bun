@@ -1,15 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Mutex = bun.Mutex;
-const sync = @import("../../sync.zig");
-const Semaphore = sync.Semaphore;
-const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
-const string = bun.string;
-
-const PathWatcher = @import("./path_watcher.zig").PathWatcher;
-const EventType = PathWatcher.EventType;
-const Event = bun.JSC.Node.fs.Watcher.Event;
-
 pub const CFAbsoluteTime = f64;
 pub const CFTimeInterval = f64;
 pub const CFArrayCallBacks = anyopaque;
@@ -632,3 +620,17 @@ pub fn closeAndWait() void {
         fsevents_default_loop = null;
     }
 }
+
+const std = @import("std");
+const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
+
+const sync = @import("../../sync.zig");
+const Semaphore = sync.Semaphore;
+
+const PathWatcher = @import("./path_watcher.zig").PathWatcher;
+const EventType = PathWatcher.EventType;
+
+const bun = @import("bun");
+const Mutex = bun.Mutex;
+const string = bun.string;
+const Event = bun.JSC.Node.fs.Watcher.Event;

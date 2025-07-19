@@ -1,21 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-
-pub const css = @import("../css_parser.zig");
-
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Result = css.Result;
-const VendorPrefix = css.VendorPrefix;
-const Property = css.css_properties.Property;
-
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const Length = css.css_values.length.LengthValue;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const Angle = css.css_values.angle.Angle;
-
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
 pub const TransformList = struct {
     v: ArrayList(Transform),
@@ -1297,3 +1279,21 @@ pub const TransformHandler = struct {
         }
     }
 };
+
+const bun = @import("bun");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const VendorPrefix = css.VendorPrefix;
+const Property = css.css_properties.Property;
+const Angle = css.css_values.angle.Angle;
+const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
+
+const Length = css.css_values.length.LengthValue;
+const LengthPercentage = css.css_values.length.LengthPercentage;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

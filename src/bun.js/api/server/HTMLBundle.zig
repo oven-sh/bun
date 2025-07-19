@@ -1,11 +1,8 @@
 //! This object is a description of an HTML bundle. It is created by importing an
 //! HTML file, and can be passed to the `static` option in `Bun.serve`. The build
 //! is done lazily (state held in HTMLBundle.Route or DevServer.RouteBundle.HTML).
+
 pub const HTMLBundle = @This();
-pub const js = JSC.Codegen.JSHTMLBundle;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
 
 /// HTMLBundle can be owned by JavaScript as well as any number of Server instances.
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
@@ -504,17 +501,26 @@ pub const Route = struct {
     };
 };
 
-const bun = @import("bun");
-const std = @import("std");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSBundler = JSC.API.JSBundler;
-const HTTPResponse = bun.uws.AnyResponse;
-const uws = bun.uws;
-const AnyServer = JSC.API.AnyServer;
+const debug = bun.Output.scoped(.HTMLBundle, true);
+
 const StaticRoute = @import("./StaticRoute.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const strings = bun.strings;
 const RefPtr = bun.ptr.RefPtr;
 
-const debug = bun.Output.scoped(.HTMLBundle, true);
-const strings = bun.strings;
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+
+const AnyServer = JSC.API.AnyServer;
+const JSBundler = JSC.API.JSBundler;
+
+pub const js = JSC.Codegen.JSHTMLBundle;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;
+
+const uws = bun.uws;
+const HTTPResponse = bun.uws.AnyResponse;

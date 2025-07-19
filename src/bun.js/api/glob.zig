@@ -1,27 +1,4 @@
 const Glob = @This();
-const globImpl = @import("../../glob.zig");
-const GlobWalker = globImpl.BunGlobWalker;
-const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
-const Syscall = @import("../../sys.zig");
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
-const bun = @import("bun");
-const BunString = bun.String;
-const string = bun.string;
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const ZigString = JSC.ZigString;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ResolvePath = @import("../../resolver/resolve_path.zig");
-const CodepointIterator = @import("../../string_immutable.zig").UnsignedCodepointIterator;
-
-const Arena = std.heap.ArenaAllocator;
-
-pub const js = JSC.Codegen.JSGlob;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
 
 pattern: []const u8,
 pattern_codepoints: ?std.ArrayList(u32) = null,
@@ -399,3 +376,28 @@ pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
         try codepoints.append(@intCast(cursor.c));
     }
 }
+
+const ResolvePath = @import("../../resolver/resolve_path.zig");
+const Syscall = @import("../../sys.zig");
+const std = @import("std");
+const CodepointIterator = @import("../../string_immutable.zig").UnsignedCodepointIterator;
+const Allocator = std.mem.Allocator;
+const Arena = std.heap.ArenaAllocator;
+
+const globImpl = @import("../../glob.zig");
+const GlobWalker = globImpl.BunGlobWalker;
+
+const bun = @import("bun");
+const BunString = bun.String;
+const string = bun.string;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
+const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
+
+pub const js = JSC.Codegen.JSGlob;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;

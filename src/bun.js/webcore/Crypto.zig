@@ -1,17 +1,10 @@
 const Crypto = @This();
 
-pub const js = JSC.Codegen.JSCrypto;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
-
 garbage: i32 = 0,
 
 comptime {
     _ = CryptoObject__create;
 }
-
-const BoringSSL = bun.BoringSSL.c;
 
 fn throwInvalidParameter(globalThis: *JSC.JSGlobalObject) bun.JSError {
     return globalThis.ERR(.CRYPTO_SCRYPT_INVALID_PARAMETER, "Invalid scrypt parameters", .{}).throw();
@@ -279,10 +272,17 @@ pub export fn CryptoObject__create(globalThis: *JSC.JSGlobalObject) JSC.JSValue 
     return ptr.toJS(globalThis);
 }
 
-const UUID7 = @import("../uuid.zig").UUID7;
+const std = @import("std");
+
 const UUID = @import("../uuid.zig");
 const UUID5 = @import("../uuid.zig").UUID5;
+const UUID7 = @import("../uuid.zig").UUID7;
 
-const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.jsc;
+const BoringSSL = bun.BoringSSL.c;
+
+pub const js = JSC.Codegen.JSCrypto;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;

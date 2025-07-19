@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-pub const css = @import("../css_parser.zig");
-const Result = css.Result;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const CSSNumber = css.css_values.number.CSSNumber;
-const Calc = css.css_values.calc.Calc;
-
 pub const Percentage = struct {
     v: CSSNumber,
 
@@ -471,3 +462,13 @@ pub const NumberOrPercentage = union(enum) {
         };
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const CSSNumber = css.css_values.number.CSSNumber;
+const Calc = css.css_values.calc.Calc;

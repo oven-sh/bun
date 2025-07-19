@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-pub const css = @import("../css_parser.zig");
-const Result = css.Result;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const LengthPercentage = css.css_values.length.LengthPercentage;
-
 /// A generic value that represents a value with two components, e.g. a border radius.
 ///
 /// When serialized, only a single component will be written if both are equal.
@@ -73,3 +64,13 @@ pub fn Size2D(comptime T: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;
+const LengthPercentage = css.css_values.length.LengthPercentage;

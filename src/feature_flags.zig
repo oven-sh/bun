@@ -1,6 +1,3 @@
-const env = @import("env.zig");
-const bun = @import("bun");
-
 /// All runtime feature flags that can be toggled with an environment variable.
 /// The field names correspond exactly to the expected environment variable names.
 pub const RuntimeFeatureFlag = enum {
@@ -77,8 +74,6 @@ pub const disable_compression_in_http_client = false;
 
 pub const enable_keepalive = true;
 
-pub const atomic_file_watcher = env.isLinux;
-
 // This change didn't seem to make a meaningful difference in microbenchmarks
 pub const latin1_is_now_ascii = false;
 
@@ -96,8 +91,6 @@ pub const hardcode_localhost_to_127_0_0_1 = false;
 /// without keys and "jsxs" is not used.
 /// https://github.com/oven-sh/bun/issues/10733
 pub const support_jsxs_in_jsx_transform = true;
-
-pub const use_simdutf = bun.Environment.isNative;
 
 pub const inline_properties_in_transpiler = true;
 
@@ -175,9 +168,6 @@ pub const nonblocking_stdout_and_stderr_on_posix = false;
 pub const postgresql = env.is_canary or env.isDebug;
 
 // TODO: fix Windows-only test failures in fetch-preconnect.test.ts
-pub const is_fetch_preconnect_supported = env.isPosix;
-
-pub const libdeflate_supported = env.isNative;
 
 // Mostly exists as a way to turn it off later, if necessary.
 pub fn isLibdeflateEnabled() bool {
@@ -198,3 +188,11 @@ pub fn bake() bool {
 /// Additional debugging features for bake.DevServer, such as the incremental visualizer.
 /// To use them, extra flags are passed in addition to this one.
 pub const bake_debugging_features = env.is_canary or env.isDebug;
+
+const bun = @import("bun");
+pub const use_simdutf = bun.Environment.isNative;
+
+const env = @import("./env.zig");
+pub const atomic_file_watcher = env.isLinux;
+pub const is_fetch_preconnect_supported = env.isPosix;
+pub const libdeflate_supported = env.isNative;

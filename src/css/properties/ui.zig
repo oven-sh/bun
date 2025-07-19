@@ -1,19 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-
-pub const css = @import("../css_parser.zig");
-
-const SmallList = css.SmallList;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
-const CSSNumber = css.css_values.number.CSSNumber;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const CssColor = css.css_values.color.CssColor;
-const Url = css.css_values.url.Url;
-
 /// A value for the [color-scheme](https://drafts.csswg.org/css-color-adjust/#color-scheme-prop) property.
 pub const ColorScheme = packed struct(u8) {
     /// Indicates that the element supports a light color scheme.
@@ -209,3 +193,18 @@ fn defineVar(allocator: Allocator, name: []const u8, value: css.Token) css.Prope
         },
     };
 }
+
+const bun = @import("bun");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const SmallList = css.SmallList;
+const CSSNumber = css.css_values.number.CSSNumber;
+const CssColor = css.css_values.color.CssColor;
+const DashedIdent = css.css_values.ident.DashedIdent;
+const Url = css.css_values.url.Url;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

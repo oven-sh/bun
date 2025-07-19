@@ -145,24 +145,23 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
 }
 
 const bun = @import("bun");
-const options = bun.options;
 const BabyList = bun.BabyList;
-const Index = bun.bundle_v2.Index;
-const js_printer = bun.js_printer;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const ThreadPoolLib = bun.ThreadPool;
-
 const Environment = bun.Environment;
-
-const js_ast = bun.js_ast;
 const ImportRecord = bun.ImportRecord;
+const ThreadPoolLib = bun.ThreadPool;
+const js_printer = bun.js_printer;
+const options = bun.options;
 
-const Symbol = js_ast.Symbol;
 const bundler = bun.bundle_v2;
-
-pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
-pub const ThreadPool = bun.bundle_v2.ThreadPool;
-pub const ParseTask = bun.bundle_v2.ParseTask;
 const Chunk = bundler.Chunk;
 const CompileResult = bundler.CompileResult;
+pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
+const Index = bun.bundle_v2.Index;
+pub const ParseTask = bun.bundle_v2.ParseTask;
+pub const ThreadPool = bun.bundle_v2.ThreadPool;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const PendingPartRange = LinkerContext.PendingPartRange;
+
+const js_ast = bun.js_ast;
+const Symbol = js_ast.Symbol;

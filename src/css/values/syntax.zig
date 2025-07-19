@@ -1,27 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-pub const css = @import("../css_parser.zig");
-const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const Length = css.css_values.length.Length;
-const Percentage = css.css_values.percentage.Percentage;
-const CssColor = css.css_values.color.CssColor;
-const Image = css.css_values.image.Image;
-const Url = css.css_values.url.Url;
-const CSSInteger = css.css_values.number.CSSInteger;
-const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
-const Angle = css.css_values.angle.Angle;
-const Time = css.css_values.time.Time;
-const Resolution = css.css_values.resolution.Resolution;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CustomIdentFns = css.css_values.ident.CustomIdentFns;
-const Ident = css.css_values.ident.Ident;
-
 // https://drafts.csswg.org/css-syntax-3/#whitespace
 const SPACE_CHARACTERS: []const u8 = &.{ 0x20, 0x09 };
 
@@ -520,3 +496,32 @@ pub const Multiplier = enum {
     /// The component may repeat one or more times, separated by commas.
     comma,
 };
+
+const bun = @import("bun");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const Angle = css.css_values.angle.Angle;
+const CssColor = css.css_values.color.CssColor;
+const Image = css.css_values.image.Image;
+const Percentage = css.css_values.percentage.Percentage;
+const Resolution = css.css_values.resolution.Resolution;
+const Time = css.css_values.time.Time;
+const Url = css.css_values.url.Url;
+
+const CustomIdent = css.css_values.ident.CustomIdent;
+const CustomIdentFns = css.css_values.ident.CustomIdentFns;
+const Ident = css.css_values.ident.Ident;
+
+const Length = css.css_values.length.Length;
+const LengthPercentage = css.css_values.length.LengthPercentage;
+
+const CSSInteger = css.css_values.number.CSSInteger;
+const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
+const CSSNumber = css.css_values.number.CSSNumber;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

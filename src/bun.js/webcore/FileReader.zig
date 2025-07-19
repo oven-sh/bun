@@ -1,4 +1,5 @@
 const FileReader = @This();
+
 const log = Output.scoped(.FileReader, false);
 
 reader: IOReader = IOReader.init(FileReader),
@@ -17,10 +18,6 @@ lazy: Lazy = .{ .none = {} },
 buffered: std.ArrayListUnmanaged(u8) = .{},
 read_inside_on_pull: ReadDuringJSOnPullResult = .{ .none = {} },
 highwater_mark: usize = 16384,
-
-pub const IOReader = bun.io.BufferedReader;
-pub const Poll = IOReader;
-pub const tag = ReadableStream.Tag.File;
 
 const ReadDuringJSOnPullResult = union(enum) {
     none: void,
@@ -668,11 +665,17 @@ pub const Source = ReadableStream.NewSource(
 );
 
 const std = @import("std");
+
 const bun = @import("bun");
-const Output = bun.Output;
 const Environment = bun.Environment;
 const JSC = bun.jsc;
+const Output = bun.Output;
+
+pub const IOReader = bun.io.BufferedReader;
+pub const Poll = IOReader;
+
 const webcore = bun.webcore;
-const streams = webcore.streams;
 const Blob = webcore.Blob;
 const ReadableStream = webcore.ReadableStream;
+const streams = webcore.streams;
+pub const tag = ReadableStream.Tag.File;

@@ -1,20 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
-pub const css = @import("./css_parser.zig");
-
-const ArrayList = std.ArrayListUnmanaged;
-
-const MediaRule = css.css_rules.media.MediaRule;
-const MediaQuery = css.media_query.MediaQuery;
-const MediaCondition = css.media_query.MediaCondition;
-const MediaList = css.media_query.MediaList;
-const MediaFeature = css.media_query.MediaFeature;
-const MediaFeatureId = css.media_query.MediaFeatureId;
-
-const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
-
 pub const SupportsEntry = struct {
     condition: css.SupportsCondition,
     declarations: ArrayList(css.Property),
@@ -305,3 +288,18 @@ pub const PropertyHandlerContext = struct {
         }
     }
 };
+
+const bun = @import("bun");
+pub const css = @import("./css_parser.zig");
+const MediaRule = css.css_rules.media.MediaRule;
+const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
+
+const MediaCondition = css.media_query.MediaCondition;
+const MediaFeature = css.media_query.MediaFeature;
+const MediaFeatureId = css.media_query.MediaFeatureId;
+const MediaList = css.media_query.MediaList;
+const MediaQuery = css.media_query.MediaQuery;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

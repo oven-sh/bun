@@ -1,23 +1,10 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const std = @import("std");
-const windows = bun.windows;
-
 const Path = @This();
-const typeBaseNameT = bun.meta.typeBaseNameT;
-const validators = @import("./util/validators.zig");
-const validateObject = validators.validateObject;
-const validateString = validators.validateString;
+
 // Allow on the stack:
 // - 8 string slices
 // - 3 path buffers
 // - extra padding
 const stack_fallback_size_large = 8 * @sizeOf([]const u8) + ((stack_fallback_size_small * 3) + 64);
-const Syscall = bun.sys;
-const strings = bun.strings;
-const L = strings.literal;
-const string = bun.string;
-const Environment = bun.Environment;
 
 const PATH_MIN_WIDE = 4096; // 4 KB
 const stack_fallback_size_small = switch (Environment.os) {
@@ -2940,3 +2927,20 @@ comptime {
     @export(&bun.jsc.host_fn.wrap4v(Path.resolve), .{ .name = "Bun__Path__resolve" });
     @export(&bun.jsc.host_fn.wrap4v(Path.toNamespacedPath), .{ .name = "Bun__Path__toNamespacedPath" });
 }
+
+const std = @import("std");
+
+const validators = @import("./util/validators.zig");
+const validateObject = validators.validateObject;
+const validateString = validators.validateString;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const Syscall = bun.sys;
+const string = bun.string;
+const windows = bun.windows;
+const typeBaseNameT = bun.meta.typeBaseNameT;
+
+const strings = bun.strings;
+const L = strings.literal;

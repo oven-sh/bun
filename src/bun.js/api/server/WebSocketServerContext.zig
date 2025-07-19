@@ -269,10 +269,11 @@ pub fn onCreate(globalObject: *JSC.JSGlobalObject, object: JSValue) bun.JSError!
 }
 
 const bun = @import("bun");
-const uws = bun.uws;
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
 const JSError = bun.JSError;
+const uws = bun.uws;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
 const ZigString = JSC.ZigString;

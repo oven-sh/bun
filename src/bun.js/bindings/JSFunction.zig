@@ -1,11 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSHostFn = JSC.JSHostFn;
-const ZigString = JSC.ZigString;
-const String = bun.String;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-
 pub const JSFunction = opaque {
     const ImplementationVisibility = enum(u8) {
         public,
@@ -68,3 +60,12 @@ pub const JSFunction = opaque {
         return if (JSC__JSFunction__getSourceCode(value, &str)) bun.String.init(str) else null;
     }
 };
+
+const bun = @import("bun");
+const String = bun.String;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSHostFn = JSC.JSHostFn;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;

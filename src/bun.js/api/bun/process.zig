@@ -2235,8 +2235,6 @@ pub const sync = struct {
     }
 };
 
-// @sortImports
-
 const std = @import("std");
 const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 

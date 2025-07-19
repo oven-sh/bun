@@ -24,12 +24,7 @@
 //! }
 //! ```
 
-const std = @import("std");
-const builtin = @import("builtin");
-const bun = @import("bun");
-const assert = bun.assert;
-const Thread = std.Thread;
-const Futex = bun.Futex;
+const Mutex = @This();
 
 impl: Impl = .{},
 
@@ -205,8 +200,6 @@ const FutexImpl = struct {
     pub const Type = u32;
 };
 
-const Mutex = @This();
-
 pub fn spinCycle() void {}
 
 // These have to be a size known to C.
@@ -220,3 +213,12 @@ export fn Bun__unlock(ptr: *ReleaseImpl) void {
 }
 
 export const Bun__lock__size: usize = @sizeOf(ReleaseImpl);
+
+const builtin = @import("builtin");
+
+const bun = @import("bun");
+const Futex = bun.Futex;
+const assert = bun.assert;
+
+const std = @import("std");
+const Thread = std.Thread;

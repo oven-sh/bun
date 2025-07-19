@@ -169,13 +169,14 @@ export fn Bun__HTTPServerAgent__setEnabled(agent: ?*InspectorHTTPServerAgent) vo
 //#endregion
 
 // Typedefs from HTTPServer.json
-pub const ServerId = JSC.Debugger.DebuggerId;
 pub const RequestId = i32;
 pub const RouteId = i32;
 pub const HotReloadId = i32;
-pub const HTTPMethod = bun.http.Method;
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
 const BunString = bun.String;
+const JSC = bun.JSC;
+pub const HTTPMethod = bun.http.Method;
+pub const ServerId = JSC.Debugger.DebuggerId;

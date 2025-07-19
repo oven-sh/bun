@@ -1535,8 +1535,6 @@ fn shouldSkipLine(line: []const u8) bool {
             (!(line.len >= 4 and (std.mem.eql(u8, line[0..4], "--- ") or std.mem.eql(u8, line[0..4], "+++ ")))));
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const JSC = bun.JSC;
 const Output = bun.Output;

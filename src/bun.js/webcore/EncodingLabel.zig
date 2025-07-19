@@ -95,7 +95,9 @@ pub const EncodingLabel = enum {
         return string_map.getAnyCase(input);
     }
 };
-const bun = @import("bun");
-const encoding = @import("encoding.zig");
 const string = []const u8;
+
+const encoding = @import("./encoding.zig");
+
+const bun = @import("bun");
 const strings = bun.strings;

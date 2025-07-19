@@ -2,57 +2,22 @@
 comptime {
     _ = process.getTitle;
     _ = process.setTitle;
-    _ = @import("node/util/parse_args.zig");
+    _ = @import("./node/util/parse_args.zig");
 }
 
 /// node:fs
-pub const fs = @import("node/node_fs.zig");
+pub const fs = @import("./node/node_fs.zig");
 /// node:path
-pub const path = @import("node/path.zig");
+pub const path = @import("./node/path.zig");
 /// node:crypto
-pub const crypto = @import("node/node_crypto_binding.zig");
+pub const crypto = @import("./node/node_crypto_binding.zig");
 /// node:os
-pub const os = @import("node/node_os.zig");
+pub const os = @import("./node/node_os.zig");
 /// node:process
-pub const process = @import("node/node_process.zig");
-pub const validators = @import("node/util/validators.zig");
-pub const ErrorCode = @import("node/nodejs_error_code.zig").Code;
-
-pub const Buffer = JSC.MarkedArrayBuffer;
-
-const types = @import("node/types.zig");
-pub const PathOrBlob = types.PathOrBlob;
-pub const Dirent = types.Dirent;
-pub const FileSystemFlags = types.FileSystemFlags;
-pub const PathOrFileDescriptor = types.PathOrFileDescriptor;
-pub const modeFromJS = types.modeFromJS;
-pub const VectorArrayBuffer = types.VectorArrayBuffer;
-pub const Valid = types.Valid;
-pub const PathLike = types.PathLike;
-pub const CallbackTask = types.CallbackTask;
-pub const PathOrBuffer = types.PathOrBuffer;
-pub const jsAssertEncodingValid = types.jsAssertEncodingValid;
-pub const Encoding = types.Encoding;
-pub const StringOrBuffer = types.StringOrBuffer;
-pub const BlobOrStringOrBuffer = types.BlobOrStringOrBuffer;
-
-pub const FSEvents = @import("node/fs_events.zig");
-const stat = @import("node/Stat.zig");
-pub const Stats = stat.Stats;
-pub const StatsBig = stat.StatsBig;
-pub const StatsSmall = stat.StatsSmall;
-
-const statfs = @import("node/StatFS.zig");
-pub const StatFSSmall = statfs.StatFSSmall;
-pub const StatFSBig = statfs.StatFSBig;
-pub const StatFS = statfs.StatFS;
+pub const process = @import("./node/node_process.zig");
 
 pub const uid_t = if (Environment.isPosix) std.posix.uid_t else bun.windows.libuv.uv_uid_t;
 pub const gid_t = if (Environment.isPosix) std.posix.gid_t else bun.windows.libuv.uv_gid_t;
-
-pub const time_like = @import("node/time_like.zig");
-pub const TimeLike = time_like.TimeLike;
-pub const timeLikeFromJS = time_like.fromJS;
 
 /// Node.js expects the error to include contextual information
 /// - "syscall"
@@ -354,11 +319,48 @@ fn translateToErrInt(err: anytype) bun.sys.Error.Int {
     };
 }
 
-const std = @import("std");
+pub const FSEvents = @import("./node/fs_events.zig");
+pub const validators = @import("./node/util/validators.zig");
+pub const ErrorCode = @import("./node/nodejs_error_code.zig").Code;
+
+const stat = @import("./node/Stat.zig");
+pub const Stats = stat.Stats;
+pub const StatsBig = stat.StatsBig;
+pub const StatsSmall = stat.StatsSmall;
+
+const statfs = @import("./node/StatFS.zig");
+pub const StatFS = statfs.StatFS;
+pub const StatFSBig = statfs.StatFSBig;
+pub const StatFSSmall = statfs.StatFSSmall;
+
+pub const time_like = @import("./node/time_like.zig");
+pub const TimeLike = time_like.TimeLike;
+pub const timeLikeFromJS = time_like.fromJS;
+
+const types = @import("./node/types.zig");
+pub const BlobOrStringOrBuffer = types.BlobOrStringOrBuffer;
+pub const CallbackTask = types.CallbackTask;
+pub const Dirent = types.Dirent;
+pub const Encoding = types.Encoding;
+pub const FileSystemFlags = types.FileSystemFlags;
+pub const PathLike = types.PathLike;
+pub const PathOrBlob = types.PathOrBlob;
+pub const PathOrBuffer = types.PathOrBuffer;
+pub const PathOrFileDescriptor = types.PathOrFileDescriptor;
+pub const StringOrBuffer = types.StringOrBuffer;
+pub const Valid = types.Valid;
+pub const VectorArrayBuffer = types.VectorArrayBuffer;
+pub const jsAssertEncodingValid = types.jsAssertEncodingValid;
+pub const modeFromJS = types.modeFromJS;
+
 const bun = @import("bun");
-const sys = bun.sys;
 const Environment = bun.Environment;
 const meta = bun.meta;
+const sys = bun.sys;
 const windows = bun.windows;
-const posix = std.posix;
+
 const JSC = bun.JSC;
+pub const Buffer = JSC.MarkedArrayBuffer;
+
+const std = @import("std");
+const posix = std.posix;

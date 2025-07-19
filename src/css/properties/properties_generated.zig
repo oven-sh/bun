@@ -1,118 +1,5 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-const bits = bun.bits;
-
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const VendorPrefix = css.VendorPrefix;
-
-const properties_impl = @import("./properties_impl.zig");
-
-const CSSWideKeyword = css.css_properties.CSSWideKeyword;
-const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
-const CustomProperty = css.css_properties.custom.CustomProperty;
-const Targets = css.targets.Targets;
-const Feature = css.prefixes.Feature;
-
-const ColorScheme = css.css_properties.ui.ColorScheme;
-
-const TransformList = css.css_properties.transform.TransformList;
-const TransformStyle = css.css_properties.transform.TransformStyle;
-const TransformBox = css.css_properties.transform.TransformBox;
-const BackfaceVisibility = css.css_properties.transform.BackfaceVisibility;
-const Perspective = css.css_properties.transform.Perspective;
-const Translate = css.css_properties.transform.Translate;
-const Rotate = css.css_properties.transform.Rotate;
-const Scale = css.css_properties.transform.Scale;
-
-const css_values = css.css_values;
-const CssColor = css.css_values.color.CssColor;
-const Image = css.css_values.image.Image;
-const Length = css.css_values.length.Length;
-const LengthPercentage = css_values.length.LengthPercentage;
-const LengthPercentageOrAuto = css_values.length.LengthPercentageOrAuto;
-const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const CSSInteger = css.css_values.number.CSSInteger;
-const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
-const Time = css.css_values.time.Time;
-const EasingFunction = css.css_values.easing.EasingFunction;
-const HorizontalPosition = css.css_values.position.HorizontalPosition;
-const VerticalPosition = css.css_values.position.VerticalPosition;
-
-pub const font = css.css_properties.font;
-const border = css.css_properties.border;
-const border_radius = css.css_properties.border_radius;
-const border_image = css.css_properties.border_image;
-const outline = css.css_properties.outline;
-const flex = css.css_properties.flex;
 const @"align" = css.css_properties.@"align";
-const margin_padding = css.css_properties.margin_padding;
-const transition = css.css_properties.transition;
-const animation = css.css_properties.animation;
-const transform = css.css_properties.transform;
-const text = css.css_properties.text;
-const ui = css.css_properties.ui;
-const list = css.css_properties.list;
-const css_modules = css.css_properties.css_modules;
-const svg = css.css_properties.svg;
-const shape = css.css_properties.shape;
-const masking = css.css_properties.masking;
-const background = css.css_properties.background;
-const effects = css.css_properties.effects;
-const contain = css.css_properties.contain;
-const custom = css.css_properties.custom;
-const position = css.css_properties.position;
-const box_shadow = css.css_properties.box_shadow;
-const size = css.css_properties.size;
-const overflow = css.css_properties.overflow;
 
-const BorderSideWidth = border.BorderSideWidth;
-const Size2D = css_values.size.Size2D;
-const BorderRadius = border_radius.BorderRadius;
-const Rect = css_values.rect.Rect;
-const LengthOrNumber = css_values.length.LengthOrNumber;
-const BorderImageRepeat = border_image.BorderImageRepeat;
-const BorderImageSideWidth = border_image.BorderImageSideWidth;
-const BorderImageSlice = border_image.BorderImageSlice;
-const BorderImage = border_image.BorderImage;
-const BorderColor = border.BorderColor;
-const BorderStyle = border.BorderStyle;
-const BorderWidth = border.BorderWidth;
-const BorderBlockColor = border.BorderBlockColor;
-const BorderBlockStyle = border.BorderBlockStyle;
-const BorderBlockWidth = border.BorderBlockWidth;
-const BorderInlineColor = border.BorderInlineColor;
-const BorderInlineStyle = border.BorderInlineStyle;
-const BorderInlineWidth = border.BorderInlineWidth;
-const Border = border.Border;
-const BorderTop = border.BorderTop;
-const BorderRight = border.BorderRight;
-const BorderLeft = border.BorderLeft;
-const BorderBottom = border.BorderBottom;
-const BorderBlockStart = border.BorderBlockStart;
-const BorderBlockEnd = border.BorderBlockEnd;
-const BorderInlineStart = border.BorderInlineStart;
-const BorderInlineEnd = border.BorderInlineEnd;
-const BorderBlock = border.BorderBlock;
-const BorderInline = border.BorderInline;
-const Outline = outline.Outline;
-const OutlineStyle = outline.OutlineStyle;
-const FlexDirection = flex.FlexDirection;
-const FlexWrap = flex.FlexWrap;
-const FlexFlow = flex.FlexFlow;
-const Flex = flex.Flex;
-const BoxOrient = flex.BoxOrient;
-const BoxDirection = flex.BoxDirection;
-const BoxAlign = flex.BoxAlign;
-const BoxPack = flex.BoxPack;
-const BoxLines = flex.BoxLines;
-const FlexPack = flex.FlexPack;
-const FlexItemAlign = flex.FlexItemAlign;
-const FlexLinePack = flex.FlexLinePack;
 const AlignContent = @"align".AlignContent;
 const JustifyContent = @"align".JustifyContent;
 const PlaceContent = @"align".PlaceContent;
@@ -124,28 +11,7 @@ const JustifyItems = @"align".JustifyItems;
 const PlaceItems = @"align".PlaceItems;
 const GapValue = @"align".GapValue;
 const Gap = @"align".Gap;
-const MarginBlock = margin_padding.MarginBlock;
-const Margin = margin_padding.Margin;
-const MarginInline = margin_padding.MarginInline;
-const PaddingBlock = margin_padding.PaddingBlock;
-const PaddingInline = margin_padding.PaddingInline;
-const Padding = margin_padding.Padding;
-const ScrollMarginBlock = margin_padding.ScrollMarginBlock;
-const ScrollMarginInline = margin_padding.ScrollMarginInline;
-const ScrollMargin = margin_padding.ScrollMargin;
-const ScrollPaddingBlock = margin_padding.ScrollPaddingBlock;
-const ScrollPaddingInline = margin_padding.ScrollPaddingInline;
-const ScrollPadding = margin_padding.ScrollPadding;
-const FontWeight = font.FontWeight;
-const FontSize = font.FontSize;
-const FontStretch = font.FontStretch;
-const FontFamily = font.FontFamily;
-const FontStyle = font.FontStyle;
-const FontVariantCaps = font.FontVariantCaps;
-const LineHeight = font.LineHeight;
-const Font = font.Font;
 // const VerticalAlign = font.VerticalAlign;
-const Transition = transition.Transition;
 // const AnimationNameList = animation.AnimationNameList;
 // const AnimationList = animation.AnimationList;
 // const AnimationIterationCount = animation.AnimationIterationCount;
@@ -186,9 +52,7 @@ const Transition = transition.Transition;
 // const TextEmphasisPositionVertical = text.TextEmphasisPositionVertical;
 // const TextEmphasisPositionHorizontal = text.TextEmphasisPositionHorizontal;
 // const TextEmphasisPosition = text.TextEmphasisPosition;
-const TextShadow = text.TextShadow;
 // const TextSizeAdjust = text.TextSizeAdjust;
-const Direction = text.Direction;
 // const UnicodeBidi = text.UnicodeBidi;
 // const BoxDecorationBreak = text.BoxDecorationBreak;
 // const Resize = ui.Resize;
@@ -203,7 +67,6 @@ const Direction = text.Direction;
 // const ListStylePosition = list.ListStylePosition;
 // const ListStyle = list.ListStyle;
 // const MarkerSide = list.MarkerSide;
-const Composes = css_modules.Composes;
 // const SVGPaint = svg.SVGPaint;
 // const FillRule = shape.FillRule;
 // const AlphaValue = shape.AlphaValue;
@@ -216,31 +79,11 @@ const Composes = css_modules.Composes;
 // const ShapeRendering = svg.ShapeRendering;
 // const TextRendering = svg.TextRendering;
 // const ImageRendering = svg.ImageRendering;
-const MaskMode = masking.MaskMode;
-const MaskClip = masking.MaskClip;
-const GeometryBox = masking.GeometryBox;
-const MaskComposite = masking.MaskComposite;
-const MaskType = masking.MaskType;
-const Mask = masking.Mask;
-const MaskBorderMode = masking.MaskBorderMode;
-const MaskBorder = masking.MaskBorder;
-const WebKitMaskComposite = masking.WebKitMaskComposite;
-const WebKitMaskSourceType = masking.WebKitMaskSourceType;
-const BackgroundRepeat = background.BackgroundRepeat;
-const BackgroundSize = background.BackgroundSize;
 // const FilterList = effects.FilterList;
 // const ContainerType = contain.ContainerType;
 // const Container = contain.Container;
 // const ContainerNameList = contain.ContainerNameList;
-const CustomPropertyName = custom.CustomPropertyName;
-const display = css.css_properties.display;
 
-const Position = position.Position;
-
-const Result = css.Result;
-
-const BabyList = bun.BabyList;
-const SmallList = css.SmallList;
 pub const Property = union(PropertyIdTag) {
     @"background-color": CssColor,
     @"background-image": SmallList(Image, 1),
@@ -10360,3 +10203,173 @@ pub const PropertyIdTag = enum(u16) {
         };
     }
 };
+
+const properties_impl = @import("./properties_impl.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const SmallList = css.SmallList;
+const VendorPrefix = css.VendorPrefix;
+const css_values = css.css_values;
+const Feature = css.prefixes.Feature;
+const Targets = css.targets.Targets;
+const CssColor = css.css_values.color.CssColor;
+const EasingFunction = css.css_values.easing.EasingFunction;
+const Image = css.css_values.image.Image;
+const Rect = css_values.rect.Rect;
+const Size2D = css_values.size.Size2D;
+const Time = css.css_values.time.Time;
+
+const CSSWideKeyword = css.css_properties.CSSWideKeyword;
+const animation = css.css_properties.animation;
+const box_shadow = css.css_properties.box_shadow;
+const contain = css.css_properties.contain;
+const display = css.css_properties.display;
+const effects = css.css_properties.effects;
+const list = css.css_properties.list;
+const overflow = css.css_properties.overflow;
+const shape = css.css_properties.shape;
+const size = css.css_properties.size;
+const svg = css.css_properties.svg;
+
+const background = css.css_properties.background;
+const BackgroundRepeat = background.BackgroundRepeat;
+const BackgroundSize = background.BackgroundSize;
+
+const border = css.css_properties.border;
+const Border = border.Border;
+const BorderBlock = border.BorderBlock;
+const BorderBlockColor = border.BorderBlockColor;
+const BorderBlockEnd = border.BorderBlockEnd;
+const BorderBlockStart = border.BorderBlockStart;
+const BorderBlockStyle = border.BorderBlockStyle;
+const BorderBlockWidth = border.BorderBlockWidth;
+const BorderBottom = border.BorderBottom;
+const BorderColor = border.BorderColor;
+const BorderInline = border.BorderInline;
+const BorderInlineColor = border.BorderInlineColor;
+const BorderInlineEnd = border.BorderInlineEnd;
+const BorderInlineStart = border.BorderInlineStart;
+const BorderInlineStyle = border.BorderInlineStyle;
+const BorderInlineWidth = border.BorderInlineWidth;
+const BorderLeft = border.BorderLeft;
+const BorderRight = border.BorderRight;
+const BorderSideWidth = border.BorderSideWidth;
+const BorderStyle = border.BorderStyle;
+const BorderTop = border.BorderTop;
+const BorderWidth = border.BorderWidth;
+
+const border_image = css.css_properties.border_image;
+const BorderImage = border_image.BorderImage;
+const BorderImageRepeat = border_image.BorderImageRepeat;
+const BorderImageSideWidth = border_image.BorderImageSideWidth;
+const BorderImageSlice = border_image.BorderImageSlice;
+
+const border_radius = css.css_properties.border_radius;
+const BorderRadius = border_radius.BorderRadius;
+
+const css_modules = css.css_properties.css_modules;
+const Composes = css_modules.Composes;
+
+const custom = css.css_properties.custom;
+const CustomProperty = css.css_properties.custom.CustomProperty;
+const CustomPropertyName = custom.CustomPropertyName;
+const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
+
+const flex = css.css_properties.flex;
+const BoxAlign = flex.BoxAlign;
+const BoxDirection = flex.BoxDirection;
+const BoxLines = flex.BoxLines;
+const BoxOrient = flex.BoxOrient;
+const BoxPack = flex.BoxPack;
+const Flex = flex.Flex;
+const FlexDirection = flex.FlexDirection;
+const FlexFlow = flex.FlexFlow;
+const FlexItemAlign = flex.FlexItemAlign;
+const FlexLinePack = flex.FlexLinePack;
+const FlexPack = flex.FlexPack;
+const FlexWrap = flex.FlexWrap;
+
+pub const font = css.css_properties.font;
+const Font = font.Font;
+const FontFamily = font.FontFamily;
+const FontSize = font.FontSize;
+const FontStretch = font.FontStretch;
+const FontStyle = font.FontStyle;
+const FontVariantCaps = font.FontVariantCaps;
+const FontWeight = font.FontWeight;
+const LineHeight = font.LineHeight;
+
+const margin_padding = css.css_properties.margin_padding;
+const Margin = margin_padding.Margin;
+const MarginBlock = margin_padding.MarginBlock;
+const MarginInline = margin_padding.MarginInline;
+const Padding = margin_padding.Padding;
+const PaddingBlock = margin_padding.PaddingBlock;
+const PaddingInline = margin_padding.PaddingInline;
+const ScrollMargin = margin_padding.ScrollMargin;
+const ScrollMarginBlock = margin_padding.ScrollMarginBlock;
+const ScrollMarginInline = margin_padding.ScrollMarginInline;
+const ScrollPadding = margin_padding.ScrollPadding;
+const ScrollPaddingBlock = margin_padding.ScrollPaddingBlock;
+const ScrollPaddingInline = margin_padding.ScrollPaddingInline;
+
+const masking = css.css_properties.masking;
+const GeometryBox = masking.GeometryBox;
+const Mask = masking.Mask;
+const MaskBorder = masking.MaskBorder;
+const MaskBorderMode = masking.MaskBorderMode;
+const MaskClip = masking.MaskClip;
+const MaskComposite = masking.MaskComposite;
+const MaskMode = masking.MaskMode;
+const MaskType = masking.MaskType;
+const WebKitMaskComposite = masking.WebKitMaskComposite;
+const WebKitMaskSourceType = masking.WebKitMaskSourceType;
+
+const outline = css.css_properties.outline;
+const Outline = outline.Outline;
+const OutlineStyle = outline.OutlineStyle;
+
+const position = css.css_properties.position;
+const Position = position.Position;
+
+const text = css.css_properties.text;
+const Direction = text.Direction;
+const TextShadow = text.TextShadow;
+
+const transform = css.css_properties.transform;
+const BackfaceVisibility = css.css_properties.transform.BackfaceVisibility;
+const Perspective = css.css_properties.transform.Perspective;
+const Rotate = css.css_properties.transform.Rotate;
+const Scale = css.css_properties.transform.Scale;
+const TransformBox = css.css_properties.transform.TransformBox;
+const TransformList = css.css_properties.transform.TransformList;
+const TransformStyle = css.css_properties.transform.TransformStyle;
+const Translate = css.css_properties.transform.Translate;
+
+const transition = css.css_properties.transition;
+const Transition = transition.Transition;
+
+const ui = css.css_properties.ui;
+const ColorScheme = css.css_properties.ui.ColorScheme;
+
+const Length = css.css_values.length.Length;
+const LengthOrNumber = css_values.length.LengthOrNumber;
+const LengthPercentage = css_values.length.LengthPercentage;
+const LengthPercentageOrAuto = css_values.length.LengthPercentageOrAuto;
+
+const CSSInteger = css.css_values.number.CSSInteger;
+const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
+const CSSNumber = css.css_values.number.CSSNumber;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;
+
+const HorizontalPosition = css.css_values.position.HorizontalPosition;
+const VerticalPosition = css.css_values.position.VerticalPosition;
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const bits = bun.bits;

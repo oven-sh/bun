@@ -3,18 +3,12 @@
 //! objects that reference the filesystem (Blob.Store.File). This is how
 //! operations like writing `Store.File` to another `Store.File` knows to use a
 //! basic file copy instead of a naive read write loop.
+
 const Blob = @This();
+
 const debug = Output.scoped(.Blob, false);
 
-pub const Store = @import("blob/Store.zig");
-pub const read_file = @import("blob/read_file.zig");
-pub const write_file = @import("blob/write_file.zig");
-pub const copy_file = @import("blob/copy_file.zig");
-
 pub const new = bun.TrivialNew(@This());
-pub const js = JSC.Codegen.JSBlob;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
 
 reported_estimated_size: usize = 0,
 
@@ -3382,7 +3376,6 @@ pub fn sharedView(this: *const Blob) []const u8 {
     return slice_[0..@min(slice_.len, @as(usize, this.size))];
 }
 
-pub const Lifetime = JSC.WebCore.Lifetime;
 pub fn setIsASCIIFlag(this: *Blob, is_all_ascii: bool) void {
     this.is_all_ascii = is_all_ascii;
     // if this Blob represents the entire binary data
@@ -4699,38 +4692,48 @@ pub fn FileCloser(comptime This: type) type {
     };
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const MimeType = http.MimeType;
-const http = bun.http;
-const JSC = bun.JSC;
-const io = bun.io;
-const Output = bun.Output;
-const strings = bun.strings;
-const string = bun.string;
-const default_allocator = bun.default_allocator;
-const JSError = bun.JSError;
-const assert = bun.assert;
-const streams = bun.webcore.streams;
-
 const Environment = @import("../../env.zig");
-const ZigString = JSC.ZigString;
-const JSPromise = JSC.JSPromise;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
+const S3File = @import("./S3File.zig");
+pub const Store = @import("./blob/Store.zig");
+pub const copy_file = @import("./blob/copy_file.zig");
+const std = @import("std");
 
-const VirtualMachine = JSC.VirtualMachine;
-const StringJoiner = bun.StringJoiner;
+pub const read_file = @import("./blob/read_file.zig");
+const NewReadFileHandler = read_file.NewReadFileHandler;
 
-const invalid_fd = bun.invalid_fd;
-const Response = JSC.WebCore.Response;
-const Request = JSC.WebCore.Request;
-
-const libuv = bun.windows.libuv;
-
-const S3 = bun.S3;
-const S3File = @import("S3File.zig");
-const PathOrBlob = JSC.Node.PathOrBlob;
+pub const write_file = @import("./blob/write_file.zig");
 const WriteFilePromise = write_file.WriteFilePromise;
 const WriteFileWaitFromLockedValueTask = write_file.WriteFileWaitFromLockedValueTask;
-const NewReadFileHandler = read_file.NewReadFileHandler;
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+const Output = bun.Output;
+const S3 = bun.S3;
+const StringJoiner = bun.StringJoiner;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const invalid_fd = bun.invalid_fd;
+const io = bun.io;
+const string = bun.string;
+const strings = bun.strings;
+const libuv = bun.windows.libuv;
+const streams = bun.webcore.streams;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSPromise = JSC.JSPromise;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;
+const ZigString = JSC.ZigString;
+const PathOrBlob = JSC.Node.PathOrBlob;
+
+pub const js = JSC.Codegen.JSBlob;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
+pub const Lifetime = JSC.WebCore.Lifetime;
+const Request = JSC.WebCore.Request;
+const Response = JSC.WebCore.Response;
+
+const http = bun.http;
+const MimeType = http.MimeType;

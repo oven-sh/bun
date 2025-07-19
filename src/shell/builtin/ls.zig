@@ -1,3 +1,5 @@
+const Ls = @This();
+
 opts: Opts = .{},
 
 state: union(enum) {
@@ -846,22 +848,26 @@ pub inline fn bltn(this: *Ls) *Builtin {
     return @fieldParentPtr("impl", impl);
 }
 
-const Ls = @This();
 const log = bun.Output.scoped(.ls, true);
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
+const OutputSrc = interpreter.OutputSrc;
+const OutputTask = interpreter.OutputTask;
+const ParseError = interpreter.ParseError;
+const ShellSyscall = interpreter.ShellSyscall;
+
 const Builtin = Interpreter.Builtin;
 const Result = Interpreter.Builtin.Result;
-const ParseError = interpreter.ParseError;
-const ExitCode = shell.ExitCode;
-const JSC = bun.JSC;
-const std = @import("std");
-const Syscall = bun.sys;
-const ShellSyscall = interpreter.ShellSyscall;
-const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
 const DirIterator = bun.DirIterator;
-const OutputTask = interpreter.OutputTask;
-const OutputSrc = interpreter.OutputSrc;
+const JSC = bun.JSC;
+const Syscall = bun.sys;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = bun.shell.Yield;

@@ -1,24 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const ArrayList = std.ArrayListUnmanaged;
-pub const css = @import("../css_parser.zig");
-const Result = css.Result;
-const VendorPrefix = css.VendorPrefix;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const CssColor = css.css_values.color.CssColor;
-const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const Angle = css.css_values.angle.Angle;
-const AnglePercentage = css.css_values.angle.AnglePercentage;
-const HorizontalPositionKeyword = css.css_values.position.HorizontalPositionKeyword;
-const VerticalPositionKeyword = css.css_values.position.VerticalPositionKeyword;
-const Position = css.css_values.position.Position;
-const Length = css.css_values.length.Length;
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-
 /// A CSS [`<gradient>`](https://www.w3.org/TR/css-images-3/#gradients) value.
 pub const Gradient = union(enum) {
     /// A `linear-gradient()`, and its vendor prefix.
@@ -1654,3 +1633,30 @@ pub fn convertStopsToWebkit(allocator: Allocator, items: *const ArrayList(Gradie
 
     return stops;
 }
+
+const bun = @import("bun");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const VendorPrefix = css.VendorPrefix;
+const CssColor = css.css_values.color.CssColor;
+const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
+
+const Angle = css.css_values.angle.Angle;
+const AnglePercentage = css.css_values.angle.AnglePercentage;
+
+const Length = css.css_values.length.Length;
+const LengthPercentage = css.css_values.length.LengthPercentage;
+
+const CSSNumber = css.css_values.number.CSSNumber;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;
+
+const HorizontalPositionKeyword = css.css_values.position.HorizontalPositionKeyword;
+const Position = css.css_values.position.Position;
+const VerticalPositionKeyword = css.css_values.position.VerticalPositionKeyword;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

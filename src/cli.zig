@@ -120,6 +120,7 @@ pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
+pub const NodeVersionCommand = @import("./cli/NodeVersionCommand.zig").NodeVersionCommand;
 
 const PackageManager = Install.PackageManager;
 const PmViewCommand = @import("./cli/pm_view_command.zig");
@@ -621,6 +622,7 @@ pub const Command = struct {
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
+            RootCommandMatcher.case("node") => .NodeVersionCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
 
@@ -646,6 +648,7 @@ pub const Command = struct {
         "x",
         "repl",
         "info",
+        "node",
     };
 
     const reject_list = default_completions_list ++ [_]string{
@@ -930,6 +933,11 @@ pub const Command = struct {
                 Output.flush();
                 try HelpCommand.exec(allocator);
             },
+            .NodeVersionCommand => {
+                const ctx = try Command.init(allocator, log, .NodeVersionCommand);
+                try NodeVersionCommand.exec(ctx);
+                return;
+            },
             .ExecCommand => {
                 const ctx = try Command.init(allocator, log, .ExecCommand);
 
@@ -972,6 +980,7 @@ pub const Command = struct {
         PublishCommand,
         AuditCommand,
         WhyCommand,
+        NodeVersionCommand,
 
         /// Used by crash reports.
         ///
@@ -1009,6 +1018,7 @@ pub const Command = struct {
                 .PublishCommand => 'k',
                 .AuditCommand => 'A',
                 .WhyCommand => 'W',
+                .NodeVersionCommand => 'N',
             };
         }
 
@@ -1317,7 +1327,7 @@ pub const Command = struct {
                     Output.flush();
                 },
                 else => {
-                    HelpCommand.printWithReason(.explicit);
+                    HelpCommand.printWithReason(.explicit, false);
                 },
             }
         }

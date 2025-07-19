@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import "../../../harness"; // for expect().toRun()
 
 describe("Bun.main", () => {

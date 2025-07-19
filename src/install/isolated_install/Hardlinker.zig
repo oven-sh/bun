@@ -179,4 +179,3 @@ const Environment = bun.Environment;
 const FD = bun.FD;
 const OOM = bun.OOM;
 const sys = bun.sys;
-const toNamespacedPathWindowsT = @import("../../bun.js/node/path.zig").toNamespacedPathWindowsT;

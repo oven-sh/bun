@@ -41,15 +41,15 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
             defer dest_save.restore();
 
             this.dest.append(entry.path);
-            const destfile_path_buf = bun.w_path_buffer_pool.get();
-            defer bun.w_path_buffer_pool.put(destfile_path_buf);
-            const destfile_path = bun.path.joinStringBufWZ(destfile_path_buf, &[_][]const u16{ this.dest.slice(), dest_cwd }, .windows);
 
             switch (entry.kind) {
                 .directory => {
                     FD.cwd().makePath(u16, this.dest.slice()) catch {};
                 },
                 .file => {
+                    const destfile_path_buf = bun.w_path_buffer_pool.get();
+                    defer bun.w_path_buffer_pool.put(destfile_path_buf);
+                    const destfile_path = bun.path.joinStringBufWZ(destfile_path_buf, &[_][]const u16{ this.dest.slice(), dest_cwd }, .windows);
                     switch (sys.link(u16, this.src.sliceZ(), destfile_path)) {
                         .result => {},
                         .err => |link_err1| switch (link_err1.getErrno()) {

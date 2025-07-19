@@ -713,7 +713,7 @@ export class BunTestController implements vscode.Disposable {
         printedArgs += `\x1b[0m\x1b[2m --test-name-pattern "${pattern}"\x1b[0m`;
       }
     }
-    run.appendOutput(printedArgs + "\x1b[0m\r\n\r\n" + this.signal!.url + "\r\n");
+    run.appendOutput(printedArgs + "\x1b[0m\r\n\r\n");
 
     for (const test of tests) {
       if (isIndividualTestRun || tests.length === 1) {

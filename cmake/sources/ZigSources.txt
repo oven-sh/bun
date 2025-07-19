@@ -338,6 +338,7 @@ src/cli/install_command.zig
 src/cli/install_completions_command.zig
 src/cli/link_command.zig
 src/cli/list-of-yarn-commands.zig
+src/cli/NodeVersionCommand.zig
 src/cli/outdated_command.zig
 src/cli/pack_command.zig
 src/cli/package_manager_command.zig

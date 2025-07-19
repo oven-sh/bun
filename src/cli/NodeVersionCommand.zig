@@ -1,64 +1,37 @@
 const bun = @import("bun");
-const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
-const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 const std = @import("std");
 const Progress = bun.Progress;
-
-const logger = bun.logger;
 
 const Command = @import("../cli.zig").Command;
 
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
-const JSON = bun.JSON;
-// const Archive = @import("../libarchive/libarchive.zig");
 const DotEnv = @import("../env_loader.zig");
-const which = @import("../which.zig").which;
-const Headers = bun.http.Headers;
 
-pub const NodeVersion = struct {
-    version: string,
-    download_url: string,
-    buf: MutableString,
-    size: u32 = 0,
-
-    pub const platform_label = switch (Environment.os) {
-        .mac => "darwin",
-        .linux => "linux",
-        .windows => "win",
-        else => @compileError("Unsupported OS for Node.js installation"),
-    };
-
-    pub const arch_label = if (Environment.isAarch64) "arm64" else "x64";
-    
-    pub fn getDownloadURL(version: string, allocator: std.mem.Allocator) !string {
-        const extension = if (Environment.isWindows) "zip" else "tar.gz";
-        return try std.fmt.allocPrint(
-            allocator,
-            "https://nodejs.org/dist/v{s}/node-v{s}-{s}-{s}.{s}",
-            .{ version, version, platform_label, arch_label, extension }
-        );
-    }
-
-    pub fn getFolderName(version: string, allocator: std.mem.Allocator) !string {
-        return try std.fmt.allocPrint(
-            allocator,
-            "node-v{s}-{s}-{s}",
-            .{ version, platform_label, arch_label }
-        );
-    }
+const platform_label = switch (Environment.os) {
+    .mac => "darwin",
+    .linux => "linux",
+    .windows => "win",
+    else => @compileError("Unsupported OS for Node.js installation"),
 };
 
-pub const NodeVersionCommand = struct {
-    const default_user_agent = "Mozilla/5.0 (compatible; Bun/" ++ Global.package_json_version ++ ")";
+const arch_label = if (Environment.isAarch64) "arm64" else "x64";
 
+fn getDownloadURL(version: []const u8, allocator: std.mem.Allocator) ![]const u8 {
+    const extension = if (Environment.isWindows) "zip" else "tar.gz";
+    return try std.fmt.allocPrint(
+        allocator,
+        "https://nodejs.org/dist/v{s}/node-v{s}-{s}-{s}.{s}",
+        .{ version, version, platform_label, arch_label, extension }
+    );
+}
+
+pub const NodeVersionCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         @branchHint(.cold);
 
@@ -82,7 +55,7 @@ pub const NodeVersionCommand = struct {
         try installNodeVersion(ctx, version_arg);
     }
 
-    fn isValidVersion(version: string) bool {
+    fn isValidVersion(version: []const u8) bool {
         // Basic validation: check if it matches X.Y.Z pattern
         var dot_count: u32 = 0;
         var has_digits = false;
@@ -101,7 +74,7 @@ pub const NodeVersionCommand = struct {
         return dot_count == 2 and has_digits;
     }
 
-    fn installNodeVersion(ctx: Command.Context, version: string) !void {
+    fn installNodeVersion(ctx: Command.Context, version: []const u8) !void {
         Output.prettyErrorln("<r><b>Installing Node.js v{s}<r>", .{version});
         
         // Get BUN_INSTALL directory
@@ -134,7 +107,7 @@ pub const NodeVersionCommand = struct {
         Output.prettyErrorln("<r><b><green>Successfully installed Node.js v{s}<r>", .{version});
     }
 
-    fn downloadAndInstallNode(ctx: Command.Context, version: string, bun_install_dir: string) !void {
+    fn downloadAndInstallNode(ctx: Command.Context, version: []const u8, bun_install_dir: []const u8) !void {
         var env_loader: DotEnv.Loader = brk: {
             const map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
@@ -142,7 +115,7 @@ pub const NodeVersionCommand = struct {
         };
         env_loader.loadProcess();
 
-        const download_url = try NodeVersion.getDownloadURL(version, ctx.allocator);
+        const download_url = try getDownloadURL(version, ctx.allocator);
         defer ctx.allocator.free(download_url);
 
         const url = URL.parse(download_url);
@@ -206,7 +179,7 @@ pub const NodeVersionCommand = struct {
         try extractNodeArchive(ctx, bytes, version, bun_install_dir);
     }
 
-    fn extractNodeArchive(ctx: Command.Context, archive_data: []const u8, version: string, bun_install_dir: string) !void {
+    fn extractNodeArchive(ctx: Command.Context, archive_data: []const u8, version: []const u8, bun_install_dir: []const u8) !void {
         Output.prettyErrorln("<r>Extracting Node.js v{s}<r>", .{version});
 
         // Create installation directory
@@ -231,7 +204,7 @@ pub const NodeVersionCommand = struct {
         }
     }
 
-    fn extractZipArchive(ctx: Command.Context, archive_data: []const u8, extract_path: string) !void {
+    fn extractZipArchive(ctx: Command.Context, archive_data: []const u8, extract_path: []const u8) !void {
         // For now, implement a basic ZIP extraction using system tools
         // This is similar to how the upgrade command handles ZIP files on Windows
         
@@ -261,7 +234,7 @@ pub const NodeVersionCommand = struct {
             Global.exit(1);
         };
 
-        var extract_argv = [_]string{
+        var extract_argv = [_][]const u8{
             powershell_path,
             "-NoProfile",
             "-ExecutionPolicy",
@@ -291,7 +264,7 @@ pub const NodeVersionCommand = struct {
         };
     }
 
-    fn extractTarGzArchive(ctx: Command.Context, archive_data: []const u8, extract_path: string) !void {
+    fn extractTarGzArchive(ctx: Command.Context, archive_data: []const u8, extract_path: []const u8) !void {
         _ = archive_data;
         _ = extract_path;
         _ = ctx;
@@ -302,7 +275,7 @@ pub const NodeVersionCommand = struct {
         Global.exit(1);
     }
 
-    fn updateNodeShim(ctx: Command.Context, version: string, bun_install_dir: string) !void {
+    fn updateNodeShim(ctx: Command.Context, version: []const u8, bun_install_dir: []const u8) !void {
         // Create or update the node shim executable
         const bin_dir = try std.fmt.allocPrint(
             ctx.allocator,

@@ -726,7 +726,12 @@ export class BunTestController implements vscode.Disposable {
     const inspectorUrl =
       this.signal.url.startsWith("ws") || this.signal.url.startsWith("tcp")
         ? `${this.signal!.url}?wait=1`
-        : this.signal!.url;
+        : `${this.signal!.url}`;
+
+    // right now there isnt a way to tell socket method to wait for the connection
+    if (!inspectorUrl.includes("?wait=1")) {
+      args.push("--inspect-wait");
+    }
 
     const proc = spawn(bunCommand, args, {
       cwd: this.workspaceFolder.uri.fsPath,
@@ -1279,7 +1284,7 @@ export class BunTestController implements vscode.Disposable {
       lastEffortMsg = lastEffortMsg.reverse();
     }
 
-    const msg = errorLine.startsWith("error: expect")
+    const msg = errorType.startsWith("expect")
       ? `${lastEffortMsg.join("\n")}\n${errorLine.trim()}`.trim()
       : `${errorLine.trim()}\n${messageLines}`.trim();
 

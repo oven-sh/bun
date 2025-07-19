@@ -35,7 +35,6 @@ class Page;
 
 template<typename T> class EventSender {
     WTF_MAKE_NONCOPYABLE(EventSender);
-    WTF_MAKE_FAST_ALLOCATED;
 
 public:
     explicit EventSender(const AtomString& eventType);

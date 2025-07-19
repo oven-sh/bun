@@ -42,7 +42,6 @@ namespace WebCore {
 // (and synchronization would be slow).
 
 class JSCallbackData {
-    WTF_MAKE_FAST_ALLOCATED;
 
 public:
     enum class CallbackType { Function,

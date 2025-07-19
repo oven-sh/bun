@@ -36,7 +36,6 @@ namespace WebCore {
 class JSHeapData;
 
 class DOMGCOutputConstraint : public JSC::MarkingConstraint {
-    WTF_MAKE_FAST_ALLOCATED;
 
 public:
     DOMGCOutputConstraint(JSC::VM&, JSHeapData&);

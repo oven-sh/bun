@@ -24,11 +24,13 @@ describe("IOWriter file output redirection", () => {
     TestBuilder.command`echo -n ${"x".repeat(1024 * 10)} > large.txt`
       .exitCode(0)
       .fileEquals("large.txt", "x".repeat(1024 * 10))
+      .quiet()
       .runAsTest("large single write");
 
     TestBuilder.command`mkdir -p subdir && echo "test" > subdir/file.txt`
       .exitCode(0)
       .fileEquals("subdir/file.txt", "test\n")
+      .quiet()
       .runAsTest("write to subdirectory");
   });
 

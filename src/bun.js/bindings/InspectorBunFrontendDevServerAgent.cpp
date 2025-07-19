@@ -31,7 +31,7 @@ InspectorBunFrontendDevServerAgent::InspectorBunFrontendDevServerAgent(JSC::JSGl
 
 InspectorBunFrontendDevServerAgent::~InspectorBunFrontendDevServerAgent() = default;
 
-void InspectorBunFrontendDevServerAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
+void InspectorBunFrontendDevServerAgent::didCreateFrontendAndBackend()
 {
 }
 

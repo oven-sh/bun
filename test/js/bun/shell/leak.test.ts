@@ -149,13 +149,15 @@ describe("fd leak", () => {
         Array(128 * 1024)
           .fill("a")
           .join(""),
-      ])}`.stdout(str =>
-        expect(str).toEqual(
-          Array(128 * 1024)
-            .fill("a")
-            .join(""),
+      ])}`
+        .quiet()
+        .stdout(str =>
+          expect(str).toEqual(
+            Array(128 * 1024)
+              .fill("a")
+              .join(""),
+          ),
         ),
-      ),
     100,
   );
   memLeakTest(
@@ -165,10 +167,16 @@ describe("fd leak", () => {
         Array(128 * 1024)
           .fill("a")
           .join(""),
-      ])}`.stdout("hi\n"),
+      ])}`
+        .quiet()
+        .stdout("hi\n"),
     100,
   );
-  memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100);
+  memLeakTest(
+    "String",
+    () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.quiet().stdout(() => {}),
+    100,
+  );
 
   function memLeakTestProtect(
     name: string,

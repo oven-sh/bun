@@ -84,9 +84,7 @@ using WasmModuleArray = Vector<RefPtr<JSC::Wasm::Module>>;
 using WasmMemoryHandleArray = Vector<RefPtr<JSC::SharedArrayBufferContents>>;
 #endif
 
-DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SerializedScriptValue);
 class SerializedScriptValue : public ThreadSafeRefCounted<SerializedScriptValue> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(SerializedScriptValue);
 
 public:
     static SYSV_ABI void writeBytesForBun(CloneSerializer*, const uint8_t*, uint32_t);

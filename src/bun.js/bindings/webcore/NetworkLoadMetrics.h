@@ -61,7 +61,6 @@ constexpr MonotonicTime reusedTLSConnectionSentinel { MonotonicTime::fromRawSeco
 struct AdditionalNetworkLoadMetricsForWebInspector;
 
 class NetworkLoadMetrics {
-    WTF_MAKE_FAST_ALLOCATED(NetworkLoadMetrics);
 
 public:
     WEBCORE_EXPORT NetworkLoadMetrics();

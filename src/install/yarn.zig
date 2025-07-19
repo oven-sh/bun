@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -20,7 +20,7 @@ const Npm = @import("./npm.zig");
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
 
-const Semver = @import("./semver.zig");
+const Semver = @import("../semver.zig");
 const String = Semver.String;
 const ExternalString = Semver.ExternalString;
 const stringHash = String.Builder.stringHash;
@@ -192,7 +192,7 @@ pub const YarnLock = struct {
 
     // Parse a yarn.lock file content
     pub fn parse(self: *YarnLock, content: []const u8) !void {
-        var lines = std.mem.split(u8, content, "\n");
+        var lines = std.mem.splitSequence(u8, content, "\n");
         var current_entry: ?Entry = null;
         var current_specs = std.ArrayList([]const u8).init(self.allocator);
         defer current_specs.deinit();
@@ -231,7 +231,7 @@ pub const YarnLock = struct {
                 // Parse specs
                 current_specs.clearRetainingCapacity();
                 const specs_str = trimmed[0 .. trimmed.len - 1]; // Remove trailing colon
-                var specs_it = std.mem.split(u8, specs_str, ",");
+                var specs_it = std.mem.splitSequence(u8, specs_str, ",");
                 while (specs_it.next()) |spec| {
                     const spec_trimmed = std.mem.trim(u8, spec, " \"");
                     try current_specs.append(try self.allocator.dupe(u8, spec_trimmed));
@@ -330,7 +330,7 @@ pub const YarnLock = struct {
                     } else if (std.mem.eql(u8, key, "os")) {
                         // Parse os array
                         var os_list = std.ArrayList([]const u8).init(self.allocator);
-                        var os_it = std.mem.split(u8, value[1 .. value.len - 1], ",");
+                        var os_it = std.mem.splitSequence(u8, value[1 .. value.len - 1], ",");
                         while (os_it.next()) |os| {
                             const trimmed_os = std.mem.trim(u8, os, " \"");
                             try os_list.append(trimmed_os);
@@ -339,7 +339,7 @@ pub const YarnLock = struct {
                     } else if (std.mem.eql(u8, key, "cpu")) {
                         // Parse cpu array
                         var cpu_list = std.ArrayList([]const u8).init(self.allocator);
-                        var cpu_it = std.mem.split(u8, value[1 .. value.len - 1], ",");
+                        var cpu_it = std.mem.splitSequence(u8, value[1 .. value.len - 1], ",");
                         while (cpu_it.next()) |cpu| {
                             const trimmed_cpu = std.mem.trim(u8, cpu, " \"");
                             try cpu_list.append(trimmed_cpu);
@@ -387,7 +387,7 @@ const processDeps = struct {
         manager: *Install.PackageManager,
     ) ![]Install.PackageID {
         var deps_it = deps.iterator();
-        const initial_len = res_buf.len;
+        var count: usize = 0;
         var dep_spec_name_stack = std.heap.stackFallback(1024, bun.default_allocator);
         const temp_allocator = dep_spec_name_stack.get();
 
@@ -406,7 +406,7 @@ const processDeps = struct {
                 const dep_name_str = try string_buf_.appendWithHash(dep_name, dep_name_hash);
 
                 // Create dependency
-                deps_buf[res_buf.len - initial_len] = Dependency{
+                deps_buf[count] = Dependency{
                     .name = dep_name_str,
                     .name_hash = dep_name_hash,
                     .version = Dependency.parse(
@@ -430,13 +430,14 @@ const processDeps = struct {
                 // Find package ID for this dependency
                 for (yarn_lock_.entries.items, 0..) |entry_, i| {
                     if (std.mem.eql(u8, entry_.specs[0], dep_spec)) {
-                        res_buf[res_buf.len - initial_len] = @intCast(i);
+                        res_buf[count] = @intCast(i + 1); // +1 because root package is at index 0
                         break;
                     }
                 }
+                count += 1;
             }
         }
-        return res_buf[initial_len..];
+        return res_buf[0..count];
     }
 }.process;
 

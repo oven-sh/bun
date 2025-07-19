@@ -10,6 +10,7 @@ src/bun.js/bindings/Base64Helpers.cpp
 src/bun.js/bindings/bindings.cpp
 src/bun.js/bindings/blob.cpp
 src/bun.js/bindings/bun-simdutf.cpp
+src/bun.js/bindings/bun-spawn-darwin.cpp
 src/bun.js/bindings/bun-spawn.cpp
 src/bun.js/bindings/BunClientData.cpp
 src/bun.js/bindings/BunCommonStrings.cpp

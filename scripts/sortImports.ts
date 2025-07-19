@@ -312,7 +312,7 @@ async function processFile(filePath: string): Promise<void> {
   if (config.normalizePaths === "") {
     fileContents = fileContents.replaceAll(`@import("./`, `@import("`);
   } else if (config.normalizePaths === "./") {
-    fileContents = fileContents.replaceAll(/@import\("([^."\s]+\.[^"\s]+)"\)/g, '@import("./$1")');
+    fileContents = fileContents.replaceAll(/@import\("([^.][^."\s]+\.[^"\s]+)"\)/g, '@import("./$1")');
   }
 
   let needsRecurse = true;

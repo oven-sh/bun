@@ -207,9 +207,17 @@ function bunTest(ctx: SuiteContext | TestContext) {
 let ctx = new TestContext(false, undefined, Bun.main, undefined);
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest(ctx);
-  describe(name, fn);
+  if (options.only) {
+    describe.only(name, fn);
+  } else if (options.todo) {
+    describe.todo(name, fn);
+  } else if (options.skip) {
+    describe.skip(name, fn);
+  } else {
+    describe(name, fn);
+  }
 }
 
 describe.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -233,7 +241,15 @@ describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 function test(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
   const { test } = bunTest(ctx);
-  test(name, fn, options);
+  if (options.only) {
+    test.only(name, fn);
+  } else if (options.todo) {
+    test.todo(name, fn);
+  } else if (options.skip) {
+    test.skip(name, fn);
+  } else {
+    test(name, fn);
+  }
 }
 
 test.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {

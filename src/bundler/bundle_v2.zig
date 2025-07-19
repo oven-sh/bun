@@ -865,20 +865,16 @@ pub const BundleV2 = struct {
 
         this.linker.dev_server = transpiler.options.dev_server;
 
-        var pool = try this.graph.allocator.create(ThreadPool);
+        const pool = try this.graph.allocator.create(ThreadPool);
         if (cli_watch_flag) {
             Watcher.enableHotModuleReloading(this);
         }
         // errdefer pool.destroy();
         errdefer this.graph.heap.deinit();
 
-        pool.* = ThreadPool{};
+        pool.* = try .init(this, thread_pool);
         this.graph.pool = pool;
-        try pool.start(
-            this,
-            thread_pool,
-        );
-
+        pool.start();
         return this;
     }
 
@@ -2230,6 +2226,7 @@ pub const BundleV2 = struct {
 
             this.graph.pool.worker_pool.wakeForIdleEvents();
         }
+        this.graph.pool.deinit();
 
         for (this.free_list.items) |free| {
             bun.default_allocator.free(free);
@@ -4134,14 +4131,13 @@ pub const sourcemap = bun.sourcemap;
 pub const StringJoiner = bun.StringJoiner;
 pub const base64 = bun.base64;
 pub const Ref = @import("../ast/base.zig").Ref;
-pub const ThreadPoolLib = @import("../thread_pool.zig");
+const ThreadPoolLib = bun.ThreadPool;
 pub const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 pub const BabyList = @import("../baby_list.zig").BabyList;
 pub const Fs = @import("../fs.zig");
 pub const schema = @import("../api/schema.zig");
 pub const Api = schema.Api;
 pub const _resolver = @import("../resolver/resolver.zig");
-pub const sync = bun.ThreadPool;
 pub const ImportRecord = bun.ImportRecord;
 pub const ImportKind = bun.ImportKind;
 pub const allocators = @import("../allocators.zig");

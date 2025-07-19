@@ -213,7 +213,7 @@ const options = @import("../options.zig");
 const js_parser = bun.js_parser;
 const js_ast = @import("../js_ast.zig");
 pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = @import("../thread_pool.zig");
+const ThreadPoolLib = bun.ThreadPool;
 const BabyList = @import("../baby_list.zig").BabyList;
 const OOM = bun.OOM;
 

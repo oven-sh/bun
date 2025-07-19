@@ -17,15 +17,8 @@ pub fn generateChunksInParallel(
         // TODO(@paperclover/bake): instead of running a renamer per chunk, run it per file
         debug(" START {d} renamers", .{chunks.len});
         defer debug("  DONE {d} renamers", .{chunks.len});
-        var wait_group = try c.allocator.create(sync.WaitGroup);
-        wait_group.init();
-        defer {
-            wait_group.deinit();
-            c.allocator.destroy(wait_group);
-        }
-        wait_group.counter = @as(u32, @truncate(chunks.len));
-        const ctx = GenerateChunkCtx{ .chunk = &chunks[0], .wg = wait_group, .c = c, .chunks = chunks };
-        try c.parse_graph.pool.worker_pool.doPtr(c.allocator, wait_group, ctx, LinkerContext.generateJSRenamer, chunks);
+        const ctx = GenerateChunkCtx{ .chunk = &chunks[0], .c = c, .chunks = chunks };
+        try c.parse_graph.pool.worker_pool.eachPtr(c.allocator, ctx, LinkerContext.generateJSRenamer, chunks);
     }
 
     if (c.source_maps.line_offset_tasks.len > 0) {
@@ -41,12 +34,6 @@ pub fn generateChunksInParallel(
         // Remove duplicate rules across files. This must be done in serial, not
         // in parallel, and must be done from the last rule to the first rule.
         if (c.parse_graph.css_file_count > 0) {
-            var wait_group = try c.allocator.create(sync.WaitGroup);
-            wait_group.init();
-            defer {
-                wait_group.deinit();
-                c.allocator.destroy(wait_group);
-            }
             const total_count = total_count: {
                 var total_count: usize = 0;
                 for (chunks) |*chunk| {
@@ -69,15 +56,13 @@ pub fn generateChunksInParallel(
                         },
                         .chunk = chunk,
                         .linker = c,
-                        .wg = wait_group,
                     };
                     batch.push(.from(&tasks[i].task));
                     i += 1;
                 }
             }
-            wait_group.counter = @as(u32, @truncate(total_count));
             c.parse_graph.pool.worker_pool.schedule(batch);
-            wait_group.wait();
+            c.parse_graph.pool.worker_pool.waitForAll();
         } else if (Environment.isDebug) {
             for (chunks) |*chunk| {
                 bun.assert(chunk.content != .css);
@@ -88,34 +73,27 @@ pub fn generateChunksInParallel(
     {
         const chunk_contexts = c.allocator.alloc(GenerateChunkCtx, chunks.len) catch unreachable;
         defer c.allocator.free(chunk_contexts);
-        var wait_group = try c.allocator.create(sync.WaitGroup);
-        wait_group.init();
 
-        defer {
-            wait_group.deinit();
-            c.allocator.destroy(wait_group);
-        }
-        errdefer wait_group.wait();
         {
             var total_count: usize = 0;
             for (chunks, chunk_contexts) |*chunk, *chunk_ctx| {
                 switch (chunk.content) {
                     .javascript => {
-                        chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
+                        chunk_ctx.* = .{ .c = c, .chunks = chunks, .chunk = chunk };
                         total_count += chunk.content.javascript.parts_in_chunk_in_order.len;
                         chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len) catch bun.outOfMemory();
                         has_js_chunk = true;
                     },
                     .css => {
                         has_css_chunk = true;
-                        chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
+                        chunk_ctx.* = .{ .c = c, .chunks = chunks, .chunk = chunk };
                         total_count += chunk.content.css.imports_in_chunk_in_order.len;
                         chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.css.imports_in_chunk_in_order.len) catch bun.outOfMemory();
                     },
                     .html => {
                         has_html_chunk = true;
                         // HTML gets only one chunk.
-                        chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
+                        chunk_ctx.* = .{ .c = c, .chunks = chunks, .chunk = chunk };
                         total_count += 1;
                         chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, 1) catch bun.outOfMemory();
                     },
@@ -187,9 +165,8 @@ pub fn generateChunksInParallel(
                     },
                 }
             }
-            wait_group.counter = @as(u32, @truncate(total_count));
             c.parse_graph.pool.worker_pool.schedule(batch);
-            wait_group.wait();
+            c.parse_graph.pool.worker_pool.waitForAll();
         }
 
         if (c.source_maps.quoted_contents_tasks.len > 0) {
@@ -206,12 +183,9 @@ pub fn generateChunksInParallel(
             bun.assert(chunks_to_do.len > 0);
             debug(" START {d} postprocess chunks", .{chunks_to_do.len});
             defer debug("  DONE {d} postprocess chunks", .{chunks_to_do.len});
-            wait_group.init();
-            wait_group.counter = @as(u32, @truncate(chunks_to_do.len));
 
-            try c.parse_graph.pool.worker_pool.doPtr(
+            try c.parse_graph.pool.worker_pool.eachPtr(
                 c.allocator,
-                wait_group,
                 chunk_contexts[0],
                 generateChunk,
                 chunks_to_do,
@@ -588,7 +562,6 @@ pub const ThreadPool = bun.bundle_v2.ThreadPool;
 const Loc = Logger.Loc;
 const Chunk = bun.bundle_v2.Chunk;
 
-const sync = bun.ThreadPool;
 const GenerateChunkCtx = LinkerContext.GenerateChunkCtx;
 const CompileResult = LinkerContext.CompileResult;
 const PendingPartRange = LinkerContext.PendingPartRange;
@@ -614,6 +587,7 @@ const base64 = bun.base64;
 
 const JSC = bun.JSC;
 
-pub const ThreadPoolLib = bun.ThreadPool;
+
 const OutputFileListBuilder = bun.bundle_v2.LinkerContext.OutputFileListBuilder;
 const StaticRouteVisitor = bun.bundle_v2.LinkerContext.StaticRouteVisitor;
+const ThreadPoolLib = bun.ThreadPool;

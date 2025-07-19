@@ -22,8 +22,6 @@ pub const LinkerContext = struct {
 
     options: LinkerOptions = .{},
 
-    wait_group: ThreadPoolLib.WaitGroup = .{},
-
     ambiguous_result_pool: std.ArrayList(MatchImport) = undefined,
 
     loop: EventLoop,
@@ -79,10 +77,10 @@ pub const LinkerContext = struct {
     };
 
     pub const SourceMapData = struct {
-        line_offset_wait_group: sync.WaitGroup = .{},
+        line_offset_wait_group: sync.WaitGroup = .init(),
         line_offset_tasks: []Task = &.{},
 
-        quoted_contents_wait_group: sync.WaitGroup = .{},
+        quoted_contents_wait_group: sync.WaitGroup = .init(),
         quoted_contents_tasks: []Task = &.{},
 
         pub const Task = struct {
@@ -210,7 +208,6 @@ pub const LinkerContext = struct {
 
         try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys());
         bundle.dynamic_import_entry_points.deinit();
-        this.wait_group.init();
         this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
 
         var runtime_named_exports = &this.graph.ast.items(.named_exports)[Index.runtime.get()];
@@ -255,10 +252,8 @@ pub const LinkerContext = struct {
         reachable: []const Index.Int,
     ) void {
         bun.assert(this.options.source_maps != .none);
-        this.source_maps.line_offset_wait_group.init();
-        this.source_maps.quoted_contents_wait_group.init();
-        this.source_maps.line_offset_wait_group.counter = @as(u32, @truncate(reachable.len));
-        this.source_maps.quoted_contents_wait_group.counter = @as(u32, @truncate(reachable.len));
+        this.source_maps.line_offset_wait_group = .initWithCount(reachable.len);
+        this.source_maps.quoted_contents_wait_group = .initWithCount(reachable.len);
         this.source_maps.line_offset_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
         this.source_maps.quoted_contents_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
 
@@ -286,7 +281,7 @@ pub const LinkerContext = struct {
     }
 
     pub fn scheduleTasks(this: *LinkerContext, batch: ThreadPoolLib.Batch) void {
-        _ = this.pending_task_count.fetchAdd(@as(u32, @truncate(batch.len)), .monotonic);
+        _ = this.pending_task_count.fetchAdd(@as(u32, @intCast(batch.len)), .monotonic);
         this.parse_graph.pool.worker_pool.schedule(batch);
     }
 
@@ -590,7 +585,6 @@ pub const LinkerContext = struct {
     pub const computeCrossChunkDependencies = @import("linker_context/computeCrossChunkDependencies.zig").computeCrossChunkDependencies;
 
     pub const GenerateChunkCtx = struct {
-        wg: *sync.WaitGroup,
         c: *LinkerContext,
         chunks: []Chunk,
         chunk: *Chunk,
@@ -600,7 +594,6 @@ pub const LinkerContext = struct {
     pub const postProcessCSSChunk = @import("linker_context/postProcessCSSChunk.zig").postProcessCSSChunk;
     pub const postProcessHTMLChunk = @import("linker_context/postProcessHTMLChunk.zig").postProcessHTMLChunk;
     pub fn generateChunk(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
-        defer ctx.wg.finish();
         const worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
         switch (chunk.content) {
@@ -613,7 +606,6 @@ pub const LinkerContext = struct {
     pub const renameSymbolsInChunk = @import("linker_context/renameSymbolsInChunk.zig").renameSymbolsInChunk;
 
     pub fn generateJSRenamer(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
-        defer ctx.wg.finish();
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
         switch (chunk.content) {
@@ -2491,11 +2483,11 @@ const sourcemap = bun.sourcemap;
 const StringJoiner = bun.StringJoiner;
 const base64 = bun.base64;
 pub const Ref = @import("../ast/base.zig").Ref;
-pub const ThreadPoolLib = @import("../thread_pool.zig");
+pub const ThreadPoolLib = bun.ThreadPool;
 const BabyList = @import("../baby_list.zig").BabyList;
 pub const Fs = @import("../fs.zig");
 const _resolver = @import("../resolver/resolver.zig");
-const sync = bun.ThreadPool;
+const sync = bun.threading;
 const ImportRecord = bun.ImportRecord;
 const runtime = @import("../runtime.zig");
 

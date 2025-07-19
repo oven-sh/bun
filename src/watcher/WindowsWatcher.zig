@@ -59,10 +59,16 @@ const EventIterator = struct {
 
     pub fn next(this: *EventIterator) ?FileEvent {
         if (!this.hasNext) return null;
-        const info_size = @sizeOf(w.FILE_NOTIFY_INFORMATION);
         const info: *w.FILE_NOTIFY_INFORMATION = @alignCast(@ptrCast(this.watcher.buf[this.offset..].ptr));
-        const name_ptr: [*]u16 = @alignCast(@ptrCast(this.watcher.buf[this.offset + info_size ..]));
-        const filename: []u16 = name_ptr[0 .. info.FileNameLength / @sizeOf(u16)];
+
+        // The FILE_NOTIFY_INFORMATION struct has FileName as a flexible array member
+        // that's commented out in the definition. We need to access it directly after
+        // the fixed part of the struct.
+        // The correct way to access the filename is to get the address of the struct
+        // and offset it by the size of the fixed fields
+        const filename_offset = @offsetOf(w.FILE_NOTIFY_INFORMATION, "FileNameLength") + @sizeOf(u32);
+        const filename_ptr = @as([*]u16, @ptrCast(@alignCast(@as([*]u8, @ptrCast(info)) + filename_offset)));
+        const filename: []u16 = filename_ptr[0 .. info.FileNameLength / @sizeOf(u16)];
 
         const action: Action = @enumFromInt(info.Action);
 
@@ -124,9 +130,18 @@ pub fn init(this: *WindowsWatcher, root: []const u8) !void {
 
     this.watcher = .{ .dirHandle = handle };
 
+    // Ensure we don't write past the buffer's end
+    if (root.len >= this.buf.len) {
+        return error.PathTooLong;
+    }
+
     @memcpy(this.buf[0..root.len], root);
     const needs_slash = root.len == 0 or !bun.strings.charIsAnySlash(root[root.len - 1]);
     if (needs_slash) {
+        // Check if we have enough space for the slash
+        if (root.len + 1 >= this.buf.len) {
+            return error.PathTooLong;
+        }
         this.buf[root.len] = '\\';
     }
     this.base_idx = if (needs_slash) root.len + 1 else root.len;

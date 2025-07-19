@@ -6198,6 +6198,65 @@ it("should handle --frozen-lockfile", async () => {
   expect(await exited).toBe(1);
 });
 
+it("should handle bun ci alias (to --frozen-lockfile)", async () => {
+  let urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }));
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+  );
+
+  // save the lockfile once
+  expect(
+    await spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "ignore",
+      env,
+    }).exited,
+  ).toBe(0);
+
+  // change version of baz in package.json
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: { baz: "0.0.5" },
+    }),
+  );
+
+  const { stderr: stderr1, exited: exited1 } = spawn({
+    cmd: [bunExe(), "ci"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("error: lockfile had changes, but lockfile is frozen");
+  expect(await exited1).toBe(1);
+
+  // test that it works even if ci isn't first "arg"
+  const { stderr: stderr2, exited: exited2 } = spawn({
+    cmd: [bunExe(), "--save", "ci"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err2 = await new Response(stderr2).text();
+  expect(err2).toContain("error: lockfile had changes, but lockfile is frozen");
+  expect(await exited2).toBe(1);
+});
+
 it("should handle frozenLockfile in config file", async () => {
   let urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }));

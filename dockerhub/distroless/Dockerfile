@@ -55,7 +55,7 @@ RUN apt-get update -qq \
     && which bun \
     && bun --version
 
-FROM gcr.io/distroless/base-nossl-debian11
+FROM gcr.io/distroless/base-nossl-debian12
 
 # Disable the runtime transpiler cache by default inside Docker containers.
 # On ephemeral containers, the cache is not useful

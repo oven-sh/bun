@@ -576,7 +576,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
                 .url = bun.String.empty,
             });
 
-            response.init.headers = response.getOrCreateHeaders(globalThis);
+            response.init.headers = try response.getOrCreateHeaders(globalThis);
             response.calculateEstimatedByteSize();
 
             return response;

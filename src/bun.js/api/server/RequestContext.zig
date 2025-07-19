@@ -1757,7 +1757,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     const status_code = response.statusCode();
                     var headers_ref: ?*FetchHeaders = null;
                     if (response.init.headers) |h| {
-                        headers_ref = h.cloneThis(globalThis);
+                        headers_ref = h.cloneThis(globalThis) catch |err| {
+                            _ = globalThis.takeException(err);
+                            return;
+                        };
                     }
 
                     if (this.req) |req| {

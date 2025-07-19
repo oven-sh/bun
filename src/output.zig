@@ -468,7 +468,7 @@ pub fn isAIAgent() bool {
     const get_is_agent = struct {
         var value = false;
         fn evaluate() bool {
-            if (bun.getenvZ("IS_CODE_AGENT")) |env| {
+            if (bun.getenvZ("AGENT")) |env| {
                 return strings.eqlComptime(env, "1");
             }
 

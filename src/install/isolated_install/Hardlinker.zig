@@ -47,7 +47,7 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
 
             switch (entry.kind) {
                 .directory => {
-                    FD.cwd().makePath(u16, destfile_path) catch {};
+                    FD.cwd().makePath(u16, this.dest.slice()) catch {};
                 },
                 .file => {
                     switch (sys.link(u16, this.src.sliceZ(), destfile_path)) {

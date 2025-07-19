@@ -1,6 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { normalizeBunSnapshot } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
 
 test("issue #17327: extra bracket in error message with colors enabled", async () => {
   const dir = tempDirWithFiles("17327", {
@@ -27,9 +26,9 @@ throw err;
     new Response(coloredProc.stderr).text(),
   ]);
 
-  const coloredOutput = (coloredStdout + coloredStderr);
+  const coloredOutput = coloredStdout + coloredStderr;
 
-  // Test with colors disabled  
+  // Test with colors disabled
   await using plainProc = Bun.spawn({
     cmd: [bunExe(), "test.ts"],
     env: { ...bunEnv, NO_COLOR: "1" },
@@ -43,17 +42,17 @@ throw err;
     new Response(plainProc.stderr).text(),
   ]);
 
-  const plainOutput = (plainStdout + plainStderr);
+  const plainOutput = plainStdout + plainStderr;
 
   // The error message should contain the correct JSON without extra brackets
   expect(coloredOutput).toContain('error: {"success":false}');
   expect(plainOutput).toContain('error: {"success":false}');
-  
+
   // The colored output should not contain extra closing brackets after JSON.stringify(
   // Check for the specific pattern where extra } appears in syntax highlighting
   expect(coloredOutput).not.toMatch(/stringify.*\(\s*}/);
   expect(coloredOutput).not.toMatch(/JSON\.stringify\([^)]*\)\s*}/);
-  
+
   // Both outputs should contain the same essential error information
   expect(normalizeBunSnapshot(coloredOutput)).toContain('error: {"success":false}');
   expect(normalizeBunSnapshot(plainOutput)).toContain('error: {"success":false}');
@@ -80,13 +79,10 @@ throw new Error(\`Array: \${JSON.stringify(arr)}\`);
       stderr: "pipe",
     });
 
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
+    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
 
     const output = stdout + stderr;
-    
+
     // Should not contain extra brackets in syntax highlighting (avoiding matching legitimate nested JSON)
     expect(output).not.toMatch(/stringify.*\(\s*}/);
     expect(output).not.toMatch(/JSON\.stringify\([^)]*\)\s*}/);

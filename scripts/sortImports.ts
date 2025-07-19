@@ -35,7 +35,7 @@ if (filePaths.length === 0) {
 const config = {
   includePub: !args.includes("--no-include-pub"),
   removeUnused: !args.includes("--no-remove-unused"),
-  normalizePaths: args.includes("--normalize-paths=./") ? "./" : args.includes("--normalize-paths=") ? "" : null,
+  normalizePaths: "./",
 };
 
 // Type definitions

@@ -1172,8 +1172,6 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         } else {
             prettyErrorln("<r><red>{s}<r><d>:<r> " ++ fmt ++ " <d>({s})<r>", .{tag_name} ++ args ++ .{@tagName(e.syscall)});
         }
-        if (e.path.len > 0) prettyErrorln("\tpath: {s}", .{e.path});
-        if (e.dest.len > 0) prettyErrorln("\tdest: {s}", .{e.dest});
         return;
     }
 

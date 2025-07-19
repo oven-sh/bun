@@ -36,18 +36,31 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
             defer dest_save.restore();
 
             this.dest.append(entry.path);
+            var destfile_path_buf: bun.WPathBuffer = undefined;
+            const destfile_path = bun.path.joinStringBufWZ(&destfile_path_buf, &[_][]const u16{ this.dest.slice(), entry.path }, .windows);
 
             switch (entry.kind) {
                 .directory => {
-                    FD.cwd().makePath(u16, this.dest.sliceZ()) catch {};
+                    FD.cwd().makePath(u16, destfile_path) catch {};
                 },
                 .file => {
-                    switch (sys.link(u16, this.src.sliceZ(), this.dest.sliceZ())) {
+                    switch (sys.link(u16, this.src.sliceZ(), destfile_path)) {
                         .result => {},
                         .err => |link_err1| switch (link_err1.getErrno()) {
                             .UV_EEXIST,
                             .EXIST,
                             => {
+                                if (bun.install.PackageManager.verbose_install) {
+                                    bun.Output.prettyErrorln(
+                                        \\Hardlinking {} to a path that already exists: {}
+                                    ,
+                                        .{
+                                            bun.fmt.fmtOSPath(this.src.slice(), .{ .path_sep = .auto }),
+                                            bun.fmt.fmtOSPath(destfile_path, .{ .path_sep = .auto }),
+                                        },
+                                    );
+                                }
+
                                 try_delete: {
                                     const delete_tree_buf = bun.path_buffer_pool.get();
                                     defer bun.path_buffer_pool.put(delete_tree_buf);
@@ -57,7 +70,7 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
                                     };
                                     FD.cwd().deleteTree(delete_tree_path) catch {};
                                 }
-                                switch (sys.link(u16, this.src.sliceZ(), this.dest.sliceZ())) {
+                                switch (sys.link(u16, this.src.sliceZ(), destfile_path)) {
                                     .result => {},
                                     .err => |link_err2| return .initErr(link_err2),
                                 }
@@ -65,12 +78,23 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
                             .UV_ENOENT,
                             .NOENT,
                             => {
+                                if (bun.install.PackageManager.verbose_install) {
+                                    bun.Output.prettyErrorln(
+                                        \\Hardlinking {} to a path that doesn't exist: {}
+                                    ,
+                                        .{
+                                            bun.fmt.fmtOSPath(this.src.slice(), .{ .path_sep = .auto }),
+                                            bun.fmt.fmtOSPath(destfile_path, .{ .path_sep = .auto }),
+                                        },
+                                    );
+                                }
                                 const dest_parent = this.dest.dirname() orelse {
                                     return .initErr(link_err1);
                                 };
 
                                 FD.cwd().makePath(u16, dest_parent) catch {};
-                                switch (sys.link(u16, this.src.sliceZ(), this.dest.sliceZ())) {
+
+                                switch (sys.link(u16, this.src.sliceZ(), destfile_path)) {
                                     .result => {},
                                     .err => |link_err2| return .initErr(link_err2),
                                 }

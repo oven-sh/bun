@@ -23,6 +23,10 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
     defer walker.deinit();
 
     if (comptime Environment.isWindows) {
+        var cwd_buf: bun.WPathBuffer = undefined;
+        const dest_cwd = FD.cwd().getFdPathW(&cwd_buf) catch {
+            return .initErr(bun.sys.Error.fromCode(bun.sys.E.ACCES, .link));
+        };
         while (switch (walker.next()) {
             .result => |res| res,
             .err => |err| return .initErr(err),
@@ -37,7 +41,7 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
 
             this.dest.append(entry.path);
             var destfile_path_buf: bun.WPathBuffer = undefined;
-            const destfile_path = bun.path.joinStringBufWZ(&destfile_path_buf, &[_][]const u16{ this.dest.slice(), entry.path }, .windows);
+            const destfile_path = bun.path.joinStringBufWZ(&destfile_path_buf, &[_][]const u16{ this.dest.slice(), dest_cwd }, .windows);
 
             switch (entry.kind) {
                 .directory => {

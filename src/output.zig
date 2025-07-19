@@ -22,10 +22,10 @@ var stdout_stream: Source.StreamType = undefined;
 var stdout_stream_set = false;
 const File = bun.sys.File;
 pub var terminal_size: std.posix.winsize = .{
-    .ws_row = 0,
-    .ws_col = 0,
-    .ws_xpixel = 0,
-    .ws_ypixel = 0,
+    .row = 0,
+    .col = 0,
+    .xpixel = 0,
+    .ypixel = 0,
 };
 
 pub const Source = struct {
@@ -468,7 +468,7 @@ pub fn isAIAgent() bool {
     const get_is_agent = struct {
         var value = false;
         fn evaluate() bool {
-            if (bun.getenvZ("IS_CODE_AGENT")) |env| {
+            if (bun.getenvZ("AGENT")) |env| {
                 return strings.eqlComptime(env, "1");
             }
 
@@ -1172,8 +1172,6 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         } else {
             prettyErrorln("<r><red>{s}<r><d>:<r> " ++ fmt ++ " <d>({s})<r>", .{tag_name} ++ args ++ .{@tagName(e.syscall)});
         }
-        if (e.path.len > 0) prettyErrorln("\tpath: {s}", .{e.path});
-        if (e.dest.len > 0) prettyErrorln("\tdest: {s}", .{e.dest});
         return;
     }
 

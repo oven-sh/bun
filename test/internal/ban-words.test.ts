@@ -89,33 +89,33 @@ for (const source of sources) {
   }
 }
 
-const newLimits = {};
-for (const word of Object.keys(words).sort()) {
-  const count = counts[word] ?? [];
-  let newLimit = count.length;
-  if (!process.argv.includes("--allow-increase")) {
-    if (newLimit > (limits[word] ?? 0)) {
-      const limit = limits[word] ?? 0;
-      console.log(
-        `${JSON.stringify(word)} is banned.\nThis PR increases the number of instances of this word from ${limit} to ${count.length}\nBan reason: ${words[word].reason}\n` +
-          (limit === 0
-            ? `Remove banned word from:\n${count.map(([line, path]) => `- ${path}:${line}\n`).join("")}`
-            : "") +
-          "Or increase the limit by running \`bun ./test/internal/ban-words.test.ts --allow-increase\`\n",
-      );
-    }
-    newLimit = Math.min(newLimit, limits[word] ?? 0);
-  }
-  if (newLimit !== 0) newLimits[word] = newLimit;
-}
-await Bun.write(import.meta.dir + "/ban-limits.json", JSON.stringify(newLimits, null, 2));
 if (typeof describe === "undefined") {
+  const newLimits = {};
+  for (const word of Object.keys(words).sort()) {
+    const count = counts[word] ?? [];
+    let newLimit = count.length;
+    if (!process.argv.includes("--allow-increase")) {
+      if (newLimit > (limits[word] ?? Infinity)) {
+        const limit = limits[word] ?? Infinity;
+        console.log(
+          `${JSON.stringify(word)} is banned.\nThis PR increases the number of instances of this word from ${limit} to ${count.length}\nBan reason: ${words[word].reason}\n` +
+            (limit === 0
+              ? `Remove banned word from:\n${count.map(([line, path]) => `- ${path}:${line}\n`).join("")}`
+              : "") +
+            "Or increase the limit by running \`bun ./test/internal/ban-words.test.ts --allow-increase\`\n",
+        );
+      }
+      newLimit = Math.min(newLimit, limits[word] ?? Infinity);
+    }
+    newLimits[word] = newLimit;
+  }
+  await Bun.write(import.meta.dir + "/ban-limits.json", JSON.stringify(newLimits, null, 2));
   process.exit(0);
 }
 
 describe("banned words", () => {
   for (const [i, [word, { reason }]] of Object.entries(words).entries()) {
-    const limit = limits[word] ?? 0;
+    const limit = limits[word] ?? Infinity;
     test(word + (limit !== 0 ? " (max " + limit + ")" : ""), () => {
       const count = counts[word] ?? [];
       if (count.length > limit) {

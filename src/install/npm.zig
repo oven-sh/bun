@@ -694,6 +694,10 @@ pub const OperatingSystem = enum(u16) {
         return (@intFromEnum(this) & @intFromEnum(current)) != 0;
     }
 
+    pub fn isMatchWithTarget(this: OperatingSystem, target: OperatingSystem) bool {
+        return (@intFromEnum(this) & @intFromEnum(target)) != 0;
+    }
+
     pub inline fn has(this: OperatingSystem, other: u16) bool {
         return (@intFromEnum(this) & other) != 0;
     }
@@ -714,6 +718,15 @@ pub const OperatingSystem = enum(u16) {
         .mac => "darwin",
         .windows => "win32",
         else => @compileError("Unsupported operating system: " ++ @tagName(current)),
+    };
+
+    pub const validValuesString = blk: {
+        var result: []const u8 = "";
+        for (NameMap.kvs, 0..) |kv, i| {
+            if (i > 0) result = result ++ ", ";
+            result = result ++ kv.key;
+        }
+        break :blk result;
     };
 
     pub fn negatable(this: OperatingSystem) Negatable(OperatingSystem) {
@@ -743,24 +756,46 @@ pub const Libc = enum(u8) {
 
     pub const glibc: u8 = 1 << 1;
     pub const musl: u8 = 1 << 2;
+    const placeholder: u8 = 1 << 7;
 
-    pub const all_value: u8 = glibc | musl;
+    pub const all_value: u8 = glibc | musl | placeholder;
 
     pub const NameMap = bun.ComptimeStringMap(u8, .{
         .{ "glibc", glibc },
         .{ "musl", musl },
+        // somehow this is needed so it doesn't keep on showing up as negated every time
+        .{ "(placeholder)", placeholder },
     });
+
+    pub const validValuesString = blk: {
+        var result: []const u8 = "";
+        for (NameMap.kvs, 0..) |kv, i| {
+            if (i > 0) result = result ++ ", ";
+            result = result ++ kv.key;
+        }
+        break :blk result;
+    };
 
     pub inline fn has(this: Libc, other: u8) bool {
         return (@intFromEnum(this) & other) != 0;
+    }
+
+    pub fn isMatch(this: Libc) bool {
+        return (@intFromEnum(this) & @intFromEnum(current)) != 0 or this == .none;
+    }
+
+    pub fn isMatchWithTarget(this: Libc, target: Libc) bool {
+        return (@intFromEnum(this) & @intFromEnum(target)) != 0 or this == .none;
     }
 
     pub fn negatable(this: Libc) Negatable(Libc) {
         return .{ .added = this, .removed = .none };
     }
 
-    // TODO:
-    pub const current: Libc = @intFromEnum(glibc);
+    pub const current: Libc = switch (Environment.os) {
+        .linux => if (Environment.isMusl) @enumFromInt(musl) else @enumFromInt(glibc),
+        else => .all,
+    };
 
     const JSC = bun.JSC;
     pub fn jsFunctionLibcIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -796,8 +831,12 @@ pub const Architecture = enum(u16) {
     pub const s390x: u16 = 1 << 9;
     pub const x32: u16 = 1 << 10;
     pub const x64: u16 = 1 << 11;
+    pub const wasm32: u16 = 1 << 12;
+    pub const riscv64: u16 = 1 << 13;
+    pub const loong64: u16 = 1 << 14;
+    pub const mips64el: u16 = 1 << 15;
 
-    pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64;
+    pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64 | wasm32 | riscv64 | loong64 | mips64el;
 
     pub const current: Architecture = switch (Environment.arch) {
         .arm64 => @enumFromInt(arm64),
@@ -823,7 +862,20 @@ pub const Architecture = enum(u16) {
         .{ "s390x", s390x },
         .{ "x32", x32 },
         .{ "x64", x64 },
+        .{ "wasm32", wasm32 },
+        .{ "riscv64", riscv64 },
+        .{ "loong64", loong64 },
+        .{ "mips64el", mips64el },
     });
+
+    pub const validValuesString = blk: {
+        var result: []const u8 = "";
+        for (NameMap.kvs, 0..) |kv, i| {
+            if (i > 0) result = result ++ ", ";
+            result = result ++ kv.key;
+        }
+        break :blk result;
+    };
 
     pub inline fn has(this: Architecture, other: u16) bool {
         return (@intFromEnum(this) & other) != 0;
@@ -831,6 +883,10 @@ pub const Architecture = enum(u16) {
 
     pub fn isMatch(this: Architecture) bool {
         return @intFromEnum(this) & @intFromEnum(current) != 0;
+    }
+
+    pub fn isMatchWithTarget(this: Architecture, target: Architecture) bool {
+        return @intFromEnum(this) & @intFromEnum(target) != 0;
     }
 
     pub fn negatable(this: Architecture) Negatable(Architecture) {
@@ -899,9 +955,8 @@ pub const PackageVersion = extern struct {
     os: OperatingSystem = OperatingSystem.all,
     /// `"cpu"` field in package.json
     cpu: Architecture = Architecture.all,
-
-    /// `"libc"` field in package.json, not exposed in npm registry api yet.
-    libc: Libc = Libc.none,
+    /// `"libc"` field in package.json
+    libc: Libc = Libc.all,
 
     /// `hasInstallScript` field in registry API.
     has_install_script: bool = false,

@@ -33,6 +33,8 @@ const Install = @import("../install/install.zig");
 
 const Architecture = @import("../install/npm.zig").Architecture;
 const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
+const Libc = @import("../install/npm.zig").Libc;
+
 pub const DependencyMap = struct {
     map: HashMap = .{},
     source_buf: []const u8 = "",
@@ -90,6 +92,7 @@ pub const PackageJSON = struct {
 
     arch: Architecture = Architecture.all,
     os: OperatingSystem = OperatingSystem.all,
+    libc: Libc = Libc.all,
 
     package_manager_package_id: Install.PackageID = Install.invalid_package_id,
     dependencies: DependencyMap = .{},
@@ -874,6 +877,19 @@ pub const PackageJSON = struct {
                         }
 
                         package_json.os = os.combine();
+                    }
+                }
+
+                if (json.get("libc")) |libc_field| {
+                    if (libc_field.asArray()) |array_const| {
+                        var array = array_const;
+                        var libc = Libc.none.negatable();
+                        while (array.next()) |item| {
+                            if (item.asString(bun.default_allocator)) |str| {
+                                libc.apply(str);
+                            }
+                        }
+                        package_json.libc = libc.combine();
                     }
                 }
 

@@ -366,9 +366,9 @@ exports[`should not change formatting unexpectedly 2`] = `
 
     "native-foo-x86": ["native-foo-x86@1.0.0", "http://localhost:1234/native-foo-x86/-/native-foo-x86-1.0.0.tgz", { "os": "none", "cpu": "none" }, "sha512-pUktFGar8JctgQh4Ow5Y9bMp3PB5bHBgbC6M3igED5q99z51WErG2GO3LnPG651SyHtRf+zdeMdhGFWzP54apQ=="],
 
-    "native-libc-glibc": ["native-libc-glibc@1.0.0", "http://localhost:1234/native-libc-glibc/-/native-libc-glibc-1.0.0.tgz", {}, "sha512-D7ivPUqV+bs4jZCFt/fm0BRchhE1kO3XMKZ7/Tt3cF2gfJcewMy/zuId79iaVn9aztJYkOk1GWFpMPXmX5rJHA=="],
+    "native-libc-glibc": ["native-libc-glibc@1.0.0", "http://localhost:1234/native-libc-glibc/-/native-libc-glibc-1.0.0.tgz", { "libc": "glibc" }, "sha512-D7ivPUqV+bs4jZCFt/fm0BRchhE1kO3XMKZ7/Tt3cF2gfJcewMy/zuId79iaVn9aztJYkOk1GWFpMPXmX5rJHA=="],
 
-    "native-libc-musl": ["native-libc-musl@1.0.0", "http://localhost:1234/native-libc-musl/-/native-libc-musl-1.0.0.tgz", {}, "sha512-1uffg8IA4EJ4VUnuZU4zyRO9EyduuNfbqg2MMVCWSMAsQkfzZnNR0hqtL0GW/EuhE8FWU/FE//Srf1px1pnN2Q=="],
+    "native-libc-musl": ["native-libc-musl@1.0.0", "http://localhost:1234/native-libc-musl/-/native-libc-musl-1.0.0.tgz", { "libc": "musl" }, "sha512-1uffg8IA4EJ4VUnuZU4zyRO9EyduuNfbqg2MMVCWSMAsQkfzZnNR0hqtL0GW/EuhE8FWU/FE//Srf1px1pnN2Q=="],
 
     "optional-native": ["optional-native@1.0.0", "http://localhost:1234/optional-native/-/optional-native-1.0.0.tgz", { "optionalDependencies": { "native-bar-x64": "1.0.0", "native-foo-x64": "1.0.0", "native-foo-x86": "1.0.0", "native-libc-glibc": "1.0.0", "native-libc-musl": "1.0.0" } }, "sha512-E+XTkTpxRqU09BnKGkOkS9vk0sPDhPtArBw6FfL5ciYkb7k6EljnqXEQ1b9l0S1YCVZxZkOZIJCYZfCwj7AgSw=="],
 

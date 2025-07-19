@@ -83,7 +83,7 @@ pub fn determinePreinstallState(
 
             // Do not automatically start downloading packages which are disabled
             // i.e. don't download all of esbuild's versions or SWCs
-            if (pkg.isDisabled()) {
+            if (pkg.isDisabledWithTarget(manager.options.target_os, manager.options.target_cpu, manager.options.target_libc)) {
                 manager.setPreinstallState(pkg.meta.id, lockfile, .done);
                 return .done;
             }

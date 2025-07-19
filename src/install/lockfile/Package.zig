@@ -56,6 +56,10 @@ pub const Package = extern struct {
         return this.meta.isDisabled();
     }
 
+    pub inline fn isDisabledWithTarget(this: *const Package, target_os: ?Npm.OperatingSystem, target_cpu: ?Npm.Architecture, target_libc: ?Npm.Libc) bool {
+        return this.meta.isDisabledWithTarget(target_os, target_cpu, target_libc);
+    }
+
     pub const Alphabetizer = struct {
         names: []const String,
         buf: []const u8,
@@ -277,6 +281,7 @@ pub const Package = extern struct {
 
             package.meta.arch = package_json.arch;
             package.meta.os = package_json.os;
+            package.meta.libc = package_json.libc;
 
             package.dependencies.off = @as(u32, @truncate(dependencies_list.items.len));
             package.dependencies.len = total_dependencies_count - @as(u32, @truncate(dependencies.len));
@@ -487,6 +492,7 @@ pub const Package = extern struct {
 
             package.meta.arch = package_version.cpu;
             package.meta.os = package_version.os;
+            package.meta.libc = package_version.libc;
             package.meta.integrity = package_version.integrity;
             package.meta.setHasInstallScript(package_version.has_install_script);
 

@@ -9,7 +9,8 @@ pub const Meta = extern struct {
 
     arch: Npm.Architecture = .all,
     os: Npm.OperatingSystem = .all,
-    _padding_os: u16 = 0,
+    libc: Npm.Libc = .all,
+    _padding_after_platform: u8 = 0,
 
     id: PackageID = invalid_package_id,
 
@@ -28,12 +29,24 @@ pub const Meta = extern struct {
         true,
     } = .false,
 
-    _padding_integrity: [2]u8 = .{0} ** 2,
+    _padding_integrity: u8 = 0,
+    _padding_end: u8 = 0,
 
     /// Does the `cpu` arch and `os` match the requirements listed in the package?
     /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
     pub fn isDisabled(this: *const Meta) bool {
-        return !this.arch.isMatch() or !this.os.isMatch();
+        return !this.arch.isMatch() or !this.os.isMatch() or !this.libc.isMatch();
+    }
+
+    pub fn isDisabledWithTarget(this: *const Meta, target_os: ?Npm.OperatingSystem, target_cpu: ?Npm.Architecture, target_libc: ?Npm.Libc) bool {
+        if (target_os != null or target_cpu != null or target_libc != null) {
+            const os_match = if (target_os) |os| this.os.isMatchWithTarget(os) else true;
+            const cpu_match = if (target_cpu) |cpu| this.arch.isMatchWithTarget(cpu) else true;
+            const libc_match = if (target_libc) |libc| this.libc.isMatchWithTarget(libc) else true;
+            return !os_match or !cpu_match or !libc_match;
+        } else {
+            return this.isDisabled();
+        }
     }
 
     pub fn hasInstallScript(this: *const Meta) bool {
@@ -63,6 +76,7 @@ pub const Meta = extern struct {
             .integrity = this.integrity,
             .arch = this.arch,
             .os = this.os,
+            .libc = this.libc,
             .origin = this.origin,
             .has_install_script = this.has_install_script,
         };

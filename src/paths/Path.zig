@@ -846,10 +846,11 @@ pub fn Path(comptime opts: Options) type {
                 []u8, []const u8 => {
                     switch (comptime opts.pathUnit()) {
                         u8 => {
-                            const cwd_path = bun.path_buffer_pool.get();
-                            defer bun.path_buffer_pool.put(cwd_path);
+                            const cwd_path_buf = bun.path_buffer_pool.get();
+                            defer bun.path_buffer_pool.put(cwd_path_buf);
                             const cwd_path_slice = this.slice();
-                            bun.copy(u8, cwd_path[0..cwd_path_slice.len], cwd_path_slice);
+                            const cwd_path = cwd_path_buf[0..cwd_path_slice.len];
+                            bun.copy(u8, cwd_path, cwd_path_slice);
 
                             const joined = bun.path.joinStringBuf(
                                 this._buf.pooled,
@@ -876,10 +877,11 @@ pub fn Path(comptime opts: Options) type {
                 []u16, []const u16 => {
                     switch (comptime opts.pathUnit()) {
                         u16 => {
-                            const cwd_path = bun.w_path_buffer_pool.get();
-                            defer bun.w_path_buffer_pool.put(cwd_path);
+                            const cwd_path_buf = bun.w_path_buffer_pool.get();
+                            defer bun.w_path_buffer_pool.put(cwd_path_buf);
                             const cwd_path_slice = this.slice();
-                            bun.copy(u16, cwd_path[0..cwd_path_slice.len], cwd_path_slice);
+                            const cwd_path = cwd_path_buf[0..cwd_path_slice.len];
+                            bun.copy(u16, cwd_path, cwd_path_slice);
 
                             const joined = bun.path.joinStringBufW(
                                 this._buf.pooled,

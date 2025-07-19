@@ -2038,7 +2038,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
                         }
                     }
                 },
-                else => {},
+                .fulfilled, .rejected => this.drainMicrotasks(),
             }
         } else {
             this.eventLoop().performGC();
@@ -2194,7 +2194,7 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
                     }
                 }
             },
-            else => {},
+            .fulfilled, .rejected => this.drainMicrotasks(),
         }
     } else {
         if (promise.status(this.global.vm()) == .rejected) {
@@ -2226,7 +2226,7 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
                     }
                 }
             },
-            else => {},
+            .fulfilled, .rejected => this.drainMicrotasks(),
         }
     } else {
         if (promise.status(this.global.vm()) == .rejected) {

@@ -496,7 +496,7 @@ pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
                 }
             }
         },
-        else => {},
+        .fulfilled, .rejected => this.drainMicrotasks() catch return,
     }
 }
 
@@ -513,7 +513,7 @@ pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) 
                 }
             }
         },
-        else => {},
+        .fulfilled, .rejected => this.drainMicrotasks() catch return,
     }
 }
 

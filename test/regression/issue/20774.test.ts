@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -10,13 +10,13 @@ test("yarn.lock should properly quote dependencies with special characters like 
       workspaces: ["packages/*"],
       dependencies: {
         "opencode": "workspace:*",
-        "lodash": "^4.17.21"
-      }
+        "lodash": "^4.17.21",
+      },
     }),
     "packages/opencode/package.json": JSON.stringify({
       name: "opencode",
-      version: "1.0.0"
-    })
+      version: "1.0.0",
+    }),
   });
 
   // Generate yarn.lock with --yarn flag
@@ -25,7 +25,7 @@ test("yarn.lock should properly quote dependencies with special characters like 
     env: bunEnv,
     cwd: dir,
     stderr: "pipe",
-    stdout: "pipe"
+    stdout: "pipe",
   });
 
   await proc.exited;
@@ -36,14 +36,14 @@ test("yarn.lock should properly quote dependencies with special characters like 
   expect(yarnLockExists).toBe(true);
 
   const yarnLockContent = await Bun.file(yarnLockPath).text();
-  
+
   // Check that dependencies with special characters are properly quoted
   // For workspace: protocol (this should be quoted with our fix)
   expect(yarnLockContent).toMatch(/"opencode@workspace:\*":/);
-  
+
   // Regular packages should still work
   expect(yarnLockContent).toMatch(/lodash@/);
-  
+
   // Make sure the generated file doesn't have the bug (unquoted workspace:)
   expect(yarnLockContent).not.toMatch(/opencode@workspace:\*:/);
 });

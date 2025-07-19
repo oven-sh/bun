@@ -228,7 +228,11 @@ export fn Source__setRawModeStdin(raw: bool) c_int {
         .result => |tty| tty,
         .err => |e| return e.errno,
     };
-    if (tty.setMode(if (raw) .raw else .normal).toError(.uv_tty_set_mode)) |err| {
+    // UV_TTY_MODE_RAW_VT is a variant of UV_TTY_MODE_RAW that enables control sequence processing on the TTY implementer side,
+    // rather than having libuv translate keypress events into control sequences, aligning behavior more closely with
+    // POSIX platforms. This is also required to support some control sequences at all on Windows, such as bracketed paste mode.
+    // The Node.js readline implementation handles differences between these modes.
+    if (tty.setMode(if (raw) .vt else .normal).toError(.uv_tty_set_mode)) |err| {
         return err.errno;
     }
     return 0;

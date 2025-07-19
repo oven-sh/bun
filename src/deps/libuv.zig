@@ -1491,6 +1491,7 @@ pub const struct_uv_tty_s = extern struct {
         normal = 0,
         raw = 1,
         io = 2,
+        vt = 3,
     };
 
     pub fn setMode(this: *uv_tty_t, mode: Mode) ReturnCode {

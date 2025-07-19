@@ -612,6 +612,126 @@ declare module "bun" {
   }
 
   /**
+   * CSV related APIs
+   */
+  namespace CSV {
+    /**
+     * Options for parsing CSV strings.
+     */
+    export interface CSVParserOptions {
+      /**
+       * Specifies whether the first line of the CSV file contains column headers.
+       * When enabled, these headers define property keys for each value in a row, creating structured objects instead of simple arrays.
+       * @default true
+       */
+      header?: boolean;
+      /**
+       * A string that separates columns in each row.
+       * @default ','
+       */
+      delimiter?: string;
+      /**
+       * Instructs the parser to ignore lines representing comments in a CSV file.
+       * @default true
+       */
+      comments?: boolean;
+      /**
+       * Defines which character(s) identify comment lines in a CSV file.
+       * By default, this is set to `#` and consumes the entire line.
+       * @default '#'
+       */
+      commentChar?: string;
+      /**
+       * Removes leading and trailing whitespace from field names and data values.
+       * @default false
+       */
+      trimWhitespace?: boolean;
+      /**
+       * Automatically converts string values to appropriate JavaScript types (numbers, booleans) during parsing.
+       * This eliminates the need for manual type conversion after parsing is complete.
+       * @default false
+       */
+      dynamicTyping?: boolean;
+      /**
+       * Character used to enclose fields containing special characters (like delimiters or newlines).
+       * Allows text containing delimiters to be properly parsed without breaking the row structure.
+       * @default '"'
+       */
+      quote?: string;
+      /**
+       * Parses only the specified number of rows.
+       * Useful for quickly analyzing file structure, validating headers, or showing sample data before processing the entire file.
+       * @default undefined
+       */
+      preview?: number;
+      /**
+       * Skips empty lines when parsing.
+       * @default false
+       */
+      skipEmptyLines?: boolean;
+    }
+
+    export interface CSVParserResult<T> {
+      /**
+       * The parsed content of the CSV file.
+       */
+      data: T[];
+      /**
+       * The number of rows parsed.
+       */
+      rows: number;
+      /**
+       * The number of columns parsed.
+       */
+      columns: number;
+      /**
+       * The number of errors encountered during parsing.
+       */
+      errors?: {
+        line: number;
+        text: string;
+      }[];
+      /**
+       * The comments encountered during parsing.
+       * This is only available if `comments` is set to true.
+       */
+      comments?: {
+        line: number;
+        text: string;
+      }[];
+    }
+
+    type InferCSVResultType<T, Opts extends CSVParserOptions> = T extends undefined
+      ? Opts extends { header: false }
+        ? Opts extends { dynamicTyping: true }
+          ? (string | number | boolean)[]
+          : string[]
+        : Opts extends { dynamicTyping: true }
+          ? Record<string, string | number | boolean>
+          : Record<string, string>
+      : T;
+
+    type Prettify<T> = {
+      [K in keyof T]: T[K];
+    } & {};
+
+    /**
+     * Parse a CSV string into a JavaScript array.
+     *
+     * @category Utilities
+     *
+     * @param input The CSV string to parse
+     * @param options Parsing options
+     * @returns If has_header is true (default), returns Record<string, string>[]; otherwise, string[][]
+     */
+    export function parse<T = undefined, const Opts extends CSVParserOptions = CSVParserOptions>(
+      data: string,
+      options?: Opts,
+    ): CSVParserResult<InferCSVResultType<T, Opts>>;
+    // ): Prettify<CSVParserResult<InferCSVResultType<T, Opts>>>;
+  }
+
+  /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
    *
    * On failure, throws a `ResolveMessage`

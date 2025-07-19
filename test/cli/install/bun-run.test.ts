@@ -12,7 +12,7 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
-import { join } from "path";
+import { join, sep } from "node:path";
 
 let run_dir: string;
 
@@ -505,7 +505,63 @@ it("$npm_command is accurate", async () => {
   });
   expect(await p.exited).toBe(0);
   expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_command\n`);
-  expect(await new Response(p.stdout).text()).toBe(`run-script\n`);
+  expect(await new Response(p.stdout).text()).toBe(`run\n`);
+});
+
+it("$INIT_CWD is accurate", async () => {
+  await writeFile(
+    join(run_dir, "package.json"),
+    `{
+      "scripts": {
+        "sample": "echo $INIT_CWD",
+        "sample2": "cd subdir && INIT_CWD=OVERRIDE ${bunExe()} run sample",
+      },
+    }
+    `,
+  );
+
+  const p = spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $INIT_CWD\n`);
+  expect(await new Response(p.stdout).text()).toBe(`${run_dir}\n`);
+
+  await mkdir(join(run_dir, "subdir"));
+  const p2 = spawn({
+    cmd: [bunExe(), "run", "sample2"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p2.exited).toBe(0);
+  expect(await new Response(p2.stdout).text()).toBe(`${run_dir}${sep}subdir\n`);
+});
+
+it("npm_config_local_prefix is accurate", async () => {
+  await writeFile(
+    join(run_dir, "package.json"),
+    `{
+      "scripts": {
+        "sample": "echo $npm_config_local_prefix",
+      },
+    }
+    `,
+  );
+  await mkdir(join(run_dir, "subdir"));
+
+  const p = spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: join(run_dir, "subdir"),
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_config_local_prefix\n`);
+  expect(await new Response(p.stdout).text()).toBe(`${run_dir}\n`);
 });
 
 it("$npm_lifecycle_event is accurate", async () => {

@@ -848,7 +848,7 @@ const Summary = ({ errorCount, onClose }: { errorCount: number; onClose: () => v
         {errorCount}&nbsp;error{errorCount > 1 ? "s" : ""}&nbsp;on this page
       </div>
 
-      <a href="https://bun.sh/discord" target="_blank" className="BunError-Summary-help">
+      <a href="https://bun.com/discord" target="_blank" className="BunError-Summary-help">
         <svg width="18" viewBox="0 0 71 55" fill="none" xmlns="http://www.w3.org/2000/svg">
           <g clipPath="url(#clip0)">
             <path

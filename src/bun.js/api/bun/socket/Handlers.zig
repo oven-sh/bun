@@ -172,6 +172,25 @@ pub fn unprotect(this: *Handlers) void {
     this.onHandshake.unprotect();
 }
 
+pub fn withAsyncContextIfNeeded(this: *Handlers, globalObject: *JSC.JSGlobalObject) void {
+    inline for (.{
+        "onOpen",
+        "onClose",
+        "onData",
+        "onWritable",
+        "onTimeout",
+        "onConnectError",
+        "onEnd",
+        "onError",
+        "onHandshake",
+    }) |field| {
+        const value = @field(this, field);
+        if (value != .zero) {
+            @field(this, field) = value.withAsyncContextIfNeeded(globalObject);
+        }
+    }
+}
+
 pub fn protect(this: *Handlers) void {
     if (comptime Environment.isDebug) {
         this.protection_count += 1;
@@ -314,11 +333,7 @@ pub const SocketConfig = struct {
                     return globalObject.throwInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{});
                 }
 
-                const porti32 = port_value.coerceToInt32(globalObject);
-                if (globalObject.hasException()) {
-                    return error.JSError;
-                }
-
+                const porti32 = try port_value.coerceToInt32(globalObject);
                 if (porti32 < 0 or porti32 > 65535) {
                     return globalObject.throwInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{});
                 }
@@ -347,6 +362,7 @@ pub const SocketConfig = struct {
             default_data = default_data_value;
         }
 
+        handlers.withAsyncContextIfNeeded(globalObject);
         handlers.protect();
 
         return SocketConfig{

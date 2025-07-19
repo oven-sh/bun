@@ -16,7 +16,7 @@ pub export fn TextEncoder__encode8(
 
     if (slice.len <= buf.len / 2) {
         const result = strings.copyLatin1IntoUTF8(&buf, []const u8, slice);
-        const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written);
+        const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written) catch return .zero;
         bun.assert(result.written <= buf.len);
         bun.assert(result.read == slice.len);
         const array_buffer = uint8array.asArrayBuffer(globalThis) orelse return .zero;
@@ -28,7 +28,7 @@ pub export fn TextEncoder__encode8(
             return globalThis.throwOutOfMemoryValue();
         };
         bun.assert(bytes.len >= slice.len);
-        return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
+        return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis) catch .zero;
     }
 }
 
@@ -53,13 +53,13 @@ pub export fn TextEncoder__encode16(
     if (slice.len <= buf.len / 4) {
         const result = strings.copyUTF16IntoUTF8(&buf, @TypeOf(slice), slice);
         if (result.read == 0 or result.written == 0) {
-            const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, 3);
+            const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, 3) catch return .zero;
             const array_buffer = uint8array.asArrayBuffer(globalThis).?;
             const replacement_char = [_]u8{ 239, 191, 189 };
             @memcpy(array_buffer.slice()[0..replacement_char.len], &replacement_char);
             return uint8array;
         }
-        const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written);
+        const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written) catch return .zero;
         bun.assert(result.written <= buf.len);
         bun.assert(result.read == slice.len);
         const array_buffer = uint8array.asArrayBuffer(globalThis).?;
@@ -74,7 +74,7 @@ pub export fn TextEncoder__encode16(
         ) catch {
             return globalThis.toInvalidArguments("Out of memory", .{});
         };
-        return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
+        return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis) catch .zero;
     }
 }
 
@@ -99,13 +99,13 @@ pub export fn c(
     if (slice.len <= buf.len / 4) {
         const result = strings.copyUTF16IntoUTF8(&buf, @TypeOf(slice), slice);
         if (result.read == 0 or result.written == 0) {
-            const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, 3);
+            const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, 3) catch return .zero;
             const array_buffer = uint8array.asArrayBuffer(globalThis).?;
             const replacement_char = [_]u8{ 239, 191, 189 };
             @memcpy(array_buffer.slice()[0..replacement_char.len], &replacement_char);
             return uint8array;
         }
-        const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written);
+        const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written) catch return .zero;
         bun.assert(result.written <= buf.len);
         bun.assert(result.read == slice.len);
         const array_buffer = uint8array.asArrayBuffer(globalThis).?;
@@ -120,7 +120,7 @@ pub export fn c(
         ) catch {
             return globalThis.throwOutOfMemoryValue();
         };
-        return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
+        return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis) catch .zero;
     }
 }
 
@@ -186,7 +186,7 @@ pub export fn TextEncoder__encodeRopeString(
     const length = rope_str.length();
     var array: JSValue = .zero;
     if (length > stack_buf.len / 2) {
-        array = JSC.JSValue.createUninitializedUint8Array(globalThis, length);
+        array = JSC.JSValue.createUninitializedUint8Array(globalThis, length) catch return .zero;
         array.ensureStillAlive();
         buf_to_use = array.asArrayBuffer(globalThis).?.slice();
     }
@@ -204,7 +204,7 @@ pub export fn TextEncoder__encodeRopeString(
     }
 
     if (array == .zero) {
-        array = JSC.JSValue.createUninitializedUint8Array(globalThis, length);
+        array = JSC.JSValue.createUninitializedUint8Array(globalThis, length) catch return .zero;
         array.ensureStillAlive();
         @memcpy(array.asArrayBuffer(globalThis).?.ptr[0..length], buf_to_use[0..length]);
     }

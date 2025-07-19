@@ -12,7 +12,7 @@ const C = bun.C;
 const clap = @import("../src/deps/zig-clap/clap.zig");
 
 const URL = @import("../src/url.zig").URL;
-const Method = @import("../src/http/method.zig").Method;
+const Method = @import("../src/http/Method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);
 const path_handler = @import("../src/resolver/resolve_path.zig");
@@ -196,7 +196,7 @@ pub fn main() anyerror!void {
         response_body: MutableString = undefined,
         context: HTTP.HTTPChannelContext = undefined,
     };
-    const Batch = @import("../src/thread_pool.zig").Batch;
+    const Batch = bun.ThreadPool.Batch;
     var groups = try default_allocator.alloc(Group, args.count);
     var repeat_i: usize = 0;
     while (repeat_i < args.repeat + 1) : (repeat_i += 1) {

@@ -113,9 +113,11 @@ pub fn parseAppend(
     source: *const logger.Source,
     expr: Expr,
     builder: *Lockfile.StringBuilder,
-) OOM!void {
+) OOM!bool {
+    var found_any = false;
     if (expr.get("catalog")) |default_catalog| {
         const group = try this.getOrPutGroup(lockfile, .empty);
+        found_any = true;
         switch (default_catalog.data) {
             .e_object => |obj| {
                 for (obj.properties.slice()) |item| {
@@ -171,6 +173,7 @@ pub fn parseAppend(
     }
 
     if (expr.get("catalogs")) |catalogs| {
+        found_any = true;
         switch (catalogs.data) {
             .e_object => |catalog_names| {
                 for (catalog_names.properties.slice()) |catalog| {
@@ -234,6 +237,8 @@ pub fn parseAppend(
             else => {},
         }
     }
+
+    return found_any;
 }
 
 pub fn sort(this: *CatalogMap, lockfile: *const Lockfile) void {

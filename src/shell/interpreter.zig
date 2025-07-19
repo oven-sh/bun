@@ -84,7 +84,6 @@ const Yield = shell.Yield;
 
 pub const Pipe = [2]bun.FileDescriptor;
 const shell = bun.shell;
-const ShellError = shell.ShellError;
 const ast = shell.AST;
 pub const SmolList = shell.SmolList;
 
@@ -657,9 +656,9 @@ pub const Interpreter = struct {
         syscall: Syscall.Error,
         other: ShellErrorKind,
 
-        fn toJSC(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
+        fn toJS(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
-                .syscall => |err| err.toJSC(globalThis),
+                .syscall => |err| err.toJS(globalThis),
                 .other => |err| bun.JSC.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
@@ -821,8 +820,8 @@ pub const Interpreter = struct {
         };
 
         // Avoid the large stack allocation on Windows.
-        const pathbuf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(pathbuf);
+        const pathbuf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(pathbuf);
         const cwd: [:0]const u8 = switch (Syscall.getcwdZ(pathbuf)) {
             .result => |cwd| cwd,
             .err => |err| {
@@ -1165,12 +1164,12 @@ pub const Interpreter = struct {
         if (this.event_loop == .js) {
             defer this.deinitAfterJSRun();
             this.exit_code = exit_code;
-            if (this.this_jsvalue != .zero) {
-                const this_jsvalue = this.this_jsvalue;
+            const this_jsvalue = this.this_jsvalue;
+            if (this_jsvalue != .zero) {
                 if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
-                    this.this_jsvalue = .zero;
-                    const globalThis = this.globalThis;
                     const loop = this.event_loop.js;
+                    const globalThis = this.globalThis;
+                    this.this_jsvalue = .zero;
                     this.keep_alive.disable();
                     loop.enter();
                     _ = resolve.call(globalThis, .js_undefined, &.{
@@ -1189,34 +1188,6 @@ pub const Interpreter = struct {
         }
 
         return .done;
-    }
-
-    fn errored(this: *ThisInterpreter, the_error: ShellError) void {
-        _ = the_error; // autofix
-        defer decrPendingActivityFlag(&this.has_pending_activity);
-
-        if (this.event_loop == .js) {
-            const this_jsvalue = this.this_jsvalue;
-            if (this_jsvalue != .zero) {
-                if (JSC.Codegen.JSShellInterpreter.rejectGetCached(this_jsvalue)) |reject| {
-                    const loop = this.event_loop.js;
-                    const globalThis = this.globalThis;
-                    this.this_jsvalue = .zero;
-                    this.keep_alive.disable();
-
-                    loop.enter();
-                    _ = reject.call(globalThis, &[_]JSValue{
-                        JSValue.jsNumberFromChar(1),
-                        this.getBufferedStdout(globalThis),
-                        this.getBufferedStderr(globalThis),
-                    }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
-                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
-                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
-
-                    loop.exit();
-                }
-            }
-        }
     }
 
     fn deinitAfterJSRun(this: *ThisInterpreter) void {
@@ -1270,7 +1241,7 @@ pub const Interpreter = struct {
         defer slice.deinit();
         switch (this.root_shell.changeCwd(this, slice.slice())) {
             .err => |e| {
-                return globalThis.throwValue(e.toJSC(globalThis));
+                return globalThis.throwValue(e.toJS(globalThis));
             },
             .result => {},
         }
@@ -1313,42 +1284,26 @@ pub const Interpreter = struct {
         return .js_undefined;
     }
 
-    pub fn isRunning(
-        this: *ThisInterpreter,
-        _: *JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+    pub fn isRunning(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.hasPendingActivity());
     }
 
-    pub fn getStarted(
-        this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+    pub fn getStarted(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         _ = globalThis; // autofix
         _ = callframe; // autofix
 
         return JSC.JSValue.jsBoolean(this.started.load(.seq_cst));
     }
 
-    pub fn getBufferedStdout(
-        this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-    ) JSC.JSValue {
+    pub fn getBufferedStdout(this: *ThisInterpreter, globalThis: *JSGlobalObject) JSC.JSValue {
         return ioToJSValue(globalThis, this.root_shell.buffered_stdout());
     }
 
-    pub fn getBufferedStderr(
-        this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-    ) JSC.JSValue {
+    pub fn getBufferedStderr(this: *ThisInterpreter, globalThis: *JSGlobalObject) JSC.JSValue {
         return ioToJSValue(globalThis, this.root_shell.buffered_stderr());
     }
 
-    pub fn finalize(
-        this: *ThisInterpreter,
-    ) void {
+    pub fn finalize(this: *ThisInterpreter) void {
         log("Interpreter(0x{x}) finalize", .{@intFromPtr(this)});
         this.deinitFromFinalizer();
     }
@@ -1746,15 +1701,15 @@ pub const ShellSyscall = struct {
 
     pub fn statat(dir: bun.FileDescriptor, path_: [:0]const u8) Maybe(bun.Stat) {
         if (bun.Environment.isWindows) {
-            const buf: *bun.PathBuffer = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf: *bun.PathBuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
             const path = switch (getPath(dir, path_, buf)) {
                 .err => |e| return .{ .err = e },
                 .result => |p| p,
             };
 
             return switch (Syscall.stat(path)) {
-                .err => |e| .{ .err = e.clone(bun.default_allocator) catch bun.outOfMemory() },
+                .err => |e| .{ .err = e.clone(bun.default_allocator) },
                 .result => |s| .{ .result = s },
             };
         }
@@ -1768,8 +1723,8 @@ pub const ShellSyscall = struct {
         if (bun.Environment.isWindows) {
             if (flags & bun.O.DIRECTORY != 0) {
                 if (ResolvePath.Platform.posix.isAbsolute(path[0..path.len])) {
-                    const buf: *bun.PathBuffer = bun.PathBufferPool.get();
-                    defer bun.PathBufferPool.put(buf);
+                    const buf: *bun.PathBuffer = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(buf);
                     const p = switch (getPath(dir, path, buf)) {
                         .result => |p| p,
                         .err => |e| return .{ .err = e },
@@ -1785,8 +1740,8 @@ pub const ShellSyscall = struct {
                 };
             }
 
-            const buf: *bun.PathBuffer = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf: *bun.PathBuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
             const p = switch (getPath(dir, path, buf)) {
                 .result => |p| p,
                 .err => |e| return .{ .err = e },

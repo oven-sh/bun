@@ -34,10 +34,6 @@ emit_decorator_metadata: bool = false,
 ctx: *BundleV2,
 package_version: string = "",
 is_entry_point: bool = false,
-/// This is set when the file is an entrypoint, and it has an onLoad plugin.
-/// In this case we want to defer adding this to additional_files until after
-/// the onLoad plugin has finished.
-defer_copy_for_bundling: bool = false,
 
 const ParseTaskStage = union(enum) {
     needs_source_code: void,
@@ -1297,7 +1293,7 @@ pub fn runFromThreadPool(this: *ParseTask) void {
                 } };
             }
 
-            if (this.ctx.graph.pool.usesIOPool()) {
+            if (ThreadPool.usesIOPool()) {
                 this.ctx.graph.pool.scheduleInsideThreadPool(this);
                 return;
             }
@@ -1396,7 +1392,7 @@ const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
 const base64 = bun.base64;
 pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = @import("../thread_pool.zig");
+const ThreadPoolLib = bun.ThreadPool;
 const BabyList = @import("../baby_list.zig").BabyList;
 const Fs = @import("../fs.zig");
 const _resolver = @import("../resolver/resolver.zig");

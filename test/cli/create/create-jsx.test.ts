@@ -99,7 +99,7 @@ async function fetchAndInjectHTML(url: string) {
   });
 
   await subprocess.exited;
-  return await new Response(subprocess.stdout).text();
+  return await subprocess.stdout.text();
 }
 
 for (const development of [true, false]) {

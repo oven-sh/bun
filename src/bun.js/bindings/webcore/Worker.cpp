@@ -417,9 +417,11 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
 
     ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }, serialized](ScriptExecutionContext& context) -> void {
         auto* globalObject = context.globalObject();
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         ErrorEvent::Init init;
         JSValue deserialized = serialized->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
-        if (!deserialized) return;
+        RETURN_IF_EXCEPTION(scope, );
         init.error = deserialized;
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
@@ -474,8 +476,13 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
         vm.setHasTerminationRequest();
 
         {
-            globalObject->esmRegistryMap()->clear(globalObject);
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            auto* esmRegistryMap = globalObject->esmRegistryMap();
+            scope.exception(); // TODO: handle or assert none?
+            esmRegistryMap->clear(globalObject);
+            scope.exception(); // TODO: handle or assert none?
             globalObject->requireMap()->clear(globalObject);
+            scope.exception(); // TODO: handle or assert none?
             vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
             gcUnprotect(globalObject);
             globalObject = nullptr;
@@ -538,7 +545,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     }
 
     if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
-        return JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject)));
     } else if (jsDynamicCast<JSBroadcastChannel*>(port)) {
         // TODO: support broadcast channels
         return JSC::JSValue::encode(jsUndefined());
@@ -612,8 +619,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     if (!context)
         return JSValue::encode(jsUndefined());
 
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
     JSC::JSValue value = callFrame->argument(0);
     JSC::JSValue options = callFrame->argument(1);
 
@@ -622,11 +627,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     if (options.isObject()) {
         JSC::JSObject* optionsObject = options.getObject();
         JSC::JSValue transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
+        RETURN_IF_EXCEPTION(scope, {});
         if (transferListValue.isObject()) {
             JSC::JSObject* transferListObject = transferListValue.getObject();
             if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
                 for (unsigned i = 0; i < transferListArray->length(); i++) {
                     JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
+                    RETURN_IF_EXCEPTION(scope, {});
                     if (transferListValue.isObject()) {
                         JSC::JSObject* transferListObject = transferListValue.getObject();
                         transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
@@ -639,15 +646,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     Vector<RefPtr<MessagePort>> ports;
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {
-        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
-        return JSValue::encode(jsUndefined());
+        WebCore::propagateException(*globalObject, scope, serialized.releaseException());
+        RELEASE_AND_RETURN(scope, {});
     }
+    scope.assertNoException();
 
     ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTFMove(ports));
     if (disentangledPorts.hasException()) {
-        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
-        return JSValue::encode(jsUndefined());
+        WebCore::propagateException(*globalObject, scope, serialized.releaseException());
+        RELEASE_AND_RETURN(scope, {});
     }
+    scope.assertNoException();
 
     MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
 

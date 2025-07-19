@@ -907,6 +907,9 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows
 
 extern "c" fn gnu_get_libc_version() ?[*:0]const u8;
 
+// Only populated after JSC::VM::tryCreate
+export var Bun__reported_memory_size: usize = 0;
+
 pub fn printMetadata(writer: anytype) !void {
     if (Output.enable_ansi_colors) {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
@@ -981,12 +984,19 @@ pub fn printMetadata(writer: anytype) !void {
             user_msecs,
             system_msecs,
         });
-        try writer.print("RSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}\n", .{
+
+        try writer.print("RSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}", .{
             std.fmt.fmtIntSizeDec(current_rss),
             std.fmt.fmtIntSizeDec(peak_rss),
             std.fmt.fmtIntSizeDec(current_commit),
             page_faults,
         });
+
+        if (Bun__reported_memory_size > 0) {
+            try writer.print(" | Machine: {:<3.2}", .{std.fmt.fmtIntSizeDec(Bun__reported_memory_size)});
+        }
+
+        try writer.writeAll("\n");
     }
 
     if (Output.enable_ansi_colors) {
@@ -1819,7 +1829,7 @@ pub const js_bindings = struct {
             // there is definitely enough space in the bounded array
             unreachable;
         };
-        var str = bun.String.createLatin1(buf.slice());
+        var str = bun.String.cloneLatin1(buf.slice());
         return str.transferToJS(global);
     }
 
@@ -1828,7 +1838,7 @@ pub const js_bindings = struct {
         const list = bun.Analytics.packed_features_list;
         const array = try JSValue.createEmptyArray(global, list.len);
         for (list, 0..) |feature, i| {
-            array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
+            try array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
         }
         obj.put(global, JSC.ZigString.static("features"), array);
         obj.put(global, JSC.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));

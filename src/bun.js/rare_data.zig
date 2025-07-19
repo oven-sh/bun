@@ -1,20 +1,4 @@
-const EditorContext = @import("../open.zig").EditorContext;
-const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
-const Blob = JSC.WebCore.Blob;
-const default_allocator = bun.default_allocator;
-const Output = bun.Output;
-const RareData = @This();
-const Syscall = bun.sys;
-const JSC = bun.JSC;
-const std = @import("std");
-const BoringSSL = bun.BoringSSL.c;
-const bun = @import("bun");
-const UUID = @import("./uuid.zig");
-const Async = bun.Async;
-const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
-const IPC = @import("./ipc.zig");
-const uws = bun.uws;
-const api = bun.api;
+websocket_deflate: ?*WebSocketDeflate.RareData = null,
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
 editor_context: EditorContext = EditorContext{},
 stderr_store: ?*Blob.Store = null,
@@ -151,7 +135,11 @@ pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []
         ) catch bun.outOfMemory();
     }
 
-    return this.mime_types.?.get(str);
+    if (this.mime_types.?.get(str)) |entry| {
+        return bun.http.MimeType.Compact.from(entry).toMimeType();
+    }
+
+    return null;
 }
 
 pub const HotMap = struct {
@@ -503,5 +491,36 @@ pub fn deinit(this: *RareData) void {
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);
 
+    if (this.websocket_deflate) |deflate| {
+        this.websocket_deflate = null;
+        deflate.deinit();
+    }
+
     this.valkey_context.deinit();
 }
+
+pub fn websocketDeflate(this: *RareData) *WebSocketDeflate.RareData {
+    return this.websocket_deflate orelse brk: {
+        this.websocket_deflate = bun.new(WebSocketDeflate.RareData, .{});
+        break :brk this.websocket_deflate.?;
+    };
+}
+
+const EditorContext = @import("../open.zig").EditorContext;
+const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
+const Blob = JSC.WebCore.Blob;
+const default_allocator = bun.default_allocator;
+const Output = bun.Output;
+const RareData = @This();
+const Syscall = bun.sys;
+const JSC = bun.JSC;
+const std = @import("std");
+const BoringSSL = bun.BoringSSL.c;
+const bun = @import("bun");
+const UUID = @import("./uuid.zig");
+const Async = bun.Async;
+const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const IPC = @import("./ipc.zig");
+const uws = bun.uws;
+const api = bun.api;
+const WebSocketDeflate = @import("../http/websocket_client/WebSocketDeflate.zig");

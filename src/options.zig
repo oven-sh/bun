@@ -1401,6 +1401,7 @@ pub fn definesFromTransformOptions(
     framework_env: ?*const Env,
     NODE_ENV: ?string,
     drop: []const []const u8,
+    omit_unused_global_calls: bool,
 ) !*defines.Define {
     const input_user_define = maybe_input_define orelse std.mem.zeroes(Api.StringMap);
 
@@ -1483,11 +1484,11 @@ pub fn definesFromTransformOptions(
 
     if (target.isBun()) {
         if (!user_defines.contains("window")) {
-            _ = try environment_defines.getOrPutValue("window", .{
+            _ = try environment_defines.getOrPutValue("window", .init(.{
                 .valueless = true,
                 .original_name = "window",
                 .value = .{ .e_undefined = .{} },
-            });
+            }));
         }
     }
 
@@ -1502,6 +1503,7 @@ pub fn definesFromTransformOptions(
         resolved_defines,
         environment_defines,
         drop_debugger,
+        omit_unused_global_calls,
     );
 }
 
@@ -1863,6 +1865,7 @@ pub const BundleOptions = struct {
                 break :node_env "\"development\"";
             },
             this.drop,
+            this.dead_code_elimination and this.minify_syntax,
         );
         this.defines_loaded = true;
     }
@@ -2060,6 +2063,10 @@ pub const BundleOptions = struct {
         }
 
         opts.polyfill_node_globals = opts.target == .browser;
+
+        if (transform.tsconfig_override) |tsconfig| {
+            opts.tsconfig_override = tsconfig;
+        }
 
         Analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
         Analytics.Features.external += @as(usize, @intFromBool(transform.external.len > 0));

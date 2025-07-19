@@ -1248,7 +1248,7 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
 
     auto globalObject = toJS(env);
     auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(globalObject));
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         *result = toNapi(JSValue(scope.exception()->value()), globalObject);
     } else {
         *result = toNapi(JSC::jsUndefined(), globalObject);
@@ -1680,6 +1680,26 @@ extern "C" napi_status napi_create_typedarray(
     JSValue arraybufferValue = toJS(arraybuffer);
     auto arraybufferPtr = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(arraybufferValue);
     NAPI_RETURN_EARLY_IF_FALSE(env, arraybufferPtr, napi_arraybuffer_expected);
+    switch (type) {
+    case napi_int8_array:
+    case napi_uint8_array:
+    case napi_uint8_clamped_array:
+    case napi_int16_array:
+    case napi_uint16_array:
+    case napi_int32_array:
+    case napi_uint32_array:
+    case napi_float32_array:
+    case napi_float64_array:
+    case napi_bigint64_array:
+    case napi_biguint64_array: {
+        break;
+    }
+    default: {
+        napi_set_last_error(env, napi_invalid_arg);
+        return napi_invalid_arg;
+    }
+    }
+
     JSC::JSArrayBufferView* view = createArrayBufferView(globalObject, type, arraybufferPtr->impl(), byte_offset, length);
     NAPI_RETURN_IF_EXCEPTION(env);
     *result = toNapi(view, globalObject);
@@ -1735,7 +1755,7 @@ extern "C" napi_status napi_get_all_property_names(
                 // Climb up the prototype chain to find inherited properties
                 JSObject* current_object = object;
                 while (!current_object->getOwnPropertyDescriptor(globalObject, key.toPropertyKey(globalObject), desc)) {
-                    JSObject* proto = current_object->getPrototype(JSC::getVM(globalObject), globalObject).getObject();
+                    JSObject* proto = current_object->getPrototype(globalObject).getObject();
                     if (!proto) {
                         break;
                     }
@@ -1936,6 +1956,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
     auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -2042,7 +2063,7 @@ extern "C" napi_status napi_get_value_int64(napi_env env, napi_value value, int6
 // must match src/bun.js/node/types.zig#Encoding, which matches WebCore::BufferEncodingType
 enum class NapiStringEncoding : uint8_t {
     utf8 = static_cast<uint8_t>(WebCore::BufferEncodingType::utf8),
-    utf16le = static_cast<uint8_t>(WebCore::BufferEncodingType::utf16le),
+    utf16 = static_cast<uint8_t>(WebCore::BufferEncodingType::utf16le),
     latin1 = static_cast<uint8_t>(WebCore::BufferEncodingType::latin1),
 };
 
@@ -2052,7 +2073,7 @@ struct BufferElement {
 };
 
 template<>
-struct BufferElement<NapiStringEncoding::utf16le> {
+struct BufferElement<NapiStringEncoding::utf16> {
     using Type = char16_t;
 };
 
@@ -2081,7 +2102,7 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
                 *writtenPtr = Bun__encoding__byteLengthUTF16AsUTF8(view->span16().data(), view->length());
             }
             break;
-        case NapiStringEncoding::utf16le:
+        case NapiStringEncoding::utf16:
             [[fallthrough]];
         case NapiStringEncoding::latin1:
             // if the string's encoding is the same as the destination encoding, this is trivially correct
@@ -2098,22 +2119,16 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
         return napi_set_last_error(env, napi_ok);
     }
 
-    if (bufsize == NAPI_AUTO_LENGTH) [[unlikely]] {
-        if (writtenPtr) *writtenPtr = 0;
-        buf[0] = '\0';
-        return napi_set_last_error(env, napi_ok);
-    }
-
     size_t written;
     std::span<unsigned char> writable_byte_slice(reinterpret_cast<unsigned char*>(buf),
-        EncodeTo == NapiStringEncoding::utf16le
+        EncodeTo == NapiStringEncoding::utf16
             // don't write encoded text to the last element of the destination buffer
             // since we need to put a null terminator there
             ? 2 * (bufsize - 1)
             : bufsize - 1);
     if (view->is8Bit()) {
         const auto span = view->span8();
-        if constexpr (EncodeTo == NapiStringEncoding::utf16le) {
+        if constexpr (EncodeTo == NapiStringEncoding::utf16) {
 
             // pass subslice to work around Bun__encoding__writeLatin1 asserting that the output has room
             written = Bun__encoding__writeLatin1(span.data(),
@@ -2130,7 +2145,7 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
     }
 
     // convert bytes to code units
-    if constexpr (EncodeTo == NapiStringEncoding::utf16le) {
+    if constexpr (EncodeTo == NapiStringEncoding::utf16) {
         written /= 2;
     }
 
@@ -2169,7 +2184,7 @@ extern "C" napi_status napi_get_value_string_utf16(napi_env env, napi_value napi
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     // this function does set_last_error
-    return napi_get_value_string_any_encoding<NapiStringEncoding::utf16le>(env, napiValue, buf, bufsize, writtenPtr);
+    return napi_get_value_string_any_encoding<NapiStringEncoding::utf16>(env, napiValue, buf, bufsize, writtenPtr);
 }
 
 extern "C" napi_status napi_get_value_bool(napi_env env, napi_value value, bool* result)
@@ -2395,6 +2410,7 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
     // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
     // hit an exception here and it's okay to assert at the end
     *result = jsValue.toBigUInt64(toJS(env));
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     // bigint to uint64 conversion is lossless if and only if there aren't multiple digits and the
     // value is positive

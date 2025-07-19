@@ -69,6 +69,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
     auto sigBuf = ArrayBuffer::createUninitialized(result.size(), 1);
     memcpy(sigBuf->data(), result.data(), result.size());
     auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(sigBuf), 0, result.size());
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(signature);
 }
 
@@ -198,8 +199,8 @@ extern "C" void Bun__SignJobCtx__runFromJS(SignJobCtx* ctx, JSGlobalObject* glob
 }
 void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
 {
-    VM& vm = lexicalGlobalObject->vm();
-    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     switch (m_mode) {
     case Mode::Sign: {
@@ -214,6 +215,7 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
         auto sigBuf = ArrayBuffer::createUninitialized(m_signResult->size(), 1);
         memcpy(sigBuf->data(), m_signResult->data(), m_signResult->size());
         auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(sigBuf), 0, m_signResult->size());
+        RETURN_IF_EXCEPTION(scope, );
 
         Bun__EventLoop__runCallback2(
             lexicalGlobalObject,

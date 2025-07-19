@@ -1,9 +1,12 @@
 'use strict';
 // http://groups.google.com/group/nodejs/browse_thread/thread/f66cd3c960406919
 const common = require('../common');
-if (!common.hasCrypto)
-  common.skip('missing crypto');
 
+if (!common.hasCrypto) {
+  common.skip('missing crypto');
+}
+
+const fs = require('fs');
 const assert = require('assert');
 
 if (process.argv[2] === 'request') {
@@ -23,15 +26,11 @@ if (process.argv[2] === 'request') {
 if (process.argv[2] === 'shasum') {
   const crypto = require('crypto');
   const shasum = crypto.createHash('sha1');
-  let total = 0;
   process.stdin.on('data', (d) => {
-    console.warn("Chunk: " + d.length);
-    total += d.length;
     shasum.update(d);
   });
 
   process.stdin.on('close', () => {
-    console.warn("Total:", total);
     process.stdout.write(shasum.digest('hex'));
   });
 
@@ -64,9 +63,8 @@ function executeRequest(cb) {
           { env },
           (err, stdout, stderr) => {
             if (stderr.trim() !== '') {
-              console.error(stderr);
+              console.log(stderr);
             }
-            console.log(stdout.toString());
             assert.ifError(err);
             assert.strictEqual(stdout.slice(0, 40),
                                '8c206a1a87599f532ce68675536f0b1546900d7a');
@@ -78,7 +76,11 @@ function executeRequest(cb) {
 
 tmpdir.refresh();
 
-common.createZeroFilledFile(filename);
+
+// Create a zero-filled file.
+const fd = fs.openSync(filename, 'w');
+fs.ftruncateSync(fd, 10 * 1024 * 1024);
+fs.closeSync(fd);
 
 server = http.createServer(function(req, res) {
   res.writeHead(200);

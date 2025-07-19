@@ -420,13 +420,12 @@ fn initSubproc(this: *Cmd) Yield {
 
     var arena = &this.spawn_arena;
     // var arena_allocator = arena.allocator();
-    var spawn_args = Subprocess.SpawnArgs.default(arena, this.base.interpreter.event_loop, false);
+    var spawn_args = Subprocess.SpawnArgs.default(arena, this, this.base.interpreter.event_loop, false);
 
-    spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
     spawn_args.cmd_parent = this;
     spawn_args.cwd = this.base.shell.cwdZ();
 
-    const args = args: {
+    {
         this.args.append(null) catch bun.outOfMemory();
 
         log("Cmd(0x{x}, {s}) IO: {}", .{ @intFromPtr(this), if (this.args.items.len > 0) this.args.items[0] orelse "<no args>" else "<no args>", this.io });
@@ -487,8 +486,8 @@ fn initSubproc(this: *Cmd) Yield {
             return this.exec.bltn.start();
         }
 
-        const path_buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(path_buf);
+        const path_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(path_buf);
         const resolved = which(path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
             if (bun.strings.eqlComptime(first_arg_real, "bun") or bun.strings.eqlComptime(first_arg_real, "bun-debug")) blk2: {
                 break :blk bun.selfExePath() catch break :blk2;
@@ -499,10 +498,7 @@ fn initSubproc(this: *Cmd) Yield {
         this.base.allocator().free(first_arg_real);
         const duped = this.base.allocator().dupeZ(u8, bun.span(resolved)) catch bun.outOfMemory();
         this.args.items[0] = duped;
-
-        break :args this.args;
-    };
-    spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args.items, .capacity = args.capacity };
+    }
 
     // Fill the env from the export end and cmd local env
     {
@@ -516,7 +512,7 @@ fn initSubproc(this: *Cmd) Yield {
     defer shellio.deref();
     this.io.to_subproc_stdio(&spawn_args.stdio, &shellio);
 
-    if (this.initRedirections(&spawn_args)) |yield| return yield;
+    if (this.initRedirections(&spawn_args) catch .failed) |yield| return yield;
 
     const buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
     log("cmd ({x}) set buffered closed => {any}", .{ @intFromPtr(this), buffered_closed });
@@ -551,7 +547,7 @@ fn initSubproc(this: *Cmd) Yield {
     return .suspended;
 }
 
-fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) ?Yield {
+fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?Yield {
     if (this.node.redirect_file) |redirect| {
         const in_cmd_subst = false;
 
@@ -573,35 +569,34 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) ?Yield {
                 } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob__| {
                     const blob = blob__.dupe();
                     if (this.node.redirect.stdin) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no) catch return .failed;
+                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no);
                     } else if (this.node.redirect.stdout) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no) catch return .failed;
+                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no);
                     } else if (this.node.redirect.stderr) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no) catch return .failed;
+                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no);
                     }
-                } else if (JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
+                } else if (try JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
                     _ = rstream;
                     @panic("TODO SHELL READABLE STREAM");
                 } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Response)) |req| {
                     req.getBodyValue().toBlobIfPossible();
                     if (this.node.redirect.stdin) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no) catch return .failed;
+                        try spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no);
                     }
                     if (this.node.redirect.stdout) {
-                        spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no) catch return .failed;
+                        try spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no);
                     }
                     if (this.node.redirect.stderr) {
-                        spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no) catch return .failed;
+                        try spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no);
                     }
                 } else {
                     const jsval = this.base.interpreter.jsobjs[val.idx];
-                    global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)}) catch {}; // TODO: propagate
-                    return .failed;
+                    return global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)});
                 }
             },
             .atom => {
                 if (this.redirection_file.items.len == 0) {
-                    return this.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{spawn_args.argv.items[0] orelse "<unknown>"});
+                    return this.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{spawn_args.cmd_parent.args.items[0] orelse "<unknown>"});
                 }
                 const path = this.redirection_file.items[0..this.redirection_file.items.len -| 1 :0];
                 log("Expanded Redirect: {s}\n", .{this.redirection_file.items[0..]});

@@ -513,18 +513,21 @@ extern fn Bun__promises__emitUnhandledRejectionWarning(*JSGlobalObject, reason: 
 extern fn Bun__noSideEffectsToString(vm: *JSC.VM, globalObject: *JSGlobalObject, reason: JSValue) JSValue;
 
 fn isErrorLike(globalObject: *JSGlobalObject, reason: JSValue) bun.JSError!bool {
-    const result = Bun__promises__isErrorLike(globalObject, reason);
-    if (globalObject.hasException()) return error.JSError;
-    return result;
+    return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__isErrorLike, .{ globalObject, reason });
 }
 
 fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject, reason: JSValue) JSValue {
     if (isErrorLike(globalObject, reason) catch blk: {
-        if (globalObject.hasException()) globalObject.clearException();
+        globalObject.clearException();
         break :blk false;
     }) return reason;
-    const reasonStr = Bun__noSideEffectsToString(globalObject.vm(), globalObject, reason);
-    if (globalObject.hasException()) globalObject.clearException();
+    const reasonStr = blk: {
+        var scope: bun.jsc.CatchScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
+        defer if (scope.exception()) |_| scope.clearException();
+        break :blk Bun__noSideEffectsToString(globalObject.vm(), globalObject, reason);
+    };
     const msg = "This error originated either by throwing inside of an async function without a catch block, " ++
         "or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \"" ++
         "{s}" ++
@@ -564,7 +567,9 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
                 error.JSExecutionTerminated => {}, // we are returning anyway
             };
             _ = Bun__handleUnhandledRejection(globalObject, reason, promise);
-            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
             return;
         },
         .warn_with_error_code => {
@@ -572,7 +577,9 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
                 error.JSExecutionTerminated => {}, // we are returning anyway
             };
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
-            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
             this.exit_handler.exit_code = 1;
             return;
         },
@@ -583,7 +590,9 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             _ = this.uncaughtException(globalObject, wrapped_reason, true);
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
-            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
             return;
         },
         .throw => {
@@ -621,7 +630,6 @@ pub fn handledPromise(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, 
 
 pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, err: JSValue, is_rejection: bool) bool {
     if (this.isShuttingDown()) {
-        Output.debugWarn("uncaughtException during shutdown.", .{});
         return true;
     }
 
@@ -869,7 +877,13 @@ pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
 }
 
 pub fn waitForTasks(this: *VirtualMachine) void {
-    this.eventLoop().waitForTasks();
+    while (this.isEventLoopAlive()) {
+        this.eventLoop().tick();
+
+        if (this.isEventLoopAlive()) {
+            this.eventLoop().autoTick();
+        }
+    }
 }
 
 pub const MacroMap = std.AutoArrayHashMap(i32, JSC.C.JSObjectRef);
@@ -1699,7 +1713,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
             else
                 specifier_utf8.slice()[namespace.len + 1 .. specifier_utf8.len];
 
-            if (try plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.fromUTF8(after_namespace), source, .bun)) |resolved_path| {
+            if (try plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.borrowUTF8(after_namespace), source, .bun)) |resolved_path| {
                 res.* = resolved_path;
                 return;
             }
@@ -1862,7 +1876,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                             specifier,
                         }) catch unreachable,
                     ),
-                ),
+                ) catch |e| globalThis.takeException(e),
             );
         },
     }
@@ -1958,15 +1972,13 @@ export fn Bun__logUnhandledException(exception: JSValue) void {
     get().runErrorHandler(exception, null);
 }
 
-pub fn clearEntryPoint(
-    this: *VirtualMachine,
-) void {
+pub fn clearEntryPoint(this: *VirtualMachine) bun.JSError!void {
     if (this.main.len == 0) {
         return;
     }
 
     var str = ZigString.init(main_file_name);
-    this.global.deleteModuleRegistryEntry(&str);
+    try this.global.deleteModuleRegistryEntry(&str);
 }
 
 fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
@@ -2087,7 +2099,7 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
             if (this.has_patched_run_main) {
                 @branchHint(.cold);
                 this.pending_internal_promise = null;
-                const ret = NodeModuleModule__callOverriddenRunMain(this.global, bun.String.createUTF8ForJS(this.global, main_file_name));
+                const ret = try bun.jsc.fromJSHostCall(this.global, @src(), NodeModuleModule__callOverriddenRunMain, .{ this.global, try bun.String.createUTF8ForJS(this.global, main_file_name) });
                 if (this.pending_internal_promise == prev or this.pending_internal_promise == null) {
                     this.pending_internal_promise = JSInternalPromise.resolvedPromise(this.global, ret);
                     return this.pending_internal_promise.?;
@@ -2099,7 +2111,7 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
         const promise = if (!this.main_is_html_entrypoint)
             JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name)) orelse return error.JSError
         else
-            Bun__loadHTMLEntryPoint(this.global);
+            try bun.jsc.fromJSHostCallGeneric(this.global, @src(), Bun__loadHTMLEntryPoint, .{this.global});
 
         this.pending_internal_promise = promise;
         JSValue.fromCell(promise).ensureStillAlive();
@@ -2347,16 +2359,16 @@ pub fn printErrorlikeObject(
             pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                 iterator(vm, globalObject, nextValue, ctx.?, false);
             }
-            inline fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+            fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                 const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
                 VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
             }
         };
         var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list, .formatter = formatter };
         if (comptime allow_ansi_color) {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor);
+            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor) catch return; // TODO: properly propagate exception upwards
         } else {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor);
+            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return; // TODO: properly propagate exception upwards
         }
         return;
     }
@@ -3310,7 +3322,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
         while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
             cursor = i + 1;
             if (msg[i] == '\n') {
-                const first_line = bun.String.fromUTF8(msg[0..i]);
+                const first_line = bun.String.borrowUTF8(msg[0..i]);
                 writer.print(": {s}::", .{first_line.githubAction()}) catch {};
                 break;
             }
@@ -3402,7 +3414,7 @@ pub fn resolveSourceMapping(
             this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch
                 bun.outOfMemory();
 
-            const mapping = SourceMap.Mapping.find(map.mappings, line, column) orelse
+            const mapping = map.mappings.find(line, column) orelse
                 return null;
 
             return .{
@@ -3602,7 +3614,7 @@ pub const ExitHandler = struct {
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
-        Process__dispatchOnBeforeExit(vm.global, this.exit_code);
+        bun.jsc.fromJSHostCallGeneric(vm.global, @src(), Process__dispatchOnBeforeExit, .{ vm.global, this.exit_code }) catch return;
     }
 };
 

@@ -44,6 +44,13 @@ extern "C" JSC::Exception* CatchScope__exceptionIncludingTraps(void* ptr)
     return nullptr;
 }
 
+extern "C" void CatchScope__clearException(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
+    auto* scope = static_cast<CatchScope*>(ptr);
+    scope->clearException();
+}
+
 extern "C" void CatchScope__destruct(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
@@ -53,5 +60,7 @@ extern "C" void CatchScope__destruct(void* ptr)
 extern "C" void CatchScope__assertNoException(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
-    static_cast<CatchScope*>(ptr)->assertNoException();
+    // this function assumes it should assert in all build modes, anything else would be confusing.
+    // Zig should only call CatchScope__assertNoException if it wants the assertion.
+    static_cast<CatchScope*>(ptr)->releaseAssertNoException();
 }

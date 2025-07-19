@@ -190,7 +190,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
             const enabled: bool = brk: {
                 if (args.len >= 1) {
-                    break :brk args.ptr[0].coerce(bool, globalThis);
+                    break :brk args.ptr[0].toBoolean();
                 }
                 break :brk false;
             };
@@ -208,11 +208,12 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn setNoDelay(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
+            _ = globalThis;
 
             const args = callframe.arguments_old(1);
             const enabled: bool = brk: {
                 if (args.len >= 1) {
-                    break :brk args.ptr[0].coerce(bool, globalThis);
+                    break :brk args.ptr[0].toBoolean();
                 }
                 break :brk true;
             };
@@ -639,7 +640,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             var js_error: JSValue = .js_undefined;
             if (err != 0) {
                 // errors here are always a read error
-                js_error = bun.sys.Error.fromCodeInt(err, .read).toJSC(globalObject);
+                js_error = bun.sys.Error.fromCodeInt(err, .read).toJS(globalObject);
             }
 
             _ = callback.call(globalObject, this_value, &[_]JSValue{
@@ -665,7 +666,10 @@ pub fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            const output_value = handlers.binary_type.toJS(data, globalObject);
+            const output_value = handlers.binary_type.toJS(data, globalObject) catch |err| {
+                this.handleError(globalObject.takeException(err));
+                return;
+            };
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
@@ -726,7 +730,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             if (args.len == 0) {
                 return globalObject.throw("Expected 1 argument, got 0", .{});
             }
-            const t = args.ptr[0].coerce(i32, globalObject);
+            const t = try args.ptr[0].coerce(i32, globalObject);
             if (t < 0) {
                 return globalObject.throw("Timeout must be a positive integer", .{});
             }
@@ -756,8 +760,8 @@ pub fn NewSocket(comptime ssl: bool) type {
             const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
 
             const fallback = JSC.SystemError{
-                .code = bun.String.createUTF8(code),
-                .message = bun.String.createUTF8(reason),
+                .code = bun.String.cloneUTF8(code),
+                .message = bun.String.cloneUTF8(reason),
             };
 
             return fallback.toErrorInstance(globalObject);
@@ -869,7 +873,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             if (comptime ssl) {
                 // TLS wrapped but in TCP mode
                 if (this.wrapped == .tcp) {
-                    const res = this.socket.rawWrite(buffer, false);
+                    const res = this.socket.rawWrite(buffer);
                     const uwrote: usize = @intCast(@max(res, 0));
                     this.bytes_written += uwrote;
                     log("write({d}) = {d}", .{ buffer.len, res });
@@ -877,7 +881,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            const res = this.socket.write(buffer, false);
+            const res = this.socket.write(buffer);
             const uwrote: usize = @intCast(@max(res, 0));
             this.bytes_written += uwrote;
             log("write({d}) = {d}", .{ buffer.len, res });
@@ -1198,7 +1202,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         fn internalFlush(this: *This) void {
             if (this.buffered_data_for_node_net.len > 0) {
-                const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice(), false), 0));
+                const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice()), 0));
                 this.bytes_written += written;
                 if (written > 0) {
                     if (this.buffered_data_for_node_net.len > written) {
@@ -1358,6 +1362,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             var prev_handlers = this.handlers;
             prev_handlers.unprotect();
             this.handlers.* = handlers; // TODO: this is a memory leak
+            this.handlers.withAsyncContextIfNeeded(globalObject);
             this.handlers.protect();
 
             return .js_undefined;
@@ -1400,7 +1405,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
+            var handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
 
             if (globalObject.hasException()) {
                 return .zero;
@@ -1455,6 +1460,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             const ext_size = @sizeOf(WrappedSocket);
 
             var handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
+            handlers.withAsyncContextIfNeeded(globalObject);
             handlers_ptr.* = handlers;
             handlers_ptr.protect();
             var tls = bun.new(TLSSocket, .{
@@ -1590,8 +1596,8 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
 
             const array = try JSC.JSValue.createEmptyArray(globalObject, 2);
-            array.putIndex(globalObject, 0, raw_js_value);
-            array.putIndex(globalObject, 1, tls_js_value);
+            try array.putIndex(globalObject, 0, raw_js_value);
+            try array.putIndex(globalObject, 1, tls_js_value);
 
             defer this.deref();
 
@@ -1976,6 +1982,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
     handlers_ptr.* = handlers;
     handlers_ptr.is_server = is_server;
+    handlers_ptr.withAsyncContextIfNeeded(globalObject);
     handlers_ptr.protect();
     var tls = bun.new(TLSSocket, .{
         .ref_count = .init(),
@@ -2020,9 +2027,9 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     duplexContext.startTLS();
 
     const array = try JSC.JSValue.createEmptyArray(globalObject, 2);
-    array.putIndex(globalObject, 0, tls_js_value);
+    try array.putIndex(globalObject, 0, tls_js_value);
     // data, end, drain and close events must be reported
-    array.putIndex(globalObject, 1, try duplexContext.upgrade.getJSHandlers(globalObject));
+    try array.putIndex(globalObject, 1, try duplexContext.upgrade.getJSHandlers(globalObject));
 
     return array;
 }
@@ -2070,15 +2077,15 @@ pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
     const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
     if (rc != 0) {
         const err = bun.sys.Error.fromCode(bun.sys.getErrno(rc), .socketpair);
-        return global.throwValue(err.toJSC(global));
+        return global.throwValue(err.toJS(global));
     }
 
     _ = bun.FD.fromNative(fds_[0]).updateNonblocking(true);
     _ = bun.FD.fromNative(fds_[1]).updateNonblocking(true);
 
     const array = try JSC.JSValue.createEmptyArray(global, 2);
-    array.putIndex(global, 0, JSC.jsNumber(fds_[0]));
-    array.putIndex(global, 1, JSC.jsNumber(fds_[1]));
+    try array.putIndex(global, 0, JSC.jsNumber(fds_[0]));
+    try array.putIndex(global, 1, JSC.jsNumber(fds_[1]));
     return array;
 }
 
@@ -2102,12 +2109,12 @@ pub fn jsSetSocketOptions(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
         if (is_for_send_buffer) {
             const result = bun.sys.setsockopt(file_descriptor, std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, buffer_size);
             if (result.asErr()) |err| {
-                return global.throwValue(err.toJSC(global));
+                return global.throwValue(err.toJS(global));
             }
         } else if (is_for_recv_buffer) {
             const result = bun.sys.setsockopt(file_descriptor, std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, buffer_size);
             if (result.asErr()) |err| {
-                return global.throwValue(err.toJSC(global));
+                return global.throwValue(err.toJS(global));
             }
         }
     }

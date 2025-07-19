@@ -59,7 +59,7 @@ pub const URL = opaque {
     }
 
     pub fn fromUTF8(input: []const u8) ?*URL {
-        return fromString(String.fromUTF8(input));
+        return fromString(String.borrowUTF8(input));
     }
     pub fn fromString(str: bun.String) ?*URL {
         JSC.markBinding(@src());

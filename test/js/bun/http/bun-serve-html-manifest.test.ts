@@ -266,7 +266,7 @@ describe("Bun.serve HTML manifest", () => {
       stdin: "ignore",
     });
 
-    const out = await new Response(proc.stdout).text();
+    const out = await proc.stdout.text();
     await proc.exited;
 
     expect(out).toContain("SUCCESS: Manifest validation failed as expected");
@@ -277,7 +277,7 @@ describe("Bun.serve HTML manifest", () => {
       "server.ts": `
         import index from "./index.html";
         
-        const server = Bun.serve({
+        using server = Bun.serve({
           port: 0,
           routes: {
             "/": index,
@@ -313,7 +313,7 @@ describe("Bun.serve HTML manifest", () => {
     using cleanup = { [Symbol.dispose]: () => rmScope(dir) };
 
     // Build first to generate the manifest
-    const buildProc = Bun.spawn({
+    await using buildProc = Bun.spawn({
       cmd: [bunExe(), "build", join(dir, "server.ts"), "--outdir", join(dir, "dist"), "--target", "bun"],
       cwd: dir,
       env: bunEnv,
@@ -326,7 +326,7 @@ describe("Bun.serve HTML manifest", () => {
     expect(buildProc.exitCode).toBe(0);
 
     // Run the built server
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "run", join(dir, "dist", "server.js")],
       cwd: join(dir, "dist"),
       env: bunEnv,
@@ -336,37 +336,26 @@ describe("Bun.serve HTML manifest", () => {
     });
 
     // Read stdout line by line to collect all output
-    const reader = proc.stdout.getReader();
-    const decoder = new StringDecoder("utf8");
-    let buffer = "";
-    let output = "";
-    let etagCount = 0;
-    const expectedEtagLines = 2; // One for HTML, one for CSS
+    const out = await proc.stdout.text();
+    expect(await proc.exited).toBe(0);
 
-    while (etagCount < expectedEtagLines) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.write(value);
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        output += line + "\n";
-        if (line.includes("Has ETag:")) {
-          etagCount++;
-        }
-      }
-    }
-
-    reader.releaseLock();
-
-    // Should have proper content types
-    expect(output).toContain("text/html");
-    expect(output).toContain("text/css");
-    expect(output).toContain("Has ETag:");
-
-    proc.kill();
-    await proc.exited;
+    expect(
+      out
+        .trim()
+        .replaceAll(/PORT=\d+/g, "PORT=99999")
+        .replaceAll(/.\/index-[a-z0-9]+\.js/g, "index-[hash].js")
+        .replaceAll(/.\/index-[a-z0-9]+\.css/g, "index-[hash].css"),
+    ).toMatchInlineSnapshot(`
+      "PORT=99999
+      File: index-[hash].js Loader: js
+        Content-Type: text/javascript;charset=utf-8
+        Has ETag: true
+      File: ./index.html Loader: html
+        Content-Type: text/html;charset=utf-8
+        Has ETag: true
+      File: index-[hash].css Loader: css
+        Content-Type: text/css;charset=utf-8
+        Has ETag: true"
+    `);
   });
 });

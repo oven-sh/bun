@@ -259,7 +259,6 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatFSObject(Zig::GlobalObject* glob
     int64_t ffree)
 {
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue js_fstype = JSC::jsNumber(fstype);
     JSC::JSValue js_bsize = JSC::jsNumber(bsize);
@@ -280,7 +279,7 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatFSObject(Zig::GlobalObject* glob
     object->putDirectOffset(vm, 5, js_files);
     object->putDirectOffset(vm, 6, js_ffree);
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(object));
+    return JSC::JSValue::encode(object);
 }
 
 extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatFSObject(Zig::GlobalObject* globalObject,
@@ -297,12 +296,19 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatFSObject(Zig::GlobalObject
 
     auto* structure = getStatFSStructure<true>(globalObject);
     JSC::JSValue js_fstype = JSC::JSBigInt::createFrom(globalObject, fstype);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_bsize = JSC::JSBigInt::createFrom(globalObject, bsize);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_blocks = JSC::JSBigInt::createFrom(globalObject, blocks);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_bfree = JSC::JSBigInt::createFrom(globalObject, bfree);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_bavail = JSC::JSBigInt::createFrom(globalObject, bavail);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_files = JSC::JSBigInt::createFrom(globalObject, files);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_ffree = JSC::JSBigInt::createFrom(globalObject, ffree);
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto* object = JSC::JSFinalObject::create(vm, structure);
 
@@ -367,10 +373,8 @@ inline JSValue constructJSStatFSObject(JSC::JSGlobalObject* lexicalGlobalObject,
             // ShadowRealm functions belong to a different global object.
             getFunctionRealm(lexicalGlobalObject, newTarget));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            lexicalGlobalObject,
-            newTarget,
-            getStatFSStructure<isBigInt>(functionGlobalObject));
+        structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, getStatFSStructure<isBigInt>(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     JSValue type = callFrame->argument(0);

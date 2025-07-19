@@ -167,7 +167,7 @@ pub const TransformTask = struct {
         if (printed > 0) {
             buffer_writer = printer.ctx;
             buffer_writer.buffer.list.items = buffer_writer.written;
-            this.output_code = bun.String.createUTF8(buffer_writer.written);
+            this.output_code = bun.String.cloneUTF8(buffer_writer.written);
         } else {
             this.output_code = bun.String.empty;
         }
@@ -188,7 +188,7 @@ pub const TransformTask = struct {
                     }
                 }
 
-                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed");
+                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed") catch return; // TODO: properly propagate exception upwards
             };
 
             promise.reject(this.global, error_value);
@@ -406,9 +406,9 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
             }
 
             if (!kind.isStringLike()) {
-                tsconfig.jsonStringify(globalThis, 0, &out);
+                try tsconfig.jsonStringify(globalThis, 0, &out);
             } else {
-                out = tsconfig.toBunString(globalThis) catch @panic("unexpected exception");
+                out = try tsconfig.toBunString(globalThis);
             }
 
             if (out.isEmpty()) break :tsconfig;
@@ -445,7 +445,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
             defer out.deref();
             // TODO: write a converter between JSC types and Bun AST types
             if (is_object) {
-                macros.jsonStringify(globalThis, 0, &out);
+                try macros.jsonStringify(globalThis, 0, &out);
             } else {
                 out = try macros.toBunString(globalThis);
             }
@@ -486,7 +486,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
 
     if (try object.getTruthy(globalThis, "minify")) |minify| {
         if (minify.isBoolean()) {
-            transpiler.minify_whitespace = minify.coerce(bool, globalThis);
+            transpiler.minify_whitespace = minify.toBoolean();
             transpiler.minify_syntax = transpiler.minify_whitespace;
             transpiler.minify_identifiers = transpiler.minify_syntax;
         } else if (minify.isObject()) {
@@ -1043,7 +1043,7 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
     });
     var i: usize = 0;
     while (named_exports_iter.next()) |entry| {
-        names[i] = bun.String.createUTF8(entry.key_ptr.*);
+        names[i] = bun.String.cloneUTF8(entry.key_ptr.*);
         i += 1;
     }
     return bun.String.toJSArray(global, names);
@@ -1064,7 +1064,7 @@ fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecor
         array.ensureStillAlive();
         const path = JSC.ZigString.init(record.path.text).toJS(global);
         const kind = JSC.ZigString.init(record.kind.label()).toJS(global);
-        array.putIndex(global, @as(u32, @truncate(i)), JSC.JSValue.createObject2(global, path_label, kind_label, path, kind));
+        try array.putIndex(global, @as(u32, @truncate(i)), try JSC.JSValue.createObject2(global, path_label, kind_label, path, kind));
     }
 
     return array;

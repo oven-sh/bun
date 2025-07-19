@@ -26,6 +26,40 @@ But if you'd rather switch to the `bun:test` imports, you can do that too.
 
 ---
 
+Since Bun v1.2.19, you can enable **TypeScript support** for global test functions with a single triple-slash directive. This makes migrating from Jest even easier since you only need to add the directive once in your entire project:
+
+Add this directive to _just one file_ in your project, such as:
+
+- A `global.d.ts` file in your project root
+- Your test `preload.ts` setup file (if using `preload` in bunfig.toml)
+- Any single `.ts` file that TypeScript includes in your compilation
+
+```ts
+/// <reference types="bun/test-globals" />
+```
+
+---
+
+Once added, all test files in your project automatically get TypeScript support for Jest globals:
+
+```ts#math.test.ts
+describe("my test suite", () => {
+  test("should work", () => {
+    expect(1 + 1).toBe(2);
+  });
+
+  beforeAll(() => {
+    // setup code
+  });
+
+  afterEach(() => {
+    // cleanup code
+  });
+});
+```
+
+---
+
 Bun implements the vast majority of Jest's matchers, but compatibility isn't 100% yet. Refer to the full compatibility table at [Docs > Test runner > Writing tests](https://bun.sh/docs/test/writing#matchers).
 
 Some notable missing features:

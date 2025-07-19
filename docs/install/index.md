@@ -120,7 +120,7 @@ dryRun = false
 concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 
 # installation strategy: "hoisted" or "isolated"
-# default: "hoisted"  
+# default: "hoisted"
 linker = "hoisted"
 ```
 

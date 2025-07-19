@@ -851,7 +851,7 @@ pub fn Path(comptime opts: Options) type {
                             const cwd_path_slice = this.slice();
                             bun.copy(u8, cwd_path[0..cwd_path_slice.len], cwd_path_slice);
 
-                            const joined = bun.path.joinStringBufZ(
+                            const joined = bun.path.joinStringBuf(
                                 this._buf.pooled,
                                 &[_][]const u8{ cwd_path, part },
                                 switch (opts.sep) {
@@ -881,7 +881,7 @@ pub fn Path(comptime opts: Options) type {
                             const cwd_path_slice = this.slice();
                             bun.copy(u16, cwd_path[0..cwd_path_slice.len], cwd_path_slice);
 
-                            const joined = bun.path.joinStringBufWZ(
+                            const joined = bun.path.joinStringBufW(
                                 this._buf.pooled,
                                 &[_][]const u16{ cwd_path, part },
                                 switch (opts.sep) {

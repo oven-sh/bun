@@ -423,7 +423,7 @@ pub const Installer = struct {
 
                             backend: switch (PackageInstall.Method.hardlink) {
                                 .hardlink => {
-                                    var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDir();
+                                    var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDirLongPath();
                                     defer src.deinit();
                                     src.appendJoin(pkg_res.value.folder.slice(string_buf));
 

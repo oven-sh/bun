@@ -49,8 +49,13 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
                 .file => {
                     const destfile_path_buf = bun.w_path_buffer_pool.get();
                     defer bun.w_path_buffer_pool.put(destfile_path_buf);
-                    const destfile_path = bun.path.joinStringBufWZ(destfile_path_buf, &[_][]const u16{ dest_cwd, this.dest.slice() }, .windows);
-                    switch (sys.link(u16, this.src.sliceZ(), destfile_path)) {
+                    const destfile_path = bun.path.joinStringBufWZ(destfile_path_buf, &[_][]const u16{ dest_cwd, this.dest.slice() }, .nt);
+
+                    const src_path_buf = bun.w_path_buffer_pool.get();
+                    defer bun.w_path_buffer_pool.put(src_path_buf);
+                    const src_path = bun.path.joinStringBufWZ(src_path_buf, &[_][]const u16{this.src.slice()}, .nt);
+
+                    switch (sys.link(u16, src_path, destfile_path)) {
                         .result => {},
                         .err => |link_err1| switch (link_err1.getErrno()) {
                             .UV_EEXIST,
@@ -61,7 +66,7 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
                                         \\Hardlinking {} to a path that already exists: {}
                                     ,
                                         .{
-                                            bun.fmt.fmtOSPath(this.src.slice(), .{ .path_sep = .auto }),
+                                            bun.fmt.fmtOSPath(src_path, .{ .path_sep = .auto }),
                                             bun.fmt.fmtOSPath(destfile_path, .{ .path_sep = .auto }),
                                         },
                                     );
@@ -76,7 +81,7 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
                                     };
                                     FD.cwd().deleteTree(delete_tree_path) catch {};
                                 }
-                                switch (sys.link(u16, this.src.sliceZ(), destfile_path)) {
+                                switch (sys.link(u16, src_path, destfile_path)) {
                                     .result => {},
                                     .err => |link_err2| return .initErr(link_err2),
                                 }
@@ -100,7 +105,7 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
 
                                 FD.cwd().makePath(u16, dest_parent) catch {};
 
-                                switch (sys.link(u16, this.src.sliceZ(), destfile_path)) {
+                                switch (sys.link(u16, src_path, destfile_path)) {
                                     .result => {},
                                     .err => |link_err2| return .initErr(link_err2),
                                 }
@@ -174,3 +179,4 @@ const Environment = bun.Environment;
 const FD = bun.FD;
 const OOM = bun.OOM;
 const sys = bun.sys;
+const toNamespacedPathWindowsT = @import("../../bun.js/node/path.zig").toNamespacedPathWindowsT;

@@ -723,9 +723,10 @@ export class BunTestController implements vscode.Disposable {
       }
     }
 
-    const inspectorUrl = this.signal.url.startsWith("ws") || this.signal.url.startsWith("tcp") ?
-      `${this.signal!.url}?wait=1` :
-      this.signal!.url;
+    const inspectorUrl =
+      this.signal.url.startsWith("ws") || this.signal.url.startsWith("tcp")
+        ? `${this.signal!.url}?wait=1`
+        : this.signal!.url;
 
     const proc = spawn(bunCommand, args, {
       cwd: this.workspaceFolder.uri.fsPath,

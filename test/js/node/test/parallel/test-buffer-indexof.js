@@ -194,24 +194,30 @@ assert.strictEqual(Buffer.from('aaaa00a').indexOf('3030', 'hex'), 4);
 {
   // Test usc2 and utf16le encoding
   ['ucs2', 'utf16le'].forEach((encoding) => {
-    const twoByteString = Buffer.from('\u039a\u0391\u03a3\u03a3\u0395', encoding);
+    const twoByteString = Buffer.from(
+      '\u039a\u0391\u03a3\u03a3\u0395', encoding);
 
     assert.strictEqual(twoByteString.indexOf('\u0395', 4, encoding), 8);
     assert.strictEqual(twoByteString.indexOf('\u03a3', -4, encoding), 6);
     assert.strictEqual(twoByteString.indexOf('\u03a3', -6, encoding), 4);
-    assert.strictEqual(twoByteString.indexOf(Buffer.from('\u03a3', encoding), -6, encoding), 4);
+    assert.strictEqual(twoByteString.indexOf(
+      Buffer.from('\u03a3', encoding), -6, encoding), 4);
     assert.strictEqual(-1, twoByteString.indexOf('\u03a3', -2, encoding));
   });
 }
 
-const mixedByteStringUcs2 = Buffer.from('\u039a\u0391abc\u03a3\u03a3\u0395', 'ucs2');
+const mixedByteStringUcs2 =
+    Buffer.from('\u039a\u0391abc\u03a3\u03a3\u0395', 'ucs2');
 assert.strictEqual(mixedByteStringUcs2.indexOf('bc', 0, 'ucs2'), 6);
 assert.strictEqual(mixedByteStringUcs2.indexOf('\u03a3', 0, 'ucs2'), 10);
 assert.strictEqual(-1, mixedByteStringUcs2.indexOf('\u0396', 0, 'ucs2'));
 
-assert.strictEqual(mixedByteStringUcs2.indexOf(Buffer.from('bc', 'ucs2'), 0, 'ucs2'), 6);
-assert.strictEqual(mixedByteStringUcs2.indexOf(Buffer.from('\u03a3', 'ucs2'), 0, 'ucs2'), 10);
-assert.strictEqual(-1, mixedByteStringUcs2.indexOf(Buffer.from('\u0396', 'ucs2'), 0, 'ucs2'));
+assert.strictEqual(
+  mixedByteStringUcs2.indexOf(Buffer.from('bc', 'ucs2'), 0, 'ucs2'), 6);
+assert.strictEqual(
+  mixedByteStringUcs2.indexOf(Buffer.from('\u03a3', 'ucs2'), 0, 'ucs2'), 10);
+assert.strictEqual(
+  -1, mixedByteStringUcs2.indexOf(Buffer.from('\u0396', 'ucs2'), 0, 'ucs2'));
 
 {
   const twoByteString = Buffer.from('\u039a\u0391\u03a3\u03a3\u0395', 'ucs2');
@@ -261,7 +267,8 @@ const longBufferString = Buffer.from(longString);
 let pattern = 'ABACABADABACABA';
 for (let i = 0; i < longBufferString.length - pattern.length; i += 7) {
   const index = longBufferString.indexOf(pattern, i);
-  assert.strictEqual((i + 15) & ~0xf, index, `Long ABACABA...-string at index ${i}`);
+  assert.strictEqual((i + 15) & ~0xf, index,
+                     `Long ABACABA...-string at index ${i}`);
 }
 
 let index = longBufferString.indexOf('AJABACA');
@@ -273,10 +280,12 @@ pattern = 'JABACABADABACABA';
 index = longBufferString.indexOf(pattern);
 assert.strictEqual(index, 511, `Long JABACABA..., First J - at index ${index}`);
 index = longBufferString.indexOf(pattern, 512);
-assert.strictEqual(index, 1535, `Long JABACABA..., Second J - at index ${index}`);
+assert.strictEqual(
+  index, 1535, `Long JABACABA..., Second J - at index ${index}`);
 
 // Search for a non-ASCII string in a pure ASCII string.
-const asciiString = Buffer.from('arglebargleglopglyfarglebargleglopglyfarglebargleglopglyf');
+const asciiString = Buffer.from(
+  'arglebargleglopglyfarglebargleglopglyfarglebargleglopglyf');
 assert.strictEqual(-1, asciiString.indexOf('\x2061'));
 assert.strictEqual(asciiString.indexOf('leb', 0), 3);
 
@@ -338,11 +347,14 @@ assert.strictEqual(Buffer.from('aaaaa').indexOf('b', 'ucs2'), -1);
       const index = indices[i] * 2;
       const length = lengths[lengthIndex];
 
-      const patternBufferUcs2 = allCharsBufferUcs2.slice(index, index + length);
-      assert.strictEqual(index, allCharsBufferUcs2.indexOf(patternBufferUcs2, 0, 'ucs2'));
+      const patternBufferUcs2 =
+          allCharsBufferUcs2.slice(index, index + length);
+      assert.strictEqual(
+        index, allCharsBufferUcs2.indexOf(patternBufferUcs2, 0, 'ucs2'));
 
       const patternStringUcs2 = patternBufferUcs2.toString('ucs2');
-      assert.strictEqual(index, allCharsBufferUcs2.indexOf(patternStringUcs2, 0, 'ucs2'));
+      assert.strictEqual(
+        index, allCharsBufferUcs2.indexOf(patternStringUcs2, 0, 'ucs2'));
     }
   }
 }
@@ -375,12 +387,24 @@ assert.strictEqual(b.indexOf('b', []), 1);
 assert.strictEqual(b.indexOf('b', [2]), -1);
 
 // Behavior should match String.indexOf()
-assert.strictEqual(b.indexOf('b', undefined), s.indexOf('b', undefined));
-assert.strictEqual(b.indexOf('b', {}), s.indexOf('b', {}));
-assert.strictEqual(b.indexOf('b', 0), s.indexOf('b', 0));
-assert.strictEqual(b.indexOf('b', null), s.indexOf('b', null));
-assert.strictEqual(b.indexOf('b', []), s.indexOf('b', []));
-assert.strictEqual(b.indexOf('b', [2]), s.indexOf('b', [2]));
+assert.strictEqual(
+  b.indexOf('b', undefined),
+  s.indexOf('b', undefined));
+assert.strictEqual(
+  b.indexOf('b', {}),
+  s.indexOf('b', {}));
+assert.strictEqual(
+  b.indexOf('b', 0),
+  s.indexOf('b', 0));
+assert.strictEqual(
+  b.indexOf('b', null),
+  s.indexOf('b', null));
+assert.strictEqual(
+  b.indexOf('b', []),
+  s.indexOf('b', []));
+assert.strictEqual(
+  b.indexOf('b', [2]),
+  s.indexOf('b', [2]));
 
 // All code for handling encodings is shared between Buffer.indexOf and
 // Buffer.lastIndexOf, so only testing the separate lastIndexOf semantics.
@@ -449,12 +473,24 @@ assert.strictEqual(b.lastIndexOf('b', []), -1);
 assert.strictEqual(b.lastIndexOf('b', [2]), 1);
 
 // Behavior should match String.lastIndexOf()
-assert.strictEqual(b.lastIndexOf('b', undefined), s.lastIndexOf('b', undefined));
-assert.strictEqual(b.lastIndexOf('b', {}), s.lastIndexOf('b', {}));
-assert.strictEqual(b.lastIndexOf('b', 0), s.lastIndexOf('b', 0));
-assert.strictEqual(b.lastIndexOf('b', null), s.lastIndexOf('b', null));
-assert.strictEqual(b.lastIndexOf('b', []), s.lastIndexOf('b', []));
-assert.strictEqual(b.lastIndexOf('b', [2]), s.lastIndexOf('b', [2]));
+assert.strictEqual(
+  b.lastIndexOf('b', undefined),
+  s.lastIndexOf('b', undefined));
+assert.strictEqual(
+  b.lastIndexOf('b', {}),
+  s.lastIndexOf('b', {}));
+assert.strictEqual(
+  b.lastIndexOf('b', 0),
+  s.lastIndexOf('b', 0));
+assert.strictEqual(
+  b.lastIndexOf('b', null),
+  s.lastIndexOf('b', null));
+assert.strictEqual(
+  b.lastIndexOf('b', []),
+  s.lastIndexOf('b', []));
+assert.strictEqual(
+  b.lastIndexOf('b', [2]),
+  s.lastIndexOf('b', [2]));
 
 // Test needles longer than the haystack.
 assert.strictEqual(b.lastIndexOf('aaaaaaaaaaaaaaa', 'ucs2'), -1);
@@ -486,7 +522,8 @@ assert.strictEqual(bufferString.lastIndexOf('canal'), 15);
 assert.strictEqual(bufferString.lastIndexOf('panama'), 21);
 assert.strictEqual(bufferString.lastIndexOf('a man a plan a canal panama'), 0);
 assert.strictEqual(-1, bufferString.lastIndexOf('a man a plan a canal mexico'));
-assert.strictEqual(-1, bufferString.lastIndexOf('a man a plan a canal mexico city'));
+assert.strictEqual(-1, bufferString
+  .lastIndexOf('a man a plan a canal mexico city'));
 assert.strictEqual(-1, bufferString.lastIndexOf(Buffer.from('a'.repeat(1000))));
 assert.strictEqual(bufferString.lastIndexOf('a man a plan', 4), 0);
 assert.strictEqual(bufferString.lastIndexOf('a '), 13);

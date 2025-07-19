@@ -28,6 +28,7 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
         const dest_cwd = FD.cwd().getFdPathW(cwd_buf) catch {
             return .initErr(bun.sys.Error.fromCode(bun.sys.E.ACCES, .link));
         };
+
         while (switch (walker.next()) {
             .result => |res| res,
             .err => |err| return .initErr(err),
@@ -52,6 +53,9 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
                     defer bun.w_path_buffer_pool.put(destfile_path_buf2);
                     defer bun.w_path_buffer_pool.put(destfile_path_buf);
                     const destfile_path = bun.strings.addNTPathPrefixIfNeeded(destfile_path_buf2, bun.path.joinStringBufWZ(destfile_path_buf, &[_][]const u16{ dest_cwd, this.dest.slice() }, .windows));
+
+                    const srcfile_path_buf = bun.w_path_buffer_pool.get();
+                    defer bun.w_path_buffer_pool.put(srcfile_path_buf);
 
                     switch (sys.link(u16, this.src.sliceZ(), destfile_path)) {
                         .result => {},

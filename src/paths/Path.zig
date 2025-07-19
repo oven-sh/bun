@@ -340,6 +340,7 @@ pub fn Path(comptime opts: Options) type {
             }
 
             this._buf.append(trimmed, false);
+
             return this;
         }
 
@@ -361,7 +362,45 @@ pub fn Path(comptime opts: Options) type {
 
             return this;
         }
+        pub fn fromLongPath(input: anytype) Result(@This()) {
+            switch (comptime @TypeOf(input)) {
+                []u8, []const u8, [:0]u8, [:0]const u8 => {},
+                []u16, []const u16, [:0]u16, [:0]const u16 => {},
+                else => @compileError("unsupported type: " ++ @typeName(@TypeOf(input))),
+            }
+            const trimmed = switch (comptime opts.kind) {
+                .abs => trimmed: {
+                    bun.debugAssert(isInputAbsolute(input));
+                    break :trimmed trimInput(.abs, input);
+                },
+                .rel => trimmed: {
+                    bun.debugAssert(!isInputAbsolute(input));
+                    break :trimmed trimInput(.rel, input);
+                },
+                .any => trimInput(if (isInputAbsolute(input)) .abs else .rel, input),
+            };
 
+            if (comptime opts.check_length == .check_for_greater_than_max_path) {
+                if (trimmed.len >= opts.maxPathLength()) {
+                    return error.MaxPathExceeded;
+                }
+            }
+
+            var this = init();
+            if (comptime Environment.isWindows) {
+                switch (comptime opts.unit) {
+                    .u8 => this._buf.append(bun.windows.long_path_prefix_u8, false),
+                    .u16 => this._buf.append(bun.windows.long_path_prefix, false),
+                    .os => if (Environment.isWindows)
+                        this._buf.append(bun.windows.long_path_prefix, false)
+                    else
+                        this._buf.append(bun.windows.long_path_prefix_u8, false),
+                }
+            }
+
+            this._buf.append(trimmed, false);
+            return this;
+        }
         pub fn from(input: anytype) Result(@This()) {
             switch (comptime @TypeOf(input)) {
                 []u8, []const u8, [:0]u8, [:0]const u8 => {},
@@ -791,6 +830,82 @@ pub fn Path(comptime opts: Options) type {
                     const trimmed = trimInput(.abs, joined);
                     this._buf.len = trimmed.len;
                 },
+            }
+        }
+
+        pub fn appendJoin(this: *@This(), part: anytype) Result(void) {
+            switch (comptime opts.kind) {
+                .abs => {},
+                .rel => @compileError("cannot join with relative path"),
+                .any => {
+                    bun.debugAssert(this.isAbsolute());
+                },
+            }
+
+            switch (comptime @TypeOf(part)) {
+                []u8, []const u8 => {
+                    switch (comptime opts.pathUnit()) {
+                        u8 => {
+                            const cwd_path = bun.path_buffer_pool.get();
+                            defer bun.path_buffer_pool.put(cwd_path);
+                            const cwd_path_slice = this.slice();
+                            bun.copy(u8, cwd_path[0..cwd_path_slice.len], cwd_path_slice);
+
+                            const joined = bun.path.joinStringBufZ(
+                                this._buf.pooled,
+                                &[_][]const u8{ cwd_path, part },
+                                switch (opts.sep) {
+                                    .any, .auto => .auto,
+                                    .posix => .posix,
+                                    .windows => .windows,
+                                },
+                            );
+
+                            const trimmed = trimInput(.abs, joined);
+                            this._buf.len = trimmed.len;
+                        },
+                        u16 => {
+                            const path_buf = bun.w_path_buffer_pool.get();
+                            defer bun.w_path_buffer_pool.put(path_buf);
+                            const converted = bun.strings.convertUTF8toUTF16InBuffer(path_buf, part);
+                            return this.appendJoin(converted);
+                        },
+                        else => @compileError("unsupported unit type"),
+                    }
+                },
+                []u16, []const u16 => {
+                    switch (comptime opts.pathUnit()) {
+                        u16 => {
+                            const cwd_path = bun.w_path_buffer_pool.get();
+                            defer bun.w_path_buffer_pool.put(cwd_path);
+                            const cwd_path_slice = this.slice();
+                            bun.copy(u16, cwd_path[0..cwd_path_slice.len], cwd_path_slice);
+
+                            const joined = bun.path.joinStringBufWZ(
+                                this._buf.pooled,
+                                &[_][]const u16{ cwd_path, part },
+                                switch (opts.sep) {
+                                    .any, .auto => .auto,
+                                    .posix => .posix,
+                                    .windows => .windows,
+                                },
+                            );
+
+                            const trimmed = trimInput(.abs, joined);
+                            this._buf.len = trimmed.len;
+                        },
+                        u8 => {
+                            const path_buf = bun.path_buffer_pool.get();
+                            defer bun.path_buffer_pool.put(path_buf);
+                            const converted = bun.strings.convertUTF16toUTF8InBuffer(path_buf, part) catch {
+                                return .initError(.MaxPathExceeded);
+                            };
+                            return this.appendJoin(converted);
+                        },
+                        else => @compileError("unsupported unit type"),
+                    }
+                },
+                else => @compileError("unsupported type: " ++ @typeName(@TypeOf(part))),
             }
         }
 

@@ -423,9 +423,9 @@ pub const Installer = struct {
 
                             backend: switch (PackageInstall.Method.hardlink) {
                                 .hardlink => {
-                                    var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDirLongPath();
+                                    var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDir();
                                     defer src.deinit();
-                                    src.append(pkg_res.value.folder.slice(string_buf));
+                                    src.appendJoin(pkg_res.value.folder.slice(string_buf));
 
                                     var dest: bun.RelPath(.{ .unit = .os, .sep = .auto }) = .init();
                                     defer dest.deinit();
@@ -598,9 +598,9 @@ pub const Installer = struct {
                                 },
                             };
 
-                            var src: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = .from(cache_dir_path.slice());
+                            var src: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = .fromLongPath(cache_dir_path.slice());
                             defer src.deinit();
-                            src.append(pkg_cache_dir_subpath.slice());
+                            src.appendJoin(pkg_cache_dir_subpath.slice());
 
                             var hardlinker: Hardlinker = .{
                                 .src_dir = cached_package_dir.?,

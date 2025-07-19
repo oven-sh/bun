@@ -842,6 +842,7 @@ src/threading.zig
 src/threading/channel.zig
 src/threading/Condition.zig
 src/threading/Futex.zig
+src/threading/guarded_value.zig
 src/threading/Mutex.zig
 src/threading/ThreadPool.zig
 src/threading/unbounded_queue.zig

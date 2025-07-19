@@ -35,6 +35,7 @@ if (filePaths.length === 0) {
 const config = {
   includePub: !args.includes("--no-include-pub"),
   removeUnused: !args.includes("--no-remove-unused"),
+  normalizePaths: args.includes("--normalize-paths=./") ? "./" : args.includes("--normalize-paths=") ? "" : null,
 };
 
 // Type definitions
@@ -307,6 +308,12 @@ const DELETED_LINE = "%DELETED_LINE%";
 async function processFile(filePath: string): Promise<void> {
   const originalFileContents = await Bun.file(filePath).text();
   let fileContents = originalFileContents;
+
+  if (config.normalizePaths === "") {
+    fileContents = fileContents.replaceAll(`@import("./`, `@import("`);
+  } else if (config.normalizePaths === "./") {
+    fileContents = fileContents.replaceAll(/@import\("([^."\s]+\.[^"\s]+)"\)/g, '@import("./$1")');
+  }
 
   let needsRecurse = true;
   while (needsRecurse) {

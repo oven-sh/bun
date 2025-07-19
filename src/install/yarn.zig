@@ -79,6 +79,31 @@ pub const YarnLock = struct {
             else
                 spec;
 
+            // Handle npm: aliased dependencies like "old@npm:abbrev@1.0.x"
+            if (std.mem.indexOf(u8, unquoted, "@npm:")) |npm_idx| {
+                return unquoted[0..npm_idx];
+            }
+
+            // Handle remote tarball URLs like "remote@https://registry.npmjs.org/..."
+            if (std.mem.indexOf(u8, unquoted, "@https://")) |url_idx| {
+                return unquoted[0..url_idx];
+            }
+
+            // Handle git URLs like "full-git-url@git+https://..."
+            if (std.mem.indexOf(u8, unquoted, "@git+")) |git_idx| {
+                return unquoted[0..git_idx];
+            }
+
+            // Handle github shorthand like "ghshort@github:..."
+            if (std.mem.indexOf(u8, unquoted, "@github:")) |gh_idx| {
+                return unquoted[0..gh_idx];
+            }
+
+            // Handle file dependencies like "symlink@file:..."
+            if (std.mem.indexOf(u8, unquoted, "@file:")) |file_idx| {
+                return unquoted[0..file_idx];
+            }
+
             if (std.mem.indexOf(u8, unquoted, "@")) |idx| {
                 if (idx == 0) {
                     if (std.mem.indexOf(u8, unquoted[1..], "@")) |second_idx| {
@@ -97,6 +122,31 @@ pub const YarnLock = struct {
                 spec[1 .. spec.len - 1]
             else
                 spec;
+
+            // Handle npm: aliased dependencies like "old@npm:abbrev@1.0.x"
+            if (std.mem.indexOf(u8, unquoted, "@npm:")) |npm_idx| {
+                return unquoted[npm_idx + 1..];
+            }
+
+            // Handle remote tarball URLs like "remote@https://registry.npmjs.org/..."
+            if (std.mem.indexOf(u8, unquoted, "@https://")) |url_idx| {
+                return unquoted[url_idx + 1..];
+            }
+
+            // Handle git URLs like "full-git-url@git+https://..."
+            if (std.mem.indexOf(u8, unquoted, "@git+")) |git_idx| {
+                return unquoted[git_idx + 1..];
+            }
+
+            // Handle github shorthand like "ghshort@github:..."
+            if (std.mem.indexOf(u8, unquoted, "@github:")) |gh_idx| {
+                return unquoted[gh_idx + 1..];
+            }
+
+            // Handle file dependencies like "symlink@file:..."
+            if (std.mem.indexOf(u8, unquoted, "@file:")) |file_idx| {
+                return unquoted[file_idx + 1..];
+            }
 
             if (std.mem.indexOf(u8, unquoted, "@")) |idx| {
                 if (idx == 0) {
@@ -118,6 +168,14 @@ pub const YarnLock = struct {
                 strings.startsWith(version, "git://") or
                 strings.startsWith(version, "github:") or
                 strings.startsWith(version, "https://github.com/");
+        }
+
+        pub fn isNpmAlias(version: []const u8) bool {
+            return strings.startsWith(version, "npm:");
+        }
+
+        pub fn isRemoteTarball(version: []const u8) bool {
+            return strings.startsWith(version, "https://") and strings.endsWith(version, ".tgz");
         }
 
         pub fn isWorkspaceDependency(version: []const u8) bool {
@@ -154,6 +212,18 @@ pub const YarnLock = struct {
             }
 
             return .{ .url = url, .commit = commit };
+        }
+
+        pub fn parseNpmAlias(version: []const u8) struct { package: []const u8, version: []const u8 } {
+            // version is in format "npm:package@version"
+            const npm_part = version[4..]; // Skip "npm:"
+            if (std.mem.indexOf(u8, npm_part, "@")) |at_idx| {
+                return .{
+                    .package = npm_part[0..at_idx],
+                    .version = npm_part[at_idx + 1..],
+                };
+            }
+            return .{ .package = npm_part, .version = "*" };
         }
     };
 
@@ -301,11 +371,18 @@ pub const YarnLock = struct {
                         if (Entry.isWorkspaceDependency(value)) {
                             current_entry.?.workspace = true;
                         } else if (Entry.isFileDependency(value)) {
-                            current_entry.?.file = value[5..];
+                            current_entry.?.file = if (strings.startsWith(value, "file:")) value[5..] else value;
                         } else if (Entry.isGitDependency(value)) {
                             const git_info = try Entry.parseGitUrl(self, value);
                             current_entry.?.resolved = git_info.url;
                             current_entry.?.commit = git_info.commit;
+                        } else if (Entry.isNpmAlias(value)) {
+                            // For npm aliases, use the actual package name and version  
+                            const alias_info = Entry.parseNpmAlias(value);
+                            current_entry.?.version = alias_info.version;
+                        } else if (Entry.isRemoteTarball(value)) {
+                            // For remote tarballs, use the URL as resolved
+                            current_entry.?.resolved = value;
                         }
                     } else if (std.mem.eql(u8, key, "resolved")) {
                         current_entry.?.resolved = value;
@@ -389,6 +466,12 @@ const processDeps = struct {
                 const dep_name_hash = stringHash(dep_name);
                 const dep_name_str = try string_buf_.appendWithHash(dep_name, dep_name_hash);
 
+                // Parse the dependency version, handling special cases
+                const parsed_version = if (YarnLock.Entry.isNpmAlias(dep_version)) blk: {
+                    const alias_info = YarnLock.Entry.parseNpmAlias(dep_version);
+                    break :blk alias_info.version;
+                } else dep_version;
+
                 // Create dependency
                 deps_buf[count] = Dependency{
                     .name = dep_name_str,
@@ -397,8 +480,8 @@ const processDeps = struct {
                         yarn_lock_.allocator,
                         dep_name_str,
                         dep_name_hash,
-                        dep_version,
-                        &Semver.SlicedString.init(dep_version, dep_version),
+                        parsed_version,
+                        &Semver.SlicedString.init(parsed_version, parsed_version),
                         log, // log
                         manager, // manager
                     ) orelse Dependency.Version{},
@@ -413,9 +496,11 @@ const processDeps = struct {
 
                 // Find package ID for this dependency
                 for (yarn_lock_.entries.items, 0..) |entry_, i| {
-                    if (std.mem.eql(u8, entry_.specs[0], dep_spec)) {
-                        res_buf[count] = @intCast(i + 1); // +1 because root package is at index 0
-                        break;
+                    for (entry_.specs) |entry_spec| {
+                        if (std.mem.eql(u8, entry_spec, dep_spec)) {
+                            res_buf[count] = @intCast(i + 1); // +1 because root package is at index 0
+                            break;
+                        }
                     }
                 }
                 count += 1;
@@ -522,6 +607,13 @@ pub fn migrateYarnLockfile(
                     }
                     break :blk Resolution{};
                 } else if (entry.resolved) |resolved| {
+                    // Handle remote tarball URLs  
+                    if (YarnLock.Entry.isRemoteTarball(resolved) or strings.endsWith(resolved, ".tgz")) {
+                        break :blk Resolution.init(.{
+                            .remote_tarball = try string_buf.append(resolved),
+                        });
+                    }
+                    
                     const version = entry.version;
                     const sliced_version = Semver.SlicedString.init(version, version);
                     const result = Semver.Version.parse(sliced_version);

@@ -6,9 +6,8 @@ import path, { join } from "path";
 const YARN_TEST_DIRS = [
   "yarn-lock-mkdirp",
   "yarn-lock-mkdirp-no-resolved",
-  // Skip file-dep and yarn-stuff tests as they have complex file dependencies
-  // "yarn-lock-mkdirp-file-dep",
-  // "yarn-stuff"
+  "yarn-lock-mkdirp-file-dep",
+  "yarn-stuff"
 ];
 
 describe("yarn.lock migration", () => {

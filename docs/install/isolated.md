@@ -7,7 +7,7 @@ Isolated installs create a non-hoisted dependency structure where packages can o
 ### Key benefits
 
 - **Prevents phantom dependencies** — Packages cannot accidentally import dependencies they haven't declared
-- **Deterministic resolution** — Same dependency tree regardless of what else is installed  
+- **Deterministic resolution** — Same dependency tree regardless of what else is installed
 - **Better for monorepos** — Workspace isolation prevents cross-contamination between packages
 - **Reproducible builds** — More predictable resolution behavior across environments
 
@@ -21,7 +21,7 @@ Use the `--linker` flag to specify the installation strategy:
 # Use isolated installs
 $ bun install --linker isolated
 
-# Use traditional hoisted installs  
+# Use traditional hoisted installs
 $ bun install --linker hoisted
 ```
 
@@ -80,14 +80,14 @@ In monorepos, workspace dependencies are handled specially:
 
 ## Comparison with hoisted installs
 
-| Aspect | Hoisted (npm/Yarn) | Isolated (pnpm-like) |
-|--------|-------------------|---------------------|
-| **Dependency access** | Packages can access any hoisted dependency | Packages only see declared dependencies |
-| **Phantom dependencies** | ❌ Possible | ✅ Prevented |
-| **Disk usage** | ✅ Lower (shared installs) | ❌ Higher (isolated installs) |
-| **Determinism** | ❌ Less deterministic | ✅ More deterministic |
-| **Node.js compatibility** | ✅ Standard behavior | ✅ Compatible via symlinks |
-| **Best for** | Single projects, legacy code | Monorepos, strict dependency management |
+| Aspect                    | Hoisted (npm/Yarn)                         | Isolated (pnpm-like)                    |
+| ------------------------- | ------------------------------------------ | --------------------------------------- |
+| **Dependency access**     | Packages can access any hoisted dependency | Packages only see declared dependencies |
+| **Phantom dependencies**  | ❌ Possible                                | ✅ Prevented                            |
+| **Disk usage**            | ✅ Lower (shared installs)                 | ❌ Higher (isolated installs)           |
+| **Determinism**           | ❌ Less deterministic                      | ✅ More deterministic                   |
+| **Node.js compatibility** | ✅ Standard behavior                       | ✅ Compatible via symlinks              |
+| **Best for**              | Single projects, legacy code               | Monorepos, strict dependency management |
 
 ## Advanced features
 
@@ -119,8 +119,9 @@ $ bun install --linker isolated --verbose
 ```
 
 This shows:
+
 - Store entry creation
-- Symlink operations  
+- Symlink operations
 - Peer dependency resolution
 - Deduplication decisions
 
@@ -137,6 +138,7 @@ Some packages may not work correctly with isolated installs due to:
 If you encounter issues, you can:
 
 1. **Switch to hoisted mode** for specific projects:
+
    ```bash
    $ bun install --linker hoisted
    ```
@@ -178,12 +180,14 @@ The main difference is that Bun uses symlinks in `node_modules` while pnpm uses 
 ## When to use isolated installs
 
 **Use isolated installs when:**
+
 - Working in monorepos with multiple packages
 - Strict dependency management is required
 - Preventing phantom dependencies is important
 - Building libraries that need deterministic dependencies
 
 **Use hoisted installs when:**
+
 - Working with legacy code that assumes flat `node_modules`
 - Compatibility with existing build tools is required
 - Disk space is a primary concern

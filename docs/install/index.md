@@ -119,7 +119,7 @@ dryRun = false
 # equivalent to `--concurrent-scripts` flag
 concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 
-# installation strategy: "auto", "hoisted", or "isolated"  
+# installation strategy: "auto", "hoisted", or "isolated"
 linker = "auto"
 ```
 

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { readFile, rm, writeFile } from "fs/promises";
+import { writeFile } from "fs/promises";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
@@ -21,30 +21,30 @@ afterEach(dummyAfterEach);
 
 it("should use cache when --prefer-offline is passed even with expired data", async () => {
   const urls: string[] = [];
-  
+
   // Create a registry handler that sets cache control headers with expiry in the past
-  setHandler(async (request) => {
+  setHandler(async request => {
     urls.push(request.url);
-    
+
     expect(request.method).toBe("GET");
     if (request.url.endsWith(".tgz")) {
       // For .tgz files, return the test package from dummy registry
       const { file } = await import("bun");
       const { basename, join } = await import("path");
-      return new Response(file(join(import.meta.dir, basename(request.url).toLowerCase())), { 
+      return new Response(file(join(import.meta.dir, basename(request.url).toLowerCase())), {
         status: 200,
         headers: {
           "content-type": "application/octet-stream",
           // Set cache control to expire in the past
           "cache-control": "max-age=3600",
           "date": new Date(Date.now() - 7200000).toUTCString(), // 2 hours ago
-        }
+        },
       });
     }
-    
+
     // For package metadata requests
     const name = request.url.slice(request.url.indexOf("/", root_url.length) + 1);
-    
+
     return new Response(
       JSON.stringify({
         name,
@@ -141,7 +141,7 @@ it("should use cache when --prefer-offline is passed even with expired data", as
 
     const stderrText = await new Response(stderr).text();
     const exitCode = await exited;
-    
+
     // With --prefer-offline and no cached manifest, the install should fail
     expect(exitCode).toBe(1);
     expect(stderrText).toContain("failed to resolve");
@@ -158,27 +158,27 @@ it("should use cache when --prefer-offline is passed even with expired data", as
 
 it("should make network requests without --prefer-offline even with expired cache", async () => {
   const urls: string[] = [];
-  
+
   // Create a registry handler that sets cache control headers with expiry in the past
-  setHandler(async (request) => {
+  setHandler(async request => {
     urls.push(request.url);
-    
+
     expect(request.method).toBe("GET");
     if (request.url.endsWith(".tgz")) {
       const { file } = await import("bun");
       const { basename, join } = await import("path");
-      return new Response(file(join(import.meta.dir, basename(request.url).toLowerCase())), { 
+      return new Response(file(join(import.meta.dir, basename(request.url).toLowerCase())), {
         status: 200,
         headers: {
           "content-type": "application/octet-stream",
           "cache-control": "max-age=3600",
           "date": new Date(Date.now() - 7200000).toUTCString(), // 2 hours ago
-        }
+        },
       });
     }
-    
+
     const name = request.url.slice(request.url.indexOf("/", root_url.length) + 1);
-    
+
     return new Response(
       JSON.stringify({
         name,
@@ -239,7 +239,7 @@ it("should make network requests without --prefer-offline even with expired cach
 
   // Clear URLs and add a new dependency to force registry lookup
   urls.length = 0;
-  
+
   // Add a new dependency to package.json to force a registry lookup
   await writeFile(
     join(package_dir, "package.json"),

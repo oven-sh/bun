@@ -230,6 +230,7 @@ pub fn load(
     maybe_cli: ?CommandLineArguments,
     bun_install_: ?*Api.BunInstall,
     subcommand: Subcommand,
+    ctx: ?Command.Context,
 ) bun.OOM!void {
     var base = Api.NpmRegistry{
         .url = "",
@@ -288,11 +289,11 @@ pub fn load(
         }
 
         if (config.disable_manifest_cache orelse false) {
-            this.enable.manifest_cache = false;
+            this.enable.manifest_cache = .disabled;
         }
 
         if (config.force orelse false) {
-            this.enable.manifest_cache_control = false;
+            this.enable.manifest_cache = .disabled;
             this.enable.force_install = true;
         }
 
@@ -452,8 +453,18 @@ pub fn load(
 
     // Update should never read from manifest cache
     if (subcommand == .update) {
-        this.enable.manifest_cache = false;
-        this.enable.manifest_cache_control = false;
+        this.enable.manifest_cache = .disabled;
+    }
+
+    // Override prefer_offline from bunfig or CLI context offline_mode_setting
+    if (ctx) |context| {
+        if (context.debug.offline_mode_setting) |offline_mode| {
+            switch (offline_mode) {
+                .offline => this.enable.manifest_cache = .prefer_offline,
+                .online => this.enable.manifest_cache = .ttl,
+                .latest => this.enable.manifest_cache = .disabled,
+            }
+        }
     }
 
     if (maybe_cli) |cli| {
@@ -499,8 +510,7 @@ pub fn load(
         this.json_output = cli.json_output;
 
         if (cli.no_cache) {
-            this.enable.manifest_cache = false;
-            this.enable.manifest_cache_control = false;
+            this.enable.manifest_cache = .disabled;
         }
 
         if (cli.omit) |omit| {
@@ -584,7 +594,7 @@ pub fn load(
         }
 
         if (cli.force) {
-            this.enable.manifest_cache_control = false;
+            this.enable.manifest_cache = .disabled;
             this.enable.force_install = true;
             this.enable.force_save_lockfile = true;
         }
@@ -641,6 +651,10 @@ pub fn load(
         // `bun pm why` command options
         this.top_only = cli.top_only;
         this.depth = cli.depth;
+
+        if (cli.prefer_offline) {
+            this.enable.manifest_cache = .prefer_offline;
+        }
     } else {
         this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
         PackageManager.verbose_install = false;
@@ -669,9 +683,42 @@ pub const Do = packed struct(u16) {
     _: u4 = 0,
 };
 
+pub const ManifestCacheControl = enum(u2) {
+    disabled,
+
+    /// Populate the cache without reading from the cache.
+    write_only,
+
+    ttl,
+
+    /// No TTL on package manifest cache
+    ///
+    /// This lets us resolve package versions without network requests if they
+    /// already exist in the cache.
+    prefer_offline,
+
+    pub const default: ManifestCacheControl = .ttl;
+
+    pub fn isExpired(this: ManifestCacheControl, public_max_age: u32, timestamp_for_manifest_cache_control: u32) bool {
+        return switch (this) {
+            .disabled => true,
+            .write_only => false,
+            .ttl => public_max_age > timestamp_for_manifest_cache_control,
+            .prefer_offline => false,
+        };
+    }
+
+    pub fn shouldReadFromCache(this: ManifestCacheControl) bool {
+        return switch (this) {
+            .disabled => false,
+            .write_only => false,
+            .ttl, .prefer_offline => true,
+        };
+    }
+};
+
 pub const Enable = packed struct(u16) {
-    manifest_cache: bool = true,
-    manifest_cache_control: bool = true,
+    manifest_cache: ManifestCacheControl = .default,
     cache: bool = true,
     fail_early: bool = false,
     frozen_lockfile: bool = false,
@@ -714,3 +761,4 @@ const CommandLineArguments = @import("./CommandLineArguments.zig");
 const Subcommand = bun.install.PackageManager.Subcommand;
 const PackageManager = bun.install.PackageManager;
 const PackageInstall = bun.install.PackageInstall;
+const Command = bun.CLI.Command;

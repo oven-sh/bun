@@ -313,6 +313,36 @@ pub fn Path(comptime opts: Options) type {
             return this;
         }
 
+        pub fn initTopLevelDirLongPath() @This() {
+            bun.debugAssert(bun.fs.FileSystem.instance_loaded);
+            const top_level_dir = bun.fs.FileSystem.instance.top_level_dir;
+
+            const trimmed = switch (comptime opts.kind) {
+                .abs => trimmed: {
+                    bun.debugAssert(isInputAbsolute(top_level_dir));
+                    break :trimmed trimInput(.abs, top_level_dir);
+                },
+                .rel => @compileError("cannot create a relative path from top_level_dir"),
+                .any => trimInput(.abs, top_level_dir),
+            };
+
+            var this = init();
+
+            if (comptime Environment.isWindows) {
+                switch (comptime opts.unit) {
+                    .u8 => this._buf.append(bun.windows.long_path_prefix_u8, false),
+                    .u16 => this._buf.append(bun.windows.long_path_prefix, false),
+                    .os => if (Environment.isWindows)
+                        this._buf.append(bun.windows.long_path_prefix, false)
+                    else
+                        this._buf.append(bun.windows.long_path_prefix_u8, false),
+                }
+            }
+
+            this._buf.append(trimmed, false);
+            return this;
+        }
+
         pub fn initFdPath(fd: FD) !@This() {
             switch (comptime opts.kind) {
                 .abs => {},

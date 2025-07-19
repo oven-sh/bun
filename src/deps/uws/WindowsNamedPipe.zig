@@ -36,7 +36,7 @@ handlers: Handlers,
 connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
 
 event_loop_timer: EventLoopTimer = .{
-    .next = .{},
+    .next = .epoch,
     .tag = .WindowsNamedPipe,
 },
 current_timeout: u32 = 0,
@@ -459,8 +459,8 @@ pub fn isTLS(this: *WindowsNamedPipe) bool {
     return this.flags.is_ssl;
 }
 
-pub fn encodeAndWrite(this: *WindowsNamedPipe, data: []const u8, is_end: bool) i32 {
-    log("encodeAndWrite (len: {} - is_end: {})", .{ data.len, is_end });
+pub fn encodeAndWrite(this: *WindowsNamedPipe, data: []const u8) i32 {
+    log("encodeAndWrite (len: {})", .{data.len});
     if (this.wrapper) |*wrapper| {
         return @as(i32, @intCast(wrapper.writeData(data) catch 0));
     } else {
@@ -469,7 +469,7 @@ pub fn encodeAndWrite(this: *WindowsNamedPipe, data: []const u8, is_end: bool) i
     return @intCast(data.len);
 }
 
-pub fn rawWrite(this: *WindowsNamedPipe, encoded_data: []const u8, _: bool) i32 {
+pub fn rawWrite(this: *WindowsNamedPipe, encoded_data: []const u8) i32 {
     this.internalWrite(encoded_data);
     return @intCast(encoded_data.len);
 }

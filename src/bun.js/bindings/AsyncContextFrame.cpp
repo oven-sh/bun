@@ -120,4 +120,10 @@ JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue function
     return AsyncContextFrame::call(global, functionObject, thisValue, args, returnedException);
 }
 
+JSC::JSValue AsyncContextFrame::run(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
+{
+    ASSERT(global->isAsyncContextTrackingEnabled());
+
+    ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
+}
 #undef ASYNCCONTEXTFRAME_CALL_IMPL

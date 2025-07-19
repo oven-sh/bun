@@ -225,6 +225,7 @@ pub const BuildCommand = struct {
         }
 
         this_transpiler.resolver.opts = this_transpiler.options;
+        this_transpiler.resolver.env_loader = this_transpiler.env;
         this_transpiler.options.jsx.development = !this_transpiler.options.production;
         this_transpiler.resolver.opts.jsx.development = this_transpiler.options.jsx.development;
 
@@ -262,13 +263,16 @@ pub const BuildCommand = struct {
                     null,
                 null,
                 this_transpiler.options.define.drop_debugger,
+                this_transpiler.options.dead_code_elimination and this_transpiler.options.minify_syntax,
             );
 
             try bun.bake.addImportMetaDefines(allocator, this_transpiler.options.define, .development, .server);
             try bun.bake.addImportMetaDefines(allocator, client_transpiler.options.define, .development, .client);
 
             this_transpiler.resolver.opts = this_transpiler.options;
+            this_transpiler.resolver.env_loader = this_transpiler.env;
             client_transpiler.resolver.opts = client_transpiler.options;
+            client_transpiler.resolver.env_loader = client_transpiler.env;
         }
 
         // var env_loader = this_transpiler.env;
@@ -342,7 +346,7 @@ pub const BuildCommand = struct {
         var had_err = false;
         dump: {
             defer Output.flush();
-            var writer = Output.writer();
+            var writer = Output.writerBuffered();
             var output_dir = this_transpiler.options.output_dir;
 
             const will_be_one_file =

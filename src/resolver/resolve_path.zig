@@ -1239,6 +1239,14 @@ pub fn joinStringBufWZ(buf: []u16, parts: anytype, comptime platform: Platform) 
     return buf[start_offset..][0..joined.len :0];
 }
 
+pub fn joinStringBufZ(buf: []u8, parts: anytype, comptime platform: Platform) [:0]const u8 {
+    const joined = joinStringBufT(u8, buf[0 .. buf.len - 1], parts, platform);
+    assert(bun.isSliceInBufferT(u8, joined, buf));
+    const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
+    buf[joined.len + start_offset] = 0;
+    return buf[start_offset..][0..joined.len :0];
+}
+
 pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime platform: Platform) []const T {
     var written: usize = 0;
     var temp_buf_: [4096]T = undefined;
@@ -1988,7 +1996,7 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
         .auto,
     );
 
-    return bun.String.createUTF8(out_slice);
+    return bun.String.cloneUTF8(out_slice);
 }
 
 pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {

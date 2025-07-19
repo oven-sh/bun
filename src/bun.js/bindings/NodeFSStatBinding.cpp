@@ -143,6 +143,7 @@ static JSValue modeStatFunction(JSC::JSGlobalObject* globalObject, CallFrame* ca
 
     if constexpr (isBigInt) {
         int64_t mode_value = modeValue.toBigInt64(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         return jsBoolean(isModeFn(statFunction, mode_value));
     }
 
@@ -602,7 +603,6 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globa
     int64_t uid, int64_t gid, int64_t rdev, int64_t size, int64_t blksize, int64_t blocks, double atimeMs, double mtimeMs, double ctimeMs, double birthtimeMs)
 {
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue js_dev = JSC::jsDoubleNumber(dev);
     JSC::JSValue js_ino = JSC::jsDoubleNumber(ino);
@@ -637,7 +637,7 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globa
     object->putDirectOffset(vm, 12, js_ctimeMs);
     object->putDirectOffset(vm, 13, js_birthtimeMs);
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(object));
+    return JSC::JSValue::encode(object);
 }
 
 extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject* globalObject,
@@ -665,23 +665,42 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject*
 
     auto* structure = getStructure<true>(globalObject);
     JSC::JSValue js_dev = JSC::JSBigInt::createFrom(globalObject, dev);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_ino = JSC::JSBigInt::createFrom(globalObject, ino);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_mode = JSC::JSBigInt::createFrom(globalObject, mode);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_nlink = JSC::JSBigInt::createFrom(globalObject, nlink);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_uid = JSC::JSBigInt::createFrom(globalObject, uid);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_gid = JSC::JSBigInt::createFrom(globalObject, gid);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_rdev = JSC::JSBigInt::createFrom(globalObject, rdev);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_size = JSC::JSBigInt::createFrom(globalObject, size);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_blksize = JSC::JSBigInt::createFrom(globalObject, blksize);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_blocks = JSC::JSBigInt::createFrom(globalObject, blocks);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_atimeMs = JSC::JSBigInt::createFrom(globalObject, atimeMs);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_mtimeMs = JSC::JSBigInt::createFrom(globalObject, mtimeMs);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_ctimeMs = JSC::JSBigInt::createFrom(globalObject, ctimeMs);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_birthtimeMs = JSC::JSBigInt::createFrom(globalObject, birthtimeMs);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_atimeNs = JSC::JSBigInt::createFrom(globalObject, atimeNs);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_mtimeNs = JSC::JSBigInt::createFrom(globalObject, mtimeNs);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_ctimeNs = JSC::JSBigInt::createFrom(globalObject, ctimeNs);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_birthtimeNs = JSC::JSBigInt::createFrom(globalObject, birthtimeNs);
+    RETURN_IF_EXCEPTION(scope, {});
+
     auto* object = JSC::JSFinalObject::create(vm, structure);
 
     object->putDirectOffset(vm, 0, js_dev);
@@ -807,10 +826,8 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
             // ShadowRealm functions belong to a different global object.
             getFunctionRealm(lexicalGlobalObject, newTarget));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            lexicalGlobalObject,
-            newTarget,
-            getStructure<isBigInt>(functionGlobalObject));
+        structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, getStructure<isBigInt>(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     JSValue dev = callFrame->argument(0);

@@ -32,8 +32,13 @@ const input = await file(join(root, "cmake", "Sources.json")).json();
 
 const start = performance.now();
 for (const item of input) {
-  await globSources(item.output, item.paths, item.exclude);
+  await globSources(item.output, item.paths, [
+    ...(item.exclude || []),
+    "src/bun.js/bindings/GeneratedBindings.zig",
+    "src/bun.js/bindings/GeneratedJS2Native.zig",
+  ]);
 }
+
 const end = performance.now();
 
 const green = "\x1b[32m";

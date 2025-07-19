@@ -136,6 +136,9 @@ pub const BundleV2 = struct {
     /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
     /// and `bun build` cli) runs at the top of an event loop. When this is
     /// true, a callback is executed after all work is complete.
+    ///
+    /// You can find which callbacks are run by looking at the
+    /// `finishFromBakeDevServer(...)` function here
     asynchronous: bool = false,
     thread_lock: bun.DebugThreadLock,
 
@@ -206,7 +209,7 @@ pub const BundleV2 = struct {
 
         try client_transpiler.configureDefines();
         client_transpiler.resolver.opts = client_transpiler.options;
-
+        client_transpiler.resolver.env_loader = client_transpiler.env;
         this.client_transpiler = client_transpiler;
         return client_transpiler;
     }
@@ -862,20 +865,16 @@ pub const BundleV2 = struct {
 
         this.linker.dev_server = transpiler.options.dev_server;
 
-        var pool = try this.graph.allocator.create(ThreadPool);
+        const pool = try this.graph.allocator.create(ThreadPool);
         if (cli_watch_flag) {
             Watcher.enableHotModuleReloading(this);
         }
         // errdefer pool.destroy();
         errdefer this.graph.heap.deinit();
 
-        pool.* = ThreadPool{};
+        pool.* = try .init(this, thread_pool);
         this.graph.pool = pool;
-        try pool.start(
-            this,
-            thread_pool,
-        );
-
+        pool.start();
         return this;
     }
 
@@ -1752,7 +1751,7 @@ pub const BundleV2 = struct {
             if (!transpiler.options.production) {
                 try transpiler.options.conditions.appendSlice(&.{"development"});
             }
-
+            transpiler.resolver.env_loader = transpiler.env;
             transpiler.resolver.opts = transpiler.options;
         }
 
@@ -1864,7 +1863,7 @@ pub const BundleV2 = struct {
                             to_assign_on_sourcemap = result;
                         }
 
-                        output_files_js.putIndex(globalThis, @as(u32, @intCast(i)), result);
+                        output_files_js.putIndex(globalThis, @as(u32, @intCast(i)), result) catch return; // TODO: properly propagate exception upwards
                     }
 
                     root_obj.put(globalThis, JSC.ZigString.static("outputs"), output_files_js);
@@ -1961,7 +1960,8 @@ pub const BundleV2 = struct {
                 this.decrementScanCounter();
             },
             .success => |code| {
-                const should_copy_for_bundling = load.parse_task.defer_copy_for_bundling and code.loader.shouldCopyForBundling();
+                // When a plugin returns a file loader, we always need to populate additional_files
+                const should_copy_for_bundling = code.loader.shouldCopyForBundling();
                 if (should_copy_for_bundling) {
                     const source_index = load.source_index;
                     var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
@@ -2222,6 +2222,7 @@ pub const BundleV2 = struct {
 
             this.graph.pool.worker_pool.wakeForIdleEvents();
         }
+        this.graph.pool.deinit();
 
         for (this.free_list.items) |free| {
             bun.default_allocator.free(free);
@@ -2616,9 +2617,6 @@ pub const BundleV2 = struct {
     pub fn enqueueOnLoadPluginIfNeededImpl(this: *BundleV2, parse: *ParseTask) bool {
         if (this.plugins) |plugins| {
             if (plugins.hasAnyMatches(&parse.path, true)) {
-                if (parse.is_entry_point and parse.loader != null and parse.loader.?.shouldCopyForBundling()) {
-                    parse.defer_copy_for_bundling = true;
-                }
                 // This is where onLoad plugins are enqueued
                 debug("enqueue onLoad: {s}:{s}", .{
                     parse.path.namespace,
@@ -2952,8 +2950,8 @@ pub const BundleV2 = struct {
                                     ) catch bun.outOfMemory();
                                 }
                             } else {
-                                const buf = bun.PathBufferPool.get();
-                                defer bun.PathBufferPool.put(buf);
+                                const buf = bun.path_buffer_pool.get();
+                                defer bun.path_buffer_pool.put(buf);
                                 const specifier_to_use = if (loader == .html and bun.strings.hasPrefix(import_record.path.text, bun.fs.FileSystem.instance.top_level_dir)) brk: {
                                     const specifier_to_use = import_record.path.text[bun.fs.FileSystem.instance.top_level_dir.len..];
                                     if (Environment.isWindows) {
@@ -4129,14 +4127,13 @@ pub const sourcemap = bun.sourcemap;
 pub const StringJoiner = bun.StringJoiner;
 pub const base64 = bun.base64;
 pub const Ref = @import("../ast/base.zig").Ref;
-pub const ThreadPoolLib = @import("../thread_pool.zig");
+const ThreadPoolLib = bun.ThreadPool;
 pub const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 pub const BabyList = @import("../baby_list.zig").BabyList;
 pub const Fs = @import("../fs.zig");
 pub const schema = @import("../api/schema.zig");
 pub const Api = schema.Api;
 pub const _resolver = @import("../resolver/resolver.zig");
-pub const sync = bun.ThreadPool;
 pub const ImportRecord = bun.ImportRecord;
 pub const ImportKind = bun.ImportKind;
 pub const allocators = @import("../allocators.zig");

@@ -144,11 +144,11 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKey, (JSC::JSGlobalObject * lexicalGlobalObje
     }
 
     V::validateFunction(scope, lexicalGlobalObject, callbackValue, "callback"_s);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     std::optional<SecretKeyJobCtx> ctx = SecretKeyJobCtx::fromJS(lexicalGlobalObject, scope, typeValue, optionsValue);
-    ASSERT(ctx.has_value() == !scope.exception());
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
+    RETURN_IF_EXCEPTION(scope, {});
 
     SecretKeyJob::createAndSchedule(lexicalGlobalObject, WTFMove(ctx.value()), callbackValue);
 
@@ -164,8 +164,8 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeySync, (JSC::JSGlobalObject * lexicalGlobal
     JSValue optionsValue = callFrame->argument(1);
 
     std::optional<SecretKeyJobCtx> ctx = SecretKeyJobCtx::fromJS(lexicalGlobalObject, scope, typeValue, optionsValue);
-    ASSERT(ctx.has_value() == !scope.exception());
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
+    RETURN_IF_EXCEPTION(scope, {});
 
     ctx->runTask(lexicalGlobalObject);
 

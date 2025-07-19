@@ -153,7 +153,7 @@ pub const SyscallAccessor = struct {
         }
 
         pub inline fn iterate(dir: Handle) DirIter {
-            return .{ .value = DirIterator.WrappedIterator.init(dir.value.stdDir()) };
+            return .{ .value = DirIterator.WrappedIterator.init(dir.value) };
         }
     };
 

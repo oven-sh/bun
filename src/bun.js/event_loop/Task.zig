@@ -81,6 +81,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellTouchTask,
     Stat,
     StatFS,
+    StreamPending,
     Symlink,
     ThreadSafeFunction,
     TimeoutObject,
@@ -465,7 +466,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             },
             @field(Task.Tag, @typeName(RuntimeTranspilerStore)) => {
                 var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
-                any.drain() catch {};
+                any.runFromJSThread(this, global, virtual_machine);
             },
             @field(Task.Tag, @typeName(ServerAllConnectionsClosedTask)) => {
                 var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
@@ -487,6 +488,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             },
             @field(Task.Tag, @typeName(FlushPendingFileSinkTask)) => {
                 var any: *FlushPendingFileSinkTask = task.get(FlushPendingFileSinkTask).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, @typeName(StreamPending)) => {
+                var any: *StreamPending = task.get(StreamPending).?;
                 any.runFromJSThread();
             },
 
@@ -573,6 +578,7 @@ const Unlink = AsyncFS.unlink;
 const NativeZlib = JSC.API.NativeZlib;
 const NativeBrotli = JSC.API.NativeBrotli;
 const NativeZstd = JSC.API.NativeZstd;
+const StreamPending = JSC.WebCore.streams.Result.Pending;
 
 const ShellGlobTask = shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = shell.Interpreter.Builtin.Rm.ShellRmTask;

@@ -650,8 +650,13 @@ register_command(
       -DDOWNLOAD_PATH=${NODEJS_HEADERS_PATH}
       -DDOWNLOAD_URL=https://nodejs.org/dist/v${NODEJS_VERSION}/node-v${NODEJS_VERSION}-headers.tar.gz
       -P ${CWD}/cmake/scripts/DownloadUrl.cmake
+  COMMAND
+    ${CMAKE_COMMAND}
+      -DNODE_INCLUDE_DIR=${NODEJS_HEADERS_PATH}/include
+      -P ${CWD}/cmake/scripts/PrepareNodeHeaders.cmake
   OUTPUTS
     ${NODEJS_HEADERS_PATH}/include/node/node_version.h
+    ${NODEJS_HEADERS_PATH}/include/.node-headers-prepared
 )
 
 list(APPEND BUN_CPP_SOURCES
@@ -763,6 +768,7 @@ target_include_directories(${bun} PRIVATE
   ${VENDOR_PATH}
   ${VENDOR_PATH}/picohttpparser
   ${NODEJS_HEADERS_PATH}/include
+  ${NODEJS_HEADERS_PATH}/include/node
 )
 
 if(NOT WIN32)
@@ -945,14 +951,22 @@ endif()
 
 if(APPLE)
   target_link_options(${bun} PUBLIC
-    -dead_strip
-    -dead_strip_dylibs
     -Wl,-ld_new
     -Wl,-no_compact_unwind
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
     -Wl,-map,${bun}.linker-map
   )
+
+  # don't strip in debug, this seems to be needed so that the Zig std library
+  # `*dbHelper` DWARF symbols (used by LLDB for pretty printing) are in the
+  # output executable
+  if(NOT DEBUG)
+    target_link_options(${bun} PUBLIC
+      -dead_strip
+      -dead_strip_dylibs
+    )
+  endif()
 endif()
 
 if(LINUX)
@@ -989,7 +1003,6 @@ if(LINUX)
     -Wl,-no-pie
     -Wl,-icf=safe
     -Wl,--as-needed
-    -Wl,--gc-sections
     -Wl,-z,stack-size=12800000
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
@@ -1005,6 +1018,15 @@ if(LINUX)
     -Wl,--build-id=sha1  # Better for debugging than default
     -Wl,-Map=${bun}.linker-map
   )
+
+  # don't strip in debug, this seems to be needed so that the Zig std library
+  # `*dbHelper` DWARF symbols (used by LLDB for pretty printing) are in the
+  # output executable
+  if(NOT DEBUG)
+    target_link_options(${bun} PUBLIC
+      -Wl,--gc-sections
+    )
+  endif()
 endif()
 
 # --- Symbols list ---
@@ -1039,7 +1061,6 @@ if(WIN32)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib
       ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
-      ${WEBKIT_LIB_PATH}/bmalloc.lib
       ${WEBKIT_LIB_PATH}/sicudtd.lib
       ${WEBKIT_LIB_PATH}/sicuind.lib
       ${WEBKIT_LIB_PATH}/sicuucd.lib
@@ -1048,7 +1069,6 @@ if(WIN32)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib
       ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
-      ${WEBKIT_LIB_PATH}/bmalloc.lib
       ${WEBKIT_LIB_PATH}/sicudt.lib
       ${WEBKIT_LIB_PATH}/sicuin.lib
       ${WEBKIT_LIB_PATH}/sicuuc.lib

@@ -20,10 +20,18 @@ export_env: *EnvMap,
 cmd_local_env: *EnvMap,
 
 arena: *bun.ArenaAllocator,
-/// The following are allocated with the above arena
-args: *const std.ArrayList(?[*:0]const u8),
-args_slice: ?[]const [:0]const u8 = null,
 cwd: bun.FileDescriptor,
+
+/// TODO: It would be nice to make this mutable so that certain commands (e.g.
+/// `export`) don't have to duplicate arguments. However, it is tricky because
+/// modifications will invalidate any codepath which previously sliced the array
+/// list (e.g. turned it into a `[]const [:0]const u8`)
+args: *const std.ArrayList(?[*:0]const u8),
+/// Cached slice of `args`.
+///
+/// This caches the result of calling `bun.span(this.args.items[i])` since the
+/// items in `this.args` are sentinel terminated and don't carry their length.
+args_slice: ?[]const [:0]const u8 = null,
 
 impl: Impl,
 
@@ -126,7 +134,6 @@ pub const BuiltinIO = struct {
     /// in the case of blob, we write to the file descriptor
     pub const Output = union(enum) {
         fd: struct { writer: *IOWriter, captured: ?*bun.ByteList = null },
-        /// array list not owned by this type
         buf: std.ArrayList(u8),
         arraybuf: ArrayBuf,
         blob: *Blob,
@@ -156,9 +163,13 @@ pub const BuiltinIO = struct {
                     this.fd.writer.deref();
                 },
                 .blob => this.blob.deref(),
-                // FIXME: should this be here??
                 .arraybuf => this.arraybuf.buf.deinit(),
-                else => {},
+                .buf => {
+                    const alloc = this.buf.allocator;
+                    this.buf.deinit();
+                    this.* = .{ .buf = std.ArrayList(u8).init(alloc) };
+                },
+                .ignore => {},
             }
         }
 
@@ -222,7 +233,13 @@ pub const BuiltinIO = struct {
                     this.fd.deref();
                 },
                 .blob => this.blob.deref(),
-                else => {},
+                .buf => {
+                    const alloc = this.buf.allocator;
+                    this.buf.deinit();
+                    this.* = .{ .buf = std.ArrayList(u8).init(alloc) };
+                },
+                .arraybuf => this.arraybuf.buf.deinit(),
+                .ignore => {},
             }
         }
 
@@ -306,6 +323,7 @@ fn callImplWithType(this: *Builtin, comptime BuiltinImpl: type, comptime Ret: ty
 }
 
 pub inline fn allocator(this: *Builtin) Allocator {
+    // FIXME: This should be `this.parentCmd().base.allocator()`
     return this.parentCmd().base.interpreter.allocator;
 }
 
@@ -327,12 +345,12 @@ pub fn init(
     };
     const stdout: BuiltinIO.Output = switch (io.stdout) {
         .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
-        .pipe => .{ .buf = std.ArrayList(u8).init(bun.default_allocator) },
+        .pipe => .{ .buf = std.ArrayList(u8).init(cmd.base.allocator()) },
         .ignore => .ignore,
     };
     const stderr: BuiltinIO.Output = switch (io.stderr) {
         .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
-        .pipe => .{ .buf = std.ArrayList(u8).init(bun.default_allocator) },
+        .pipe => .{ .buf = std.ArrayList(u8).init(cmd.base.allocator()) },
         .ignore => .ignore,
     };
 
@@ -364,6 +382,20 @@ pub fn init(
             cmd.exec.bltn.impl = .{
                 .echo = Echo{
                     .output = std.ArrayList(u8).init(arena.allocator()),
+                },
+            };
+        },
+        .ls => {
+            cmd.exec.bltn.impl = .{
+                .ls = Ls{
+                    .alloc_scope = shell.AllocScope.beginScope(bun.default_allocator),
+                },
+            };
+        },
+        .yes => {
+            cmd.exec.bltn.impl = .{
+                .yes = Yes{
+                    .alloc_scope = shell.AllocScope.beginScope(bun.default_allocator),
                 },
             };
         },
@@ -561,6 +593,7 @@ pub inline fn throw(this: *const Builtin, err: *const bun.shell.ShellErr) void {
     this.parentCmd().base.throw(err) catch {};
 }
 
+/// The `Cmd` state node associated with this builtin
 pub inline fn parentCmd(this: *const Builtin) *const Cmd {
     const union_ptr: *const Cmd.Exec = @fieldParentPtr("bltn", this);
     return @fieldParentPtr("exec", union_ptr);

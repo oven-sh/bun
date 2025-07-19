@@ -36,10 +36,64 @@ pub const Tag = enum(u3) {
     only,
     skip,
     todo,
+    skipped_because_label,
 };
 const debug = Output.scoped(.jest, false);
+
 var max_test_id_for_debugger: u32 = 0;
+
+const CurrentFile = struct {
+    title: string = "",
+    prefix: string = "",
+    repeat_info: struct {
+        count: u32 = 0,
+        index: u32 = 0,
+    } = .{},
+    has_printed_filename: bool = false,
+
+    pub fn set(this: *CurrentFile, title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
+        if (Output.isAIAgent()) {
+            this.freeAndClear();
+            this.title = bun.default_allocator.dupe(u8, title) catch bun.outOfMemory();
+            this.prefix = bun.default_allocator.dupe(u8, prefix) catch bun.outOfMemory();
+            this.repeat_info.count = repeat_count;
+            this.repeat_info.index = repeat_index;
+            this.has_printed_filename = false;
+            return;
+        }
+
+        this.has_printed_filename = true;
+        print(title, prefix, repeat_count, repeat_index);
+    }
+
+    fn freeAndClear(this: *CurrentFile) void {
+        bun.default_allocator.free(this.title);
+        bun.default_allocator.free(this.prefix);
+    }
+
+    fn print(title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
+        if (repeat_count > 0) {
+            if (repeat_count > 1) {
+                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ prefix, title, repeat_index + 1 });
+            } else {
+                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
+            }
+        } else {
+            Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
+        }
+
+        Output.flush();
+    }
+
+    pub fn printIfNeeded(this: *CurrentFile) void {
+        if (this.has_printed_filename) return;
+        this.has_printed_filename = true;
+        print(this.title, this.prefix, this.repeat_info.count, this.repeat_info.index);
+    }
+};
+
 pub const TestRunner = struct {
+    current_file: CurrentFile = CurrentFile{},
     tests: TestRunner.Test.List = .{},
     log: *logger.Log,
     files: File.List = .{},
@@ -66,7 +120,7 @@ pub const TestRunner = struct {
     default_timeout_override: u32 = std.math.maxInt(u32),
 
     event_loop_timer: bun.api.Timer.EventLoopTimer = .{
-        .next = .{},
+        .next = .epoch,
         .tag = .TestRunner,
     },
     active_test_for_timeout: ?TestRunner.Test.ID = null,
@@ -84,8 +138,23 @@ pub const TestRunner = struct {
     filter_buffer: MutableString,
 
     unhandled_errors_between_tests: u32 = 0,
+    summary: Summary = Summary{},
 
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
+
+    pub const Summary = struct {
+        pass: u32 = 0,
+        expectations: u32 = 0,
+        skip: u32 = 0,
+        todo: u32 = 0,
+        fail: u32 = 0,
+        files: u32 = 0,
+        skipped_because_label: u32 = 0,
+
+        pub fn didLabelFilterOutAllTests(this: *const Summary) bool {
+            return this.skipped_because_label > 0 and (this.pass + this.skip + this.todo + this.fail + this.expectations) == 0;
+        }
+    };
 
     pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
         _ = vm; // autofix
@@ -178,27 +247,38 @@ pub const TestRunner = struct {
         onTestPass: OnTestUpdate,
         onTestFail: OnTestUpdate,
         onTestSkip: OnTestUpdate,
+        onTestFilteredOut: OnTestUpdate, // when a test is filtered out by a label
         onTestTodo: OnTestUpdate,
     };
 
-    pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
+    pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .pass;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestPass(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
     }
 
-    pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
+    pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .fail;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestFail(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
     }
 
-    pub fn reportSkip(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
+    pub fn reportSkip(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .skip;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestSkip(this.callback, test_id, file, label, 0, 0, parent);
     }
 
-    pub fn reportTodo(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
+    pub fn reportTodo(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .todo;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestTodo(this.callback, test_id, file, label, 0, 0, parent);
+    }
+
+    pub fn reportFilteredOut(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope, line_number: u32) void {
+        this.tests.items(.status)[test_id] = .skip;
+        this.tests.items(.line_number)[test_id] = line_number;
+        this.callback.onTestFilteredOut(this.callback, test_id, file, label, 0, 0, parent);
     }
 
     pub fn addTestCount(this: *TestRunner, count: u32) u32 {
@@ -239,6 +319,7 @@ pub const TestRunner = struct {
 
     pub const Test = struct {
         status: Status = Status.pending,
+        line_number: u32 = 0,
 
         pub const ID = u32;
         pub const null_id: ID = std.math.maxInt(Test.ID);
@@ -250,6 +331,8 @@ pub const TestRunner = struct {
             fail,
             skip,
             todo,
+            timeout,
+            skipped_because_label,
             /// A test marked as `.failing()` actually passed
             fail_because_failing_test_passed,
             fail_because_todo_passed,
@@ -499,7 +582,7 @@ pub const Jest = struct {
             return globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
         }
 
-        const timeout_ms: u32 = @intCast(@max(arguments[0].coerce(i32, globalObject), 0));
+        const timeout_ms: u32 = @intCast(@max(try arguments[0].coerce(i32, globalObject), 0));
 
         if (Jest.runner) |test_runner| {
             test_runner.default_timeout_override = timeout_ms;
@@ -528,6 +611,7 @@ pub const TestScope = struct {
     task: ?*TestRunnerTask = null,
     tag: Tag = .pass,
     snapshot_count: usize = 0,
+    line_number: u32 = 0,
 
     // null if the test does not set a timeout
     timeout_millis: u32 = std.math.maxInt(u32),
@@ -670,7 +754,7 @@ pub const TestScope = struct {
         debug("test({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
         var initial_value = JSValue.zero;
-        task.started_at = bun.timespec.now();
+        task.started_at = .now();
 
         if (this.timeout_millis == std.math.maxInt(u32)) {
             if (Jest.runner.?.default_timeout_override != std.math.maxInt(u32)) {
@@ -809,6 +893,8 @@ pub const DescribeScope = struct {
     done: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
+    line_number: u32 = 0,
+    test_id_for_debugger: u32 = 0,
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1131,7 +1217,7 @@ pub const DescribeScope = struct {
             if (this.runCallback(globalObject, .beforeAll)) |err| {
                 _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
                 while (i < end) {
-                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
+                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this, tests[i].line_number);
                     i += 1;
                 }
                 this.deinit(globalObject);
@@ -1145,6 +1231,7 @@ pub const DescribeScope = struct {
                     .globalThis = globalObject,
                     .source_file_path = source.path.text,
                     .test_id_for_debugger = 0,
+                    .started_at = .epoch,
                 };
                 runner.ref.ref(globalObject.bunVM());
 
@@ -1163,6 +1250,7 @@ pub const DescribeScope = struct {
                 .globalThis = globalObject,
                 .source_file_path = source.path.text,
                 .test_id_for_debugger = if (maybe_report_debugger) tests[i].test_id_for_debugger else 0,
+                .started_at = .epoch,
             };
             runner.ref.ref(globalObject.bunVM());
 
@@ -1267,7 +1355,7 @@ pub const TestRunnerTask = struct {
     promise_state: AsyncState = .none,
     sync_state: AsyncState = .none,
     reported: bool = false,
-    started_at: bun.timespec = .{},
+    started_at: bun.timespec,
 
     pub const AsyncState = enum {
         none,
@@ -1292,6 +1380,10 @@ pub const TestRunnerTask = struct {
             deduped = true;
         } else {
             if (is_unhandled and Jest.runner != null) {
+                if (Output.isAIAgent()) {
+                    Jest.runner.?.current_file.printIfNeeded();
+                }
+
                 Output.prettyErrorln(
                     \\<r>
                     \\<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>
@@ -1300,7 +1392,12 @@ pub const TestRunnerTask = struct {
                 , .{});
 
                 Output.flush();
+            } else if (!is_unhandled and Jest.runner != null) {
+                if (Output.isAIAgent()) {
+                    Jest.runner.?.current_file.printIfNeeded();
+                }
             }
+
             jsc_vm.runErrorHandlerWithDedupe(rejection, jsc_vm.onUnhandledRejectionExceptionList);
             if (is_unhandled and Jest.runner != null) {
                 Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});
@@ -1347,6 +1444,7 @@ pub const TestRunnerTask = struct {
         expect.is_expecting_assertions = false;
         expect.is_expecting_assertions_count = false;
         jsc_vm.last_reported_error_for_dedupe = .zero;
+        this.started_at = .now();
 
         const test_id = this.test_id;
         if (test_id == TestRunner.Test.null_id) {
@@ -1370,6 +1468,9 @@ pub const TestRunnerTask = struct {
                 .skip => {
                     this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, test_id_for_debugger, describe);
                 },
+                .skipped_because_label => {
+                    this.processTestResult(globalThis, .{ .skipped_because_label = {} }, test_, test_id, test_id_for_debugger, describe);
+                },
                 else => {},
             }
             this.deinit();
@@ -1381,11 +1482,12 @@ pub const TestRunnerTask = struct {
 
         if (this.needs_before_each) {
             this.needs_before_each = false;
-            const label = test_.label;
+            const label = bun.default_allocator.dupe(u8, test_.label) catch bun.outOfMemory();
+            defer bun.default_allocator.free(label);
 
             if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
                 _ = jsc_vm.uncaughtException(globalThis, err, true);
-                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
+                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe, test_.line_number);
                 return false;
             }
         }
@@ -1427,7 +1529,7 @@ pub const TestRunnerTask = struct {
         const elapsed = now.duration(&this.started_at).ms();
         this.ref.unref(this.globalThis.bunVM());
         this.globalThis.requestTermination();
-        this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .{ .timeout = @intCast(@max(elapsed, 0)) });
+        this.handleResult(.{ .timeout = {} }, .{ .timeout = @intCast(@max(elapsed, 0)) });
     }
 
     const ResultType = union(enum) {
@@ -1564,6 +1666,7 @@ pub const TestRunnerTask = struct {
                 count,
                 elapsed,
                 describe,
+                test_.line_number,
             ),
             .fail => |count| Jest.runner.?.reportFailure(
                 test_id,
@@ -1572,6 +1675,7 @@ pub const TestRunnerTask = struct {
                 count,
                 elapsed,
                 describe,
+                test_.line_number,
             ),
             .fail_because_failing_test_passed => |count| {
                 Output.prettyErrorln("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works", .{});
@@ -1582,6 +1686,7 @@ pub const TestRunnerTask = struct {
                     count,
                     elapsed,
                     describe,
+                    test_.line_number,
                 );
             },
             .fail_because_expected_has_assertions => {
@@ -1594,6 +1699,7 @@ pub const TestRunnerTask = struct {
                     0,
                     elapsed,
                     describe,
+                    test_.line_number,
                 );
             },
             .fail_because_expected_assertion_count => |counter| {
@@ -1609,10 +1715,21 @@ pub const TestRunnerTask = struct {
                     counter.actual,
                     elapsed,
                     describe,
+                    test_.line_number,
                 );
             },
-            .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
-            .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe),
+            .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe, test_.line_number),
+            .skipped_because_label => Jest.runner.?.reportFilteredOut(test_id, this.source_file_path, test_.label, describe, test_.line_number),
+            .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe, test_.line_number),
+            .timeout => Jest.runner.?.reportFailure(
+                test_id,
+                this.source_file_path,
+                test_.label,
+                0,
+                elapsed,
+                describe,
+                test_.line_number,
+            ),
             .fail_because_todo_passed => |count| {
                 Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
                 Jest.runner.?.reportFailure(
@@ -1622,6 +1739,7 @@ pub const TestRunnerTask = struct {
                     count,
                     elapsed,
                     describe,
+                    test_.line_number,
                 );
             },
             .pending => @panic("Unexpected pending test"),
@@ -1634,6 +1752,8 @@ pub const TestRunnerTask = struct {
                         .pass => .pass,
                         .skip => .skip,
                         .todo => .todo,
+                        .timeout => .timeout,
+                        .skipped_because_label => .skipped_because_label,
                         else => .fail,
                     }, @floatFromInt(elapsed));
                 }
@@ -1673,20 +1793,22 @@ pub const Result = union(TestRunner.Test.Status) {
     fail: u32,
     skip: void,
     todo: void,
+    timeout: void,
+    skipped_because_label: void,
     fail_because_failing_test_passed: u32,
     fail_because_todo_passed: u32,
     fail_because_expected_has_assertions: void,
     fail_because_expected_assertion_count: Counter,
 
     pub fn isFailure(this: *const Result) bool {
-        return this.* == .fail or this.* == .fail_because_expected_has_assertions or this.* == .fail_because_expected_assertion_count;
+        return this.* == .fail or this.* == .timeout or this.* == .fail_because_expected_has_assertions or this.* == .fail_because_expected_assertion_count;
     }
 
     pub fn forceTODO(this: Result, is_todo: bool) Result {
         if (is_todo and this == .pass)
             return .{ .fail_because_todo_passed = this.pass };
 
-        if (is_todo and this == .fail) {
+        if (is_todo and (this == .fail or this == .timeout)) {
             return .{ .todo = {} };
         }
         return this;
@@ -1758,10 +1880,10 @@ inline fn createScope(
         }
 
         if (description.isClass(globalThis)) {
-            const name_str = if (description.className(globalThis).toSlice(allocator).length() == 0)
+            const name_str = if ((try description.className(globalThis)).toSlice(allocator).length() == 0)
                 description.getName(globalThis).toSlice(allocator).slice()
             else
-                description.className(globalThis).toSlice(allocator).slice();
+                (try description.className(globalThis)).toSlice(allocator).slice();
             break :brk try allocator.dupe(u8, name_str);
         }
         if (description.isFunction()) {
@@ -1776,25 +1898,25 @@ inline fn createScope(
 
     var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
-        timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
+        timeout_ms = @as(u32, @intCast(@max(try args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
-            timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
+            timeout_ms = @as(u32, @intCast(@max(try timeout.coerce(i32, globalThis), 0)));
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
                 return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
             }
-            // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
+            // TODO: retry_count = @intCast(u32, @max(try retries.coerce(i32, globalThis), 0));
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
                 return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
             }
-            // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
+            // TODO: repeat_count = @intCast(u32, @max(try repeats.coerce(i32, globalThis), 0));
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
@@ -1814,16 +1936,18 @@ inline fn createScope(
         (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
     if (is_test) {
-        if (!is_skip) {
-            if (Jest.runner.?.filter_regex) |regex| {
-                var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
+        // Apply filter to all tests, including skipped and todo tests
+        if (Jest.runner) |runner| {
+            if (runner.filter_regex) |regex| {
+                var buffer: bun.MutableString = runner.filter_buffer;
                 buffer.reset();
                 appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
                 buffer.append(label) catch unreachable;
                 const str = bun.String.fromBytes(buffer.slice());
-                is_skip = !regex.matches(str);
-                if (is_skip) {
-                    tag_to_use = .skip;
+                const matches_filter = regex.matches(str);
+                if (!matches_filter) {
+                    is_skip = true;
+                    tag_to_use = .skipped_because_label;
                 }
             }
         }
@@ -1852,16 +1976,16 @@ inline fn createScope(
             .func_arg = function_args,
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
+            .line_number = captureTestLineNumber(callframe, globalThis),
             .test_id_for_debugger = brk: {
-                if (!is_skip) {
-                    const vm = globalThis.bunVM();
-                    if (vm.debugger) |*debugger| {
-                        if (debugger.test_reporter_agent.isEnabled()) {
-                            max_test_id_for_debugger += 1;
-                            var name = bun.String.init(label);
-                            debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name);
-                            break :brk max_test_id_for_debugger;
-                        }
+                const vm = globalThis.bunVM();
+                if (vm.debugger) |*debugger| {
+                    if (debugger.test_reporter_agent.isEnabled()) {
+                        max_test_id_for_debugger += 1;
+                        var name = bun.String.init(label);
+                        const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
+                        debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, .@"test", parent_id);
+                        break :brk max_test_id_for_debugger;
                     }
                 }
 
@@ -1875,6 +1999,20 @@ inline fn createScope(
             .parent = parent,
             .file_id = parent.file_id,
             .tag = tag_to_use,
+            .line_number = captureTestLineNumber(callframe, globalThis),
+            .test_id_for_debugger = brk: {
+                const vm = globalThis.bunVM();
+                if (vm.debugger) |*debugger| {
+                    if (debugger.test_reporter_agent.isEnabled()) {
+                        max_test_id_for_debugger += 1;
+                        var name = bun.String.init(label);
+                        const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
+                        debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, .describe, parent_id);
+                        break :brk max_test_id_for_debugger;
+                    }
+                }
+                break :brk 0;
+            },
         };
 
         return scope.run(globalThis, function, &.{});
@@ -1905,7 +2043,7 @@ inline fn createIfScope(
         .pass => .{ Scope.skip, Scope.call },
         .fail => @compileError("unreachable"),
         .only => @compileError("unreachable"),
-        .skip => .{ Scope.call, Scope.skip },
+        .skipped_because_label, .skip => .{ Scope.call, Scope.skip },
         .todo => .{ Scope.call, Scope.todo },
     };
 
@@ -1944,7 +2082,50 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
 
     while (idx < label.len) {
         const char = label[idx];
-        if (char == '%' and (idx + 1 < label.len) and !(args_idx >= function_args.len)) {
+
+        if (char == '$' and idx + 1 < label.len and function_args.len > 0 and function_args[0].isObject()) {
+            const var_start = idx + 1;
+            var var_end = var_start;
+
+            if (bun.js_lexer.isIdentifierStart(label[var_end])) {
+                var_end += 1;
+
+                while (var_end < label.len) {
+                    const c = label[var_end];
+                    if (c == '.') {
+                        if (var_end + 1 < label.len and bun.js_lexer.isIdentifierContinue(label[var_end + 1])) {
+                            var_end += 1;
+                        } else {
+                            break;
+                        }
+                    } else if (bun.js_lexer.isIdentifierContinue(c)) {
+                        var_end += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                const var_path = label[var_start..var_end];
+                const value = try function_args[0].getIfPropertyExistsFromPath(globalThis, bun.String.init(var_path).toJS(globalThis));
+                if (!value.isEmptyOrUndefinedOrNull()) {
+                    var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                    defer formatter.deinit();
+                    const value_str = std.fmt.allocPrint(allocator, "{}", .{value.toFmt(&formatter)}) catch bun.outOfMemory();
+                    defer allocator.free(value_str);
+                    list.appendSlice(allocator, value_str) catch bun.outOfMemory();
+                    idx = var_end;
+                    continue;
+                }
+            } else {
+                while (var_end < label.len and (bun.js_lexer.isIdentifierContinue(label[var_end]) and label[var_end] != '$')) {
+                    var_end += 1;
+                }
+            }
+
+            list.append(allocator, '$') catch bun.outOfMemory();
+            list.appendSlice(allocator, label[var_start..var_end]) catch bun.outOfMemory();
+            idx = var_end;
+        } else if (char == '%' and (idx + 1 < label.len) and !(args_idx >= function_args.len)) {
             const current_arg = function_args[args_idx];
 
             switch (label[idx + 1]) {
@@ -1963,7 +2144,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                 'j', 'o' => {
                     var str = bun.String.empty;
                     defer str.deref();
-                    current_arg.jsonStringify(globalThis, 0, &str);
+                    try current_arg.jsonStringify(globalThis, 0, &str);
                     const owned_slice = str.toOwnedSlice(allocator) catch bun.outOfMemory();
                     defer allocator.free(owned_slice);
                     list.appendSlice(allocator, owned_slice) catch bun.outOfMemory();
@@ -2001,7 +2182,11 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
     return list.toOwnedSlice(allocator);
 }
 
-pub const EachData = struct { strong: JSC.Strong.Optional, is_test: bool };
+pub const EachData = struct {
+    strong: JSC.Strong.Optional,
+    is_test: bool,
+    line_number: u32 = 0,
+};
 
 fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
     const signature = "eachBind";
@@ -2023,25 +2208,25 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
 
     var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
-        timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
+        timeout_ms = @as(u32, @intCast(@max(try args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
-            timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
+            timeout_ms = @as(u32, @intCast(@max(try timeout.coerce(i32, globalThis), 0)));
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
                 return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
             }
-            // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
+            // TODO: retry_count = @intCast(u32, @max(try retries.coerce(i32, globalThis), 0));
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
                 return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
             }
-            // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
+            // TODO: repeat_count = @intCast(u32, @max(try repeats.coerce(i32, globalThis), 0));
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
@@ -2123,33 +2308,64 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                 (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
                 (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
-            if (Jest.runner.?.filter_regex) |regex| {
-                var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
-                buffer.reset();
-                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
-                buffer.append(formattedLabel) catch unreachable;
-                const str = bun.String.fromBytes(buffer.slice());
-                is_skip = !regex.matches(str);
+            var tag_to_use = tag;
+            if (!is_skip) {
+                if (Jest.runner.?.filter_regex) |regex| {
+                    var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
+                    buffer.reset();
+                    appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                    buffer.append(formattedLabel) catch unreachable;
+                    const str = bun.String.fromBytes(buffer.slice());
+                    is_skip = !regex.matches(str);
+                    if (is_skip) {
+                        tag_to_use = .skipped_because_label;
+                    }
+                }
             }
 
             if (is_skip) {
                 parent.skip_count += 1;
                 function.unprotect();
-                // lets free the formatted label
-                allocator.free(formattedLabel);
-            } else if (each_data.is_test) {
-                if (Jest.runner.?.only and tag != .only) {
-                    return .js_undefined;
+            }
+
+            if (each_data.is_test) {
+                if (Jest.runner.?.only and tag != .only and tag_to_use != .skip and tag_to_use != .skipped_because_label) {
+                    allocator.free(formattedLabel);
+                    for (function_args) |arg| {
+                        if (arg != .zero) arg.unprotect();
+                    }
+                    allocator.free(function_args);
                 } else {
-                    function.protect();
+                    if (!is_skip) {
+                        function.protect();
+                    } else {
+                        for (function_args) |arg| {
+                            if (arg != .zero) arg.unprotect();
+                        }
+                        allocator.free(function_args);
+                    }
                     parent.tests.append(allocator, TestScope{
                         .label = formattedLabel,
                         .parent = parent,
-                        .tag = tag,
-                        .func = function,
-                        .func_arg = function_args,
+                        .tag = tag_to_use,
+                        .func = if (is_skip) .zero else function,
+                        .func_arg = if (is_skip) &.{} else function_args,
                         .func_has_callback = has_callback_function,
                         .timeout_millis = timeout_ms,
+                        .line_number = each_data.line_number,
+                        .test_id_for_debugger = brk: {
+                            const vm = globalThis.bunVM();
+                            if (vm.debugger) |*debugger| {
+                                if (debugger.test_reporter_agent.isEnabled()) {
+                                    max_test_id_for_debugger += 1;
+                                    var name = bun.String.init(formattedLabel);
+                                    const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
+                                    debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, .@"test", parent_id);
+                                    break :brk max_test_id_for_debugger;
+                                }
+                            }
+                            break :brk 0;
+                        },
                     }) catch unreachable;
                 }
             } else {
@@ -2159,6 +2375,19 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     .parent = parent,
                     .file_id = parent.file_id,
                     .tag = tag,
+                    .test_id_for_debugger = brk: {
+                        const vm = globalThis.bunVM();
+                        if (vm.debugger) |*debugger| {
+                            if (debugger.test_reporter_agent.isEnabled()) {
+                                max_test_id_for_debugger += 1;
+                                var name = bun.String.init(formattedLabel);
+                                const parent_id = if (parent.test_id_for_debugger > 0) @as(i32, @intCast(parent.test_id_for_debugger)) else -1;
+                                debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name, .describe, parent_id);
+                                break :brk max_test_id_for_debugger;
+                            }
+                        }
+                        break :brk 0;
+                    },
                 };
 
                 const ret = scope.run(globalThis, function, function_args);
@@ -2198,6 +2427,7 @@ inline fn createEach(
     each_data.* = EachData{
         .strong = strong,
         .is_test = is_test,
+        .line_number = captureTestLineNumber(callframe, globalThis),
     };
 
     return JSC.host_fn.NewFunctionWithData(globalThis, name, 3, eachBind, true, each_data);
@@ -2212,3 +2442,14 @@ fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalO
 }
 
 const assert = bun.assert;
+
+extern fn Bun__CallFrame__getLineNumber(callframe: *JSC.CallFrame, globalObject: *JSC.JSGlobalObject) u32;
+
+fn captureTestLineNumber(callframe: *JSC.CallFrame, globalThis: *JSGlobalObject) u32 {
+    if (Jest.runner) |runner| {
+        if (runner.test_options.file_reporter == .junit) {
+            return Bun__CallFrame__getLineNumber(callframe, globalThis);
+        }
+    }
+    return 0;
+}

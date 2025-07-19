@@ -290,7 +290,7 @@ pub const Framework = struct {
         import_source: []const u8 = "react-refresh/runtime",
     };
 
-    pub const react_install_command = "bun i react@experimental react-dom@experimental react-server-dom-bun";
+    pub const react_install_command = "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
 
     pub fn addReactInstallCommandNote(log: *bun.logger.Log) !void {
         try log.addMsg(.{
@@ -594,6 +594,37 @@ pub const Framework = struct {
         out: *bun.transpiler.Transpiler,
         bundler_options: *const BuildConfigSubset,
     ) !void {
+        const source_map: bun.options.SourceMapOption = switch (mode) {
+            // Source maps must always be external, as DevServer special cases
+            // the linking and part of the generation of these. It also relies
+            // on source maps always being enabled.
+            .development => .external,
+            // TODO: follow user configuration
+            else => .none,
+        };
+
+        return initTranspilerWithSourceMap(
+            framework,
+            arena,
+            log,
+            mode,
+            renderer,
+            out,
+            bundler_options,
+            source_map,
+        );
+    }
+
+    pub fn initTranspilerWithSourceMap(
+        framework: *Framework,
+        arena: std.mem.Allocator,
+        log: *bun.logger.Log,
+        mode: Mode,
+        renderer: Graph,
+        out: *bun.transpiler.Transpiler,
+        bundler_options: *const BuildConfigSubset,
+        source_map: bun.options.SourceMapOption,
+    ) !void {
         const JSAst = bun.JSAst;
 
         var ast_memory_allocator: JSAst.ASTMemoryAllocator = undefined;
@@ -646,6 +677,11 @@ pub const Framework = struct {
             // Support `esm-env` package using this condition.
             try out.options.conditions.appendSlice(&.{"development"});
         }
+        // Ensure "node" condition is included for server-side rendering
+        // This helps with package.json imports field resolution
+        if (renderer == .server or renderer == .ssr) {
+            try out.options.conditions.appendSlice(&.{"node"});
+        }
         if (bundler_options.conditions.count() > 0) {
             try out.options.conditions.appendSlice(bundler_options.conditions.keys());
         }
@@ -661,14 +697,7 @@ pub const Framework = struct {
         if (bundler_options.ignoreDCEAnnotations) |ignore|
             out.options.ignore_dce_annotations = ignore;
 
-        out.options.source_map = switch (mode) {
-            // Source maps must always be external, as DevServer special cases
-            // the linking and part of the generation of these. It also relies
-            // on source maps always being enabled.
-            .development => .external,
-            // TODO: follow user configuration
-            else => .none,
-        };
+        out.options.source_map = source_map;
         if (bundler_options.env != ._none) {
             out.options.env.behavior = bundler_options.env;
             out.options.env.prefix = bundler_options.env_prefix orelse "";
@@ -876,7 +905,7 @@ pub fn printWarning() void {
         bun.Output.warn(
             \\Be advised that Bun Bake is highly experimental, and its API
             \\will have breaking changes. Join the <magenta>#bake<r> Discord
-            \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
+            \\channel to help us find bugs: <blue>https://bun.com/discord<r>
             \\
             \\
         , .{});

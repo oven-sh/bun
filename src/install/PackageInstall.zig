@@ -43,7 +43,7 @@ pub const PackageInstall = struct {
 
     package_name: String,
     package_version: string,
-    patch: Patch,
+    patch: ?Patch,
 
     // TODO: this is never read
     file_count: u32 = 0,
@@ -53,15 +53,8 @@ pub const PackageInstall = struct {
     const ThisPackageInstall = @This();
 
     pub const Patch = struct {
-        root_project_dir: ?[]const u8 = null,
-        patch_path: string = undefined,
-        patch_contents_hash: u64 = 0,
-
-        pub const NULL = Patch{};
-
-        pub fn isNull(this: Patch) bool {
-            return this.root_project_dir == null;
-        }
+        path: string,
+        contents_hash: u64,
     };
 
     const debug = Output.scoped(.install, true);
@@ -78,7 +71,7 @@ pub const PackageInstall = struct {
         packages_with_blocked_scripts: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, usize) = .{},
     };
 
-    pub const Method = enum {
+    pub const Method = enum(u8) {
         clonefile,
 
         /// Slower than clonefile
@@ -140,12 +133,11 @@ pub const PackageInstall = struct {
     ///
     fn verifyPatchHash(
         this: *@This(),
+        patch: *const Patch,
         root_node_modules_dir: std.fs.Dir,
     ) bool {
-        bun.debugAssert(!this.patch.isNull());
-
         // hash from the .patch file, to be checked against bun tag
-        const patchfile_contents_hash = this.patch.patch_contents_hash;
+        const patchfile_contents_hash = patch.contents_hash;
         var buf: BuntagHashBuf = undefined;
         const bunhashtag = buntaghashbuf_make(&buf, patchfile_contents_hash);
 
@@ -211,9 +203,12 @@ pub const PackageInstall = struct {
                     this.verifyTransitiveSymlinkedFolder(root_node_modules_dir),
                 else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag),
             };
-        if (this.patch.isNull()) return verified;
-        if (!verified) return false;
-        return this.verifyPatchHash(root_node_modules_dir);
+
+        if (this.patch) |*patch| {
+            if (!verified) return false;
+            return this.verifyPatchHash(patch, root_node_modules_dir);
+        }
+        return verified;
     }
 
     // Only check for destination directory in node_modules. We can't use package.json because
@@ -415,7 +410,7 @@ pub const PackageInstall = struct {
         var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
         defer cached_package_dir.close();
         var walker_ = Walker.walk(
-            cached_package_dir,
+            .fromStdDir(cached_package_dir),
             this.allocator,
             &[_]bun.OSPathSlice{},
             &[_]bun.OSPathSlice{},
@@ -429,7 +424,7 @@ pub const PackageInstall = struct {
             ) !u32 {
                 var real_file_count: u32 = 0;
                 var stackpath: [bun.MAX_PATH_BYTES]u8 = undefined;
-                while (try walker.next()) |entry| {
+                while (try walker.next().unwrap()) |entry| {
                     switch (entry.kind) {
                         .directory => {
                             _ = bun.sys.mkdirat(.fromStdDir(destination_dir_), entry.path, 0o755);
@@ -440,7 +435,7 @@ pub const PackageInstall = struct {
                             const path: [:0]u8 = stackpath[0..entry.path.len :0];
                             const basename: [:0]u8 = stackpath[entry.path.len - entry.basename.len .. entry.path.len :0];
                             switch (bun.c.clonefileat(
-                                entry.dir.fd,
+                                entry.dir.cast(),
                                 basename,
                                 destination_dir_.fd,
                                 path,
@@ -549,7 +544,7 @@ pub const PackageInstall = struct {
             return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
 
         state.walker = Walker.walk(
-            state.cached_package_dir,
+            .fromStdDir(state.cached_package_dir),
             this.allocator,
             &[_]bun.OSPathSlice{},
             if (method == .symlink and this.cache_dir_subpath.len == 1 and this.cache_dir_subpath[0] == '.')
@@ -635,7 +630,7 @@ pub const PackageInstall = struct {
 
                 var copy_file_state: bun.CopyFileState = .{};
 
-                while (try walker.next()) |entry| {
+                while (try walker.next().unwrap()) |entry| {
                     if (comptime Environment.isWindows) {
                         switch (entry.kind) {
                             .directory, .file => {},
@@ -688,10 +683,9 @@ pub const PackageInstall = struct {
                     } else {
                         if (entry.kind != .file) continue;
                         real_file_count += 1;
-                        const openFile = std.fs.Dir.openFile;
                         const createFile = std.fs.Dir.createFile;
 
-                        var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
+                        var in_file = try entry.dir.openat(entry.basename, bun.O.RDONLY, 0).unwrap();
                         defer in_file.close();
 
                         debug("createFile {} {s}\n", .{ destination_dir_.fd, entry.path });
@@ -712,11 +706,11 @@ pub const PackageInstall = struct {
                         defer outfile.close();
 
                         if (comptime Environment.isPosix) {
-                            const stat = in_file.stat() catch continue;
+                            const stat = in_file.stat().unwrap() catch continue;
                             _ = bun.c.fchmod(outfile.handle, @intCast(stat.mode));
                         }
 
-                        bun.copyFileWithState(.fromStdFile(in_file), .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
+                        bun.copyFileWithState(in_file, .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
                             if (progress_) |progress| {
                                 progress.root.end();
                                 progress.refresh();
@@ -910,20 +904,20 @@ pub const PackageInstall = struct {
                 var real_file_count: u32 = 0;
                 var queue = if (Environment.isWindows) HardLinkWindowsInstallTask.getQueue();
 
-                while (try walker.next()) |entry| {
+                while (try walker.next().unwrap()) |entry| {
                     if (comptime Environment.isPosix) {
                         switch (entry.kind) {
                             .directory => {
                                 bun.MakePath.makePath(std.meta.Elem(@TypeOf(entry.path)), destination_dir, entry.path) catch {};
                             },
                             .file => {
-                                std.posix.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
+                                std.posix.linkatZ(entry.dir.cast(), entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
                                     if (err != error.PathAlreadyExists) {
                                         return err;
                                     }
 
-                                    std.posix.unlinkat(destination_dir.fd, entry.path, 0) catch {};
-                                    try std.posix.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0);
+                                    std.posix.unlinkatZ(destination_dir.fd, entry.path, 0) catch {};
+                                    try std.posix.linkatZ(entry.dir.cast(), entry.basename, destination_dir.fd, entry.path, 0);
                                 };
 
                                 real_file_count += 1;
@@ -1019,7 +1013,7 @@ pub const PackageInstall = struct {
                 head2: []if (Environment.isWindows) u16 else u8,
             ) !u32 {
                 var real_file_count: u32 = 0;
-                while (try walker.next()) |entry| {
+                while (try walker.next().unwrap()) |entry| {
                     if (comptime Environment.isPosix) {
                         switch (entry.kind) {
                             .directory => {
@@ -1181,7 +1175,7 @@ pub const PackageInstall = struct {
                         var unintall_task: *@This() = @fieldParentPtr("task", task);
                         var debug_timer = bun.Output.DebugTimer.start();
                         defer {
-                            _ = PackageManager.get().decrementPendingTasks();
+                            PackageManager.get().decrementPendingTasks();
                             PackageManager.get().wake();
                         }
 
@@ -1317,7 +1311,7 @@ pub const PackageInstall = struct {
                 _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false);
             }
 
-            const res = strings.copyUTF16IntoUTF8(dest_buf[0..], []const u16, wbuf[0..i], true);
+            const res = strings.copyUTF16IntoUTF8(dest_buf[0..], []const u16, wbuf[0..i]);
             var offset: usize = res.written;
             if (dest_buf[offset - 1] != std.fs.path.sep_windows) {
                 dest_buf[offset] = std.fs.path.sep_windows;
@@ -1334,12 +1328,12 @@ pub const PackageInstall = struct {
 
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
-            switch (bun.sys.symlinkOrJunction(dest_z, target_z)) {
+            switch (bun.sys.symlinkOrJunction(dest_z, target_z, null)) {
                 .err => |err_| brk: {
                     var err = err_;
                     if (err.getErrno() == .EXIST) {
                         _ = bun.sys.rmdirat(.fromStdDir(destination_dir), this.destination_dir_subpath);
-                        switch (bun.sys.symlinkOrJunction(dest_z, target_z)) {
+                        switch (bun.sys.symlinkOrJunction(dest_z, target_z, null)) {
                             .err => |e| err = e,
                             .result => break :brk,
                         }
@@ -1380,7 +1374,7 @@ pub const PackageInstall = struct {
         return switch (state) {
             .done => false,
             else => brk: {
-                if (this.patch.isNull()) {
+                if (this.patch == null) {
                     const exists = switch (resolution_tag) {
                         .npm => package_json_exists: {
                             var buf = &PackageManager.cached_package_folder_name_buf;

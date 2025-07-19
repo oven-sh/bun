@@ -84,11 +84,6 @@ interface ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaul
   $error: typeof ReadableStreamDefaultController.prototype.error;
 }
 
-declare var ReadableStreamDefaultController: {
-  prototype: ReadableStreamDefaultController;
-  new (): ReadableStreamDefaultController;
-};
-
 interface ReadableStream<R = any> extends _ReadableStream<R> {
   $highWaterMark: number;
   $bunNativePtr: undefined | TODO;
@@ -344,6 +339,7 @@ declare function $addEventListener(): TODO;
 declare function $appendFromJS(): TODO;
 declare function $argv(): TODO;
 declare function $assignToStream(): TODO;
+declare function $assignStreamIntoResumableSink(): TODO;
 declare function $associatedReadableByteStreamController(): TODO;
 declare function $autoAllocateChunkSize(): TODO;
 declare function $backpressure(): TODO;

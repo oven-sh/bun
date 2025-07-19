@@ -325,7 +325,7 @@ When adding a build step is too complicated, you can set `development: false` in
 
 ## Plugins
 
-Bun's [bundler plugins](https://bun.sh/docs/bundler/plugins) are also supported when bundling static routes.
+Bun's [bundler plugins](https://bun.com/docs/bundler/plugins) are also supported when bundling static routes.
 
 To configure plugins for `Bun.serve`, add a `plugins` array in the `[serve.static]` section of your `bunfig.toml`.
 
@@ -365,7 +365,7 @@ Or in your CSS:
 
 ### Custom plugins
 
-Any JS file or module which exports a [valid bundler plugin object](https://bun.sh/docs/bundler/plugins#usage) (essentially an object with a `name` and `setup` field) can be placed inside the `plugins` array:
+Any JS file or module which exports a [valid bundler plugin object](https://bun.com/docs/bundler/plugins#usage) (essentially an object with a `name` and `setup` field) can be placed inside the `plugins` array:
 
 ```toml#bunfig.toml
 [serve.static]
@@ -381,7 +381,6 @@ Note: this is currently in `bunfig.toml` to make it possible to know statically 
 Bun uses [`HTMLRewriter`](/docs/api/html-rewriter) to scan for `<script>` and `<link>` tags in HTML files, uses them as entrypoints for [Bun's bundler](/docs/bundler), generates an optimized bundle for the JavaScript/TypeScript/TSX/JSX and CSS files, and serves the result.
 
 1. **`<script>` processing**
-
    - Transpiles TypeScript, JSX, and TSX in `<script>` tags
    - Bundles imported dependencies
    - Generates sourcemaps for debugging
@@ -392,7 +391,6 @@ Bun uses [`HTMLRewriter`](/docs/api/html-rewriter) to scan for `<script>` and `<
    ```
 
 2. **`<link>` processing**
-
    - Processes CSS imports and `<link>` tags
    - Concatenates CSS files
    - Rewrites `url` and asset paths to include content-addressable hashes in URLs
@@ -402,18 +400,15 @@ Bun uses [`HTMLRewriter`](/docs/api/html-rewriter) to scan for `<script>` and `<
    ```
 
 3. **`<img>` & asset processing**
-
    - Links to assets are rewritten to include content-addressable hashes in URLs
    - Small assets in CSS files are inlined into `data:` URLs, reducing the total number of HTTP requests sent over the wire
 
 4. **Rewrite HTML**
-
    - Combines all `<script>` tags into a single `<script>` tag with a content-addressable hash in the URL
    - Combines all `<link>` tags into a single `<link>` tag with a content-addressable hash in the URL
    - Outputs a new HTML file
 
 5. **Serve**
-
    - All the output files from the bundler are exposed as static routes, using the same mechanism internally as when you pass a `Response` object to [`static` in `Bun.serve()`](/docs/api/http#static-routes).
 
 This works similarly to how [`Bun.build` processes HTML files](/docs/bundler/html).

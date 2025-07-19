@@ -50,7 +50,7 @@ server.on('stream', (stream, headers) => {
 server.on('close', common.mustCall(() => fs.closeSync(fd)));
 
 server.listen(0, () => {
-  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  const client = http2.connect(`http://localhost:${server.address().port}`);
 
   const countdown = new Countdown(2, () => {
     client.close();

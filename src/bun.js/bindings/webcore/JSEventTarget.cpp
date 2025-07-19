@@ -233,13 +233,15 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
             warningMessage = "addEventListener called with undefined listener, which has no effect."_s;
         }
         auto errorInstance = JSC::ErrorInstance::create(vm, lexicalGlobalObject->errorStructure(JSC::ErrorType::Error), warningMessage, JSValue(), nullptr, RuntimeType::TypeNothing, JSC::ErrorType::Error);
+        RETURN_IF_EXCEPTION(throwScope, {});
         errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, String("AddEventListenerArgumentTypeWarning"_s)));
         JSObject& target = *castedThis;
         errorInstance->putDirect(vm, vm.propertyNames->target, &target);
         RETURN_IF_EXCEPTION(throwScope, {});
         errorInstance->putDirect(vm, vm.propertyNames->type, jsString(vm, WTFMove(type)));
         Bun::Process::emitWarningErrorInstance(lexicalGlobalObject, errorInstance);
-        RETURN_IF_EXCEPTION(throwScope, {});
+        if (throwScope.exception()) [[unlikely]]
+            throwScope.clearException();
     }
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addEventListenerForBindings(WTFMove(type), WTFMove(listener), WTFMove(options)); }));
     RETURN_IF_EXCEPTION(throwScope, {});

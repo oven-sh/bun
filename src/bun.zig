@@ -695,7 +695,6 @@ pub const webcore = @import("bun.js/webcore.zig");
 pub const api = @import("bun.js/api.zig");
 
 pub const logger = @import("./logger.zig");
-pub const ThreadPool = @import("./thread_pool.zig");
 pub const default_thread_stack_size = ThreadPool.default_thread_stack_size;
 pub const picohttp = @import("./deps/picohttp.zig");
 pub const uws = @import("./deps/uws.zig");
@@ -1850,7 +1849,8 @@ pub const ParseTask = bundle_v2.ParseTask;
 pub const threading = @import("./threading.zig");
 pub const Mutex = threading.Mutex;
 pub const Futex = threading.Futex;
-pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
+pub const ThreadPool = threading.ThreadPool;
+pub const UnboundedQueue = threading.UnboundedQueue;
 
 pub fn threadlocalAllocator() std.mem.Allocator {
     if (comptime use_mimalloc) {

@@ -562,6 +562,13 @@ pub const UpdateInteractiveCommand = struct {
         return result;
     }
 
+    const ColumnWidths = struct {
+        name: usize,
+        current: usize,
+        target: usize,
+        latest: usize,
+    };
+
     const MultiSelectState = struct {
         packages: []OutdatedPackage,
         selected: []bool,
@@ -573,25 +580,12 @@ pub const UpdateInteractiveCommand = struct {
         max_latest_len: usize = 0,
     };
 
-    fn promptForUpdates(allocator: std.mem.Allocator, packages: []OutdatedPackage) ![]bool {
-        if (packages.len == 0) {
-            Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
-            return allocator.alloc(bool, 0);
-        }
-
-        const selected = try allocator.alloc(bool, packages.len);
-        // Default to all unselected
-        @memset(selected, false);
-
-        // Calculate max column widths - need to account for diffFmt ANSI codes
+    fn calculateColumnWidths(packages: []OutdatedPackage) ColumnWidths {
+        // Calculate natural widths based on content
         var max_name_len: usize = "Package".len;
         var max_current_len: usize = "Current".len;
         var max_target_len: usize = "Target".len;
         var max_latest_len: usize = "Latest".len;
-
-        // Set reasonable limits to prevent excessive column widths
-        const MAX_NAME_WIDTH = 60;
-        const MAX_VERSION_WIDTH = 20;
 
         for (packages) |pkg| {
             // Include dev tag length in max calculation
@@ -603,26 +597,42 @@ pub const UpdateInteractiveCommand = struct {
             } else if (pkg.behavior.optional) {
                 dev_tag_len = 9; // " optional"
             }
-            const name_len = @min(pkg.name.len + dev_tag_len, MAX_NAME_WIDTH);
-            max_name_len = @max(max_name_len, name_len);
 
-            // For current version - it's always displayed without formatting
-            max_current_len = @max(max_current_len, @min(pkg.current_version.len, MAX_VERSION_WIDTH));
-
-            // For max width calculation, just use the plain version string length
-            // The diffFmt adds ANSI codes but doesn't change the visible width of the version
-            // Version strings are always ASCII so we can use string length directly
-            max_target_len = @max(max_target_len, @min(pkg.update_version.len, MAX_VERSION_WIDTH));
-            max_latest_len = @max(max_latest_len, @min(pkg.latest_version.len, MAX_VERSION_WIDTH));
+            max_name_len = @max(max_name_len, pkg.name.len + dev_tag_len);
+            max_current_len = @max(max_current_len, pkg.current_version.len);
+            max_target_len = @max(max_target_len, pkg.update_version.len);
+            max_latest_len = @max(max_latest_len, pkg.latest_version.len);
         }
+
+        // Use natural widths without any limits
+        return ColumnWidths{
+            .name = max_name_len,
+            .current = max_current_len,
+            .target = max_target_len,
+            .latest = max_latest_len,
+        };
+    }
+
+    fn promptForUpdates(allocator: std.mem.Allocator, packages: []OutdatedPackage) ![]bool {
+        if (packages.len == 0) {
+            Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
+            return allocator.alloc(bool, 0);
+        }
+
+        const selected = try allocator.alloc(bool, packages.len);
+        // Default to all unselected
+        @memset(selected, false);
+
+        // Calculate optimal column widths based on terminal width and content
+        const columns = calculateColumnWidths(packages);
 
         var state = MultiSelectState{
             .packages = packages,
             .selected = selected,
-            .max_name_len = max_name_len,
-            .max_current_len = max_current_len,
-            .max_update_len = max_target_len,
-            .max_latest_len = max_latest_len,
+            .max_name_len = columns.name,
+            .max_current_len = columns.current,
+            .max_update_len = columns.target,
+            .max_latest_len = columns.latest,
         };
 
         // Set raw mode
@@ -745,10 +755,11 @@ pub const UpdateInteractiveCommand = struct {
                     // The padding should align with the first character of package names
                     // Package names start at: "    " (4 spaces) + "□ " (2 chars) = 6 chars from left
                     // Headers start at: "  " (2 spaces) + dep_type_text
-                    // So we need to pad: 4 (cursor/space) + 2 (checkbox+space) + max_name_len - dep_type_text_len
-                    // Use safe subtraction to prevent underflow when dep_type_text_len is longer than available space
-                    const base_padding = 4 + 2 + state.max_name_len;
-                    const padding_to_current = if (dep_type_text_len >= base_padding) 1 else base_padding - dep_type_text_len;
+                    // We need the headers to align where the current version column starts
+                    // That's at: 6 (start of names) + max_name_len + 2 (spacing after names) - 2 (header indent) - dep_type_text_len
+                    const total_offset = 6 + state.max_name_len + 2;
+                    const header_start = 2 + dep_type_text_len;
+                    const padding_to_current = if (header_start >= total_offset) 1 else total_offset - header_start;
                     while (j < padding_to_current) : (j += 1) {
                         Output.print(" ", .{});
                     }
@@ -869,14 +880,7 @@ pub const UpdateInteractiveCommand = struct {
                     "";
                 defer if (package_url.len > 0) bun.default_allocator.free(package_url);
 
-                // Truncate package name if it's too long
-                const display_name = if (pkg.name.len > 60)
-                    try std.fmt.allocPrint(bun.default_allocator, "{s}...", .{pkg.name[0..57]})
-                else
-                    pkg.name;
-                defer if (display_name.ptr != pkg.name.ptr) bun.default_allocator.free(display_name);
-
-                const hyperlink = TerminalHyperlink.new(package_url, display_name, package_url.len > 0);
+                const hyperlink = TerminalHyperlink.new(package_url, pkg.name, package_url.len > 0);
 
                 if (selected) {
                     if (strings.eqlComptime(checkbox_color, "red")) {
@@ -899,24 +903,17 @@ pub const UpdateInteractiveCommand = struct {
                     Output.pretty("<r><d> optional<r>", .{});
                 }
 
-                // Print padding after name
+                // Print padding after name (2 spaces)
                 var j: usize = 0;
                 while (j < name_padding + 2) : (j += 1) {
                     Output.print(" ", .{});
                 }
 
-                // Current version - truncate if too long
-                const display_current = if (pkg.current_version.len > 20)
-                    try std.fmt.allocPrint(bun.default_allocator, "{s}...", .{pkg.current_version[0..17]})
-                else
-                    pkg.current_version;
-                defer if (display_current.ptr != pkg.current_version.ptr) bun.default_allocator.free(display_current);
+                // Current version
+                Output.pretty("<r>{s}<r>", .{pkg.current_version});
 
-                Output.pretty("<r>{s}<r>", .{display_current});
-
-                // Print padding after current version
-                const current_display_len = if (pkg.current_version.len > 20) 20 else pkg.current_version.len;
-                const current_padding = if (current_display_len >= state.max_current_len) 0 else state.max_current_len - current_display_len;
+                // Print padding after current version (2 spaces)
+                const current_padding = if (pkg.current_version.len >= state.max_current_len) 0 else state.max_current_len - pkg.current_version.len;
                 j = 0;
                 while (j < current_padding + 2) : (j += 1) {
                     Output.print(" ", .{});

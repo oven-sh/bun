@@ -34,14 +34,9 @@ Set the default linker strategy in your `bunfig.toml`:
 linker = "isolated"
 ```
 
-### Auto-detection behavior
+### Default behavior
 
-By default, Bun automatically selects the installation strategy:
-
-- **Monorepos with workspaces** — Uses `isolated` linker for better workspace isolation
-- **Single projects** — Uses `hoisted` linker for npm compatibility
-
-You can override this auto-detection with the `--linker` flag or configuration file.
+By default, Bun uses the **hoisted** installation strategy for all projects. To use isolated installs, you must explicitly specify the `--linker isolated` flag or set it in your configuration file.
 
 ## How isolated installs work
 

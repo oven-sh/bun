@@ -195,7 +195,7 @@ The traditional npm/Yarn approach that flattens dependencies into a shared `node
 $ bun install --linker hoisted
 ```
 
-### Isolated installs (default for workspaces)
+### Isolated installs
 
 A pnpm-like approach that creates strict dependency isolation to prevent phantom dependencies:
 
@@ -238,9 +238,9 @@ dryRun = false
 # equivalent to `--concurrent-scripts` flag
 concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 
-# installation strategy: "auto", "hoisted", or "isolated"
-# auto: isolated for workspaces, hoisted for single projects
-linker = "auto"
+# installation strategy: "hoisted" or "isolated"
+# default: "hoisted"
+linker = "hoisted"
 ```
 
 ## CI/CD

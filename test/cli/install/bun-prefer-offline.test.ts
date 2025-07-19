@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { writeFile } from "fs/promises";
 import { bunEnv as bunEnv_, bunExe } from "harness";
-import path, { join } from "path";
+import { join } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,

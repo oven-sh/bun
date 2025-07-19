@@ -223,6 +223,7 @@ pub fn verifyResolutions(this: *PackageManager, log_level: PackageManager.Option
 
 // @sortImports
 
+const PackageManagerDirectories = @import("./PackageManagerDirectories.zig");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -234,7 +235,6 @@ const strings = bun.strings;
 
 const Semver = bun.Semver;
 const SlicedString = Semver.SlicedString;
-const String = Semver.String;
 
 const Dependency = bun.install.Dependency;
 const DependencyID = bun.install.DependencyID;
@@ -246,5 +246,3 @@ const PackageManager = bun.install.PackageManager;
 const PackageNameHash = bun.install.PackageNameHash;
 const Resolution = bun.install.Resolution;
 const invalid_package_id = bun.install.invalid_package_id;
-
-const PackageManagerDirectories = @import("./PackageManagerDirectories.zig");

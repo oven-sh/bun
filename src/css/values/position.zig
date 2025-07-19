@@ -1,11 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const Result = css.Result;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const Percentage = css.css_values.percentage.Percentage;
-
 /// A CSS `<position>` value,
 /// as used in the `background-position` property, gradients, masks, etc.
 pub const Position = struct {
@@ -426,3 +418,12 @@ pub const VerticalPositionKeyword = enum {
 
 pub const HorizontalPosition = PositionComponent(HorizontalPositionKeyword);
 pub const VerticalPosition = PositionComponent(VerticalPositionKeyword);
+
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const LengthPercentage = css.css_values.length.LengthPercentage;
+const Percentage = css.css_values.percentage.Percentage;

@@ -1,10 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const strings = bun.strings;
-
 pub const S3ListObjectsOptions = struct {
     continuation_token: ?[]const u8,
     delimiter: ?[]const u8,
@@ -585,3 +578,12 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
 
     return listObjectsOptions;
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

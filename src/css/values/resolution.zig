@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-pub const css = @import("../css_parser.zig");
-const Result = css.Result;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const CSSNumber = css.css_values.number.CSSNumber;
-
 /// A CSS `<resolution>` value.
 pub const Resolution = union(enum) {
     /// A resolution in dots per inch.
@@ -88,3 +80,12 @@ pub const Resolution = union(enum) {
         };
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const CSSNumber = css.css_values.number.CSSNumber;

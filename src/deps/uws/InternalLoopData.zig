@@ -56,10 +56,11 @@ pub const InternalLoopData = extern struct {
 
 const bun = @import("bun");
 const JSC = bun.JSC;
+
 const uws = bun.uws;
-const Timer = uws.Timer;
-const SocketContext = uws.SocketContext;
 const ConnectingSocket = uws.ConnectingSocket;
+const Loop = uws.Loop;
+const SocketContext = uws.SocketContext;
+const Timer = uws.Timer;
 const udp = uws.udp;
 const us_socket_t = uws.us_socket_t;
-const Loop = uws.Loop;

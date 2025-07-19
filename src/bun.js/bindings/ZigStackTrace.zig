@@ -1,11 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const ZigStackFrame = JSC.ZigStackFrame;
-const ZigURL = @import("../../url.zig").URL;
-const Api = @import("../../api/schema.zig").Api;
-const SourceProvider = JSC.SourceProvider;
-const JSC = bun.JSC;
-const ZigString = JSC.ZigString;
 const string = []const u8;
 
 /// Represents a JavaScript stack trace
@@ -143,3 +135,13 @@ pub const ZigStackTrace = extern struct {
         return .{ .trace = this, .i = i };
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Api = @import("../../api/schema.zig").Api;
+const ZigURL = @import("../../url.zig").URL;
+
+const JSC = bun.JSC;
+const SourceProvider = JSC.SourceProvider;
+const ZigStackFrame = JSC.ZigStackFrame;
+const ZigString = JSC.ZigString;

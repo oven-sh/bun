@@ -1,27 +1,5 @@
-const bun = @import("bun");
-const Environment = bun.Environment;
-
-const strings = bun.strings;
-const string = bun.string;
-const Output = bun.Output;
 const debug = Output.scoped(.TCC, false);
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const Fs = @import("../../fs.zig");
 
-const options = @import("../../options.zig");
-const ZigString = bun.JSC.ZigString;
-const JSC = bun.JSC;
-
-const JSValue = bun.JSC.JSValue;
-
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const VM = bun.JSC.VM;
-const VirtualMachine = JSC.VirtualMachine;
-
-const napi = @import("../../napi/napi.zig");
-
-const TCC = @import("../../deps/tcc.zig");
 extern fn pthread_jit_write_protect_np(enable: c_int) void;
 
 /// Run a function that needs to write to JIT-protected memory.
@@ -2418,3 +2396,23 @@ fn makeNapiEnvIfNeeded(functions: []const FFI.Function, globalThis: *JSGlobalObj
 
     return null;
 }
+
+const Fs = @import("../../fs.zig");
+const TCC = @import("../../deps/tcc.zig");
+const napi = @import("../../napi/napi.zig");
+const options = @import("../../options.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const string = bun.string;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const JSValue = bun.JSC.JSValue;
+const VM = bun.JSC.VM;
+const VirtualMachine = JSC.VirtualMachine;
+const ZigString = bun.JSC.ZigString;

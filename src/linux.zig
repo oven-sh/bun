@@ -3,8 +3,6 @@
 //! If an API can be implemented on multiple platforms,
 //! it does not belong in this namespace.
 
-pub const memfd_allocator = @import("allocators/linux_memfd_allocator.zig").LinuxMemFdAllocator;
-
 /// splice() moves data between two file descriptors without copying
 /// between kernel address space and user address space.  It
 /// transfers up to len bytes of data from the file descriptor fd_in
@@ -89,5 +87,6 @@ export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxe
     );
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");
+pub const memfd_allocator = @import("./allocators/linux_memfd_allocator.zig").LinuxMemFdAllocator;

@@ -1,11 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const Result = css.Result;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-
 /// A CSS [`<ratio>`](https://www.w3.org/TR/css-values-4/#ratios) value,
 /// representing the ratio of two numeric values.
 pub const Ratio = struct {
@@ -55,3 +47,13 @@ pub const Ratio = struct {
         return css.implementEql(@This(), lhs, rhs);
     }
 };
+
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+
+const CSSNumber = css.css_values.number.CSSNumber;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;

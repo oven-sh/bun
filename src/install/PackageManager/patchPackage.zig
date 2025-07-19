@@ -1083,8 +1083,6 @@ const PatchArgKind = enum {
     }
 };
 
-// @sortImports
-
 const Walker = @import("../../walker_skippable.zig");
 const std = @import("std");
 

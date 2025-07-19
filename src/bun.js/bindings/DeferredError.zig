@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const ZigString = @import("./ZigString.zig").ZigString;
-
 // Error's cannot be created off of the main thread. So we use this to store the
 // information until its ready to be materialized later.
 pub const DeferredError = struct {
@@ -31,3 +25,10 @@ pub const DeferredError = struct {
         return err;
     }
 };
+
+const bun = @import("bun");
+const ZigString = @import("./ZigString.zig").ZigString;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

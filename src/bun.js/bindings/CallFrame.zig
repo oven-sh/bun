@@ -1,10 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const VM = @import("./VM.zig").VM;
-
 /// Call Frame for JavaScript -> Native function calls. In Bun, it is
 /// preferred to use the bindings generator instead of directly decoding
 /// arguments. See `docs/project/bindgen.md`
@@ -301,3 +294,11 @@ pub const CallFrame = opaque {
         }
     };
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const VM = @import("./VM.zig").VM;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

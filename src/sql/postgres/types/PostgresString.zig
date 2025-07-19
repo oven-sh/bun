@@ -39,8 +39,6 @@ pub fn toJS(
     return str.toJS(globalThis);
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const Data = @import("../Data.zig").Data;

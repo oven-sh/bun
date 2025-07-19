@@ -1,13 +1,3 @@
-pub const css = @import("../css_parser.zig");
-
-const SmallList = css.SmallList;
-
-const CssColor = css.css_values.color.CssColor;
-const Length = css.css_values.length.LengthValue;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const Angle = css.css_values.angle.Angle;
-const Url = css.css_values.url.Url;
-
 /// A value for the [filter](https://drafts.fxtf.org/filter-effects-1/#FilterProperty) and
 /// [backdrop-filter](https://drafts.fxtf.org/filter-effects-2/#BackdropFilterProperty) properties.
 pub const FilterList = union(enum) {
@@ -54,3 +44,11 @@ pub const DropShadow = struct {
     /// The blur radius of the drop shadow.
     blur: Length,
 };
+
+pub const css = @import("../css_parser.zig");
+const SmallList = css.SmallList;
+const Angle = css.css_values.angle.Angle;
+const CssColor = css.css_values.color.CssColor;
+const Length = css.css_values.length.LengthValue;
+const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
+const Url = css.css_values.url.Url;

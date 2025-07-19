@@ -693,10 +693,11 @@ const c = struct {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
-const uws = bun.uws;
-const Socket = uws.Socket;
-const SocketContext = uws.SocketContext;
 const Environment = bun.Environment;
 
+const uws = bun.uws;
+const Socket = uws.Socket;
 const SocketAddress = uws.SocketAddress;
+const SocketContext = uws.SocketContext;

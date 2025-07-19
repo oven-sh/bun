@@ -1,7 +1,5 @@
 pub const @"bool" = @import("./types/bool.zig");
 
-// @sortImports
-
 pub const bytea = @import("./types/bytea.zig");
 pub const date = @import("./types/date.zig");
 pub const json = @import("./types/json.zig");

@@ -468,8 +468,6 @@ pub inline fn isHoisted(self: *const Symbol) bool {
     return Symbol.isKindHoisted(self.kind);
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

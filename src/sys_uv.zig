@@ -1,29 +1,11 @@
 //! bun.sys.sys_uv is a polyfill of bun.sys but with libuv.
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
-const bun = @import("bun");
-
-const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
-const uv = bun.windows.libuv;
-
-const Environment = bun.Environment;
-const FileDescriptor = bun.FileDescriptor;
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
 
 comptime {
     bun.assert(Environment.isWindows);
 }
 
-pub const log = bun.sys.syslog;
-pub const Error = bun.sys.Error;
-
 // libuv dont support openat (https://github.com/libuv/libuv/issues/4167)
-pub const openat = bun.sys.openat;
-pub const getFdPath = bun.sys.getFdPath;
-pub const setFileOffset = bun.sys.setFileOffset;
-pub const openatOSPath = bun.sys.openatOSPath;
-pub const mkdirOSPath = bun.sys.mkdirOSPath;
-pub const access = bun.sys.access;
 
 // Note: `req = undefined; req.deinit()` has a safety-check in a debug build
 
@@ -406,3 +388,21 @@ pub inline fn write(fd: FileDescriptor, buf: []const u8) Maybe(usize) {
 }
 
 pub const Tag = @import("./sys.zig").Tag;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FileDescriptor = bun.FileDescriptor;
+const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
+const uv = bun.windows.libuv;
+
+const JSC = bun.JSC;
+const Maybe = JSC.Maybe;
+
+pub const Error = bun.sys.Error;
+pub const access = bun.sys.access;
+pub const getFdPath = bun.sys.getFdPath;
+pub const log = bun.sys.syslog;
+pub const mkdirOSPath = bun.sys.mkdirOSPath;
+pub const openat = bun.sys.openat;
+pub const openatOSPath = bun.sys.openatOSPath;
+pub const setFileOffset = bun.sys.setFileOffset;

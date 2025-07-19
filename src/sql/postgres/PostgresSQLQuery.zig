@@ -1,3 +1,5 @@
+const PostgresSQLQuery = @This();
+
 statement: ?*PostgresSQLStatement = null,
 query: bun.String = bun.String.empty,
 cursor_name: bun.String = bun.String.empty,
@@ -478,11 +480,8 @@ comptime {
 
 const debug = bun.Output.scoped(.Postgres, false);
 
-// @sortImports
-
 const PostgresRequest = @import("./PostgresRequest.zig");
 const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
-const PostgresSQLQuery = @This();
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
 const Signature = @import("./Signature.zig");
 const bun = @import("bun");

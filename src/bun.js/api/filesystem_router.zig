@@ -1,25 +1,3 @@
-const std = @import("std");
-const QueryStringMap = @import("../../url.zig").QueryStringMap;
-const CombinedScanner = @import("../../url.zig").CombinedScanner;
-const bun = @import("bun");
-const string = bun.string;
-const JSC = bun.JSC;
-const WebCore = JSC.WebCore;
-const Transpiler = bun.transpiler;
-const ZigString = JSC.ZigString;
-const Fs = @import("../../fs.zig");
-const JSObject = JSC.JSObject;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const strings = bun.strings;
-const Request = WebCore.Request;
-const Environment = bun.Environment;
-const URLPath = @import("../../http/URLPath.zig");
-const URL = @import("../../url.zig").URL;
-const Log = bun.logger;
-const Resolver = @import("../../resolver/resolver.zig").Resolver;
-const Router = @import("../../router.zig");
-
 const default_extensions = &[_][]const u8{
     "tsx",
     "jsx",
@@ -668,3 +646,29 @@ pub const MatchedRoute = struct {
         return JSValue.createEmptyObject(globalThis, 0);
     }
 };
+
+const Fs = @import("../../fs.zig");
+const Router = @import("../../router.zig");
+const URLPath = @import("../../http/URLPath.zig");
+const std = @import("std");
+const Resolver = @import("../../resolver/resolver.zig").Resolver;
+
+const CombinedScanner = @import("../../url.zig").CombinedScanner;
+const QueryStringMap = @import("../../url.zig").QueryStringMap;
+const URL = @import("../../url.zig").URL;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Log = bun.logger;
+const Transpiler = bun.transpiler;
+const string = bun.string;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSObject = JSC.JSObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
+
+const WebCore = JSC.WebCore;
+const Request = WebCore.Request;

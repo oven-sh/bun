@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-
 pub const WeakRefType = enum(u32) {
     None = 0,
     FetchResponse = 1,
@@ -113,3 +110,6 @@ pub fn Weak(comptime T: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+const JSC = bun.JSC;

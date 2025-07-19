@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const UUID = bun.UUID;
 const ObjectURLRegistry = @This();
 
 lock: bun.Mutex = .{},
@@ -173,3 +169,9 @@ pub const specifier_len = "blob:".len + UUID.stringLength;
 pub fn isBlobURL(url: []const u8) bool {
     return url.len >= specifier_len and bun.strings.hasPrefixComptime(url, "blob:");
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const UUID = bun.UUID;

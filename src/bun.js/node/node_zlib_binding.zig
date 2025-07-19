@@ -1,11 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const string = bun.string;
-const Output = bun.Output;
-const ZigString = JSC.ZigString;
 const debug = bun.Output.scoped(.zlib, true);
-const Buffer = bun.api.node.Buffer;
 
 pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(2).ptr;
@@ -284,12 +277,6 @@ pub fn CompressionStream(comptime T: type) type {
     };
 }
 
-pub const NativeZlib = JSC.Codegen.JSNativeZlib.getConstructor;
-
-pub const NativeBrotli = JSC.Codegen.JSNativeBrotli.getConstructor;
-
-pub const NativeZstd = JSC.Codegen.JSNativeZstd.getConstructor;
-
 pub const CountedKeepAlive = struct {
     keep_alive: bun.Async.KeepAlive = .{},
     ref_count: u32 = 0,
@@ -332,3 +319,16 @@ pub const Error = struct {
         return this.msg != null;
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Output = bun.Output;
+const string = bun.string;
+const Buffer = bun.api.node.Buffer;
+
+const JSC = bun.JSC;
+const ZigString = JSC.ZigString;
+pub const NativeBrotli = JSC.Codegen.JSNativeBrotli.getConstructor;
+pub const NativeZlib = JSC.Codegen.JSNativeZlib.getConstructor;
+pub const NativeZstd = JSC.Codegen.JSNativeZstd.getConstructor;

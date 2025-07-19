@@ -148,8 +148,6 @@ pub fn getWithSource(
     return .{ .entry = entry.value_ptr };
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

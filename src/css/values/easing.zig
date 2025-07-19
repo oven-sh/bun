@@ -1,14 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-pub const css = @import("../css_parser.zig");
-const Result = css.Result;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const CSSInteger = css.css_values.number.CSSInteger;
-const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
-
 /// A CSS [easing function](https://www.w3.org/TR/css-easing-1/#easing-functions).
 pub const EasingFunction = union(enum) {
     /// A linear easing function.
@@ -268,3 +257,16 @@ pub const StepPosition = enum {
         return .end;
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+
+const CSSInteger = css.css_values.number.CSSInteger;
+const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
+const CSSNumber = css.css_values.number.CSSNumber;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;

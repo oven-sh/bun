@@ -1,12 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-pub const css_values = @import("../values/values.zig");
-pub const Error = css.Error;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
 /// A [@custom-media](https://drafts.csswg.org/mediaqueries-5/#custom-mq) rule.
 pub const CustomMediaRule = struct {
     /// The name of the declared media query.
@@ -36,3 +27,12 @@ pub const CustomMediaRule = struct {
         try dest.writeChar(';');
     }
 };
+
+pub const css_values = @import("../values/values.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const css = @import("../css_parser.zig");
+pub const Error = css.Error;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;

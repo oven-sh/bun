@@ -1,3 +1,5 @@
+const Cp = @This();
+
 opts: Opts = .{},
 state: union(enum) {
     idle,
@@ -728,29 +730,33 @@ const Opts = packed struct(u16) {
 
 // --
 const log = bun.Output.scoped(.cp, true);
-const ArrayList = std.ArrayList;
-const Syscall = bun.sys;
-const bun = @import("bun");
-const shell = bun.shell;
-const Yield = shell.Yield;
+
 const interpreter = @import("../interpreter.zig");
+const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
+const OutputSrc = interpreter.OutputSrc;
+const OutputTask = interpreter.OutputTask;
 const ParseError = interpreter.ParseError;
 const ParseFlagResult = interpreter.ParseFlagResult;
-const ExitCode = shell.ExitCode;
-const Cp = @This();
-const OutputTask = interpreter.OutputTask;
+const unsupportedFlag = interpreter.unsupportedFlag;
+
+const Builtin = Interpreter.Builtin;
+const Result = Interpreter.Builtin.Result;
+
+const bun = @import("bun");
+const ResolvePath = bun.path;
 const assert = bun.assert;
 
-const OutputSrc = interpreter.OutputSrc;
 const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
-const std = @import("std");
-const FlagParser = interpreter.FlagParser;
-
-const unsupportedFlag = interpreter.unsupportedFlag;
 const WorkPool = JSC.WorkPool;
 const WorkPoolTask = JSC.WorkPoolTask;
-const ResolvePath = bun.path;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = shell.Yield;
+
+const Syscall = bun.sys;
+const Maybe = bun.sys.Maybe;
+
+const std = @import("std");
+const ArrayList = std.ArrayList;

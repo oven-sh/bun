@@ -1,21 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
-const bun = @import("bun");
-const Output = bun.Output;
-const JSC = bun.JSC;
-const MutableString = bun.MutableString;
-const strings = bun.strings;
-const JSTLSSocket = JSC.Codegen.JSTLSSocket;
-const JSTCPSocket = JSC.Codegen.JSTCPSocket;
-const JSValue = JSC.JSValue;
-const BinaryType = JSC.ArrayBuffer.BinaryType;
-
-const AutoFlusher = JSC.WebCore.AutoFlusher;
-const lshpack = @import("./lshpack.zig");
-const TLSSocket = @import("./socket.zig").TLSSocket;
-const TCPSocket = @import("./socket.zig").TCPSocket;
-
 const MAX_PAYLOAD_SIZE_WITHOUT_FRAME = 16384 - FrameHeader.byteSize - 1;
 const BunSocket = union(enum) {
     none: void,
@@ -4493,3 +4475,23 @@ pub const H2FrameParser = struct {
 };
 
 extern fn Bun__wrapAbortError(globalObject: *JSC.JSGlobalObject, cause: JSC.JSValue) JSC.JSValue;
+
+const lshpack = @import("./lshpack.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const TCPSocket = @import("./socket.zig").TCPSocket;
+const TLSSocket = @import("./socket.zig").TLSSocket;
+
+const bun = @import("bun");
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;
+const AutoFlusher = JSC.WebCore.AutoFlusher;
+const BinaryType = JSC.ArrayBuffer.BinaryType;
+
+const JSTCPSocket = JSC.Codegen.JSTCPSocket;
+const JSTLSSocket = JSC.Codegen.JSTLSSocket;

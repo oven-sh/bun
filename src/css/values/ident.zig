@@ -1,15 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const Symbol = bun.JSAst.Symbol;
-
-pub const css = @import("../css_parser.zig");
-pub const Result = css.Result;
-pub const Printer = css.Printer;
-pub const PrintErr = css.PrintErr;
-
-pub const Specifier = css.css_properties.css_modules.Specifier;
-
 /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) reference.
 ///
 /// Dashed idents are used in cases where an identifier can be either author defined _or_ CSS-defined.
@@ -323,3 +311,14 @@ pub const CustomIdent = struct {
 
 /// A list of CSS [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents) values.
 pub const CustomIdentList = css.SmallList(CustomIdent, 1);
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Symbol = bun.JSAst.Symbol;
+
+pub const css = @import("../css_parser.zig");
+pub const PrintErr = css.PrintErr;
+pub const Printer = css.Printer;
+pub const Result = css.Result;
+pub const Specifier = css.css_properties.css_modules.Specifier;

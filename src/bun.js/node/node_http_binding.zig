@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-
 pub fn getBunServerAllClosedPromise(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1).slice();
     if (arguments.len < 1) {
@@ -42,3 +39,6 @@ pub fn setMaxHTTPHeaderSize(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
     bun.http.max_http_header_size = @intCast(num);
     return JSC.JSValue.jsNumber(bun.http.max_http_header_size);
 }
+
+const bun = @import("bun");
+const JSC = bun.JSC;

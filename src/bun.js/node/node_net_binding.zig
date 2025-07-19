@@ -1,7 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const validators = @import("./util/validators.zig");
-
 //
 //
 
@@ -70,10 +66,6 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
     }).setter, 1, .{});
 }
 
-pub const SocketAddress = bun.JSC.Codegen.JSSocketAddress.getConstructor;
-
-pub const BlockList = JSC.Codegen.JSBlockList.getConstructor;
-
 pub fn newDetachedSocket(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const args = callframe.argumentsAsArray(1);
     const is_ssl = args[0].toBoolean();
@@ -105,3 +97,10 @@ pub fn doConnect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
     const maybe_tls = prev.as(bun.api.TLSSocket);
     return bun.api.Listener.connectInner(globalThis, maybe_tcp, maybe_tls, opts);
 }
+
+const validators = @import("./util/validators.zig");
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+pub const BlockList = JSC.Codegen.JSBlockList.getConstructor;
+pub const SocketAddress = bun.JSC.Codegen.JSSocketAddress.getConstructor;

@@ -1,34 +1,5 @@
-const bun = @import("bun");
-const std = @import("std");
-const builtin = @import("builtin");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
-const JSC = bun.JSC;
-const JSValue = bun.JSC.JSValue;
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const Syscall = @import("../sys.zig");
-const Glob = @import("../glob.zig");
-const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
-const isAllAscii = @import("../string_immutable.zig").isAllASCII;
-
-pub const interpret = @import("./interpreter.zig");
-pub const subproc = @import("./subproc.zig");
-
-pub const AllocScope = @import("./AllocScope.zig");
-
-pub const EnvMap = interpret.EnvMap;
-pub const EnvStr = interpret.EnvStr;
-pub const Interpreter = interpret.Interpreter;
-pub const ParsedShellScript = interpret.ParsedShellScript;
-pub const Subprocess = subproc.ShellSubprocess;
-pub const ExitCode = interpret.ExitCode;
-pub const IOWriter = Interpreter.IOWriter;
-pub const IOReader = Interpreter.IOReader;
 // pub const IOWriter = interpret.IOWriter;
 // pub const SubprocessMini = subproc.ShellSubprocessMini;
-
-pub const Yield = @import("./Yield.zig").Yield;
-pub const unreachableState = interpret.unreachableState;
 
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
@@ -3625,8 +3596,6 @@ pub const CmdEnvIter = struct {
     }
 };
 
-const ExpansionStr = union(enum) {};
-
 pub const Test = struct {
     pub const TestToken = union(TokenTag) {
         // |
@@ -4438,6 +4407,37 @@ pub const TestingAPIs = struct {
     }
 };
 
+pub const AllocScope = @import("./AllocScope.zig");
+const Glob = @import("../glob.zig");
+const Syscall = @import("../sys.zig");
+const builtin = @import("builtin");
+pub const Yield = @import("./Yield.zig").Yield;
+
+const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
+const isAllAscii = @import("../string_immutable.zig").isAllASCII;
+
+pub const interpret = @import("./interpreter.zig");
+pub const EnvMap = interpret.EnvMap;
+pub const EnvStr = interpret.EnvStr;
+pub const ExitCode = interpret.ExitCode;
+pub const ParsedShellScript = interpret.ParsedShellScript;
+pub const unreachableState = interpret.unreachableState;
+
+pub const Interpreter = interpret.Interpreter;
+pub const IOReader = Interpreter.IOReader;
+pub const IOWriter = Interpreter.IOWriter;
+
+pub const subproc = @import("./subproc.zig");
+pub const ShellSubprocess = @import("./subproc.zig").ShellSubprocess;
+pub const Subprocess = subproc.ShellSubprocess;
+
+const bun = @import("bun");
 const assert = bun.assert;
 
-pub const ShellSubprocess = @import("subproc.zig").ShellSubprocess;
+const JSC = bun.JSC;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const JSValue = bun.JSC.JSValue;
+
+const std = @import("std");
+const ArrayList = std.ArrayList;
+const Allocator = std.mem.Allocator;

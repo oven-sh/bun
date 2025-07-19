@@ -21,8 +21,6 @@ pub fn writeQuery(query: []const u8, comptime Context: type, writer: NewWriter(C
     try writer.string(query);
 }
 
-// @sortImports
-
 pub const ArrayList = @import("./protocol/ArrayList.zig");
 pub const BackendKeyData = @import("./protocol/BackendKeyData.zig");
 pub const CommandComplete = @import("./protocol/CommandComplete.zig");

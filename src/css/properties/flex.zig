@@ -1,26 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
-const Property = css.Property;
-const PropertyId = css.PropertyId;
-
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const CSSNumber = css.css_values.number.CSSNumber;
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Length = css.css_values.length.LengthValue;
-const CSSInteger = css.css_values.number.CSSInteger;
-
-const isFlex2009 = css.prefixes.Feature.isFlex2009;
-
-const VendorPrefix = css.VendorPrefix;
-
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
 pub const FlexDirection = enum {
@@ -532,8 +509,6 @@ pub const FlexLinePack = enum {
     }
 };
 
-pub const BoxOrdinalGroup = CSSInteger;
-
 // A handler for flex-related properties that manages both standard and legacy vendor prefixed values.
 pub const FlexHandler = struct {
     /// The flex-direction property value and vendor prefix
@@ -947,3 +922,24 @@ pub const FlexHandler = struct {
         };
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Property = css.Property;
+const PropertyId = css.PropertyId;
+const VendorPrefix = css.VendorPrefix;
+const isFlex2009 = css.prefixes.Feature.isFlex2009;
+
+const Length = css.css_values.length.LengthValue;
+const LengthPercentage = css.css_values.length.LengthPercentage;
+const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
+
+pub const BoxOrdinalGroup = CSSInteger;
+const CSSInteger = css.css_values.number.CSSInteger;
+const CSSNumber = css.css_values.number.CSSNumber;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;

@@ -1,38 +1,4 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const Progress = bun.Progress;
-
-const logger = bun.logger;
-
-const js_ast = bun.JSAst;
-
-const resolve_path = @import("../resolver/resolve_path.zig");
-const Command = @import("../cli.zig").Command;
-
-const fs = @import("../fs.zig");
-const URL = @import("../url.zig").URL;
-const HTTP = bun.http;
-
-const JSON = bun.JSON;
-const Archiver = bun.libarchive.Archiver;
-const Zlib = @import("../zlib.zig");
-const JSPrinter = bun.js_printer;
-const DotEnv = @import("../env_loader.zig");
-const NPMClient = @import("../which_npm_client.zig").NPMClient;
-const which = @import("../which.zig").which;
-const clap = bun.clap;
-const Headers = bun.http.Headers;
-const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: bun.PathBuffer = undefined;
-const Futex = bun.Futex;
 
 const target_nextjs_version = "12.2.3";
 pub var initialized_store = false;
@@ -2456,4 +2422,34 @@ const GitHandler = struct {
     }
 };
 
+const CopyFile = @import("../copy_file.zig");
+const DotEnv = @import("../env_loader.zig");
 const SourceFileProjectGenerator = @import("../create/SourceFileProjectGenerator.zig");
+const Zlib = @import("../zlib.zig");
+const fs = @import("../fs.zig");
+const resolve_path = @import("../resolver/resolve_path.zig");
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+const NPMClient = @import("../which_npm_client.zig").NPMClient;
+const URL = @import("../url.zig").URL;
+const which = @import("../which.zig").which;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Futex = bun.Futex;
+const Global = bun.Global;
+const JSON = bun.JSON;
+const JSPrinter = bun.js_printer;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const clap = bun.clap;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.JSAst;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+const Archiver = bun.libarchive.Archiver;
+
+const HTTP = bun.http;
+const Headers = bun.http.Headers;

@@ -1,3 +1,5 @@
+const PostgresSQLStatement = @This();
+
 cached_structure: PostgresCachedStructure = .{},
 ref_count: u32 = 1,
 fields: []protocol.FieldDescription = &[_]protocol.FieldDescription{},
@@ -170,10 +172,7 @@ pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *JSC
 
 const debug = bun.Output.scoped(.Postgres, false);
 
-// @sortImports
-
 const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
-const PostgresSQLStatement = @This();
 const Signature = @import("./Signature.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");

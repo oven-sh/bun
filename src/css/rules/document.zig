@@ -1,9 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Location = css.css_rules.Location;
-
 /// A [@-moz-document](https://www.w3.org/TR/2012/WD-css3-conditional-20120911/#at-document) rule.
 ///
 /// Note that only the `url-prefix()` function with no arguments is supported, and only the `-moz` prefix
@@ -36,3 +30,10 @@ pub fn MozDocumentRule(comptime R: type) type {
         }
     };
 }
+
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Location = css.css_rules.Location;

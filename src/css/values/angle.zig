@@ -1,13 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-pub const css = @import("../css_parser.zig");
-const Result = css.Result;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const Calc = css.css_values.calc.Calc;
-
 const Tag = enum(u8) {
     deg = 1,
     rad = 2,
@@ -303,3 +293,15 @@ pub const Angle = union(Tag) {
 /// A CSS [`<angle-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-angle-percentage) value.
 /// May be specified as either an angle or a percentage that resolves to an angle.
 pub const AnglePercentage = css.css_values.percentage.DimensionPercentage(Angle);
+
+const bun = @import("bun");
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const Calc = css.css_values.calc.Calc;
+
+const CSSNumber = css.css_values.number.CSSNumber;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;

@@ -112,8 +112,6 @@ pub fn deinit(this: *Ast) void {
     if (this.import_records.len > 0) this.import_records.deinitWithAllocator(bun.default_allocator);
 }
 
-// @sortImports
-
 const std = @import("std");
 const Runtime = @import("../runtime.zig").Runtime;
 

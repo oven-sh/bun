@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Sizes = @import("./sizes.zig");
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-
 pub const JSUint8Array = opaque {
     pub fn ptr(this: *JSUint8Array) [*]u8 {
         return @as(*[*]u8, @ptrFromInt(@intFromPtr(this) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector)).*;
@@ -32,3 +26,10 @@ pub const JSUint8Array = opaque {
         return Bun__createUint8ArrayForCopy(globalThis, null, 0, false);
     }
 };
+
+const Sizes = @import("./sizes.zig");
+const bun = @import("bun");
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

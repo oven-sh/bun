@@ -1,14 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-const Property = css.Property;
-const PropertyIdTag = css.PropertyIdTag;
-const PropertyCategory = css.logical.PropertyCategory;
-
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-
 /// A value for the [inset](https://drafts.csswg.org/css-logical/#propdef-inset) shorthand property.
 pub const Inset = struct {
     top: LengthPercentageOrAuto,
@@ -850,3 +839,13 @@ pub fn NewSizeHandler(
         }
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const css = @import("../css_parser.zig");
+const Property = css.Property;
+const PropertyIdTag = css.PropertyIdTag;
+const PropertyCategory = css.logical.PropertyCategory;
+const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;

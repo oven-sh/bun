@@ -32,9 +32,6 @@ const TCC_OUTPUT_OBJ = @as(c_int, 4);
 const TCC_OUTPUT_PREPROCESS = @as(c_int, 5);
 const TCC_RELOCATE_AUTO: ?*anyopaque = @ptrCast(&1);
 
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
 pub const Error = error{
     InvalidOptions,
     InvalidIncludePath,
@@ -326,3 +323,6 @@ pub const State = opaque {
         tcc_list_symbols(s, ctx, symbolCb);
     }
 };
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;

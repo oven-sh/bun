@@ -92,8 +92,6 @@ pub fn endProgressBar(manager: *PackageManager) void {
     manager.downloads_node = null;
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const Output = bun.Output;
 const Progress = bun.Progress;

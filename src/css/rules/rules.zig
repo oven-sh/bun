@@ -1,37 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
-
-const ArrayList = std.ArrayListUnmanaged;
-const CustomMedia = css.CustomMedia;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Dependency = css.Dependency;
-const dependencies = css.dependencies;
-
-pub const import = @import("./import.zig");
-pub const layer = @import("./layer.zig");
-pub const style = @import("./style.zig");
-pub const keyframes = @import("./keyframes.zig");
-pub const font_face = @import("./font_face.zig");
-pub const font_palette_values = @import("./font_palette_values.zig");
-pub const page = @import("./page.zig");
-pub const supports = @import("./supports.zig");
-pub const counter_style = @import("./counter_style.zig");
-pub const custom_media = @import("./custom_media.zig");
-pub const namespace = @import("./namespace.zig");
-pub const unknown = @import("./unknown.zig");
-pub const document = @import("./document.zig");
-pub const nesting = @import("./nesting.zig");
-pub const viewport = @import("./viewport.zig");
-pub const property = @import("./property.zig");
-pub const container = @import("./container.zig");
-pub const scope = @import("./scope.zig");
-pub const media = @import("./media.zig");
-pub const starting_style = @import("./starting_style.zig");
-
-pub const tailwind = @import("./tailwind.zig");
-
 const debug = bun.Output.scoped(.CSS_MINIFY, false);
 
 pub fn CssRule(comptime Rule: type) type {
@@ -669,3 +635,36 @@ fn mergeStyleRules(
     }
     return false;
 }
+
+const bun = @import("bun");
+pub const container = @import("./container.zig");
+pub const counter_style = @import("./counter_style.zig");
+pub const custom_media = @import("./custom_media.zig");
+pub const document = @import("./document.zig");
+pub const font_face = @import("./font_face.zig");
+pub const font_palette_values = @import("./font_palette_values.zig");
+pub const import = @import("./import.zig");
+pub const keyframes = @import("./keyframes.zig");
+pub const layer = @import("./layer.zig");
+pub const media = @import("./media.zig");
+pub const namespace = @import("./namespace.zig");
+pub const nesting = @import("./nesting.zig");
+pub const page = @import("./page.zig");
+pub const property = @import("./property.zig");
+pub const scope = @import("./scope.zig");
+pub const starting_style = @import("./starting_style.zig");
+pub const style = @import("./style.zig");
+pub const supports = @import("./supports.zig");
+pub const tailwind = @import("./tailwind.zig");
+pub const unknown = @import("./unknown.zig");
+pub const viewport = @import("./viewport.zig");
+
+pub const css = @import("../css_parser.zig");
+const CustomMedia = css.CustomMedia;
+const Dependency = css.Dependency;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const dependencies = css.dependencies;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

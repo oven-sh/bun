@@ -1,3 +1,5 @@
+const SASLInitialResponse = @This();
+
 mechanism: Data = .{ .empty = {} },
 data: Data = .{ .empty = {} },
 
@@ -25,9 +27,6 @@ pub fn writeInternal(
 
 pub const write = WriteWrap(@This(), writeInternal).write;
 
-// @sortImports
-
-const SASLInitialResponse = @This();
 const std = @import("std");
 const Data = @import("../Data.zig").Data;
 const Int32 = @import("../types/int_types.zig").Int32;

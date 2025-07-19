@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 pub const CachedBytecode = opaque {
     extern fn generateCachedModuleByteCodeFromSourceCode(sourceProviderURL: *bun.String, input_code: [*]const u8, inputSourceCodeSize: usize, outputByteCode: *?[*]u8, outputByteCodeSize: *usize, cached_bytecode: *?*CachedBytecode) bool;
     extern fn generateCachedCommonJSProgramByteCodeFromSourceCode(sourceProviderURL: *bun.String, input_code: [*]const u8, inputSourceCodeSize: usize, outputByteCode: *?[*]u8, outputByteCodeSize: *usize, cached_bytecode: *?*CachedBytecode) bool;
@@ -70,3 +67,6 @@ pub const CachedBytecode = opaque {
         };
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

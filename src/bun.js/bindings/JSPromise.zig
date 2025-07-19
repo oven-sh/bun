@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const VM = JSC.VM;
-const String = bun.String;
-const JSError = bun.JSError;
-
 pub const JSPromise = opaque {
     pub const Status = enum(u32) {
         pending = 0, // Making this as 0, so that, we can change the status from Pending to others without masking.
@@ -320,3 +311,14 @@ pub const JSPromise = opaque {
         };
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+const String = bun.String;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VM = JSC.VM;

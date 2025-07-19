@@ -1,28 +1,10 @@
+const Router = @This();
+
 // This is a Next.js-compatible file-system router.
 // It uses the filesystem to infer entry points.
 // Despite being Next.js-compatible, it's not tied to Next.js.
 // It does not handle the framework parts of rendering pages.
 // All it does is resolve URL paths to the appropriate entry point and parse URL params/query.
-const Router = @This();
-
-const Api = @import("./api/schema.zig").Api;
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const PathString = bun.PathString;
-const HashedString = bun.HashedString;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const DirInfo = @import("./resolver/dir_info.zig");
-const Fs = @import("./fs.zig");
-const Options = @import("./options.zig");
-const URLPath = @import("./http/URLPath.zig");
-const PathnameScanner = @import("./url.zig").PathnameScanner;
-const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 
 const index_route_hash = @as(u32, @truncate(bun.hash("$$/index-route$$-!(@*@#&*%-901823098123")));
 
@@ -898,8 +880,6 @@ pub const Match = struct {
     }
 };
 
-const FileSystem = Fs.FileSystem;
-
 const MockRequestContextType = struct {
     controlled: bool = false,
     url: URLPath,
@@ -957,12 +937,6 @@ fn makeTest(cwd_path: string, data: anytype) !void {
         file.close();
     }
 }
-
-const expect = std.testing.expect;
-const expectEqual = std.testing.expectEqual;
-const expectEqualStrings = std.testing.expectEqualStrings;
-const expectStr = std.testing.expectEqualStrings;
-const Logger = bun.logger;
 
 pub const Test = struct {
     pub fn makeRoutes(comptime testName: string, data: anytype) !Routes {
@@ -1912,3 +1886,30 @@ test "Pattern" {
     try expectStr(static2.value.static.str(), "static2");
     try expectStr(catch_all.value.catch_all.str(pattern), "catch_all");
 }
+
+const DirInfo = @import("./resolver/dir_info.zig");
+const Options = @import("./options.zig");
+const URLPath = @import("./http/URLPath.zig");
+const std = @import("std");
+const Api = @import("./api/schema.zig").Api;
+const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
+const PathnameScanner = @import("./url.zig").PathnameScanner;
+
+const Fs = @import("./fs.zig");
+const FileSystem = Fs.FileSystem;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const HashedString = bun.HashedString;
+const Logger = bun.logger;
+const Output = bun.Output;
+const PathString = bun.PathString;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+
+const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
+const expectEqualStrings = std.testing.expectEqualStrings;
+const expectStr = std.testing.expectEqualStrings;

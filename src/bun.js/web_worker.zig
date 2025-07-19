@@ -1,13 +1,8 @@
 //! Shared implementation of Web and Node `Worker`
-const bun = @import("bun");
-const jsc = bun.jsc;
-const Output = bun.Output;
-const log = Output.scoped(.Worker, true);
-const std = @import("std");
-const JSValue = jsc.JSValue;
-const Async = bun.Async;
-const WTFStringImpl = @import("../string.zig").WTFStringImpl;
+
 const WebWorker = @This();
+
+const log = Output.scoped(.Worker, true);
 
 /// null when haven't started yet
 vm: ?*jsc.VirtualMachine = null,
@@ -618,4 +613,13 @@ comptime {
     _ = WebWorker__updatePtr;
 }
 
+const std = @import("std");
+const WTFStringImpl = @import("../string.zig").WTFStringImpl;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Output = bun.Output;
 const assert = bun.assert;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

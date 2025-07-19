@@ -1,19 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Allocator = std.mem.Allocator;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const cli = @import("../cli.zig");
-
-const Command = cli.Command;
-const Run = @import("./run_command.zig").RunCommand;
-const UpdateRequest = bun.PackageManager.UpdateRequest;
-
 const debug = Output.scoped(.bunx, false);
 
 pub const BunxCommand = struct {
@@ -801,3 +785,19 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 };
+
+const std = @import("std");
+const Run = @import("./run_command.zig").RunCommand;
+const Allocator = std.mem.Allocator;
+
+const cli = @import("../cli.zig");
+const Command = cli.Command;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+const UpdateRequest = bun.PackageManager.UpdateRequest;

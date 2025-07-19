@@ -18,6 +18,7 @@
 //! - Shell command execution with proper I/O handling
 //! - Any Bun subsystem that needs event-driven architecture without JS overhead
 //!
+
 const MiniEventLoop = @This();
 
 tasks: Queue,
@@ -58,8 +59,6 @@ pub fn initGlobal(env: ?*bun.DotEnv.Loader) *MiniEventLoop {
 }
 
 const Queue = std.fifo.LinearFifo(*AnyTaskWithExtraContext, .Dynamic);
-
-pub const Task = AnyTaskWithExtraContext;
 
 pub inline fn getVmImpl(this: *MiniEventLoop) *MiniEventLoop {
     return this;
@@ -383,12 +382,15 @@ pub fn AbstractVM(inner: anytype) switch (@TypeOf(inner)) {
 }
 
 const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Async = bun.Async;
-const VirtualMachine = JSC.VirtualMachine;
 const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
-const AnyTaskWithExtraContext = JSC.AnyTaskWithExtraContext;
-const uws = bun.uws;
-const EventLoop = JSC.EventLoop;
+
+const bun = @import("bun");
+const Async = bun.Async;
 const Environment = bun.Environment;
+const uws = bun.uws;
+
+const JSC = bun.JSC;
+const AnyTaskWithExtraContext = JSC.AnyTaskWithExtraContext;
+const EventLoop = JSC.EventLoop;
+pub const Task = AnyTaskWithExtraContext;
+const VirtualMachine = JSC.VirtualMachine;

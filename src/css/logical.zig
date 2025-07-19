@@ -1,6 +1,3 @@
-pub const css = @import("./css_parser.zig");
-pub const Error = css.Error;
-
 pub const PropertyCategory = enum {
     logical,
     physical,
@@ -24,3 +21,6 @@ pub const LogicalGroup = enum {
     min_size,
     max_size,
 };
+
+pub const css = @import("./css_parser.zig");
+pub const Error = css.Error;

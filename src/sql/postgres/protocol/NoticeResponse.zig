@@ -1,3 +1,5 @@
+const NoticeResponse = @This();
+
 messages: std.ArrayListUnmanaged(FieldMessage) = .{},
 pub fn deinit(this: *NoticeResponse) void {
     for (this.messages.items) |*message| {
@@ -40,9 +42,6 @@ pub fn toJS(this: NoticeResponse, globalObject: *JSC.JSGlobalObject) JSValue {
     return JSC.ZigString.init(b.allocatedSlice()[0..b.len]).toJS(globalObject);
 }
 
-// @sortImports
-
-const NoticeResponse = @This();
 const bun = @import("bun");
 const std = @import("std");
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;

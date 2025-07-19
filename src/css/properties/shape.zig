@@ -1,5 +1,3 @@
-pub const css = @import("../css_parser.zig");
-
 /// A [`<fill-rule>`](https://www.w3.org/TR/css-shapes-1/#typedef-fill-rule) used to
 /// determine the interior of a `polygon()` shape.
 ///
@@ -13,3 +11,5 @@ pub const FillRule = css.DefineEnumProperty(@compileError(css.todo_stuff.depth))
 pub const AlphaValue = struct {
     v: f32,
 };
+
+pub const css = @import("../css_parser.zig");

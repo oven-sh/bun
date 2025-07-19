@@ -1,10 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const ArrayList = std.ArrayListUnmanaged;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Location = css.css_rules.Location;
-
 pub fn StyleRule(comptime R: type) type {
     return struct {
         /// The selectors for the style rule.
@@ -247,3 +240,11 @@ pub fn StyleRule(comptime R: type) type {
         }
     };
 }
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Location = css.css_rules.Location;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

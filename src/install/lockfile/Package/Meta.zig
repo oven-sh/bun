@@ -69,11 +69,13 @@ pub const Meta = extern struct {
     }
 };
 
+const Integrity = @import("../../integrity.zig").Integrity;
+
 const bun = @import("bun");
+const String = bun.Semver.String;
+
 const install = bun.install;
 const Npm = install.Npm;
-const String = bun.Semver.String;
-const Integrity = @import("../../integrity.zig").Integrity;
 const Origin = install.Origin;
 const PackageID = install.PackageID;
 const invalid_package_id = install.invalid_package_id;

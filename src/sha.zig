@@ -1,7 +1,3 @@
-const BoringSSL = bun.BoringSSL.c;
-const std = @import("std");
-pub const bun = @import("bun");
-
 fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, comptime Full: anytype, comptime Init: anytype, comptime Update: anytype, comptime Final: anytype) type {
     return struct {
         hasher: ContextType = undefined,
@@ -196,3 +192,7 @@ const labels = [_][]const u8{
     "Blake2",
     "Blake3",
 };
+
+pub const bun = @import("bun");
+const std = @import("std");
+const BoringSSL = bun.BoringSSL.c;

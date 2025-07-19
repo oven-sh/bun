@@ -1,14 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
-pub const css = @import("../css_parser.zig");
-
-const VendorPrefix = css.VendorPrefix;
-
-const PropertyIdTag = css.PropertyIdTag;
-const Property = css.Property;
-const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
-
 /// *NOTE* The struct field names must match their corresponding names in `Property`!
 pub const FallbackHandler = struct {
     color: ?usize = null,
@@ -133,3 +122,12 @@ pub const FallbackHandler = struct {
         }
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const Property = css.Property;
+const PropertyIdTag = css.PropertyIdTag;
+const VendorPrefix = css.VendorPrefix;
+const UnparsedProperty = css.css_properties.custom.UnparsedProperty;

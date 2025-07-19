@@ -1,3 +1,5 @@
+const CopyFail = @This();
+
 message: Data = .{ .empty = {} },
 
 pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
@@ -27,9 +29,6 @@ pub fn writeInternal(
 
 pub const write = WriteWrap(@This(), writeInternal).write;
 
-// @sortImports
-
-const CopyFail = @This();
 const std = @import("std");
 const Data = @import("../Data.zig").Data;
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;

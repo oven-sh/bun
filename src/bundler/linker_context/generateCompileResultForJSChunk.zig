@@ -72,24 +72,23 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
 }
 
 const bun = @import("bun");
-const Index = bun.bundle_v2.Index;
-const js_printer = bun.js_printer;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const ThreadPool = bun.bundle_v2.ThreadPool;
-const ThreadPoolLib = bun.ThreadPool;
-
 const Environment = bun.Environment;
+const ThreadPoolLib = bun.ThreadPool;
 const default_allocator = bun.default_allocator;
+const js_printer = bun.js_printer;
+const renamer = bun.renamer;
+
+const bundler = bun.bundle_v2;
+const Chunk = bundler.Chunk;
+const CompileResult = bundler.CompileResult;
+pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
+const Index = bun.bundle_v2.Index;
+pub const ParseTask = bun.bundle_v2.ParseTask;
+const PartRange = bundler.PartRange;
+const ThreadPool = bun.bundle_v2.ThreadPool;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const PendingPartRange = LinkerContext.PendingPartRange;
 
 const js_ast = bun.js_ast;
-
-const renamer = bun.renamer;
 const Scope = js_ast.Scope;
-const bundler = bun.bundle_v2;
-
-pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
-pub const ParseTask = bun.bundle_v2.ParseTask;
-const Chunk = bundler.Chunk;
-const PartRange = bundler.PartRange;
-const CompileResult = bundler.CompileResult;
-const PendingPartRange = LinkerContext.PendingPartRange;

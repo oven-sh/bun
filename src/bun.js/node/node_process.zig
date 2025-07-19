@@ -336,11 +336,13 @@ pub export const Bun__versions_lshpack: [*:0]const u8 = bun.Global.versions.lshp
 pub export const Bun__versions_zstd: [*:0]const u8 = bun.Global.versions.zstd;
 
 const std = @import("std");
-const Environment = bun.Environment;
+
 const bun = @import("bun");
+const Environment = bun.Environment;
+const Syscall = bun.sys;
+const strings = bun.strings;
+
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
-const Syscall = bun.sys;
-const strings = bun.strings;

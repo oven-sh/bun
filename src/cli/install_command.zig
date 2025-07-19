@@ -92,8 +92,6 @@ fn installWithCLI(ctx: Command.Context, cli: CommandLineArguments) !void {
     }
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

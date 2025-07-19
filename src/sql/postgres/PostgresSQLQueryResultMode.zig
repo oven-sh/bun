@@ -3,5 +3,3 @@ pub const PostgresSQLQueryResultMode = enum(u2) {
     values = 1,
     raw = 2,
 };
-
-// @sortImports

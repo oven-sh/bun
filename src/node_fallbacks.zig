@@ -1,11 +1,3 @@
-const std = @import("std");
-const string = @import("./string_types.zig").string;
-const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
-const logger = bun.logger;
-const Fs = @import("./fs.zig");
-const bun = @import("bun");
-const Environment = bun.Environment;
-
 pub const import_path = "/bun-vfs$$/node_modules/";
 
 comptime {
@@ -95,3 +87,12 @@ pub fn contentsFromPath(path: string) ?string {
 
     return null;
 }
+
+const Fs = @import("./fs.zig");
+const std = @import("std");
+const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+const string = @import("./string_types.zig").string;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const logger = bun.logger;

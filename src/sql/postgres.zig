@@ -17,8 +17,6 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSValue {
     return binding;
 }
 
-// @sortImports
-
 pub const PostgresSQLConnection = @import("./postgres/PostgresSQLConnection.zig");
 pub const PostgresSQLContext = @import("./postgres/PostgresSQLContext.zig");
 pub const PostgresSQLQuery = @import("./postgres/PostgresSQLQuery.zig");

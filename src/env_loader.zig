@@ -1,18 +1,3 @@
-const std = @import("std");
-const logger = bun.logger;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-
-const Analytics = @import("./analytics/analytics_thread.zig");
-const Fs = @import("./fs.zig");
-const URL = @import("./url.zig").URL;
-const Api = @import("./api/schema.zig").Api;
-const which = @import("./which.zig").which;
-const s3 = bun.S3;
-
 const DotEnvFileSuffix = enum {
     development,
     production,
@@ -1343,3 +1328,18 @@ pub const Map = struct {
 pub var instance: ?*Loader = null;
 
 pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";
+
+const Analytics = @import("./analytics/analytics_thread.zig");
+const Fs = @import("./fs.zig");
+const std = @import("std");
+const Api = @import("./api/schema.zig").Api;
+const URL = @import("./url.zig").URL;
+const which = @import("./which.zig").which;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const logger = bun.logger;
+const s3 = bun.S3;
+const string = bun.string;
+const strings = bun.strings;

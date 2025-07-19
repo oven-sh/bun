@@ -986,8 +986,6 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
     }
 }
 
-// @sortImports
-
 const std = @import("std");
 const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
 const installIsolatedPackages = @import("../isolated_install.zig").installIsolatedPackages;

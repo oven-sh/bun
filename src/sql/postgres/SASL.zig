@@ -1,3 +1,5 @@
+const SASL = @This();
+
 const nonce_byte_len = 18;
 const nonce_base64_len = bun.base64.encodeLenFromSize(nonce_byte_len);
 
@@ -83,10 +85,7 @@ pub fn deinit(this: *SASL) void {
     this.status = .init;
 }
 
-// @sortImports
-
 const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
-const SASL = @This();
 const std = @import("std");
 
 const bun = @import("bun");

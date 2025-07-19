@@ -1,18 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
-pub const css = @import("./css_parser.zig");
-pub const css_values = @import("./values/values.zig");
-const DashedIdent = css_values.ident.DashedIdent;
-pub const Error = css.Error;
-const Location = css.Location;
-const PrintErr = css.PrintErr;
-
-const ArrayList = std.ArrayListUnmanaged;
-
-const sourcemap = @import("./sourcemap.zig");
-
 /// Options that control how CSS is serialized to a string.
 pub const PrinterOptions = struct {
     /// Whether to minify the CSS, i.e. remove white space.
@@ -70,10 +55,6 @@ const PseudoClasses = struct {
     /// The class name to replace `:focus-within` with.
     focus_within: ?[]const u8 = null,
 };
-
-pub const Targets = css.targets.Targets;
-
-pub const Features = css.targets.Features;
 
 pub const ImportInfo = struct {
     import_records: *const bun.BabyList(bun.ImportRecord),
@@ -582,3 +563,20 @@ pub fn Printer(comptime Writer: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+pub const css_values = @import("./values/values.zig");
+const sourcemap = @import("./sourcemap.zig");
+const DashedIdent = css_values.ident.DashedIdent;
+
+pub const css = @import("./css_parser.zig");
+pub const Error = css.Error;
+const Location = css.Location;
+const PrintErr = css.PrintErr;
+
+pub const Features = css.targets.Features;
+pub const Targets = css.targets.Targets;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

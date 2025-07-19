@@ -4,11 +4,6 @@ const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
-pub const js = JSC.Codegen.JSTimeout;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
-
 ref_count: RefCount,
 event_loop_timer: EventLoopTimer = .{
     .next = .epoch,
@@ -123,12 +118,19 @@ pub fn dispose(this: *TimeoutObject, globalThis: *JSGlobalObject, _: *JSC.CallFr
     return .js_undefined;
 }
 
-const bun = @import("bun");
-const JSC = bun.JSC;
-const TimerObjectInternals = @import("../Timer.zig").TimerObjectInternals;
 const Debugger = @import("../../Debugger.zig");
+const bun = @import("bun");
+
+const EventLoopTimer = @import("../Timer.zig").EventLoopTimer;
 const ID = @import("../Timer.zig").ID;
 const Kind = @import("../Timer.zig").Kind;
-const EventLoopTimer = @import("../Timer.zig").EventLoopTimer;
-const JSValue = JSC.JSValue;
+const TimerObjectInternals = @import("../Timer.zig").TimerObjectInternals;
+
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+
+pub const js = JSC.Codegen.JSTimeout;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;

@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
-pub const css = @import("./css_parser.zig");
-const bits = bun.bits;
-
-const VendorPrefix = css.VendorPrefix;
-
 /// Target browsers and features to compile.
 pub const Targets = struct {
     /// Browser targets to compile the CSS for.
@@ -346,3 +338,11 @@ pub const Features = packed struct(u32) {
         .space_separated_color_notation = true,
     };
 };
+
+const std = @import("std");
+
+pub const css = @import("./css_parser.zig");
+const VendorPrefix = css.VendorPrefix;
+
+const bun = @import("bun");
+const bits = bun.bits;

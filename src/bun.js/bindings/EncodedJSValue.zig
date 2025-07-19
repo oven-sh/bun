@@ -1,5 +1,3 @@
-const JSCell = @import("./JSCell.zig").JSCell;
-
 pub const EncodedJSValue = extern union {
     asInt64: i64,
     ptr: ?*JSCell,
@@ -7,3 +5,5 @@ pub const EncodedJSValue = extern union {
     asPtr: ?*anyopaque,
     asDouble: f64,
 };
+
+const JSCell = @import("./JSCell.zig").JSCell;

@@ -1,3 +1,5 @@
+const RefCountedStr = @This();
+
 refcount: u32 = 1,
 len: u32 = 0,
 ptr: [*]const u8 = undefined,
@@ -42,5 +44,4 @@ fn freeStr(this: *RefCountedStr) void {
     bun.default_allocator.free(this.ptr[0..this.len]);
 }
 
-const RefCountedStr = @This();
 const bun = @import("bun");

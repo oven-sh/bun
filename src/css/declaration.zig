@@ -1,32 +1,6 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-
-pub const css = @import("./css_parser.zig");
-pub const Error = css.Error;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Result = css.Result;
-
-const ArrayList = std.ArrayListUnmanaged;
 pub const DeclarationList = ArrayList(css.Property);
 
-const BackgroundHandler = css.css_properties.background.BackgroundHandler;
-const BorderHandler = css.css_properties.border.BorderHandler;
-const FallbackHandler = css.css_properties.prefix_handler.FallbackHandler;
-const MarginHandler = css.css_properties.margin_padding.MarginHandler;
-const PaddingHandler = css.css_properties.margin_padding.PaddingHandler;
-const ScrollMarginHandler = css.css_properties.margin_padding.ScrollMarginHandler;
-const FontHandler = css.css_properties.font.FontHandler;
-const InsetHandler = css.css_properties.margin_padding.InsetHandler;
-const SizeHandler = css.css_properties.size.SizeHandler;
-const FlexHandler = css.css_properties.flex.FlexHandler;
 const AlignHandler = css.css_properties.@"align".AlignHandler;
-const TransitionHandler = css.css_properties.transition.TransitionHandler;
-const TransformHandler = css.css_properties.transform.TransformHandler;
-const ColorSchemeHandler = css.css_properties.ui.ColorSchemeHandler;
-const BoxShadowHandler = css.css_properties.box_shadow.BoxShadowHandler;
 // const GridHandler = css.css_properties.g
 
 /// A CSS declaration block.
@@ -458,3 +432,31 @@ pub const DeclarationHandler = struct {
         };
     }
 };
+
+pub const css = @import("./css_parser.zig");
+pub const Error = css.Error;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const BackgroundHandler = css.css_properties.background.BackgroundHandler;
+const BorderHandler = css.css_properties.border.BorderHandler;
+const BoxShadowHandler = css.css_properties.box_shadow.BoxShadowHandler;
+const ColorSchemeHandler = css.css_properties.ui.ColorSchemeHandler;
+const FallbackHandler = css.css_properties.prefix_handler.FallbackHandler;
+const FlexHandler = css.css_properties.flex.FlexHandler;
+const FontHandler = css.css_properties.font.FontHandler;
+const SizeHandler = css.css_properties.size.SizeHandler;
+const TransformHandler = css.css_properties.transform.TransformHandler;
+const TransitionHandler = css.css_properties.transition.TransitionHandler;
+
+const InsetHandler = css.css_properties.margin_padding.InsetHandler;
+const MarginHandler = css.css_properties.margin_padding.MarginHandler;
+const PaddingHandler = css.css_properties.margin_padding.PaddingHandler;
+const ScrollMarginHandler = css.css_properties.margin_padding.ScrollMarginHandler;
+
+const bun = @import("bun");
+const logger = bun.logger;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

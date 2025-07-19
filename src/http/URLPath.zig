@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-
-const PercentEncoding = @import("../url.zig").PercentEncoding;
-const std = @import("std");
 const URLPath = @This();
 
 extname: string = "",
@@ -146,3 +140,10 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
         .needs_redirect = needs_redirect,
     };
 }
+
+const std = @import("std");
+const PercentEncoding = @import("../url.zig").PercentEncoding;
+
+const bun = @import("bun");
+const string = bun.string;
+const strings = bun.strings;

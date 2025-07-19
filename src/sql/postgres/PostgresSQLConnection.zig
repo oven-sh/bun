@@ -1,3 +1,5 @@
+const PostgresSQLConnection = @This();
+
 socket: Socket,
 status: Status = Status.connecting,
 ref_count: u32 = 1,
@@ -1713,11 +1715,8 @@ const debug = bun.Output.scoped(.Postgres, false);
 
 const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection
 
-// @sortImports
-
 const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
 const PostgresRequest = @import("./PostgresRequest.zig");
-const PostgresSQLConnection = @This();
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
 const SocketMonitor = @import("./SocketMonitor.zig");

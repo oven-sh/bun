@@ -1,18 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
-const LengthPercentage = css.css_values.length.LengthPercentage;
-
-const VendorPrefix = css.VendorPrefix;
-const Property = css.Property;
-const Feature = css.prefixes.Feature;
-
 /// A value for the [align-content](https://www.w3.org/TR/css-align-3/#propdef-align-content) property.
 pub const AlignContent = union(enum) {
     /// Default alignment.
@@ -1100,13 +1085,6 @@ pub const ContentPositionInner = struct {
     }
 };
 
-const FlexLinePack = css.css_properties.flex.FlexLinePack;
-const BoxPack = css.css_properties.flex.BoxPack;
-const FlexPack = css.css_properties.flex.FlexPack;
-const BoxAlign = css.css_properties.flex.BoxAlign;
-const FlexAlign = css.css_properties.flex.FlexAlign;
-const FlexItemAlign = css.css_properties.flex.FlexItemAlign;
-
 pub const AlignHandler = struct {
     align_content: ?struct { AlignContent, VendorPrefix } = null,
     flex_line_pack: ?struct { FlexLinePack, VendorPrefix } = null,
@@ -1514,3 +1492,22 @@ fn isAlignProperty(property_id: css.PropertyId) bool {
         else => false,
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Property = css.Property;
+const VendorPrefix = css.VendorPrefix;
+const Feature = css.prefixes.Feature;
+const LengthPercentage = css.css_values.length.LengthPercentage;
+
+const BoxAlign = css.css_properties.flex.BoxAlign;
+const BoxPack = css.css_properties.flex.BoxPack;
+const FlexAlign = css.css_properties.flex.FlexAlign;
+const FlexItemAlign = css.css_properties.flex.FlexItemAlign;
+const FlexLinePack = css.css_properties.flex.FlexLinePack;
+const FlexPack = css.css_properties.flex.FlexPack;

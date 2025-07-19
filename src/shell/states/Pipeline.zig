@@ -325,36 +325,38 @@ fn readPipe(pipes: []Pipe, proc_idx: usize, io: *IO, evtloop: JSC.EventLoopHandl
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
-
-const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellExecEnv = Interpreter.ShellExecEnv;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-const Pipe = bun.shell.interpret.Pipe;
-const closefd = bun.shell.interpret.closefd;
-const IOReader = bun.shell.Interpreter.IOReader;
-const IOWriter = bun.shell.Interpreter.IOWriter;
-
-const Assigns = bun.shell.Interpreter.Assigns;
-const Async = bun.shell.Interpreter.Async;
-const Cmd = bun.shell.Interpreter.Cmd;
-const If = bun.shell.Interpreter.If;
-const CondExpr = bun.shell.Interpreter.CondExpr;
-const Binary = bun.shell.Interpreter.Binary;
-const Subshell = bun.shell.Interpreter.Subshell;
-const Stmt = bun.shell.Interpreter.Stmt;
+const assert = bun.assert;
 
 const JSC = bun.JSC;
 const Maybe = JSC.Maybe;
-const assert = bun.assert;
+
+const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
+
+const Interpreter = bun.shell.Interpreter;
+const Assigns = bun.shell.Interpreter.Assigns;
+const Async = bun.shell.Interpreter.Async;
+const Binary = bun.shell.Interpreter.Binary;
+const Cmd = bun.shell.Interpreter.Cmd;
+const CondExpr = bun.shell.Interpreter.CondExpr;
+const IO = bun.shell.Interpreter.IO;
+const IOReader = bun.shell.Interpreter.IOReader;
+const IOWriter = bun.shell.Interpreter.IOWriter;
+const If = bun.shell.Interpreter.If;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Stmt = bun.shell.Interpreter.Stmt;
+const Subshell = bun.shell.Interpreter.Subshell;
+
+const Pipe = bun.shell.interpret.Pipe;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const Syscall = bun.shell.interpret.Syscall;
+const closefd = bun.shell.interpret.closefd;
+const log = bun.shell.interpret.log;
 
 const windows = bun.windows;
 const uv = windows.libuv;

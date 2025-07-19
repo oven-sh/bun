@@ -288,8 +288,6 @@ comptime {
     @export(&jsFunctionFindSourceMap, .{ .name = "Bun__JSSourceMap__find" });
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

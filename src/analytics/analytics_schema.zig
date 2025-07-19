@@ -1,5 +1,3 @@
-const std = @import("std");
-
 pub const Reader = struct {
     const Self = @This();
     pub const ReadError = error{EOF};
@@ -518,3 +516,5 @@ pub const analytics = struct {
         }
     };
 };
+
+const std = @import("std");

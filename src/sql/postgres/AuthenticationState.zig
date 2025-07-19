@@ -16,6 +16,4 @@ pub const AuthenticationState = union(enum) {
     }
 };
 
-// @sortImports
-
 const SASL = @import("./SASL.zig");

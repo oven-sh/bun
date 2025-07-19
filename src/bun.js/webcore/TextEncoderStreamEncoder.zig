@@ -1,11 +1,8 @@
+const TextEncoderStreamEncoder = @This();
+
 pending_lead_surrogate: ?u16 = null,
 
 const log = Output.scoped(.TextEncoderStreamEncoder, false);
-
-pub const js = JSC.Codegen.JSTextEncoderStreamEncoder;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
 
 pub const new = bun.TrivialNew(TextEncoderStreamEncoder);
 
@@ -196,14 +193,19 @@ fn flushBody(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject) JSV
         JSUint8Array.fromBytesCopy(globalObject, &.{ 0xef, 0xbf, 0xbd });
 }
 
-const TextEncoderStreamEncoder = @This();
-
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
+const Environment = bun.Environment;
 const Output = bun.Output;
 const strings = bun.strings;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
 const JSUint8Array = JSC.JSUint8Array;
 const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const Environment = bun.Environment;
+
+pub const js = JSC.Codegen.JSTextEncoderStreamEncoder;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;

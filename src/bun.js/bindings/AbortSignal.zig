@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const CommonAbortReason = @import("CommonAbortReason.zig").CommonAbortReason;
-
 pub const AbortSignal = opaque {
     extern fn WebCore__AbortSignal__aborted(arg0: *AbortSignal) bool;
     extern fn WebCore__AbortSignal__abortReason(arg0: *AbortSignal) JSValue;
@@ -144,3 +138,10 @@ pub const AbortSignal = opaque {
         return WebCore__AbortSignal__new(global);
     }
 };
+
+const bun = @import("bun");
+const CommonAbortReason = @import("./CommonAbortReason.zig").CommonAbortReason;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

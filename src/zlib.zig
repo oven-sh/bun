@@ -1,10 +1,5 @@
 // @link "deps/zlib/libz.a"
 
-const std = @import("std");
-const bun = @import("bun");
-
-const mimalloc = @import("./allocators/mimalloc.zig");
-
 pub const MIN_WBITS = 8;
 pub const MAX_WBITS = 15;
 
@@ -32,11 +27,6 @@ const voidpf = ?*anyopaque;
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
-const internal = @import("zlib-internal");
-const zStream_struct = @import("zlib-internal").zStream_struct;
-pub const z_stream = @import("zlib-internal").z_stream;
-pub const z_streamp = @import("zlib-internal").z_streamp;
-
 // typedef struct z_stream_s {
 //     z_const Bytef *next_in;  /* next input byte */
 //     uInt     avail_in;  /* number of bytes available at next_in */
@@ -58,10 +48,6 @@ pub const z_streamp = @import("zlib-internal").z_streamp;
 //     uLong   adler;      /* Adler-32 or CRC-32 value of the uncompressed data */
 //     uLong   reserved;   /* reserved for future use */
 // } z_stream;
-
-const DataType = @import("zlib-internal").DataType;
-pub const FlushValue = @import("zlib-internal").FlushValue;
-pub const ReturnCode = @import("zlib-internal").ReturnCode;
 
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
 
@@ -936,3 +922,15 @@ pub const ZlibCompressorArrayList = struct {
         }
     }
 };
+
+const bun = @import("bun");
+const mimalloc = @import("./allocators/mimalloc.zig");
+const std = @import("std");
+
+const internal = @import("zlib-internal");
+const DataType = @import("zlib-internal").DataType;
+pub const FlushValue = @import("zlib-internal").FlushValue;
+pub const ReturnCode = @import("zlib-internal").ReturnCode;
+const zStream_struct = @import("zlib-internal").zStream_struct;
+pub const z_stream = @import("zlib-internal").z_stream;
+pub const z_streamp = @import("zlib-internal").z_streamp;

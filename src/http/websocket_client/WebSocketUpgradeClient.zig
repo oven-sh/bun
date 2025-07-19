@@ -675,23 +675,22 @@ fn buildRequestBody(
     );
 }
 
+const log = Output.scoped(.WebSocketUpgradeClient, false);
+
+const WebSocketDeflate = @import("./WebSocketDeflate.zig");
 const std = @import("std");
+const CppWebSocket = @import("./CppWebSocket.zig").CppWebSocket;
+
+const websocket_client = @import("../websocket_client.zig");
+const ErrorCode = websocket_client.ErrorCode;
 
 const bun = @import("bun");
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const BoringSSL = bun.BoringSSL;
-const uws = bun.uws;
-const JSC = bun.JSC;
-const PicoHTTP = bun.picohttp;
-
 const Async = bun.Async;
-const websocket_client = @import("../websocket_client.zig");
-const CppWebSocket = @import("./CppWebSocket.zig").CppWebSocket;
-const ErrorCode = websocket_client.ErrorCode;
-const WebSocketDeflate = @import("./WebSocketDeflate.zig");
-
-const log = Output.scoped(.WebSocketUpgradeClient, false);
+const BoringSSL = bun.BoringSSL;
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const Output = bun.Output;
+const PicoHTTP = bun.picohttp;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
+const uws = bun.uws;

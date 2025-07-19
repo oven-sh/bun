@@ -1184,8 +1184,6 @@ pub const Installer = struct {
     }
 };
 
-// @sortImports
-
 const std = @import("std");
 const FileCopier = @import("./FileCopier.zig").FileCopier;
 const Hardlinker = @import("./Hardlinker.zig").Hardlinker;

@@ -1,16 +1,3 @@
-const bun = @import("bun");
-
-pub const css = @import("../css_parser.zig");
-
-const CustomPropertyName = css.css_properties.CustomPropertyName;
-
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const VendorPrefix = css.VendorPrefix;
-
-const PropertyId = css.PropertyId;
-const Property = css.Property;
-
 pub const property_id_mixin = struct {
     pub fn toCss(this: *const PropertyId, comptime W: type, dest: *Printer(W)) PrintErr!void {
         var first = true;
@@ -107,3 +94,13 @@ pub const property_mixin = struct {
         }
     }
 };
+
+const bun = @import("bun");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Property = css.Property;
+const PropertyId = css.PropertyId;
+const VendorPrefix = css.VendorPrefix;
+const CustomPropertyName = css.css_properties.CustomPropertyName;

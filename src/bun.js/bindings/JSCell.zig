@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const GetterSetter = @import("GetterSetter.zig").GetterSetter;
-const CustomGetterSetter = @import("CustomGetterSetter.zig").CustomGetterSetter;
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-
 pub const JSCell = opaque {
     /// Statically cast a cell to a JSObject. Returns null for non-objects.
     /// Use `toObject` to mutate non-objects into objects.
@@ -61,3 +53,12 @@ pub const JSCell = opaque {
     // when upgrading WebKit.
     extern fn JSC__JSCell__getType(this: *JSCell) u8;
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const CustomGetterSetter = @import("./CustomGetterSetter.zig").CustomGetterSetter;
+const GetterSetter = @import("./GetterSetter.zig").GetterSetter;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

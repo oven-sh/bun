@@ -1,6 +1,7 @@
 //! This is the base header struct that all state nodes include in their layout.
 //!
 //! TODO: Is this still needed?
+
 const Base = @This();
 
 kind: StateKind,
@@ -126,12 +127,13 @@ pub fn leakSlice(this: *Base, memory: anytype) void {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
+const JSC = bun.JSC;
 
 const Interpreter = bun.shell.Interpreter;
+const IO = bun.shell.Interpreter.IO;
 const ShellExecEnv = Interpreter.ShellExecEnv;
+
 const StateKind = bun.shell.interpret.StateKind;
 const throwShellErr = bun.shell.interpret.throwShellErr;
-const IO = bun.shell.Interpreter.IO;
-
-const JSC = bun.JSC;

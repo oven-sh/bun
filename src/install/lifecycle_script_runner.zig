@@ -1,16 +1,3 @@
-const bun = @import("bun");
-const Lockfile = @import("./lockfile.zig");
-const std = @import("std");
-const PackageManager = @import("./install.zig").PackageManager;
-const Environment = bun.Environment;
-const Output = bun.Output;
-const Global = bun.Global;
-const JSC = bun.JSC;
-const Timer = std.time.Timer;
-const string = bun.string;
-const Store = bun.install.Store;
-
-const Process = bun.spawn.Process;
 const log = Output.scoped(.Script, false);
 pub const LifecycleScriptSubprocess = struct {
     package_name: string,
@@ -575,3 +562,17 @@ pub const LifecycleScriptSubprocess = struct {
         };
     }
 };
+
+const Lockfile = @import("./lockfile.zig");
+const std = @import("std");
+const PackageManager = @import("./install.zig").PackageManager;
+const Timer = std.time.Timer;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSC = bun.JSC;
+const Output = bun.Output;
+const string = bun.string;
+const Process = bun.spawn.Process;
+const Store = bun.install.Store;

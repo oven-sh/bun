@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Environment = bun.Environment;
-const posix = std.posix;
-
 pub const OutKind = enum {
     stdout,
     stderr,
@@ -15,6 +10,11 @@ pub const OutKind = enum {
     }
 };
 
+pub const WatchFd = if (Environment.isLinux) posix.fd_t else i32;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
 pub const Stdio = bun.spawn.Stdio;
 
-pub const WatchFd = if (Environment.isLinux) posix.fd_t else i32;
+const std = @import("std");
+const posix = std.posix;

@@ -1,13 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const Result = css.Result;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const LengthOrNumber = css.css_values.length.LengthOrNumber;
-const CssColor = css.css_values.color.CssColor;
-
 fn needsDeinit(comptime T: type) bool {
     return switch (T) {
         f32, i32, u32, []const u8 => false,
@@ -140,3 +130,15 @@ pub fn Rect(comptime T: type) type {
         }
     };
 }
+
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const CssColor = css.css_values.color.CssColor;
+const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
+
+const LengthOrNumber = css.css_values.length.LengthOrNumber;
+const LengthPercentage = css.css_values.length.LengthPercentage;

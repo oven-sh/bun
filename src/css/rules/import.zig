@@ -1,15 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-pub const css = @import("../css_parser.zig");
-const MediaList = css.MediaList;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Dependency = css.Dependency;
-const dependencies = css.dependencies;
-const LayerName = css.css_rules.layer.LayerName;
-const SupportsCondition = css.css_rules.supports.SupportsCondition;
-const Location = css.css_rules.Location;
-
 /// TODO: change this to be field on ImportRule
 /// The fields of this struct need to match the fields of ImportRule
 /// because we cast between them
@@ -265,3 +253,17 @@ pub const ImportRule = struct {
         return css.implementDeepClone(@This(), this, allocator);
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const Dependency = css.Dependency;
+const MediaList = css.MediaList;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const dependencies = css.dependencies;
+
+const Location = css.css_rules.Location;
+const LayerName = css.css_rules.layer.LayerName;
+const SupportsCondition = css.css_rules.supports.SupportsCondition;

@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
-const js_ast = bun.JSAst;
-
 pub const NodeIndex = u32;
 pub const NodeIndexNone = 4294967293;
 
@@ -237,3 +232,8 @@ pub const Ref = packed struct(u64) {
         return &resolved_symbol_table[ref.innerIndex()];
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const js_ast = bun.JSAst;

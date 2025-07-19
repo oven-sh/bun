@@ -418,38 +418,38 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
     }
 }
 
-const bun = @import("bun");
-const Ref = bun.bundle_v2.Ref;
-const BabyList = bun.BabyList;
-const Logger = bun.logger;
-const Index = bun.bundle_v2.Index;
-const Loc = Logger.Loc;
-const LinkerContext = bun.bundle_v2.LinkerContext;
+const std = @import("std");
 
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const Environment = bun.Environment;
+const ImportRecord = bun.ImportRecord;
+const default_allocator = bun.default_allocator;
+const renamer = bun.renamer;
+const string = bun.string;
+
+const bundler = bun.bundle_v2;
+const Chunk = bundler.Chunk;
+const CrossChunkImport = bundler.CrossChunkImport;
+pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
+const Index = bun.bundle_v2.Index;
+const JSMeta = bundler.JSMeta;
+pub const ParseTask = bun.bundle_v2.ParseTask;
+const Ref = bun.bundle_v2.Ref;
+const RefImportData = bundler.RefImportData;
+const ResolvedExports = bundler.ResolvedExports;
+const StableRef = bundler.StableRef;
+pub const ThreadPool = bun.bundle_v2.ThreadPool;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const ChunkMeta = LinkerContext.ChunkMeta;
 const debug = LinkerContext.debug;
 
-const string = bun.string;
-const Environment = bun.Environment;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const Part = js_ast.Part;
 const js_ast = bun.js_ast;
-const ImportRecord = bun.ImportRecord;
-
-const Symbol = js_ast.Symbol;
-const Stmt = js_ast.Stmt;
+const Part = js_ast.Part;
 const S = js_ast.S;
-const renamer = bun.renamer;
-const bundler = bun.bundle_v2;
+const Stmt = js_ast.Stmt;
+const Symbol = js_ast.Symbol;
 
-pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
-pub const ThreadPool = bun.bundle_v2.ThreadPool;
-pub const ParseTask = bun.bundle_v2.ParseTask;
-const Chunk = bundler.Chunk;
-const JSMeta = bundler.JSMeta;
-const ResolvedExports = bundler.ResolvedExports;
-const RefImportData = bundler.RefImportData;
-const CrossChunkImport = bundler.CrossChunkImport;
-const StableRef = bundler.StableRef;
-const ChunkMeta = LinkerContext.ChunkMeta;
+const Logger = bun.logger;
+const Loc = Logger.Loc;

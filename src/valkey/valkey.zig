@@ -2,8 +2,6 @@
 //
 // This file contains the core Valkey client implementation with protocol handling
 
-pub const ValkeyContext = @import("ValkeyContext.zig");
-
 /// Connection flags to track Valkey client state
 pub const ConnectionFlags = packed struct(u8) {
     is_authenticated: bool = false,
@@ -23,8 +21,6 @@ pub const Status = enum {
     connected,
     failed,
 };
-
-pub const Command = @import("./ValkeyCommand.zig");
 
 /// Valkey protocol types (standalone, TLS, Unix socket)
 pub const Protocol = enum {
@@ -959,13 +955,16 @@ pub const ValkeyClient = struct {
 };
 
 // Auto-pipelining
-const AutoFlusher = JSC.WebCore.AutoFlusher;
 
-const JSValkeyClient = JSC.API.Valkey;
-
-const JSC = bun.JSC;
-const std = @import("std");
-const bun = @import("bun");
-const protocol = @import("valkey_protocol.zig");
 const debug = bun.Output.scoped(.Redis, false);
+
+pub const Command = @import("./ValkeyCommand.zig");
+pub const ValkeyContext = @import("./ValkeyContext.zig");
+const protocol = @import("./valkey_protocol.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const JSC = bun.JSC;
 const uws = bun.uws;
+const AutoFlusher = JSC.WebCore.AutoFlusher;
+const JSValkeyClient = JSC.API.Valkey;

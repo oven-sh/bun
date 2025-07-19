@@ -101,5 +101,5 @@ pub const OSLog = opaque {
     };
 };
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");

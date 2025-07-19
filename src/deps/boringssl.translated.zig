@@ -1,18 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const C = @import("std").zig.c_builtins;
 const pthread_rwlock_t = if (bun.Environment.isPosix) @import("../sync.zig").RwLock.pthread_rwlock_t else *anyopaque;
-const time_t = C.time_t;
-const va_list = C.va_list;
-const struct_timeval = C.struct_timeval;
-const DEFINE_NAMED_STACK_OF = C.DEFINE_NAMED_STACK_OF;
-const struct_timespec = C.struct_timespec;
-const NULL = C.NULL;
-const DECLARE_ASN1_FUNCTIONS_name = C.DECLARE_ASN1_FUNCTIONS_name;
-const DECLARE_ASN1_ALLOC_FUNCTIONS_name = C.DECLARE_ASN1_ALLOC_FUNCTIONS_name;
-const timercmp = C.timercmp;
-const struct_tm = C.struct_tm;
-const enum_ssl_verify_result_t = C.enum_ssl_verify_result_t;
 /// `isize` alias. Kept for clarity.
 ///
 /// Docs from OpenSSL:
@@ -18704,8 +18690,6 @@ pub const evp_aead_direction_t = enum_evp_aead_direction_t;
 pub const stack_st_CRYPTO_BUFFER = struct_stack_st_CRYPTO_BUFFER;
 pub const stack_st_X509 = struct_stack_st_X509;
 pub const stack_st_X509_CRL = struct_stack_st_X509_CRL;
-pub const timespec = struct_timespec;
-pub const tm = struct_tm;
 pub const bn_primality_result_t = enum_bn_primality_result_t;
 pub const stack_st_ASN1_INTEGER = struct_stack_st_ASN1_INTEGER;
 pub const stack_st_ASN1_OBJECT = struct_stack_st_ASN1_OBJECT;
@@ -18729,7 +18713,6 @@ pub const stack_st_X509_OBJECT = struct_stack_st_X509_OBJECT;
 pub const stack_st_X509_VERIFY_PARAM = struct_stack_st_X509_VERIFY_PARAM;
 pub const fips_counter_t = enum_fips_counter_t;
 pub const stack_st_SSL_CIPHER = struct_stack_st_SSL_CIPHER;
-pub const ssl_verify_result_t = enum_ssl_verify_result_t;
 pub const stack_st_SRTP_PROTECTION_PROFILE = struct_stack_st_SRTP_PROTECTION_PROFILE;
 pub const ssl_early_data_reason_t = enum_ssl_early_data_reason_t;
 pub const ssl_renegotiate_mode_t = enum_ssl_renegotiate_mode_t;
@@ -19280,3 +19263,22 @@ pub fn getError(this: *SSL, rc: c_int) SSL.Error!u32 {
         else => @as(u32, @intCast(rc)),
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+
+const C = @import("std").zig.c_builtins;
+const DECLARE_ASN1_ALLOC_FUNCTIONS_name = C.DECLARE_ASN1_ALLOC_FUNCTIONS_name;
+const DECLARE_ASN1_FUNCTIONS_name = C.DECLARE_ASN1_FUNCTIONS_name;
+const DEFINE_NAMED_STACK_OF = C.DEFINE_NAMED_STACK_OF;
+const NULL = C.NULL;
+const enum_ssl_verify_result_t = C.enum_ssl_verify_result_t;
+pub const ssl_verify_result_t = enum_ssl_verify_result_t;
+const struct_timespec = C.struct_timespec;
+const struct_timeval = C.struct_timeval;
+const struct_tm = C.struct_tm;
+const time_t = C.time_t;
+const timercmp = C.timercmp;
+pub const timespec = struct_timespec;
+pub const tm = struct_tm;
+const va_list = C.va_list;

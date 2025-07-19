@@ -1,41 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
-pub const css = @import("../css_parser.zig");
-pub const css_values = @import("../values/values.zig");
-pub const Printer = css.Printer;
-pub const PrintErr = css.PrintErr;
-const DashedIdent = css_values.ident.DashedIdent;
-const DashedIdentFns = css_values.ident.DashedIdentFns;
-const Ident = css_values.ident.Ident;
-const IdentFns = css_values.ident.IdentFns;
-pub const Result = css.Result;
-
-pub const CssColor = css.css_values.color.CssColor;
-pub const RGBA = css.css_values.color.RGBA;
-pub const SRGB = css.css_values.color.SRGB;
-pub const HSL = css.css_values.color.HSL;
-pub const CSSInteger = css.css_values.number.CSSInteger;
-pub const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
-pub const CSSNumberFns = css.css_values.number.CSSNumberFns;
-pub const Percentage = css.css_values.percentage.Percentage;
-pub const Url = css.css_values.url.Url;
-pub const DashedIdentReference = css.css_values.ident.DashedIdentReference;
-pub const CustomIdent = css.css_values.ident.CustomIdent;
-pub const CustomIdentFns = css.css_values.ident.CustomIdentFns;
-pub const LengthValue = css.css_values.length.LengthValue;
-pub const Angle = css.css_values.angle.Angle;
-pub const Time = css.css_values.time.Time;
-pub const Resolution = css.css_values.resolution.Resolution;
-pub const AnimationName = css.css_properties.animation.AnimationName;
-const ComponentParser = css.css_values.color.ComponentParser;
-
-const SupportsCondition = css.SupportsCondition;
-const ColorFallbackKind = css.ColorFallbackKind;
-
-const ArrayList = std.ArrayListUnmanaged;
-
 /// PERF: nullable optimization
 pub const TokenList = struct {
     v: std.ArrayListUnmanaged(TokenOrValue) = .{},
@@ -1554,3 +1516,43 @@ pub fn tryParseColorToken(f: []const u8, state: *const css.ParserState, input: *
 
     return null;
 }
+
+const bun = @import("bun");
+pub const css_values = @import("../values/values.zig");
+
+pub const css = @import("../css_parser.zig");
+const ColorFallbackKind = css.ColorFallbackKind;
+pub const PrintErr = css.PrintErr;
+pub const Printer = css.Printer;
+pub const Result = css.Result;
+const SupportsCondition = css.SupportsCondition;
+pub const Angle = css.css_values.angle.Angle;
+pub const AnimationName = css.css_properties.animation.AnimationName;
+pub const LengthValue = css.css_values.length.LengthValue;
+pub const Percentage = css.css_values.percentage.Percentage;
+pub const Resolution = css.css_values.resolution.Resolution;
+pub const Time = css.css_values.time.Time;
+pub const Url = css.css_values.url.Url;
+
+const ComponentParser = css.css_values.color.ComponentParser;
+pub const CssColor = css.css_values.color.CssColor;
+pub const HSL = css.css_values.color.HSL;
+pub const RGBA = css.css_values.color.RGBA;
+pub const SRGB = css.css_values.color.SRGB;
+
+pub const CustomIdent = css.css_values.ident.CustomIdent;
+pub const CustomIdentFns = css.css_values.ident.CustomIdentFns;
+pub const DashedIdentReference = css.css_values.ident.DashedIdentReference;
+
+pub const CSSInteger = css.css_values.number.CSSInteger;
+pub const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
+pub const CSSNumberFns = css.css_values.number.CSSNumberFns;
+
+const DashedIdent = css_values.ident.DashedIdent;
+const DashedIdentFns = css_values.ident.DashedIdentFns;
+const Ident = css_values.ident.Ident;
+const IdentFns = css_values.ident.IdentFns;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

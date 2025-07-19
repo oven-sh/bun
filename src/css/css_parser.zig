@@ -1,131 +1,6 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-const Log = logger.Log;
-
-pub const SrcIndex = bun.bundle_v2.Index;
-
-pub const SymbolList = bun.JSAst.Symbol.List;
-
-const ArrayList = std.ArrayListUnmanaged;
-
-pub const ImportRecord = bun.ImportRecord;
-pub const ImportKind = bun.ImportKind;
-
-pub const prefixes = @import("./prefixes.zig");
-
-pub const dependencies = @import("./dependencies.zig");
-pub const Dependency = dependencies.Dependency;
-
-pub const css_modules = @import("./css_modules.zig");
-pub const CssModuleExports = css_modules.CssModuleExports;
-pub const CssModule = css_modules.CssModule;
-pub const CssModuleReferences = css_modules.CssModuleReferences;
-pub const CssModuleReference = css_modules.CssModuleReference;
-pub const CssModuleConfig = css_modules.Config;
-
-pub const css_rules = @import("./rules/rules.zig");
-pub const CssRule = css_rules.CssRule;
-pub const CssRuleList = css_rules.CssRuleList;
-pub const LayerName = css_rules.layer.LayerName;
-pub const LayerStatementRule = css_rules.layer.LayerStatementRule;
-pub const SupportsCondition = css_rules.supports.SupportsCondition;
-pub const CustomMedia = css_rules.custom_media.CustomMediaRule;
-pub const NamespaceRule = css_rules.namespace.NamespaceRule;
-pub const UnknownAtRule = css_rules.unknown.UnknownAtRule;
-pub const ImportRule = css_rules.import.ImportRule;
-pub const StyleRule = css_rules.style.StyleRule;
-pub const StyleContext = css_rules.StyleContext;
-pub const SupportsRule = css_rules.supports.SupportsRule;
-pub const TailwindAtRule = css_rules.tailwind.TailwindAtRule;
-
-pub const MinifyContext = css_rules.MinifyContext;
-
-pub const media_query = @import("./media_query.zig");
-pub const MediaList = media_query.MediaList;
-pub const MediaFeatureType = media_query.MediaFeatureType;
-
-pub const css_values = @import("./values/values.zig");
-pub const DashedIdent = css_values.ident.DashedIdent;
-pub const DashedIdentFns = css_values.ident.DashedIdentFns;
-pub const CssColor = css_values.color.CssColor;
-pub const ColorFallbackKind = css_values.color.ColorFallbackKind;
-pub const CSSString = css_values.string.CSSString;
-pub const CSSStringFns = css_values.string.CSSStringFns;
-pub const CSSInteger = css_values.number.CSSInteger;
-pub const CSSIntegerFns = css_values.number.CSSIntegerFns;
-pub const CSSNumber = css_values.number.CSSNumber;
-pub const CSSNumberFns = css_values.number.CSSNumberFns;
-pub const Ident = css_values.ident.Ident;
-pub const IdentFns = css_values.ident.IdentFns;
-pub const CustomIdent = css_values.ident.CustomIdent;
-pub const CustomIdentFns = css_values.ident.CustomIdentFns;
-pub const Url = css_values.url.Url;
-
-pub const declaration = @import("./declaration.zig");
-
-pub const css_properties = @import("./properties/properties.zig");
-pub const Property = css_properties.Property;
-pub const PropertyId = css_properties.PropertyId;
-pub const PropertyIdTag = css_properties.PropertyIdTag;
-pub const TokenList = css_properties.custom.TokenList;
-pub const TokenListFns = css_properties.custom.TokenListFns;
-
-const css_decls = @import("./declaration.zig");
-pub const DeclarationList = css_decls.DeclarationList;
-pub const DeclarationBlock = css_decls.DeclarationBlock;
-
-pub const selector = @import("./selectors/selector.zig");
-pub const SelectorList = selector.parser.SelectorList;
-pub const Selector = selector.parser.Selector;
-pub const Component = selector.parser.Component;
-pub const PseudoClass = selector.parser.PseudoClass;
-pub const PseudoElement = selector.parser.PseudoElement;
-
-pub const logical = @import("./logical.zig");
-pub const PropertyCategory = logical.PropertyCategory;
-pub const LogicalGroup = logical.LogicalGroup;
-
-pub const css_printer = @import("./printer.zig");
-pub const Printer = css_printer.Printer;
-pub const PrinterOptions = css_printer.PrinterOptions;
-pub const targets = @import("./targets.zig");
-pub const Targets = css_printer.Targets;
-pub const ImportInfo = css_printer.ImportInfo;
 // pub const Features = css_printer.Features;
 
-const context = @import("./context.zig");
-pub const PropertyHandlerContext = context.PropertyHandlerContext;
-pub const DeclarationHandler = declaration.DeclarationHandler;
-
-pub const Maybe = bun.JSC.Node.Maybe;
 // TODO: Remove existing Error defined here and replace it with these
-const errors_ = @import("./error.zig");
-pub const Err = errors_.Err;
-pub const PrinterErrorKind = errors_.PrinterErrorKind;
-pub const PrinterError = errors_.PrinterError;
-pub const ErrorLocation = errors_.ErrorLocation;
-pub const ParseError = errors_.ParseError;
-pub const ParserError = errors_.ParserError;
-pub const BasicParseError = errors_.BasicParseError;
-pub const BasicParseErrorKind = errors_.BasicParseErrorKind;
-pub const SelectorError = errors_.SelectorError;
-pub const MinifyErrorKind = errors_.MinifyErrorKind;
-pub const MinifyError = errors_.MinifyError;
-pub const MinifyErr = errors_.MinifyErr;
-
-pub const generic = @import("./generics.zig");
-pub const HASH_SEED = generic.HASH_SEED;
-
-pub const ImportConditions = css_rules.import.ImportConditions;
-
-pub const compat = @import("./compat.zig");
-
-pub const Features = targets.Features;
-pub const Feature = compat.Feature;
-
-pub const fmtPrinterError = errors_.fmtPrinterError;
 
 pub const PrintErr = error{
     CSSPrintError,
@@ -137,8 +12,6 @@ pub fn OOM(e: anyerror) noreturn {
     }
     bun.outOfMemory();
 }
-
-pub const SmallList = @import("./small_list.zig").SmallList;
 
 pub const todo_stuff = struct {
     pub const think_mem_mgmt = "TODO: think about memory management";
@@ -282,7 +155,6 @@ pub const SourceLocation = struct {
         };
     }
 };
-pub const Location = css_rules.Location;
 
 pub const Error = Err(ParserError);
 
@@ -2947,9 +2819,6 @@ pub const ParserExtra = struct {
     source_index: SrcIndex,
 };
 
-pub const CustomIdentList = css_values.ident.CustomIdentList;
-pub const Specifier = css_properties.css_modules.Specifier;
-
 /// Reference to a symbol in a stylesheet.
 pub const CssRef = packed struct(u32) {
     inner_index: u26 = 0,
@@ -3006,7 +2875,6 @@ pub const LocalsResultsMap = bun.bundle_v2.MangledProps;
 /// Using `compose` and having conflicting properties is undefined behavior according
 /// to the css modules spec. We should warn the user about this.
 pub const LocalPropertyUsage = std.AutoArrayHashMapUnmanaged(bun.bundle_v2.Ref, PropertyUsage);
-pub const Composes = css_properties.css_modules.Composes;
 pub const ComposesMap = std.AutoArrayHashMapUnmanaged(bun.bundle_v2.Ref, ComposesEntry);
 
 pub const ComposesEntry = struct {
@@ -6974,10 +6842,6 @@ pub const serializer = struct {
     }
 };
 
-pub const implementEql = generic.implementEql;
-pub const implementHash = generic.implementHash;
-pub const implementDeepClone = generic.implementDeepClone;
-
 pub const parse_utility = struct {
     /// Parse a value from a string.
     ///
@@ -7338,3 +7202,140 @@ pub fn f32_length_with_5_digits(n_input: f32) usize {
 
     return count;
 }
+
+pub const css_values = @import("./values/values.zig");
+pub const prefixes = @import("./prefixes.zig");
+pub const selector = @import("./selectors/selector.zig");
+pub const SmallList = @import("./small_list.zig").SmallList;
+pub const Url = css_values.url.Url;
+
+pub const compat = @import("./compat.zig");
+pub const Feature = compat.Feature;
+
+const context = @import("./context.zig");
+pub const PropertyHandlerContext = context.PropertyHandlerContext;
+
+pub const css_modules = @import("./css_modules.zig");
+pub const CssModule = css_modules.CssModule;
+pub const CssModuleConfig = css_modules.Config;
+pub const CssModuleExports = css_modules.CssModuleExports;
+pub const CssModuleReference = css_modules.CssModuleReference;
+pub const CssModuleReferences = css_modules.CssModuleReferences;
+
+const css_decls = @import("./declaration.zig");
+pub const declaration = @import("./declaration.zig");
+pub const DeclarationBlock = css_decls.DeclarationBlock;
+pub const DeclarationHandler = declaration.DeclarationHandler;
+pub const DeclarationList = css_decls.DeclarationList;
+
+pub const dependencies = @import("./dependencies.zig");
+pub const Dependency = dependencies.Dependency;
+
+const errors_ = @import("./error.zig");
+pub const BasicParseError = errors_.BasicParseError;
+pub const BasicParseErrorKind = errors_.BasicParseErrorKind;
+pub const Err = errors_.Err;
+pub const ErrorLocation = errors_.ErrorLocation;
+pub const MinifyErr = errors_.MinifyErr;
+pub const MinifyError = errors_.MinifyError;
+pub const MinifyErrorKind = errors_.MinifyErrorKind;
+pub const ParseError = errors_.ParseError;
+pub const ParserError = errors_.ParserError;
+pub const PrinterError = errors_.PrinterError;
+pub const PrinterErrorKind = errors_.PrinterErrorKind;
+pub const SelectorError = errors_.SelectorError;
+pub const fmtPrinterError = errors_.fmtPrinterError;
+
+pub const generic = @import("./generics.zig");
+pub const HASH_SEED = generic.HASH_SEED;
+pub const implementDeepClone = generic.implementDeepClone;
+pub const implementEql = generic.implementEql;
+pub const implementHash = generic.implementHash;
+
+pub const logical = @import("./logical.zig");
+pub const LogicalGroup = logical.LogicalGroup;
+pub const PropertyCategory = logical.PropertyCategory;
+
+pub const media_query = @import("./media_query.zig");
+pub const MediaFeatureType = media_query.MediaFeatureType;
+pub const MediaList = media_query.MediaList;
+
+pub const css_printer = @import("./printer.zig");
+pub const ImportInfo = css_printer.ImportInfo;
+pub const Printer = css_printer.Printer;
+pub const PrinterOptions = css_printer.PrinterOptions;
+pub const Targets = css_printer.Targets;
+
+pub const css_properties = @import("./properties/properties.zig");
+pub const Property = css_properties.Property;
+pub const PropertyId = css_properties.PropertyId;
+pub const PropertyIdTag = css_properties.PropertyIdTag;
+
+pub const Composes = css_properties.css_modules.Composes;
+pub const Specifier = css_properties.css_modules.Specifier;
+
+pub const TokenList = css_properties.custom.TokenList;
+pub const TokenListFns = css_properties.custom.TokenListFns;
+
+pub const css_rules = @import("./rules/rules.zig");
+pub const CssRule = css_rules.CssRule;
+pub const CssRuleList = css_rules.CssRuleList;
+pub const Location = css_rules.Location;
+pub const MinifyContext = css_rules.MinifyContext;
+pub const StyleContext = css_rules.StyleContext;
+pub const CustomMedia = css_rules.custom_media.CustomMediaRule;
+pub const NamespaceRule = css_rules.namespace.NamespaceRule;
+pub const StyleRule = css_rules.style.StyleRule;
+pub const TailwindAtRule = css_rules.tailwind.TailwindAtRule;
+pub const UnknownAtRule = css_rules.unknown.UnknownAtRule;
+
+pub const ImportConditions = css_rules.import.ImportConditions;
+pub const ImportRule = css_rules.import.ImportRule;
+
+pub const LayerName = css_rules.layer.LayerName;
+pub const LayerStatementRule = css_rules.layer.LayerStatementRule;
+
+pub const SupportsCondition = css_rules.supports.SupportsCondition;
+pub const SupportsRule = css_rules.supports.SupportsRule;
+
+pub const Component = selector.parser.Component;
+pub const PseudoClass = selector.parser.PseudoClass;
+pub const PseudoElement = selector.parser.PseudoElement;
+pub const Selector = selector.parser.Selector;
+pub const SelectorList = selector.parser.SelectorList;
+
+pub const targets = @import("./targets.zig");
+pub const Features = targets.Features;
+
+pub const ColorFallbackKind = css_values.color.ColorFallbackKind;
+pub const CssColor = css_values.color.CssColor;
+
+pub const CustomIdent = css_values.ident.CustomIdent;
+pub const CustomIdentFns = css_values.ident.CustomIdentFns;
+pub const CustomIdentList = css_values.ident.CustomIdentList;
+pub const DashedIdent = css_values.ident.DashedIdent;
+pub const DashedIdentFns = css_values.ident.DashedIdentFns;
+pub const Ident = css_values.ident.Ident;
+pub const IdentFns = css_values.ident.IdentFns;
+
+pub const CSSInteger = css_values.number.CSSInteger;
+pub const CSSIntegerFns = css_values.number.CSSIntegerFns;
+pub const CSSNumber = css_values.number.CSSNumber;
+pub const CSSNumberFns = css_values.number.CSSNumberFns;
+
+pub const CSSString = css_values.string.CSSString;
+pub const CSSStringFns = css_values.string.CSSStringFns;
+
+const bun = @import("bun");
+pub const ImportKind = bun.ImportKind;
+pub const ImportRecord = bun.ImportRecord;
+pub const SrcIndex = bun.bundle_v2.Index;
+pub const Maybe = bun.JSC.Node.Maybe;
+pub const SymbolList = bun.JSAst.Symbol.List;
+
+const logger = bun.logger;
+const Log = logger.Log;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

@@ -1,4 +1,5 @@
 const Headers = @This();
+
 pub const Entry = struct {
     name: Api.StringPointer,
     value: Api.StringPointer,
@@ -174,9 +175,11 @@ pub fn from(fetch_headers_ref: ?*FetchHeaders, allocator: std.mem.Allocator, opt
     return headers;
 }
 
-const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
+const Api = @import("../api/schema.zig").Api;
+
 const bun = @import("bun");
 const picohttp = bun.picohttp;
+
 const Blob = bun.webcore.Blob;
 const FetchHeaders = bun.webcore.FetchHeaders;

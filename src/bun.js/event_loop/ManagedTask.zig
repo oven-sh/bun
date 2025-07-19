@@ -42,5 +42,6 @@ pub fn New(comptime Type: type, comptime Callback: anytype) type {
 }
 
 const bun = @import("bun");
+
 const JSC = bun.JSC;
 const Task = JSC.Task;

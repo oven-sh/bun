@@ -1,3 +1,5 @@
+const HashObject = @This();
+
 pub const wyhash = hashWrap(std.hash.Wyhash);
 pub const adler32 = hashWrap(std.hash.Adler32);
 pub const crc32 = hashWrap(std.hash.Crc32);
@@ -135,11 +137,10 @@ fn hashWrap(comptime Hasher_: anytype) JSC.JSHostFnZig {
     }.hash;
 }
 
-const HashObject = @This();
+const bun = @import("bun");
+const std = @import("std");
 
 const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const std = @import("std");
-const bun = @import("bun");
+const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;

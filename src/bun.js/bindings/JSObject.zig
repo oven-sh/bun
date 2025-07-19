@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ZigString = JSC.ZigString;
-const JSError = bun.JSError;
-
 extern const JSC__JSObject__maxInlineCapacity: c_uint;
 
 pub const JSObject = opaque {
@@ -169,3 +161,13 @@ pub const JSObject = opaque {
         return v;
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;

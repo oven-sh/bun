@@ -57,8 +57,6 @@ pub const Impl = union(Kind) {
     cp: Cp,
 };
 
-pub const Result = @import("../result.zig").Result;
-
 // Note: this enum uses @tagName, choose wisely!
 pub const Kind = enum {
     cat,
@@ -746,46 +744,50 @@ pub fn fmtErrorArena(this: *Builtin, comptime kind: ?Kind, comptime fmt_: []cons
 }
 
 // --- Shell Builtin Commands ---
-pub const Cat = @import("./builtin/cat.zig");
-pub const Touch = @import("./builtin/touch.zig");
-pub const Mkdir = @import("./builtin/mkdir.zig");
-pub const Export = @import("./builtin/export.zig");
-pub const Cd = @import("./builtin/cd.zig");
-pub const Ls = @import("./builtin/ls.zig");
-pub const Pwd = @import("./builtin/pwd.zig");
-pub const Echo = @import("./builtin/echo.zig");
-pub const Which = @import("./builtin/which.zig");
-pub const Rm = @import("./builtin/rm.zig");
-pub const Exit = @import("./builtin/exit.zig");
-pub const True = @import("./builtin/true.zig");
-pub const False = @import("./builtin/false.zig");
-pub const Yes = @import("./builtin/yes.zig");
-pub const Seq = @import("./builtin/seq.zig");
-pub const Dirname = @import("./builtin/dirname.zig");
-pub const Basename = @import("./builtin/basename.zig");
-pub const Cp = @import("./builtin/cp.zig");
-pub const Mv = @import("./builtin/mv.zig");
 // --- End Shell Builtin Commands ---
 
+pub const Basename = @import("./builtin/basename.zig");
+pub const Cat = @import("./builtin/cat.zig");
+pub const Cd = @import("./builtin/cd.zig");
+pub const Cp = @import("./builtin/cp.zig");
+pub const Dirname = @import("./builtin/dirname.zig");
+pub const Echo = @import("./builtin/echo.zig");
+pub const Exit = @import("./builtin/exit.zig");
+pub const Export = @import("./builtin/export.zig");
+pub const False = @import("./builtin/false.zig");
+pub const Ls = @import("./builtin/ls.zig");
+pub const Mkdir = @import("./builtin/mkdir.zig");
+pub const Mv = @import("./builtin/mv.zig");
+pub const Pwd = @import("./builtin/pwd.zig");
+pub const Rm = @import("./builtin/rm.zig");
+pub const Seq = @import("./builtin/seq.zig");
+pub const Touch = @import("./builtin/touch.zig");
+pub const True = @import("./builtin/true.zig");
+pub const Which = @import("./builtin/which.zig");
+pub const Yes = @import("./builtin/yes.zig");
 const std = @import("std");
+pub const Result = @import("../result.zig").Result;
+const Allocator = std.mem.Allocator;
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
+const JSC = bun.JSC;
 
 const shell = bun.shell;
-const Interpreter = shell.interpret.Interpreter;
-const Builtin = Interpreter.Builtin;
-
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
-const ExitCode = shell.interpret.ExitCode;
-const EnvMap = shell.interpret.EnvMap;
-const log = shell.interpret.log;
-const Syscall = bun.sys;
-const IOWriter = Interpreter.IOWriter;
-const IOReader = Interpreter.IOReader;
-const OutputNeedsIOSafeGuard = shell.interpret.OutputNeedsIOSafeGuard;
-const Cmd = Interpreter.Cmd;
-const ShellSyscall = shell.interpret.ShellSyscall;
-const Allocator = std.mem.Allocator;
+const Yield = bun.shell.Yield;
 const ast = shell.AST;
 const IO = shell.Interpreter.IO;
+
+const EnvMap = shell.interpret.EnvMap;
+const ExitCode = shell.interpret.ExitCode;
+const OutputNeedsIOSafeGuard = shell.interpret.OutputNeedsIOSafeGuard;
+const ShellSyscall = shell.interpret.ShellSyscall;
+const log = shell.interpret.log;
+
+const Interpreter = shell.interpret.Interpreter;
+const Builtin = Interpreter.Builtin;
+const Cmd = Interpreter.Cmd;
+const IOReader = Interpreter.IOReader;
+const IOWriter = Interpreter.IOWriter;
+
+const Syscall = bun.sys;
+const Maybe = bun.sys.Maybe;

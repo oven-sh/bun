@@ -450,10 +450,11 @@ pub const c = struct {
 };
 
 const bun = @import("bun");
+
 const uws = bun.uws;
-const Request = bun.uws.Request;
-const Opcode = bun.uws.Opcode;
-const WebSocketBehavior = bun.uws.WebSocketBehavior;
 const ListenSocket = bun.uws.ListenSocket;
+const Opcode = bun.uws.Opcode;
+const Request = bun.uws.Request;
+const WebSocketBehavior = bun.uws.WebSocketBehavior;
 const us_socket_t = bun.uws.us_socket_t;
 const BunSocketContextOptions = bun.uws.SocketContext.BunSocketContextOptions;

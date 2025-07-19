@@ -8,8 +8,6 @@ pub const PatchCommand = struct {
     }
 };
 
-// @sortImports
-
 const bun = @import("bun");
 const string = bun.string;
 const Command = bun.CLI.Command;

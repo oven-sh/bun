@@ -1,23 +1,3 @@
-const std = @import("std");
-const logger = bun.logger;
-const toml_lexer = @import("./toml_lexer.zig");
-const Lexer = toml_lexer.Lexer;
-const js_ast = bun.JSAst;
-
-const bun = @import("bun");
-const string = bun.string;
-const default_allocator = bun.default_allocator;
-
-const expect = std.testing.expect;
-
-const assert = bun.assert;
-
-const T = toml_lexer.T;
-const E = js_ast.E;
-const Expr = js_ast.Expr;
-
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-
 const HashMapPool = struct {
     const HashMap = std.HashMap(u64, void, IdentityContext, 80);
     const LinkedList = std.SinglyLinkedList(HashMap);
@@ -385,3 +365,21 @@ pub const TOML = struct {
         return true;
     }
 };
+
+const std = @import("std");
+const IdentityContext = @import("../identity_context.zig").IdentityContext;
+const expect = std.testing.expect;
+
+const toml_lexer = @import("./toml_lexer.zig");
+const Lexer = toml_lexer.Lexer;
+const T = toml_lexer.T;
+
+const bun = @import("bun");
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
+const string = bun.string;
+
+const js_ast = bun.JSAst;
+const E = js_ast.E;
+const Expr = js_ast.Expr;

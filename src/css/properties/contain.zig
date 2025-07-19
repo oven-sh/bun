@@ -1,11 +1,3 @@
-pub const css = @import("../css_parser.zig");
-
-const SmallList = css.SmallList;
-
-const ContainerName = css.css_rules.container.ContainerName;
-
-const ContainerIdent = ContainerName;
-
 /// A value for the [container-type](https://drafts.csswg.org/css-contain-3/#container-type) property.
 /// Establishes the element as a query container for the purpose of container queries.
 pub const ContainerType = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
@@ -20,3 +12,9 @@ pub const ContainerNameList = union(enum) {
 
 /// A value for the [container](https://drafts.csswg.org/css-contain-3/#container-shorthand) shorthand property.
 pub const Container = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+
+pub const css = @import("../css_parser.zig");
+const SmallList = css.SmallList;
+
+const ContainerIdent = ContainerName;
+const ContainerName = css.css_rules.container.ContainerName;

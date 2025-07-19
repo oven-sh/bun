@@ -1,13 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const MyersDiff = @import("./assert/myers_diff.zig");
-
-const Allocator = std.mem.Allocator;
-const BunString = bun.String;
-
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-
 /// Compare `actual` and `expected`, producing a diff that would turn `actual`
 /// into `expected`.
 ///
@@ -126,3 +116,13 @@ fn mapDiffError(global: *JSC.JSGlobalObject, err: MyersDiff.Error) bun.JSError {
         error.InputsTooLarge => global.throwInvalidArguments("Input strings are too large to diff. Please open a bug report on GitHub.", .{}),
     };
 }
+
+const MyersDiff = @import("./assert/myers_diff.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const BunString = bun.String;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;

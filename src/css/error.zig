@@ -1,16 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-const Log = logger.Log;
-
-pub const css = @import("./css_parser.zig");
-pub const css_values = @import("./values/values.zig");
-pub const Error = css.Error;
-const Location = css.Location;
-
-const ArrayList = std.ArrayListUnmanaged;
-
 /// A printer error.
 pub const PrinterError = Err(PrinterErrorKind);
 
@@ -426,3 +413,17 @@ pub const MinifyErrorKind = union(enum) {
         };
     }
 };
+
+const bun = @import("bun");
+pub const css_values = @import("./values/values.zig");
+
+pub const css = @import("./css_parser.zig");
+pub const Error = css.Error;
+const Location = css.Location;
+
+const logger = bun.logger;
+const Log = logger.Log;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

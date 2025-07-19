@@ -1,4 +1,5 @@
 //! This is the code for the object returned by Bun.listen().
+
 const Listener = @This();
 
 handlers: Handlers,
@@ -12,11 +13,6 @@ protos: ?[]const u8 = null,
 
 strong_data: JSC.Strong.Optional = .empty,
 strong_self: JSC.Strong.Optional = .empty,
-
-pub const js = JSC.Codegen.JSListener;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
 
 pub const ListenerType = union(enum) {
     uws: *uws.ListenSocket,
@@ -972,27 +968,35 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
     }
 } else void;
 
-const default_allocator = bun.default_allocator;
-const bun = @import("bun");
-const Environment = bun.Environment;
-
-const strings = bun.strings;
-const string = bun.string;
-const Output = bun.Output;
 const std = @import("std");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const uws = bun.uws;
-const ZigString = JSC.ZigString;
-const BoringSSL = bun.BoringSSL.c;
+
+const socket_ = @import("../socket.zig");
+const NewSocket = socket_.NewSocket;
+const SocketConfig = socket_.SocketConfig;
+const WindowsNamedPipeContext = socket_.WindowsNamedPipeContext;
+
+const bun = @import("bun");
 const Async = bun.Async;
+const Environment = bun.Environment;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+const uws = bun.uws;
+const BoringSSL = bun.BoringSSL.c;
 const uv = bun.windows.libuv;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
+const NodePath = JSC.Node.path;
+
 const Handlers = JSC.API.SocketHandlers;
 const TCPSocket = JSC.API.TCPSocket;
 const TLSSocket = JSC.API.TLSSocket;
-const socket_ = @import("../socket.zig");
-const WindowsNamedPipeContext = socket_.WindowsNamedPipeContext;
-const SocketConfig = socket_.SocketConfig;
-const NodePath = JSC.Node.path;
-const NewSocket = socket_.NewSocket;
+
+pub const js = JSC.Codegen.JSListener;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;

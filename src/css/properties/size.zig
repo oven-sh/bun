@@ -1,22 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
-pub const css = @import("../css_parser.zig");
-
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-
-const PropertyId = css.PropertyId;
-const PropertyIdTag = css.PropertyIdTag;
-const Property = css.Property;
-const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
-
-const PropertyCategory = css.logical.PropertyCategory;
-
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const Ratio = css.css_values.ratio.Ratio;
-
 pub const BoxSizing = enum {
     /// Exclude the margin/border/padding from the width and height.
     @"content-box",
@@ -605,3 +586,18 @@ pub const SizeHandler = struct {
         }
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Property = css.Property;
+const PropertyId = css.PropertyId;
+const PropertyIdTag = css.PropertyIdTag;
+const PropertyCategory = css.logical.PropertyCategory;
+const LengthPercentage = css.css_values.length.LengthPercentage;
+const Ratio = css.css_values.ratio.Ratio;
+const UnparsedProperty = css.css_properties.custom.UnparsedProperty;

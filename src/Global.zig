@@ -1,12 +1,4 @@
-const std = @import("std");
-const Environment = @import("./env.zig");
-
-const Output = @import("output.zig");
-const use_mimalloc = bun.use_mimalloc;
-const Mimalloc = bun.Mimalloc;
-const bun = @import("bun");
-
-const version_string = Environment.version_string;
+const Global = @This();
 
 /// Does not have the canary tag, because it is exposed in `Bun.version`
 /// "1.0.0" or "1.0.0-debug"
@@ -166,7 +158,6 @@ pub inline fn mimalloc_cleanup(force: bool) void {
         Mimalloc.mi_collect(force);
     }
 }
-pub const versions = @import("./generated_versions_list.zig");
 
 // Enabling huge pages slows down bun by 8x or so
 // Keeping this code for:
@@ -190,9 +181,6 @@ pub fn crash() noreturn {
     @branchHint(.cold);
     Global.exit(1);
 }
-
-const Global = @This();
-const string = bun.string;
 
 pub const BunInfo = struct {
     bun_version: string,
@@ -231,3 +219,15 @@ pub export fn Bun__onExit() void {
 comptime {
     _ = Bun__onExit;
 }
+
+const Output = @import("./output.zig");
+const std = @import("std");
+pub const versions = @import("./generated_versions_list.zig");
+
+const Environment = @import("./env.zig");
+const version_string = Environment.version_string;
+
+const bun = @import("bun");
+const Mimalloc = bun.Mimalloc;
+const string = bun.string;
+const use_mimalloc = bun.use_mimalloc;

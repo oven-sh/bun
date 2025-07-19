@@ -1,3 +1,5 @@
+const Touch = @This();
+
 opts: Opts = .{},
 state: union(enum) {
     idle,
@@ -386,24 +388,29 @@ pub inline fn bltn(this: *Touch) *Builtin {
 
 // --
 const debug = bun.Output.scoped(.ShellTouch, true);
-const Touch = @This();
 const log = debug;
+
 const std = @import("std");
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
-const ExitCode = shell.ExitCode;
-const JSC = bun.JSC;
-const WorkPool = bun.JSC.WorkPool;
-const ResolvePath = bun.path;
-const Syscall = bun.sys;
+
 const interpreter = @import("../interpreter.zig");
+const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
+const OutputSrc = interpreter.OutputSrc;
+const OutputTask = interpreter.OutputTask;
 const ParseError = interpreter.ParseError;
 const ParseFlagResult = interpreter.ParseFlagResult;
-const FlagParser = interpreter.FlagParser;
 const unsupportedFlag = interpreter.unsupportedFlag;
-const OutputTask = interpreter.OutputTask;
-const OutputSrc = interpreter.OutputSrc;
+
+const Builtin = Interpreter.Builtin;
+const Result = Interpreter.Builtin.Result;
+
+const bun = @import("bun");
+const ResolvePath = bun.path;
+const Syscall = bun.sys;
+
+const JSC = bun.JSC;
+const WorkPool = bun.JSC.WorkPool;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = bun.shell.Yield;

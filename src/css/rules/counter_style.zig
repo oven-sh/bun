@@ -1,9 +1,3 @@
-const std = @import("std");
-pub const css = @import("../css_parser.zig");
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const Location = css.css_rules.Location;
-
 /// A [@counter-style](https://drafts.csswg.org/css-counter-styles/#the-counter-style-rule) rule.
 pub const CounterStyleRule = struct {
     /// The name of the counter style to declare.
@@ -28,3 +22,10 @@ pub const CounterStyleRule = struct {
         return css.implementDeepClone(@This(), this, allocator);
     }
 };
+
+const std = @import("std");
+
+pub const css = @import("../css_parser.zig");
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Location = css.css_rules.Location;

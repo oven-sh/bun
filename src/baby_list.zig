@@ -1,8 +1,3 @@
-const std = @import("std");
-const Environment = @import("./env.zig");
-const strings = @import("./string_immutable.zig");
-const bun = @import("bun");
-
 /// This is like ArrayList except it stores the length and capacity as u32
 /// In practice, it is very unusual to have lengths above 4 GB
 pub fn BabyList(comptime Type: type) type {
@@ -474,3 +469,8 @@ pub fn OffsetList(comptime Type: type) type {
         }
     };
 }
+
+const Environment = @import("./env.zig");
+const bun = @import("bun");
+const std = @import("std");
+const strings = @import("./string_immutable.zig");

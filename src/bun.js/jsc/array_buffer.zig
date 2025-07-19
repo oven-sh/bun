@@ -639,13 +639,6 @@ pub export fn BlobArrayBuffer_deallocator(_: *anyopaque, blob: *anyopaque) void 
     store.deref();
 }
 
-const bun = @import("bun");
-const JSC = bun.jsc;
-const Output = bun.Output;
-const JSError = bun.JSError;
-
-const std = @import("std");
-
 extern fn Bun__makeArrayBufferWithBytesNoCopy(*JSC.JSGlobalObject, ?*anyopaque, usize, JSC.C.JSTypedArrayBytesDeallocator, ?*anyopaque) JSC.JSValue;
 extern fn Bun__makeTypedArrayWithBytesNoCopy(*JSC.JSGlobalObject, ArrayBuffer.TypedArrayType, ?*anyopaque, usize, JSC.C.JSTypedArrayBytesDeallocator, ?*anyopaque) JSC.JSValue;
 
@@ -656,3 +649,10 @@ pub fn makeArrayBufferWithBytesNoCopy(globalObject: *JSC.JSGlobalObject, ptr: ?*
 pub fn makeTypedArrayWithBytesNoCopy(globalObject: *JSC.JSGlobalObject, arrayType: ArrayBuffer.TypedArrayType, ptr: ?*anyopaque, len: usize, deallocator: JSC.C.JSTypedArrayBytesDeallocator, deallocatorContext: ?*anyopaque) bun.JSError!JSC.JSValue {
     return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__makeTypedArrayWithBytesNoCopy, .{ globalObject, arrayType, ptr, len, deallocator, deallocatorContext });
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSC = bun.jsc;
+const JSError = bun.JSError;
+const Output = bun.Output;

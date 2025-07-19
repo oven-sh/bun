@@ -1,14 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
-pub const css = @import("./css_parser.zig");
-pub const css_values = @import("./values/values.zig");
-pub const Error = css.Error;
-const PrintErr = css.PrintErr;
-
-const ArrayList = std.ArrayListUnmanaged;
-
 pub const CssModule = struct {
     config: *const Config,
     sources: *const ArrayList([]const u8),
@@ -430,3 +419,14 @@ pub fn hash(allocator: Allocator, comptime fmt: []const u8, args: anytype, at_st
 
     return base64_encoded_hash;
 }
+
+const bun = @import("bun");
+pub const css_values = @import("./values/values.zig");
+
+pub const css = @import("./css_parser.zig");
+pub const Error = css.Error;
+const PrintErr = css.PrintErr;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

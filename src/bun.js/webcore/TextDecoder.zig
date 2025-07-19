@@ -1,3 +1,5 @@
+const TextDecoder = @This();
+
 // used for utf8 decoding
 buffered: struct {
     buf: [3]u8 = .{0} ** 3,
@@ -15,11 +17,6 @@ lead_surrogate: ?u16 = null,
 ignore_bom: bool = false,
 fatal: bool = false,
 encoding: EncodingLabel = EncodingLabel.@"UTF-8",
-
-pub const js = JSC.Codegen.JSTextDecoder;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
 
 pub const new = bun.TrivialNew(TextDecoder);
 
@@ -317,15 +314,20 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     return TextDecoder.new(decoder);
 }
 
-const TextDecoder = @This();
-
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
 const strings = bun.strings;
+
+const JSC = bun.JSC;
 const ArrayBuffer = JSC.ArrayBuffer;
-const JSUint8Array = JSC.JSUint8Array;
-const ZigString = JSC.ZigString;
-const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
+const JSUint8Array = JSC.JSUint8Array;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
 const EncodingLabel = JSC.WebCore.EncodingLabel;
+
+pub const js = JSC.Codegen.JSTextDecoder;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;

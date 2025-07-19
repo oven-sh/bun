@@ -350,6 +350,7 @@ src/bun.js/bindings/webcore/JSTextEncoderStream.cpp
 src/bun.js/bindings/webcore/JSTransformStream.cpp
 src/bun.js/bindings/webcore/JSTransformStreamDefaultController.cpp
 src/bun.js/bindings/webcore/JSURLSearchParams.cpp
+src/bun.js/bindings/webcore/JSWasmStreamingCompiler.cpp
 src/bun.js/bindings/webcore/JSWebSocket.cpp
 src/bun.js/bindings/webcore/JSWorker.cpp
 src/bun.js/bindings/webcore/JSWorkerOptions.cpp

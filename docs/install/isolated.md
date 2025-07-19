@@ -79,7 +79,7 @@ In monorepos, workspace dependencies are handled specially:
 | ------------------------- | ------------------------------------------ | --------------------------------------- |
 | **Dependency access**     | Packages can access any hoisted dependency | Packages only see declared dependencies |
 | **Phantom dependencies**  | ❌ Possible                                | ✅ Prevented                            |
-| **Disk usage**            | ✅ Lower (shared installs)                 | ❌ Higher (isolated installs)           |
+| **Disk usage**            | ✅ Lower (shared installs)                 | ✅ Similar (uses symlinks)              |
 | **Determinism**           | ❌ Less deterministic                      | ✅ More deterministic                   |
 | **Node.js compatibility** | ✅ Standard behavior                       | ✅ Compatible via symlinks              |
 | **Best for**              | Single projects, legacy code               | Monorepos, strict dependency management |
@@ -143,7 +143,7 @@ If you encounter issues, you can:
 ### Performance considerations
 
 - **Install time** — May be slightly slower due to symlink operations
-- **Disk usage** — Higher due to isolated package copies
+- **Disk usage** — Similar to hoisted (uses symlinks, not file copies)
 - **Memory usage** — Higher during install due to complex peer resolution
 
 ## Migration guide
@@ -185,8 +185,8 @@ The main difference is that Bun uses symlinks in `node_modules` while pnpm uses 
 
 - Working with legacy code that assumes flat `node_modules`
 - Compatibility with existing build tools is required
-- Disk space is a primary concern
 - Working in environments where symlinks aren't well supported
+- You prefer the simpler traditional npm behavior
 
 ## Related documentation
 

@@ -23,8 +23,9 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
     defer walker.deinit();
 
     if (comptime Environment.isWindows) {
-        var cwd_buf: bun.WPathBuffer = undefined;
-        const dest_cwd = FD.cwd().getFdPathW(&cwd_buf) catch {
+        const cwd_buf = bun.w_path_buffer_pool.get();
+        defer bun.w_path_buffer_pool.put(cwd_buf);
+        const dest_cwd = FD.cwd().getFdPathW(cwd_buf) catch {
             return .initErr(bun.sys.Error.fromCode(bun.sys.E.ACCES, .link));
         };
         while (switch (walker.next()) {
@@ -40,8 +41,9 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
             defer dest_save.restore();
 
             this.dest.append(entry.path);
-            var destfile_path_buf: bun.WPathBuffer = undefined;
-            const destfile_path = bun.path.joinStringBufWZ(&destfile_path_buf, &[_][]const u16{ this.dest.slice(), dest_cwd }, .windows);
+            const destfile_path_buf = bun.w_path_buffer_pool.get();
+            defer bun.w_path_buffer_pool.put(destfile_path_buf);
+            const destfile_path = bun.path.joinStringBufWZ(destfile_path_buf, &[_][]const u16{ this.dest.slice(), dest_cwd }, .windows);
 
             switch (entry.kind) {
                 .directory => {

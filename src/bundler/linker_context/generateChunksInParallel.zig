@@ -587,7 +587,6 @@ const base64 = bun.base64;
 
 const JSC = bun.JSC;
 
-
 const OutputFileListBuilder = bun.bundle_v2.LinkerContext.OutputFileListBuilder;
 const StaticRouteVisitor = bun.bundle_v2.LinkerContext.StaticRouteVisitor;
 const ThreadPoolLib = bun.ThreadPool;

@@ -617,6 +617,7 @@ src/install/resolvers/folder_resolver.zig
 src/install/versioned_url.zig
 src/install/windows-shim/BinLinkingShim.zig
 src/install/windows-shim/bun_shim_impl.zig
+src/install/yarn.zig
 src/io/heap.zig
 src/io/io.zig
 src/io/MaxBuf.zig

@@ -352,7 +352,6 @@ pub const DeclaredSymbol = struct {
 
         pub fn toOwnedSlice(this: *List) List {
             const new = this.*;
-
             this.* = .{};
             return new;
         }

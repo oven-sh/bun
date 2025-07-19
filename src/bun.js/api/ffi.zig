@@ -551,7 +551,7 @@ pub const FFI = struct {
                 }
                 const str = try val.getZigString(globalThis);
                 if (str.isEmpty()) continue;
-                items.append(str.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                items.append(str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
             }
 
             return .{ .items = items.items };
@@ -565,7 +565,7 @@ pub const FFI = struct {
             const str = try value.getZigString(globalThis);
             if (str.isEmpty()) return .{};
             var items = std.ArrayList([:0]const u8).init(bun.default_allocator);
-            items.append(str.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+            items.append(str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
             return .{ .items = items.items };
         }
 
@@ -651,7 +651,7 @@ pub const FFI = struct {
 
                 const str = try flags_value.getZigString(globalThis);
                 if (!str.isEmpty()) {
-                    compile_c.flags = str.toOwnedSliceZ(allocator) catch bun.outOfMemory();
+                    compile_c.flags = str.toOwnedSlice(allocator) catch bun.outOfMemory();
                 }
             }
         }
@@ -672,7 +672,7 @@ pub const FFI = struct {
                         if (iter.value.isString()) {
                             const value = try iter.value.getZigString(globalThis);
                             if (value.len > 0) {
-                                owned_value = value.toOwnedSliceZ(allocator) catch bun.outOfMemory();
+                                owned_value = value.toOwnedSlice(allocator) catch bun.outOfMemory();
                             }
                         }
                     }
@@ -706,12 +706,12 @@ pub const FFI = struct {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("source", "array of strings", value);
                     }
-                    try compile_c.source.files.append(bun.default_allocator, try (try value.getZigString(globalThis)).toOwnedSliceZ(bun.default_allocator));
+                    try compile_c.source.files.append(bun.default_allocator, try (try value.getZigString(globalThis)).toOwnedSlice(bun.default_allocator));
                 }
             } else if (!source_value.isString()) {
                 return globalThis.throwInvalidArgumentTypeValue("source", "string", source_value);
             } else {
-                const source_path = try (try source_value.getZigString(globalThis)).toOwnedSliceZ(bun.default_allocator);
+                const source_path = try (try source_value.getZigString(globalThis)).toOwnedSlice(bun.default_allocator);
                 compile_c.source.file = source_path;
             }
         }

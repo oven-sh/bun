@@ -71,6 +71,8 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
+prefer_offline: bool = false,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -230,6 +232,7 @@ pub fn load(
     maybe_cli: ?CommandLineArguments,
     bun_install_: ?*Api.BunInstall,
     subcommand: Subcommand,
+    ctx: ?Command.Context,
 ) bun.OOM!void {
     var base = Api.NpmRegistry{
         .url = "",
@@ -641,9 +644,18 @@ pub fn load(
         // `bun pm why` command options
         this.top_only = cli.top_only;
         this.depth = cli.depth;
+
+        this.prefer_offline = cli.prefer_offline;
     } else {
         this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
         PackageManager.verbose_install = false;
+    }
+
+    // Override prefer_offline from bunfig or CLI context offline_mode_setting
+    if (ctx) |context| {
+        if (context.debug.offline_mode_setting) |offline_mode| {
+            this.prefer_offline = (offline_mode == .offline);
+        }
     }
 
     // If the lockfile is frozen, don't save it to disk.
@@ -714,3 +726,4 @@ const CommandLineArguments = @import("./CommandLineArguments.zig");
 const Subcommand = bun.install.PackageManager.Subcommand;
 const PackageManager = bun.install.PackageManager;
 const PackageInstall = bun.install.PackageInstall;
+const Command = bun.CLI.Command;

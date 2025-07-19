@@ -898,6 +898,7 @@ pub fn init(
         cli,
         ctx.install,
         subcommand,
+        ctx,
     );
 
     var ca: []stringZ = &.{};
@@ -1071,6 +1072,7 @@ pub fn initWithRuntimeOnce(
         cli,
         bun_install,
         .install,
+        null,
     ) catch |err| {
         switch (err) {
             error.OutOfMemory => bun.outOfMemory(),

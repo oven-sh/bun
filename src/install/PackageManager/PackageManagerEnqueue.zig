@@ -704,11 +704,17 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                         }
 
                                         // Was it recent enough to just load it without the network call?
-                                        if (this.options.enable.manifest_cache_control and !expired) {
+                                        if (this.options.enable.manifest_cache_control and (!expired or this.options.prefer_offline)) {
                                             _ = this.network_dedupe_map.remove(task_id);
                                             continue :retry_from_manifests_ptr;
                                         }
                                     }
+                                }
+
+                                // Check if prefer_offline is set and we have no cached manifest
+                                if (this.options.prefer_offline) {
+                                    // Skip this network task when prefer_offline is set
+                                    return;
                                 }
 
                                 if (PackageManager.verbose_install) {

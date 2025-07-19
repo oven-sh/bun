@@ -411,6 +411,13 @@ pub const Route = struct {
                     }
 
                     server.appendStaticRoute(route_path, .{ .static = static_route }, .any) catch bun.outOfMemory();
+                    
+                    // Also register the route with "./" prefix to handle assets referenced in HTML
+                    // that get the "./" prefix added by cheapPrefixNormalizer during bundle processing
+                    if (!strings.hasPrefixComptime(output_file.dest_path, "./") and !strings.hasPrefixComptime(output_file.dest_path, ".\\")) {
+                        const prefixed_route = std.fmt.allocPrint(bun.default_allocator, ".{s}", .{route_path}) catch bun.outOfMemory();
+                        server.appendStaticRoute(prefixed_route, .{ .static = static_route }, .any) catch bun.outOfMemory();
+                    }
                 }
 
                 const html_route: *StaticRoute = this_html_route orelse @panic("Internal assertion failure: HTML entry point not found in HTMLBundle.");

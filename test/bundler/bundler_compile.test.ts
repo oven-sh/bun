@@ -626,4 +626,87 @@ error: Hello World`,
       },
     ],
   });
+
+  // Test for favicon handling in compiled output - Issue #20589
+  itBundled("compile/FaviconServingBug", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { serve } from "bun";
+        import indexContent from "./index.html" with { type: "file" };
+
+        const server = serve({
+          port: 0,
+          fetch(req) {
+            const url = new URL(req.url);
+            if (url.pathname === "/") {
+              return new Response(Bun.file(indexContent), {
+                headers: { "Content-Type": "text/html" }
+              });
+            }
+            
+            // Handle favicon request
+            if (url.pathname.startsWith("/favicon")) {
+              // Check if the favicon file exists in Bun.embeddedFiles
+              const faviconFile = Bun.embeddedFiles.find(f => f.name.includes("favicon"));
+              if (faviconFile) {
+                return new Response(faviconFile.slice(), {
+                  headers: { "Content-Type": "image/svg+xml" }
+                });
+              }
+              return new Response("Favicon not found", { status: 404 });
+            }
+            
+            return new Response("Not found", { status: 404 });
+          },
+        });
+
+        console.log(\`Server running at http://localhost:\${server.port}\`);
+        
+        // Test that the favicon is accessible
+        const response = await fetch(\`http://localhost:\${server.port}/\`);
+        const html = await response.text();
+        const faviconMatch = html.match(/href="(.*favicon[^"]*\\.svg)"/);
+        
+        if (faviconMatch) {
+          const faviconUrl = faviconMatch[1];
+          console.log(\`Found favicon URL: \${faviconUrl}\`);
+          
+          const faviconResponse = await fetch(\`http://localhost:\${server.port}\${faviconUrl}\`);
+          console.log(\`Favicon response status: \${faviconResponse.status}\`);
+          
+          if (faviconResponse.status === 404) {
+            console.log("FAIL: Favicon returned 404");
+            process.exit(1);
+          } else {
+            console.log("SUCCESS: Favicon accessible");
+          }
+        } else {
+          console.log("FAIL: No favicon found in HTML");
+          process.exit(1);
+        }
+        
+        server.stop();
+        process.exit(0);
+      `,
+      "/index.html": `<!DOCTYPE html>
+<html>
+<head>
+  <title>Favicon Test</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+</head>
+<body>
+  <h1>Favicon Test Page</h1>
+</body>
+</html>`,
+      "/favicon.svg": `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <circle cx="12" cy="12" r="10" fill="#007acc"/>
+  <text x="12" y="16" text-anchor="middle" fill="white" font-size="12">B</text>
+</svg>`,
+    },
+    run: { 
+      stdout: "SUCCESS: Favicon accessible",
+      setCwd: true 
+    },
+  });
 });

@@ -3,12 +3,7 @@ import fs from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path, { join } from "path";
 
-const YARN_TEST_DIRS = [
-  "yarn-lock-mkdirp",
-  "yarn-lock-mkdirp-no-resolved",
-  "yarn-lock-mkdirp-file-dep",  
-  "yarn-stuff"
-];
+const YARN_TEST_DIRS = ["yarn-lock-mkdirp", "yarn-lock-mkdirp-no-resolved", "yarn-lock-mkdirp-file-dep", "yarn-stuff"];
 
 describe("yarn.lock migration", () => {
   // Helper function to parse yarn.lock file and extract versions
@@ -90,7 +85,7 @@ describe("yarn.lock migration", () => {
       if (testDir === "yarn-lock-mkdirp-file-dep") {
         const mkdirpPackageJson = fs.readFileSync(join(originalDir, "mkdirp", "package.json"), "utf8");
         tempFiles["mkdirp/package.json"] = mkdirpPackageJson;
-        
+
         // Copy the yarn.lock we created
         if (fs.existsSync(join(originalDir, "yarn.lock"))) {
           tempFiles["yarn.lock"] = fs.readFileSync(join(originalDir, "yarn.lock"), "utf8");
@@ -98,12 +93,12 @@ describe("yarn.lock migration", () => {
       } else if (testDir === "yarn-stuff") {
         const abbrevPackageJson = fs.readFileSync(join(originalDir, "abbrev-link-target", "package.json"), "utf8");
         tempFiles["abbrev-link-target/package.json"] = abbrevPackageJson;
-        
+
         // Copy the yarn.lock we created
         if (fs.existsSync(join(originalDir, "yarn.lock"))) {
           tempFiles["yarn.lock"] = fs.readFileSync(join(originalDir, "yarn.lock"), "utf8");
         }
-        
+
         // Copy the tarball file
         if (fs.existsSync(join(originalDir, "abbrev-1.1.1.tgz"))) {
           const tarballContent = fs.readFileSync(join(originalDir, "abbrev-1.1.1.tgz"));

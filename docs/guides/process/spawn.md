@@ -9,6 +9,9 @@ const proc = Bun.spawn(["echo", "hello"]);
 
 // await completion
 await proc.exited;
+
+// or await success (error on non-zero exit code)
+await proc.success;
 ```
 
 ---

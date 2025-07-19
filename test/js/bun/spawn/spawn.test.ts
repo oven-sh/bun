@@ -151,6 +151,21 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
+      it("success based on exit code", async () => {
+        const success0 = await spawn({
+          cmd: [bunExe(), "-e", "process.exit(0)"],
+        }).success;
+        gcTick();
+        const success1 = spawn({
+          cmd: [bunExe(), "-e", "process.exit(1)"],
+        }).success;
+        gcTick();
+        expect(success0).toBe(undefined);
+        gcTick();
+        expect(() => success1).toThrow();
+        gcTick();
+      });
+
       it("nothing to stdout and sleeping doesn't keep process open 4ever", async () => {
         const proc = spawn({
           cmd: [shellExe(), "-c", "sleep 0.1"],
@@ -556,9 +571,10 @@ it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix 
 describe("spawn unref and kill should not hang", () => {
   const cmd = [shellExe(), "-c", "sleep 0.001"];
 
-  it("kill and await exited", async () => {
-    const promises = new Array(10);
-    for (let i = 0; i < promises.length; i++) {
+  it("kill and await exited/success", async () => {
+    const exitedPromises = new Array(10);
+    const successPromises = new Array(10);
+    for (let i = 0; i < exitedPromises.length; i++) {
       const proc = spawn({
         cmd,
         stdout: "ignore",
@@ -566,12 +582,22 @@ describe("spawn unref and kill should not hang", () => {
         stdin: "ignore",
       });
       proc.kill();
-      promises[i] = proc.exited;
+      exitedPromises[i] = proc.exited;
+      successPromises[i] = proc.success;
     }
 
-    await Promise.all(promises);
-
-    expect().pass();
+    await Promise.all(exitedPromises);
+    for (let i = 0; i < successPromises.length; i++) {
+      expect(() => successPromises[i]).toThrow();
+      // TODO: doesn't work.
+      try {
+        await successPromises[i];
+      } catch {
+        // expected
+      }
+    }
+    // TODO: doesn't work.
+    await Promise.allSettled(successPromises);
   });
   it("unref", async () => {
     for (let i = 0; i < 10; i++) {

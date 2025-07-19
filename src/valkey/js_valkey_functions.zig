@@ -546,6 +546,84 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
     return promise.toJS();
 }
 
+// Your INCRBY implementation
+pub fn incrby(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const key = try callframe.argument(0).toBunString(globalObject);
+    defer key.deref();
+    const value = try callframe.argument(1).toBunString(globalObject);
+    defer value.deref();
+
+    const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
+    defer key_slice.deinit();
+    const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
+    defer value_slice.deinit();
+
+    // Send INCRBY command
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "INCRBY",
+            .args = .{ .slices = &.{ key_slice, value_slice } },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send INCRBY command", err);
+    };
+    return promise.toJS();
+}
+
+// Your DECRBY implementation
+pub fn decrby(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const key = try callframe.argument(0).toBunString(globalObject);
+    defer key.deref();
+    const value = try callframe.argument(1).toBunString(globalObject);
+    defer value.deref();
+
+    const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
+    defer key_slice.deinit();
+    const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
+    defer value_slice.deinit();
+
+    // Send DECRBY command
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "DECRBY",
+            .args = .{ .slices = &.{ key_slice, value_slice } },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send DECRBY command", err);
+    };
+    return promise.toJS();
+}
+
+// Your INCRBYFLOAT implementation
+pub fn incrbyfloat(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const key = try callframe.argument(0).toBunString(globalObject);
+    defer key.deref();
+    const value = try callframe.argument(1).toBunString(globalObject);
+    defer value.deref();
+
+    const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
+    defer key_slice.deinit();
+    const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
+    defer value_slice.deinit();
+
+    // Send INCRBYFLOAT command
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "INCRBYFLOAT",
+            .args = .{ .slices = &.{ key_slice, value_slice } },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send INCRBYFLOAT command", err);
+    };
+    return promise.toJS();
+}
+
 // Implement ping (send a PING command with an optional message)
 pub fn ping(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     var message_buf: [1]JSArgument = undefined;

@@ -23,7 +23,7 @@ pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
     }
 
     {
-        const cross_chunk_dependencies = c.allocator.create(CrossChunkDependencies) catch unreachable;
+        const cross_chunk_dependencies = c.allocator.create(CrossChunkDependencies) catch bun.outOfMemory();
         defer c.allocator.destroy(cross_chunk_dependencies);
 
         cross_chunk_dependencies.* = .{
@@ -177,10 +177,18 @@ const CrossChunkDependencies = struct {
                     for (sorted_and_filtered_export_aliases) |alias| {
                         const export_ = resolved_exports.get(alias).?;
                         var target_ref = export_.data.import_ref;
+                        var source_index = export_.data.source_index;
 
                         // If this is an import, then target what the import points to
-                        if (deps.imports_to_bind[export_.data.source_index.get()].get(target_ref)) |import_data| {
+                        if (deps.imports_to_bind[source_index.get()].get(target_ref)) |import_data| {
                             target_ref = import_data.data.import_ref;
+                            source_index = import_data.data.source_index;
+                        }
+
+                        // Skip exports that are defined locally in this entry point to avoid
+                        // duplicate exports in cross-chunk and entry point tail generation
+                        if (source_index.get() == chunk.entry_point.source_index) {
+                            continue;
                         }
 
                         // If this is an ES6 import from a CommonJS file, it will become a
@@ -309,12 +317,31 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                         chunk_meta.exports,
                         &stable_ref_list,
                     );
-                    var clause_items = BabyList(js_ast.ClauseItem).initCapacity(c.allocator, stable_ref_list.items.len) catch unreachable;
-                    clause_items.len = @as(u32, @truncate(stable_ref_list.items.len));
-                    repr.exports_to_other_chunks.ensureUnusedCapacity(c.allocator, stable_ref_list.items.len) catch unreachable;
+
+                    // Deduplicate export items to prevent duplicate exports in code splitting
+                    var unique_stable_refs = std.ArrayList(StableRef).init(c.allocator);
+                    defer unique_stable_refs.deinit();
+
+                    if (stable_ref_list.items.len > 1) {
+                        var seen_refs = std.AutoHashMap(Ref, void).init(c.allocator);
+                        defer seen_refs.deinit();
+
+                        for (stable_ref_list.items) |stable_ref| {
+                            if (!seen_refs.contains(stable_ref.ref)) {
+                                seen_refs.put(stable_ref.ref, {}) catch bun.outOfMemory();
+                                unique_stable_refs.append(stable_ref) catch bun.outOfMemory();
+                            }
+                        }
+                    } else {
+                        unique_stable_refs.appendSlice(stable_ref_list.items) catch bun.outOfMemory();
+                    }
+
+                    var clause_items = BabyList(js_ast.ClauseItem).initCapacity(c.allocator, unique_stable_refs.items.len) catch bun.outOfMemory();
+                    clause_items.len = @as(u32, @truncate(unique_stable_refs.items.len));
+                    repr.exports_to_other_chunks.ensureUnusedCapacity(c.allocator, unique_stable_refs.items.len) catch bun.outOfMemory();
                     r.clearRetainingCapacity();
 
-                    for (stable_ref_list.items, clause_items.slice()) |stable_ref, *clause_item| {
+                    for (unique_stable_refs.items, clause_items.slice()) |stable_ref, *clause_item| {
                         const ref = stable_ref.ref;
                         const alias = if (c.options.minify_identifiers) try r.nextMinifiedName(c.allocator) else r.nextRenamedName(c.graph.symbols.get(ref).?.original_name);
 
@@ -335,8 +362,8 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                     }
 
                     if (clause_items.len > 0) {
-                        var stmts = BabyList(js_ast.Stmt).initCapacity(c.allocator, 1) catch unreachable;
-                        const export_clause = c.allocator.create(js_ast.S.ExportClause) catch unreachable;
+                        var stmts = BabyList(js_ast.Stmt).initCapacity(c.allocator, 1) catch bun.outOfMemory();
+                        const export_clause = c.allocator.create(js_ast.S.ExportClause) catch bun.outOfMemory();
                         export_clause.* = .{
                             .items = clause_items.slice(),
                             .is_single_line = true,

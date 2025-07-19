@@ -100,7 +100,7 @@ pub fn writeEscapedJSON(index: u32, graph: *const Graph, linker_graph: *const Li
     var bytes = std.ArrayList(u8).init(allocator);
     defer bytes.deinit();
     try write(index, graph, linker_graph, chunks, bytes.writer());
-    try bun.js_printer.writePreQuotedString(bytes.items, @TypeOf(writer), writer, '"', false, true, .utf8);
+    try bun.js_printer.writePreQuotedString(.utf8, bytes.items, @TypeOf(writer), writer, '"', false, true);
 }
 
 fn escapedJSONFormatter(this: HTMLImportManifest, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) bun.OOM!void {

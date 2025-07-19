@@ -1,25 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Output = bun.Output;
-const ConsoleObject = @This();
-const String = bun.String;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const strings = bun.strings;
-const ZigException = JSC.ZigException;
-const ZigString = JSC.ZigString;
-const VirtualMachine = JSC.VirtualMachine;
-const string = bun.string;
-const JSLexer = bun.js_lexer;
 const ScriptArguments = opaque {};
-const JSPrinter = bun.js_printer;
-const Environment = bun.Environment;
-const default_allocator = bun.default_allocator;
-const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
-const JSPromise = JSC.JSPromise;
-const CLI = @import("../cli.zig").Command;
-const EventType = JSC.EventType;
 
 /// Default depth for console.log object inspection
 /// Only --console-depth CLI flag and console.depth bunfig option should modify this
@@ -712,6 +691,7 @@ pub const FormatOptions = struct {
     single_line: bool = false,
     default_indent: u16 = 0,
     error_display_level: ErrorDisplayLevel = .full,
+    multiline_strings: bool = false,
     pub const ErrorDisplayLevel = enum {
         normal,
         warn,
@@ -843,6 +823,7 @@ pub fn format2(
             .stack_check = bun.StackCheck.init(),
             .can_throw_stack_overflow = true,
             .error_display_level = options.error_display_level,
+            .multiline_strings = options.multiline_strings,
         };
         defer fmt.deinit();
         const tag = try ConsoleObject.Formatter.Tag.get(vals[0], global);
@@ -1014,6 +995,7 @@ pub const Formatter = struct {
     /// If ArrayBuffer-like objects contain ascii text, the buffer is printed as a string.
     /// Set true in the error printer so that ShellError prints a more readable message.
     format_buffer_as_text: bool = false,
+    multiline_strings: bool = false,
 
     pub fn deinit(this: *Formatter) void {
         if (bun.take(&this.map_node)) |node| {
@@ -2130,12 +2112,32 @@ pub const Formatter = struct {
                     defer if (comptime enable_ansi_colors)
                         writer.writeAll(Output.prettyFmt("<r>", true));
 
-                    if (str.isUTF16()) {
-                        try this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
-                        return;
-                    }
+                    switch (str.isUTF16()) {
+                        inline else => |isUTF16| {
+                            const encoding: bun.strings.Encoding = comptime if (isUTF16) .utf16 else .latin1;
+                            const slice = if (isUTF16) str.utf16() else str.latin1();
 
-                    JSPrinter.writeJSONString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
+                            if (this.multiline_strings and std.mem.indexOfScalar(encoding.Unit(), slice, '\n') != null) {
+                                writer.writeAll("\"");
+                                var lines = std.mem.splitScalar(encoding.Unit(), slice, '\n');
+
+                                if (lines.next()) |line| {
+                                    JSPrinter.writePreQuotedString(encoding, line, Writer, writer_, '"', false, true) catch {};
+                                }
+
+                                while (lines.next()) |line| {
+                                    writer.writeAll("\n");
+                                    this.writeIndent(Writer, writer_) catch {};
+                                    JSPrinter.writePreQuotedString(encoding, line, Writer, writer_, '"', false, true) catch {};
+                                }
+                                writer.writeAll("\"");
+                            } else {
+                                writer.writeAll("\"");
+                                JSPrinter.writePreQuotedString(encoding, @ptrCast(slice), Writer, writer_, '"', false, true) catch {};
+                                writer.writeAll("\"");
+                            }
+                        },
+                    }
 
                     return;
                 }
@@ -3747,3 +3749,29 @@ comptime {
     @export(&recordEnd, .{ .name = "Bun__ConsoleObject__recordEnd" });
     @export(&screenshot, .{ .name = "Bun__ConsoleObject__screenshot" });
 }
+
+// @sortImports
+
+const ConsoleObject = @This();
+const std = @import("std");
+const CLI = @import("../cli.zig").Command;
+const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSLexer = bun.js_lexer;
+const JSPrinter = bun.js_printer;
+const Output = bun.Output;
+const String = bun.String;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const EventType = JSC.EventType;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSPromise = JSC.JSPromise;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;
+const ZigException = JSC.ZigException;
+const ZigString = JSC.ZigString;

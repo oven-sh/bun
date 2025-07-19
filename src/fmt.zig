@@ -241,7 +241,7 @@ const JSONFormatterUTF8 = struct {
         if (self.opts.quote) {
             try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
         } else {
-            try bun.js_printer.writePreQuotedString(self.input, @TypeOf(writer), writer, '"', false, true, .utf8);
+            try bun.js_printer.writePreQuotedString(.utf8, self.input, @TypeOf(writer), writer, '"', false, true);
         }
     }
 };

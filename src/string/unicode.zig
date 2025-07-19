@@ -1629,13 +1629,6 @@ pub fn convertUTF16toUTF8InBuffer(
     return buf[0..result];
 }
 
-pub fn latin1ToCodepointAssumeNotASCII(char: u8, comptime CodePointType: type) CodePointType {
-    return @as(
-        CodePointType,
-        @intCast(latin1ToCodepointBytesAssumeNotASCII16(char)),
-    );
-}
-
 const latin1_to_utf16_conversion_table = [256]u16{
     0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, // 00-07
     0x0008, 0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x000E, 0x000F, // 08-0F

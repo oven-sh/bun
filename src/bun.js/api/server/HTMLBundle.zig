@@ -96,6 +96,7 @@ pub const Route = struct {
     }
 
     pub const State = union(enum) {
+        pub const dupeRef = Route.RefCount.dupeRef;
         pending,
         building: ?*bun.BundleV2.JSBundleCompletionTask,
         err: bun.logger.Log,
@@ -208,7 +209,7 @@ pub const Route = struct {
 
     /// Schedule a bundle to be built.
     /// If success, bumps the ref count and returns true;
-    fn scheduleBundle(this: *Route, server: AnyServer) !void {
+    pub fn scheduleBundle(this: *Route, server: AnyServer) !void {
         switch (server.getOrLoadPlugins(.{ .html_bundle_route = this })) {
             .err => this.state = .{ .err = bun.logger.Log.init(bun.default_allocator) },
             .ready => |plugins| try onPluginsResolved(this, plugins),
@@ -447,7 +448,13 @@ pub const Route = struct {
 
             switch (this.state) {
                 .html => |html| {
-                    if (method == .HEAD) {
+                    if (pending_response.status_code != 200 or pending_response.headers != null) {
+                        StaticRoute.sendBlobThenDeinit(resp, &html.blob, .{
+                            .server = pending_response.server,
+                            .status_code = pending_response.status_code,
+                            .headers = pending_response.headers,
+                        });
+                    } else if (method == .HEAD) {
                         html.onHEAD(resp);
                     } else {
                         html.on(resp);
@@ -477,6 +484,8 @@ pub const Route = struct {
         is_response_pending: bool = true,
         server: ?AnyServer = null,
         route: *Route,
+        status_code: u16 = 200,
+        headers: ?*JSC.WebCore.FetchHeaders = null,
 
         pub fn deinit(this: *PendingResponse) void {
             if (this.is_response_pending) {
@@ -484,6 +493,7 @@ pub const Route = struct {
                 this.resp.clearOnWritable();
                 this.resp.endWithoutBody(true);
             }
+            if (this.headers) |h| h.deref();
             this.route.deref();
             bun.destroy(this);
         }
@@ -495,6 +505,7 @@ pub const Route = struct {
             // Technically, this could be the final ref count, but we don't want to risk it
             this.route.ref();
             defer this.route.deref();
+            if (this.headers) |h| h.deref();
 
             while (std.mem.indexOfScalar(*PendingResponse, this.route.pending_responses.items, this)) |index| {
                 _ = this.route.pending_responses.orderedRemove(index);

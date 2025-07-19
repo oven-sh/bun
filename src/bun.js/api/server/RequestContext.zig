@@ -162,6 +162,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             ctx.flags.response_protected = true;
             value.protect();
 
+            if (response.body.value == .Route) {
+                ctx.response_ptr = response;
+                ctx.render(response);
+                return;
+            }
+
             if (ctx.method == .HEAD) {
                 if (ctx.resp) |resp| {
                     var pair = HeaderResponsePair{ .this = ctx, .response = response };
@@ -539,7 +545,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             var any_js_calls = false;
             var vm = this.server.?.vm;
-            const globalThis = this.server.?.globalThis;
+            const server = this.server orelse return;
+            const globalThis = server.globalThis;
             defer {
                 // This is a task in the event loop.
                 // If we called into JavaScript, we must drain the microtask queue
@@ -1434,6 +1441,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     resp.writeHeader("transfer-encoding", "chunked");
                     this.endWithoutBody(this.shouldCloseConnection());
                 },
+                .Route => {
+                    this.renderMetadata();
+                    this.response_ptr = response;
+                    this.render(response);
+                },
                 .Used, .Null, .Empty, .Error => {
                     this.renderMetadata();
                     resp.writeHeaderInt("content-length", 0);
@@ -1487,6 +1499,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
                 ctx.flags.response_protected = false;
+
+                if (response.body.value == .Route) {
+                    ctx.response_ptr = response;
+                    ctx.render(response);
+                    return;
+                }
+
                 if (ctx.method == .HEAD) {
                     if (ctx.resp) |resp| {
                         var pair = HeaderResponsePair{ .this = ctx, .response = response };
@@ -1545,6 +1564,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         ctx.response_jsvalue = fulfilled_value;
                         ctx.response_jsvalue.ensureStillAlive();
                         ctx.flags.response_protected = false;
+
+                        if (response.body.value == .Route) {
+                            ctx.response_ptr = response;
+                            ctx.render(response);
+                            return;
+                        }
+
                         ctx.response_ptr = response;
                         if (ctx.method == .HEAD) {
                             if (ctx.resp) |resp| {
@@ -1687,7 +1713,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // If a ReadableStream can trivially be converted to a Blob, do so.
             // If it's a WTFStringImpl and it cannot be used as a UTF-8 string, convert it to a Blob.
             value.toBlobIfPossible();
-            const globalThis = this.server.?.globalThis;
+            const server = this.server orelse return;
+            const globalThis = server.globalThis;
             switch (value.*) {
                 .Error => |*err_ref| {
                     _ = value.use();
@@ -1705,6 +1732,119 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     // toBlobIfPossible checks for WTFString needing a conversion.
                     this.blob = value.useAsAnyBlobAllowNonUTF8String();
                     this.renderWithBlobFromBodyValue();
+                    return;
+                },
+                // todo
+                // requires better implementation.
+                .Route => |route_ptr| {
+                    if (bun.Environment.enable_logs)
+                        ctxLog(".Route.doRenderWithBody route {s}", .{@tagName(route_ptr.data.state)});
+
+                    if (this.isAbortedOrEnded()) {
+                        return;
+                    }
+
+                    const srv = this.server orelse {
+                        globalThis.throwInvalidArguments("Server unavailable", .{}) catch {};
+                        return;
+                    };
+
+                    if (route_ptr.data.server == null) {
+                        route_ptr.data.server = AnyServer.from(srv);
+                    }
+
+                    const resp_ptr = this.resp.?;
+                    const resp_any = uws.AnyResponse.init(resp_ptr);
+                    const response = this.response_ptr.?;
+                    const status_code = response.statusCode();
+                    var headers_ref: ?*FetchHeaders = null;
+                    if (response.init.headers) |h| {
+                        headers_ref = h.cloneThis(globalThis);
+                    }
+
+                    if (this.req) |req| {
+                        if (this.method == .HEAD or this.method == .GET) {
+                            if (status_code != 200 or headers_ref != null) {
+                                if (route_ptr.data.state == .html) {
+                                    var temp = StaticRoute.initFromAnyBlob(&route_ptr.data.state.html.blob, .{
+                                        .server = route_ptr.data.server,
+                                        .status_code = status_code,
+                                        .headers = headers_ref,
+                                    });
+                                    defer temp.deref();
+                                    temp.onWithMethod(this.method, resp_any);
+                                    if (headers_ref) |h| h.deref();
+                                } else {
+                                    const pending = bun.new(HTMLBundle.Route.PendingResponse, .{
+                                        .method = this.method,
+                                        .resp = resp_any,
+                                        .server = route_ptr.data.server,
+                                        .route = route_ptr.data,
+                                        .status_code = status_code,
+                                        .headers = headers_ref,
+                                    });
+                                    route_ptr.data.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
+                                    route_ptr.data.ref();
+                                    resp_any.onAborted(*HTMLBundle.Route.PendingResponse, HTMLBundle.Route.PendingResponse.onAborted, pending);
+                                    this.flags.has_marked_pending = true;
+                                    if (route_ptr.data.state == .pending) {
+                                        route_ptr.data.scheduleBundle(route_ptr.data.server.?) catch bun.outOfMemory();
+                                    }
+                                }
+                                return;
+                            }
+                        }
+                        if (this.method == .HEAD) {
+                            route_ptr.data.onHEADRequest(req, resp_any);
+                        } else {
+                            route_ptr.data.onRequest(req, resp_any);
+                        }
+                        if (headers_ref) |h| h.deref();
+                        return;
+                    }
+
+                    switch (route_ptr.data.state) {
+                        .html => |html| {
+                            if (status_code != 200 or headers_ref != null) {
+                                var temp = StaticRoute.initFromAnyBlob(&html.blob, .{
+                                    .server = route_ptr.data.server,
+                                    .status_code = status_code,
+                                    .headers = headers_ref,
+                                });
+                                defer temp.deref();
+                                temp.onWithMethod(this.method, resp_any);
+                                if (headers_ref) |h| h.deref();
+                            } else if (this.method == .HEAD) {
+                                html.onHEAD(resp_any);
+                            } else {
+                                html.on(resp_any);
+                            }
+                        },
+                        .err => |log| {
+                            if (srv.config.isDevelopment()) {
+                                _ = log;
+                            }
+                            resp_any.writeStatus("500 Build Failed");
+                            resp_any.endWithoutBody(false);
+                        },
+                        else => {
+                            const pending = bun.new(HTMLBundle.Route.PendingResponse, .{
+                                .method = this.method,
+                                .resp = resp_any,
+                                .server = route_ptr.data.server,
+                                .route = route_ptr.data,
+                                .status_code = status_code,
+                                .headers = headers_ref,
+                            });
+                            route_ptr.data.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
+                            route_ptr.data.ref();
+                            resp_any.onAborted(*HTMLBundle.Route.PendingResponse, HTMLBundle.Route.PendingResponse.onAborted, pending);
+                            this.flags.has_marked_pending = true;
+                            if (route_ptr.data.state == .pending) {
+                                route_ptr.data.scheduleBundle(route_ptr.data.server.?) catch bun.outOfMemory();
+                            }
+                        },
+                    }
                     return;
                 },
                 .Locked => |*lock| {
@@ -2546,3 +2686,6 @@ const AnyRequestContext = JSC.API.AnyRequestContext;
 const VirtualMachine = JSC.VirtualMachine;
 const writeStatus = @import("../server.zig").writeStatus;
 const Fallback = @import("../../../runtime.zig").Fallback;
+const AnyServer = JSC.API.AnyServer;
+const HTMLBundle = JSC.API.HTMLBundle;
+const StaticRoute = @import("./StaticRoute.zig");

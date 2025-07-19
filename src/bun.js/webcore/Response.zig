@@ -92,7 +92,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
 
     // Get the body if it's available synchronously.
     switch (body.*) {
-        .Used, .Empty, .Null => return .js_undefined,
+        .Used, .Empty, .Route, .Null => return .js_undefined,
         .Blob => |*blob| {
             if (blob.isBunFile()) {
                 return .js_undefined;
@@ -541,6 +541,45 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
                 try headers_ref.put(.Location, result.url, globalThis);
                 return bun.new(Response, response);
             }
+        }
+
+        if (arguments[0].as(HTMLBundle)) |html_bundle| {
+            if (globalThis.hasException()) {
+                return error.JSError;
+            }
+
+            var init: Init = brk: {
+                if (!arguments[1].isUndefinedOrNull()) {
+                    if (arguments[1].isObject()) {
+                        break :brk try Init.init(globalThis, arguments[1]) orelse unreachable;
+                    }
+
+                    if (!globalThis.hasException()) {
+                        return globalThis.throwInvalidArguments("Failed to construct 'Response': The provided body value is not of type 'ResponseInit'", .{});
+                    }
+                    return error.JSError;
+                }
+
+                break :brk Init{
+                    .status_code = 200,
+                    .headers = null,
+                };
+            };
+
+            errdefer init.deinit(bun.default_allocator);
+
+            const route = HTMLBundle.Route.init(html_bundle);
+
+            var response = bun.new(Response, Response{
+                .init = init,
+                .body = Body{ .value = .{ .Route = route } },
+                .url = bun.String.empty,
+            });
+
+            response.init.headers = response.getOrCreateHeaders(globalThis);
+            response.calculateEstimatedByteSize();
+
+            return response;
         }
     }
     var init: Init = (brk: {

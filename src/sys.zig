@@ -3786,19 +3786,8 @@ pub fn link(comptime T: type, src: [:0]const T, dest: [:0]const T) Maybe(void) {
         if (T == u8) {
             return sys_uv.link(src, dest);
         }
-        var full_dest: [bun.MAX_PATH_BYTES:0]u16 = undefined;
-        var full_src: [bun.MAX_PATH_BYTES:0]u16 = undefined;
 
-        const src_size = kernel32.GetFullPathNameW(src, bun.MAX_PATH_BYTES, &full_src, null);
-        if (src_size == 0) {
-            return Maybe(void).errno(bun.windows.getLastErrno(), .link);
-        }
-        const dest_size = kernel32.GetFullPathNameW(dest, bun.MAX_PATH_BYTES, &full_dest, null);
-        if (dest_size == 0) {
-            return Maybe(void).errno(bun.windows.getLastErrno(), .link);
-        }
-
-        if (bun.windows.CreateHardLinkW(full_dest[0..dest_size :0], full_src[0..src_size :0], null) == 0) {
+        if (bun.windows.CreateHardLinkW(dest, src, null) == 0) {
             return Maybe(void).errno(bun.windows.getLastErrno(), .link);
         }
         log("CreateHardLinkW({s}, {s}) = 0", .{

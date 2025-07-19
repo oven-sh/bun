@@ -1,6 +1,7 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
+    "lib": ["ESNext"],
     // Path remapping
     "baseUrl": ".",
     "paths": {

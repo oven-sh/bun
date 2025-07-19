@@ -3023,6 +3023,8 @@ pub const Api = struct {
 
         link_workspace_packages: ?bool = null,
 
+        security_provider: ?[]const u8 = null,
+
         node_linker: ?bun.install.PackageManager.Options.NodeLinker = null,
 
         pub fn decode(reader: anytype) anyerror!BunInstall {

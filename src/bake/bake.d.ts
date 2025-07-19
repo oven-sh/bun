@@ -418,9 +418,9 @@ declare module "bun" {
     }
 
     type GetParamIterator =
-      | AsyncIterable<Record<string, string>, GetParamsFinalOpts>
-      | Iterable<Record<string, string>, GetParamsFinalOpts>
-      | ({ pages: Array<Record<string, string>> } & GetParamsFinalOpts);
+      | AsyncIterable<Record<string, string | string[]>, GetParamsFinalOpts>
+      | Iterable<Record<string, string | string[]>, GetParamsFinalOpts>
+      | ({ pages: Array<Record<string, string | string[]>> } & GetParamsFinalOpts);
 
     type GetParamsFinalOpts = void | null | {
       /**
@@ -478,7 +478,7 @@ declare module "bun" {
        */
       readonly layouts: ReadonlyArray<any>;
       /** Received route params. `null` if the route does not take params */
-      readonly params: null | Record<string, string>;
+      readonly params: null | Record<string, string | string[]>;
       /**
        * A list of js files that the route will need to be interactive.
        */

@@ -185,8 +185,9 @@ fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.Refe
         });
 
         if (is_default) {
+            const ref = try b.newSymbol(.other, "default");
             // export default registerClientReference(...);
-            try b.appendStmt(S.ExportDefault{ .value = .{ .expr = value }, .default_name = .{} });
+            try b.appendStmt(S.ExportDefault{ .value = .{ .expr = value }, .default_name = .{ .ref = ref } });
         } else {
             // export const Component = registerClientReference(...);
             const export_ref = try b.newSymbol(.other, key);

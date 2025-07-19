@@ -1100,6 +1100,40 @@ pub fn getSourceMapImpl(
 
         // try to load a .map file
         if (load_hint != .is_inline_map) try_external: {
+            if (comptime SourceProviderKind == BakeSourceProvider) fallback_to_normal: {
+                const global = bun.JSC.VirtualMachine.get().global;
+                // If we're using bake's production build the global object will
+                // be Bake::GlobalObject and we can fetch the sourcemap from it,
+                // if not fallback to the normal way
+                if (!BakeGlobalObject__isBakeGlobalObject(global)) {
+                    break :fallback_to_normal;
+                }
+                const data = BakeSourceProvider.getExternal(
+                    provider,
+                    global,
+                    source_filename,
+                );
+                break :parsed .{
+                    .is_external_map,
+                    parseJSON(
+                        bun.default_allocator,
+                        allocator,
+                        data,
+                        result,
+                    ) catch |err| {
+                        // Print warning even if this came from non-visible code like
+                        // calling `error.stack`. This message is only printed if
+                        // the sourcemap has been found but is invalid, such as being
+                        // invalid JSON text or corrupt mappings.
+                        bun.Output.warn("Could not decode sourcemap in '{s}': {s}", .{
+                            source_filename,
+                            @errorName(err),
+                        }); // Disable the "try using --sourcemap=external" hint
+                        bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                        return null;
+                    },
+                };
+            }
             var load_path_buf: *bun.PathBuffer = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(load_path_buf);
             if (source_filename.len + 4 > load_path_buf.len)
@@ -1182,11 +1216,24 @@ pub const SourceProviderMap = opaque {
     }
 };
 
+extern "c" fn BakeGlobalObject__isBakeGlobalObject(global: *bun.JSC.JSGlobalObject) bool;
+
+extern "c" fn BakeGlobalObject__getPerThreadData(global: *bun.JSC.JSGlobalObject) *bun.bake.production.PerThread;
+
 pub const BakeSourceProvider = opaque {
     extern fn BakeSourceProvider__getSourceSlice(*BakeSourceProvider) bun.String;
     pub const getSourceSlice = BakeSourceProvider__getSourceSlice;
     pub fn toSourceContentPtr(this: *BakeSourceProvider) ParsedSourceMap.SourceContentPtr {
         return ParsedSourceMap.SourceContentPtr.fromBakeProvider(this);
+    }
+
+    pub fn getExternal(_: *BakeSourceProvider, global: *bun.JSC.JSGlobalObject, source_filename: []const u8) []const u8 {
+        bun.assert(BakeGlobalObject__isBakeGlobalObject(global));
+        const pt = BakeGlobalObject__getPerThreadData(global);
+        if (pt.source_maps.get(source_filename)) |value| {
+            return pt.bundled_outputs[value.get()].value.asSlice();
+        }
+        return "";
     }
 
     /// The last two arguments to this specify loading hints

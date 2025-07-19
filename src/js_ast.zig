@@ -116,8 +116,16 @@ pub const Flags = struct {
 };
 
 pub const ClauseItem = struct {
+    /// The local alias used for the imported/exported symbol in the current module.
+    /// For imports: `import { foo as bar }` - "bar" is the alias
+    /// For exports: `export { foo as bar }` - "bar" is the alias
+    /// For re-exports: `export { foo as bar } from 'path'` - "bar" is the alias
     alias: string,
     alias_loc: logger.Loc = logger.Loc.Empty,
+    /// Reference to the actual symbol being imported/exported.
+    /// For imports: `import { foo as bar }` - ref to the symbol representing "foo" from the source module
+    /// For exports: `export { foo as bar }` - ref to the local symbol "foo"
+    /// For re-exports: `export { foo as bar } from 'path'` - ref to an intermediate symbol
     name: LocRef,
 
     /// This is the original name of the symbol stored in "Name". It's needed for
@@ -550,6 +558,13 @@ pub const NamedImport = struct {
     // Parts within this file that use this import
     local_parts_with_uses: BabyList(u32) = BabyList(u32){},
 
+    // The original export name from the source module being imported.
+    // Examples:
+    // - `import { foo } from 'module'` → alias = "foo"
+    // - `import { foo as bar } from 'module'` → alias = "foo" (original export name)
+    // - `import * as ns from 'module'` → alias_is_star = true, alias = ""
+    // This field is used by the bundler to match imports with their corresponding
+    // exports and for error reporting when imports can't be resolved.
     alias: ?string,
     alias_loc: ?logger.Loc = null,
     namespace_ref: ?Ref,

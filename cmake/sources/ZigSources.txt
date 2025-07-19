@@ -304,12 +304,14 @@ src/bundler/linker_context/generateCodeForLazyExport.zig
 src/bundler/linker_context/generateCompileResultForCssChunk.zig
 src/bundler/linker_context/generateCompileResultForHtmlChunk.zig
 src/bundler/linker_context/generateCompileResultForJSChunk.zig
+src/bundler/linker_context/OutputFileListBuilder.zig
 src/bundler/linker_context/postProcessCSSChunk.zig
 src/bundler/linker_context/postProcessHTMLChunk.zig
 src/bundler/linker_context/postProcessJSChunk.zig
 src/bundler/linker_context/prepareCssAstsForChunk.zig
 src/bundler/linker_context/renameSymbolsInChunk.zig
 src/bundler/linker_context/scanImportsAndExports.zig
+src/bundler/linker_context/StaticRouteVisitor.zig
 src/bundler/linker_context/writeOutputFilesToDisk.zig
 src/bundler/LinkerContext.zig
 src/bundler/LinkerGraph.zig

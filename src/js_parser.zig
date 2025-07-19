@@ -9049,7 +9049,9 @@ fn NewParser_(
                     }) catch unreachable;
                 }
 
-                item_refs.putAssumeCapacity(name, name_loc.*);
+                // No need to add the `default_name` to `item_refs` because
+                // `.scanImportsAndExports(...)` special cases and handles
+                // `default_name` separately
             }
             var end: usize = 0;
 
@@ -17519,7 +17521,7 @@ fn NewParser_(
                     //
                     // When we see a hook call, we need to hash it, and then mark a flag so that if
                     // it is assigned to a variable, that variable also get's hashed.
-                    if (p.options.features.react_fast_refresh) try_record_hook: {
+                    if (p.options.features.react_fast_refresh or p.options.features.server_components.isServerSide()) try_record_hook: {
                         const original_name = switch (e_.target.data) {
                             inline .e_identifier,
                             .e_import_identifier,
@@ -17529,7 +17531,33 @@ fn NewParser_(
                             else => break :try_record_hook,
                         };
                         if (!ReactRefresh.isHookName(original_name)) break :try_record_hook;
-                        p.handleReactRefreshHookCall(e_, original_name);
+                        if (p.options.features.react_fast_refresh) {
+                            p.handleReactRefreshHookCall(e_, original_name);
+                        } else if (
+                        // If we're here it means we're in server component.
+                        // Error if the user is using the `useState` hook as it
+                        // is disallowed in server components.
+                        //
+                        // We're also specifically checking that the target is
+                        // `.e_import_identifier`.
+                        //
+                        // Why? Because we *don't* want to check for uses of
+                        // `useState` _inside_ React, and we know React uses
+                        // commonjs so it will never be `.e_import_identifier`.
+                        e_.target.data == .e_import_identifier) {
+                            bun.assert(p.options.features.server_components.isServerSide());
+                            if (bun.strings.eqlComptime(original_name, "useState")) {
+                                p.log.addError(
+                                    p.source,
+                                    expr.loc,
+                                    std.fmt.allocPrint(
+                                        p.allocator,
+                                        "\"useState\" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding `\"use client\";` to the top of the file).",
+                                        .{},
+                                    ) catch bun.outOfMemory(),
+                                ) catch bun.outOfMemory();
+                            }
+                        }
                     }
 
                     // Implement constant folding for 'string'.charCodeAt(n)
@@ -18794,6 +18822,26 @@ fn NewParser_(
                         return .{ .data = .{
                             .e_special = if (p.options.features.hot_module_reloading) .hot_enabled else .hot_disabled,
                         }, .loc = loc };
+                    }
+
+                    // Inline import.meta properties for Bake
+                    if (p.options.framework != null) {
+                        if (strings.eqlComptime(name, "dir") or strings.eqlComptime(name, "dirname")) {
+                            // Inline import.meta.dir
+                            return p.newExpr(E.String.init(p.source.path.name.dir), name_loc);
+                        } else if (strings.eqlComptime(name, "file")) {
+                            // Inline import.meta.file (filename only)
+                            return p.newExpr(E.String.init(p.source.path.name.filename), name_loc);
+                        } else if (strings.eqlComptime(name, "path")) {
+                            // Inline import.meta.path (full path)
+                            return p.newExpr(E.String.init(p.source.path.text), name_loc);
+                        } else if (strings.eqlComptime(name, "url")) {
+                            // Inline import.meta.url as file:// URL
+                            const bunstr = bun.String.fromBytes(p.source.path.text);
+                            defer bunstr.deref();
+                            const url = std.fmt.allocPrint(p.allocator, "{s}", .{JSC.URL.fileURLFromString(bunstr)}) catch unreachable;
+                            return p.newExpr(E.String.init(url), name_loc);
+                        }
                     }
 
                     // Make all property accesses on `import.meta.url` side effect free.

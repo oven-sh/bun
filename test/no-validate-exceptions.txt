@@ -126,6 +126,8 @@ test/js/node/process/call-constructor.test.js
 test/js/node/stubs.test.js
 test/js/node/timers/node-timers.test.ts
 test/bake/dev/vfile.test.ts
+test/bake/dev/import-meta-inline.test.ts
+test/bake/dev/production.test.ts
 test/cli/run/run-eval.test.ts
 test/cli/run/self-reference.test.ts
 test/js/bun/resolve/import-meta-resolve.test.mjs

@@ -18,7 +18,7 @@ pub const isMac = build_target == .native and @import("builtin").target.os.tag =
 pub const isBrowser = !isWasi and isWasm;
 pub const isWindows = @import("builtin").target.os.tag == .windows;
 pub const isPosix = !isWindows and !isWasm;
-pub const isDebug = std.builtin.Mode.Debug == @import("builtin").mode;
+pub const isDebug = @import("builtin").mode == .Debug;
 pub const isTest = @import("builtin").is_test;
 pub const isLinux = @import("builtin").target.os.tag == .linux;
 pub const isAarch64 = @import("builtin").target.cpu.arch.isAARCH64();
@@ -26,11 +26,18 @@ pub const isX86 = @import("builtin").target.cpu.arch.isX86();
 pub const isX64 = @import("builtin").target.cpu.arch == .x86_64;
 pub const isMusl = builtin.target.abi.isMusl();
 pub const allow_assert = isDebug or isTest or std.builtin.Mode.ReleaseSafe == @import("builtin").mode;
+pub const ci_assert = isDebug or isTest or enable_asan or (std.builtin.Mode.ReleaseSafe == @import("builtin").mode and is_canary);
 pub const show_crash_trace = isDebug or isTest or enable_asan;
 /// All calls to `@export` should be gated behind this check, so that code
 /// generators that compile Zig code know not to reference and compile a ton of
 /// unused code.
-pub const export_cpp_apis = @import("builtin").output_mode == .Obj or isTest;
+pub const export_cpp_apis = if (build_options.override_no_export_cpp_apis) false else (@import("builtin").output_mode == .Obj or isTest);
+
+/// Whether or not to enable allocation tracking when the `AllocationScope`
+/// allocator is used.
+pub const enableAllocScopes = brk: {
+    break :brk isDebug or enable_asan;
+};
 
 pub const build_options = @import("build_options");
 

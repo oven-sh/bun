@@ -24,7 +24,7 @@ import fs from "node:fs";
 // TODO: vm module not implemented by bun yet
 // import vm from 'node:vm';
 import assert from "assert";
-import { promisify, inspect } from "util";
+import { inspect, promisify } from "util";
 
 const stat = promisify(fs.stat);
 

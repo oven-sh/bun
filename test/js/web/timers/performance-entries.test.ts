@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
+import { expect, test } from "bun:test";
 
 test("memory usage of Performance", () => {
   const initial = estimateShallowMemoryUsageOf(performance);

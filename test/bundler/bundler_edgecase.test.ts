@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test";
+import { isBroken, isWindows } from "harness";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
-import { isBroken, isWindows } from "harness";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -1799,6 +1799,28 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toMatch(/[^\.:]module/); // `.module` and `node:module` are ok.
     },
   });
+  itBundled("edgecase/build-cjs-module#20308", {
+    files: {
+      "/entry.ts": /* js */ `
+        import {other} from './other';
+        console.log(capture(import.meta.main), capture(require.main === module), ...other);
+      `,
+      "/other.ts": /* js */ `
+        globalThis['ca' + 'pture'] = x => x;
+
+        export const other = [capture(require.main === module), capture(import.meta.main)];
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    capture: ["false", "false", "require.main == module", "require.main == module"],
+    onAfterBundle(api) {
+      console.log(api.readFile("/out.js"));
+      // This should be marked as a CommonJS module
+      api.expectFile("/out.js").toMatch(/\brequire\b/); // __require is not ok
+      api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.
+    },
+  });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `
@@ -2025,7 +2047,7 @@ describe("bundler", () => {
   itBundled("edgecase/NoOutWithTwoFiles", {
     files: {
       "/entry.ts": `
-        import index from './index.html'
+        import index from './index.html' with { type: 'file' }
         console.log(index);
       `,
       "/index.html": `
@@ -2051,7 +2073,7 @@ describe("bundler", () => {
   itBundled("edgecase/OutWithTwoFiles", {
     files: {
       "/entry.ts": `
-        import index from './index.html'
+        import index from './index.html' with { type: 'file' }
         console.log(index);
       `,
       "/index.html": `
@@ -2304,9 +2326,9 @@ describe("bundler", () => {
         +[hello,world,etc,blah];
       `,
     },
-    target: 'bun',
+    target: "bun",
     onAfterBundle(api) {
-      api.expectFile('out.js').toMatchInlineSnapshot(`
+      api.expectFile("out.js").toMatchInlineSnapshot(`
         "// @bun
         // entry.ts
         import * as hello from "node:test";
@@ -2327,9 +2349,9 @@ describe("bundler", () => {
         +[hello,world,etc];
       `,
     },
-    target: 'node',
+    target: "node",
     onAfterBundle(api) {
-      api.expectFile('out.js').toMatchInlineSnapshot(`
+      api.expectFile("out.js").toMatchInlineSnapshot(`
         "// entry.ts
         import * as hello from "node:test";
         import * as world from "node:fs";

@@ -244,12 +244,8 @@ JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t ind
 
     auto* params = paramsObjectForRoute(vm, globalObject, index, req);
 
-    JSBunRequest* request = JSBunRequest::create(
-        vm,
-        structure,
-        requestPtr,
-        params);
-    ASSERT(!scope.exception());
+    JSBunRequest* request = JSBunRequest::create(vm, structure, requestPtr, params);
+    scope.assertNoException();
     *requestObject = JSValue::encode(request);
 
     JSValue callback = m_routes.at(index).get();
@@ -259,7 +255,9 @@ JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t ind
     args.append(request);
     args.append(serverValue);
 
-    return AsyncContextFrame::call(globalObject, callback, serverValue, args);
+    auto result = AsyncContextFrame::call(globalObject, callback, serverValue, args);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
 }
 
 extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRoute(

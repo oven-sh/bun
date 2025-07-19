@@ -8,8 +8,6 @@ const StringTypes = bun.StringTypes;
 const Global = bun.Global;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const use_mimalloc = bun.use_mimalloc;
-const writeStream = std.json.writeStream;
-const WriteStream = std.json.WriteStream;
 const c = bun.c;
 
 const SystemTimer = @import("./system_timer.zig").Timer;
@@ -459,9 +457,60 @@ pub inline fn isEmojiEnabled() bool {
 
 pub fn isGithubAction() bool {
     if (bun.getenvZ("GITHUB_ACTIONS")) |value| {
-        return strings.eqlComptime(value, "true");
+        return strings.eqlComptime(value, "true") and
+            // Do not print github annotations for AI agents because that wastes the context window.
+            !isAIAgent();
     }
     return false;
+}
+
+pub fn isAIAgent() bool {
+    const get_is_agent = struct {
+        var value = false;
+        fn evaluate() bool {
+            if (bun.getenvZ("IS_CODE_AGENT")) |env| {
+                return strings.eqlComptime(env, "1");
+            }
+
+            if (isVerbose()) {
+                return false;
+            }
+
+            // Claude Code.
+            if (bun.getenvTruthy("CLAUDECODE")) {
+                return true;
+            }
+
+            // Replit.
+            if (bun.getenvTruthy("REPL_ID")) {
+                return true;
+            }
+
+            // TODO: add environment variable for Gemini
+            // Gemini does not appear to add any environment variables to identify it.
+
+            // TODO: add environment variable for Codex
+            // codex does not appear to add any environment variables to identify it.
+
+            // TODO: add environment variable for Cursor Background Agents
+            // cursor does not appear to add any environment variables to identify it.
+
+            return false;
+        }
+
+        fn setValue() void {
+            value = evaluate();
+        }
+
+        var once = std.once(setValue);
+
+        pub fn isEnabled() bool {
+            once.call();
+            return value;
+        }
+    };
+
+    return get_is_agent.isEnabled();
 }
 
 pub fn isVerbose() bool {
@@ -515,6 +564,11 @@ pub fn errorStream() Source.StreamType {
 pub fn writer() WriterType {
     bun.debugAssert(source_set);
     return source.stream.quietWriter();
+}
+
+pub fn writerBuffered() Source.BufferedStream.Writer {
+    bun.debugAssert(source_set);
+    return source.buffered_stream.writer();
 }
 
 pub fn resetTerminal() void {
@@ -865,6 +919,7 @@ pub const color_map = ComptimeStringMap(string, .{
     &.{ "b", CSI ++ "1m" },
     &.{ "d", CSI ++ "2m" },
     &.{ "i", CSI ++ "3m" },
+    &.{ "u", CSI ++ "4m" },
     &.{ "black", CSI ++ "30m" },
     &.{ "red", CSI ++ "31m" },
     &.{ "green", CSI ++ "32m" },

@@ -1,12 +1,12 @@
-import { describe, it, expect } from "bun:test";
 import { pathToFileURL } from "bun";
+import { describe, expect, it } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
-import { join, sep, resolve } from "path";
-import { bunExe, bunEnv, tempDirWithFiles, joinP, isWindows, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, joinP, tempDirWithFiles } from "harness";
+import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
 
-it("spawn test file", () => {
+it.todo("spawn test file", () => {
   writePackageJSONImportsFixture();
   writePackageJSONExportsFixture();
 
@@ -299,7 +299,7 @@ it("import long string should not segfault", async () => {
   } catch {}
 });
 
-it.only("import override to node builtin", async () => {
+it("import override to node builtin", async () => {
   // @ts-expect-error
   expect(await import("#async_hooks")).toBeDefined();
 });

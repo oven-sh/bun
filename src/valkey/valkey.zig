@@ -346,7 +346,7 @@ pub const ValkeyClient = struct {
     pub fn flushData(this: *ValkeyClient) bool {
         const chunk = this.write_buffer.remaining();
         if (chunk.len == 0) return false;
-        const wrote = this.socket.write(chunk, false);
+        const wrote = this.socket.write(chunk);
         if (wrote > 0) {
             this.write_buffer.consume(@intCast(wrote));
         }
@@ -795,7 +795,7 @@ pub const ValkeyClient = struct {
             // Optimization: avoid cloning the data an extra time.
             defer this.allocator.free(data);
 
-            const wrote = this.socket.write(data, false);
+            const wrote = this.socket.write(data);
             const unwritten = data[@intCast(@max(wrote, 0))..];
 
             if (unwritten.len > 0) {
@@ -967,7 +967,5 @@ const JSC = bun.JSC;
 const std = @import("std");
 const bun = @import("bun");
 const protocol = @import("valkey_protocol.zig");
-const js_valkey = @import("js_valkey.zig");
 const debug = bun.Output.scoped(.Redis, false);
 const uws = bun.uws;
-const Slice = JSC.ZigString.Slice;

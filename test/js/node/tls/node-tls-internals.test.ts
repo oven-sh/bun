@@ -1,8 +1,7 @@
-import { TLSBinding } from "bun:internal-for-testing";
+import { canonicalizeIP } from "bun:internal-for-testing";
 import { createTest } from "node-harness";
+import { rootCertificates } from "tls";
 const { describe, expect } = createTest(import.meta.path);
-
-const { canonicalizeIP, rootCertificates } = TLSBinding;
 
 describe("NodeTLS.cpp", () => {
   test("canonicalizeIP", () => {

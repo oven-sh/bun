@@ -1,7 +1,7 @@
 pub const Mode = std.posix.mode_t;
 pub const E = std.posix.E;
 pub const S = std.posix.S;
-pub const SystemErrno = enum(u8) {
+pub const SystemErrno = enum(u16) {
     SUCCESS = 0,
     EPERM = 1,
     ENOENT = 2,
@@ -222,6 +222,7 @@ pub const UV_E = struct {
     pub const SOCKTNOSUPPORT: i32 = @intFromEnum(SystemErrno.ESOCKTNOSUPPORT);
     pub const NODATA: i32 = @intFromEnum(SystemErrno.ENODATA);
     pub const UNATCH: i32 = @intFromEnum(SystemErrno.EUNATCH);
+    pub const NOEXEC: i32 = @intFromEnum(SystemErrno.ENOEXEC);
 };
 pub fn getErrno(rc: anytype) E {
     const Type = @TypeOf(rc);

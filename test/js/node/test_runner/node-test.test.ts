@@ -1,7 +1,7 @@
-import { describe, test, expect } from "bun:test";
 import { spawn } from "bun";
-import { join } from "node:path";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { join } from "node:path";
 
 describe("node:test", () => {
   test("should run basic tests", async () => {

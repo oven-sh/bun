@@ -222,6 +222,7 @@ pub const E = enum(u16) {
     UV_ESOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT,
     UV_ERRNO_MAX = -uv.UV_ERRNO_MAX,
     UV_EUNATCH = -uv.UV_EUNATCH,
+    UV_ENOEXEC = -uv.UV_ENOEXEC,
 };
 
 pub const S = struct {
@@ -524,6 +525,7 @@ pub const SystemErrno = enum(u16) {
     UV_ESOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT,
     UV_ERRNO_MAX = -uv.UV_ERRNO_MAX,
     UV_EUNATCH = -uv.UV_EUNATCH,
+    UV_ENOEXEC = -uv.UV_ENOEXEC,
 
     pub const max = 137;
 
@@ -963,6 +965,16 @@ pub const SystemErrno = enum(u16) {
             if (code <= @intFromEnum(Win32Error.IO_REISSUE_AS_CACHED) or (code >= @intFromEnum(Win32Error.WSAEINTR) and code <= @intFromEnum(Win32Error.WSA_QOS_RESERVED_PETYPE))) {
                 return init(@as(Win32Error, @enumFromInt(code)));
             } else {
+                // uv error codes
+                inline for (@typeInfo(SystemErrno).@"enum".fields) |field| {
+                    if (comptime std.mem.startsWith(u8, field.name, "UV_")) {
+                        if (comptime @hasField(SystemErrno, field.name["UV_".len..])) {
+                            if (code == field.value) {
+                                return @field(SystemErrno, field.name["UV_".len..]);
+                            }
+                        }
+                    }
+                }
                 if (comptime bun.Environment.allow_assert)
                     bun.Output.debugWarn("Unknown error code: {any}\n", .{code});
 
@@ -1079,7 +1091,6 @@ pub const SystemErrno = enum(u16) {
         if (code < 0)
             return init(-code);
 
-        if (code >= max) return null;
         return @as(SystemErrno, @enumFromInt(code));
     }
 };
@@ -1153,6 +1164,7 @@ pub const UV_E = struct {
     pub const SOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT;
     pub const NODATA = -uv.UV_ENODATA;
     pub const UNATCH = -uv.UV_EUNATCH;
+    pub const NOEXEC = -uv.UV_ENOEXEC;
 };
 const std = @import("std");
 const bun = @import("bun");

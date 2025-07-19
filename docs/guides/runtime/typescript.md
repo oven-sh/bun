@@ -18,7 +18,7 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
     // Environment setup & latest features
     "lib": ["ESNext"],
     "target": "ESNext",
-    "module": "ESNext",
+    "module": "Preserve",
     "moduleDetection": "force",
     "jsx": "react-jsx",
     "allowJs": true,
@@ -34,6 +34,7 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
 
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
@@ -45,4 +46,4 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
 
 ---
 
-Refer to [Ecosystem > TypeScript](https://bun.sh/docs/runtime/typescript) for a complete guide to TypeScript support in Bun.
+Refer to [Ecosystem > TypeScript](https://bun.com/docs/runtime/typescript) for a complete guide to TypeScript support in Bun.

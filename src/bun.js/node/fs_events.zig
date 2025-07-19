@@ -1,6 +1,5 @@
 const std = @import("std");
 const bun = @import("bun");
-const Environment = bun.Environment;
 const Mutex = bun.Mutex;
 const sync = @import("../../sync.zig");
 const Semaphore = sync.Semaphore;
@@ -618,5 +617,18 @@ pub fn watch(path: string, recursive: bool, callback: FSEventsWatcher.Callback, 
             fsevents_default_loop = try FSEventsLoop.init();
         }
         return FSEventsWatcher.init(fsevents_default_loop.?, path, recursive, callback, updateEnd, ctx);
+    }
+}
+
+pub fn closeAndWait() void {
+    if (!bun.Environment.isMac) {
+        return;
+    }
+
+    if (fsevents_default_loop) |loop| {
+        fsevents_default_loop_mutex.lock();
+        defer fsevents_default_loop_mutex.unlock();
+        loop.deinit();
+        fsevents_default_loop = null;
     }
 }

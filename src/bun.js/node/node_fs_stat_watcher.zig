@@ -3,11 +3,7 @@ const JSC = bun.JSC;
 const bun = @import("bun");
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
-const Encoder = JSC.WebCore.encoding;
-const Mutex = bun.Mutex;
-const uws = @import("../../deps/uws.zig");
 
-const PathWatcher = @import("./path_watcher.zig");
 const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const EventLoopTimer = @import("../api/Timer.zig").EventLoopTimer;
 const VirtualMachine = JSC.VirtualMachine;
@@ -16,15 +12,13 @@ const PathLike = JSC.Node.PathLike;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const Output = bun.Output;
 const string = bun.string;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const Environment = bun.Environment;
 
 const StatsSmall = bun.JSC.Node.StatsSmall;
 const StatsBig = bun.JSC.Node.StatsBig;
 
 const log = bun.Output.scoped(.StatWatcher, false);
 
-fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: *const bun.Stat, bigint: bool) JSC.JSValue {
+fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: *const bun.Stat, bigint: bool) bun.JSError!JSC.JSValue {
     if (bigint) {
         return StatsBig.init(stats).toJS(globalThis);
     } else {
@@ -41,16 +35,29 @@ pub const StatWatcherScheduler = struct {
     watchers: WatcherQueue = WatcherQueue{},
 
     event_loop_timer: EventLoopTimer = .{
-        .next = .{},
+        .next = .epoch,
         .tag = .StatWatcherScheduler,
     },
 
+    ref_count: RefCount,
+
+    const RefCount = bun.ptr.ThreadSafeRefCount(StatWatcherScheduler, "ref_count", deinit, .{ .debug_name = "StatWatcherScheduler" });
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
     const WatcherQueue = UnboundedQueue(StatWatcher, .next);
 
-    pub fn init(allocator: std.mem.Allocator, vm: *bun.JSC.VirtualMachine) *StatWatcherScheduler {
-        const this = allocator.create(StatWatcherScheduler) catch bun.outOfMemory();
-        this.* = .{ .main_thread = std.Thread.getCurrentId(), .vm = vm };
-        return this;
+    pub fn init(vm: *bun.JSC.VirtualMachine) bun.ptr.RefPtr(StatWatcherScheduler) {
+        return .new(.{
+            .ref_count = .init(),
+            .main_thread = std.Thread.getCurrentId(),
+            .vm = vm,
+        });
+    }
+
+    fn deinit(this: *StatWatcherScheduler) void {
+        bun.assertf(this.watchers.isEmpty(), "destroying StatWatcherScheduler while it still has watchers", .{});
+        bun.destroy(this);
     }
 
     pub fn append(this: *StatWatcherScheduler, watcher: *StatWatcher) void {
@@ -58,7 +65,9 @@ pub const StatWatcherScheduler = struct {
         bun.assert(watcher.closed == false);
         bun.assert(watcher.next == null);
 
+        watcher.ref();
         this.watchers.push(watcher);
+        log("push watcher {x}", .{@intFromPtr(watcher)});
         const current = this.getInterval();
         if (current == 0 or current > watcher.interval) {
             // we are not running or the new watcher has a smaller interval
@@ -72,6 +81,7 @@ pub const StatWatcherScheduler = struct {
 
     /// Update the current interval and set the timer (this function is thread safe)
     fn setInterval(this: *StatWatcherScheduler, interval: i32) void {
+        this.ref();
         this.current_interval.store(interval, .monotonic);
 
         if (this.main_thread == std.Thread.getCurrentId()) {
@@ -135,17 +145,20 @@ pub const StatWatcherScheduler = struct {
 
     pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
         var this: *StatWatcherScheduler = @alignCast(@fieldParentPtr("task", task));
+        // ref'd when the timer was scheduled
+        defer this.deref();
         // Instant.now will not fail on our target platforms.
         const now = std.time.Instant.now() catch unreachable;
 
         var batch = this.watchers.popBatch();
+        log("pop batch of {d} watchers", .{batch.count});
         var iter = batch.iterator();
         var min_interval: i32 = std.math.maxInt(i32);
         var closest_next_check: u64 = @intCast(min_interval);
         var contain_watchers = false;
         while (iter.next()) |watcher| {
             if (watcher.closed) {
-                watcher.used_by_scheduler_thread.store(false, .release);
+                watcher.deref();
                 continue;
             }
             contain_watchers = true;
@@ -161,6 +174,7 @@ pub const StatWatcherScheduler = struct {
             }
             min_interval = @min(min_interval, watcher.interval);
             this.watchers.push(watcher);
+            log("reinsert watcher {x}", .{@intFromPtr(watcher)});
         }
 
         if (contain_watchers) {
@@ -181,11 +195,10 @@ pub const StatWatcher = struct {
 
     ctx: *VirtualMachine,
 
-    /// Closed is set to true to tell the scheduler to remove from list and mark `used_by_scheduler_thread` as false.
-    closed: bool,
-    /// When this is marked `false` this StatWatcher can get freed
-    used_by_scheduler_thread: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    ref_count: RefCount,
 
+    /// Closed is set to true to tell the scheduler to remove from list and deref.
+    closed: bool,
     path: [:0]u8,
     persistent: bool,
     bigint: bool,
@@ -199,6 +212,12 @@ pub const StatWatcher = struct {
 
     last_stat: bun.Stat,
     last_jsvalue: JSC.Strong.Optional,
+
+    scheduler: bun.ptr.RefPtr(StatWatcherScheduler),
+
+    const RefCount = bun.ptr.ThreadSafeRefCount(StatWatcher, "ref_count", deinit, .{ .debug_name = "StatWatcher" });
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
 
     pub const js = JSC.Codegen.JSStatWatcher;
     pub const toJS = js.toJS;
@@ -214,8 +233,7 @@ pub const StatWatcher = struct {
     }
 
     pub fn deinit(this: *StatWatcher) void {
-        log("deinit\n", .{});
-        bun.assert(!this.hasPendingActivity());
+        log("deinit {x}", .{@intFromPtr(this)});
 
         if (this.persistent) {
             this.persistent = false;
@@ -261,7 +279,7 @@ pub const StatWatcher = struct {
                         if (!interval_.isNumber() and !interval_.isAnyInt()) {
                             return global.throwInvalidArguments("interval must be a number", .{});
                         }
-                        interval = interval_.coerce(i32, global);
+                        interval = try interval_.coerce(i32, global);
                     }
                 }
             }
@@ -291,7 +309,7 @@ pub const StatWatcher = struct {
             if (obj.js_this != .zero) {
                 return obj.js_this;
             }
-            return .undefined;
+            return .js_undefined;
         }
     };
 
@@ -300,7 +318,7 @@ pub const StatWatcher = struct {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
         }
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -308,11 +326,7 @@ pub const StatWatcher = struct {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
         }
-        return .undefined;
-    }
-
-    pub fn hasPendingActivity(this: *StatWatcher) bool {
-        return this.used_by_scheduler_thread.load(.acquire);
+        return .js_undefined;
     }
 
     /// Stops file watching but does not free the instance.
@@ -327,13 +341,15 @@ pub const StatWatcher = struct {
 
     pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         this.close();
-        return .undefined;
+        return .js_undefined;
     }
 
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
     pub fn finalize(this: *StatWatcher) void {
         log("Finalize\n", .{});
-        this.deinit();
+        this.closed = true;
+        this.scheduler.deref();
+        this.deref(); // but don't deinit until the scheduler drops its reference
     }
 
     pub const InitialStatTask = struct {
@@ -351,7 +367,6 @@ pub const StatWatcher = struct {
             const this = initial_stat_task.watcher;
 
             if (this.closed) {
-                this.used_by_scheduler_thread.store(false, .release);
                 return;
             }
 
@@ -374,31 +389,26 @@ pub const StatWatcher = struct {
 
     pub fn initialStatSuccessOnMainThread(this: *StatWatcher) void {
         if (this.closed) {
-            this.used_by_scheduler_thread.store(false, .release);
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
         this.last_jsvalue = .create(jsvalue, this.globalThis);
 
-        const vm = this.globalThis.bunVM();
-        vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
+        this.scheduler.data.append(this);
     }
 
     pub fn initialStatErrorOnMainThread(this: *StatWatcher) void {
         if (this.closed) {
-            this.used_by_scheduler_thread.store(false, .release);
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
         this.last_jsvalue = .create(jsvalue, this.globalThis);
-
-        const vm = this.globalThis.bunVM();
 
         _ = js.listenerGetCached(this.js_this).?.call(
             this.globalThis,
-            .undefined,
+            .js_undefined,
             &[2]JSC.JSValue{
                 jsvalue,
                 jsvalue,
@@ -406,10 +416,9 @@ pub const StatWatcher = struct {
         ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
 
         if (this.closed) {
-            this.used_by_scheduler_thread.store(false, .release);
             return;
         }
-        vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
+        this.scheduler.data.append(this);
     }
 
     /// Called from any thread
@@ -421,7 +430,17 @@ pub const StatWatcher = struct {
             .err => std.mem.zeroes(bun.Stat),
         };
 
-        if (std.mem.eql(u8, std.mem.asBytes(&res), std.mem.asBytes(&this.last_stat))) return;
+        var compare = res;
+        const StatT = @TypeOf(compare);
+        if (@hasField(StatT, "st_atim")) {
+            compare.st_atim = this.last_stat.st_atim;
+        } else if (@hasField(StatT, "st_atimespec")) {
+            compare.st_atimespec = this.last_stat.st_atimespec;
+        } else if (@hasField(StatT, "atim")) {
+            compare.atim = this.last_stat.atim;
+        }
+
+        if (std.mem.eql(u8, std.mem.asBytes(&compare), std.mem.asBytes(&this.last_stat))) return;
 
         this.last_stat = res;
         this.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, swapAndCallListenerOnMainThread));
@@ -430,12 +449,12 @@ pub const StatWatcher = struct {
     /// After a restat found the file changed, this calls the listener function.
     pub fn swapAndCallListenerOnMainThread(this: *StatWatcher) void {
         const prev_jsvalue = this.last_jsvalue.swap();
-        const current_jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
+        const current_jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
         this.last_jsvalue.set(this.globalThis, current_jsvalue);
 
         _ = js.listenerGetCached(this.js_this).?.call(
             this.globalThis,
-            .undefined,
+            .js_undefined,
             &[2]JSC.JSValue{
                 current_jsvalue,
                 prev_jsvalue,
@@ -446,8 +465,8 @@ pub const StatWatcher = struct {
     pub fn init(args: Arguments) !*StatWatcher {
         log("init", .{});
 
-        const buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(buf);
+        const buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(buf);
         var slice = args.path.slice();
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];
@@ -476,12 +495,13 @@ pub const StatWatcher = struct {
             .js_this = .zero,
             .closed = false,
             .path = alloc_file_path,
-            .used_by_scheduler_thread = std.atomic.Value(bool).init(true),
             // Instant.now will not fail on our target platforms.
             .last_check = std.time.Instant.now() catch unreachable,
             // InitStatTask is responsible for setting this
             .last_stat = std.mem.zeroes(bun.Stat),
             .last_jsvalue = .empty,
+            .scheduler = vm.rareData().nodeFSStatWatcherScheduler(vm),
+            .ref_count = .init(),
         };
         errdefer this.deinit();
 

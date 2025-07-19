@@ -7,8 +7,6 @@ const strings = bun.strings;
 const JSON = bun.JSON;
 const Glob = @import("../glob.zig");
 
-const Package = @import("../install/lockfile.zig").Package;
-
 const SKIP_LIST = .{
     // skip hidden directories
     ".",
@@ -53,7 +51,7 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
         log.errors = 0;
         log.warnings = 0;
 
-        const json_source = switch (bun.sys.File.toSource(json_path, allocator)) {
+        const json_source = switch (bun.sys.File.toSource(json_path, allocator, .{})) {
             .err => |err| {
                 switch (err.getErrno()) {
                     .NOENT, .ACCES, .PERM => continue,

@@ -538,6 +538,19 @@ pub const FD = packed struct(backing_int) {
         return @enumFromInt(@as(backing_int, @bitCast(fd)));
     }
 
+    pub fn makePath(dir: FD, comptime T: type, subpath: []const T) !void {
+        return switch (T) {
+            u8 => bun.makePath(dir.stdDir(), subpath),
+            u16 => bun.makePathW(dir.stdDir(), subpath),
+            else => @compileError("unexpected type"),
+        };
+    }
+
+    // TODO: make our own version of deleteTree
+    pub fn deleteTree(dir: FD, subpath: []const u8) !void {
+        try dir.stdDir().deleteTree(subpath);
+    }
+
     // The following functions are from bun.sys but with the 'f' prefix dropped
     // where it is relevant. These functions all take FD as the first argument,
     // so that makes them Zig methods, even when declared in a separate file.

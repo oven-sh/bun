@@ -34,7 +34,7 @@ fn deinit(this: *HTMLBundle) void {
     bun.destroy(this);
 }
 
-pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) JSValue {
+pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) bun.JSError!JSValue {
     return bun.String.createUTF8ForJS(globalObject, this.path);
 }
 
@@ -63,6 +63,11 @@ pub const Route = struct {
     dev_server_id: bun.bake.DevServer.RouteBundle.Index.Optional = .none,
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: std.ArrayListUnmanaged(*PendingResponse) = .{},
+
+    method: union(enum) {
+        any: void,
+        method: bun.http.Method.Set,
+    } = .any,
 
     pub fn memoryCost(this: *const Route) usize {
         var cost: usize = 0;
@@ -405,7 +410,7 @@ pub const Route = struct {
                         route_path = route_path[1..];
                     }
 
-                    server.appendStaticRoute(route_path, .{ .static = static_route }) catch bun.outOfMemory();
+                    server.appendStaticRoute(route_path, .{ .static = static_route }, .any) catch bun.outOfMemory();
                 }
 
                 const html_route: *StaticRoute = this_html_route orelse @panic("Internal assertion failure: HTML entry point not found in HTMLBundle.");
@@ -504,8 +509,6 @@ const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSString = JSC.JSString;
-const JSValueRef = JSC.JSValueRef;
 const JSBundler = JSC.API.JSBundler;
 const HTTPResponse = bun.uws.AnyResponse;
 const uws = bun.uws;

@@ -1,0 +1,54 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`CSS system colors in color-mix - snapshot outputs 1`] = `
+"{
+  "color-mix(in srgb, ButtonFace, red)": {
+    "success": true,
+    "output": ".test {/n  color: color-mix(in srgb, ButtonFace, red);/n}/n"
+  },
+  "color-mix(in srgb, Canvas, blue)": {
+    "success": true,
+    "output": ".test {/n  color: color-mix(in srgb, Canvas, blue);/n}/n"
+  },
+  "color-mix(in srgb, AccentColor, white)": {
+    "success": true,
+    "output": ".test {/n  color: color-mix(in srgb, AccentColor, white);/n}/n"
+  },
+  "color-mix(in srgb, red, ButtonFace)": {
+    "success": true,
+    "output": ".test {/n  color: color-mix(in srgb, red, ButtonFace);/n}/n"
+  },
+  "color-mix(in srgb, ButtonFace 50%, red)": {
+    "success": true,
+    "output": ".test {/n  color: color-mix(in srgb, ButtonFace 50%, red);/n}/n"
+  },
+  "color-mix(in srgb, ButtonFace, Canvas)": {
+    "success": true,
+    "output": ".test {/n  color: color-mix(in srgb, ButtonFace, Canvas);/n}/n"
+  },
+  "color-mix(in oklch, AccentColor, FieldText)": {
+    "success": true,
+    "output": ".test {/n  color: color-mix(in oklch, AccentColor, FieldText);/n}/n"
+  },
+  "color-mix(in hsl, WindowFrame, LinkText)": {
+    "success": true,
+    "output": ".test {/n  color: color-mix(in hsl, WindowFrame, LinkText);/n}/n"
+  },
+  "color-mix(in srgb, HighlightText, GrayText)": {
+    "success": true,
+    "output": ".test {/n  color: color-mix(in srgb, HighlightText, GrayText);/n}/n"
+  },
+  "color-mix(in srgb, Canvas 25%, AccentColor 75%)": {
+    "success": true,
+    "output": ".test {/n  color: color-mix(in srgb, Canvas 25%, AccentColor 75%);/n}/n"
+  },
+  "color-mix(in lch, ButtonFace, transparent)": {
+    "success": true,
+    "output": ".test {/n  color: color-mix(in lch, ButtonFace, transparent);/n}/n"
+  },
+  "color-mix(in hsl, AccentColor, currentColor)": {
+    "success": true,
+    "output": ".test {/n  color: color-mix(in hsl, AccentColor, currentColor);/n}/n"
+  }
+}"
+`;

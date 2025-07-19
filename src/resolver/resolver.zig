@@ -1,13 +1,11 @@
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const FeatureFlags = bun.FeatureFlags;
 const PathString = bun.PathString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const FD = bun.FD;
 
@@ -17,10 +15,8 @@ const options = @import("../options.zig");
 const Fs = @import("../fs.zig");
 const std = @import("std");
 const cache = @import("../cache.zig");
-const sync = @import("../sync.zig");
 const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("./package_json.zig").PackageJSON;
-const MacroRemap = @import("./package_json.zig").MacroMap;
 const ESModule = @import("./package_json.zig").ESModule;
 const BrowserMap = @import("./package_json.zig").BrowserMap;
 const CacheSet = cache.Set;
@@ -29,7 +25,6 @@ pub const DirInfo = @import("./dir_info.zig");
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = bun.Mutex;
-const StringBoolMap = bun.StringHashMap(bool);
 const FileDescriptorType = bun.FileDescriptor;
 const JSC = bun.JSC;
 
@@ -40,7 +35,6 @@ const debuglog = Output.scoped(.Resolver, true);
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Dependency = @import("../install/dependency.zig");
 const Install = @import("../install/install.zig");
-const Lockfile = @import("../install/lockfile.zig").Lockfile;
 const Package = @import("../install/lockfile.zig").Package;
 const Resolution = @import("../install/resolution.zig").Resolution;
 const Semver = bun.Semver;
@@ -95,7 +89,7 @@ const bufs = struct {
     pub threadlocal var esm_absolute_package_path_joined: bun.PathBuffer = undefined;
 
     pub threadlocal var dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
-    pub threadlocal var open_dirs: [256]std.fs.Dir = undefined;
+    pub threadlocal var open_dirs: [256]FD = undefined;
     pub threadlocal var resolve_without_remapping: bun.PathBuffer = undefined;
     pub threadlocal var index: bun.PathBuffer = undefined;
     pub threadlocal var dir_info_uncached_filename: bun.PathBuffer = undefined;
@@ -886,7 +880,7 @@ pub const Resolver = struct {
 
         // A path with a null byte cannot exist on the filesystem. Continuing
         // anyways would cause assertion failures.
-        if (bun.strings.indexOfChar(import_path, 0) != null) {
+        if (bun.strings.containsChar(import_path, 0)) {
             r.flushDebugLogs(.fail) catch {};
             return .{ .not_found = {} };
         }
@@ -896,7 +890,7 @@ pub const Resolver = struct {
         // Fragments in URLs in CSS imports are technically expected to work
         if (tmp == .not_found and kind.isFromCSS()) try_without_suffix: {
             // If resolution failed, try again with the URL query and/or hash removed
-            const maybe_suffix = std.mem.indexOfAny(u8, import_path, "?#");
+            const maybe_suffix = bun.strings.indexOfAny(import_path, "?#");
             if (maybe_suffix == null or maybe_suffix.? < 1)
                 break :try_without_suffix;
 
@@ -1823,11 +1817,11 @@ pub const Resolver = struct {
                         };
 
                         if (pkg_dir_info.package_json) |package_json| {
-                            if (package_json.exports) |exports_map| {
+                            if (package_json.exports) |*exports_map| {
 
                                 // The condition set is determined by the kind of import
                                 var module_type = package_json.module_type;
-                                var esmodule = ESModule{
+                                const esmodule = ESModule{
                                     .conditions = switch (kind) {
                                         ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
                                         ast.ImportKind.at, ast.ImportKind.at_conditional => r.opts.conditions.style,
@@ -2222,7 +2216,7 @@ pub const Resolver = struct {
         var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
         var needs_iter = true;
         var in_place: ?*Fs.FileSystem.DirEntry = null;
-        const open_dir = bun.openDirForIteration(std.fs.cwd(), dir_path) catch |err| {
+        const open_dir = bun.openDirForIteration(FD.cwd(), dir_path).unwrap() catch |err| {
             // TODO: handle this error better
             r.log.addErrorFmt(
                 null,
@@ -2270,10 +2264,10 @@ pub const Resolver = struct {
             dir_entries_ptr.* = new_entry;
 
             if (r.store_fd) {
-                dir_entries_ptr.fd = .fromStdDir(open_dir);
+                dir_entries_ptr.fd = open_dir;
             }
 
-            bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.FD.fromStdDir(open_dir), dir_path, dir_entries_ptr.data.count() });
+            bun.fs.debug("readdir({}, {s}) = {d}", .{ open_dir, dir_path, dir_entries_ptr.data.count() });
 
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
                 .entries = dir_entries_ptr,
@@ -2294,7 +2288,7 @@ pub const Resolver = struct {
             // to check for a parent package.json
             null,
             allocators.NotFound,
-            .fromStdDir(open_dir),
+            open_dir,
             package_id,
         );
         return dir_info_ptr;
@@ -2580,7 +2574,7 @@ pub const Resolver = struct {
         // then it will be undefined memory if we parse another tsconfig.json late
         const key_path = Fs.Path.init(r.fs.dirname_store.append(string, file) catch unreachable);
 
-        const source = logger.Source.initPathString(key_path.text, entry.contents);
+        const source = &logger.Source.initPathString(key_path.text, entry.contents);
         const file_dir = source.path.sourceDir();
 
         var result = (try TSConfigJSON.parse(bun.default_allocator, r.log, source, &r.caches.json)) orelse return null;
@@ -2789,9 +2783,9 @@ pub const Resolver = struct {
         // When this function halts, any item not processed means it's not found.
         defer {
             if (open_dir_count > 0 and (!r.store_fd or r.fs.fs.needToCloseFiles())) {
-                const open_dirs: []std.fs.Dir = bufs(.open_dirs)[0..open_dir_count];
+                const open_dirs = bufs(.open_dirs)[0..open_dir_count];
                 for (open_dirs) |open_dir| {
-                    bun.FD.fromStdDir(open_dir).close();
+                    open_dir.close();
                 }
             }
         }
@@ -2816,8 +2810,8 @@ pub const Resolver = struct {
             defer top_parent = queue_top.result;
             queue_slice.len -= 1;
 
-            const open_dir: std.fs.Dir = if (queue_top.fd.isValid())
-                queue_top.fd.stdDir()
+            const open_dir: FD = if (queue_top.fd.isValid())
+                queue_top.fd
             else open_dir: {
                 // This saves us N copies of .toPosixPath
                 // which was likely the perf gain from resolving directories relative to the parent directory, anyway.
@@ -2826,19 +2820,20 @@ pub const Resolver = struct {
                 defer path.ptr[queue_top.unsafe_path.len] = prev_char;
                 const sentinel = path.ptr[0..queue_top.unsafe_path.len :0];
 
-                const open_req = if (comptime Environment.isPosix)
-                    std.fs.openDirAbsoluteZ(
+                const open_req = if (comptime Environment.isPosix) open_req: {
+                    const dir_result = std.fs.openDirAbsoluteZ(
                         sentinel,
                         .{ .no_follow = !follow_symlinks, .iterate = true },
-                    )
-                else if (comptime Environment.isWindows) open_req: {
+                    ) catch |err| break :open_req err;
+                    break :open_req FD.fromStdDir(dir_result);
+                } else if (comptime Environment.isWindows) open_req: {
                     const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, .{
                         .iterable = true,
                         .no_follow = !follow_symlinks,
                         .read_only = true,
                     });
                     if (dirfd_result.unwrap()) |result| {
-                        break :open_req result.stdDir();
+                        break :open_req result;
                     } else |err| {
                         break :open_req err;
                     }
@@ -2885,7 +2880,7 @@ pub const Resolver = struct {
             };
 
             if (!queue_top.fd.isValid()) {
-                Fs.FileSystem.setMaxFd(open_dir.fd);
+                Fs.FileSystem.setMaxFd(open_dir.cast());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 bufs(.open_dirs)[open_dir_count] = open_dir;
                 open_dir_count += 1;
@@ -2951,13 +2946,13 @@ pub const Resolver = struct {
                 if (in_place) |existing| {
                     existing.data.clearAndFree(allocator);
                 }
-                new_entry.fd = if (r.store_fd) .fromStdDir(open_dir) else .invalid;
+                new_entry.fd = if (r.store_fd) open_dir else .invalid;
                 var dir_entries_ptr = in_place orelse allocator.create(Fs.FileSystem.DirEntry) catch unreachable;
                 dir_entries_ptr.* = new_entry;
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                     .entries = dir_entries_ptr,
                 });
-                bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.FD.fromStdDir(open_dir), dir_path, dir_entries_ptr.data.count() });
+                bun.fs.debug("readdir({}, {s}) = {d}", .{ open_dir, dir_path, dir_entries_ptr.data.count() });
             }
 
             // We must initialize it as empty so that the result index is correct.
@@ -2972,7 +2967,7 @@ pub const Resolver = struct {
                 cached_dir_entry_result.index,
                 r.dir_cache.atIndex(top_parent.index),
                 top_parent.index,
-                .fromStdDir(open_dir),
+                open_dir,
                 null,
             );
 
@@ -3497,7 +3492,7 @@ pub const Resolver = struct {
             .{root_path},
         ) catch bun.outOfMemory()) catch bun.outOfMemory();
 
-        return bun.String.toJSArray(globalObject, list.items);
+        return bun.String.toJSArray(globalObject, list.items) catch .zero;
     }
 
     pub fn loadAsIndex(r: *ThisResolver, dir_info: *DirInfo, extension_order: []const string) ?MatchResult {

@@ -5,8 +5,8 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, randomPort, bunExe } from "harness";
-import { createTest, toRun } from "node-harness";
+import { bunEnv, bunExe, tls as COMMON_TLS_CERT, randomPort } from "harness";
+import { createTest } from "node-harness";
 import { spawnSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import nodefs, { unlinkSync } from "node:fs";
@@ -23,10 +23,9 @@ import http, {
   validateHeaderName,
   validateHeaderValue,
 } from "node:http";
-import { connect, createConnection } from "node:net";
-import type { AddressInfo } from "node:net";
 import https, { createServer as createHttpsServer } from "node:https";
-import { tls as COMMON_TLS_CERT } from "harness";
+import type { AddressInfo } from "node:net";
+import { connect, createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import * as stream from "node:stream";
@@ -373,7 +372,7 @@ describe("node:http", () => {
       });
     }
 
-    // it.only("check for expected fields", done => {
+    // test("check for expected fields", done => {
     //   runTest((server, port) => {
     //     const req = request({ host: "localhost", port, method: "GET" }, res => {
     //       console.log("called");
@@ -1485,7 +1484,7 @@ it("should emit events in the right order", async () => {
     stderr: "inherit",
     env: bunEnv,
   });
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   // TODO prefinish and socket are not emitted in the right order
   expect(
     out
@@ -1499,8 +1498,8 @@ it("should emit events in the right order", async () => {
     ["req", "response"],
     "STATUS: 200",
     // TODO: not totally right:
-    ["req", "close"],
     ["res", "resume"],
+    ["req", "close"],
     ["res", "readable"],
     ["res", "end"],
     ["res", "close"],
@@ -2632,6 +2631,35 @@ test("client side flushHeaders should work", async () => {
   expect(headers.foo).toEqual("bar");
 });
 
+test("flushHeaders should not drop request body", async () => {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  await using server = http.createServer((req, res) => {
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", chunk => (body += chunk));
+    req.on("end", () => {
+      resolve(body);
+      res.end();
+    });
+  });
+
+  await once(server.listen(0), "listening");
+  const address = server.address() as AddressInfo;
+  const req = http.request({
+    method: "POST",
+    host: "127.0.0.1",
+    port: address.port,
+    headers: { "content-type": "text/plain" },
+  });
+
+  req.flushHeaders();
+  req.write("bun");
+  req.end("rocks");
+
+  const body = await promise;
+  expect(body).toBe("bunrocks");
+});
+
 test("server.listening should work", async () => {
   const server = http.createServer();
   await once(server.listen(0), "listening");
@@ -2969,4 +2997,356 @@ test("chunked encoding must be valid after without flushHeaders", async () => {
     }
   });
   await promise;
+});
+
+test("should accept received and send blank headers", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  await using server = http.createServer(async (req, res) => {
+    expect(req.headers["empty-header"]).toBe("");
+    res.writeHead(200, { "x-test": "test", "empty-header": "" });
+    res.end();
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+
+  const socket = createConnection((server.address() as AddressInfo).port, "localhost", () => {
+    socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\nEmpty-Header:\r\n\r\n");
+  });
+
+  socket.on("data", data => {
+    const headers = data.toString("utf-8").split("\r\n");
+    expect(headers[0]).toBe("HTTP/1.1 200 OK");
+    expect(headers[1]).toBe("x-test: test");
+    expect(headers[2]).toBe("empty-header: ");
+    socket.end();
+    resolve();
+  });
+
+  socket.on("error", reject);
+
+  await promise;
+});
+
+test("should handle header overflow", async () => {
+  await using server = http.createServer(async (req, res) => {
+    expect.unreachable();
+  });
+  const { promise, resolve, reject } = Promise.withResolvers();
+  server.on("connection", socket => {
+    socket.on("error", (err: any) => {
+      expect(err.code).toBe("HPE_HEADER_OVERFLOW");
+      resolve();
+    });
+  });
+  server.listen(0);
+  await once(server, "listening");
+
+  const socket = createConnection((server.address() as AddressInfo).port, "localhost", () => {
+    socket.write(
+      "GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\nBig-Header: " +
+        "a".repeat(http.maxHeaderSize) + // will overflow because of host and connection headers
+        "\r\n\r\n",
+    );
+  });
+  socket.on("error", reject);
+  await promise;
+});
+
+test("should handle invalid method", async () => {
+  await using server = http.createServer(async (req, res) => {
+    expect.unreachable();
+  });
+  const { promise, resolve, reject } = Promise.withResolvers();
+  server.on("connection", socket => {
+    socket.on("error", (err: any) => {
+      expect(err.code).toBe("HPE_INVALID_METHOD");
+      resolve();
+    });
+  });
+  server.listen(0);
+  await once(server, "listening");
+
+  const socket = createConnection((server.address() as AddressInfo).port, "localhost", () => {
+    socket.write(
+      "BUN / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\nBig-Header: " +
+        "a".repeat(http.maxHeaderSize) + // will overflow because of host and connection headers
+        "\r\n\r\n",
+    );
+  });
+  socket.on("error", reject);
+  await promise;
+});
+
+describe("HTTP Server Security Tests - Advanced", () => {
+  // Setup and teardown utilities
+  let server;
+  let port;
+
+  beforeEach(async () => {
+    server = new Server();
+
+    server.listen(0, () => {
+      port = server.address().port;
+    });
+    await once(server, "listening");
+  });
+
+  afterEach(async () => {
+    // Close the server if it's still running
+    if (server.listening) {
+      server.closeAllConnections();
+    }
+  });
+
+  // Helper that returns a promise with the server response
+  const sendRequest = message => {
+    return new Promise((resolve, reject) => {
+      const client = connect(port, "localhost");
+      let response = "";
+      client.setEncoding("utf8");
+      client.on("data", chunk => {
+        response += chunk;
+      });
+
+      client.on("error", reject);
+
+      client.on("end", () => {
+        resolve(response.toString("utf8"));
+      });
+
+      client.write(message);
+    });
+  };
+
+  // Mock request handler that simulates security-sensitive operations
+  const createMockHandler = () => {
+    const mockHandler = jest.fn().mockImplementation((req, res) => {
+      // In a real app, this might be a security-sensitive operation
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("Request processed successfully");
+    });
+
+    return mockHandler;
+  };
+
+  // Test Suites
+
+  describe("Header Injection Protection", () => {
+    test("rejects requests with CR in header field name", async () => {
+      const mockHandler = createMockHandler();
+      server.on("request", mockHandler);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INVALID_HEADER_TOKEN");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      const msg = ["GET / HTTP/1.1", "Host: localhost", "Bad\rHeader: value", "", ""].join("\r\n");
+
+      const response = await sendRequest(msg);
+      expect(response).toInclude("400 Bad Request");
+      await promise;
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
+
+    test("rejects requests with CR in header field value", async () => {
+      const mockHandler = createMockHandler();
+      server.on("request", mockHandler);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INTERNAL");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      const msg = ["GET / HTTP/1.1", "Host: localhost", "X-Custom: bad\rvalue", "", ""].join("\r\n");
+
+      const response = await sendRequest(msg);
+      expect(response).toInclude("400 Bad Request");
+      await promise;
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Transfer-Encoding Attacks", () => {
+    test("rejects chunked requests with malformed chunk size", async () => {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INTERNAL");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      const msg = [
+        "POST / HTTP/1.1",
+        "Host: localhost",
+        "Transfer-Encoding: chunked",
+        "",
+        "XYZ\r\n", // Not a valid hex number
+        "data",
+        "0",
+        "",
+        "",
+      ].join("\r\n");
+
+      const response = await sendRequest(msg);
+      expect(response).toInclude("400 Bad Request");
+      await promise;
+    });
+
+    test("rejects chunked requests with invalid chunk ending", async () => {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INTERNAL");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      const msg = [
+        "POST / HTTP/1.1",
+        "Host: localhost",
+        "Transfer-Encoding: chunked",
+        "",
+        "4",
+        "dataXXXX", // Should be "data\r\n"
+        "0",
+        "",
+        "",
+      ].join("\r\n");
+
+      const response = await sendRequest(msg);
+      expect(response).toInclude("400 Bad Request");
+      await promise;
+    });
+  });
+
+  describe("HTTP Request Smuggling", () => {
+    test("rejects requests with both Content-Length and Transfer-Encoding", async () => {
+      const mockHandler = createMockHandler();
+      server.on("request", mockHandler);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INVALID_TRANSFER_ENCODING");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+      const msg = [
+        "POST / HTTP/1.1",
+        "Host: localhost",
+        "Content-Length: 10",
+        "Transfer-Encoding: chunked",
+        "",
+        "5",
+        "hello",
+        "0",
+        "",
+        "",
+      ].join("\r\n");
+
+      const response = await sendRequest(msg);
+      expect(response).toInclude("400 Bad Request");
+      await promise;
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
+
+    test("rejects requests with obfuscated Transfer-Encoding header", async () => {
+      const mockHandler = createMockHandler();
+      server.on("request", mockHandler);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INVALID_HEADER_TOKEN");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+      const msg = [
+        "POST / HTTP/1.1",
+        "Host: localhost",
+        "Content-Length: 11",
+        "Transfer-Encoding : chunked", // Note the space before colon
+        "",
+        "5",
+        "hello",
+        "0",
+        "",
+        "",
+      ].join("\r\n");
+
+      const response = await sendRequest(msg);
+      expect(response).toInclude("400 Bad Request");
+      await promise;
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("HTTP Protocol Violations", () => {
+    test("rejects requests with invalid HTTP version", async () => {
+      const mockHandler = createMockHandler();
+      server.on("request", mockHandler);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INTERNAL");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+      const msg = [
+        "GET / HTTP/9.9", // Invalid HTTP version
+        "Host: localhost",
+        "",
+        "",
+      ].join("\r\n");
+
+      const response = await sendRequest(msg);
+      expect(response).toInclude("505 HTTP Version Not Supported");
+      await promise;
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
+
+    test("rejects requests with missing Host header in HTTP/1.1", async () => {
+      const mockHandler = createMockHandler();
+      server.on("request", mockHandler);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INTERNAL");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+      const msg = [
+        "GET / HTTP/1.1",
+        // Missing Host header
+        "",
+        "",
+      ].join("\r\n");
+
+      const response = await sendRequest(msg);
+      expect(response).toInclude("400 Bad Request");
+      await promise;
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
+  });
 });

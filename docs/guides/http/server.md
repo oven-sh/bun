@@ -4,7 +4,7 @@ name: Common HTTP server usage
 
 This starts an HTTP server listening on port `3000`. It demonstrates basic routing with a number of common responses and also handles POST data from standard forms or as JSON.
 
-See [`Bun.serve`](https://bun.sh/docs/api/http) for details.
+See [`Bun.serve`](https://bun.com/docs/api/http) for details.
 
 ```ts
 const server = Bun.serve({

@@ -15,8 +15,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { connect } from "node:net";
-import { hostname, tmpdir as nodeTmpdir, homedir as nodeHomedir, userInfo, release } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { hostname, homedir as nodeHomedir, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
 export const isWindows = process.platform === "win32";
@@ -290,7 +290,7 @@ export async function spawn(command, options = {}) {
   if (exitCode !== 0 && isWindows) {
     const exitReason = getWindowsExitReason(exitCode);
     if (exitReason) {
-      exitCode = exitReason;
+      signalCode = exitReason;
     }
   }
 
@@ -386,7 +386,7 @@ export function spawnSync(command, options = {}) {
   if (exitCode !== 0 && isWindows) {
     const exitReason = getWindowsExitReason(exitCode);
     if (exitReason) {
-      exitCode = exitReason;
+      signalCode = exitReason;
     }
   }
 
@@ -442,9 +442,37 @@ export function spawnSyncSafe(command, options = {}) {
  * @returns {string | undefined}
  */
 export function getWindowsExitReason(exitCode) {
-  const ntStatusPath = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared\\ntstatus.h";
-  const nthStatus = readFile(ntStatusPath, { cache: true });
+  const windowsKitPath = "C:\\Program Files (x86)\\Windows Kits";
+  if (!existsSync(windowsKitPath)) {
+    return;
+  }
 
+  const windowsKitPaths = readdirSync(windowsKitPath)
+    .filter(filename => isFinite(parseInt(filename)))
+    .sort((a, b) => parseInt(b) - parseInt(a));
+
+  let ntStatusPath;
+  for (const windowsKitPath of windowsKitPaths) {
+    const includePath = `${windowsKitPath}\\Include`;
+    if (!existsSync(includePath)) {
+      continue;
+    }
+
+    const windowsSdkPaths = readdirSync(includePath).sort();
+    for (const windowsSdkPath of windowsSdkPaths) {
+      const statusPath = `${includePath}\\${windowsSdkPath}\\shared\\ntstatus.h`;
+      if (existsSync(statusPath)) {
+        ntStatusPath = statusPath;
+        break;
+      }
+    }
+  }
+
+  if (!ntStatusPath) {
+    return;
+  }
+
+  const nthStatus = readFile(ntStatusPath, { cache: true });
   const match = nthStatus.match(new RegExp(`(STATUS_\\w+).*0x${exitCode?.toString(16)}`, "i"));
   if (match) {
     const [, exitReason] = match;
@@ -1342,13 +1370,16 @@ export async function getLastSuccessfulBuild() {
 }
 
 /**
- * @param {string} filename
- * @param {string} [cwd]
+ * @param {string} filename Absolute path to file to upload
  */
-export async function uploadArtifact(filename, cwd) {
+export async function uploadArtifact(filename) {
   if (isBuildkite) {
-    const relativePath = relative(cwd ?? process.cwd(), filename);
-    await spawnSafe(["buildkite-agent", "artifact", "upload", relativePath], { cwd, stdio: "inherit" });
+    await spawnSafe(["buildkite-agent", "artifact", "upload", basename(filename)], {
+      cwd: dirname(filename),
+      stdio: "inherit",
+    });
+  } else {
+    console.warn(`not in buildkite. artifact ${filename} not uploaded.`);
   }
 }
 
@@ -2810,6 +2841,20 @@ export function printEnvironment() {
         const shell = which(["sh", "bash"]);
         if (shell) {
           spawnSync([shell, "-c", "ulimit -a"], { stdio: "inherit" });
+        }
+      });
+      startGroup("Disk (df)", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "df"], { stdio: "inherit" });
+        }
+      });
+    }
+    if (isWindows) {
+      startGroup("Disk (win)", () => {
+        const shell = which(["pwsh"]);
+        if (shell) {
+          spawnSync([shell, "-c", "get-psdrive"], { stdio: "inherit" });
         }
       });
     }

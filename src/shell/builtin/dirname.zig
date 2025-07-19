@@ -1,7 +1,7 @@
-state: enum { idle, waiting_io, err, done } = .idle,
+state: enum { idle, err, done } = .idle,
 buf: std.ArrayListUnmanaged(u8) = .{},
 
-pub fn start(this: *@This()) Maybe(void) {
+pub fn start(this: *@This()) Yield {
     const args = this.bltn().argsSlice();
     var iter = bun.SliceIterator([*:0]const u8).init(args);
 
@@ -15,11 +15,9 @@ pub fn start(this: *@This()) Maybe(void) {
 
     this.state = .done;
     if (this.bltn().stdout.needsIO()) |safeguard| {
-        this.bltn().stdout.enqueue(this, this.buf.items, safeguard);
-    } else {
-        this.bltn().done(0);
+        return this.bltn().stdout.enqueue(this, this.buf.items, safeguard);
     }
-    return Maybe(void).success;
+    return this.bltn().done(0);
 }
 
 pub fn deinit(this: *@This()) void {
@@ -27,15 +25,13 @@ pub fn deinit(this: *@This()) void {
     //dirname
 }
 
-fn fail(this: *@This(), msg: []const u8) Maybe(void) {
+fn fail(this: *@This(), msg: []const u8) Yield {
     if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .err;
-        this.bltn().stderr.enqueue(this, msg, safeguard);
-        return Maybe(void).success;
+        return this.bltn().stderr.enqueue(this, msg, safeguard);
     }
     _ = this.bltn().writeNoIO(.stderr, msg);
-    this.bltn().done(1);
-    return Maybe(void).success;
+    return this.bltn().done(1);
 }
 
 fn print(this: *@This(), msg: []const u8) Maybe(void) {
@@ -48,17 +44,16 @@ fn print(this: *@This(), msg: []const u8) Maybe(void) {
     return Maybe(void).success;
 }
 
-pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) Yield {
     if (maybe_e) |e| {
         defer e.deref();
         this.state = .err;
-        this.bltn().done(1);
-        return;
+        return this.bltn().done(1);
     }
     switch (this.state) {
-        .done => this.bltn().done(0),
-        .err => this.bltn().done(1),
-        else => {},
+        .done => return this.bltn().done(0),
+        .err => return this.bltn().done(1),
+        .idle => bun.shell.unreachableState("Dirname.onIOWriterChunk", "idle"),
     }
 }
 
@@ -68,28 +63,11 @@ pub inline fn bltn(this: *@This()) *Builtin {
 }
 
 // --
-const debug = bun.Output.scoped(.ShellCat, true);
 const bun = @import("bun");
-const shell = bun.shell;
+const Yield = bun.shell.Yield;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
-const ParseError = interpreter.ParseError;
-const ParseFlagResult = interpreter.ParseFlagResult;
-const ExitCode = shell.ExitCode;
-const IOReader = shell.IOReader;
-const IOWriter = shell.IOWriter;
-const IO = shell.IO;
-const IOVector = shell.IOVector;
-const IOVectorSlice = shell.IOVectorSlice;
-const IOVectorSliceMut = shell.IOVectorSliceMut;
-const Dirname = @This();
-const ReadChunkAction = interpreter.ReadChunkAction;
 const JSC = bun.JSC;
 const Maybe = bun.sys.Maybe;
 const std = @import("std");
-const FlagParser = interpreter.FlagParser;
-
-const ShellSyscall = interpreter.ShellSyscall;
-const unsupportedFlag = interpreter.unsupportedFlag;

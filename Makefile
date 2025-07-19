@@ -482,7 +482,7 @@ STATIC_MUSL_FLAG ?=
 WRAP_SYMBOLS_ON_LINUX =
 
 ifeq ($(OS_NAME), linux)
-WRAP_SYMBOLS_ON_LINUX = -Wl,--wrap=fcntl -Wl,--wrap=fcntl64 -Wl,--wrap=stat64 -Wl,--wrap=pow -Wl,--wrap=exp -Wl,--wrap=log -Wl,--wrap=log2 \
+WRAP_SYMBOLS_ON_LINUX = -Wl,--wrap=fcntl -Wl,--wrap=fcntl64 -Wl,--wrap=stat64 -Wl,--wrap=pow -Wl,--wrap=exp -Wl,--wrap=exp2 -Wl,--wrap=log -Wl,--wrap=log2 \
 	-Wl,--wrap=lstat \
 	-Wl,--wrap=stat \
 	-Wl,--wrap=fstat \
@@ -980,7 +980,7 @@ release-create-auto-updater:
 .PHONY: release-create
 release-create:
 	gh release create --title "bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)"
-	gh release create --repo=$(BUN_AUTO_UPDATER_REPO) --title "bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)" -n "See https://github.com/oven-sh/bun/releases/tag/$(BUN_BUILD_TAG) for release notes. Using the install script or bun upgrade is the recommended way to install bun. Join bun's Discord to get access https://bun.sh/discord"
+	gh release create --repo=$(BUN_AUTO_UPDATER_REPO) --title "bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)" -n "See https://github.com/oven-sh/bun/releases/tag/$(BUN_BUILD_TAG) for release notes. Using the install script or bun upgrade is the recommended way to install bun. Join bun's Discord to get access https://bun.com/discord"
 
 release-bin-entitlements:
 
@@ -1977,7 +1977,7 @@ integration-test-dev: # to run integration tests
 	USE_EXISTING_PROCESS=true TEST_SERVER_URL=http://localhost:3000 node test/scripts/browser.js
 
 copy-install:
-	cp src/cli/install.sh ../bun.sh/docs/install.html
+	cp src/cli/install.sh ../bun.com/docs/install.html
 
 copy-to-bun-release-dir: copy-to-bun-release-dir-bin copy-to-bun-release-dir-dsym
 
@@ -2019,28 +2019,28 @@ vendor-dev: assert-deps submodule npm-install-dev vendor-without-npm
 .PHONY: bun
 bun: 
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'
 
 cpp:
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'
 
 zig:
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'
 
 dev:
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'
 
 setup:
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'
 
 bindings:
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'
 
 help:
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'

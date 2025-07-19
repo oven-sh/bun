@@ -74,7 +74,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformEncryptWithHash(co
         size_t labelSize = parameters.labelVector().size();
         // The library takes ownership of the label so the caller should not free the original memory pointed to by label.
         auto label = OPENSSL_malloc(labelSize);
-        memcpy(label, parameters.labelVector().data(), labelSize);
+        memcpy(label, parameters.labelVector().begin(), labelSize);
         if (EVP_PKEY_CTX_set0_rsa_oaep_label(ctx.get(), reinterpret_cast<uint8_t*>(label), labelSize) <= 0) {
             OPENSSL_free(label);
             return Exception { OperationError };
@@ -82,11 +82,11 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformEncryptWithHash(co
     }
 
     size_t cipherTextLen;
-    if (EVP_PKEY_encrypt(ctx.get(), nullptr, &cipherTextLen, plainText.data(), plainText.size()) <= 0)
+    if (EVP_PKEY_encrypt(ctx.get(), nullptr, &cipherTextLen, plainText.begin(), plainText.size()) <= 0)
         return Exception { OperationError };
 
     Vector<uint8_t> cipherText(cipherTextLen);
-    if (EVP_PKEY_encrypt(ctx.get(), cipherText.data(), &cipherTextLen, plainText.data(), plainText.size()) <= 0)
+    if (EVP_PKEY_encrypt(ctx.get(), cipherText.begin(), &cipherTextLen, plainText.begin(), plainText.size()) <= 0)
         return Exception { OperationError };
     cipherText.shrink(cipherTextLen);
 
@@ -131,7 +131,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformDecryptWithHash(co
         size_t labelSize = parameters.labelVector().size();
         // The library takes ownership of the label so the caller should not free the original memory pointed to by label.
         auto label = OPENSSL_malloc(labelSize);
-        memcpy(label, parameters.labelVector().data(), labelSize);
+        memcpy(label, parameters.labelVector().begin(), labelSize);
         if (EVP_PKEY_CTX_set0_rsa_oaep_label(ctx.get(), reinterpret_cast<uint8_t*>(label), labelSize) <= 0) {
             OPENSSL_free(label);
             return Exception { OperationError };
@@ -139,11 +139,11 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformDecryptWithHash(co
     }
 
     size_t plainTextLen;
-    if (EVP_PKEY_decrypt(ctx.get(), nullptr, &plainTextLen, cipherText.data(), cipherText.size()) <= 0)
+    if (EVP_PKEY_decrypt(ctx.get(), nullptr, &plainTextLen, cipherText.begin(), cipherText.size()) <= 0)
         return Exception { OperationError };
 
     Vector<uint8_t> plainText(plainTextLen);
-    if (EVP_PKEY_decrypt(ctx.get(), plainText.data(), &plainTextLen, cipherText.data(), cipherText.size()) <= 0)
+    if (EVP_PKEY_decrypt(ctx.get(), plainText.begin(), &plainTextLen, cipherText.begin(), cipherText.size()) <= 0)
         return Exception { OperationError };
     plainText.shrink(plainTextLen);
 

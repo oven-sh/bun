@@ -82,7 +82,7 @@ describe("spawn()", () => {
     ]);
     await runBunInstall(bunEnv, tmpdir);
 
-    console.error({tmpdir});
+    console.error({ tmpdir });
     const { exitCode, out } = await new Promise<any>(resolve => {
       const child = spawn("./node_modules/.bin/foo", { cwd: tmpdir, env: bunEnv });
       child.on("exit", async exitCode => {
@@ -388,7 +388,7 @@ it("should call close and exit before process exits", async () => {
     stdin: "inherit",
     stderr: "inherit",
   });
-  const data = await new Response(proc.stdout).text();
+  const data = await proc.stdout.text();
   expect(data).toContain("closeHandler called");
   expect(data).toContain("exithHandler called");
   expect(await proc.exited).toBe(0);
@@ -429,10 +429,10 @@ it("it accepts stdio passthrough", async () => {
     env: bunEnv,
   }));
   console.log(package_dir);
-  const [err, out, exitCode] = await Promise.all([new Response(stderr).text(), new Response(stdout).text(), exited]);
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   try {
     // This command outputs in either `["hello", "world"]` or `["world", "hello"]` order.
-    console.log({err, out});
+    console.log({ err, out });
     expect([err.split("\n")[0], ...err.split("\n").slice(1, -1).sort(), err.split("\n").at(-1)]).toEqual([
       "$ run-p echo-hello echo-world",
       "$ echo hello",

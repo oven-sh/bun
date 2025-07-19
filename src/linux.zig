@@ -45,7 +45,7 @@ pub const RWFFlagSupport = enum(u8) {
         if (comptime !bun.Environment.isLinux) return false;
         switch (rwf_bool.load(.monotonic)) {
             .unknown => {
-                if (isLinuxKernelVersionWithBuggyRWF_NONBLOCK() or bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK")) {
+                if (isLinuxKernelVersionWithBuggyRWF_NONBLOCK() or bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK)) {
                     rwf_bool.store(.unsupported, .monotonic);
                     return false;
                 }

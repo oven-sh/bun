@@ -709,13 +709,11 @@ export class BunTestController implements vscode.Disposable {
     if (isIndividualTestRun) {
       const pattern = this.buildTestNamePattern(tests);
       if (pattern) {
-        args.push("--test-name-pattern", process.platform === "win32" ? `"${pattern}"` : pattern);
+        args.push("--test-name-pattern", pattern);
         printedArgs += `\x1b[0m\x1b[2m --test-name-pattern "${pattern}"\x1b[0m`;
       }
     }
-
-    run.appendOutput(printedArgs + "\x1b[0m\r\n\r\n");
-    args.push(`--inspect-wait=${this.signal!.url}`);
+    run.appendOutput(printedArgs + "\x1b[0m\r\n\r\n" + this.signal!.url + "\r\n");
 
     for (const test of tests) {
       if (isIndividualTestRun || tests.length === 1) {
@@ -725,11 +723,16 @@ export class BunTestController implements vscode.Disposable {
       }
     }
 
+    const inspectorUrl = this.signal.url.startsWith("ws") || this.signal.url.startsWith("tcp") ?
+      `${this.signal!.url}?wait=1` :
+      this.signal!.url;
+
     const proc = spawn(bunCommand, args, {
       cwd: this.workspaceFolder.uri.fsPath,
       env: {
         BUN_DEBUG_QUIET_LOGS: "1",
         FORCE_COLOR: "1",
+        BUN_INSPECT: inspectorUrl,
         ...process.env,
       },
     });
@@ -1399,7 +1402,7 @@ export class BunTestController implements vscode.Disposable {
 
       const pattern = this.buildTestNamePattern(tests);
       if (pattern) {
-        args.push("--test-name-pattern", process.platform === "win32" ? `"${pattern}"` : pattern);
+        args.push("--test-name-pattern", pattern);
       }
     }
 

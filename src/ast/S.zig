@@ -163,6 +163,7 @@ pub const Import = struct {
     star_name_loc: ?logger.Loc = null,
     import_record_index: u32,
     is_single_line: bool = false,
+    phase: bun.ImportRecord.ImportPhase = .none,
 };
 
 pub const Return = struct { value: ?ExprNodeIndex = null };

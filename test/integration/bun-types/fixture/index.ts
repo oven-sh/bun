@@ -267,10 +267,6 @@ Bun.serve({
   port: 3000,
   fetch: () => new Response("ok"),
 
-  // don't do this, use the `tls: {}` options instead
-  key: Bun.file(""), // dont do it!
-  cert: Bun.file(""), // dont do it!
-
   tls: {
     key: Bun.file(""), // do this!
     cert: Bun.file(""), // do this!

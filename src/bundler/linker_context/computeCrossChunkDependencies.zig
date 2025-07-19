@@ -41,9 +41,8 @@ pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
             .symbols = &c.graph.symbols,
         };
 
-        c.parse_graph.pool.worker_pool.doPtr(
+        c.parse_graph.pool.worker_pool.eachPtr(
             c.allocator,
-            &c.wait_group,
             cross_chunk_dependencies,
             CrossChunkDependencies.walk,
             chunks,

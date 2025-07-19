@@ -48,12 +48,14 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
                 },
                 .file => {
                     const destfile_path_buf = bun.w_path_buffer_pool.get();
+                    const destfile_path_buf2 = bun.w_path_buffer_pool.get();
+                    defer bun.w_path_buffer_pool.put(destfile_path_buf2);
                     defer bun.w_path_buffer_pool.put(destfile_path_buf);
-                    const destfile_path = bun.path.joinStringBufWZ(destfile_path_buf, &[_][]const u16{ dest_cwd, this.dest.slice() }, .nt);
+                    const destfile_path = bun.strings.addLongPathPrefix(destfile_path_buf2, bun.path.joinStringBufWZ(destfile_path_buf, &[_][]const u16{ dest_cwd, this.dest.slice() }, .windows));
 
                     const src_path_buf = bun.w_path_buffer_pool.get();
                     defer bun.w_path_buffer_pool.put(src_path_buf);
-                    const src_path = bun.path.joinStringBufWZ(src_path_buf, &[_][]const u16{this.src.slice()}, .nt);
+                    const src_path = bun.strings.addLongPathPrefix(src_path_buf, this.src.slice());
 
                     switch (sys.link(u16, src_path, destfile_path)) {
                         .result => {},

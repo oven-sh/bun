@@ -110,6 +110,16 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
                     break :brk .{ .Blob = blob };
                 },
 
+                .Route => {
+                    var html_route = response.body.value.Route.data;
+                    if (html_route.state == .html) {
+                        return html_route.state.html.clone(globalThis) catch {
+                            return globalThis.throwOutOfMemory();
+                        };
+                    }
+                    return globalThis.throwInvalidArguments("HTMLBundle route is not ready", .{});
+                },
+
                 else => {
                     return globalThis.throwInvalidArguments("Body must be fully buffered before it can be used in a static route. Consider calling new Response(await response.blob()) to buffer the body.", .{});
                 },

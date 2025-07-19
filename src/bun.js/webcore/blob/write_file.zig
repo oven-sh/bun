@@ -714,6 +714,13 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                 this.promise.deinit();
                 bun.destroy(this);
             },
+            .Route => {
+                file_blob.detach();
+                _ = value.use();
+                this.promise.deinit();
+                bun.destroy(this);
+                promise.reject(globalThis, ZigString.init("Body was a Route").toErrorInstance(globalThis));
+            },
             .Locked => {
                 value.Locked.onReceiveValue = thenWrap;
                 value.Locked.task = this;

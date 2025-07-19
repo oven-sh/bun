@@ -134,9 +134,6 @@ pub const Route = extern struct {
 
 //#region C++ agent reference type for Zig
 pub const InspectorHTTPServerAgent = opaque {
-    extern fn Bun__HTTPServerAgent__notifyServerStarted(agent: *InspectorHTTPServerAgent, serverId: ServerId, hotReloadId: HotReloadId, address: *const BunString, startTime: f64, serverInstance: *anyopaque) void;
-    extern fn Bun__HTTPServerAgent__notifyServerStopped(agent: *InspectorHTTPServerAgent, serverId: ServerId, timestamp: f64) void;
-    extern fn Bun__HTTPServerAgent__notifyServerRoutesUpdated(agent: *InspectorHTTPServerAgent, serverId: ServerId, hotReloadId: HotReloadId, routes: [*]Route, routesCount: usize) void;
     extern fn Bun__HTTPServerAgent__notifyRequestWillBeSent(agent: *InspectorHTTPServerAgent, requestId: RequestId, serverId: ServerId, routeId: RouteId, url: *const BunString, fullUrl: *const BunString, method: HTTPMethod, headersJson: *const BunString, paramsJson: *const BunString, hasBody: bool, timestamp: f64) void;
     extern fn Bun__HTTPServerAgent__notifyResponseReceived(agent: *InspectorHTTPServerAgent, requestId: RequestId, serverId: ServerId, statusCode: i32, statusText: *const BunString, headersJson: *const BunString, hasBody: bool, timestamp: f64) void;
     extern fn Bun__HTTPServerAgent__notifyBodyChunkReceived(agent: *InspectorHTTPServerAgent, requestId: RequestId, serverId: ServerId, flags: i32, chunk: *const BunString, timestamp: f64) void;
@@ -144,15 +141,15 @@ pub const InspectorHTTPServerAgent = opaque {
     extern fn Bun__HTTPServerAgent__notifyRequestHandlerException(agent: *InspectorHTTPServerAgent, requestId: RequestId, serverId: ServerId, message: *const BunString, url: *const BunString, line: i32, timestamp: f64) void;
 
     pub fn notifyServerStarted(agent: *InspectorHTTPServerAgent, serverId: ServerId, hotReloadId: HotReloadId, address: *const BunString, startTime: f64, serverInstance: *anyopaque) void {
-        Bun__HTTPServerAgent__notifyServerStarted(agent, serverId, hotReloadId, address, startTime, serverInstance);
+        bun.cpp.Bun__HTTPServerAgent__notifyServerStarted(agent, serverId, hotReloadId, address, startTime, serverInstance);
     }
 
     pub fn notifyServerStopped(agent: *InspectorHTTPServerAgent, serverId: ServerId, timestamp: f64) void {
-        Bun__HTTPServerAgent__notifyServerStopped(agent, serverId, timestamp);
+        bun.cpp.Bun__HTTPServerAgent__notifyServerStopped(agent, serverId, timestamp);
     }
 
     pub fn notifyServerRoutesUpdated(agent: *InspectorHTTPServerAgent, serverId: ServerId, hotReloadId: HotReloadId, routes: []Route) void {
-        Bun__HTTPServerAgent__notifyServerRoutesUpdated(agent, serverId, hotReloadId, routes.ptr, routes.len);
+        bun.cpp.Bun__HTTPServerAgent__notifyServerRoutesUpdated(agent, serverId, hotReloadId, routes.ptr, routes.len);
     }
 };
 

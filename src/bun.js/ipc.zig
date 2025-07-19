@@ -1372,14 +1372,10 @@ pub const IPCHandlers = struct {
     };
 };
 
-extern "C" fn IPCSerialize(globalObject: *JSC.JSGlobalObject, message: JSC.JSValue, handle: JSC.JSValue) JSC.JSValue;
-
 pub fn ipcSerialize(globalObject: *JSC.JSGlobalObject, message: JSC.JSValue, handle: JSC.JSValue) bun.JSError!JSC.JSValue {
-    return bun.jsc.fromJSHostCall(globalObject, @src(), IPCSerialize, .{ globalObject, message, handle });
+    return bun.cpp.IPCSerialize(globalObject, message, handle);
 }
 
-extern "C" fn IPCParse(globalObject: *JSC.JSGlobalObject, target: JSC.JSValue, serialized: JSC.JSValue, fd: JSC.JSValue) JSC.JSValue;
-
 pub fn ipcParse(globalObject: *JSC.JSGlobalObject, target: JSC.JSValue, serialized: JSC.JSValue, fd: JSC.JSValue) bun.JSError!JSC.JSValue {
-    return bun.jsc.fromJSHostCall(globalObject, @src(), IPCParse, .{ globalObject, target, serialized, fd });
+    return bun.cpp.IPCParse(globalObject, target, serialized, fd);
 }

@@ -7,8 +7,6 @@ const String = bun.String;
 
 pub const DOMURL = opaque {
     pub extern fn WebCore__DOMURL__cast_(JSValue0: JSValue, arg1: *VM) ?*DOMURL;
-    pub extern fn WebCore__DOMURL__href_(arg0: ?*DOMURL, arg1: *ZigString) void;
-    pub extern fn WebCore__DOMURL__pathname_(arg0: ?*DOMURL, arg1: *ZigString) void;
 
     pub fn cast_(value: JSValue, vm: *VM) ?*DOMURL {
         return WebCore__DOMURL__cast_(value, vm);
@@ -19,7 +17,7 @@ pub const DOMURL = opaque {
     }
 
     pub fn href_(this: *DOMURL, out: *ZigString) void {
-        return WebCore__DOMURL__href_(this, out);
+        return bun.cpp.WebCore__DOMURL__href_(this, out);
     }
 
     pub fn href(this: *DOMURL) ZigString {
@@ -48,7 +46,7 @@ pub const DOMURL = opaque {
     }
 
     pub fn pathname_(this: *DOMURL, out: *ZigString) void {
-        return WebCore__DOMURL__pathname_(this, out);
+        return bun.cpp.WebCore__DOMURL__pathname_(this, out);
     }
 
     pub fn pathname(this: *DOMURL) ZigString {

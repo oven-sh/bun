@@ -125,27 +125,27 @@ pub const YarnLock = struct {
 
             // Handle npm: aliased dependencies like "old@npm:abbrev@1.0.x"
             if (std.mem.indexOf(u8, unquoted, "@npm:")) |npm_idx| {
-                return unquoted[npm_idx + 1..];
+                return unquoted[npm_idx + 1 ..];
             }
 
             // Handle remote tarball URLs like "remote@https://registry.npmjs.org/..."
             if (std.mem.indexOf(u8, unquoted, "@https://")) |url_idx| {
-                return unquoted[url_idx + 1..];
+                return unquoted[url_idx + 1 ..];
             }
 
             // Handle git URLs like "full-git-url@git+https://..."
             if (std.mem.indexOf(u8, unquoted, "@git+")) |git_idx| {
-                return unquoted[git_idx + 1..];
+                return unquoted[git_idx + 1 ..];
             }
 
             // Handle github shorthand like "ghshort@github:..."
             if (std.mem.indexOf(u8, unquoted, "@github:")) |gh_idx| {
-                return unquoted[gh_idx + 1..];
+                return unquoted[gh_idx + 1 ..];
             }
 
             // Handle file dependencies like "symlink@file:..."
             if (std.mem.indexOf(u8, unquoted, "@file:")) |file_idx| {
-                return unquoted[file_idx + 1..];
+                return unquoted[file_idx + 1 ..];
             }
 
             if (std.mem.indexOf(u8, unquoted, "@")) |idx| {
@@ -220,7 +220,7 @@ pub const YarnLock = struct {
             if (std.mem.indexOf(u8, npm_part, "@")) |at_idx| {
                 return .{
                     .package = npm_part[0..at_idx],
-                    .version = npm_part[at_idx + 1..],
+                    .version = npm_part[at_idx + 1 ..],
                 };
             }
             return .{ .package = npm_part, .version = "*" };
@@ -377,7 +377,7 @@ pub const YarnLock = struct {
                             current_entry.?.resolved = git_info.url;
                             current_entry.?.commit = git_info.commit;
                         } else if (Entry.isNpmAlias(value)) {
-                            // For npm aliases, use the actual package name and version  
+                            // For npm aliases, use the actual package name and version
                             const alias_info = Entry.parseNpmAlias(value);
                             current_entry.?.version = alias_info.version;
                         } else if (Entry.isRemoteTarball(value)) {
@@ -607,13 +607,13 @@ pub fn migrateYarnLockfile(
                     }
                     break :blk Resolution{};
                 } else if (entry.resolved) |resolved| {
-                    // Handle remote tarball URLs  
+                    // Handle remote tarball URLs
                     if (YarnLock.Entry.isRemoteTarball(resolved) or strings.endsWith(resolved, ".tgz")) {
                         break :blk Resolution.init(.{
                             .remote_tarball = try string_buf.append(resolved),
                         });
                     }
-                    
+
                     const version = entry.version;
                     const sliced_version = Semver.SlicedString.init(version, version);
                     const result = Semver.Version.parse(sliced_version);

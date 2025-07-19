@@ -7,7 +7,7 @@ const YARN_TEST_DIRS = [
   "yarn-lock-mkdirp",
   "yarn-lock-mkdirp-no-resolved",
   // Re-enable these once basic build works
-  // "yarn-lock-mkdirp-file-dep",  
+  // "yarn-lock-mkdirp-file-dep",
   // "yarn-stuff"
 ];
 

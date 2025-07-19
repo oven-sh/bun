@@ -164,7 +164,8 @@ tildify() {
     fi
 }
 
-success "bun was installed successfully to $Bold_Green$(tildify "$exe")"
+bun_version=$("$exe" --version 2>/dev/null || echo "unknown")
+success "Bun v${bun_version} was installed successfully to $Bold_Green$(tildify "$exe")"
 
 if command -v bun >/dev/null; then
     # Install completions, but we don't care if it fails

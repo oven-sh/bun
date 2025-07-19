@@ -42,8 +42,8 @@
 #endif
 
 #ifdef BUN_DEBUG
-#define nonnull_fn_decl 
-#else 
+#define nonnull_fn_decl
+#else
 #ifndef nonnull_fn_decl
 #define nonnull_fn_decl __attribute__((nonnull))
 #endif
@@ -98,8 +98,10 @@ enum {
     LIBUS_SOCKET_ALLOW_HALF_OPEN = 2,
     /* Setting reusePort allows multiple sockets on the same host to bind to the same port. Incoming connections are distributed by the operating system to listening sockets. This option is available only on some platforms, such as Linux 3.9+, DragonFlyBSD 3.6+, FreeBSD 12.0+, Solaris 11.4, and AIX 7.2.5+*/
     LIBUS_LISTEN_REUSE_PORT = 4,
-    /* etting ipv6Only will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound.*/
+    /* Setting ipv6Only will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound.*/
     LIBUS_SOCKET_IPV6_ONLY = 8,
+    LIBUS_LISTEN_REUSE_ADDR = 16,
+    LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32,
 };
 
 /* Library types publicly available */
@@ -153,9 +155,11 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 //struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
-struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, void *user);
+struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, int flags, int *err, void *user);
 
 void us_udp_socket_close(struct us_udp_socket_t *s);
+
+int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled);
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);
@@ -223,11 +227,11 @@ struct us_bun_socket_context_options_t {
     const char *ssl_ciphers;
     int ssl_prefer_low_memory_usage; /* Todo: rename to prefer_low_memory_usage and apply for TCP as well */
     const char **key;
-    unsigned int key_count; 
+    unsigned int key_count;
     const char **cert;
-    unsigned int cert_count; 
+    unsigned int cert_count;
     const char **ca;
-    unsigned int ca_count; 
+    unsigned int ca_count;
     unsigned int secure_options;
     int reject_unauthorized;
     int request_cert;
@@ -260,8 +264,10 @@ enum create_bun_socket_error_t {
   CREATE_BUN_SOCKET_ERROR_INVALID_CA,
 };
 
-struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop_t *loop,
+struct us_socket_context_t *us_create_bun_ssl_socket_context(struct us_loop_t *loop,
     int ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err);
+struct us_socket_context_t *us_create_bun_nossl_socket_context(struct us_loop_t *loop,
+    int ext_size);
 
 /* Delete resources allocated at creation time (will call unref now and only free when ref count == 0). */
 void us_socket_context_free(int ssl, us_socket_context_r context) nonnull_fn_decl;
@@ -276,6 +282,8 @@ void us_socket_context_on_close(int ssl, us_socket_context_r context,
     struct us_socket_t *(*on_close)(us_socket_r s, int code, void *reason));
 void us_socket_context_on_data(int ssl, us_socket_context_r context,
     struct us_socket_t *(*on_data)(us_socket_r s, char *data, int length));
+void us_socket_context_on_fd(int ssl, us_socket_context_r context,
+    struct us_socket_t *(*on_fd)(us_socket_r s, int fd));
 void us_socket_context_on_writable(int ssl, us_socket_context_r context,
     struct us_socket_t *(*on_writable)(us_socket_r s));
 void us_socket_context_on_timeout(int ssl, us_socket_context_r context,
@@ -310,7 +318,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, us_socket_cont
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) nonnull_fn_decl;
 
 /*
-    Returns one of 
+    Returns one of
     - struct us_socket_t * - indicated by the value at on_connecting being set to 1
       This is the fast path where the DNS result is available immediately and only a single remote
       address is available
@@ -411,9 +419,8 @@ struct us_poll_t *us_poll_resize(us_poll_r p, us_loop_r loop, unsigned int ext_s
 void *us_socket_get_native_handle(int ssl, us_socket_r s) nonnull_fn_decl;
 
 /* Write up to length bytes of data. Returns actual bytes written.
- * Will call the on_writable callback of active socket context on failure to write everything off in one go.
- * Set hint msg_more if you have more immediate data to write. */
-int us_socket_write(int ssl, us_socket_r s, const char * nonnull_arg data, int length, int msg_more) nonnull_fn_decl;
+ * Will call the on_writable callback of active socket context on failure to write everything off in one go. */
+int us_socket_write(int ssl, us_socket_r s, const char * nonnull_arg data, int length) nonnull_fn_decl;
 
 /* Special path for non-SSL sockets. Used to send header and payload in one go. Works like us_socket_write. */
 int us_socket_write2(int ssl, us_socket_r s, const char *header, int header_length, const char *payload, int payload_length) nonnull_fn_decl;
@@ -432,7 +439,7 @@ void *us_connecting_socket_ext(int ssl, struct us_connecting_socket_t *c) nonnul
 /* Return the socket context of this socket */
 struct us_socket_context_t *us_socket_context(int ssl, us_socket_r s) nonnull_fn_decl __attribute__((returns_nonnull));
 
-/* Withdraw any msg_more status and flush any pending data */
+/*  Flush any pending data */
 void us_socket_flush(int ssl, us_socket_r s) nonnull_fn_decl;
 
 /* Shuts down the connection by sending FIN and/or close_notify */
@@ -461,13 +468,13 @@ void us_socket_local_address(int ssl, us_socket_r s, char *nonnull_arg buf, int 
 
 /* Bun extras */
 struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR* fds);
-struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd);
-struct us_socket_t *us_socket_attach(int ssl, LIBUS_SOCKET_DESCRIPTOR client_fd, struct us_socket_context_t *ctx, int flags, int socket_ext_size);
+struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc);
 struct us_socket_t *us_socket_wrap_with_tls(int ssl, us_socket_r s, struct us_bun_socket_context_options_t options, struct us_socket_events_t events, int socket_ext_size);
-int us_socket_raw_write(int ssl, us_socket_r s, const char *data, int length, int msg_more);
+int us_socket_raw_write(int ssl, us_socket_r s, const char *data, int length);
 struct us_socket_t* us_socket_open(int ssl, struct us_socket_t * s, int is_client, char* ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t**out);
 unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
+unsigned int us_get_local_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 int us_socket_get_error(int ssl, us_socket_r s);
 
 void us_socket_ref(us_socket_r s);

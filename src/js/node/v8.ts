@@ -126,14 +126,14 @@ function getDefaultHeapSnapshotPath() {
 
 let fs;
 
-function writeHeapSnapshot(path, options) {
+function writeHeapSnapshot(path, _options) {
   if (path !== undefined) {
     if (typeof path !== "string") {
       throw $ERR_INVALID_ARG_TYPE("path", "string", path);
     }
 
     if (!path) {
-      throw $ERR_INVALID_ARG_VALUE("path must be a non-empty string");
+      throw $ERR_INVALID_ARG_VALUE("path", path, "must be a non-empty string");
     }
   } else {
     path = getDefaultHeapSnapshotPath();

@@ -60,7 +60,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     auto* callee = JSC::jsDynamicCast<Function*>(callFrame->jsCallee());
     auto* functionTemplate = callee->functionTemplate();
     auto* isolate = JSC::jsCast<Zig::GlobalObject*>(globalObject)->V8GlobalInternals()->isolate();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     WTF::Vector<TaggedPointer, 8> args(callFrame->argumentCount() + 1);
 
@@ -71,6 +71,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     // object.
     JSC::JSObject* jscThis = globalObject->globalThis();
     if (!callFrame->thisValue().isUndefinedOrNull()) {
+        // TODO(@190n) throwscope, assert no exception
         jscThis = callFrame->thisValue().toObject(globalObject);
     }
     Local<Object> thisObject = hs.createLocal<Object>(vm, jscThis);
@@ -81,20 +82,21 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
         args[i + 1] = argValue.tagged();
     }
 
-    Local<Value> data = hs.createLocal<Value>(vm, functionTemplate->m_data.get());
+    // In V8, the target is the function being called
+    Local<Value> target = hs.createLocal<Value>(vm, callee);
 
     ImplicitArgs implicit_args = {
-        .holder = nullptr,
-        .isolate = isolate,
         .unused = nullptr,
+        .isolate = isolate,
+        // Context is always a reinterpret pointer to Zig::GlobalObject
+        .context = reinterpret_cast<void*>(globalObject),
         .return_value = TaggedPointer(),
-        // data may be an object
-        // put it in the handle scope so that it has a map ptr
-        .data = data.tagged(),
+        // target holds the Function being called, which contains the FunctionTemplate
+        .target = target.tagged(),
         .new_target = nullptr,
     };
 
-    FunctionCallbackInfo<Value> info(&implicit_args, args.data() + 1, callFrame->argumentCount());
+    FunctionCallbackInfo<Value> info(&implicit_args, args.begin() + 1, callFrame->argumentCount());
 
     functionTemplate->m_callback(info);
 

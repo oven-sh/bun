@@ -2,7 +2,7 @@
 name: Debugging
 ---
 
-Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-types/jsc.d.ts), so you can debug your code with an interactive debugger. For demonstration purposes, consider the following simple web server.
+Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts), so you can debug your code with an interactive debugger. For demonstration purposes, consider the following simple web server.
 
 ## Debugging JavaScript and TypeScript
 
@@ -93,7 +93,7 @@ Here's a cheat sheet explaining the functions of the control flow buttons.
 
 ### Visual Studio Code Debugger
 
-Experimental support for debugging Bun scripts is available in Visual Studio Code. To use it, you'll need to install the [Bun VSCode extension](https://bun.sh/guides/runtime/vscode-debugger).
+Experimental support for debugging Bun scripts is available in Visual Studio Code. To use it, you'll need to install the [Bun VSCode extension](https://bun.com/guides/runtime/vscode-debugger).
 
 ## Debugging Network Requests
 
@@ -124,11 +124,11 @@ await fetch("https://example.com", {
 This prints the `fetch` request as a single-line `curl` command to let you copy-paste into your terminal to replicate the request.
 
 ```sh
-[fetch] $ curl --http1.1 "https://example.com/" -X POST -H "content-type: application/json" -H "Connection: keep-alive" -H "User-Agent: Bun/1.1.14" -H "Accept: */*" -H "Host: example.com" -H "Accept-Encoding: gzip, deflate, br" --compressed -H "Content-Length: 13" --data-raw "{\"foo\":\"bar\"}"
+[fetch] $ curl --http1.1 "https://example.com/" -X POST -H "content-type: application/json" -H "Connection: keep-alive" -H "User-Agent: Bun/$BUN_LATEST_VERSION" -H "Accept: */*" -H "Host: example.com" -H "Accept-Encoding: gzip, deflate, br" --compressed -H "Content-Length: 13" --data-raw "{\"foo\":\"bar\"}"
 [fetch] > HTTP/1.1 POST https://example.com/
 [fetch] > content-type: application/json
 [fetch] > Connection: keep-alive
-[fetch] > User-Agent: Bun/1.1.14
+[fetch] > User-Agent: Bun/$BUN_LATEST_VERSION
 [fetch] > Accept: */*
 [fetch] > Host: example.com
 [fetch] > Accept-Encoding: gzip, deflate, br
@@ -170,7 +170,7 @@ This prints the following to the console:
 [fetch] > HTTP/1.1 POST https://example.com/
 [fetch] > content-type: application/json
 [fetch] > Connection: keep-alive
-[fetch] > User-Agent: Bun/1.1.14
+[fetch] > User-Agent: Bun/$BUN_LATEST_VERSION
 [fetch] > Accept: */*
 [fetch] > Host: example.com
 [fetch] > Accept-Encoding: gzip, deflate, br
@@ -192,7 +192,7 @@ This prints the following to the console:
 
 Bun transpiles every file, which sounds like it would mean that the stack traces you see in the console would unhelpfully point to the transpiled output. To address this, Bun automatically generates and serves sourcemapped files for every file it transpiles. When you see a stack trace in the console, you can click on the file path and be taken to the original source code, even though it was written in TypeScript or JSX, or has some other transformation applied.
 
-<!-- TODO: uncomment once v1.1.13 regression is fixed (cc @paperdave) -->
+<!-- TODO: uncomment once v1.1.13 regression is fixed (cc @paperclover) -->
 <!-- In Bun, each `Error` object gets four additional properties:
 
 - `line` — the source-mapped line number. This number points to the input source code, not the transpiled output.

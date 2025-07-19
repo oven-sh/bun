@@ -16,13 +16,20 @@
 
 namespace Bake {
 
+  
+extern "C" BunString BakeSourceProvider__getSourceSlice(SourceProvider* provider)
+{
+    return Bun::toStringView(provider->source());
+}
+
 extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, BunString source, bool separateSSRGraph) {
-  JSC::VM& vm = global->vm();
+  auto& vm = JSC::getVM(global);
   auto scope = DECLARE_THROW_SCOPE(vm);
 
   String string = "bake://server-runtime.js"_s;
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
+    global,
     source.toWTFString(),
     origin,
     WTFMove(string),
@@ -31,7 +38,7 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, B
   ));
 
   JSC::JSValue fnValue = vm.interpreter.executeProgram(sourceCode, global, global);
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+  RETURN_IF_EXCEPTION(scope, {});
 
   RELEASE_ASSERT(fnValue);
 
@@ -42,7 +49,7 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, B
   args.append(JSC::jsBoolean(separateSSRGraph)); // separateSSRGraph
   args.append(Zig::ImportMetaObject::create(global, "bake://server-runtime.js"_s)); // importMeta
 
-  return JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, fn, callData, JSC::jsUndefined(), args));
+  RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, fn, callData, JSC::jsUndefined(), args)));
 }
 
 extern "C" JSC::JSInternalPromise* BakeLoadModuleByKey(GlobalObject* global, JSC::JSString* key) {
@@ -56,6 +63,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunS
   String string = "bake://server.patch.js"_s;
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
+    global,
     source.toWTFString(),
     origin,
     WTFMove(string),
@@ -64,7 +72,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunS
   ));
 
   JSC::JSValue result = vm.interpreter.executeProgram(sourceCode, global, global);
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+  RETURN_IF_EXCEPTION(scope, {});
 
   RELEASE_ASSERT(result);
   return JSC::JSValue::encode(result);
@@ -75,7 +83,7 @@ extern "C" JSC::EncodedJSValue BakeGetModuleNamespace(
   JSC::JSValue keyValue
 ) {
   JSC::JSString* key = JSC::jsCast<JSC::JSString*>(keyValue);
-  JSC::VM& vm = global->vm();
+  auto& vm = JSC::getVM(global);
   JSC::JSMap* map = JSC::jsCast<JSC::JSMap*>(
     global->moduleLoader()->getDirect(
       vm, JSC::Identifier::fromString(global->vm(), "registry"_s)
@@ -93,7 +101,7 @@ extern "C" JSC::EncodedJSValue BakeGetDefaultExportFromModule(
   JSC::JSGlobalObject* global,
   JSC::JSValue keyValue
 ) {
-  JSC::VM& vm = global->vm();
+  auto& vm = JSC::getVM(global);
   return JSC::JSValue::encode(jsCast<JSC::JSModuleNamespaceObject*>(JSC::JSValue::decode(BakeGetModuleNamespace(global, keyValue)))->get(global, vm.propertyNames->defaultKeyword));
 }
 
@@ -104,7 +112,7 @@ extern "C" JSC::EncodedJSValue BakeGetOnModuleNamespace(
   const unsigned char* key,
   size_t keyLength
 ) {
-  JSC::VM& vm = global->vm();
+  auto& vm = JSC::getVM(global);
   const auto propertyString = String(StringImpl::createWithoutCopying({ key, keyLength }));
   const auto identifier = JSC::Identifier::fromString(vm, propertyString);
   const auto property = JSC::PropertyName(identifier);
@@ -112,13 +120,14 @@ extern "C" JSC::EncodedJSValue BakeGetOnModuleNamespace(
 }
 
 extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* global, BunString virtualPathName, BunString source) {
-  JSC::VM& vm = global->vm();
+  auto& vm = JSC::getVM(global);
   auto scope = DECLARE_THROW_SCOPE(vm);
 
   String string = virtualPathName.toWTFString();
   JSC::JSString* key = JSC::jsString(vm, string);
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
+    global,
     source.toWTFString(),
     origin,
     WTFMove(string),
@@ -127,7 +136,7 @@ extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* 
   ));
 
   global->moduleLoader()->provideFetch(global, key, sourceCode);
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+  RETURN_IF_EXCEPTION(scope, {});
 
   return JSC::JSValue::encode(key);
 }

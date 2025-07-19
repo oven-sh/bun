@@ -29,19 +29,6 @@ static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastNeed);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastTotal);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_encoding);
 
-static WTF::String replacementString()
-{
-    return WTF::String(std::span<const UChar> { u"\uFFFD", 1 });
-}
-static WTF::String replacementString2()
-{
-    return WTF::String(std::span<const UChar> { u"\uFFFD\uFFFD", 2 });
-}
-static WTF::String replacementString3()
-{
-    return WTF::String(std::span<const UChar> { u"\uFFFD\uFFFD\uFFFD", 3 });
-}
-
 // Checks the type of a UTF-8 byte, whether it's ASCII, a leading byte, or a
 // continuation byte.
 //     0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
@@ -84,18 +71,21 @@ ALWAYS_INLINE bool isContinuation(uint8_t byte)
 static inline JSStringDecoder* jsStringDecoderCast(JSGlobalObject* globalObject, JSValue stringDecoderValue, WTF::ASCIILiteral functionName)
 {
     ASSERT(stringDecoderValue);
-    if (auto cast = jsDynamicCast<JSStringDecoder*>(stringDecoderValue); LIKELY(cast))
+    if (auto cast = jsDynamicCast<JSStringDecoder*>(stringDecoderValue); cast) [[likely]] {
         return cast;
+    }
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     if (JSC::JSObject* thisObject = stringDecoderValue.getObject()) {
         auto clientData = WebCore::clientData(vm);
         JSValue existingDecoderValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().decodePrivateName());
-        if (LIKELY(existingDecoderValue)) {
-            if (auto cast = jsDynamicCast<JSStringDecoder*>(existingDecoderValue); LIKELY(cast))
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (existingDecoderValue) [[likely]] {
+            if (auto cast = jsDynamicCast<JSStringDecoder*>(existingDecoderValue); cast) [[likely]] {
                 return cast;
+            }
         }
     }
 
@@ -210,7 +200,7 @@ JSC::JSValue JSStringDecoder::text(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
         if (length == offset)
             RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
         if ((length - offset) % 2 == 0) {
-            UChar c = (static_cast<uint16_t>(bufPtr[length - 1]) << 8) + static_cast<uint16_t>(bufPtr[length - 2]);
+            char16_t c = (static_cast<uint16_t>(bufPtr[length - 1]) << 8) + static_cast<uint16_t>(bufPtr[length - 2]);
             if (c >= 0xD800 && c <= 0xDBFF) {
                 m_lastNeed = 2;
                 m_lastTotal = 4;
@@ -411,7 +401,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
 
     auto buffer = callFrame->uncheckedArgument(0);
     JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
-    if (UNLIKELY(!view || view->isDetached())) {
+    if (!view || view->isDetached()) [[unlikely]] {
         // What node does:
         // StringDecoder.prototype.write = function write(buf) {
         // if (typeof buf === 'string')
@@ -434,7 +424,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::
 
     auto buffer = callFrame->uncheckedArgument(0);
     JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
-    if (UNLIKELY(!view || view->isDetached())) {
+    if (!view || view->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
     }
@@ -451,7 +441,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
 
     auto buffer = callFrame->uncheckedArgument(0);
     JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
-    if (UNLIKELY(!view || view->isDetached())) {
+    if (!view || view->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
     }
@@ -468,32 +458,32 @@ JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_write,
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSStringDecoder* castedThis = jsStringDecoderCast(globalObject, callFrame->thisValue(), "write"_s);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
-    return jsStringDecoderPrototypeFunction_writeBody(globalObject, callFrame, castedThis);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, jsStringDecoderPrototypeFunction_writeBody(globalObject, callFrame, castedThis));
 }
 JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_end,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSStringDecoder* castedThis = jsStringDecoderCast(globalObject, callFrame->thisValue(), "end"_s);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
-    return jsStringDecoderPrototypeFunction_endBody(globalObject, callFrame, castedThis);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, jsStringDecoderPrototypeFunction_endBody(globalObject, callFrame, castedThis));
 }
 JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_text,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSStringDecoder* castedThis = jsStringDecoderCast(globalObject, callFrame->thisValue(), "text"_s);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
-    return jsStringDecoderPrototypeFunction_textBody(globalObject, callFrame, castedThis);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, jsStringDecoderPrototypeFunction_textBody(globalObject, callFrame, castedThis));
 }
 
 static JSC_DEFINE_CUSTOM_GETTER(jsStringDecoder_lastChar, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSStringDecoder* castedThis = jsStringDecoderCast(lexicalGlobalObject, JSC::JSValue::decode(thisValue), "text"_s);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+    JSStringDecoder* castedThis = jsStringDecoderCast(lexicalGlobalObject, JSC::JSValue::decode(thisValue), "lastChar"_s);
+    RETURN_IF_EXCEPTION(scope, {});
     auto buffer = ArrayBuffer::create({ castedThis->m_lastChar, 4 });
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buffer), 0, 4);
@@ -504,7 +494,7 @@ static JSC_DEFINE_CUSTOM_GETTER(jsStringDecoder_lastNeed, (JSGlobalObject * lexi
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSStringDecoder* castedThis = jsStringDecoderCast(lexicalGlobalObject, JSC::JSValue::decode(thisValue), "lastNeed"_s);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(castedThis->m_lastNeed)));
 }
 static JSC_DEFINE_CUSTOM_GETTER(jsStringDecoder_lastTotal, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
@@ -512,7 +502,7 @@ static JSC_DEFINE_CUSTOM_GETTER(jsStringDecoder_lastTotal, (JSGlobalObject * lex
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSStringDecoder* castedThis = jsStringDecoderCast(lexicalGlobalObject, JSC::JSValue::decode(thisValue), "lastTotal"_s);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(castedThis->m_lastTotal)));
 }
 
@@ -520,8 +510,8 @@ static JSC_DEFINE_CUSTOM_GETTER(jsStringDecoder_encoding, (JSGlobalObject * lexi
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSStringDecoder* castedThis = jsStringDecoderCast(lexicalGlobalObject, JSC::JSValue::decode(thisValue), "lastTotal"_s);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+    JSStringDecoder* castedThis = jsStringDecoderCast(lexicalGlobalObject, JSC::JSValue::decode(thisValue), "encoding"_s);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(WebCore::convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, castedThis->m_encoding));
 }
 
@@ -562,7 +552,7 @@ JSStringDecoderConstructor* JSStringDecoderConstructor::create(JSC::VM& vm, JSC:
 
 JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto encoding = BufferEncodingType::utf8;
     auto jsEncoding = callFrame->argument(0);

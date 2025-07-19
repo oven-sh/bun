@@ -1,0 +1,1461 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/001/default/style.css 1`] = `
+"/* 001/default/a.css */
+.box {
+  background-color: green;
+}
+
+/* 001/default/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/001/relative-url/style.css 1`] = `
+"/* 001/relative-url/a.css */
+.box {
+  background-color: green;
+}
+
+/* 001/relative-url/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-charset/001/style.css 1`] = `
+"@charset "UTF-8";
+
+/* at-charset/001/a.css */
+.box {
+  background-color: red;
+}
+
+/* at-charset/001/b.css */
+.box {
+  background-color: green;
+}
+
+/* at-charset/001/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-keyframes/001/style.css 1`] = `
+"/* at-keyframes/001/a.css */
+@media screen {
+  .box {
+    animation: BOX;
+    animation-duration: 0s;
+    animation-fill-mode: both;
+  }
+  @keyframes BOX {
+    0%, 100% {
+      background-color: green;
+    }
+  }
+}
+
+/* at-keyframes/001/b.css */
+@media print {
+  .box {
+    animation: BOX;
+    animation-duration: 0s;
+    animation-fill-mode: both;
+  }
+  @keyframes BOX {
+    0%, 100% {
+      background-color: red;
+    }
+  }
+}
+
+/* at-keyframes/001/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/001/style.css 1`] = `
+"@layer a;
+
+/* at-layer/001/b.css */
+@layer b {
+  .box {
+    background-color: green;
+  }
+}
+
+/* at-layer/001/a.css */
+@layer a {
+  .box {
+    background-color: red;
+  }
+}
+
+/* at-layer/001/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/002/style.css 1`] = `
+"@media print {
+  @layer a;
+}
+
+/* at-layer/002/b.css */
+@layer b {
+  .box {
+    background-color: red;
+  }
+}
+
+/* at-layer/002/a.css */
+@layer a {
+  .box {
+    background-color: green;
+  }
+}
+
+/* at-layer/002/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/003/style.css 1`] = `
+"@layer a;
+
+/* at-layer/003/b.css */
+@layer b {
+  .box {
+    background-color: green;
+  }
+}
+
+/* at-layer/003/a.css */
+@layer a {
+  .box {
+    background-color: red;
+  }
+}
+
+/* at-layer/003/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/004/style.css 1`] = `
+"/* at-layer/004/b.css */
+@layer {
+  .box {
+    background-color: red;
+  }
+}
+
+/* at-layer/004/a.css */
+@layer {
+  .box {
+    background-color: green;
+  }
+}
+
+/* at-layer/004/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/005/style.css 1`] = `
+"/* at-layer/005/b.css */
+@media (min-width: 1px) {
+  @layer a {
+    @media (width: 1px) {
+      @layer b {
+        .box {
+          background-color: red;
+        }
+      }
+    }
+  }
+}
+
+/* at-layer/005/a.css */
+@media (min-width: 1px) {
+  @layer a;
+}
+
+/* at-layer/005/style.css */
+@layer a.c {
+  .box {
+    background-color: red;
+  }
+}
+@layer a.b {
+  .box {
+    background-color: green;
+  }
+}
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/006/style.css 1`] = `
+"/* at-layer/006/b.css */
+@media (min-width: 1px) {
+  @layer a {
+    @media (min-width: 1px) {
+      @layer b {
+        .box {
+          background-color: red;
+        }
+      }
+    }
+  }
+}
+
+/* at-layer/006/a.css */
+@media (min-width: 1px) {
+  @layer a;
+}
+
+/* at-layer/006/style.css */
+@layer a.c {
+  .box {
+    background-color: green;
+  }
+}
+@layer a.b {
+  .box {
+    background-color: red;
+  }
+}
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/007/style.css 1`] = `
+"/* at-layer/007/style.css */
+@layer foo {
+}
+@layer bar {
+}
+@layer bar {
+  .box {
+    background-color: green;
+  }
+}
+@layer foo {
+  .box {
+    background-color: red;
+  }
+}
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/008/style.css 1`] = `
+"/* at-layer/008/b.css */
+@layer {
+  @layer {
+    .box {
+      background-color: red;
+    }
+  }
+}
+
+/* at-layer/008/a.css */
+@layer {
+  .box {
+    background-color: green;
+  }
+}
+
+/* at-layer/008/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/001/default/style.css 1`] = `
+"/* at-media/001/default/a.css */
+@media screen {
+  .box {
+    background-color: green;
+  }
+}
+
+/* at-media/001/default/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/002/style.css 1`] = `
+"/* at-media/002/a.css */
+@media screen {
+  .box {
+    background-color: green;
+  }
+}
+
+/* at-media/002/b.css */
+@media print {
+  .box {
+    background-color: red;
+  }
+}
+
+/* at-media/002/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/003/style.css 1`] = `
+"/* at-media/003/b.css */
+@media screen {
+  @media (min-width: 1px) {
+    .box {
+      background-color: green;
+    }
+  }
+}
+
+/* at-media/003/a.css */
+
+/* at-media/003/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/004/style.css 1`] = `
+"/* at-media/004/c.css */
+.box {
+  background-color: green;
+}
+
+/* at-media/004/b.css */
+@media print {
+  @media print {
+    .box {
+      background-color: red;
+    }
+  }
+}
+
+/* at-media/004/a.css */
+
+/* at-media/004/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/005/style.css 1`] = `
+"/* at-media/005/c.css */
+.box {
+  background-color: green;
+}
+
+/* at-media/005/b.css */
+@media (max-width: 1px) {
+  @media (max-width: 1px) {
+    .box {
+      background-color: red;
+    }
+  }
+}
+
+/* at-media/005/a.css */
+
+/* at-media/005/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/006/style.css 1`] = `
+"/* at-media/006/b.css */
+@media (min-height: 1px) {
+  @media (min-width: 1px) {
+    .box {
+      background-color: green;
+    }
+  }
+}
+
+/* at-media/006/a.css */
+
+/* at-media/006/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/007/style.css 1`] = `
+"/* at-media/007/b.css */
+@media all {
+  @media screen {
+    .box {
+      background-color: green;
+    }
+  }
+}
+
+/* at-media/007/a.css */
+
+/* at-media/007/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/008/style.css 1`] = `
+"/* at-media/008/green.css */
+@media all {
+  @layer alpha {
+    @media print {
+      @layer alpha {
+        .box {
+          background-color: green;
+        }
+      }
+    }
+  }
+}
+
+/* at-media/008/a.css */
+@media all {
+  @layer alpha;
+}
+
+/* at-media/008/red.css */
+@media all {
+  @layer beta {
+    @media print {
+      @layer beta {
+        .box {
+          background-color: red;
+        }
+      }
+    }
+  }
+}
+
+/* at-media/008/b.css */
+@media all {
+  @layer beta;
+}
+
+/* at-media/008/style.css */
+@layer beta {
+  .box {
+    background-color: green;
+  }
+}
+@layer alpha {
+  .box {
+    background-color: red;
+  }
+}
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supports/001/style.css 1`] = `
+"/* at-supports/001/a.css */
+@supports (display: block) {
+  .box {
+    background-color: green;
+  }
+}
+
+/* at-supports/001/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supports/002/style.css 1`] = `
+"/* at-supports/002/b.css */
+@supports (display: block) {
+  @supports (width: 10px) {
+    .box {
+      background-color: green;
+    }
+  }
+}
+
+/* at-supports/002/a.css */
+
+/* at-supports/002/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supports/003/style.css 1`] = `
+"/* at-supports/003/b.css */
+@supports ((display: block) or (display: inline)) {
+  @supports (width: 10px) {
+    .box {
+      background-color: green;
+    }
+  }
+}
+
+/* at-supports/003/a.css */
+
+/* at-supports/003/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supports/004/style.css 1`] = `
+"/* at-supports/004/b.css */
+@supports (display: block) {
+  @layer a {
+    @supports (width: 10px) {
+      @layer b {
+        .box {
+          background-color: green;
+        }
+      }
+    }
+  }
+}
+
+/* at-supports/004/a.css */
+@supports (display: block) {
+  @layer a;
+}
+
+/* at-supports/004/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supports/005/style.css 1`] = `
+"/* at-supports/005/green.css */
+@supports (display: block) {
+  @layer alpha {
+    @supports (foo: bar) {
+      @layer alpha {
+        .box {
+          background-color: green;
+        }
+      }
+    }
+  }
+}
+
+/* at-supports/005/a.css */
+@supports (display: block) {
+  @layer alpha;
+}
+
+/* at-supports/005/red.css */
+@supports (display: block) {
+  @layer beta {
+    @supports (foo: bar) {
+      @layer beta {
+        .box {
+          background-color: red;
+        }
+      }
+    }
+  }
+}
+
+/* at-supports/005/b.css */
+@supports (display: block) {
+  @layer beta;
+}
+
+/* at-supports/005/style.css */
+@layer beta {
+  .box {
+    background-color: green;
+  }
+}
+@layer alpha {
+  .box {
+    background-color: red;
+  }
+}
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/001/style.css 1`] = `
+"/* cycles/001/style.css */
+.box {
+  background-color: green;
+}
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/002/style.css 1`] = `
+"/* cycles/002/red.css */
+.box {
+  background-color: red;
+}
+
+/* cycles/002/green.css */
+.box {
+  background-color: green;
+}
+
+/* cycles/002/b.css */
+
+/* cycles/002/a.css */
+
+/* cycles/002/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/003/style.css 1`] = `
+"/* cycles/003/b.css */
+.box {
+  background-color: red;
+}
+
+/* cycles/003/a.css */
+.box {
+  background-color: green;
+}
+
+/* cycles/003/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/004/style.css 1`] = `
+"/* cycles/004/a.css */
+.box {
+  background-color: red;
+}
+
+/* cycles/004/b.css */
+.box {
+  background-color: green;
+}
+
+/* cycles/004/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/005/style.css 1`] = `
+"/* cycles/005/b.css */
+.box {
+  background-color: red;
+}
+
+/* cycles/005/a.css */
+.box {
+  background-color: green;
+}
+
+/* cycles/005/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/006/style.css 1`] = `
+"/* cycles/006/red.css */
+.box {
+  background-color: red;
+}
+
+/* cycles/006/green.css */
+.box {
+  background-color: green;
+}
+
+/* cycles/006/b.css */
+
+/* cycles/006/a.css */
+
+/* cycles/006/c.css */
+
+/* cycles/006/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/007/style.css 1`] = `
+"/* cycles/007/green.css */
+.box {
+  background-color: green;
+}
+
+/* cycles/007/red.css */
+@media all {
+  .box {
+    background-color: red;
+  }
+}
+
+/* cycles/007/a.css */
+
+/* cycles/007/b.css */
+
+/* cycles/007/red.css */
+@media not print {
+  .box {
+    background-color: red;
+  }
+}
+
+/* cycles/007/green.css */
+@media not print {
+  @media screen {
+    .box {
+      background-color: green;
+    }
+  }
+}
+
+/* cycles/007/b.css */
+
+/* cycles/007/a.css */
+
+/* cycles/007/c.css */
+
+/* cycles/007/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/008/style.css 1`] = `
+"/* cycles/008/green.css */
+@layer {
+  .box {
+    background-color: green;
+  }
+}
+
+/* cycles/008/red.css */
+@layer {
+  .box {
+    background-color: red;
+  }
+}
+
+/* cycles/008/a.css */
+
+/* cycles/008/b.css */
+
+/* cycles/008/red.css */
+@layer {
+  @layer {
+    .box {
+      background-color: red;
+    }
+  }
+}
+
+/* cycles/008/green.css */
+@layer {
+  @layer {
+    .box {
+      background-color: green;
+    }
+  }
+}
+
+/* cycles/008/b.css */
+
+/* cycles/008/a.css */
+
+/* cycles/008/c.css */
+
+/* cycles/008/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/data-urls/002/style.css 1`] = `
+"/* <data:text/css;plain,.box%20%7B%0A%09background-color%3A%20green%...> */
+.box {
+  background-color: green;
+}
+
+/* data-urls/002/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/data-urls/003/style.css 1`] = `
+"/* <data:text/css,.box%20%7B%0A%09background-color%3A%20green%3B%0A%...> */
+.box {
+  background-color: green;
+}
+
+/* data-urls/003/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/duplicates/001/style.css 1`] = `
+"/* duplicates/001/b.css */
+.box {
+  background-color: red;
+}
+
+/* duplicates/001/a.css */
+.box {
+  background-color: green;
+}
+
+/* duplicates/001/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/duplicates/002/style.css 1`] = `
+"/* duplicates/002/b.css */
+.box {
+  background-color: red;
+}
+
+/* duplicates/002/a.css */
+.box {
+  background-color: green;
+}
+
+/* duplicates/002/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/empty/001/style.css 1`] = `
+"/* empty/001/empty.css */
+
+/* empty/001/style.css */
+.box {
+  background-color: green;
+}
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/relative-paths/001/style.css 1`] = `
+"/* relative-paths/001/b/b.css */
+.box {
+  background-color: green;
+}
+
+/* relative-paths/001/a/a.css */
+
+/* relative-paths/001/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/relative-paths/002/style.css 1`] = `
+"/* relative-paths/002/b/b.css */
+.box {
+  background-color: green;
+}
+
+/* relative-paths/002/a/a.css */
+
+/* relative-paths/002/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subresource/001/style.css 1`] = `
+"/* subresource/001/something/styles/green.css */
+.box {
+  background-image: url(data:image/png;base64,Li4u);
+}
+
+/* subresource/001/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subresource/002/style.css 1`] = `
+"/* subresource/002/styles/green.css */
+.box {
+  background-image: url(data:image/png;base64,Li4u);
+}
+
+/* subresource/002/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subresource/004/style.css 1`] = `
+"/* subresource/004/styles/green.css */
+.box {
+  background-image: url(data:image/png;base64,Li4u);
+}
+
+/* subresource/004/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subresource/005/style.css 1`] = `
+"/* subresource/005/styles/green.css */
+.box {
+  background-image: url(data:image/png;base64,Li4u);
+}
+
+/* subresource/005/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subresource/007/style.css 1`] = `
+"/* subresource/007/style.css */
+.box {
+  background-image: url(data:image/png;base64,Li4u);
+}
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-format/001/default/style.css 1`] = `
+"/* url-format/001/default/a.css */
+.box {
+  background-color: green;
+}
+
+/* url-format/001/default/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-format/001/relative-url/style.css 1`] = `
+"/* url-format/001/relative-url/a.css */
+.box {
+  background-color: green;
+}
+
+/* url-format/001/relative-url/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-format/002/default/style.css 1`] = `
+"/* url-format/002/default/a.css */
+.box {
+  background-color: green;
+}
+
+/* url-format/002/default/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-format/002/relative-url/style.css 1`] = `
+"/* url-format/002/relative-url/a.css */
+.box {
+  background-color: green;
+}
+
+/* url-format/002/relative-url/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-format/003/default/style.css 1`] = `
+"/* url-format/003/default/a.css */
+.box {
+  background-color: green;
+}
+
+/* url-format/003/default/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-format/003/relative-url/style.css 1`] = `
+"/* url-format/003/relative-url/a.css */
+.box {
+  background-color: green;
+}
+
+/* url-format/003/relative-url/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-fragments/001/style.css 1`] = `
+"/* url-fragments/001/a.css#foo */
+.box {
+  background-color: green;
+}
+
+/* url-fragments/001/style.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-fragments/002/style.css 1`] = `
+"/* url-fragments/002/a.css#1 */
+.box {
+  background-color: green;
+}
+
+/* url-fragments/002/b.css#2 */
+.box {
+  background-color: red;
+}
+
+/* url-fragments/002/a.css#3 */
+.box {
+  background-color: green;
+}
+
+/* url-fragments/002/style.css */
+
+"
+`;
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /001/default/style.css 1`] = `"@import url("a.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /001/relative-url/style.css 1`] = `"@import url("./a.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-charset/001/style.css 1`] = `"@charset "utf-8"; @import url("a.css"); @import url("b.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-keyframes/001/style.css 1`] = `"@import url("a.css") screen; @import url("b.css") print;"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/001/style.css 1`] = `
+"@import url("a.css") layer(a);
+@import url("b.css") layer(b);
+@import url("a.css") layer(a);"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/002/style.css 1`] = `
+"@import url("a.css") layer(a) print;
+@import url("b.css") layer(b);
+@import url("a.css") layer(a);"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/003/style.css 1`] = `"@import url("a.css"); @import url("b.css"); @import url("a.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/004/style.css 1`] = `"@import url("a.css"); @import url("b.css"); @import url("a.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/005/style.css 1`] = `
+"@import url("a.css") layer(a) (min-width: 1px);
+@layer a.c { .box { background-color: red; } }
+@layer a.b { .box { background-color: green; } }"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/006/style.css 1`] = `
+"@import url("a.css") layer(a) (min-width: 1px);
+@layer a.c { .box { background-color: green; } }
+@layer a.b { .box { background-color: red; } }"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/007/style.css 1`] = `
+"@layer foo {}
+@layer bar {}
+@layer bar { .box { background-color: green; } }
+@layer foo { .box { background-color: red; } }"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/008/style.css 1`] = `"@import url("a.css") layer;"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/001/default/style.css 1`] = `"@import url("a.css") screen;"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/002/style.css 1`] = `"@import url("a.css") screen; @import url("b.css") print;"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/003/style.css 1`] = `"@import url("a.css") screen;"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/004/style.css 1`] = `"@import url("c.css"); @import url("a.css") print;"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/005/style.css 1`] = `"@import url("c.css"); @import url("a.css") (max-width: 1px);"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/006/style.css 1`] = `"@import url("a.css") (min-height: 1px);"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/007/style.css 1`] = `"@import url("a.css") all;"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/008/style.css 1`] = `
+"@import url("a.css") layer(alpha) all;
+@import url("b.css") layer(beta) all;
+@layer beta { .box { background-color: green; } }
+@layer alpha { .box { background-color: red; } }"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/001/style.css 1`] = `"@import url("a.css") supports(display: block);"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/002/style.css 1`] = `"@import url("a.css") supports(display: block);"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/003/style.css 1`] = `"@import url("a.css") supports((display: block) or (display: inline));"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/004/style.css 1`] = `"@import url("a.css") layer(a) supports(display: block);"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/005/style.css 1`] = `
+"@import url("a.css") layer(alpha) supports(display: block);
+@import url("b.css") layer(beta) supports(display: block);
+@layer beta { .box { background-color: green; } }
+@layer alpha { .box { background-color: red; } }"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/001/style.css 1`] = `"@import url("style.css"); .box { background-color: green; }"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/002/style.css 1`] = `"@import url("a.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/003/style.css 1`] = `"@import url("a.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/004/style.css 1`] = `"@import url("a.css"); @import url("b.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/005/style.css 1`] = `"@import url("a.css"); @import url("b.css"); @import url("a.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/006/style.css 1`] = `"@import url("b.css"); @import url("c.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/007/style.css 1`] = `"@import url("b.css"); @import url("c.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/008/style.css 1`] = `"@import url("b.css"); @import url("c.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /data-urls/002/style.css 1`] = `"@import url('data:text/css;plain,.box%20%7B%0A%09background-color%3A%20green%3B%0A%7D%0A');"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /data-urls/003/style.css 1`] = `"@import url('data:text/css,.box%20%7B%0A%09background-color%3A%20green%3B%0A%7D%0A');"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /duplicates/001/style.css 1`] = `"@import url("a.css"); @import url("b.css"); @import url("a.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /duplicates/002/style.css 1`] = `"@import url("a.css"); @import url("b.css"); @import url("a.css"); @import url("b.css"); @import url("a.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /empty/001/style.css 1`] = `"@import url("./empty.css"); .box { background-color: green; }"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /relative-paths/001/style.css 1`] = `"@import url("./a/a.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /relative-paths/002/style.css 1`] = `"@import url("./a/a.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/001/style.css 1`] = `"@import url("./something/styles/green.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/002/style.css 1`] = `"@import url("./styles/green.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/004/style.css 1`] = `"@import url("./styles/green.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/005/style.css 1`] = `"@import url("./styles/green.css");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/007/style.css 1`] = `".box { background-image: url("./green.png"); }"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/001/default/style.css 1`] = `"@import url(a.css);"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/001/relative-url/style.css 1`] = `"@import url(./a.css);"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/002/default/style.css 1`] = `"@import "a.css";"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/002/relative-url/style.css 1`] = `"@import "./a.css";"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/003/default/style.css 1`] = `"@import url("a.css""`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/003/relative-url/style.css 1`] = `"@import url("./a.css""`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-fragments/001/style.css 1`] = `"@import url("./a.css#foo");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-fragments/002/style.css 1`] = `"@import url("./a.css#1"); @import url("./b.css#2"); @import url("./a.css#3");"`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case1.css 1`] = `
+"@layer first.one;
+
+/* case1-foo.css */
+@layer last.one {
+  body {
+    color: red;
+  }
+}
+
+/* case1-foo.css */
+@layer first.one {
+  body {
+    color: red;
+  }
+}
+
+/* case1.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case2.css 1`] = `
+"@layer first.one;
+
+/* case2-bar.css */
+@layer last.one {
+  body {
+    color: green;
+  }
+}
+
+/* case2-foo.css */
+@layer first.one {
+  body {
+    color: red;
+  }
+}
+
+/* case2.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case3.css 1`] = `
+"/* case3-bar.css */
+@layer only.one {
+  body {
+    color: green;
+  }
+}
+
+/* case3-foo.css */
+@layer {
+  body {
+    color: red;
+  }
+}
+
+/* case3.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case4.css 1`] = `
+"@layer first {
+  @layer one, one.two, one.three.four;
+}
+
+/* case4-foo.css */
+@layer last {
+  @layer one {
+    @layer two, three.four;
+
+    body {
+      color: red;
+    }
+  }
+}
+
+/* case4-foo.css */
+@layer first {
+  @layer one {
+    @layer two, three.four;
+
+    body {
+      color: red;
+    }
+  }
+}
+
+/* case4.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case5.css 1`] = `
+"/* case5-foo.css */
+@layer middle {
+  @layer one {
+    @layer two, three.four;
+
+    body {
+      color: red;
+    }
+  }
+}
+
+/* case5-foo.css */
+@layer {
+  @layer one {
+    @layer two, three.four;
+
+    body {
+      color: red;
+    }
+  }
+}
+
+/* case5.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case6.css 1`] = `
+"@layer first;
+
+/* case6-foo.css */
+@layer last {
+  @layer {
+    @layer two, three.four;
+
+    body {
+      color: red;
+    }
+  }
+}
+
+/* case6-foo.css */
+@layer first {
+  @layer {
+    @layer two, three.four;
+
+    body {
+      color: red;
+    }
+  }
+}
+
+/* case6.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundleAlternatingLayerInFile: case1.css 1`] = `
+"/* a.css */
+@layer first {
+  body {
+    color: red;
+  }
+}
+
+/* case1.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundleAlternatingLayerInFile: case2.css 1`] = `
+"@layer first;
+
+/* b.css */
+@layer last {
+  body {
+    color: green;
+  }
+}
+
+/* a.css */
+@layer first {
+  body {
+    color: red;
+  }
+}
+
+/* case2.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundleAlternatingLayerInFile: case3.css 1`] = `
+"@layer first;
+@layer last;
+
+/* a.css */
+@layer first {
+  body {
+    color: red;
+  }
+}
+
+/* b.css */
+@layer last {
+  body {
+    color: green;
+  }
+}
+
+/* case3.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundleAlternatingLayerInFile: case4.css 1`] = `
+"@layer first;
+
+/* b.css */
+@layer last {
+  body {
+    color: green;
+  }
+}
+
+/* a.css */
+@layer first {
+  body {
+    color: red;
+  }
+}
+
+/* case4.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundleAlternatingLayerInFile: case5.css 1`] = `
+"@layer first;
+@layer last;
+
+/* a.css */
+@layer first {
+  body {
+    color: red;
+  }
+}
+
+/* b.css */
+@layer last {
+  body {
+    color: green;
+  }
+}
+
+/* case5.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundleAlternatingLayerInFile: case6.css 1`] = `
+"@layer first;
+
+/* b.css */
+@layer last {
+  body {
+    color: green;
+  }
+}
+
+/* a.css */
+@layer first {
+  body {
+    color: red;
+  }
+}
+
+/* case6.css */
+
+"
+`;
+
+exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /a.js 1`] = `
+"import shared from './shared.js'
+console.log(shared() + 1)"
+`;
+
+exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /b.js 1`] = `
+"import shared from './shared.js'
+console.log(shared() + 2)"
+`;
+
+exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /c.css 1`] = `
+"@import "./shared.css";
+body { color: red }"
+`;
+
+exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /d.css 1`] = `
+"@import "./shared.css";
+body { color: blue }"
+`;
+
+exports[`bundler css/ComposesWithSharedPropertiesError 1`] = `
+"// styles.module.css
+var styles_module_default = {
+  button: "otherButton_NlEjJA button_-MSaAA"
+};
+
+// entry.js
+console.log(styles_module_default);
+"
+`;
+
+exports[`bundler css/ComposesWithSharedPropertiesError 2`] = `
+"/* other.module.css */
+.otherButton_NlEjJA {
+  color: red;
+  font-size: 16px;
+}
+
+/* styles.module.css */
+.button_-MSaAA {
+  color: #00f;
+}
+"
+`;

@@ -25,6 +25,8 @@ public:
         IsEval = 2,
         IsConstructor = 4,
         IsNative = 8,
+        IsWasm = 16,
+        IsFunction = 32,
     };
 
 private:
@@ -41,7 +43,7 @@ public:
 
     static CallSite* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
     {
-        JSC::VM& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         CallSite* callSite = new (NotNull, JSC::allocateCell<CallSite>(vm)) CallSite(vm, structure);
         callSite->finishCreation(vm, globalObject, stackFrame, encounteredStrictFrame);
         return callSite;
@@ -80,6 +82,7 @@ public:
 
     void setLineNumber(OrdinalNumber lineNumber) { m_lineNumber = lineNumber; }
     void setColumnNumber(OrdinalNumber columnNumber) { m_columnNumber = columnNumber; }
+    void setSourceURL(JSC::VM& vm, JSC::JSString* sourceURL) { m_sourceURL.set(vm, this, sourceURL); }
 
     void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb);
 

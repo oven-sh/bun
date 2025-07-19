@@ -1,11 +1,10 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const wchar_t = u16;
 const la_int64_t = i64;
 const la_ssize_t = isize;
 const struct_archive = opaque {};
 const struct_archive_entry = opaque {};
-const archive_entry = struct_archive_entry;
 const mode_t = bun.Mode;
 const FILE = @import("std").c.FILE;
 // const time_t = @import("std").c.time_t;
@@ -184,8 +183,6 @@ pub const Flags = struct {
     };
 };
 
-const ARCHIVE_VERSION_ONLY_STRING = "3.5.3dev";
-const ARCHIVE_VERSION_STRING = "libarchive " ++ ARCHIVE_VERSION_ONLY_STRING;
 const ARCHIVE_EOF = @as(c_int, 1);
 const ARCHIVE_OK = @as(c_int, 0);
 const ARCHIVE_RETRY = -@as(c_int, 10);
@@ -252,11 +249,6 @@ const ARCHIVE_FORMAT_RAR = @import("std").zig.c_translation.promoteIntLiteral(c_
 const ARCHIVE_FORMAT_7ZIP = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xE0000, .hexadecimal);
 const ARCHIVE_FORMAT_WARC = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xF0000, .hexadecimal);
 const ARCHIVE_FORMAT_RAR_V5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x100000, .hexadecimal);
-const ARCHIVE_READ_FORMAT_CAPS_NONE = @as(c_int, 0);
-const ARCHIVE_READ_FORMAT_CAPS_ENCRYPT_DATA = @as(c_int, 1) << @as(c_int, 0);
-const ARCHIVE_READ_FORMAT_CAPS_ENCRYPT_METADATA = @as(c_int, 1) << @as(c_int, 1);
-const ARCHIVE_READ_FORMAT_ENCRYPTION_UNSUPPORTED = -@as(c_int, 2);
-const ARCHIVE_READ_FORMAT_ENCRYPTION_DONT_KNOW = -@as(c_int, 1);
 const ARCHIVE_EXTRACT_OWNER = @as(c_int, 0x0001);
 const ARCHIVE_EXTRACT_PERM = @as(c_int, 0x0002);
 const ARCHIVE_EXTRACT_TIME = @as(c_int, 0x0004);
@@ -276,18 +268,6 @@ const ARCHIVE_EXTRACT_HFS_COMPRESSION_FORCED = @import("std").zig.c_translation.
 const ARCHIVE_EXTRACT_SECURE_NOABSOLUTEPATHS = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x10000, .hexadecimal);
 const ARCHIVE_EXTRACT_CLEAR_NOCHANGE_FFLAGS = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000, .hexadecimal);
 const ARCHIVE_EXTRACT_SAFE_WRITES = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000, .hexadecimal);
-const ARCHIVE_READDISK_RESTORE_ATIME = @as(c_int, 0x0001);
-const ARCHIVE_READDISK_HONOR_NODUMP = @as(c_int, 0x0002);
-const ARCHIVE_READDISK_MAC_COPYFILE = @as(c_int, 0x0004);
-const ARCHIVE_READDISK_NO_TRAVERSE_MOUNTS = @as(c_int, 0x0008);
-const ARCHIVE_READDISK_NO_XATTR = @as(c_int, 0x0010);
-const ARCHIVE_READDISK_NO_ACL = @as(c_int, 0x0020);
-const ARCHIVE_READDISK_NO_FFLAGS = @as(c_int, 0x0040);
-const ARCHIVE_MATCH_MTIME = @as(c_int, 0x0100);
-const ARCHIVE_MATCH_CTIME = @as(c_int, 0x0200);
-const ARCHIVE_MATCH_NEWER = @as(c_int, 0x0001);
-const ARCHIVE_MATCH_OLDER = @as(c_int, 0x0002);
-const ARCHIVE_MATCH_EQUAL = @as(c_int, 0x0010);
 
 pub const Archive = opaque {
     pub const Result = enum(i32) {
@@ -874,11 +854,11 @@ pub const Archive = opaque {
                 },
                 result: T,
 
-                pub fn err(arch: *Archive, msg: []const u8) @This() {
+                pub fn initErr(arch: *Archive, msg: []const u8) @This() {
                     return .{ .err = .{ .message = msg, .archive = arch } };
                 }
 
-                pub fn res(value: T) @This() {
+                pub fn initRes(value: T) @This() {
                     return .{ .result = value };
                 }
             };
@@ -891,38 +871,38 @@ pub const Archive = opaque {
 
             switch (archive.readSupportFormatTar()) {
                 .failed, .fatal, .warn => {
-                    return Return.err(archive, "failed to enable tar format support");
+                    return Return.initErr(archive, "failed to enable tar format support");
                 },
                 else => {},
             }
             switch (archive.readSupportFormatGnutar()) {
                 .failed, .fatal, .warn => {
-                    return Return.err(archive, "failed to enable gnutar format support");
+                    return Return.initErr(archive, "failed to enable gnutar format support");
                 },
                 else => {},
             }
             switch (archive.readSupportFilterGzip()) {
                 .failed, .fatal, .warn => {
-                    return Return.err(archive, "failed to enable support for gzip compression");
+                    return Return.initErr(archive, "failed to enable support for gzip compression");
                 },
                 else => {},
             }
 
             switch (archive.readSetOptions("read_concatenated_archives")) {
                 .failed, .fatal, .warn => {
-                    return Return.err(archive, "failed to set option `read_concatenated_archives`");
+                    return Return.initErr(archive, "failed to set option `read_concatenated_archives`");
                 },
                 else => {},
             }
 
             switch (archive.readOpenMemory(tarball_bytes)) {
                 .failed, .fatal, .warn => {
-                    return Return.err(archive, "failed to read tarball");
+                    return Return.initErr(archive, "failed to read tarball");
                 },
                 else => {},
             }
 
-            return Return.res(.{
+            return Return.initRes(.{
                 .archive = archive,
                 .filter = std.EnumSet(std.fs.File.Kind).initEmpty(),
             });
@@ -935,15 +915,15 @@ pub const Archive = opaque {
             pub fn readEntryData(this: *const @This(), allocator: std.mem.Allocator, archive: *Archive) OOM!Iterator.Result([]const u8) {
                 const Return = Iterator.Result([]const u8);
                 const size = this.entry.size();
-                if (size < 0) return Return.err(archive, "invalid archive entry size");
+                if (size < 0) return Return.initErr(archive, "invalid archive entry size");
 
                 const buf = try allocator.alloc(u8, @intCast(size));
 
                 const read = archive.readData(buf);
                 if (read < 0) {
-                    return Return.err(archive, "failed to read archive data");
+                    return Return.initErr(archive, "failed to read archive data");
                 }
-                return Return.res(buf[0..@intCast(read)]);
+                return Return.initRes(buf[0..@intCast(read)]);
             }
         };
 
@@ -954,18 +934,18 @@ pub const Archive = opaque {
             while (true) {
                 return switch (this.archive.readNextHeader(&entry)) {
                     .retry => continue,
-                    .eof => Return.res(null),
+                    .eof => Return.initRes(null),
                     .ok => {
-                        const kind = bun.C.kindFromMode(entry.filetype());
+                        const kind = bun.sys.kindFromMode(entry.filetype());
 
                         if (this.filter.contains(kind)) continue;
 
-                        return Return.res(.{
+                        return Return.initRes(.{
                             .entry = entry,
                             .kind = kind,
                         });
                     },
-                    else => Return.err(this.archive, "failed to read archive header"),
+                    else => Return.initErr(this.archive, "failed to read archive header"),
                 };
             }
         }
@@ -975,18 +955,18 @@ pub const Archive = opaque {
 
             switch (this.archive.readClose()) {
                 .failed, .fatal, .warn => {
-                    return Return.err(this.archive, "failed to close archive read");
+                    return Return.initErr(this.archive, "failed to close archive read");
                 },
                 else => {},
             }
             switch (this.archive.readFree()) {
                 .failed, .fatal, .warn => {
-                    return Return.err(this.archive, "failed to free archive read");
+                    return Return.initErr(this.archive, "failed to free archive read");
                 },
                 else => {},
             }
 
-            return Return.res({});
+            return Return.initRes({});
         }
     };
 };

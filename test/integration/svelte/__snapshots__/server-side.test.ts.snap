@@ -1,0 +1,38 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`When bun-plugin-svelte is enabled via Bun.plugin() can be render()-ed 1`] = `
+{
+  "body": Any<String>,
+  "head": Any<String>,
+  "html": 
+"<!--[--><!-- source: https://svelte.dev/playground/7eb8c1dd6cac414792b0edb53521ab49?version=5.20.4 -->
+
+
+<main>
+  <h1 class="title svelte-y13uzakzmn8w">Todo List</h1>
+  <input value="" type="text" placeholder="new todo item..">
+  <button>Add</button>
+
+  <br>
+  <!--[--><!---->
+    <input checked type="checkbox">
+    <span class="svelte-y13uzakzmn8w checked">Write my first post</span>
+    <span role="button">❌</span>
+    <br>
+  <!---->
+    <input type="checkbox">
+    <span class="svelte-y13uzakzmn8w">Upload the post to the blog</span>
+    <span role="button">❌</span>
+    <br>
+  <!---->
+    <input type="checkbox">
+    <span class="svelte-y13uzakzmn8w">Publish the post at Facebook</span>
+    <span role="button">❌</span>
+    <br>
+  <!--]-->
+</main>
+
+<!--]-->"
+,
+}
+`;

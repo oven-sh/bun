@@ -544,7 +544,6 @@ EXPORTS
   napi_reference_ref
   napi_reference_unref
   napi_get_reference_value
-  napi_get_reference_value_internal
   napi_throw
   napi_throw_error
   napi_throw_type_error
@@ -567,6 +566,13 @@ EXPORTS
   napi_is_detached_arraybuffer
   napi_create_external_buffer
   napi_fatal_exception
+  node_api_create_buffer_from_arraybuffer
+  node_api_get_module_file_name
+  node_api_post_finalizer
+  node_api_create_property_key_latin1
+  node_api_create_property_key_utf16
+  node_api_create_property_key_utf8
+  dumpBtjsTrace
   ?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ
   ?GetCurrent@Isolate@v8@@SAPEAV12@XZ
   ?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ
@@ -582,6 +588,9 @@ EXPORTS
   ?Value@External@v8@@QEBAPEAXXZ
   ?New@Object@v8@@SA?AV?$Local@VObject@v8@@@2@PEAVIsolate@2@@Z
   ?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@1@Z
+  ?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@IV?$Local@VValue@v8@@@2@@Z
+  ?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@I@Z
+  ?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z
   ?SetInternalField@Object@v8@@QEAAXHV?$Local@VData@v8@@@2@@Z
   ?SlowGetInternalField@Object@v8@@AEAA?AV?$Local@VData@v8@@@2@H@Z
   ?CreateHandle@HandleScope@v8@@KAPEA_KPEAVIsolate@internal@2@_K@Z
@@ -597,6 +606,11 @@ EXPORTS
   ??0EscapableHandleScopeBase@v8@@QEAA@PEAVIsolate@1@@Z
   ?IsolateFromNeverReadOnlySpaceObject@internal@v8@@YAPEAVIsolate@12@_K@Z
   ?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@PEAV?$Local@VValue@v8@@@2@_K@Z
+  ?Length@Array@v8@@QEBAIXZ
+  ?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@H@Z
+  ?New@Array@v8@@SA?AV?$MaybeLocal@VArray@v8@@@2@V?$Local@VContext@v8@@@2@_KV?$function@$$A6A?AV?$MaybeLocal@VValue@v8@@@v8@@XZ@std@@@Z
+  ?Iterate@Array@v8@@QEAA?AV?$Maybe@X@2@V?$Local@VContext@v8@@@2@P6A?AW4CallbackResult@12@IV?$Local@VValue@v8@@@2@PEAX@Z2@Z
+  ?CheckCast@Array@v8@@CAXPEAVValue@2@@Z
   ?SetName@Function@v8@@QEAAXV?$Local@VString@v8@@@2@@Z
   ?IsBoolean@Value@v8@@QEBA_NXZ
   ?Value@Boolean@v8@@QEBA_NXZ
@@ -614,6 +628,7 @@ EXPORTS
   ?IsTrue@Value@v8@@QEBA_NXZ
   ?IsFalse@Value@v8@@QEBA_NXZ
   ?IsString@Value@v8@@QEBA_NXZ
+  ?StrictEquals@Value@v8@@QEBA_NV?$Local@VValue@v8@@@2@@Z
   ?New@Boolean@v8@@SA?AV?$Local@VBoolean@v8@@@2@PEAVIsolate@2@_N@Z
   ?GetInternalField@Object@v8@@QEAA?AV?$Local@VData@v8@@@2@H@Z
   ?GetIsolate@Context@v8@@QEAAPEAVIsolate@2@XZ
@@ -629,3 +644,4 @@ EXPORTS
   ?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ
   ?IsFunction@Value@v8@@QEBA_NXZ
   ?FromJustIsNothing@api_internal@v8@@YAXXZ
+  ?GetFunctionTemplateData@api_internal@v8@@YA?AV?$Local@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VData@v8@@@2@@Z

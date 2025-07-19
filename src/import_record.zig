@@ -1,30 +1,35 @@
 const fs = bun.fs;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const std = @import("std");
-const Ref = @import("ast/base.zig").Ref;
 const Index = @import("ast/base.zig").Index;
 const Api = @import("./api/schema.zig").Api;
 
 pub const ImportKind = enum(u8) {
-    /// An entry point provided by the user
-    entry_point,
+    /// An entry point provided to `bun run` or `bun`
+    entry_point_run = 0,
+    /// An entry point provided to `bun build` or `Bun.build`
+    entry_point_build = 1,
     /// An ES6 import or re-export statement
-    stmt,
+    stmt = 2,
     /// A call to "require()"
-    require,
+    require = 3,
     /// An "import()" expression with a string argument
-    dynamic,
+    dynamic = 4,
     /// A call to "require.resolve()"
-    require_resolve,
+    require_resolve = 5,
     /// A CSS "@import" rule
-    at,
+    at = 6,
     /// A CSS "@import" rule with import conditions
-    at_conditional,
+    at_conditional = 7,
     /// A CSS "url(...)" token
-    url,
+    url = 8,
+    /// A CSS "composes" property
+    composes = 9,
 
-    internal,
+    html_manifest = 10,
+
+    internal = 11,
 
     pub const Label = std.EnumArray(ImportKind, []const u8);
     pub const all_labels: Label = brk: {
@@ -32,27 +37,33 @@ pub const ImportKind = enum(u8) {
         // - src/js/builtins/codegen/replacements.ts
         // - packages/bun-types/bun.d.ts
         var labels = Label.initFill("");
-        labels.set(ImportKind.entry_point, "entry-point");
+        labels.set(ImportKind.entry_point_run, "entry-point-run");
+        labels.set(ImportKind.entry_point_build, "entry-point-build");
         labels.set(ImportKind.stmt, "import-statement");
         labels.set(ImportKind.require, "require-call");
         labels.set(ImportKind.dynamic, "dynamic-import");
         labels.set(ImportKind.require_resolve, "require-resolve");
         labels.set(ImportKind.at, "import-rule");
         labels.set(ImportKind.url, "url-token");
+        labels.set(ImportKind.composes, "composes");
         labels.set(ImportKind.internal, "internal");
+        labels.set(ImportKind.html_manifest, "html_manifest");
         break :brk labels;
     };
 
     pub const error_labels: Label = brk: {
         var labels = Label.initFill("");
-        labels.set(ImportKind.entry_point, "entry point");
+        labels.set(ImportKind.entry_point_run, "entry point (run)");
+        labels.set(ImportKind.entry_point_build, "entry point (build)");
         labels.set(ImportKind.stmt, "import");
         labels.set(ImportKind.require, "require()");
         labels.set(ImportKind.dynamic, "import()");
-        labels.set(ImportKind.require_resolve, "require.resolve");
+        labels.set(ImportKind.require_resolve, "require.resolve()");
         labels.set(ImportKind.at, "@import");
         labels.set(ImportKind.url, "url()");
         labels.set(ImportKind.internal, "<bun internal>");
+        labels.set(ImportKind.composes, "composes");
+        labels.set(ImportKind.html_manifest, "HTML import");
         break :brk labels;
     };
 
@@ -76,7 +87,7 @@ pub const ImportKind = enum(u8) {
     }
 
     pub fn isFromCSS(k: ImportKind) bool {
-        return k == .at_conditional or k == .at or k == .url;
+        return k == .at_conditional or k == .at or k == .url or k == .composes;
     }
 
     pub fn toAPI(k: ImportKind) Api.ImportKind {
@@ -94,14 +105,15 @@ pub const ImportKind = enum(u8) {
 };
 
 pub const ImportRecord = struct {
+    pub const Index = bun.GenericIndex(u32, ImportRecord);
+
     range: logger.Range,
     path: fs.Path,
     kind: ImportKind,
     tag: Tag = .none,
+    loader: ?bun.options.Loader = null,
 
-    source_index: Index = Index.invalid,
-
-    print_mode: PrintMode = .normal,
+    source_index: bun.JSAst.Index = .invalid,
 
     /// True for the following cases:
     ///
@@ -163,10 +175,6 @@ pub const ImportRecord = struct {
 
     pub const List = bun.BabyList(ImportRecord);
 
-    pub fn loader(this: *const ImportRecord) ?bun.options.Loader {
-        return this.tag.loader();
-    }
-
     pub const Tag = enum {
         /// A normal import to a user's source file
         none,
@@ -185,42 +193,7 @@ pub const ImportRecord = struct {
         /// crossover to the SSR graph. See bake.Framework.ServerComponents.separate_ssr_graph
         bake_resolve_to_ssr_graph,
 
-        with_type_sqlite,
-        with_type_sqlite_embedded,
-        with_type_text,
-        with_type_json,
-        with_type_toml,
-        with_type_file,
-
         tailwind,
-
-        pub fn loader(this: Tag) ?bun.options.Loader {
-            return switch (this) {
-                .with_type_sqlite => .sqlite,
-                .with_type_sqlite_embedded => .sqlite_embedded,
-                .with_type_text => .text,
-                .with_type_json => .json,
-                .with_type_toml => .toml,
-                .with_type_file => .file,
-                else => null,
-            };
-        }
-
-        pub fn onlySupportsDefaultImports(this: Tag) bool {
-            return switch (this) {
-                .with_type_file, .with_type_text => true,
-                else => false,
-            };
-        }
-
-        pub fn isSQLite(this: Tag) bool {
-            return switch (this) {
-                .with_type_sqlite,
-                .with_type_sqlite_embedded,
-                => true,
-                else => false,
-            };
-        }
 
         pub inline fn isRuntime(this: Tag) bool {
             return this == .runtime;

@@ -91,9 +91,9 @@ ZIG ?= $(shell which zig 2>/dev/null || echo -e "error: Missing zig. Please make
 # This is easier to happen than you'd expect.
 # Using realpath here causes issues because clang uses clang++ as a symlink
 # so if that's resolved, it won't build for C++
-REAL_CC = $(shell which clang-16 2>/dev/null || which clang 2>/dev/null)
-REAL_CXX = $(shell which clang++-16 2>/dev/null || which clang++ 2>/dev/null)
-CLANG_FORMAT = $(shell which clang-format-16 2>/dev/null || which clang-format 2>/dev/null)
+REAL_CC = $(shell which clang-19 2>/dev/null || which clang 2>/dev/null)
+REAL_CXX = $(shell which clang++-19 2>/dev/null || which clang++ 2>/dev/null)
+CLANG_FORMAT = $(shell which clang-format-19 2>/dev/null || which clang-format 2>/dev/null)
 
 CC = $(REAL_CC)
 CXX = $(REAL_CXX)
@@ -117,14 +117,14 @@ CC_WITH_CCACHE = $(CCACHE_PATH) $(CC)
 ifeq ($(OS_NAME),darwin)
 # Find LLVM
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
-		LLVM_PREFIX = $(shell brew --prefix llvm@16)
+		LLVM_PREFIX = $(shell brew --prefix llvm@19)
 	endif
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
 		LLVM_PREFIX = $(shell brew --prefix llvm)
 	endif
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
 #   This is kinda ugly, but I can't find a better way to error :(
-		LLVM_PREFIX = $(shell echo -e "error: Unable to find llvm. Please run 'brew install llvm@16' or set LLVM_PREFIX=/path/to/llvm")
+		LLVM_PREFIX = $(shell echo -e "error: Unable to find llvm. Please run 'brew install llvm@19' or set LLVM_PREFIX=/path/to/llvm")
 	endif
 
 	LDFLAGS += -L$(LLVM_PREFIX)/lib
@@ -164,7 +164,7 @@ CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) \
 	-DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) \
 	$(CMAKE_CXX_COMPILER_LAUNCHER_FLAG) \
 	-DCMAKE_AR=$(AR) \
-	-DCMAKE_RANLIB=$(which llvm-16-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null) \
+	-DCMAKE_RANLIB=$(which llvm-19-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null) \
 	-DCMAKE_CXX_STANDARD=20 \
 	-DCMAKE_C_STANDARD=17 \
 	-DCMAKE_CXX_STANDARD_REQUIRED=ON \
@@ -191,7 +191,7 @@ endif
 
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH =
-AR = $(shell which llvm-ar-16 2>/dev/null || which llvm-ar 2>/dev/null || which ar 2>/dev/null)
+AR = $(shell which llvm-ar-19 2>/dev/null || which llvm-ar 2>/dev/null || which ar 2>/dev/null)
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
@@ -255,7 +255,7 @@ DEFAULT_LINKER_FLAGS= -pthread -ldl
 endif
 ifeq ($(OS_NAME),darwin)
     _MIMALLOC_OBJECT_FILE = 0
-	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
+	JSC_BUILD_STEPS += jsc-build-mac
 	JSC_BUILD_STEPS_DEBUG += jsc-build-mac-debug
 	_MIMALLOC_FILE = libmimalloc.a
 	_MIMALLOC_INPUT_PATH = libmimalloc.a
@@ -286,7 +286,7 @@ STRIP=/usr/bin/strip
 endif
 
 ifeq ($(OS_NAME),linux)
-STRIP=$(shell which llvm-strip 2>/dev/null || which llvm-strip-16 2>/dev/null || which strip 2>/dev/null || echo "Missing strip")
+STRIP=$(shell which llvm-strip 2>/dev/null || which llvm-strip-19 2>/dev/null || which strip 2>/dev/null || echo "Missing strip")
 endif
 
 
@@ -482,7 +482,7 @@ STATIC_MUSL_FLAG ?=
 WRAP_SYMBOLS_ON_LINUX =
 
 ifeq ($(OS_NAME), linux)
-WRAP_SYMBOLS_ON_LINUX = -Wl,--wrap=fcntl -Wl,--wrap=fcntl64 -Wl,--wrap=stat64 -Wl,--wrap=pow -Wl,--wrap=exp -Wl,--wrap=log -Wl,--wrap=log2 \
+WRAP_SYMBOLS_ON_LINUX = -Wl,--wrap=fcntl -Wl,--wrap=fcntl64 -Wl,--wrap=stat64 -Wl,--wrap=pow -Wl,--wrap=exp -Wl,--wrap=exp2 -Wl,--wrap=log -Wl,--wrap=log2 \
 	-Wl,--wrap=lstat \
 	-Wl,--wrap=stat \
 	-Wl,--wrap=fstat \
@@ -674,7 +674,7 @@ endif
 .PHONY: assert-deps
 assert-deps:
 	@echo "Checking if the required utilities are available..."
-	@if [ $(CLANG_VERSION) -lt "15" ]; then echo -e "ERROR: clang version >=15 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@16"; exit 1; fi
+	@if [ $(CLANG_VERSION) -lt "19" ]; then echo -e "ERROR: clang version >=19 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@19"; exit 1; fi
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
 	@$(PYTHON) --version >/dev/null 2>&1 || (echo -e "ERROR: python is required."; exit 1)
 	@$(ESBUILD) --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)
@@ -924,7 +924,7 @@ bun-codesign-release-local-debug:
 
 
 .PHONY: jsc
-jsc: jsc-build jsc-copy-headers jsc-bindings
+jsc: jsc-build
 .PHONY: jsc-debug
 jsc-debug: jsc-build-debug
 .PHONY: jsc-build
@@ -980,7 +980,7 @@ release-create-auto-updater:
 .PHONY: release-create
 release-create:
 	gh release create --title "bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)"
-	gh release create --repo=$(BUN_AUTO_UPDATER_REPO) --title "bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)" -n "See https://github.com/oven-sh/bun/releases/tag/$(BUN_BUILD_TAG) for release notes. Using the install script or bun upgrade is the recommended way to install bun. Join bun's Discord to get access https://bun.sh/discord"
+	gh release create --repo=$(BUN_AUTO_UPDATER_REPO) --title "bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)" -n "See https://github.com/oven-sh/bun/releases/tag/$(BUN_BUILD_TAG) for release notes. Using the install script or bun upgrade is the recommended way to install bun. Join bun's Discord to get access https://bun.com/discord"
 
 release-bin-entitlements:
 
@@ -1154,7 +1154,7 @@ jsc-copy-headers:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/StubInfoSummary.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/StubInfoSummary.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/CommonSlowPaths.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/CommonSlowPaths.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/DirectArguments.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/DirectArguments.h
-	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/GenericArguments.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GenericArguments.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/GenericArgumentsImpl.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GenericArgumentsImpl.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/SamplingProfiler.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/SamplingProfiler.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/ScopedArguments.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ScopedArguments.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSLexicalEnvironment.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSLexicalEnvironment.h
@@ -1183,6 +1183,8 @@ jsc-copy-headers:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/SymbolObject.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/SymbolObject.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSGenerator.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSGenerator.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/UnlinkedFunctionCodeBlock.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/UnlinkedFunctionCodeBlock.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/GlobalCodeBlock.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GlobalCodeBlock.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/ProgramCodeBlock.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ProgramCodeBlock.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/AggregateError.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/AggregateError.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/API/JSWeakValue.h  $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSWeakValue.h
 	find $(WEBKIT_RELEASE_DIR)/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
@@ -1205,7 +1207,7 @@ jsc-copy-headers-debug:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/StubInfoSummary.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/StubInfoSummary.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/CommonSlowPaths.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/CommonSlowPaths.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/DirectArguments.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/DirectArguments.h
-	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/GenericArguments.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GenericArguments.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/GenericArgumentsImpl.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GenericArgumentsImpl.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/SamplingProfiler.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/SamplingProfiler.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/ScopedArguments.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ScopedArguments.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSLexicalEnvironment.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSLexicalEnvironment.h
@@ -1234,6 +1236,8 @@ jsc-copy-headers-debug:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/SymbolObject.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/SymbolObject.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSGenerator.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSGenerator.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/UnlinkedFunctionCodeBlock.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/UnlinkedFunctionCodeBlock.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/GlobalCodeBlock.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GlobalCodeBlock.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/ProgramCodeBlock.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ProgramCodeBlock.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/AggregateError.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/AggregateError.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/API/JSWeakValue.h  $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSWeakValue.h
 	find $(WEBKIT_DEBUG_DIR)/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
@@ -1261,6 +1265,7 @@ jsc-build-mac-compile:
 			-DBUN_FAST_TLS=ON \
 			-DENABLE_FTL_JIT=ON \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-G Ninja \
 			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
 			-DPTHREAD_JIT_PERMISSIONS_API=1 \
@@ -1284,6 +1289,7 @@ jsc-build-mac-compile-lto:
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DBUN_FAST_TLS=ON \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-DCMAKE_C_FLAGS="-flto=full" \
 			-DCMAKE_CXX_FLAGS="-flto=full" \
 			-DENABLE_FTL_JIT=ON \
@@ -1299,6 +1305,7 @@ jsc-build-mac-compile-lto:
 .PHONY: jsc-build-mac-compile-debug
 jsc-build-mac-compile-debug:
 	mkdir -p $(WEBKIT_DEBUG_DIR) $(WEBKIT_DIR);
+	# to disable asan, remove -DENABLE_SANITIZERS=address and add -DENABLE_MALLOC_HEAP_BREAKDOWN=ON
 	cd $(WEBKIT_DEBUG_DIR) && \
 		ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" \
 		cmake \
@@ -1307,9 +1314,9 @@ jsc-build-mac-compile-debug:
 			-DCMAKE_BUILD_TYPE=Debug \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DENABLE_FTL_JIT=ON \
-			-DENABLE_MALLOC_HEAP_BREAKDOWN=ON \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
 			-DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
 			-G Ninja \
@@ -1318,6 +1325,7 @@ jsc-build-mac-compile-debug:
 			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
 			-DENABLE_REMOTE_INSPECTOR=ON \
 			-DUSE_VISIBILITY_ATTRIBUTE=1 \
+			-DENABLE_SANITIZERS=address \
 			$(WEBKIT_DIR) \
 			$(WEBKIT_DEBUG_DIR) && \
 	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -ffat-lto-objects" \
@@ -1334,6 +1342,7 @@ jsc-build-linux-compile-config:
 			-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-DENABLE_FTL_JIT=ON \
 			-DENABLE_REMOTE_INSPECTOR=ON \
 			-DJSEXPORT_PRIVATE=WTF_EXPORT_DECLARATION \
@@ -1357,6 +1366,7 @@ jsc-build-linux-compile-config-debug:
 			-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DUSE_BUN_EVENT_LOOP=ON \
 			-DENABLE_FTL_JIT=ON \
 			-DENABLE_REMOTE_INSPECTOR=ON \
 			-DJSEXPORT_PRIVATE=WTF_EXPORT_DECLARATION \
@@ -1375,18 +1385,18 @@ jsc-build-linux-compile-config-debug:
 jsc-build-linux-compile-build:
 		mkdir -p $(WEBKIT_RELEASE_DIR)  && \
 		cd $(WEBKIT_RELEASE_DIR)  && \
-	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON" \
+	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON -DUSE_BUN_EVENT_LOOP=ON" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config relwithdebuginfo --target jsc
 
 .PHONY: jsc-build-linux-compile-build-debug
 jsc-build-linux-compile-build-debug:
 		mkdir -p $(WEBKIT_DEBUG_DIR)  && \
 		cd $(WEBKIT_DEBUG_DIR)  && \
-	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON" \
+	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON -DUSE_BUN_EVENT_LOOP=ON" \
 		cmake --build $(WEBKIT_DEBUG_DIR) --config Debug --target jsc
 
 
-jsc-build-mac: jsc-force-fastjit jsc-build-mac-compile jsc-build-copy
+jsc-build-mac: jsc-force-fastjit jsc-build-mac-compile
 jsc-build-mac-debug: jsc-force-fastjit jsc-build-mac-compile-debug
 
 jsc-build-linux: jsc-build-linux-compile-config jsc-build-linux-compile-build jsc-build-copy
@@ -1967,7 +1977,7 @@ integration-test-dev: # to run integration tests
 	USE_EXISTING_PROCESS=true TEST_SERVER_URL=http://localhost:3000 node test/scripts/browser.js
 
 copy-install:
-	cp src/cli/install.sh ../bun.sh/docs/install.html
+	cp src/cli/install.sh ../bun.com/docs/install.html
 
 copy-to-bun-release-dir: copy-to-bun-release-dir-bin copy-to-bun-release-dir-dsym
 
@@ -2009,28 +2019,28 @@ vendor-dev: assert-deps submodule npm-install-dev vendor-without-npm
 .PHONY: bun
 bun: 
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'
 
 cpp:
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'
 
 zig:
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'
 
 dev:
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'
 
 setup:
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'
 
 bindings:
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'
 
 help:
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
-	@echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'See https://bun.com/docs/project/contributing for more details'

@@ -35,7 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace WebCore {
 
-template<typename T> class ExceptionOr {
+template<typename T> class [[nodiscard]] ExceptionOr {
 public:
     using ReturnType = T;
 
@@ -87,9 +87,6 @@ public:
 
 private:
     Expected<void, Exception> m_value;
-#if ASSERT_ENABLED
-    bool m_wasReleased { false };
-#endif
 };
 
 ExceptionOr<void> isolatedCopy(ExceptionOr<void>&&);

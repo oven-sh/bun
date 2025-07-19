@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
-import { isWindows } from "harness";
 
 describe("bun build", () => {
   test("warnings dont return exit code 1", () => {
@@ -60,11 +59,113 @@ describe("bun build", () => {
     expect(["build", src]).toRun();
   });
 
+  test("--tsconfig-override works", () => {
+    const tmp = tmpdirSync();
+    const baseDir = path.join(tmp, "tsconfig-override-test");
+    fs.mkdirSync(baseDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(baseDir, "index.ts"),
+      `import { utils } from "@utils/helper";
+console.log(utils());`,
+    );
+
+    fs.writeFileSync(path.join(baseDir, "helper.ts"), `export function utils() { return "Hello from utils"; }`);
+
+    fs.writeFileSync(
+      path.join(baseDir, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          paths: {
+            "@wrong/*": ["./wrong/*"],
+          },
+        },
+      }),
+    );
+
+    fs.writeFileSync(
+      path.join(baseDir, "custom-tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          paths: {
+            "@utils/*": ["./*"],
+          },
+        },
+      }),
+    );
+
+    const failResult = Bun.spawnSync({
+      cmd: [bunExe(), "build", path.join(baseDir, "index.ts"), "--outdir", path.join(baseDir, "out-fail")],
+      env: bunEnv,
+      cwd: baseDir,
+    });
+    expect(failResult.exitCode).not.toBe(0);
+    expect(failResult.stderr?.toString() || "").toContain("Could not resolve");
+
+    const successResult = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "build",
+        path.join(baseDir, "index.ts"),
+        "--tsconfig-override",
+        path.join(baseDir, "custom-tsconfig.json"),
+        "--outdir",
+        path.join(baseDir, "out-success"),
+      ],
+      env: bunEnv,
+      cwd: baseDir,
+    });
+    expect(successResult.exitCode).toBe(0);
+
+    const outputFile = path.join(baseDir, "out-success", "index.js");
+    expect(fs.existsSync(outputFile)).toBe(true);
+    const output = fs.readFileSync(outputFile, "utf8");
+    expect(output).toContain("Hello from utils");
+  });
+
+  test("--tsconfig-override works from nested directories", () => {
+    const tmp = tmpdirSync();
+    const baseDir = path.join(tmp, "tsconfig-nested-test");
+    const nestedDir = path.join(baseDir, "nested", "deep");
+    fs.mkdirSync(nestedDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(nestedDir, "index.ts"),
+      `import { utils } from "@utils/helper";
+console.log(utils());`,
+    );
+
+    fs.writeFileSync(path.join(baseDir, "helper.ts"), `export function utils() { return "Hello from nested!"; }`);
+
+    fs.writeFileSync(
+      path.join(baseDir, "custom-tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          paths: {
+            "@utils/*": ["./*"],
+          },
+        },
+      }),
+    );
+
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "build", "index.ts", "--tsconfig-override", "../../custom-tsconfig.json", "--outdir", "out"],
+      env: bunEnv,
+      cwd: nestedDir,
+    });
+    expect(result.exitCode).toBe(0);
+
+    const outputFile = path.join(nestedDir, "out", "index.js");
+    expect(fs.existsSync(outputFile)).toBe(true);
+    const output = fs.readFileSync(outputFile, "utf8");
+    expect(output).toContain("Hello from nested!");
+  });
+
   test("__dirname and __filename are printed correctly", () => {
     const tmpdir = tmpdirSync();
     const baseDir = `${tmpdir}/bun-build-dirname-filename-${Date.now()}`;
     fs.mkdirSync(baseDir, { recursive: true });
-    fs.mkdirSync(path.join(baseDir, "我")), { recursive: true };
+    (fs.mkdirSync(path.join(baseDir, "我")), { recursive: true });
     fs.writeFileSync(path.join(baseDir, "我", "我.ts"), "console.log(__dirname); console.log(__filename);");
     const { exitCode } = Bun.spawnSync({
       cmd: [bunExe(), "build", path.join(baseDir, "我/我.ts"), "--compile", "--outfile", path.join(baseDir, "exe.exe")],
@@ -170,4 +271,113 @@ test.skipIf(!isWindows)("should be able to handle pretty path on windows #13897"
     ],
   });
   expect(buildOut?.success).toBe(true);
+});
+
+test("you can use --outfile=... and --sourcemap", () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+  const outFile = path.join(tmpdir, "out.js");
+
+  writeFileSync(inputFile, 'console.log("Hello, world!");');
+
+  const originalContent = fs.readFileSync(inputFile, "utf8");
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--outfile=" + path.relative(tmpdir, outFile), "--sourcemap", inputFile],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+
+  expect(exitCode).toBe(0);
+
+  // Verify that the input file wasn't overwritten
+  expect(fs.readFileSync(inputFile, "utf8")).toBe(originalContent);
+
+  // Verify that the output file was created
+  expect(fs.existsSync(outFile)).toBe(true);
+
+  // Verify that the sourcemap file was created
+  expect(fs.existsSync(outFile + ".map")).toBe(true);
+
+  // Verify that the output file contains sourceMappingURL comment
+  const outputContent = fs.readFileSync(outFile, "utf8");
+  expect(outputContent).toContain("//# sourceMappingURL=out.js.map");
+
+  expect(stdout.toString().replace(/\d{1,}ms/, "0.000000001ms")).toMatchInlineSnapshot(`
+    "Bundled 1 module in 0.000000001ms
+
+      out.js      120 bytes  (entry point)
+      out.js.map  213 bytes  (source map)
+
+    "
+  `);
+});
+
+test("some log cases", () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+  const outFile = path.join(tmpdir, "out.js");
+
+  writeFileSync(inputFile, 'console.log("Hello, world!");');
+
+  // absolute path
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--outfile=" + outFile, "--sourcemap", inputFile],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString().replace(/in \d+ms/g, "in {time}ms")).toMatchInlineSnapshot(`
+    "Bundled 1 module in {time}ms
+
+      out.js      120 bytes  (entry point)
+      out.js.map  213 bytes  (source map)
+
+    "
+  `);
+});
+
+test("log case 1", () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+  const inputFile2 = path.join(tmpdir, "input-twooo.js");
+
+  writeFileSync(inputFile, 'console.log("Hello, world!");');
+  writeFileSync(inputFile2, 'console.log("Hello, world!");');
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--outdir=" + tmpdir + "/out", inputFile, inputFile2],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString().replace(/in \d+ms/g, "in {time}ms")).toMatchInlineSnapshot(`
+    "Bundled 2 modules in {time}ms
+
+      input.js        42 bytes  (entry point)
+      input-twooo.js  48 bytes  (entry point)
+
+    "
+  `);
+});
+
+test("log case 2", () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+
+  writeFileSync(inputFile, 'console.log("Hello, world!");');
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--outdir=" + tmpdir + "/out", inputFile],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString().replace(/in \d+ms/g, "in {time}ms")).toMatchInlineSnapshot(`
+    "Bundled 1 module in {time}ms
+
+      input.js  42 bytes  (entry point)
+
+    "
+  `);
 });

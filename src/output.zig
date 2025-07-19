@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const Environment = @import("./env.zig");
 const string = bun.string;
@@ -8,8 +8,7 @@ const StringTypes = bun.StringTypes;
 const Global = bun.Global;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const use_mimalloc = bun.use_mimalloc;
-const writeStream = std.json.writeStream;
-const WriteStream = std.json.WriteStream;
+const c = bun.c;
 
 const SystemTimer = @import("./system_timer.zig").Timer;
 
@@ -23,10 +22,10 @@ var stdout_stream: Source.StreamType = undefined;
 var stdout_stream_set = false;
 const File = bun.sys.File;
 pub var terminal_size: std.posix.winsize = .{
-    .ws_row = 0,
-    .ws_col = 0,
-    .ws_xpixel = 0,
-    .ws_ypixel = 0,
+    .row = 0,
+    .col = 0,
+    .xpixel = 0,
+    .ypixel = 0,
 };
 
 pub const Source = struct {
@@ -170,15 +169,15 @@ pub const Source = struct {
             const handles = &.{ &stdin, &stdout, &stderr };
             inline for (console_mode, handles) |mode, handle| {
                 if (mode) |m| {
-                    _ = w.SetConsoleMode(handle.*, m);
+                    _ = c.SetConsoleMode(handle.*, m);
                 }
             }
 
             if (console_output_codepage != 0)
-                _ = w.kernel32.SetConsoleOutputCP(console_output_codepage);
+                _ = c.SetConsoleOutputCP(console_output_codepage);
 
             if (console_codepage != 0)
-                _ = w.SetConsoleCP(console_codepage);
+                _ = c.SetConsoleCP(console_codepage);
         }
 
         pub fn init() void {
@@ -188,22 +187,25 @@ pub const Source = struct {
             const stdout = std.os.windows.GetStdHandle(std.os.windows.STD_OUTPUT_HANDLE) catch w.INVALID_HANDLE_VALUE;
             const stderr = std.os.windows.GetStdHandle(std.os.windows.STD_ERROR_HANDLE) catch w.INVALID_HANDLE_VALUE;
 
-            bun.win32.STDERR_FD = if (stderr != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stderr) else bun.invalid_fd;
-            bun.win32.STDOUT_FD = if (stdout != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdout) else bun.invalid_fd;
-            bun.win32.STDIN_FD = if (stdin != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdin) else bun.invalid_fd;
+            const fd_internals = @import("fd.zig");
+            const INVALID_HANDLE_VALUE = std.os.windows.INVALID_HANDLE_VALUE;
+            fd_internals.windows_cached_stderr = if (stderr != INVALID_HANDLE_VALUE) .fromSystem(stderr) else .invalid;
+            fd_internals.windows_cached_stdout = if (stdout != INVALID_HANDLE_VALUE) .fromSystem(stdout) else .invalid;
+            fd_internals.windows_cached_stdin = if (stdin != INVALID_HANDLE_VALUE) .fromSystem(stdin) else .invalid;
+            if (Environment.isDebug) fd_internals.windows_cached_fd_set = true;
 
-            buffered_stdin.unbuffered_reader.context.handle = bun.win32.STDIN_FD;
+            buffered_stdin.unbuffered_reader.context.handle = .stdin();
 
             // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
             const CP_UTF8 = 65001;
-            console_output_codepage = w.kernel32.GetConsoleOutputCP();
-            _ = w.kernel32.SetConsoleOutputCP(CP_UTF8);
+            console_output_codepage = c.GetConsoleOutputCP();
+            _ = c.SetConsoleOutputCP(CP_UTF8);
 
-            console_codepage = w.kernel32.GetConsoleOutputCP();
-            _ = w.SetConsoleCP(CP_UTF8);
+            console_codepage = c.GetConsoleOutputCP();
+            _ = c.SetConsoleCP(CP_UTF8);
 
             var mode: w.DWORD = undefined;
-            if (w.kernel32.GetConsoleMode(stdin, &mode) != 0) {
+            if (c.GetConsoleMode(stdin, &mode) != 0) {
                 console_mode[0] = mode;
                 bun_stdio_tty[0] = 1;
                 // There are no flags to set on standard in, but just in case something
@@ -213,22 +215,22 @@ pub const Source = struct {
                 // intentionally set for any purpose, and instead only caused problems.
             }
 
-            if (w.kernel32.GetConsoleMode(stdout, &mode) != 0) {
+            if (c.GetConsoleMode(stdout, &mode) != 0) {
                 console_mode[1] = mode;
                 bun_stdio_tty[1] = 1;
-                _ = w.SetConsoleMode(stdout, w.ENABLE_PROCESSED_OUTPUT | std.os.windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING | w.ENABLE_WRAP_AT_EOL_OUTPUT | mode);
+                _ = c.SetConsoleMode(stdout, w.ENABLE_PROCESSED_OUTPUT | std.os.windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING | w.ENABLE_WRAP_AT_EOL_OUTPUT | mode);
             }
 
-            if (w.kernel32.GetConsoleMode(stderr, &mode) != 0) {
+            if (c.GetConsoleMode(stderr, &mode) != 0) {
                 console_mode[2] = mode;
                 bun_stdio_tty[2] = 1;
-                _ = w.SetConsoleMode(stderr, w.ENABLE_PROCESSED_OUTPUT | std.os.windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING | w.ENABLE_WRAP_AT_EOL_OUTPUT | mode);
+                _ = c.SetConsoleMode(stderr, w.ENABLE_PROCESSED_OUTPUT | std.os.windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING | w.ENABLE_WRAP_AT_EOL_OUTPUT | mode);
             }
         }
     };
 
     pub const Stdio = struct {
-        extern "C" var bun_is_stdio_null: [3]i32;
+        extern "c" var bun_is_stdio_null: [3]i32;
 
         pub fn isStderrNull() bool {
             return bun_is_stdio_null[2] == 1;
@@ -242,8 +244,9 @@ pub const Source = struct {
             return bun_is_stdio_null[0] == 1;
         }
 
+        pub extern "c" fn bun_initialize_process() void;
         pub fn init() void {
-            bun.C.bun_initialize_process();
+            bun_initialize_process();
 
             if (Environment.isWindows) {
                 WindowsStdio.init();
@@ -260,11 +263,12 @@ pub const Source = struct {
             }
         }
 
+        pub extern "c" fn bun_restore_stdio() void;
         pub fn restore() void {
             if (Environment.isWindows) {
                 WindowsStdio.restore();
             } else {
-                bun.C.bun_restore_stdio();
+                bun_restore_stdio();
             }
         }
     };
@@ -310,19 +314,18 @@ pub const Source = struct {
         }
 
         if (bun.getenvZ("TERM_PROGRAM")) |term_program| {
-            if (strings.eqlComptime(term_program, "iTerm.app")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "WezTerm")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-
-            if (strings.eqlComptime(term_program, "ghostty")) {
-                lazy_color_depth = .@"16m";
-                return;
+            const use_16m = .{
+                "ghostty",
+                "MacTerm",
+                "WezTerm",
+                "HyperTerm",
+                "iTerm.app",
+            };
+            inline for (use_16m) |program| {
+                if (strings.eqlComptime(term_program, program)) {
+                    lazy_color_depth = .@"16m";
+                    return;
+                }
             }
         }
 
@@ -454,9 +457,60 @@ pub inline fn isEmojiEnabled() bool {
 
 pub fn isGithubAction() bool {
     if (bun.getenvZ("GITHUB_ACTIONS")) |value| {
-        return strings.eqlComptime(value, "true");
+        return strings.eqlComptime(value, "true") and
+            // Do not print github annotations for AI agents because that wastes the context window.
+            !isAIAgent();
     }
     return false;
+}
+
+pub fn isAIAgent() bool {
+    const get_is_agent = struct {
+        var value = false;
+        fn evaluate() bool {
+            if (bun.getenvZ("AGENT")) |env| {
+                return strings.eqlComptime(env, "1");
+            }
+
+            if (isVerbose()) {
+                return false;
+            }
+
+            // Claude Code.
+            if (bun.getenvTruthy("CLAUDECODE")) {
+                return true;
+            }
+
+            // Replit.
+            if (bun.getenvTruthy("REPL_ID")) {
+                return true;
+            }
+
+            // TODO: add environment variable for Gemini
+            // Gemini does not appear to add any environment variables to identify it.
+
+            // TODO: add environment variable for Codex
+            // codex does not appear to add any environment variables to identify it.
+
+            // TODO: add environment variable for Cursor Background Agents
+            // cursor does not appear to add any environment variables to identify it.
+
+            return false;
+        }
+
+        fn setValue() void {
+            value = evaluate();
+        }
+
+        var once = std.once(setValue);
+
+        pub fn isEnabled() bool {
+            once.call();
+            return value;
+        }
+    };
+
+    return get_is_agent.isEnabled();
 }
 
 pub fn isVerbose() bool {
@@ -469,16 +523,6 @@ pub fn isVerbose() bool {
     return false;
 }
 
-// var _source_for_test: if (Environment.isTest) Source else void = undefined;
-// var _source_for_test_set = false;
-// pub fn initTest() void {
-//     if (_source_for_test_set) return;
-//     _source_for_test_set = true;
-//     const in = std.io.getStdErr();
-//     const out = std.io.getStdOut();
-//     _source_for_test = Source.init(File.from(out), File.from(in));
-//     Source.set(&_source_for_test);
-// }
 pub fn enableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = true;
 }
@@ -489,7 +533,7 @@ pub fn disableBuffering() void {
 }
 
 pub fn panic(comptime fmt: string, args: anytype) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
 
     if (isEmojiEnabled()) {
         std.debug.panic(comptime prettyFmt(fmt, true), args);
@@ -520,6 +564,11 @@ pub fn errorStream() Source.StreamType {
 pub fn writer() WriterType {
     bun.debugAssert(source_set);
     return source.stream.quietWriter();
+}
+
+pub fn writerBuffered() Source.BufferedStream.Writer {
+    bun.debugAssert(source_set);
+    return source.buffered_stream.writer();
 }
 
 pub fn resetTerminal() void {
@@ -713,9 +762,9 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
 
 pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
-    const tagname = comptime brk: {
+    const tagname = comptime if (!Environment.enable_logs) .{} else brk: {
         const input = switch (@TypeOf(tag)) {
-            @Type(.EnumLiteral) => @tagName(tag),
+            @Type(.enum_literal) => @tagName(tag),
             else => tag,
         };
         var ascii_slice: [input.len]u8 = undefined;
@@ -734,7 +783,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
             pub inline fn isVisible() bool {
                 return false;
             }
-            pub inline fn log(comptime _: string, _: anytype) void {}
+            pub fn log(comptime _: string, _: anytype) callconv(bun.callconv_inline) void {}
         };
     }
 
@@ -744,32 +793,35 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
         var buffered_writer: BufferedWriter = undefined;
         var out: BufferedWriter.Writer = undefined;
         var out_set = false;
-        var really_disable = disabled;
-        var evaluated_disable = false;
-        var lock = std.Thread.Mutex{};
+        var really_disable = std.atomic.Value(bool).init(disabled);
 
-        pub fn isVisible() bool {
-            if (!evaluated_disable) {
-                evaluated_disable = true;
-                if (bun.getenvZAnyCase("BUN_DEBUG_" ++ tagname)) |val| {
-                    really_disable = strings.eqlComptime(val, "0");
-                } else if (bun.getenvZAnyCase("BUN_DEBUG_ALL")) |val| {
-                    really_disable = strings.eqlComptime(val, "0");
-                } else if (bun.getenvZAnyCase("BUN_DEBUG_QUIET_LOGS")) |val| {
-                    really_disable = really_disable or !strings.eqlComptime(val, "0");
-                } else {
-                    for (bun.argv) |arg| {
-                        if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-" ++ tagname, true)) {
-                            really_disable = false;
-                            break;
-                        } else if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-all", true)) {
-                            really_disable = false;
-                            break;
-                        }
+        var lock = bun.Mutex{};
+
+        var is_visible_once = std.once(evaluateIsVisible);
+
+        fn evaluateIsVisible() void {
+            if (bun.getenvZAnyCase("BUN_DEBUG_" ++ tagname)) |val| {
+                really_disable.store(strings.eqlComptime(val, "0"), .monotonic);
+            } else if (bun.getenvZAnyCase("BUN_DEBUG_ALL")) |val| {
+                really_disable.store(strings.eqlComptime(val, "0"), .monotonic);
+            } else if (bun.getenvZAnyCase("BUN_DEBUG_QUIET_LOGS")) |val| {
+                really_disable.store(really_disable.load(.monotonic) or !strings.eqlComptime(val, "0"), .monotonic);
+            } else {
+                for (bun.argv) |arg| {
+                    if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-" ++ tagname, true)) {
+                        really_disable.store(false, .monotonic);
+                        break;
+                    } else if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-all", true)) {
+                        really_disable.store(false, .monotonic);
+                        break;
                     }
                 }
             }
-            return !really_disable;
+        }
+
+        pub fn isVisible() bool {
+            is_visible_once.call();
+            return !really_disable.load(.monotonic);
         }
 
         /// Debug-only logs which should not appear in release mode
@@ -788,6 +840,8 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
             if (ScopedDebugWriter.disable_inside_log > 0) {
                 return;
             }
+
+            if (bun.crash_handler.isPanicking()) return;
 
             if (Environment.enable_logs) ScopedDebugWriter.disable_inside_log += 1;
             defer {
@@ -810,20 +864,20 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
 
             if (enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
                 out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, true), args) catch {
-                    really_disable = true;
+                    really_disable.store(true, .monotonic);
                     return;
                 };
                 buffered_writer.flush() catch {
-                    really_disable = true;
+                    really_disable.store(true, .monotonic);
                     return;
                 };
             } else {
                 out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, false), args) catch {
-                    really_disable = true;
+                    really_disable.store(true, .monotonic);
                     return;
                 };
                 buffered_writer.flush() catch {
-                    really_disable = true;
+                    really_disable.store(true, .monotonic);
                     return;
                 };
             }
@@ -838,37 +892,49 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
     ).log;
 }
 
+pub fn up(n: usize) void {
+    print("\x1B[{d}A", .{n});
+}
+pub fn clearToEnd() void {
+    print("\x1B[0J", .{});
+}
+
 // Valid "colors":
 // <black>
 // <blue>
 // <cyan>
 // <green>
+// <bggreen>
 // <magenta>
 // <red>
+// <bgred>
 // <white>
 // <yellow>
 // <b> - bold
 // <d> - dim
 // </r> - reset
 // <r> - reset
-const ED = "\x1b[";
+const CSI = "\x1b[";
 pub const color_map = ComptimeStringMap(string, .{
-    &.{ "black", ED ++ "30m" },
-    &.{ "blue", ED ++ "34m" },
-    &.{ "b", ED ++ "1m" },
-    &.{ "d", ED ++ "2m" },
-    &.{ "i", ED ++ "3m" },
-    &.{ "cyan", ED ++ "36m" },
-    &.{ "green", ED ++ "32m" },
-    &.{ "magenta", ED ++ "35m" },
-    &.{ "red", ED ++ "31m" },
-    &.{ "white", ED ++ "37m" },
-    &.{ "yellow", ED ++ "33m" },
+    &.{ "b", CSI ++ "1m" },
+    &.{ "d", CSI ++ "2m" },
+    &.{ "i", CSI ++ "3m" },
+    &.{ "u", CSI ++ "4m" },
+    &.{ "black", CSI ++ "30m" },
+    &.{ "red", CSI ++ "31m" },
+    &.{ "green", CSI ++ "32m" },
+    &.{ "yellow", CSI ++ "33m" },
+    &.{ "blue", CSI ++ "34m" },
+    &.{ "magenta", CSI ++ "35m" },
+    &.{ "cyan", CSI ++ "36m" },
+    &.{ "white", CSI ++ "37m" },
+    &.{ "bgred", CSI ++ "41m" },
+    &.{ "bggreen", CSI ++ "42m" },
 });
 const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
     if (comptime bun.fast_debug_build_mode)
-        return fmt;
+        return fmt ++ "\x00";
 
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
     comptime var new_fmt_i: usize = 0;
@@ -876,8 +942,7 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
     @setEvalBranchQuota(9999);
     comptime var i: usize = 0;
     comptime while (i < fmt.len) {
-        const c = fmt[i];
-        switch (c) {
+        switch (fmt[i]) {
             '\\' => {
                 i += 1;
                 if (i < fmt.len) {
@@ -994,6 +1059,41 @@ pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, printErrorln, .stderr);
 }
 
+/// Pretty-print a command that will be run.
+/// $ bun run foo
+fn printCommand(argv: anytype, comptime destination: Destination) void {
+    const prettyFn = if (destination == .stdout) pretty else prettyError;
+    const printFn = if (destination == .stdout) print else printError;
+    switch (@TypeOf(argv)) {
+        [][:0]const u8, []const []const u8, []const []u8, [][]const u8 => {
+            prettyFn("<r><d><magenta>$<r> <d><b>", .{});
+            printFn("{s}", .{argv[0]});
+            if (argv.len > 1) {
+                for (argv[1..]) |arg| {
+                    printFn(" {s}", .{arg});
+                }
+            }
+            prettyFn("<r>\n", .{});
+        },
+        []const u8, []u8, [:0]const u8, [:0]u8 => {
+            prettyFn("<r><d><magenta>$<r> <d><b>{s}<r>\n", .{argv});
+        },
+        else => {
+            @compileLog(argv);
+            @compileError("command() was given unsupported type: " ++ @typeName(@TypeOf(argv)));
+        },
+    }
+    flush();
+}
+
+pub fn commandOut(argv: anytype) void {
+    printCommand(argv, .stdout);
+}
+
+pub fn command(argv: anytype) void {
+    printCommand(argv, .stderr);
+}
+
 pub const Destination = enum(u8) {
     stderr,
     stdout,
@@ -1046,11 +1146,9 @@ pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }
 
-const debugWarnScope = Scoped("debug_warn", false);
-
 /// Print a yellow warning message, only in debug mode
 pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
-    if (debugWarnScope.isVisible()) {
+    if (bun.Environment.isDebug) {
         prettyErrorln("<yellow>debug warn<r><d>:<r> " ++ fmt, args);
         flush();
     }
@@ -1063,19 +1161,27 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     const T = @TypeOf(error_name);
     const info = @typeInfo(T);
 
-    if (comptime T == bun.sys.Error or info == .Pointer and info.Pointer.child == bun.sys.Error) {
-        prettyErrorln("<r><red>error:<r><d>:<r> " ++ fmt, args ++ .{error_name});
+    if (comptime T == bun.sys.Error or info == .pointer and info.pointer.child == bun.sys.Error) {
+        const e: bun.sys.Error = error_name;
+        const tag_name, const sys_errno = e.getErrorCodeTagName() orelse {
+            err("unknown error", fmt, args);
+            return;
+        };
+        if (bun.sys.coreutils_error_map.get(sys_errno)) |label| {
+            prettyErrorln("<r><red>{s}<r><d>:<r> {s}: " ++ fmt ++ " <d>({s})<r>", .{ tag_name, label } ++ args ++ .{@tagName(e.syscall)});
+        } else {
+            prettyErrorln("<r><red>{s}<r><d>:<r> " ++ fmt ++ " <d>({s})<r>", .{tag_name} ++ args ++ .{@tagName(e.syscall)});
+        }
         return;
     }
 
     const display_name, const is_comptime_name = display_name: {
-
         // Zig string literals are of type *const [n:0]u8
         // we assume that no one will pass this type from not using a string literal.
-        if (info == .Pointer and info.Pointer.size == .One and info.Pointer.is_const) {
-            const child_info = @typeInfo(info.Pointer.child);
-            if (child_info == .Array and child_info.Array.child == u8) {
-                if (child_info.Array.len == 0) @compileError("Output.err should not be passed an empty string (use errGeneric)");
+        if (info == .pointer and info.pointer.size == .one and info.pointer.is_const) {
+            const child_info = @typeInfo(info.pointer.child);
+            if (child_info == .array and child_info.array.child == u8) {
+                if (child_info.array.len == 0) @compileError("Output.err should not be passed an empty string (use errGeneric)");
                 break :display_name .{ error_name, true };
             }
         }
@@ -1086,8 +1192,8 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         }
 
         // error unions
-        if (info == .ErrorSet) {
-            if (info.ErrorSet) |errors| {
+        if (info == .error_set) {
+            if (info.error_set) |errors| {
                 if (errors.len == 0) {
                     @compileError("Output.err was given an empty error set");
                 }
@@ -1100,7 +1206,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         }
 
         // enum literals
-        if (info == .EnumLiteral) {
+        if (info == .enum_literal) {
             const tag = @tagName(info);
             comptime bun.assert(tag.len > 0); // how?
             if (tag[0] != 'E') break :display_name .{ "E" ++ tag, true };
@@ -1108,8 +1214,8 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         }
 
         // enums
-        if (info == .Enum) {
-            const errno: bun.C.SystemErrno = @enumFromInt(@intFromEnum(info));
+        if (info == .@"enum") {
+            const errno: bun.sys.SystemErrno = @enumFromInt(@intFromEnum(info));
             break :display_name .{ @tagName(errno), false };
         }
 
@@ -1130,10 +1236,14 @@ pub const ScopedDebugWriter = struct {
     pub threadlocal var disable_inside_log: isize = 0;
 };
 pub fn disableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log += 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log += 1;
+    }
 }
 pub fn enableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log -= 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log -= 1;
+    }
 }
 
 extern "c" fn getpid() c_int;
@@ -1154,13 +1264,13 @@ pub fn initScopedDebugWriterAtStartup() void {
             const path_fmt = std.mem.replaceOwned(u8, bun.default_allocator, path, "{pid}", pid) catch @panic("failed to allocate path");
             defer bun.default_allocator.free(path_fmt);
 
-            const fd = std.fs.cwd().createFile(path_fmt, .{
+            const fd: bun.FD = .fromStdFile(std.fs.cwd().createFile(path_fmt, .{
                 .mode = if (Environment.isPosix) 0o644 else 0,
             }) catch |open_err| {
                 panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(open_err), path });
-            };
-            _ = bun.sys.ftruncate(bun.toFD(fd), 0); // windows
-            ScopedDebugWriter.scoped_file_writer = File.from(fd).quietWriter();
+            });
+            _ = fd.truncate(0); // windows
+            ScopedDebugWriter.scoped_file_writer = fd.quietWriter();
             return;
         }
     }
@@ -1185,8 +1295,6 @@ pub inline fn errFmt(formatter: anytype) void {
     return errGeneric("{}", .{formatter});
 }
 
-/// This struct is a workaround a Windows terminal bug.
-/// TODO: when https://github.com/microsoft/terminal/issues/16606 is resolved, revert this commit.
 pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
-    .unbuffered_reader = File.Reader{ .context = .{ .handle = if (Environment.isWindows) undefined else bun.toFD(0) } },
+    .unbuffered_reader = .{ .context = .{ .handle = if (Environment.isWindows) undefined else .stdin() } },
 };

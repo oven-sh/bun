@@ -19,7 +19,6 @@ function check(isTTY, colorMode, expectedColorMode, inspectOptions) {
   let i = 0;
   const stream = new Writable({
     write: common.mustCall((chunk, enc, cb) => {
-      console.log("testing case", isTTY, colorMode, expectedColorMode, inspectOptions);
       assert.strictEqual(chunk.trim(),
                          util.inspect(items[i++], {
                            colors: expectedColorMode,

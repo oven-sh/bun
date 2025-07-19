@@ -1,11 +1,7 @@
-const nativeTests = require("./build/Release/napitests.node");
-const secondAddon = require("./build/Release/second_addon.node");
-
-function assert(ok) {
-  if (!ok) {
-    throw new Error("assertion failed");
-  }
-}
+const assert = require("node:assert");
+const nativeTests = require("./build/Debug/napitests.node");
+const secondAddon = require("./build/Debug/second_addon.node");
+const asyncFinalizeAddon = require("./build/Debug/async_finalize_addon.node");
 
 async function gcUntil(fn) {
   const MAX = 100;
@@ -38,15 +34,37 @@ nativeTests.test_napi_handle_scope_finalizer = async () => {
   nativeTests.create_ref_with_finalizer(Boolean(process.isBun));
 
   // Wait until it actually has been collected by ticking the event loop and forcing GC
-  while (!nativeTests.was_finalize_called()) {
-    await new Promise(resolve => {
-      setTimeout(() => resolve(), 0);
-    });
-    if (process.isBun) {
-      Bun.gc(true);
-    } else if (global.gc) {
-      global.gc();
+  await gcUntil(() => nativeTests.was_finalize_called());
+};
+
+nativeTests.test_napi_async_work_execute_null_check = () => {
+  const res = nativeTests.create_async_work_with_null_execute();
+  if (res) {
+    console.log("success!");
+  } else {
+    console.log("failure!");
+  }
+};
+
+nativeTests.test_napi_async_work_complete_null_check = async () => {
+  nativeTests.create_async_work_with_null_complete();
+  await gcUntil(() => true);
+};
+
+nativeTests.test_napi_async_work_cancel = () => {
+  // UV_THREADPOOL_SIZE is set to 2, create two blocking tasks,
+  // then create another and cancel it, ensuring the work is not
+  // scheduled before `napi_cancel_async_work` is called
+  const res = nativeTests.test_cancel_async_work(result => {
+    if (result) {
+      console.log("success!");
+    } else {
+      console.log("failure!");
     }
+  });
+
+  if (!res) {
+    console.log("failure!");
   }
 };
 
@@ -92,7 +110,8 @@ nativeTests.test_get_property = () => {
     ),
     5,
     "hello",
-    // TODO(@190n) test null and undefined here on the napi fix branch
+    null,
+    undefined,
   ];
   const keys = [
     "foo",
@@ -116,7 +135,61 @@ nativeTests.test_get_property = () => {
         const ret = nativeTests.perform_get(object, key);
         console.log("native function returned", ret);
       } catch (e) {
-        console.log("threw", e.toString());
+        console.log("threw", e.name);
+      }
+    }
+  }
+};
+
+nativeTests.test_set_property = () => {
+  const objects = [
+    {},
+    { foo: "bar" },
+    {
+      set foo(value) {
+        throw new Error(`set foo to ${value}`);
+      },
+    },
+    {
+      // getter but no setter
+      get foo() {},
+    },
+    new Proxy(
+      {},
+      {
+        set(_target, key, value) {
+          throw new Error(`proxy set ${key} to ${value}`);
+        },
+      },
+    ),
+    null,
+    undefined,
+  ];
+  const keys = [
+    "foo",
+    {
+      toString() {
+        throw new Error("toString");
+      },
+    },
+    {
+      [Symbol.toPrimitive]() {
+        throw new Error("Symbol.toPrimitive");
+      },
+    },
+  ];
+
+  for (const object of objects) {
+    for (const key of keys) {
+      console.log(objects.indexOf(object) + ", " + keys.indexOf(key));
+      try {
+        const ret = nativeTests.perform_set(object, key, 42);
+        console.log("native function returned", ret);
+        if (object[key] != 42) {
+          throw new Error("setting property did not throw an error, but the property was not actually set");
+        }
+      } catch (e) {
+        console.log("threw", e.name);
       }
     }
   }
@@ -156,9 +229,7 @@ nativeTests.test_number_integer_conversions_from_js = () => {
   for (const [input, expectedOutput] of i32Cases) {
     const actualOutput = nativeTests.double_to_i32(input);
     console.log(`${input} as i32 => ${actualOutput}`);
-    if (actualOutput !== expectedOutput) {
-      console.error("wrong");
-    }
+    assert(actualOutput === expectedOutput);
   }
 
   const u32Cases = [
@@ -187,9 +258,7 @@ nativeTests.test_number_integer_conversions_from_js = () => {
   for (const [input, expectedOutput] of u32Cases) {
     const actualOutput = nativeTests.double_to_u32(input);
     console.log(`${input} as u32 => ${actualOutput}`);
-    if (actualOutput !== expectedOutput) {
-      console.error("wrong");
-    }
+    assert(actualOutput === expectedOutput);
   }
 
   const i64Cases = [
@@ -222,9 +291,7 @@ nativeTests.test_number_integer_conversions_from_js = () => {
     console.log(
       `${typeof input == "number" ? input.toFixed(2) : input} as i64 => ${typeof actualOutput == "number" ? actualOutput.toFixed(2) : actualOutput}`,
     );
-    if (actualOutput !== expectedOutput) {
-      console.error("wrong");
-    }
+    assert(actualOutput === expectedOutput);
   }
 };
 
@@ -294,6 +361,87 @@ nativeTests.test_type_tag = () => {
   console.log("o1 matches o2:", nativeTests.check_tag(o1, 3, 4));
   console.log("o2 matches o1:", nativeTests.check_tag(o2, 1, 2));
   console.log("o2 matches o2:", nativeTests.check_tag(o2, 3, 4));
+};
+
+nativeTests.test_napi_class = () => {
+  const NapiClass = nativeTests.get_class_with_constructor();
+  const instance = new NapiClass();
+  console.log("static data =", NapiClass.getStaticData());
+  console.log("static getter =", NapiClass.getter);
+  console.log("foo =", instance.foo);
+  console.log("data =", instance.getData());
+};
+
+nativeTests.test_subclass_napi_class = () => {
+  const NapiClass = nativeTests.get_class_with_constructor();
+  class Subclass extends NapiClass {}
+  const instance = new Subclass();
+  console.log("subclass static data =", Subclass.getStaticData());
+  console.log("subclass static getter =", Subclass.getter);
+  console.log("subclass foo =", instance.foo);
+  console.log("subclass data =", instance.getData());
+};
+
+nativeTests.test_napi_class_non_constructor_call = () => {
+  const NapiClass = nativeTests.get_class_with_constructor();
+  console.log("non-constructor call NapiClass() =", NapiClass());
+  console.log("global foo set to ", typeof foo != "undefined" ? foo : undefined);
+};
+
+nativeTests.test_reflect_construct_napi_class = () => {
+  const NapiClass = nativeTests.get_class_with_constructor();
+  let instance = Reflect.construct(NapiClass, [], Object);
+  console.log("reflect constructed foo =", instance.foo);
+  console.log("reflect constructed data =", instance.getData?.());
+  class Foo {}
+  instance = Reflect.construct(NapiClass, [], Foo);
+  console.log("reflect constructed foo =", instance.foo);
+  console.log("reflect constructed data =", instance.getData?.());
+};
+
+nativeTests.test_reflect_construct_no_prototype_crash = () => {
+  // This test verifies the fix for jsDynamicCast being called on JSValue(0)
+  // when a NAPI class constructor is called via Reflect.construct with a
+  // newTarget that has no prototype property.
+
+  const NapiClass = nativeTests.get_class_with_constructor();
+
+  // Test 1: Constructor function with deleted prototype property
+  // This case should work without crashing
+  function ConstructorWithoutPrototype() {}
+  delete ConstructorWithoutPrototype.prototype;
+
+  try {
+    const instance1 = Reflect.construct(NapiClass, [], ConstructorWithoutPrototype);
+    console.log("constructor without prototype: success - no crash");
+  } catch (e) {
+    console.log("constructor without prototype error:", e.message);
+  }
+
+  // Test 2: Regular constructor (control test)
+  // This should always work
+  function NormalConstructor() {}
+
+  try {
+    const instance2 = Reflect.construct(NapiClass, [], NormalConstructor);
+    console.log("normal constructor: success - no crash");
+  } catch (e) {
+    console.log("normal constructor error:", e.message);
+  }
+
+  // Test 3: Reflect.construct with Proxy newTarget (prototype returns undefined)
+  function ProxyObject() {}
+
+  const proxyTarget = new Proxy(ProxyObject, {
+    get(target, prop) {
+      if (prop === "prototype") {
+        return undefined;
+      }
+      return target[prop];
+    },
+  });
+  const instance3 = Reflect.construct(NapiClass, [], proxyTarget);
+  console.log("✓ Success - no crash!");
 };
 
 nativeTests.test_napi_wrap = () => {
@@ -490,8 +638,60 @@ nativeTests.test_remove_wrap_lifetime_with_strong_ref = async () => {
   await gcUntil(() => nativeTests.get_object_from_ref() === undefined);
 };
 
+nativeTests.test_ref_deleted_in_cleanup = () => {
+  let object = { foo: "bar" };
+  assert(createWrapWithWeakRef(object) === object);
+  assert(nativeTests.get_wrap_data(object) === 42);
+};
+
+nativeTests.test_ref_deleted_in_async_finalize = () => {
+  asyncFinalizeAddon.create_ref();
+};
+
 nativeTests.test_create_bigint_words = () => {
   console.log(nativeTests.create_weird_bigints());
+};
+
+nativeTests.test_get_value_string = () => {
+  function to16Bit(string) {
+    if (typeof Bun != "object") return string;
+    const jsc = require("bun:jsc");
+    const codeUnits = new DataView(new ArrayBuffer(2 * string.length));
+    for (let i = 0; i < string.length; i++) {
+      codeUnits.setUint16(2 * i, string.charCodeAt(i), true);
+    }
+    const decoder = new TextDecoder("utf-16le");
+    const string16Bit = decoder.decode(codeUnits);
+    // make sure we succeeded in making a UTF-16 string
+    assert(jsc.jscDescribe(string16Bit).includes("8Bit:(0)"));
+    return string16Bit;
+  }
+  function assert8Bit(string) {
+    if (typeof Bun != "object") return string;
+    const jsc = require("bun:jsc");
+    // make sure we succeeded in making a Latin-1 string
+    assert(jsc.jscDescribe(string).includes("8Bit:(1)"));
+    return string;
+  }
+  // test all of our get_value_string_XXX functions on a variety of inputs
+  for (const [string, description] of [
+    ["hello", "simple latin-1"],
+    [to16Bit("hello"), "16-bit encoded with only BMP characters"],
+    [assert8Bit("café"), "8-bit with non-ascii characters"],
+    [to16Bit("café"), "16-bit with non-ascii but latin-1 characters"],
+    ["你好小圆面包", "16-bit, all BMP, all outside latin-1"],
+    ["🐱🏳️‍⚧️", "16-bit with many surrogate pairs"],
+    // TODO(@190n) handle these correctly
+    // ["\ud801", "unpaired high surrogate"],
+    // ["\udc02", "unpaired low surrogate"],
+  ]) {
+    console.log(`test napi_get_value_string on ${string} (${description})`);
+    for (const encoding of ["latin1", "utf8", "utf16"]) {
+      console.log(encoding);
+      const fn = nativeTests[`test_get_value_string_${encoding}`];
+      fn(string);
+    }
+  }
 };
 
 module.exports = nativeTests;

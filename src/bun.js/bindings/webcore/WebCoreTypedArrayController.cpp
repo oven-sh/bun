@@ -56,11 +56,7 @@ JSC::JSArrayBuffer* WebCoreTypedArrayController::toJS(JSC::JSGlobalObject* lexic
 
 void WebCoreTypedArrayController::registerWrapper(JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer* native, JSC::JSArrayBuffer* wrapper)
 {
-    // require("vm") can be used to create an ArrayBuffer
-    if (UNLIKELY(!globalObject->inherits<JSDOMGlobalObject>()))
-        return;
-
-    cacheWrapper(JSC::jsCast<JSDOMGlobalObject*>(globalObject)->world(), native, wrapper);
+    cacheWrapper(static_cast<JSVMClientData*>(JSC::getVM(globalObject).clientData)->normalWorld(), native, wrapper);
 }
 
 bool WebCoreTypedArrayController::isAtomicsWaitAllowedOnCurrentThread()
@@ -70,7 +66,7 @@ bool WebCoreTypedArrayController::isAtomicsWaitAllowedOnCurrentThread()
 
 bool WebCoreTypedArrayController::JSArrayBufferOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    if (UNLIKELY(reason))
+    if (reason) [[unlikely]]
         *reason = "ArrayBuffer is opaque root"_s;
     auto& wrapper = *JSC::jsCast<JSC::JSArrayBuffer*>(handle.slot()->asCell());
     return visitor.containsOpaqueRoot(wrapper.impl());

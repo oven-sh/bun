@@ -78,24 +78,21 @@ export function initializeTextDecoderStream() {
 
 $getter;
 export function encoding() {
-  if (!$getByIdDirectPrivate(this, "textDecoderStreamTransform"))
-    throw $makeThisTypeError("TextDecoderStream", "encoding");
+  if (!$getByIdDirectPrivate(this, "textDecoderStreamTransform")) throw $ERR_INVALID_THIS("TextDecoderStream");
 
   return $getByIdDirectPrivate(this, "encoding");
 }
 
 $getter;
 export function fatal() {
-  if (!$getByIdDirectPrivate(this, "textDecoderStreamTransform"))
-    throw $makeThisTypeError("TextDecoderStream", "fatal");
+  if (!$getByIdDirectPrivate(this, "textDecoderStreamTransform")) throw $ERR_INVALID_THIS("TextDecoderStream");
 
   return $getByIdDirectPrivate(this, "fatal");
 }
 
 $getter;
 export function ignoreBOM() {
-  if (!$getByIdDirectPrivate(this, "textDecoderStreamTransform"))
-    throw $makeThisTypeError("TextDecoderStream", "ignoreBOM");
+  if (!$getByIdDirectPrivate(this, "textDecoderStreamTransform")) throw $ERR_INVALID_THIS("TextDecoderStream");
 
   return $getByIdDirectPrivate(this, "ignoreBOM");
 }
@@ -103,7 +100,7 @@ export function ignoreBOM() {
 $getter;
 export function readable() {
   const transform = $getByIdDirectPrivate(this, "textDecoderStreamTransform");
-  if (!transform) throw $makeThisTypeError("TextDecoderStream", "readable");
+  if (!transform) throw $ERR_INVALID_THIS("TextDecoderStream");
 
   return $getByIdDirectPrivate(transform, "readable");
 }
@@ -111,7 +108,7 @@ export function readable() {
 $getter;
 export function writable() {
   const transform = $getByIdDirectPrivate(this, "textDecoderStreamTransform");
-  if (!transform) throw $makeThisTypeError("TextDecoderStream", "writable");
+  if (!transform) throw $ERR_INVALID_THIS("TextDecoderStream");
 
   return $getByIdDirectPrivate(transform, "writable");
 }

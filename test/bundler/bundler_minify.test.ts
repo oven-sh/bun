@@ -502,4 +502,192 @@ describe("bundler", () => {
       '+"æ"',
     ],
   });
+  itBundled("minify/ImportMetaHotTreeShaking", {
+    files: {
+      "/entry.ts": `
+        import { value } from "./other.ts";
+        capture(import.meta.hot);
+        if (import.meta.hot) {
+          throw new Error("FAIL");
+        }
+        import.meta.hot.accept(() => {"FAIL";value});
+        import.meta.hot.dispose(() => {"FAIL";value});
+        import.meta.hot.on(() => {"FAIL";value});
+        import.meta.hot.off(() => {"FAIL";value});
+        import.meta.hot.send(() => {"FAIL";value});
+        import.meta.hot.invalidate(() => {"FAIL";value});
+        import.meta.hot.prune(() => {"FAIL";value});
+        capture(import.meta.hot.accept());
+        capture("This should remain");
+        import.meta.hot.accept(async() => {
+          await import("crash");
+          require("crash");
+        });
+        capture(import.meta.hot.data);
+        capture(import.meta.hot.data.value ??= "hello");
+      `,
+      "other.ts": `
+        capture("hello");
+        export const value = "hello";
+      `,
+    },
+    outfile: "/out.js",
+    capture: ['"hello"', "void 0", "void 0", '"This should remain"', "{}", '"hello"'],
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("FAIL");
+      api.expectFile("/out.js").not.toContain("import.meta.hot");
+    },
+  });
+  itBundled("minify/ProductionMode", {
+    files: {
+      "/entry.jsx": `
+        import {foo} from 'dev-trap';
+        capture(process.env.NODE_ENV);
+        capture(1232 + 521)
+        console.log(<div>Hello</div>);
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": `
+        throw new Error("Should not use dev runtime");
+      `,
+      "/node_modules/react/jsx-runtime.js": `
+        export function jsx(type, props) {
+          return {type, props};
+        }
+        export const Fragment = (globalThis.doNotDCE = Symbol.for("jsx-runtime"));
+      `,
+      "/node_modules/dev-trap/package.json": `{
+        "name": "dev-trap",
+        "exports": {
+          "development": "./dev.js",
+          "default": "./prod.js"
+        }
+      }`,
+      "/node_modules/dev-trap/dev.js": `
+        throw new Error("FAIL");
+      `,
+      "/node_modules/dev-trap/prod.js": `
+        export const foo = "production";
+      `,
+    },
+    capture: ['"production"', "1753"],
+    production: true,
+    onAfterBundle(api) {
+      const output = api.readFile("out.js");
+
+      expect(output).not.toContain("FAIL");
+
+      // Check minification
+      expect(output).not.toContain("\t");
+      expect(output).not.toContain("  ");
+
+      // Check NODE_ENV is inlined
+      expect(output).toContain('"production"');
+      expect(output).not.toContain("process.env.NODE_ENV");
+
+      // Check JSX uses production runtime
+      expect(output).toContain("jsx-runtime");
+    },
+  });
+  itBundled("minify/UnusedInCommaExpression", {
+    files: {
+      "/entry.ts": `
+        let flag = computeSomethingUnknown();
+        // the expression 'flag === 1' has no side effects
+        capture((flag === 1234 ? "a" : "b", "c"));
+        // 'flag == 1234' may invoke a side effect
+        capture((flag == 1234 ? "a" : "b", "c"));
+        // 'unbound' may invoke a side effect
+        capture((unbound ? "a" : "b", "c"));
+        // two side effects
+        capture((flag == 1234 ? "a" : unbound, "c"));
+        // two side effects 2
+        capture(([flag == 1234] ? unbound : other, "c"));
+        // new expression
+        capture((new Date(), 123));
+        // call expression
+        const funcWithNoSideEffects = () => 1;
+        capture((/* @__PURE__ */ funcWithNoSideEffects(), 456));
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      // 'flag' cannot throw on access or comparison via '==='
+      '"c"',
+      // 0 is inserted instead of 1234 because it is shorter and invokes the same coercion side effects
+      '(flag == 0, "c")',
+      // 'unbound' may throw on access
+      '(unbound, "c")',
+      // 0 is not inserted here because the result of 'flag == 1234' is used by the ternary
+      '(flag == 1234 || unbound, "c")',
+      // || is not inserted since the condition is always true, can simplify '1234' to '0'
+      '(flag == 0, unbound, "c")',
+      "123",
+      "456",
+    ],
+  });
+
+  itBundled("minify/TrimCodeInDeadControlFlow", {
+    files: {
+      "/entry.js": /* js */ `
+        // Basic dead code elimination after return
+        function test1() {
+          return 'foo'; 
+          try { 
+            return 'bar';
+          } catch {}
+        }
+
+        // Keep var declarations in dead try block
+        function test2() {
+          return foo = true; 
+          try { 
+            var foo;
+          } catch {}
+        }
+
+        // Keep var declarations in dead catch block
+        function test3() {
+          return foo = true; 
+          try {} catch { 
+            var foo;
+          }
+        }
+
+        // Complex async function with dead code after early return
+        async function test4() {
+          if (true) return { status: "disabled_for_development" };
+          try {
+            const response = await httpClients.releasesApi.get();
+            if (!response.ok) return { status: "no_release_found" };
+            if (response.statusCode === 204) return { status: "up_to_date" };
+          } catch (error) {
+            return { status: "no_release_found" };
+          }
+          return { status: "downloading" };
+        }
+
+        console.log(test1());
+        console.log(test2());
+        console.log(test3());
+        test4().then(result => console.log(result.status));
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      expect(file).toContain('function test1(){return"foo"}');
+      expect(file).toContain("return foo=!0;try{var foo}catch{}");
+      expect(file).toContain("return foo=!0;try{}catch{var foo}");
+      expect(file).toContain('async function test4(){return{status:"disabled_for_development"}}');
+      expect(file).not.toContain("no_release_found");
+      expect(file).not.toContain("downloading");
+      expect(file).not.toContain("up_to_date");
+    },
+    run: {
+      stdout: "foo\ntrue\ntrue\ndisabled_for_development",
+    },
+  });
 });

@@ -76,7 +76,7 @@ The `define` field allows you to replace certain global identifiers with constan
 
 ### `loader`
 
-Configure how Bun maps file extensions to loaders. This is useful for loading files that aren't natively supported by Bun. If
+Configure how Bun maps file extensions to loaders. This is useful for loading files that aren't natively supported by Bun.
 
 ```toml
 [loader]
@@ -107,6 +107,21 @@ The `telemetry` field permit to enable/disable the analytics records. Bun record
 ```toml
 telemetry = false
 ```
+
+### `console`
+
+Configure console output behavior.
+
+#### `console.depth`
+
+Set the default depth for `console.log()` object inspection. Default `2`.
+
+```toml
+[console]
+depth = 3
+```
+
+This controls how deeply nested objects are displayed in console output. Higher values show more nested properties but may produce verbose output for complex objects. This setting can be overridden by the `--console-depth` CLI flag.
 
 ## Test runner
 
@@ -180,6 +195,42 @@ Whether to skip test files when computing coverage statistics. Default `false`.
 coverageSkipTestFiles = false
 ```
 
+### `test.coveragePathIgnorePatterns`
+
+Exclude specific files or file patterns from coverage reports using glob patterns. Can be a single string pattern or an array of patterns.
+
+```toml
+[test]
+# Single pattern
+coveragePathIgnorePatterns = "**/*.spec.ts"
+
+# Multiple patterns
+coveragePathIgnorePatterns = [
+  "**/*.spec.ts",
+  "**/*.test.ts",
+  "src/utils/**",
+  "*.config.js"
+]
+```
+
+### `test.coverageReporter`
+
+By default, coverage reports will be printed to the console. For persistent code coverage reports in CI environments and for other tools use `lcov`.
+
+```toml
+[test]
+coverageReporter  = ["text", "lcov"]  # default ["text"]
+```
+
+### `test.coverageDir`
+
+Set path where coverage reports will be saved. Please notice, that it works only for persistent `coverageReporter` like `lcov`.
+
+```toml
+[test]
+coverageDir = "path/to/somewhere"  # default "coverage"
+```
+
 ## Package manager
 
 Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured under the `[install]` section.
@@ -240,13 +291,13 @@ exact = false
 
 ### `install.saveTextLockfile`
 
-Generate `bun.lock`, a human-readable text-based lockfile. Once generated, Bun will use this file instead of `bun.lockb`, choosing it over the binary lockfile if both are present.
+If false, generate a binary `bun.lockb` instead of a text-based `bun.lock` file when running `bun install` and no lockfile is present.
 
-Default `false`. In Bun v1.2.0 the default lockfile format will change to `bun.lock`.
+Default `true` (since Bun v1.2).
 
 ```toml
 [install]
-saveTextLockfile = true
+saveTextLockfile = false
 ```
 
 <!--
@@ -315,7 +366,7 @@ Valid values are:
 
 ### `install.frozenLockfile`
 
-When true, `bun install` will not update `bun.lockb`. Default `false`. If `package.json` and the existing `bun.lockb` are not in agreement, this will error.
+When true, `bun install` will not update `bun.lock`. Default `false`. If `package.json` and the existing `bun.lock` are not in agreement, this will error.
 
 ```toml
 [install]
@@ -335,6 +386,8 @@ dryRun = false
 
 To configure the directory where Bun puts globally installed packages.
 
+Environment variable: `BUN_INSTALL_GLOBAL_DIR`
+
 ```toml
 [install]
 # where `bun install --global` installs packages
@@ -344,6 +397,8 @@ globalDir = "~/.bun/install/global"
 ### `install.globalBinDir`
 
 To configure the directory where Bun installs globally installed binaries and CLIs.
+
+Environment variable: `BUN_INSTALL_BIN`
 
 ```toml
 # where globally-installed package bins are linked
@@ -362,6 +417,17 @@ registry = "https://registry.npmjs.org"
 registry = { url = "https://registry.npmjs.org", token = "123456" }
 # set a username/password
 registry = "https://username:password@registry.npmjs.org"
+```
+
+### `install.linkWorkspacePackages`
+
+To configure how workspace packages are linked, use the `install.linkWorkspacePackages` option.
+
+Whether to link workspace packages from the monorepo root to their respective `node_modules` directories. Default `true`.
+
+```toml
+[install]
+linkWorkspacePackages = true
 ```
 
 ### `install.scopes`
@@ -423,7 +489,7 @@ Whether to generate a lockfile on `bun install`. Default `true`.
 save = true
 ```
 
-Whether to generate a non-Bun lockfile alongside `bun.lockb`. (A `bun.lockb` will always be created.) Currently `"yarn"` is the only supported value.
+Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` will always be created.) Currently `"yarn"` is the only supported value.
 
 ```toml
 [install.lockfile]

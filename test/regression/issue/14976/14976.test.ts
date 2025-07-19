@@ -1,9 +1,8 @@
-import { mile𐃘add1 } from "./import_target";
-import { mile𐃘add1 as m } from "./import_target";
-import * as i from "./import_target";
-import { test, expect } from "bun:test";
 import { $ } from "bun";
+import { expect, test } from "bun:test";
 import { bunExe, tempDirWithFiles } from "harness";
+import * as i from "./import_target";
+import { mile𐃘add1 as m, mile𐃘add1 } from "./import_target";
 
 test("unicode imports", () => {
   expect(mile𐃘add1(25)).toBe(26);
@@ -39,7 +38,6 @@ test("bun build --target=bun outputs only ascii", async () => {
   const build_result = await Bun.build({
     entrypoints: [import.meta.dirname + "/import_target.ts"],
     target: "bun",
-    throw: true,
   });
   expect(build_result.success).toBe(true);
   expect(build_result.outputs.length).toBe(1);

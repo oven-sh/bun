@@ -5,6 +5,9 @@
   // - FORCE_COLOR=1 forces colors in the terminal
   // - "${workspaceFolder}/test" is the cwd for `bun test` so it matches CI, we should fix this later
   // - "cppvsdbg" is used instead of "lldb" on Windows, because "lldb" is too slow
+  // - Seeing WebKit files requires `vendor/WebKit` to exist and have code from the right commit.
+  //   Run `bun sync-webkit-source` to ensure that folder is at the right commit. If you haven't
+  //   cloned it at all, that script will suggest how.
   "version": "0.2.0",
   "configurations": [
     // bun test [file]
@@ -13,153 +16,35 @@
       "request": "launch",
       "name": "bun test [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${file}"],
+      "args": ["test", "--timeout=3600000", "${file}"],
       "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [file] --only",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "--only", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
-        "BUN_DEBUG_jest": "1",
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     {
       "type": "lldb",
       "name": "Attach",
       "request": "attach",
       "pid": "${command:pickMyProcess}",
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [file] (fast)",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [file] (verbose)",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "0",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [file] --watch",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "--watch", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [file] --hot",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "--hot", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [file] --inspect",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-        "BUN_INSPECT": "ws://localhost:0/?wait=1",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
-      },
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [file] --inspect-brk",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-        "BUN_INSPECT": "ws://localhost:0/?break=1",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     // bun run [file]
@@ -168,133 +53,21 @@
       "request": "launch",
       "name": "bun run [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "${fileBasename}"],
+      "args": ["${file}"],
       "cwd": "${fileDirname}",
-      "envFile": "${workspaceFolder}/.env",
       "env": {
         "FORCE_COLOR": "0",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run [file] (fast)",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "${fileBasename}"],
-      "cwd": "${fileDirname}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
-        "BUN_DEBUG_IncrementalGraph": "1",
-        "BUN_DEBUG_Bake": "1",
-        "BUN_DEBUG_reload_file_list": "1",
-        "GOMAXPROCS": "1",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run [file] (verbose)",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "${fileBasename}"],
-      "cwd": "${fileDirname}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "0",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run [file] --watch",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "--watch", "${fileBasename}"],
-      "cwd": "${fileDirname}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        // "BUN_DEBUG_DEBUGGER": "1",
-        // "BUN_DEBUG_INTERNAL_DEBUGGER": "1",
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-        // "BUN_INSPECT": "ws+unix:///var/folders/jk/8fzl9l5119598vsqrmphsw7m0000gn/T/tl15npi7qtf.sock?report=1",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run [file] --hot",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "--hot", "${fileBasename}"],
-      "cwd": "${fileDirname}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run [file] --inspect",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "${fileBasename}"],
-      "cwd": "${fileDirname}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "FORCE_COLOR": "0",
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-        "BUN_INSPECT": "ws://localhost:0/?wait=1",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
-      },
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run [file] --inspect-brk",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "${fileBasename}"],
-      "cwd": "${fileDirname}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "FORCE_COLOR": "0",
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-        "BUN_INSPECT": "ws://localhost:0/?break=1",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     // bun test [...]
@@ -303,130 +76,21 @@
       "request": "launch",
       "name": "bun test [...]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "${input:testName}"],
       "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [...] (fast)",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [...] (verbose)",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [...] --watch",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "--watch", "${input:testName}"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [...] --hot",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "--hot", "${input:testName}"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [...] --inspect",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-        "BUN_INSPECT": "ws://localhost:0/?wait=1",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
-      },
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [...] --inspect-brk",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-        "BUN_INSPECT": "ws://localhost:0/?break=1",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     // bun exec [...]
@@ -437,14 +101,19 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["exec", "${input:testName}"],
       "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     // bun test [*]
     {
@@ -454,51 +123,18 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test"],
       "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [*] (fast)",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [*] --inspect",
-      "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-        "BUN_INSPECT": "ws://localhost:0/",
-      },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -508,30 +144,19 @@
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["install"],
       "cwd": "${fileDirname}",
-      "envFile": "${workspaceFolder}/.env",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test [*] (ci)",
-      "program": "node",
-      "args": ["test/runner.node.mjs"],
-      "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
     // Windows: bun test [file]
     {
@@ -542,7 +167,7 @@
       "request": "launch",
       "name": "Windows: bun test [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${file}"],
+      "args": ["test", "--timeout=3600000", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -558,149 +183,6 @@
           "value": "1",
         },
       ],
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test --only [file]",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "--only", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-      ],
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test [file] (fast)",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "0",
-        },
-      ],
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test [file] (verbose)",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "0",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-      ],
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test [file] --inspect",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-        {
-          "name": "BUN_INSPECT",
-          "value": "ws://localhost:0/?wait=1",
-        },
-      ],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
-      },
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test [file] --inspect-brk",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-        {
-          "name": "BUN_INSPECT",
-          "value": "ws://localhost:0/?break=1",
-        },
-      ],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
-      },
     },
     // Windows: bun run [file]
     {
@@ -749,87 +231,6 @@
         },
       ],
     },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun run [file] (verbose)",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["run", "${fileBasename}"],
-      "cwd": "${fileDirname}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-      ],
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun run [file] --inspect",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["run", "${fileBasename}"],
-      "cwd": "${fileDirname}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-        {
-          "name": "BUN_INSPECT",
-          "value": "ws://localhost:0/?wait=1",
-        },
-      ],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
-      },
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun run [file] --inspect-brk",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["run", "${fileBasename}"],
-      "cwd": "${fileDirname}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-        {
-          "name": "BUN_INSPECT",
-          "value": "ws://localhost:0/?break=1",
-        },
-      ],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
-      },
-    },
     // Windows: bun test [...]
     {
       "type": "cppvsdbg",
@@ -839,7 +240,7 @@
       "request": "launch",
       "name": "Windows: bun test [...]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -855,174 +256,6 @@
           "value": "2",
         },
       ],
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test [...] (fast)",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "0",
-        },
-      ],
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test [...] (verbose)",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "0",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-      ],
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test [...] --watch",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "--watch", "${input:testName}"],
-      "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-      ],
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test [...] --hot",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "--hot", "${input:testName}"],
-      "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-      ],
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test [...] --inspect",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-        {
-          "name": "BUN_INSPECT",
-          "value": "ws://localhost:0/?wait=1",
-        },
-      ],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
-      },
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test [...] --inspect-brk",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-        {
-          "name": "BUN_INSPECT",
-          "value": "ws://localhost:0/?break=1",
-        },
-      ],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
-      },
     },
     // Windows: bun exec [...]
     {
@@ -1069,91 +302,42 @@
       ],
     },
     {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test [*] (fast)",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test"],
+      "type": "bun",
+      "name": "[JS] bun test [file]",
+      "runtime": "${workspaceFolder}/build/debug/bun-debug",
+      "runtimeArgs": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "0",
-        },
-      ],
-    },
-    {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test [*] --inspect",
-      "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test"],
-      "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-        {
-          "name": "BUN_INSPECT",
-          "value": "ws://localhost:0/",
-        },
-      ],
-      "serverReadyAction": {
-        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
-        "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
-        "action": "openExternally",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
     },
     {
-      "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
-      "request": "launch",
-      "name": "Windows: bun test [*] (ci)",
-      "program": "node",
-      "args": ["test/runner.node.mjs"],
+      "type": "bun",
+      "name": "[JS] bun run [file]",
+      "runtime": "${workspaceFolder}/build/debug/bun-debug",
+      "runtimeArgs": ["run", "${file}"],
       "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_jest",
-          "value": "1",
-        },
-        {
-          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+      },
+    },
+    {
+      "type": "midas-rr",
+      "request": "attach",
+      "name": "rr",
+      "trace": "Off",
+      "setupCommands": [
+        "handle SIGPWR nostop noprint pass",
+        "source ${workspaceFolder}/misctools/gdb/std_gdb_pretty_printers.py",
+        "source ${workspaceFolder}/misctools/gdb/zig_gdb_pretty_printers.py",
+        "set substitute-path /webkitbuild/vendor/WebKit ${workspaceFolder}/vendor/WebKit",
+        "set substitute-path /webkitbuild/.WTF/Headers ${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // uncomment if you like
+        // "set disassembly-flavor intel",
+        "set print asm-demangle",
       ],
-      "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
   ],
   "inputs": [

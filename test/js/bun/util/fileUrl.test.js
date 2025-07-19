@@ -9,9 +9,10 @@ describe("pathToFileURL", () => {
 });
 
 describe("fileURLToPath", () => {
+  const absoluteErrorMessage = "File URL path must be an absolute";
   it("should convert a file url to a path", () => {
     if (isWindows) {
-      expect(() => fileURLToPath("file:///path/to/file.js")).toThrow("File URL path must be absolute");
+      expect(() => fileURLToPath("file:///path/to/file.js")).toThrow(absoluteErrorMessage);
     } else {
       expect(fileURLToPath("file:///path/to/file.js")).toBe("/path/to/file.js");
     }
@@ -19,7 +20,7 @@ describe("fileURLToPath", () => {
 
   it("should convert a URL to a path", () => {
     if (isWindows) {
-      expect(() => fileURLToPath(new URL("file:///path/to/file.js"))).toThrow("File URL path must be absolute");
+      expect(() => fileURLToPath(new URL("file:///path/to/file.js"))).toThrow(absoluteErrorMessage);
     } else {
       expect(fileURLToPath(new URL("file:///path/to/file.js"))).toBe("/path/to/file.js");
     }

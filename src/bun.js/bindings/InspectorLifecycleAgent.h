@@ -18,6 +18,7 @@ enum class DisconnectReason;
 
 class InspectorLifecycleAgent final : public InspectorAgentBase, public Inspector::LifecycleReporterBackendDispatcherHandler {
     WTF_MAKE_NONCOPYABLE(InspectorLifecycleAgent);
+    WTF_MAKE_TZONE_ALLOCATED(InspectorLifecycleAgent);
 
 public:
     InspectorLifecycleAgent(JSC::JSGlobalObject&);
@@ -30,6 +31,8 @@ public:
     // LifecycleReporterBackendDispatcherHandler
     virtual Protocol::ErrorStringOr<void> enable() final;
     virtual Protocol::ErrorStringOr<void> disable() final;
+
+    virtual CommandResultOf<Ref<JSON::ArrayOf<String>> /* esm */, Ref<JSON::ArrayOf<String>> /* cjs */, String /* cwd */, String /* main */, Ref<JSON::ArrayOf<String>> /* argv */> getModuleGraph() final;
 
     // Public API
     void reportReload();

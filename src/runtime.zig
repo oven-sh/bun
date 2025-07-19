@@ -1,21 +1,13 @@
-const options = @import("./options.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
-const resolve_path = @import("./resolver/resolve_path.zig");
-const Fs = @import("./fs.zig");
 const Schema = @import("./api/schema.zig");
 const Ref = @import("ast/base.zig").Ref;
 const JSAst = bun.JSAst;
-const content = @import("root").content;
 
 const Api = Schema.Api;
 fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []const u8 {
@@ -149,12 +141,15 @@ pub const Fallback = struct {
 };
 
 pub const Runtime = struct {
-    pub const source_code = @embedFile("runtime.out.js");
-    pub const hash = brk: {
-        @setEvalBranchQuota(source_code.len * 50);
-        break :brk bun.Wyhash11.hash(0, source_code);
-    };
+    pub fn sourceCode() string {
+        return if (Environment.codegen_embed)
+            @embedFile("runtime.out.js")
+        else
+            bun.runtimeEmbedFile(.codegen, "runtime.out.js");
+    }
+
     pub fn versionHash() u32 {
+        const hash = bun.Wyhash11.hash(0, sourceCode());
         return @truncate(hash);
     }
 
@@ -190,10 +185,6 @@ pub const Runtime = struct {
         set_breakpoint_on_first_line: bool = false,
 
         trim_unused_imports: bool = false,
-
-        /// Use `import.meta.require()` instead of require()?
-        /// This is only supported with --target=bun
-        use_import_meta_require: bool = false,
 
         /// Allow runtime usage of require(), converting `require` into `__require`
         auto_polyfill_require: bool = false,
@@ -240,7 +231,6 @@ pub const Runtime = struct {
             .dead_code_elimination,
             .set_breakpoint_on_first_line,
             .trim_unused_imports,
-            .use_import_meta_require,
             .dont_bundle_twice,
             .commonjs_at_runtime,
             .emit_decorator_metadata,
@@ -325,6 +315,7 @@ pub const Runtime = struct {
         @"$$typeof": ?Ref = null,
         __using: ?Ref = null,
         __callDispose: ?Ref = null,
+        __jsonParse: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -340,6 +331,7 @@ pub const Runtime = struct {
             "$$typeof",
             "__using",
             "__callDispose",
+            "__jsonParse",
         };
         const all_sorted: [all.len]string = brk: {
             @setEvalBranchQuota(1000000);

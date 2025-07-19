@@ -1,4 +1,3 @@
-// Flags: --expose-internals
 'use strict';
 
 require('../common');
@@ -10,8 +9,7 @@ require('../common');
 const assert = require('assert');
 
 // Or anything that calls StreamBase::AddMethods when setting up its prototype
-const { internalBinding } = require('internal/test/binding');
-const TTY = internalBinding('tty_wrap').TTY;
+const TTY = process.binding('tty_wrap').TTY;
 
 {
   const ttyIsEnumerable = Object.prototype.propertyIsEnumerable.bind(TTY);

@@ -106,13 +106,13 @@ $ bun run clean
  Done.
 ```
 
-Bun executes the script command in a subshell. It checks for the following shells in order, using the first one it finds: `bash`, `sh`, `zsh`.
+Bun executes the script command in a subshell. On Linux & macOS, it checks for the following shells in order, using the first one it finds: `bash`, `sh`, `zsh`. On windows, it uses [bun shell](https://bun.com/docs/runtime/shell) to support bash-like syntax and many common commands.
 
 {% callout %}
 ⚡️ The startup time for `npm run` on Linux is roughly 170ms; with Bun it is `6ms`.
 {% /callout %}
 
-If there is a name conflict between a `package.json` script and a built-in `bun` command (`install`, `dev`, `upgrade`, etc.) Bun's built-in command takes precedence. In this case, use the more explicit `bun run` command to execute your package script.
+Scripts can also be run with the shorter command `bun <script>`, however if there is a built-in bun command with the same name, the built-in command takes precedence. In this case, use the more explicit `bun run <script>` command to execute your package script.
 
 ```bash
 $ bun run dev
@@ -153,7 +153,7 @@ $ bun run --bun vite
 
 ### Filtering
 
-in monorepos containing multiple packages, you can use the `--filter` argument to execute scripts in many packages at once.
+In monorepos containing multiple packages, you can use the `--filter` argument to execute scripts in many packages at once.
 
 Use `bun run --filter <name_pattern> <script>` to execute `<script>` in all packages whose name matches `<name_pattern>`.
 For example, if you have subdirectories containing packages named `foo`, `bar` and `baz`, running
@@ -164,7 +164,7 @@ bun run --filter 'ba*' <script>
 
 will execute `<script>` in both `bar` and `baz`, but not in `foo`.
 
-Find more details in the docs page for [filter](https://bun.sh/docs/cli/filter).
+Find more details in the docs page for [filter](https://bun.com/docs/cli/filter#running-scripts-with-filter).
 
 ## `bun run -` to pipe code from stdin
 
@@ -185,6 +185,23 @@ This is TypeScript!
 
 For convenience, all code is treated as TypeScript with JSX support when using `bun run -`.
 
+## `bun run --console-depth`
+
+Control the depth of object inspection in console output with the `--console-depth` flag.
+
+```bash
+$ bun --console-depth 5 run index.tsx
+```
+
+This sets how deeply nested objects are displayed in `console.log()` output. The default depth is `2`. Higher values show more nested properties but may produce verbose output for complex objects.
+
+```js
+const nested = { a: { b: { c: { d: "deep" } } } };
+console.log(nested);
+// With --console-depth 2 (default): { a: { b: [Object] } }
+// With --console-depth 4: { a: { b: { c: { d: 'deep' } } } }
+```
+
 ## `bun run --smol`
 
 In memory-constrained environments, use the `--smol` flag to reduce memory usage at a cost to performance.
@@ -194,3 +211,16 @@ $ bun --smol run index.tsx
 ```
 
 This causes the garbage collector to run more frequently, which can slow down execution. However, it can be useful in environments with limited memory. Bun automatically adjusts the garbage collector's heap size based on the available memory (accounting for cgroups and other memory limits) with and without the `--smol` flag, so this is mostly useful for cases where you want to make the heap size grow more slowly.
+
+## Resolution order
+
+Absolute paths and paths starting with `./` or `.\\` are always executed as source files. Unless using `bun run`, running a file with an allowed extension will prefer the file over a package.json script.
+
+When there is a package.json script and a file with the same name, `bun run` prioritizes the package.json script. The full resolution order is:
+
+1. package.json scripts, eg `bun run build`
+2. Source files, eg `bun run src/main.js`
+3. Binaries from project packages, eg `bun add eslint && bun run eslint`
+4. (`bun run` only) System commands, eg `bun run ls`
+
+{% bunCLIUsage command="run" /%}

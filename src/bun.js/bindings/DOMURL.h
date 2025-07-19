@@ -65,6 +65,10 @@ public:
     {
         return sizeof(DOMURL) + m_url.string().sizeInBytes();
     }
+    size_t memoryCostForGC() const
+    {
+        return sizeof(DOMURL) + m_initialURLCostForGC;
+    }
 
 private:
     static ExceptionOr<Ref<DOMURL>> create(const String& url, const URL& base);
@@ -75,6 +79,7 @@ private:
 
     URL m_url;
     RefPtr<URLSearchParams> m_searchParams;
+    short m_initialURLCostForGC { 0 };
 };
 
 } // namespace WebCore

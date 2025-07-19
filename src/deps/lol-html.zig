@@ -1,6 +1,6 @@
 pub const Error = error{Fail};
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const MemorySettings = extern struct {
     preallocated_parsing_buffer_size: usize,
     max_allowed_memory_usage: usize,
@@ -581,8 +581,7 @@ pub const HTMLString = extern struct {
         return this.ptr[0..this.len];
     }
 
-    fn deinit_external(ctx: *anyopaque, ptr: *anyopaque, len: u32) callconv(.C) void {
-        _ = ctx;
+    fn deinit_external(_: [*]u8, ptr: *anyopaque, len: u32) callconv(.C) void {
         auto_disable();
         lol_html_str_free(.{ .ptr = @as([*]const u8, @ptrCast(ptr)), .len = len });
     }
@@ -590,10 +589,10 @@ pub const HTMLString = extern struct {
     pub fn toString(this: HTMLString) bun.String {
         const bytes = this.slice();
         if (bytes.len > 0 and bun.strings.isAllASCII(bytes)) {
-            return bun.String.createExternal(bytes, true, @constCast(bytes.ptr), &deinit_external);
+            return bun.String.createExternal([*]u8, bytes, true, @constCast(bytes.ptr), &deinit_external);
         }
         defer this.deinit();
-        return bun.String.createUTF8(bytes);
+        return bun.String.cloneUTF8(bytes);
     }
 
     pub fn toJS(this: HTMLString, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
@@ -732,8 +731,8 @@ pub const Comment = opaque {
 };
 
 pub const Directive = enum(c_uint) {
-    stop = 0,
-    @"continue" = 1,
+    @"continue" = 0,
+    stop = 1,
 };
 pub const lol_html_comment_handler_t = *const fn (*Comment, ?*anyopaque) callconv(.C) Directive;
 pub const lol_html_text_handler_handler_t = *const fn (*TextChunk, ?*anyopaque) callconv(.C) Directive;

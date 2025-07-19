@@ -132,7 +132,7 @@ import { readableStreamFromArray } from "harness";
   test("constructing with an invalid encoding should throw", () => {
     expect(() => {
       new TextDecoderStream("");
-    }).toThrow(TypeError);
+    }).toThrow(RangeError);
   });
 
   test("constructing with a non-stringifiable encoding should throw", () => {

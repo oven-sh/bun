@@ -16,7 +16,7 @@ using namespace JSC;
 using namespace WebCore;
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 2) {
@@ -30,7 +30,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners, (JSGlobalObject 
     auto eventType = callFrame->argument(1).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         return Bun::throwError(globalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
             "ERR_INVALID_ARG_TYPE: first argument must be of type EventEmitter"_s);
     }
@@ -44,7 +44,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners, (JSGlobalObject 
         }
     }
 
-    return JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values)));
 }
 
 }

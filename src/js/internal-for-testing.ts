@@ -1,3 +1,5 @@
+// Hardcoded module "bun:internal-for-testing"
+
 // If you want to test an internal API, add a binding into this file.
 //
 // Then at test time: import ... from "bun:internal-for-testing"
@@ -10,7 +12,7 @@ const fmtBinding = $bindgenFn("fmt.bind.ts", "fmtString");
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
-export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
+export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
@@ -53,8 +55,12 @@ export const iniInternals = {
 
 export const cssInternals = {
   minifyTestWithOptions: $newZigFunction("css_internals.zig", "minifyTestWithOptions", 3),
+  minifyErrorTestWithOptions: $newZigFunction("css_internals.zig", "minifyErrorTestWithOptions", 3),
   testWithOptions: $newZigFunction("css_internals.zig", "testWithOptions", 3),
   prefixTestWithOptions: $newZigFunction("css_internals.zig", "prefixTestWithOptions", 3),
+  minifyTest: $newZigFunction("css_internals.zig", "minifyTest", 3),
+  prefixTest: $newZigFunction("css_internals.zig", "prefixTest", 3),
+  _test: $newZigFunction("css_internals.zig", "_test", 3),
   attrTest: $newZigFunction("css_internals.zig", "attrTest", 3),
 };
 
@@ -72,7 +78,7 @@ export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bind
   closeTempDirHandle: () => void;
 };
 
-export const install_test_helpers = $zig("install.zig", "bun_install_js_bindings.generate") as {
+export const install_test_helpers = $zig("install_binding.zig", "bun_install_js_bindings.generate") as {
   /**
    * Returns the lockfile at the given path as an object.
    */
@@ -95,7 +101,7 @@ export const memfd_create: (size: number) => number = $newZigFunction(
 );
 
 export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $newZigFunction(
-  "javascript.zig",
+  "virtual_machine_exports.zig",
   "Bun__setSyntheticAllocationLimitForTesting",
   1,
 );
@@ -151,3 +157,39 @@ export const bindgen = $zig("bindgen_test.zig", "getBindgenTestFunctions") as {
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
+export const Dequeue = require("internal/fifo");
+
+export const fs = require("node:fs/promises").$data;
+
+export const fsStreamInternals = {
+  writeStreamFastPath(str) {
+    return str[require("internal/fs/streams").kWriteStreamFastPath];
+  },
+};
+
+export const arrayBufferViewHasBuffer = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_arrayBufferViewHasBuffer",
+  1,
+);
+
+export const timerInternals = {
+  timerClockMs: $newZigFunction("Timer.zig", "internal_bindings.timerClockMs", 0),
+};
+
+export const decodeURIComponentSIMD = $newCppFunction(
+  "decodeURIComponentSIMD.cpp",
+  "jsFunctionDecodeURIComponentSIMD",
+  1,
+);
+
+export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
+export const getCounters = $newZigFunction("Counters.zig", "createCountersObject", 0);
+export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
+
+interface setSocketOptionsFn {
+  (socket: Bun.Socket, sendBuffer: 1, size: number): void;
+  (socket: Bun.Socket, recvBuffer: 2, size: number): void;
+}
+
+export const setSocketOptions: setSocketOptionsFn = $newZigFunction("socket.zig", "jsSetSocketOptions", 3);

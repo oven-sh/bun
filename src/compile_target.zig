@@ -4,7 +4,7 @@
 /// It uses npm to download the bun binary from the npm registry
 /// It stores the downloaded binary into the bun install cache.
 ///
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const Environment = bun.Environment;
 const strings = bun.strings;
@@ -27,6 +27,14 @@ const Libc = enum {
     default,
     /// musl libc
     musl,
+
+    /// npm package name, `@oven-sh/bun-{os}-{arch}`
+    pub fn npmName(this: Libc) []const u8 {
+        return switch (this) {
+            .default => "",
+            .musl => "-musl",
+        };
+    }
 
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
         if (self == .musl) {
@@ -64,21 +72,25 @@ pub fn toNPMRegistryURL(this: *const CompileTarget, buf: []u8) ![]const u8 {
 pub fn toNPMRegistryURLWithURL(this: *const CompileTarget, buf: []u8, registry_url: []const u8) ![]const u8 {
     return switch (this.os) {
         inline else => |os| switch (this.arch) {
-            inline else => |arch| switch (this.baseline) {
-                // https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-0.1.6.tgz
-                inline else => |is_baseline| try std.fmt.bufPrint(buf, comptime "{s}/@oven/bun-" ++
-                    os.npmName() ++ "-" ++ arch.npmName() ++
-                    (if (is_baseline) "-baseline" else "") ++
-                    "/-/bun-" ++
-                    os.npmName() ++ "-" ++ arch.npmName() ++
-                    (if (is_baseline) "-baseline" else "") ++
-                    "-" ++
-                    "{d}.{d}.{d}.tgz", .{
-                    registry_url,
-                    this.version.major,
-                    this.version.minor,
-                    this.version.patch,
-                }),
+            inline else => |arch| switch (this.libc) {
+                inline else => |libc| switch (this.baseline) {
+                    // https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-0.1.6.tgz
+                    inline else => |is_baseline| try std.fmt.bufPrint(buf, comptime "{s}/@oven/bun-" ++
+                        os.npmName() ++ "-" ++ arch.npmName() ++
+                        libc.npmName() ++
+                        (if (is_baseline) "-baseline" else "") ++
+                        "/-/bun-" ++
+                        os.npmName() ++ "-" ++ arch.npmName() ++
+                        libc.npmName() ++
+                        (if (is_baseline) "-baseline" else "") ++
+                        "-" ++
+                        "{d}.{d}.{d}.tgz", .{
+                        registry_url,
+                        this.version.major,
+                        this.version.minor,
+                        this.version.patch,
+                    }),
+                },
             },
         },
     };
@@ -111,7 +123,7 @@ pub fn exePath(this: *const CompileTarget, buf: *bun.PathBuffer, version_str: [:
         return buf[0..self_exe_path.len :0];
     }
 
-    if (bun.sys.existsAt(bun.toFD(std.fs.cwd()), version_str)) {
+    if (bun.FD.cwd().existsAt(version_str)) {
         needs_download.* = false;
         return version_str;
     }
@@ -126,7 +138,7 @@ pub fn exePath(this: *const CompileTarget, buf: *bun.PathBuffer, version_str: [:
         .auto,
     );
 
-    if (bun.sys.existsAt(bun.toFD(std.fs.cwd()), dest)) {
+    if (bun.FD.cwd().existsAt(dest)) {
         needs_download.* = false;
     }
 
@@ -285,7 +297,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
 
                 var did_retry = false;
                 while (true) {
-                    bun.C.moveFileZ(bun.toFD(tmpdir), if (this.os == .windows) "bun.exe" else "bun", bun.invalid_fd, dest_z) catch |err| {
+                    bun.sys.moveFileZ(.fromStdDir(tmpdir), if (this.os == .windows) "bun.exe" else "bun", bun.invalid_fd, dest_z) catch |err| {
                         if (!did_retry) {
                             did_retry = true;
                             const dirname = bun.path.dirname(dest_z, .loose);
@@ -381,7 +393,7 @@ pub fn from(input_: []const u8) CompileTarget {
             Output.errGeneric(
                 \\Unsupported target {} in "bun{s}"
                 \\To see the supported targets:
-                \\  https://bun.sh/docs/bundler/executables
+                \\  https://bun.com/docs/bundler/executables
             ,
                 .{
                     bun.fmt.quote(token),

@@ -11,8 +11,14 @@
 #include "ZigGlobalObject.h"
 
 #include "ModuleLoader.h"
+#include <wtf/TZoneMallocInlines.h>
+
+using namespace JSC;
+using namespace Inspector;
 
 namespace Inspector {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorTestReporterAgent);
 
 // Zig bindings implementation
 extern "C" {
@@ -20,10 +26,28 @@ extern "C" {
 void Bun__TestReporterAgentEnable(Inspector::InspectorTestReporterAgent* agent);
 void Bun__TestReporterAgentDisable(Inspector::InspectorTestReporterAgent* agent);
 
-void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, JSC::CallFrame* callFrame, int testId, BunString* name)
+enum class BunTestType : uint8_t {
+    Test,
+    Describe,
+};
+
+void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, JSC::CallFrame* callFrame, int testId, BunString* name, BunTestType item_type, int parentId)
 {
     auto str = name->toWTFString(BunString::ZeroCopy);
-    agent->reportTestFound(callFrame, testId, str);
+
+    Protocol::TestReporter::TestType type;
+    switch (item_type) {
+    case BunTestType::Test:
+        type = Protocol::TestReporter::TestType::Test;
+        break;
+    case BunTestType::Describe:
+        type = Protocol::TestReporter::TestType::Describe;
+        break;
+    default:
+        ASSERT_NOT_REACHED();
+    }
+
+    agent->reportTestFound(callFrame, testId, str, type, parentId);
 }
 
 void Bun__TestReporterAgentReportTestStart(Inspector::InspectorTestReporterAgent* agent, int testId)
@@ -37,6 +61,7 @@ enum class BunTestStatus : uint8_t {
     Timeout,
     Skip,
     Todo,
+    SkippedBecauseLabel,
 };
 
 void Bun__TestReporterAgentReportTestEnd(Inspector::InspectorTestReporterAgent* agent, int testId, BunTestStatus bunTestStatus, double elapsed)
@@ -58,9 +83,13 @@ void Bun__TestReporterAgentReportTestEnd(Inspector::InspectorTestReporterAgent* 
     case BunTestStatus::Todo:
         status = Protocol::TestReporter::TestStatus::Todo;
         break;
+    case BunTestStatus::SkippedBecauseLabel:
+        status = Protocol::TestReporter::TestStatus::Skipped_because_label;
+        break;
     default:
         ASSERT_NOT_REACHED();
     }
+
     agent->reportTestEnd(testId, status, elapsed);
 }
 }
@@ -80,15 +109,13 @@ InspectorTestReporterAgent::~InspectorTestReporterAgent()
     }
 }
 
-void InspectorTestReporterAgent::didCreateFrontendAndBackend(FrontendRouter* frontendRouter, BackendDispatcher* backendDispatcher)
+void InspectorTestReporterAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
 {
-    this->m_frontendDispatcher = makeUnique<TestReporterFrontendDispatcher>(const_cast<FrontendRouter&>(m_globalObject.inspectorController().frontendRouter()));
 }
 
 void InspectorTestReporterAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
     disable();
-    m_frontendDispatcher = nullptr;
 }
 
 Protocol::ErrorStringOr<void> InspectorTestReporterAgent::enable()
@@ -111,7 +138,7 @@ Protocol::ErrorStringOr<void> InspectorTestReporterAgent::disable()
     return {};
 }
 
-void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, const String& name)
+void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, const String& name, Protocol::TestReporter::TestType type, int parentId)
 {
     if (!m_enabled)
         return;
@@ -123,7 +150,7 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
     ZigStackFrame remappedFrame = {};
 
     auto* globalObject = &m_globalObject;
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         if (Zig::isImplementationVisibilityPrivate(visitor))
@@ -132,30 +159,20 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
         if (visitor->hasLineAndColumnInfo()) {
             lineColumn = visitor->computeLineAndColumn();
 
-            String sourceURLForFrame = visitor->sourceURL();
+            String sourceURLForFrame = Zig::sourceURL(visitor);
 
             // Sometimes, the sourceURL is empty.
             // For example, pages in Next.js.
             if (sourceURLForFrame.isEmpty()) {
+                auto* codeBlock = visitor->codeBlock();
+                ASSERT(codeBlock);
 
                 // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
-                const auto& source = visitor->codeBlock()->source();
+                const auto& source = codeBlock->source();
 
                 // source.isNull() is true when the SourceProvider is a null pointer.
                 if (!source.isNull()) {
                     auto* provider = source.provider();
-                    // I'm not 100% sure we should show sourceURLDirective here.
-                    if (!provider->sourceURLDirective().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURLDirective();
-                    } else if (!provider->sourceURL().isEmpty()) {
-                        sourceURLForFrame = provider->sourceURL();
-                    } else {
-                        const auto& origin = provider->sourceOrigin();
-                        if (!origin.isNull()) {
-                            sourceURLForFrame = origin.string();
-                        }
-                    }
-
                     sourceID = provider->asID();
                 }
             }
@@ -176,7 +193,7 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
         remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
-        Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+        Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
 
         sourceURL = remappedFrame.source_url.toWTFString();
         lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
@@ -188,7 +205,9 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
         sourceID > 0 ? String::number(sourceID) : String(),
         sourceURL,
         lineColumn.line,
-        name);
+        name,
+        type,
+        parentId > 0 ? parentId : std::optional<int>());
 }
 
 void InspectorTestReporterAgent::reportTestStart(int testId)

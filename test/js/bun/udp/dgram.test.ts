@@ -71,6 +71,17 @@ describe("createSocket()", () => {
     socket.bind(0, localhost);
   });
 
+  test("address before/after connecting", done => {
+    const socket = createSocket("udp4");
+    socket.bind(0, () => {
+      expect(socket.address().address).toBe("0.0.0.0");
+      socket.connect(socket.address().port, "127.0.0.1", () => {
+        expect(socket.address().address).toBe("127.0.0.1");
+        socket.close(done);
+      });
+    });
+  });
+
   const validateRecv = (server, data, rinfo, bytes) => {
     using _ = disableAggressiveGCScope();
     try {

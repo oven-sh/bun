@@ -169,9 +169,13 @@ Bun.hash.crc32("data", 1234);
 Bun.hash.adler32("data", 1234);
 Bun.hash.cityHash32("data", 1234);
 Bun.hash.cityHash64("data", 1234);
+Bun.hash.xxHash32("data", 1234);
+Bun.hash.xxHash64("data", 1234);
+Bun.hash.xxHash3("data", 1234);
 Bun.hash.murmur32v3("data", 1234);
 Bun.hash.murmur32v2("data", 1234);
 Bun.hash.murmur64v2("data", 1234);
+Bun.hash.rapidhash("data", 1234);
 ```
 
 ## `Bun.CryptoHasher`

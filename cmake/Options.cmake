@@ -26,6 +26,15 @@ else()
   setx(DEBUG OFF)
 endif()
 
+optionx(BUN_TEST BOOL "Build Bun's unit test suite instead of the normal build" DEFAULT OFF)
+
+if (BUN_TEST)
+  setx(TEST ON)
+else()
+  setx(TEST OFF)
+endif()
+
+
 if(CMAKE_BUILD_TYPE MATCHES "MinSizeRel")
   setx(ENABLE_SMOL ON)
 endif()
@@ -62,7 +71,14 @@ if(ARCH STREQUAL "x64")
   optionx(ENABLE_BASELINE BOOL "If baseline features should be used for older CPUs (e.g. disables AVX, AVX2)" DEFAULT OFF)
 endif()
 
-optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEBUG})
+# Disabling logs by default for tests yields faster builds
+if (DEBUG AND NOT TEST)
+  set(DEFAULT_ENABLE_LOGS ON)
+else()
+  set(DEFAULT_ENABLE_LOGS OFF)
+endif()
+
+optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEFAULT_ENABLE_LOGS})
 optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT ${DEBUG})
 
 optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ON)
@@ -75,7 +91,19 @@ endif()
 
 optionx(CANARY_REVISION STRING "The canary revision of the build" DEFAULT ${DEFAULT_CANARY_REVISION})
 
-if(RELEASE AND LINUX AND CI)
+if(LINUX)
+  optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)
+endif()
+
+if(DEBUG AND ((APPLE AND ARCH STREQUAL "aarch64") OR LINUX))
+  set(DEFAULT_ASAN ON)
+else()
+  set(DEFAULT_ASAN OFF)
+endif()
+
+optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ${DEFAULT_ASAN})
+
+if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN)
   set(DEFAULT_LTO ON)
 else()
   set(DEFAULT_LTO OFF)
@@ -83,11 +111,10 @@ endif()
 
 optionx(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT ${DEFAULT_LTO})
 
-if(LINUX)
-  optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)
+if(ENABLE_ASAN AND ENABLE_LTO)
+  message(WARNING "ASAN and LTO are not supported together, disabling LTO")
+  setx(ENABLE_LTO OFF)
 endif()
-
-optionx(ENABLE_PRETTIER BOOL "If prettier should be ran" DEFAULT OFF)
 
 if(USE_VALGRIND AND NOT USE_BASELINE)
   message(WARNING "If valgrind is enabled, baseline must also be enabled")
@@ -112,10 +139,10 @@ endif()
 optionx(REVISION STRING "The git revision of the build" DEFAULT ${DEFAULT_REVISION})
 
 # Used in process.version, process.versions.node, napi, and elsewhere
-optionx(NODEJS_VERSION STRING "The version of Node.js to report" DEFAULT "22.6.0")
+setx(NODEJS_VERSION "24.3.0")
 
 # Used in process.versions.modules and compared while loading V8 modules
-optionx(NODEJS_ABI_VERSION STRING "The ABI version of Node.js to report" DEFAULT "127")
+setx(NODEJS_ABI_VERSION "137")
 
 if(APPLE)
   set(DEFAULT_STATIC_SQLITE OFF)

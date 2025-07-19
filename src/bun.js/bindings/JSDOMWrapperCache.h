@@ -212,11 +212,11 @@ template<typename DOMClass> inline void setSubclassStructureIfNeeded(JSC::JSGlob
 
     using WrapperClass = typename JSDOMWrapperConverterTraits<DOMClass>::WrapperClass;
 
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // If the new target isn't actually callable
-    if (UNLIKELY(!newTarget->isCallable()))
+    if (!newTarget->isCallable()) [[unlikely]]
         newTarget = constructor;
 
     auto* functionGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);

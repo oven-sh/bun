@@ -1,13 +1,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
+const bun = @import("bun");
 
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
 const DashedIdent = css_values.ident.DashedIdent;
-const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 const Location = css.Location;
 const PrintErr = css.PrintErr;
@@ -78,7 +75,23 @@ pub const Targets = css.targets.Targets;
 
 pub const Features = css.targets.Features;
 
-const Browsers = css.targets.Browsers;
+pub const ImportInfo = struct {
+    import_records: *const bun.BabyList(bun.ImportRecord),
+    /// bundle_v2.graph.ast.items(.url_for_css)
+    ast_urls_for_css: []const []const u8,
+    /// bundle_v2.graph.input_files.items(.unique_key_for_additional_file)
+    ast_unique_key_for_additional_file: []const []const u8,
+
+    /// Only safe to use when outside the bundler. As in, the import records
+    /// were not resolved to source indices. This will out-of-bounds otherwise.
+    pub fn initOutsideOfBundler(records: *bun.BabyList(bun.ImportRecord)) ImportInfo {
+        return .{
+            .import_records = records,
+            .ast_urls_for_css = &.{},
+            .ast_unique_key_for_additional_file = &.{},
+        };
+    }
+};
 
 /// A `Printer` represents a destination to output serialized CSS, as used in
 /// the [ToCss](super::traits::ToCss) trait. It can wrap any destination that
@@ -104,23 +117,53 @@ pub fn Printer(comptime Writer: type) type {
         col: u32 = 0,
         minify: bool,
         targets: Targets,
-        vendor_prefix: css.VendorPrefix = css.VendorPrefix.empty(),
+        vendor_prefix: css.VendorPrefix = .{},
         in_calc: bool = false,
         css_module: ?css.CssModule = null,
         dependencies: ?ArrayList(css.Dependency) = null,
         remove_imports: bool,
+        /// A mapping of pseudo classes to replace with class names that can be applied
+        /// from JavaScript. Useful for polyfills, for example.
         pseudo_classes: ?PseudoClasses = null,
         indentation_buf: std.ArrayList(u8),
         ctx: ?*const css.StyleContext = null,
         scratchbuf: std.ArrayList(u8),
         error_kind: ?css.PrinterError = null,
-        import_records: ?*const bun.BabyList(bun.ImportRecord),
+        import_info: ?ImportInfo = null,
         public_path: []const u8,
+        symbols: *const bun.JSAst.Symbol.Map,
+        local_names: ?*const css.LocalsResultsMap = null,
         /// NOTE This should be the same mimalloc heap arena allocator
         allocator: Allocator,
         // TODO: finish the fields
 
+        pub threadlocal var in_debug_fmt: if (bun.Environment.isDebug) bool else u0 = if (bun.Environment.isDebug) false else 0;
+
         const This = @This();
+
+        pub fn lookupSymbol(this: *This, ref: bun.bundle_v2.Ref) []const u8 {
+            const symbols = this.symbols;
+
+            const final_ref = symbols.follow(ref);
+            if (this.local_names) |local_names| {
+                if (local_names.get(final_ref)) |local_name| return local_name;
+            }
+
+            const original_name = symbols.get(final_ref).?.original_name;
+            return original_name;
+        }
+
+        pub fn lookupIdentOrRef(this: *This, ident: css.css_values.ident.IdentOrRef) []const u8 {
+            if (comptime bun.Environment.isDebug) {
+                if (in_debug_fmt) {
+                    return ident.debugIdent();
+                }
+            }
+            if (ident.isIdent()) {
+                return ident.asIdent().?.v;
+            }
+            return this.lookupSymbol(ident.asRef().?);
+        }
 
         inline fn getWrittenAmt(writer: Writer) usize {
             return switch (Writer) {
@@ -144,20 +187,32 @@ pub fn Printer(comptime Writer: type) type {
         }
 
         /// Add an error related to std lib fmt errors
-        pub fn addFmtError(this: *This) PrintErr!void {
+        pub fn addFmtError(this: *This) PrintErr {
             this.error_kind = css.PrinterError{
                 .kind = .fmt_error,
                 .loc = null,
             };
-            return PrintErr.lol;
+            return PrintErr.CSSPrintError;
         }
 
-        pub fn addNoImportRecordError(this: *This) PrintErr!void {
+        pub fn addNoImportRecordError(this: *This) PrintErr {
             this.error_kind = css.PrinterError{
                 .kind = .no_import_records,
                 .loc = null,
             };
-            return PrintErr.lol;
+            return PrintErr.CSSPrintError;
+        }
+
+        pub fn addInvalidCssModulesPatternInGridError(this: *This) PrintErr {
+            this.error_kind = css.PrinterError{
+                .kind = .invalid_css_modules_pattern_in_grid,
+                .loc = css.ErrorLocation{
+                    .filename = this.filename(),
+                    .line = this.loc.line,
+                    .column = this.loc.column,
+                },
+            };
+            return PrintErr.CSSPrintError;
         }
 
         /// Returns an error of the given kind at the provided location in the current source file.
@@ -175,7 +230,7 @@ pub fn Printer(comptime Writer: type) type {
                     .column = loc.column,
                 } else null,
             };
-            return PrintErr.lol;
+            return PrintErr.CSSPrintError;
         }
 
         pub fn deinit(this: *This) void {
@@ -192,38 +247,41 @@ pub fn Printer(comptime Writer: type) type {
             scratchbuf: std.ArrayList(u8),
             dest: Writer,
             options: PrinterOptions,
-            import_records: ?*const bun.BabyList(bun.ImportRecord),
+            import_info: ?ImportInfo,
+            local_names: ?*const css.LocalsResultsMap,
+            symbols: *const bun.JSAst.Symbol.Map,
         ) This {
             return .{
                 .sources = null,
                 .dest = dest,
                 .minify = options.minify,
                 .targets = options.targets,
-                .dependencies = if (options.analyze_dependencies != null) ArrayList(css.Dependency){} else null,
+                .dependencies = if (options.analyze_dependencies != null) .empty else null,
                 .remove_imports = options.analyze_dependencies != null and options.analyze_dependencies.?.remove_imports,
                 .pseudo_classes = options.pseudo_classes,
-                .indentation_buf = std.ArrayList(u8).init(allocator),
-                .import_records = import_records,
+                .indentation_buf = .init(allocator),
+                .import_info = import_info,
                 .scratchbuf = scratchbuf,
                 .allocator = allocator,
                 .public_path = options.public_path,
-                .loc = Location{
+                .local_names = local_names,
+                .loc = .{
                     .source_index = 0,
                     .line = 0,
                     .column = 1,
                 },
+                .symbols = symbols,
             };
         }
 
         pub inline fn getImportRecords(this: *This) PrintErr!*const bun.BabyList(bun.ImportRecord) {
-            if (this.import_records) |import_records| return import_records;
-            try this.addNoImportRecordError();
-            unreachable;
+            if (this.import_info) |info| return info.import_records;
+            return this.addNoImportRecordError();
         }
 
         pub fn printImportRecord(this: *This, import_record_idx: u32) PrintErr!void {
-            if (this.import_records) |import_records| {
-                const import_record = import_records.at(import_record_idx);
+            if (this.import_info) |info| {
+                const import_record = info.import_records.at(import_record_idx);
                 const a, const b = bun.bundle_v2.cheapPrefixNormalizer(this.public_path, import_record.path.text);
                 try this.writeStr(a);
                 try this.writeStr(b);
@@ -233,13 +291,27 @@ pub fn Printer(comptime Writer: type) type {
         }
 
         pub inline fn importRecord(this: *Printer(Writer), import_record_idx: u32) PrintErr!*const bun.ImportRecord {
-            if (this.import_records) |import_records| return import_records.at(import_record_idx);
-            try this.addNoImportRecordError();
-            unreachable;
+            if (this.import_info) |info| return info.import_records.at(import_record_idx);
+            return this.addNoImportRecordError();
         }
 
         pub inline fn getImportRecordUrl(this: *This, import_record_idx: u32) PrintErr![]const u8 {
-            return (try this.importRecord(import_record_idx)).path.text;
+            const import_info = this.import_info orelse return this.addNoImportRecordError();
+            const record = import_info.import_records.at(import_record_idx);
+            if (record.source_index.isValid()) {
+                // It has an inlined url for CSS
+                const urls_for_css = import_info.ast_urls_for_css[record.source_index.get()];
+                if (urls_for_css.len > 0) {
+                    return urls_for_css;
+                }
+                // It is a chunk URL
+                const unique_key_for_additional_file = import_info.ast_unique_key_for_additional_file[record.source_index.get()];
+                if (unique_key_for_additional_file.len > 0) {
+                    return unique_key_for_additional_file;
+                }
+            }
+            // External URL stays as-is
+            return record.path.text;
         }
 
         pub fn context(this: *const Printer(Writer)) ?*const css.StyleContext {
@@ -297,6 +369,21 @@ pub fn Printer(comptime Writer: type) type {
             var str = allocator.dupe(u8, s) catch bun.outOfMemory();
             std.mem.replaceScalar(u8, str[0..], '.', '-');
             return str;
+        }
+
+        pub fn writeIdentOrRef(this: *This, ident: css.css_values.ident.IdentOrRef, handle_css_module: bool) PrintErr!void {
+            if (!handle_css_module) {
+                if (ident.asIdent()) |identifier| {
+                    return css.serializer.serializeIdentifier(identifier.v, this) catch return this.addFmtError();
+                } else {
+                    const ref = ident.asRef().?;
+                    const symbol = this.symbols.get(ref) orelse return this.addFmtError();
+                    return css.serializer.serializeIdentifier(symbol.original_name, this) catch return this.addFmtError();
+                }
+            }
+
+            const str = this.lookupIdentOrRef(ident);
+            return css.serializer.serializeIdentifier(str, this) catch return this.addFmtError();
         }
 
         /// Writes a CSS identifier to the underlying destination, escaping it

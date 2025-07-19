@@ -20,11 +20,10 @@ class DOMWrapperWorld;
 #include <wtf/HashSet.h>
 #include <wtf/RefPtr.h>
 #include <JavaScriptCore/WeakInlines.h>
-#include <JavaScriptCore/IsoSubspacePerVM.h>
 #include <wtf/StdLibExtras.h>
 #include "WebCoreJSBuiltins.h"
 #include "JSCTaskScheduler.h"
-
+#include "HTTPHeaderIdentifiers.h"
 namespace Zig {
 }
 
@@ -59,7 +58,7 @@ public:
 
     JSC::IsoHeapCellType m_heapCellTypeForJSWorkerGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForNodeVMGlobalObject;
-    JSC::IsoHeapCellType m_heapCellTypeForJSS3Bucket;
+    JSC::IsoHeapCellType m_heapCellTypeForNapiHandleScopeImpl;
     JSC::IsoHeapCellType m_heapCellTypeForBakeGlobalObject;
 
 private:
@@ -74,9 +73,11 @@ private:
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
 };
 
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
+
 class JSVMClientData : public JSC::VM::ClientData {
     WTF_MAKE_NONCOPYABLE(JSVMClientData);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(JSVMClientData);
 
 public:
     explicit JSVMClientData(JSC::VM&, RefPtr<JSC::SourceProvider>);
@@ -104,6 +105,8 @@ public:
 
     JSC::GCClient::IsoSubspace& domBuiltinConstructorSpace() { return m_domBuiltinConstructorSpace; }
 
+    WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers();
+
     template<typename Func> void forEachOutputConstraintSpace(const Func& func)
     {
         for (auto* space : m_outputConstraintSpaces)
@@ -114,6 +117,8 @@ public:
     Bun::JSCTaskScheduler deferredWorkTimer;
 
 private:
+    bool isWebCoreJSClientData() const final { return true; }
+
     BunBuiltinNames m_builtinNames;
     JSBuiltinFunctions m_builtinFunctions;
 
@@ -126,12 +131,22 @@ private:
 
     std::unique_ptr<ExtendedDOMClientIsoSubspaces> m_clientSubspaces;
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
+
+    std::optional<WebCore::HTTPHeaderIdentifiers> m_httpHeaderIdentifiers;
 };
+
+} // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::JSVMClientData)
+static bool isType(const JSC::VM::ClientData& clientData) { return clientData.isWebCoreJSClientData(); }
+SPECIALIZE_TYPE_TRAITS_END()
+
+namespace WebCore {
 
 template<typename T, UseCustomHeapCellType useCustomHeapCellType, typename GetClient, typename SetClient, typename GetServer, typename SetServer>
 ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient getClient, SetClient setClient, GetServer getServer, SetServer setServer, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&) = nullptr)
 {
-    auto& clientData = *static_cast<JSVMClientData*>(vm.clientData);
+    auto& clientData = *downcast<JSVMClientData>(vm.clientData);
     auto& clientSubspaces = clientData.clientSubspaces();
     if (auto* clientSpace = getClient(clientSubspaces))
         return clientSpace;
@@ -144,7 +159,7 @@ ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient
     if (!space) {
         JSC::Heap& heap = vm.heap;
         std::unique_ptr<JSC::IsoSubspace> uniqueSubspace;
-        static_assert(useCustomHeapCellType == UseCustomHeapCellType::Yes || std::is_base_of_v<JSC::JSDestructibleObject, T> || !T::needsDestruction);
+        static_assert(useCustomHeapCellType == UseCustomHeapCellType::Yes || std::is_base_of_v<JSC::JSDestructibleObject, T> || T::needsDestruction == JSC::DoesNotNeedDestruction);
         if constexpr (useCustomHeapCellType == UseCustomHeapCellType::Yes)
             uniqueSubspace = makeUnique<JSC::IsoSubspace> ISO_SUBSPACE_INIT(heap, getCustomHeapCellType(heapData), T);
         else {
@@ -183,7 +198,7 @@ ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient
 
 static JSVMClientData* clientData(JSC::VM& vm)
 {
-    return static_cast<WebCore::JSVMClientData*>(vm.clientData);
+    return downcast<JSVMClientData>(vm.clientData);
 }
 
 static inline BunBuiltinNames& builtinNames(JSC::VM& vm)

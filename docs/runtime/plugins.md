@@ -1,4 +1,4 @@
-Bun provides a universal plugin API that can be used to extend both the _runtime_ and [_bundler_](https://bun.sh/docs/bundler).
+Bun provides a universal plugin API that can be used to extend both the _runtime_ and [_bundler_](https://bun.com/docs/bundler).
 
 Plugins intercept imports and perform custom loading logic: reading files, transpiling code, etc. They can be used to add support for additional file types, like `.scss` or `.yaml`. In the context of Bun's bundler, plugins can be used to implement framework-level features like CSS extraction, macros, and client-server code co-location.
 
@@ -19,10 +19,16 @@ const myPlugin: BunPlugin = {
 plugin(myPlugin);
 ```
 
-Plugins have to be loaded before any other code runs! To achieve this, use the `preload` option in your [`bunfig.toml`](https://bun.sh/docs/runtime/bunfig). Bun automatically loads the files/modules specified in `preload` before running a file.
+Plugins have to be loaded before any other code runs! To achieve this, use the `preload` option in your [`bunfig.toml`](https://bun.com/docs/runtime/bunfig). Bun automatically loads the files/modules specified in `preload` before running a file.
 
 ```toml
 preload = ["./myPlugin.ts"]
+```
+
+Preloads can be either local files or npm packages. Anything that can be imported/required can be preloaded.
+
+```toml
+preload = ["bun-plugin-foo"]
 ```
 
 To preload files before `bun test`:
@@ -32,7 +38,7 @@ To preload files before `bun test`:
 preload = ["./myPlugin.ts"]
 ```
 
-## Third-party plugins
+## Plugin conventions
 
 By convention, third-party plugins intended for consumption should export a factory function that accepts some configuration and returns a plugin object.
 
@@ -47,7 +53,7 @@ plugin(
 );
 ```
 
-Bun's plugin API is loosely based on [esbuild](https://esbuild.github.io/plugins). Only [a subset](https://bun.sh/docs/bundler/vs-esbuild#plugin-api) of the esbuild API is implemented, but some esbuild plugins "just work" in Bun, like the official [MDX loader](https://mdxjs.com/packages/esbuild/):
+Bun's plugin API is loosely based on [esbuild](https://esbuild.github.io/plugins). Only [a subset](https://bun.com/docs/bundler/vs-esbuild#plugin-api) of the esbuild API is implemented, but some esbuild plugins "just work" in Bun, like the official [MDX loader](https://mdxjs.com/packages/esbuild/):
 
 ```jsx
 import { plugin } from "bun";
@@ -96,7 +102,7 @@ Once the plugin is registered, `.yaml` and `.yml` files can be directly imported
 {% codetabs %}
 
 ```ts#index.ts
-import data from "./data.yml"
+import * as data from "./data.yml"
 
 console.log(data);
 ```
@@ -110,7 +116,7 @@ releaseYear: 2023
 
 Note that the returned object has a `loader` property. This tells Bun which of its internal loaders should be used to handle the result. Even though we're implementing a loader for `.yaml`, the result must still be understandable by one of Bun's built-in loaders. It's loaders all the way down.
 
-In this case we're using `"object"`—a built-in loader (intended for use by plugins) that converts a plain JavaScript object to an equivalent ES module. Any of Bun's built-in loaders are supported; these same loaders are used by Bun internally for handling files of various kinds. The table below is a quick reference; refer to [Bundler > Loaders](https://bun.sh/docs/bundler/loaders) for complete documentation.
+In this case we're using `"object"`—a built-in loader (intended for use by plugins) that converts a plain JavaScript object to an equivalent ES module. Any of Bun's built-in loaders are supported; these same loaders are used by Bun internally for handling files of various kinds. The table below is a quick reference; refer to [Bundler > Loaders](https://bun.com/docs/bundler/loaders) for complete documentation.
 
 {% table %}
 
@@ -304,7 +310,7 @@ await import("my-object-virtual-module"); // { baz: "quix" }
 
 ## Reading or modifying the config
 
-Plugins can read and write to the [build config](https://bun.sh/docs/bundler#api) with `build.config`.
+Plugins can read and write to the [build config](https://bun.com/docs/bundler#api) with `build.config`.
 
 ```ts
 await Bun.build({
@@ -324,13 +330,12 @@ await Bun.build({
       },
     },
   ],
-  throw: true,
 });
 ```
 
 {% callout %}
 
-**NOTE**: Plugin lifcycle callbacks (`onStart()`, `onResolve()`, etc.) do not have the ability to modify the `build.config` object in the `setup()` function. If you want to mutate `build.config`, you must do so directly in the `setup()` function:
+**NOTE**: Plugin lifecycle callbacks (`onStart()`, `onResolve()`, etc.) do not have the ability to modify the `build.config` object in the `setup()` function. If you want to mutate `build.config`, you must do so directly in the `setup()` function:
 
 ```ts
 await Bun.build({
@@ -351,7 +356,6 @@ await Bun.build({
       },
     },
   ],
-  throw: true,
 });
 ```
 
@@ -402,7 +406,7 @@ type Loader = "js" | "jsx" | "ts" | "tsx" | "css" | "json" | "toml" | "object";
 
 ### Namespaces
 
-`onLoad` and `onResolve` accept an optional `namespace` string. What is a namespaace?
+`onLoad` and `onResolve` accept an optional `namespace` string. What is a namespace?
 
 Every module has a namespace. Namespaces are used to prefix the import in transpiled code; for instance, a loader with a `filter: /\.yaml$/` and `namespace: "yaml:"` will transform an import from `./myfile.yaml` into `yaml:./myfile.yaml`.
 

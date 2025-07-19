@@ -4,12 +4,12 @@
 
 <img align="right" src="https://user-images.githubusercontent.com/709451/182802334-d9c42afe-f35d-4a7b-86ea-9985f73f20c3.png" height="150px" style="float: right; padding: 30px;">
 
-This extension adds support for using [Bun](https://bun.sh/) with Visual Studio Code. Bun is an all-in-one toolkit for JavaScript and TypeScript apps.
+This extension adds support for using [Bun](https://bun.com/) with Visual Studio Code. Bun is an all-in-one toolkit for JavaScript and TypeScript apps.
 
 At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-in replacement for Node.js. It's written in Zig and powered by JavaScriptCore under the hood, dramatically reducing startup times and memory usage.
 
 <div align="center">
-  <a href="https://bun.sh/docs">Documentation</a>
+  <a href="https://bun.com/docs">Documentation</a>
   <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
   <a href="https://discord.com/invite/CXdq2DP29u">Discord</a>
   <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
@@ -25,7 +25,7 @@ At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-i
 - Test runner codelens
 - Debugger support
 - Run scripts from package.json
-- Visual lockfile viewer (`bun.lockb`)
+- Visual lockfile viewer for old binary lockfiles (`bun.lockb`)
 
 ## In-editor error messages
 
@@ -95,6 +95,9 @@ You can use the following configurations to debug JavaScript and TypeScript file
       // The URL of the WebSocket inspector to attach to.
       // This value can be retrieved by using `bun --inspect`.
       "url": "ws://localhost:6499/",
+      // Optional path mapping for remote debugging
+      "localRoot": "${workspaceFolder}",
+      "remoteRoot": "/app",
     },
   ],
 }
@@ -116,6 +119,9 @@ You can use the following configurations to customize the behavior of the Bun ex
   "bun.debugTerminal.stopOnEntry": false,
 
   // Glob pattern to find test files. Defaults to the value shown below.
-  "bun.test.filePattern": "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts}",
+  "bun.test.filePattern": "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}",
+
+  // The custom script to call for testing instead of `bun test`
+  "bun.test.customScript": "bun test",
 }
 ```

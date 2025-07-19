@@ -3,9 +3,8 @@ const Environment = @import("./env.zig");
 
 const Output = @import("output.zig");
 const use_mimalloc = bun.use_mimalloc;
-const StringTypes = @import("./string_types.zig");
 const Mimalloc = bun.Mimalloc;
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const version_string = Environment.version_string;
 
@@ -91,6 +90,10 @@ export fn Bun__atexit(function: ExitFn) void {
     }
 }
 
+pub fn addExitCallback(function: ExitFn) void {
+    Bun__atexit(function);
+}
+
 pub fn runExitCallbacks() void {
     for (on_exit_callbacks.items) |callback| {
         callback();
@@ -113,13 +116,21 @@ pub fn exit(code: u32) noreturn {
     // If we are crashing, allow the crash handler to finish it's work.
     bun.crash_handler.sleepForeverIfAnotherThreadIsCrashing();
 
+    if (Environment.isDebug) {
+        bun.assert(bun.debug_allocator_data.backing.?.deinit() == .ok);
+        bun.debug_allocator_data.backing = null;
+    }
+
     switch (Environment.os) {
         .mac => std.c.exit(@bitCast(code)),
         .windows => {
             Bun__onExit();
             std.os.windows.kernel32.ExitProcess(code);
         },
-        else => bun.C.quick_exit(@bitCast(code)),
+        else => {
+            bun.c.quick_exit(@bitCast(code));
+            std.c.abort(); // quick_exit should be noreturn
+        },
     }
 }
 
@@ -170,13 +181,13 @@ pub inline fn configureAllocator(_: AllocatorConfiguration) void {
 }
 
 pub fn notimpl() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     Output.panic("Not implemented yet!!!!!", .{});
 }
 
 // Make sure we always print any leftover
 pub fn crash() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     Global.exit(1);
 }
 
@@ -208,15 +219,13 @@ comptime {
 }
 
 pub export fn Bun__onExit() void {
+    bun.JSC.Node.FSEvents.closeAndWait();
+
     runExitCallbacks();
     Output.flush();
     std.mem.doNotOptimizeAway(&Bun__atexit);
 
     Output.Source.Stdio.restore();
-
-    if (Environment.isWindows) {
-        bun.windows.libuv.uv_library_shutdown();
-    }
 }
 
 comptime {

@@ -1,22 +1,105 @@
-const bun = @import("root").bun;
+const std = @import("std");
+const bun = @import("bun");
 const string = bun.string;
+const Allocator = std.mem.Allocator;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
-const std = @import("std");
+
 const cli = @import("../cli.zig");
+
 const Command = cli.Command;
 const Run = @import("./run_command.zig").RunCommand;
+const UpdateRequest = bun.PackageManager.UpdateRequest;
 
 const debug = Output.scoped(.bunx, false);
 
 pub const BunxCommand = struct {
     var path_buf: bun.PathBuffer = undefined;
+
+    /// bunx-specific options parsed from argv.
+    const Options = struct {
+        /// CLI arguments to pass to the command being run.
+        passthrough_list: std.ArrayListUnmanaged(string) = .{},
+        /// `bunx <package_name>`
+        package_name: string,
+        // `--silent` and `--verbose` are not mutually exclusive. Both the
+        // global CLI parser and `bun add` parser use them for different
+        // purposes.
+        verbose_install: bool = false,
+        silent_install: bool = false,
+        /// Skip installing the package, only running the target command if its
+        /// already downloaded. If its not, `bunx` exits with an error.
+        no_install: bool = false,
+        allocator: Allocator,
+
+        /// Create a new `Options` instance by parsing CLI arguments. `ctx` may be mutated.
+        ///
+        /// ## Exits
+        /// - `--revision` or `--version` flags are passed without a target
+        ///   command also being provided. This is not a failure.
+        /// - Incorrect arguments are passed. Prints usage and exits with a failure code.
+        fn parse(ctx: bun.CLI.Command.Context, argv: [][:0]const u8) Allocator.Error!Options {
+            var found_subcommand_name = false;
+            var maybe_package_name: ?string = null;
+            var has_version = false; //  --version
+            var has_revision = false; // --revision
+
+            // SAFETY: `opts` is only ever returned when a package name is found, otherwise the process exits.
+            var opts = Options{ .package_name = undefined, .allocator = ctx.allocator };
+            try opts.passthrough_list.ensureTotalCapacityPrecise(opts.allocator, argv.len);
+
+            for (argv) |positional| {
+                if (maybe_package_name != null) {
+                    opts.passthrough_list.appendAssumeCapacity(positional);
+                    continue;
+                }
+
+                if (positional.len > 0 and positional[0] == '-') {
+                    if (strings.eqlComptime(positional, "--version") or strings.eqlComptime(positional, "-v")) {
+                        has_version = true;
+                    } else if (strings.eqlComptime(positional, "--revision")) {
+                        has_revision = true;
+                    } else if (strings.eqlComptime(positional, "--verbose")) {
+                        opts.verbose_install = true;
+                    } else if (strings.eqlComptime(positional, "--silent")) {
+                        opts.silent_install = true;
+                    } else if (strings.eqlComptime(positional, "--bun") or strings.eqlComptime(positional, "-b")) {
+                        ctx.debug.run_in_bun = true;
+                    } else if (strings.eqlComptime(positional, "--no-install")) {
+                        opts.no_install = true;
+                    }
+                } else {
+                    if (!found_subcommand_name) {
+                        found_subcommand_name = true;
+                    } else {
+                        maybe_package_name = positional;
+                    }
+                }
+            }
+
+            // check if package_name_for_update_request is empty string or " "
+            if (maybe_package_name == null or maybe_package_name.?.len == 0) {
+                // no need to free memory b/c we're exiting
+                if (has_revision) {
+                    cli.printRevisionAndExit();
+                } else if (has_version) {
+                    cli.printVersionAndExit();
+                } else {
+                    exitWithUsage();
+                }
+            }
+            opts.package_name = maybe_package_name.?;
+            return opts;
+        }
+
+        fn deinit(self: *Options) void {
+            self.passthrough_list.deinit(self.allocator);
+            self.* = undefined;
+        }
+    };
 
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -77,12 +160,12 @@ pub const BunxCommand = struct {
         }
 
         const package_json_contents = package_json_read.bytes.items;
-        const source = bun.logger.Source.initPathString(bun.span(subpath_z), package_json_contents);
+        const source = &bun.logger.Source.initPathString(bun.span(subpath_z), package_json_contents);
 
         bun.JSAst.Expr.Data.Store.create();
         bun.JSAst.Stmt.Data.Store.create();
 
-        const expr = try bun.JSON.parsePackageJSONUTF8(&source, transpiler.log, transpiler.allocator);
+        const expr = try bun.JSON.parsePackageJSONUTF8(source, transpiler.log, transpiler.allocator);
 
         // choose the first package that fits
         if (expr.get("bin")) |bin_expr| {
@@ -112,9 +195,8 @@ pub const BunxCommand = struct {
             if (dirs.expr.asProperty("bin")) |bin_prop| {
                 if (bin_prop.expr.asString(transpiler.allocator)) |dir_name| {
                     const bin_dir = try bun.sys.openatA(dir_fd, dir_name, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap();
-                    defer _ = bun.sys.close(bin_dir);
-                    const dir = std.fs.Dir{ .fd = bin_dir.cast() };
-                    var iterator = bun.DirIterator.iterate(dir, .u8);
+                    defer bin_dir.close();
+                    var iterator = bun.DirIterator.iterate(bin_dir, .u8);
                     var entry = iterator.next();
                     while (true) : (entry = iterator.next()) {
                         const current = switch (entry) {
@@ -167,7 +249,7 @@ pub const BunxCommand = struct {
                     }
                 } else {
                     const stat = target_package_json.stat().unwrap() catch break :is_stale true;
-                    break :is_stale std.time.timestamp() - stat.mtime().tv_sec > seconds_cache_valid;
+                    break :is_stale std.time.timestamp() - stat.mtime().sec > seconds_cache_valid;
                 }
             };
 
@@ -192,7 +274,7 @@ pub const BunxCommand = struct {
     /// Check the enclosing package.json for a matching "bin"
     /// If not found, check bunx cache dir
     fn getBinName(transpiler: *bun.Transpiler, toplevel_fd: bun.FileDescriptor, tempdir_name: []const u8, package_name: []const u8) error{ NoBinFound, NeedToInstall }![]const u8 {
-        toplevel_fd.assertValid();
+        bun.assert(toplevel_fd.isValid());
         return getBinNameFromProjectDirectory(transpiler, toplevel_fd, package_name) catch |err| {
             if (err == error.NoBinFound) {
                 return error.NoBinFound;
@@ -217,63 +299,16 @@ pub const BunxCommand = struct {
         // Don't log stuff
         ctx.debug.silent = true;
 
-        var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, argv.len);
-        var maybe_package_name: ?string = null;
-        var verbose_install = false;
-        var silent_install = false;
-        var has_version = false;
-        var has_revision = false;
-        {
-            var found_subcommand_name = false;
+        var opts = try Options.parse(ctx, argv);
+        defer opts.deinit();
 
-            for (argv) |positional| {
-                if (maybe_package_name != null) {
-                    passthrough_list.appendAssumeCapacity(positional);
-                    continue;
-                }
-
-                if (positional.len > 0 and positional[0] == '-') {
-                    if (strings.eqlComptime(positional, "--version") or strings.eqlComptime(positional, "-v")) {
-                        has_version = true;
-                    } else if (strings.eqlComptime(positional, "--revision")) {
-                        has_revision = true;
-                    } else if (strings.eqlComptime(positional, "--verbose")) {
-                        verbose_install = true;
-                    } else if (strings.eqlComptime(positional, "--silent")) {
-                        silent_install = true;
-                    } else if (strings.eqlComptime(positional, "--bun") or strings.eqlComptime(positional, "-b")) {
-                        ctx.debug.run_in_bun = true;
-                    }
-                } else {
-                    if (!found_subcommand_name) {
-                        found_subcommand_name = true;
-                    } else {
-                        maybe_package_name = positional;
-                    }
-                }
-            }
-        }
-
-        // check if package_name_for_update_request is empty string or " "
-        if (maybe_package_name == null or maybe_package_name.?.len == 0) {
-            if (has_revision) {
-                cli.printRevisionAndExit();
-            } else if (has_version) {
-                cli.printVersionAndExit();
-            } else {
-                exitWithUsage();
-            }
-        }
-
-        const package_name = maybe_package_name.?;
-
-        var requests_buf = bun.PackageManager.UpdateRequest.Array.initCapacity(ctx.allocator, 64) catch bun.outOfMemory();
+        var requests_buf = UpdateRequest.Array.initCapacity(ctx.allocator, 64) catch bun.outOfMemory();
         defer requests_buf.deinit(ctx.allocator);
-        const update_requests = bun.PackageManager.UpdateRequest.parse(
+        const update_requests = UpdateRequest.parse(
             ctx.allocator,
             null,
             ctx.log,
-            &.{package_name},
+            &.{opts.package_name},
             &requests_buf,
             .add,
         );
@@ -304,6 +339,7 @@ pub const BunxCommand = struct {
 
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
+        // SAFETY: initialized by Run.configureEnvForRun
         var this_transpiler: bun.Transpiler = undefined;
         var ORIGINAL_PATH: string = "";
 
@@ -325,9 +361,9 @@ pub const BunxCommand = struct {
         );
         this_transpiler.env.map.put("npm_command", "exec") catch unreachable;
         this_transpiler.env.map.put("npm_lifecycle_event", "bunx") catch unreachable;
-        this_transpiler.env.map.put("npm_lifecycle_script", package_name) catch unreachable;
+        this_transpiler.env.map.put("npm_lifecycle_script", opts.package_name) catch unreachable;
 
-        if (strings.eqlComptime(package_name, "bun-repl")) {
+        if (strings.eqlComptime(opts.package_name, "bun-repl")) {
             this_transpiler.env.map.remove("BUN_INSPECT_CONNECT_TO");
             this_transpiler.env.map.remove("BUN_INSPECT_NOTIFY");
             this_transpiler.env.map.remove("BUN_INSPECT");
@@ -353,7 +389,7 @@ pub const BunxCommand = struct {
                 else => ":",
             };
 
-            const has_banned_char = bun.strings.indexAnyComptime(update_request.name, banned_path_chars) != null or bun.strings.indexAnyComptime(display_version, banned_path_chars) != null;
+            const has_banned_char = strings.indexAnyComptime(update_request.name, banned_path_chars) != null or strings.indexAnyComptime(display_version, banned_path_chars) != null;
 
             break :brk try if (has_banned_char)
                 // This branch gets hit usually when a URL is requested as the package
@@ -439,7 +475,7 @@ pub const BunxCommand = struct {
         //     where a user can replace the directory with malicious code.
         //
         // If this format changes, please update cache clearing code in package_manager_command.zig
-        const uid = if (bun.Environment.isPosix) bun.C.getuid() else bun.windows.userUniqueId();
+        const uid = if (bun.Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId();
         PATH = switch (PATH.len > 0) {
             inline else => |path_is_nonzero| try std.fmt.allocPrint(
                 ctx.allocator,
@@ -469,11 +505,13 @@ pub const BunxCommand = struct {
             .{ bunx_cache_dir, initial_bin_name, bun.exe_suffix },
         ) catch return error.PathTooLong;
 
-        const passthrough = passthrough_list.items;
+        const passthrough = opts.passthrough_list.items;
 
         var do_cache_bust = update_request.version.tag == .dist_tag;
+        const look_for_existing_bin = update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag;
 
-        if (update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag) try_run_existing: {
+        debug("try run existing? {}", .{look_for_existing_bin});
+        if (look_for_existing_bin) try_run_existing: {
             var destination_: ?[:0]const u8 = null;
 
             // Only use the system-installed version if there is no version specified
@@ -502,12 +540,12 @@ pub const BunxCommand = struct {
                 if (bun.strings.hasPrefix(out, bunx_cache_dir)) {
                     const is_stale = is_stale: {
                         if (Environment.isWindows) {
-                            const fd = bun.sys.openat(bun.invalid_fd, destination, bun.O.RDONLY, 0).unwrap() catch {
+                            const fd = bun.sys.openat(.cwd(), destination, bun.O.RDONLY, 0).unwrap() catch {
                                 // if we cant open this, we probably will just fail when we run it
                                 // and that error message is likely going to be better than the one from `bun add`
                                 break :is_stale false;
                             };
-                            defer _ = bun.sys.close(fd);
+                            defer fd.close();
 
                             var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
                             var info: std.os.windows.FILE_BASIC_INFORMATION = undefined;
@@ -527,16 +565,22 @@ pub const BunxCommand = struct {
                             if (rc != 0) {
                                 break :is_stale true;
                             }
-                            break :is_stale std.time.timestamp() - stat.mtime().tv_sec > seconds_cache_valid;
+                            break :is_stale std.time.timestamp() - stat.mtime().sec > seconds_cache_valid;
                         }
                     };
 
                     if (is_stale) {
+                        debug("found stale binary: {s}", .{out});
                         do_cache_bust = true;
-                        break :try_run_existing;
+                        if (opts.no_install) {
+                            Output.warn("Using a stale installation of <b>{s}<r> because --no-install was passed. Run `bunx` without --no-install to use a fresh binary.", .{update_request.name});
+                        } else {
+                            break :try_run_existing;
+                        }
                     }
                 }
 
+                debug("running existing binary: {s}", .{destination});
                 try Run.runBinary(
                     ctx,
                     try this_transpiler.fs.dirname_store.append(@TypeOf(out), out),
@@ -552,7 +596,7 @@ pub const BunxCommand = struct {
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
             const root_dir_fd = root_dir_info.getFileDescriptor();
-            bun.assert(root_dir_fd != .zero);
+            bun.assert(root_dir_fd.isValid());
             if (getBinName(&this_transpiler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
                 // if we check the bin name and its actually the same, we don't need to check $PATH here again
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
@@ -595,6 +639,24 @@ pub const BunxCommand = struct {
                 }
             }
         }
+        // If we've reached this point, it means we couldn't find an existing binary to run.
+        // Next step is to install, then run it.
+
+        // NOTE: npx prints errors like this:
+        //
+        //     npm error npx canceled due to missing packages and no YES option: ["foo@1.2.3"]
+        //     npm error A complete log of this run can be found in: [folder]/debug.log
+        //
+        // Which is not very helpful.
+
+        if (opts.no_install) {
+            Output.errGeneric(
+                "Could not find an existing '{s}' binary to run. Stopping because --no-install was passed.",
+                .{initial_bin_name},
+            );
+            Global.exit(1);
+        }
+
         const bunx_install_dir = try std.fs.cwd().makeOpenPath(bunx_cache_dir, .{});
 
         create_package_json: {
@@ -623,12 +685,12 @@ pub const BunxCommand = struct {
                 unreachable; // upper bound is known
         }
 
-        if (verbose_install) {
+        if (opts.verbose_install) {
             args.append("--verbose") catch
                 unreachable; // upper bound is known
         }
 
-        if (silent_install) {
+        if (opts.silent_install) {
             args.append("--silent") catch
                 unreachable; // upper bound is known
         }
@@ -650,7 +712,7 @@ pub const BunxCommand = struct {
 
             .windows = if (Environment.isWindows) .{
                 .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(this_transpiler.env)),
-            } else {},
+            },
         }) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error <b>{s}<r>", .{ install_param, @errorName(err) });
             Global.exit(1);

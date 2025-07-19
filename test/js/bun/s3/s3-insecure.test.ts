@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
-import { S3, s3, file } from "bun";
+import { S3Client } from "bun";
+import { describe, expect, it } from "bun:test";
 
 describe("s3", async () => {
   it("should not fail to connect when endpoint is http and not https", async () => {
@@ -15,14 +15,14 @@ describe("s3", async () => {
       },
     });
 
-    const s3 = new S3({
+    const s3 = new S3Client({
       accessKeyId: "test",
       secretAccessKey: "test",
       endpoint: server.url.href,
       bucket: "test",
     });
 
-    const file = s3("hello.txt");
+    const file = s3.file("hello.txt");
     let err;
     try {
       await file.text();

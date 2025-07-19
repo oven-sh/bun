@@ -15,7 +15,7 @@ export function asyncIterator(this: Console) {
 
   async function* ConsoleAsyncIterator() {
     var reader = stream.getReader();
-    var deferredError;
+    var deferredError: Error | undefined;
     try {
       if (i !== -1) {
         last = i + 1;
@@ -99,13 +99,14 @@ export function asyncIterator(this: Console) {
         actualChunk = undefined!;
       }
     } catch (e) {
-      deferredError = e;
+      deferredError = e as Error;
     } finally {
       reader.releaseLock();
+    }
 
-      if (deferredError) {
-        throw deferredError;
-      }
+    if (deferredError) {
+      // eslint-disable-next-line no-throw-literal
+      throw deferredError;
     }
   }
 
@@ -142,7 +143,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const { inspect, formatWithOptions, stripVTControlCharacters } = require("node:util");
   const { isBuffer } = require("node:buffer");
 
-  const { validateObject, validateInteger, validateArray } = require("internal/validators");
+  const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
   const kMaxGroupIndentation = 1000;
 
   const StringPrototypeIncludes = String.prototype.includes;
@@ -155,7 +156,6 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const StringPrototypeSplit = String.prototype.split;
   const NumberPrototypeToFixed = Number.prototype.toFixed;
   const StringPrototypeNormalize = String.prototype.normalize;
-  const StringPrototypeCodePointAt = String.prototype.codePointAt;
   const ArrayPrototypeMap = Array.prototype.map;
   const ArrayPrototypeJoin = Array.prototype.join;
   const ArrayPrototypePush = Array.prototype.push;
@@ -298,11 +298,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       throw $ERR_CONSOLE_WRITABLE_STREAM("stderr is not a writable stream");
     }
 
-    if (typeof colorMode !== "boolean" && colorMode !== "auto") {
-      throw $ERR_INVALID_ARG_VALUE(
-        "The argument 'colorMode' must be one of: 'auto', true, false. Received " + inspect(colorMode),
-      );
-    }
+    validateOneOf(colorMode, "colorMode", ["auto", true, false]);
 
     if (groupIndentation !== undefined) {
       validateInteger(groupIndentation, "groupIndentation", 0, kMaxGroupIndentation);

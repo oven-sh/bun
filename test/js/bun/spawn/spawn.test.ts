@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   getMaxFD,
+  isBroken,
   isMacOS,
   isPosix,
   isWindows,
@@ -81,7 +82,7 @@ for (let [gcTick, label] of [
             cmd: ["node", "-e", "console.log('hi')"],
             cwd: "./this-should-not-exist",
           });
-        }).toThrow("No such file or directory");
+        }).toThrow("no such file or directory");
       });
     });
 
@@ -97,7 +98,7 @@ for (let [gcTick, label] of [
             stdin: "ignore",
           });
           gcTick();
-          const text = await new Response(stdout).text();
+          const text = await stdout.text();
           expect(text).toBe("hello\n");
         })();
         gcTick();
@@ -117,7 +118,7 @@ for (let [gcTick, label] of [
           stderr: null,
         });
         gcTick();
-        const text = await new Response(stdout).text();
+        const text = await stdout.text();
         expect(text).toBe("bar\n");
         gcTick();
       });
@@ -450,7 +451,7 @@ for (let [gcTick, label] of [
             describe("should should allow reading stdout", () => {
               it("before exit", async () => {
                 const process = callback();
-                const output = await readableStreamToText(process.stdout);
+                const output = await process.stdout.text();
                 await process.exited;
                 const expected = fixture + "\n";
 
@@ -492,10 +493,10 @@ for (let [gcTick, label] of [
                 expect(output).toBe(expected);
               });
 
-              it("after exit", async () => {
+              it.todoIf(isWindows && isBroken)("after exit", async () => {
                 const process = callback();
                 await process.exited;
-                const output = await readableStreamToText(process.stdout);
+                const output = await process.stdout.text();
                 const expected = fixture + "\n";
                 expect(output.length).toBe(expected.length);
                 expect(output).toBe(expected);
@@ -513,7 +514,7 @@ for (let [gcTick, label] of [
               stdin: "ignore",
             });
             await Bun.sleep(1);
-            const out = await Bun.readableStreamToText(proc.stdout);
+            const out = await proc.stdout.text();
             expect(out).not.toBe("");
           }
         });
@@ -525,15 +526,16 @@ for (let [gcTick, label] of [
             cmd: ["node", "-e", "console.log('hi')"],
             cwd: "./this-should-not-exist",
           });
-        }).toThrow("No such file or directory");
+        }).toThrow("no such file or directory");
       });
     });
   });
 }
 
 // This is a test which should only be used when pidfd and EVTFILT_PROC is NOT available
-if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && isPosix && !isMacOS) {
-  it("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
+it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix || isMacOS)(
+  "with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD",
+  async () => {
     const result = spawnSync({
       cmd: [bunExe(), "test", path.resolve(import.meta.path)],
       env: {
@@ -547,8 +549,9 @@ if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && isPosix && !isMacOS) {
       stdin: "inherit",
     });
     expect(result.exitCode).toBe(0);
-  }, 128_000);
-}
+  },
+  192_000,
+);
 
 describe("spawn unref and kill should not hang", () => {
   const cmd = [shellExe(), "-c", "sleep 0.001"];
@@ -823,4 +826,14 @@ it("dispose keyword works", async () => {
   expect(captured.killed).toBe(true);
   expect(captured.exitCode).toBe(null);
   expect(captured.signalCode).toBe("SIGTERM");
+});
+
+it("error does not UAF", async () => {
+  let emsg = "";
+  try {
+    Bun.spawnSync({ cmd: ["command-is-not-found-uh-oh"] });
+  } catch (e) {
+    emsg = (e as Error).message;
+  }
+  expect(emsg).toInclude(" ");
 });

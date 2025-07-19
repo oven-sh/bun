@@ -24,6 +24,7 @@ test("reportError", () => {
                 ^
 error: reportError Test!
       at [file]:1:13
+      at loadAndEvaluateModule (2:1)
 error: true
 true
 error: false
@@ -43,9 +44,9 @@ error
 error
 Uint8Array(1) [ 0 ]
 error
-Uint8Array(0) [  ]
+Uint8Array(0) []
 error
-ArrayBuffer(0) [  ]
+ArrayBuffer(0) []
 error
 ArrayBuffer(1) [ 0 ]
 error: string

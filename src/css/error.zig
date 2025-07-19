@@ -1,13 +1,11 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const Log = logger.Log;
 
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
-const DashedIdent = css_values.ident.DashedIdent;
-const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 const Location = css.Location;
 
@@ -30,6 +28,26 @@ pub fn Err(comptime T: type) type {
         kind: T,
         /// The location where the error occurred.
         loc: ?ErrorLocation,
+
+        pub fn fmt(
+            this: @This(),
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            if (@hasDecl(T, "fmt")) {
+                try writer.print("{}", .{this.kind});
+                return;
+            }
+            @compileError("fmt not implemented for " ++ @typeName(T));
+        }
+
+        pub fn toJSString(this: @This(), allocator: Allocator, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
+            var error_string = ArrayList(u8){};
+            defer error_string.deinit(allocator);
+            error_string.writer(allocator).print("{}", .{this.kind}) catch unreachable;
+            return bun.String.fromBytes(error_string.items).toJS(globalThis);
+        }
 
         pub fn fromParseError(err: ParseError(ParserError), filename: []const u8) Err(ParserError) {
             if (T != ParserError) {
@@ -57,12 +75,12 @@ pub fn Err(comptime T: type) type {
             };
         }
 
-        pub fn addToLogger(this: @This(), log: *logger.Log, source: *const logger.Source) !void {
+        pub fn addToLogger(this: @This(), log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !void {
             try log.addMsg(.{
                 .kind = .err,
                 .data = .{
-                    .location = if (this.loc) |*loc| try loc.toLocation(source, log.msgs.allocator) else null,
-                    .text = try std.fmt.allocPrint(log.msgs.allocator, "{}", .{this.kind}),
+                    .location = if (this.loc) |*loc| try loc.toLocation(source, allocator) else null,
+                    .text = try std.fmt.allocPrint(allocator, "{}", .{this.kind}),
                 },
             });
 
@@ -191,6 +209,17 @@ pub const PrinterErrorKind = union(enum) {
     /// The CSS modules pattern must end with `[local]` for use in CSS grid.
     invalid_css_modules_pattern_in_grid,
     no_import_records,
+
+    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        return switch (this) {
+            .ambiguous_url_in_custom_property => |data| writer.print("Ambiguous relative URL '{s}' in custom property declaration", .{data.url}),
+            .fmt_error => writer.writeAll("Formatting error occurred"),
+            .invalid_composes_nesting => writer.writeAll("The 'composes' property cannot be used within nested rules"),
+            .invalid_composes_selector => writer.writeAll("The 'composes' property can only be used with a simple class selector"),
+            .invalid_css_modules_pattern_in_grid => writer.writeAll("CSS modules pattern must end with '[local]' when used in CSS grid"),
+            .no_import_records => writer.writeAll("No import records found"),
+        };
+    }
 };
 
 /// A parser error.
@@ -227,6 +256,10 @@ pub const ParserError = union(enum) {
     unexpected_token: css.Token,
     /// Maximum nesting depth was reached.
     maximum_nesting_depth,
+    unexpected_value: struct {
+        expected: []const u8,
+        received: []const u8,
+    },
 
     pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (this) {
@@ -244,8 +277,9 @@ pub const ParserError = union(enum) {
             .selector_error => |err| writer.print("Invalid selector. {s}", .{err}),
             .unexpected_import_rule => writer.writeAll("@import rules must come before any other rules except @charset and @layer"),
             .unexpected_namespace_rule => writer.writeAll("@namespace rules must come before any other rules except @charset, @import, and @layer"),
-            .unexpected_token => |token| writer.print("Unexpected token. {}", .{token}),
+            .unexpected_token => |token| writer.print("Unexpected token: {}", .{token}),
             .maximum_nesting_depth => writer.writeAll("Maximum CSS nesting depth exceeded"),
+            .unexpected_value => |v| writer.print("Expected {s}, received {s}", .{ v.expected, v.received }),
         };
     }
 };
@@ -318,6 +352,7 @@ pub const SelectorError = union(enum) {
     /// An unsupported pseudo class or pseudo element was encountered.
     unsupported_pseudo_class_or_element: []const u8,
     unexpected_selector_after_pseudo_element: css.Token,
+    ambiguous_css_module_class: []const u8,
 
     pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (this) {
@@ -343,6 +378,7 @@ pub const SelectorError = union(enum) {
             .pseudo_element_expected_ident => |tok| try writer.print("Expected identifier in pseudo-element, found: {}", .{tok}),
             .unexpected_token_in_attribute_selector => |tok| try writer.print("Unexpected token in attribute selector: {}", .{tok}),
             .unexpected_selector_after_pseudo_element => |tok| try writer.print("Unexpected selector after pseudo-element: {}", .{tok}),
+            .ambiguous_css_module_class => |name| try writer.print("CSS module class: '{s}' is currently not supported.", .{name}),
         };
     }
 };

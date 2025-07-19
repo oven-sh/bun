@@ -140,8 +140,8 @@ it("should keep process alive only when active", async () => {
   });
 
   expect(await exited).toBe(0);
-  expect(await new Response(stderr).text()).toBe("");
-  var lines = (await new Response(stdout).text()).split(/\r?\n/);
+  expect(await stderr.text()).toBe("");
+  var lines = (await stdout.text()).split(/\r?\n/);
   expect(
     lines.filter(function (line) {
       return line.startsWith("[Server]");
@@ -171,7 +171,7 @@ it("connect without top level await should keep process alive", async () => {
   await proc.exited;
   try {
     expect(proc.exitCode).toBe(0);
-    expect(await new Response(proc.stdout).text()).toContain("event loop was not killed");
+    expect(await proc.stdout.text()).toContain("event loop was not killed");
   } finally {
     server.stop();
   }
@@ -188,7 +188,7 @@ it("connect() should return the socket object", async () => {
   });
 
   expect(await exited).toBe(0);
-  expect(await new Response(stderr).text()).toBe("");
+  expect(await stderr.text()).toBe("");
 });
 
 it("listen() should throw connection error for invalid host", () => {
@@ -220,7 +220,8 @@ it("should reject on connection error, calling both connectError() and rejecting
         expect(socket).toBeDefined();
         expect(socket.data).toBe(data);
         expect(error).toBeDefined();
-        expect(error.name).toBe("ECONNREFUSED");
+        expect(error.name).toBe("Error");
+        expect(error.code).toBe("ECONNREFUSED");
         expect(error.message).toBe("Failed to connect");
       },
       data() {
@@ -246,7 +247,8 @@ it("should reject on connection error, calling both connectError() and rejecting
     () => done(new Error("Promise should reject instead")),
     err => {
       expect(err).toBeDefined();
-      expect(err.name).toBe("ECONNREFUSED");
+      expect(err.name).toBe("Error");
+      expect(err.code).toBe("ECONNREFUSED");
       expect(err.message).toBe("Failed to connect");
 
       done();
@@ -293,7 +295,7 @@ it("should handle connection error", done => {
         expect(socket).toBeDefined();
         expect(socket.data).toBe(data);
         expect(error).toBeDefined();
-        expect(error.name).toBe("ECONNREFUSED");
+        expect(error.name).toBe("Error");
         expect(error.message).toBe("Failed to connect");
         expect((error as any).code).toBe("ECONNREFUSED");
         done();
@@ -390,7 +392,7 @@ it("it should not crash when getting a ReferenceError on client socket open", as
       hostname: server.hostname,
       socket: {
         open(socket) {
-          // ReferenceError: Can't find variable: bytes
+          // ReferenceError: bytes is not defined
           // @ts-expect-error
           socket.write(bytes);
         },
@@ -407,7 +409,7 @@ it("it should not crash when getting a ReferenceError on client socket open", as
     });
 
     const result: any = await promise;
-    expect(result?.message).toBe("Can't find variable: bytes");
+    expect(result?.message).toBe("bytes is not defined");
   }
 });
 
@@ -595,6 +597,7 @@ it("should not call drain before handshake", async () => {
 });
 it("upgradeTLS handles errors", async () => {
   using server = Bun.serve({
+    port: 0,
     tls,
     async fetch(req) {
       return new Response("Hello World");
@@ -696,9 +699,10 @@ it("upgradeTLS handles errors", async () => {
     socket.end();
   }
   Bun.gc(true);
-});
+}, 20_000); // only needed in debug mode
 it("should be able to upgrade to TLS", async () => {
   using server = Bun.serve({
+    port: 0,
     tls,
     async fetch(req) {
       return new Response("Hello World");

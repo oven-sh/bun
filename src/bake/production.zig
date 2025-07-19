@@ -109,7 +109,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         unresolved_config_entry_point = try std.fmt.allocPrint(ctx.allocator, "./{s}", .{unresolved_config_entry_point});
     }
 
-    const config_entry_point = b.resolver.resolve(cwd, unresolved_config_entry_point, .entry_point) catch |err| {
+    const config_entry_point = b.resolver.resolve(cwd, unresolved_config_entry_point, .entry_point_build) catch |err| {
         if (err == error.ModuleNotFound) {
             if (ctx.args.entry_points.len == 0) {
                 // Onboarding message
@@ -118,7 +118,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                     \\
                     \\The default location for this is `bun.app.ts`
                     \\
-                    \\TODO: insert a link to `bun.sh/docs`
+                    \\TODO: insert a link to `bun.com/docs`
                 , .{});
                 bun.Global.crash();
             }
@@ -128,7 +128,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         bun.Global.crash();
     };
 
-    const config_entry_point_string = bun.String.createUTF8(config_entry_point.pathConst().?.text);
+    const config_entry_point_string = bun.String.cloneUTF8(config_entry_point.pathConst().?.text);
     defer config_entry_point_string.deref();
 
     const config_promise = bun.JSC.JSModuleLoader.loadAndEvaluateModule(global, &config_entry_point_string) orelse {
@@ -141,7 +141,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     var options = switch (config_promise.unwrap(vm.jsc, .mark_handled)) {
         .pending => unreachable,
         .fulfilled => |resolved| config: {
-            bun.assert(resolved == .undefined);
+            bun.assert(resolved.isUndefined());
             const default = BakeGetDefaultExportFromModule(vm.global, config_entry_point_string.toJS(vm.global));
 
             if (!default.isObject()) {
@@ -171,17 +171,17 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     try loader.map.put("NODE_ENV", "production");
     bun.DotEnv.instance = loader;
 
-    var client_bundler: bun.transpiler.Transpiler = undefined;
-    var server_bundler: bun.transpiler.Transpiler = undefined;
-    var ssr_bundler: bun.transpiler.Transpiler = undefined;
-    try framework.initBundler(allocator, vm.log, .production_static, .server, &server_bundler);
-    try framework.initBundler(allocator, vm.log, .production_static, .client, &client_bundler);
+    var client_transpiler: bun.transpiler.Transpiler = undefined;
+    var server_transpiler: bun.transpiler.Transpiler = undefined;
+    var ssr_transpiler: bun.transpiler.Transpiler = undefined;
+    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .server, &server_transpiler, &options.bundler_options.server, .@"inline");
+    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .client, &client_transpiler, &options.bundler_options.client, .@"inline");
     if (separate_ssr_graph) {
-        try framework.initBundler(allocator, vm.log, .production_static, .ssr, &ssr_bundler);
+        try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .ssr, &ssr_transpiler, &options.bundler_options.ssr, .@"inline");
     }
 
     if (ctx.bundler_options.bake_debug_disable_minify) {
-        for ([_]*bun.transpiler.Transpiler{ &client_bundler, &server_bundler, &ssr_bundler }) |transpiler| {
+        for ([_]*bun.transpiler.Transpiler{ &client_transpiler, &server_transpiler, &ssr_transpiler }) |transpiler| {
             transpiler.options.minify_syntax = false;
             transpiler.options.minify_identifiers = false;
             transpiler.options.minify_whitespace = false;
@@ -192,14 +192,14 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     }
 
     // these share pointers right now, so setting NODE_ENV == production on one should affect all
-    bun.assert(server_bundler.env == client_bundler.env);
+    bun.assert(server_transpiler.env == client_transpiler.env);
 
-    framework.* = framework.resolve(&server_bundler.resolver, &client_bundler.resolver, allocator) catch {
+    framework.* = framework.resolve(&server_transpiler.resolver, &client_transpiler.resolver, allocator) catch {
         if (framework.is_built_in_react)
-            try bake.Framework.addReactInstallCommandNote(server_bundler.log);
+            try bake.Framework.addReactInstallCommandNote(server_transpiler.log);
         Output.errGeneric("Failed to resolve all imports required by the framework", .{});
         Output.flush();
-        server_bundler.log.print(Output.errorWriter()) catch {};
+        server_transpiler.log.print(Output.errorWriter()) catch {};
         bun.Global.crash();
     };
 
@@ -222,7 +222,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
 
     for (options.framework.file_system_router_types) |fsr| {
         const joined_root = bun.path.joinAbs(cwd, .auto, fsr.root);
-        const entry = server_bundler.resolver.readDirInfoIgnoreError(joined_root) orelse
+        const entry = server_transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse
             continue;
         try router_types.append(allocator, .{
             .abs_root = bun.strings.withoutTrailingSlashWindowsPath(entry.abs_path),
@@ -237,24 +237,24 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 (try entry_points.getOrPutEntryPoint(client, .client)).toOptional()
             else
                 .none,
-            .server_file_string = .{},
+            .server_file_string = .empty,
         });
     }
 
     var router = try FrameworkRouter.initEmpty(cwd, router_types.items, allocator);
     try router.scanAll(
         allocator,
-        &server_bundler.resolver,
+        &server_transpiler.resolver,
         FrameworkRouter.InsertionContext.wrap(EntryPointMap, &entry_points),
     );
 
     const bundled_outputs_list = try bun.BundleV2.generateFromBakeProductionCLI(
         entry_points,
-        &server_bundler,
+        &server_transpiler,
         .{
             .framework = framework.*,
-            .client_bundler = &client_bundler,
-            .ssr_bundler = if (separate_ssr_graph) &ssr_bundler else &server_bundler,
+            .client_transpiler = &client_transpiler,
+            .ssr_transpiler = if (separate_ssr_graph) &ssr_transpiler else &server_transpiler,
             .plugins = options.bundler_options.plugin,
         },
         allocator,
@@ -286,7 +286,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             file.dest_path,
             file.entry_point_index,
         });
-        if (file.loader == .css) {
+        if (file.loader.isCSS()) {
             if (css_chunks_count == 0) css_chunks_first = i;
             css_chunks_count += 1;
         }
@@ -356,9 +356,9 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     pt.attach();
 
     // Static site generator
-    const server_render_funcs = JSValue.createEmptyArray(global, router.types.len);
-    const server_param_funcs = JSValue.createEmptyArray(global, router.types.len);
-    const client_entry_urls = JSValue.createEmptyArray(global, router.types.len);
+    const server_render_funcs = try JSValue.createEmptyArray(global, router.types.len);
+    const server_param_funcs = try JSValue.createEmptyArray(global, router.types.len);
+    const client_entry_urls = try JSValue.createEmptyArray(global, router.types.len);
 
     for (router.types, 0..) |router_type, i| {
         if (router_type.client_file.unwrap()) |client_file| {
@@ -366,16 +366,16 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 public_path,
                 pt.outputFile(client_file).dest_path,
             })).toJS(global);
-            client_entry_urls.putIndex(global, @intCast(i), str);
+            try client_entry_urls.putIndex(global, @intCast(i), str);
         } else {
-            client_entry_urls.putIndex(global, @intCast(i), .null);
+            try client_entry_urls.putIndex(global, @intCast(i), .null);
         }
 
         const server_entry_point = try pt.loadBundledModule(router_type.server_file);
         const server_render_func = brk: {
             const raw = BakeGetOnModuleNamespace(global, server_entry_point, "prerender") orelse
                 break :brk null;
-            if (!raw.isCallable(vm.jsc)) {
+            if (!raw.isCallable()) {
                 break :brk null;
             }
             break :brk raw;
@@ -391,7 +391,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             brk: {
                 const raw = BakeGetOnModuleNamespace(global, server_entry_point, "getParams") orelse
                     break :brk null;
-                if (!raw.isCallable(vm.jsc)) {
+                if (!raw.isCallable()) {
                     break :brk null;
                 }
                 break :brk raw;
@@ -404,8 +404,8 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             }
         else
             JSValue.null;
-        server_render_funcs.putIndex(global, @intCast(i), server_render_func);
-        server_param_funcs.putIndex(global, @intCast(i), server_param_func);
+        try server_render_funcs.putIndex(global, @intCast(i), server_render_func);
+        try server_param_funcs.putIndex(global, @intCast(i), server_param_func);
     }
 
     var navigatable_routes = std.ArrayList(FrameworkRouter.Route.Index).init(allocator);
@@ -417,16 +417,16 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     const css_chunk_js_strings = try allocator.alloc(JSValue, css_chunks_count);
     for (bundled_outputs[css_chunks_first..][0..css_chunks_count], css_chunk_js_strings) |output_file, *str| {
         bun.assert(output_file.dest_path[0] != '.');
-        bun.assert(output_file.loader == .css);
+        bun.assert(output_file.loader.isCSS());
         str.* = (try bun.String.createFormat("{s}{s}", .{ public_path, output_file.dest_path })).toJS(global);
     }
 
-    const route_patterns = JSValue.createEmptyArray(global, navigatable_routes.items.len);
-    const route_nested_files = JSValue.createEmptyArray(global, navigatable_routes.items.len);
-    const route_type_and_flags = JSValue.createEmptyArray(global, navigatable_routes.items.len);
-    const route_source_files = JSValue.createEmptyArray(global, navigatable_routes.items.len);
-    const route_param_info = JSValue.createEmptyArray(global, navigatable_routes.items.len);
-    const route_style_references = JSValue.createEmptyArray(global, navigatable_routes.items.len);
+    const route_patterns = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+    const route_nested_files = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+    const route_type_and_flags = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+    const route_source_files = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+    const route_param_info = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+    const route_style_references = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
 
     var params_buf: std.ArrayListUnmanaged([]const u8) = .{};
     for (navigatable_routes.items, 0..) |route_index, nav_index| {
@@ -476,21 +476,21 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         }
 
         // Fill styles and file_list
-        const styles = JSValue.createEmptyArray(global, css_chunks_count);
-        const file_list = JSValue.createEmptyArray(global, file_count);
+        const styles = try JSValue.createEmptyArray(global, css_chunks_count);
+        const file_list = try JSValue.createEmptyArray(global, file_count);
 
         next = route.parent.unwrap();
         file_count = 1;
         css_file_count = 0;
-        file_list.putIndex(global, 0, pt.preloadBundledModule(main_file_route_index));
+        try file_list.putIndex(global, 0, try pt.preloadBundledModule(main_file_route_index));
         for (main_file.referenced_css_files) |ref| {
-            styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
+            try styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
             css_file_count += 1;
         }
         if (route.file_layout.unwrap()) |file| {
-            file_list.putIndex(global, file_count, pt.preloadBundledModule(file));
+            try file_list.putIndex(global, file_count, try pt.preloadBundledModule(file));
             for (pt.outputFile(file).referenced_css_files) |ref| {
-                styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
+                try styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
                 css_file_count += 1;
             }
             file_count += 1;
@@ -499,9 +499,9 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         while (next) |parent_index| {
             const parent = router.routePtr(parent_index);
             if (parent.file_layout.unwrap()) |file| {
-                file_list.putIndex(global, file_count, pt.preloadBundledModule(file));
+                try file_list.putIndex(global, file_count, try pt.preloadBundledModule(file));
                 for (pt.outputFile(file).referenced_css_files) |ref| {
-                    styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
+                    try styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
                     css_file_count += 1;
                 }
                 file_count += 1;
@@ -510,28 +510,28 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         }
 
         // Init the items
-        var pattern_string = bun.String.createUTF8(pattern.slice());
+        var pattern_string = bun.String.cloneUTF8(pattern.slice());
         defer pattern_string.deref();
-        route_patterns.putIndex(global, @intCast(nav_index), pattern_string.toJS(global));
+        try route_patterns.putIndex(global, @intCast(nav_index), pattern_string.toJS(global));
 
-        var src_path = bun.String.createUTF8(bun.path.relative(cwd, pt.inputFile(main_file_route_index).absPath()));
-        route_source_files.putIndex(global, @intCast(nav_index), src_path.transferToJS(global));
+        var src_path = bun.String.cloneUTF8(bun.path.relative(cwd, pt.inputFile(main_file_route_index).absPath()));
+        try route_source_files.putIndex(global, @intCast(nav_index), src_path.transferToJS(global));
 
-        route_nested_files.putIndex(global, @intCast(nav_index), file_list);
-        route_type_and_flags.putIndex(global, @intCast(nav_index), JSValue.jsNumberFromInt32(@bitCast(TypeAndFlags{
+        try route_nested_files.putIndex(global, @intCast(nav_index), file_list);
+        try route_type_and_flags.putIndex(global, @intCast(nav_index), JSValue.jsNumberFromInt32(@bitCast(TypeAndFlags{
             .type = route.type.get(),
         })));
 
         if (params_buf.items.len > 0) {
-            const param_info_array = JSValue.createEmptyArray(global, params_buf.items.len);
+            const param_info_array = try JSValue.createEmptyArray(global, params_buf.items.len);
             for (params_buf.items, 0..) |param, i| {
-                param_info_array.putIndex(global, @intCast(params_buf.items.len - i - 1), JSValue.toJSString(global, param));
+                try param_info_array.putIndex(global, @intCast(params_buf.items.len - i - 1), try bun.String.createUTF8ForJS(global, param));
             }
-            route_param_info.putIndex(global, @intCast(nav_index), param_info_array);
+            try route_param_info.putIndex(global, @intCast(nav_index), param_info_array);
         } else {
-            route_param_info.putIndex(global, @intCast(nav_index), .null);
+            try route_param_info.putIndex(global, @intCast(nav_index), .null);
         }
-        route_style_references.putIndex(global, @intCast(nav_index), styles);
+        try route_style_references.putIndex(global, @intCast(nav_index), styles);
     }
 
     const render_promise = BakeRenderRoutesForProdStatic(
@@ -561,6 +561,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             return vm.global.throwValue(err);
         },
     }
+    vm.waitForTasks();
 }
 
 /// unsafe function, must be run outside of the event loop
@@ -572,7 +573,7 @@ fn loadModule(vm: *VirtualMachine, global: *JSC.JSGlobalObject, key: JSValue) !J
     switch (promise.unwrap(vm.jsc, .mark_handled)) {
         .pending => unreachable,
         .fulfilled => |val| {
-            bun.assert(val == .undefined);
+            bun.assert(val.isUndefined());
             return BakeGetModuleNamespace(global, key);
         },
         .rejected => |err| {
@@ -626,14 +627,14 @@ fn BakeRegisterProductionChunk(global: *JSC.JSGlobalObject, key: bun.String, sou
     return result;
 }
 
-export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
+pub export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
     var sfa = std.heap.stackFallback(@sizeOf(bun.PathBuffer) * 2, bun.default_allocator);
     const alloc = sfa.get();
 
     const specifier = specifier_str.toUTF8(alloc);
     defer specifier.deinit();
 
-    if (JSC.HardcodedModule.Aliases.get(specifier.slice(), .bun)) |alias| {
+    if (JSC.ModuleLoader.HardcodedModule.Alias.get(specifier.slice(), .bun)) |alias| {
         return bun.String.static(alias.path);
     }
 
@@ -766,10 +767,10 @@ pub const PerThread = struct {
 
     /// After initializing, call `attach`
     pub fn init(vm: *VirtualMachine, opts: Options) !PerThread {
-        const loaded_files = try bun.bit_set.AutoBitSet.initEmpty(vm.allocator, opts.output_indexes.len);
+        var loaded_files = try bun.bit_set.AutoBitSet.initEmpty(vm.allocator, opts.output_indexes.len);
         errdefer loaded_files.deinit(vm.allocator);
 
-        const all_server_files = JSValue.createEmptyArray(vm.global, opts.output_indexes.len);
+        const all_server_files = try JSValue.createEmptyArray(vm.global, opts.output_indexes.len);
         all_server_files.protect();
 
         return .{
@@ -821,10 +822,10 @@ pub const PerThread = struct {
     // What could be done here is generating a new index type, which is
     // specifically for referenced files. This would remove the holes, but make
     // it harder to pre-allocate. It's probably worth it.
-    pub fn preloadBundledModule(pt: *PerThread, id: OpaqueFileId) JSValue {
+    pub fn preloadBundledModule(pt: *PerThread, id: OpaqueFileId) bun.JSError!JSValue {
         if (!pt.loaded_files.isSet(id.get())) {
             pt.loaded_files.set(id.get());
-            pt.all_server_files.putIndex(
+            try pt.all_server_files.putIndex(
                 pt.vm.global,
                 @intCast(id.get()),
                 pt.module_keys[id.get()].toJS(pt.vm.global),
@@ -836,16 +837,13 @@ pub const PerThread = struct {
 };
 
 /// Given a key, returns the source code to load.
-export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
+pub export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
     var sfa = std.heap.stackFallback(4096, bun.default_allocator);
     const allocator = sfa.get();
     const utf8 = key.toUTF8(allocator);
     defer utf8.deinit();
     if (pt.module_map.get(utf8.slice())) |value| {
         return pt.bundled_outputs[value.get()].value.toBunString();
-    }
-    for (pt.module_map.keys()) |keys| {
-        std.debug.print("key that does exist: {s}\n", .{keys});
     }
     return bun.String.dead;
 }
@@ -857,7 +855,7 @@ const TypeAndFlags = packed struct(i32) {
 
 const std = @import("std");
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const OutputFile = bun.options.OutputFile;
@@ -869,3 +867,8 @@ const OpaqueFileId = FrameworkRouter.OpaqueFileId;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
+
+fn @"export"() void {
+    _ = BakeProdResolve;
+    _ = BakeProdLoad;
+}

@@ -27,7 +27,7 @@ export default {
     divider("Intro"),
     page("index", "What is Bun?", {
       description:
-        "Bun is an all-in-one runtime for JavaScript and TypeScript apps. Run, bundle, and test apps with one fast tool.",
+        "Bun is an all-in-one runtime for JavaScript and TypeScript apps. Build, run, and test apps with one fast tool.",
     }),
     page("installation", "Installation", {
       description: "Install Bun with npm, Homebrew, Docker, or the official install script.",
@@ -176,12 +176,18 @@ export default {
     page("cli/pm", "`bun pm`", {
       description: "Utilities relating to package management with Bun.",
     }),
+    page("cli/why", "`bun why`", {
+      description: "Explains why a package is installed in your project.",
+    }),
     page("install/cache", "Global cache", {
       description:
         "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",
     }),
     page("install/workspaces", "Workspaces", {
-      description: "Bun's package manager supports workspaces and mono-repo development workflows.",
+      description: "Bun's package manager supports workspaces and monorepo development workflows.",
+    }),
+    page("install/catalogs", "Catalogs", {
+      description: "Use catalogs to share dependency versions between packages in a monorepo.",
     }),
     page("install/lifecycle", "Lifecycle scripts", {
       description: "How Bun handles package lifecycle scripts with trustedDependencies",
@@ -191,10 +197,11 @@ export default {
     }),
     page("install/lockfile", "Lockfile", {
       description:
-        "Bun's binary lockfile `bun.lockb` tracks your resolved dependency tree, making future installs fast and repeatable.",
+        "Bun's lockfile `bun.lock` tracks your resolved dependency tree, making future installs fast and repeatable.",
     }),
     page("install/registries", "Scopes and registries", {
-      description: "How to configure private scopes and custom package registries.",
+      description:
+        "How to configure private scopes, custom package registries, authenticating with npm token, and more.",
     }),
     page("install/overrides", "Overrides and resolutions", {
       description: "Specify version ranges for nested dependencies",
@@ -202,6 +209,9 @@ export default {
     page("install/patch", "Patch dependencies", {
       description:
         "Patch dependencies in your project to fix bugs or add features without vendoring the entire package.",
+    }),
+    page("install/audit", "Audit dependencies", {
+      description: "Check installed packages for vulnerabilities.",
     }),
     page("install/npmrc", ".npmrc support", {
       description: "Bun supports loading some configuration options from .npmrc",
@@ -214,9 +224,19 @@ export default {
     page("bundler", "`Bun.build`", {
       description: "Bundle code for consumption in the browser with Bun's native bundler.",
     }),
-    page("bundler/html", "HTML", {
-      description: `Bundle html files with Bun's native bundler.`,
+    page("bundler/html", "HTML & static sites", {
+      description: `Zero-config HTML bundler for single-page apps and multi-page apps. Automatic bundling, TailwindCSS plugins, TypeScript, JSX, React support, and incredibly fast builds`,
     }),
+    page("bundler/css", "CSS", {
+      description: `Production ready CSS bundler with support for modern CSS features, CSS modules, and more.`,
+    }),
+    page("bundler/fullstack", "Fullstack Dev Server", {
+      description: "Serve your frontend and backend from the same app with Bun's dev server.",
+    }),
+    page("bundler/hmr", "Hot reloading", {
+      description: `Update modules in a running application without reloading the page using import.meta.hot`,
+    }),
+
     page("bundler/loaders", "Loaders", {
       description: "Bun's built-in loaders for the bundler and runtime",
     }),
@@ -254,11 +274,24 @@ export default {
     page("test/time", "Dates and times", {
       description: "Control the date & time in your tests for more reliable and deterministic tests",
     }),
-    page("test/dom", "DOM testing", {
-      description: "Write headless tests for UI and React/Vue/Svelte/Lit components with happy-dom",
-    }),
+
     page("test/coverage", "Code coverage", {
       description: "Generate code coverage reports with `bun test --coverage`",
+    }),
+    page("test/reporters", "Test reporters", {
+      description: "Add a junit reporter to your test runs",
+    }),
+    page("test/configuration", "Test configuration", {
+      description: "Configure the test runner with bunfig.toml",
+    }),
+    page("test/runtime-behavior", "Runtime behavior", {
+      description: "Learn how the test runner affects Bun's runtime behavior",
+    }),
+    page("test/discovery", "Finding tests", {
+      description: "Learn how the test runner discovers tests",
+    }),
+    page("test/dom", "DOM testing", {
+      description: "Write headless tests for UI and React/Vue/Svelte/Lit components with happy-dom",
     }),
 
     divider("Package runner"),
@@ -311,12 +344,18 @@ export default {
     page("api/streams", "Streams", {
       description: `Reading, writing, and manipulating streams of data in Bun.`,
     }), // "`Bun.serve`"),
+    page("api/sql", "SQL", {
+      description: `Bun provides fast, native bindings for interacting with PostgreSQL databases.`,
+    }),
     page("api/s3", "S3 Object Storage", {
       description: `Bun provides fast, native bindings for interacting with S3-compatible object storage services.`,
     }),
     page("api/file-io", "File I/O", {
       description: `Read and write files fast with Bun's heavily optimized file system API.`,
     }), // "`Bun.write`"),
+    page("api/redis", "Redis client", {
+      description: `Bun provides a fast, native Redis client with automatic command pipelining for better performance.`,
+    }),
     page("api/import-meta", "import.meta", {
       description: `Module-scoped metadata and utilities`,
     }), // "`bun:sqlite`"),
@@ -341,14 +380,17 @@ export default {
     page("api/spawn", "Child processes", {
       description: `Spawn sync and async child processes with easily configurable input and output streams.`,
     }), // "`Bun.spawn`"),
-    page("api/transpiler", "Transpiler", {
-      description: `Bun exposes its internal transpiler as a pluggable API.`,
-    }), // "`Bun.Transpiler`"),
+    page("api/html-rewriter", "HTMLRewriter", {
+      description: `Parse and transform HTML with Bun's native HTMLRewriter API, inspired by Cloudflare Workers.`,
+    }), // "`HTMLRewriter`"),
     page("api/hashing", "Hashing", {
       description: `Native support for a range of fast hashing algorithms.`,
     }), // "`Bun.serve`"),
     page("api/console", "Console", {
       description: `Bun implements a Node.js-compatible \`console\` object with colorized output and deep pretty-printing.`,
+    }), // "`Node-API`"),
+    page("api/cookie", "Cookie", {
+      description: "Bun's native Cookie API simplifies working with HTTP cookies.",
     }), // "`Node-API`"),
     page("api/ffi", "FFI", {
       description: `Call native code from JavaScript with Bun's foreign function interface (FFI) API.`,
@@ -356,10 +398,7 @@ export default {
     page("api/cc", "C Compiler", {
       description: `Build & run native C from JavaScript with Bun's native C compiler API`,
     }), // "`bun:ffi`"),
-    page("api/html-rewriter", "HTMLRewriter", {
-      description: `Parse and transform HTML with Bun's native HTMLRewriter API, inspired by Cloudflare Workers.`,
-    }), // "`HTMLRewriter`"),
-    page("api/test", "Testing", {
+    page("cli/test", "Testing", {
       description: `Bun's built-in test runner is fast and uses Jest-compatible syntax.`,
     }), // "`bun:test`"),
     page("api/utils", "Utils", {
@@ -384,6 +423,9 @@ export default {
     page("api/color", "Color", {
       description: `Bun's color function leverages Bun's CSS parser for parsing, normalizing, and converting colors from user input to a variety of output formats.`,
     }), // "`Color`"),
+    page("api/transpiler", "Transpiler", {
+      description: `Bun exposes its internal transpiler as a pluggable API.`,
+    }), // "`Bun.Transpiler`"),
 
     // divider("Dev Server"),
     // page("bun-dev", "Vanilla"),

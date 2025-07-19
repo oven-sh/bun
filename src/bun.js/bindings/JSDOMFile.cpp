@@ -66,7 +66,7 @@ public:
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
     {
         auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-        JSC::VM& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         JSObject* newTarget = asObject(callFrame->newTarget());
         auto* constructor = globalObject->JSDOMFileConstructor();
         Structure* structure = globalObject->JSBlobStructure();
@@ -77,15 +77,13 @@ public:
                 // ShadowRealm functions belong to a different global object.
                 getFunctionRealm(lexicalGlobalObject, newTarget));
             RETURN_IF_EXCEPTION(scope, {});
-            structure = InternalFunction::createSubclassStructure(
-                lexicalGlobalObject,
-                newTarget,
-                functionGlobalObject->JSBlobStructure());
+            structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, functionGlobalObject->JSBlobStructure());
+            RETURN_IF_EXCEPTION(scope, {});
         }
 
         void* ptr = JSDOMFile__construct(lexicalGlobalObject, callFrame);
 
-        if (UNLIKELY(!ptr)) {
+        if (!ptr) [[unlikely]] {
             return JSValue::encode(JSC::jsUndefined());
         }
 

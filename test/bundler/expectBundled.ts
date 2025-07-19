@@ -1,11 +1,21 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { BuildConfig, BuildOutput, BunPlugin, fileURLToPath, PluginBuilder } from "bun";
+import { BuildConfig, BuildOutput, BunPlugin, fileURLToPath, PluginBuilder, Loader } from "bun";
 import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -122,7 +132,7 @@ export interface BundlerTestInput {
   todo?: boolean;
 
   // file options
-  files: Record<string, string | Buffer | Blob>;
+  files: Record<string, string | Buffer | Uint8ClampedArray | Blob>;
   /** Files to be written only after the bundle is done. */
   runtimeFiles?: Record<string, string | Buffer>;
   /** Defaults to the first item in `files` */
@@ -186,15 +196,13 @@ export interface BundlerTestInput {
   publicPath?: string;
   keepNames?: boolean;
   legalComments?: "none" | "inline" | "eof" | "linked" | "external";
-  loader?: Record<string, string>;
+  loader?: Record<`.${string}`, Loader>;
   mangleProps?: RegExp;
   mangleQuoted?: boolean;
   mainFields?: string[];
   metafile?: boolean | string;
   minifyIdentifiers?: boolean;
   minifySyntax?: boolean;
-  experimentalCss?: boolean;
-  experimentalHtml?: boolean;
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
@@ -207,6 +215,7 @@ export interface BundlerTestInput {
   sourceMap?: "inline" | "external" | "linked" | "none" | "linked";
   plugins?: BunPlugin[] | ((builder: PluginBuilder) => void | Promise<void>);
   install?: string[];
+  production?: boolean;
 
   // pass subprocess.env
   env?: Record<string, any>;
@@ -345,7 +354,7 @@ export interface BundlerTestRunOptions {
   stderr?: string;
   /** partial match stdout (toContain()) */
   partialStdout?: string;
-  /** match exact error message, example "ReferenceError: Can't find variable: bar" */
+  /** match exact error message, example "ReferenceError: bar is not defined" */
   error?: string;
   /**
    * for extra confidence the error is correctly tested for, a regex for the line it was
@@ -448,8 +457,6 @@ function expectBundled(
     minifyIdentifiers,
     minifySyntax,
     minifyWhitespace,
-    experimentalCss,
-    experimentalHtml,
     onAfterBundle,
     outdir,
     dotenv,
@@ -474,6 +481,7 @@ function expectBundled(
     ignoreDCEAnnotations,
     bytecode = false,
     emitDCEAnnotations,
+    production,
     // @ts-expect-error
     _referenceFn,
     expectExactFilesize,
@@ -543,7 +551,7 @@ function expectBundled(
     const loaderValues = [...new Set(Object.values(loader))];
     const supportedLoaderTypes = ["js", "jsx", "ts", "tsx", "css", "json", "text", "file", "wtf", "toml"];
     const unsupportedLoaderTypes = loaderValues.filter(x => !supportedLoaderTypes.includes(x));
-    if (unsupportedLoaderTypes.length) {
+    if (unsupportedLoaderTypes.length > 0) {
       throw new Error(`loader '${unsupportedLoaderTypes.join("', '")}' not implemented in bun build`);
     }
   }
@@ -642,7 +650,7 @@ function expectBundled(
         typeof contents === "string"
           ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\"))
           : contents;
-      writeFileSync(filename, formattedContents);
+      writeFileSync(filename, formattedContents as any);
     }
 
     if (useDefineForClassFields !== undefined) {
@@ -696,8 +704,6 @@ function expectBundled(
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
               drop?.length && drop.map(x => ["--drop=" + x]),
-              experimentalCss && "--experimental-css",
-              experimentalHtml && "--experimental-html",
               globalName && `--global-name=${globalName}`,
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
               jsx.factory && ["--jsx-factory", jsx.factory],
@@ -725,6 +731,7 @@ function expectBundled(
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
               bytecode && "--bytecode",
+              production && "--production",
             ]
           : [
               ESBUILD_PATH,
@@ -736,7 +743,6 @@ function expectBundled(
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
-              experimentalCss && "--experimental-css",
               external && external.map(x => `--external:${x}`),
               packages && ["--packages", packages],
               conditions && `--conditions=${conditions.join(",")}`,
@@ -830,10 +836,13 @@ function expectBundled(
       }
 
       const bundlerEnv = { ...bunEnv, ...env };
-      // remove undefined keys instead of passing "undefined"
+      // remove undefined keys instead of passing "undefined" and resolve {{root}}
       for (const key in bundlerEnv) {
-        if (bundlerEnv[key] === undefined) {
+        const value = bundlerEnv[key];
+        if (value === undefined) {
           delete bundlerEnv[key];
+        } else if (typeof value === "string") {
+          bundlerEnv[key] = value.replaceAll("{{root}}", root);
         }
       }
 
@@ -1035,10 +1044,9 @@ function expectBundled(
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
-          experimentalCss,
-          html: experimentalHtml ? true : undefined,
           drop,
           define: define ?? {},
+          throw: false,
         } as BuildConfig;
 
         if (dotenv) {
@@ -1055,7 +1063,7 @@ function expectBundled(
             const debugFile = `import path from 'path';
 import assert from 'assert';
 const {plugins} = (${x})({ root: ${JSON.stringify(root)} });
-const options = ${JSON.stringify({ ...buildConfig, throw: true, plugins: undefined }, null, 2)};
+const options = ${JSON.stringify({ ...buildConfig, plugins: undefined }, null, 2)};
 options.plugins = typeof plugins === "function" ? [{ name: "plugin", setup: plugins }] : plugins;
 const build = await Bun.build(options);
 for (const [key, blob] of build.outputs) {
@@ -1070,7 +1078,17 @@ for (const [key, blob] of build.outputs) {
         }
 
         configRef = buildConfig;
-        const build = await Bun.build(buildConfig);
+        let build: BuildOutput;
+        try {
+          build = await Bun.build(buildConfig);
+        } catch (e) {
+          const err = e as AggregateError;
+          build = {
+            outputs: [],
+            success: false,
+            logs: err.errors,
+          };
+        }
         if (onAfterApiBundle) await onAfterApiBundle(build);
         configRef = null!;
         Bun.gc(true);
@@ -1558,7 +1576,7 @@ for (const [key, blob] of build.outputs) {
 
             if (run.errorLineMatch) {
               const stackTraceLine = stack.pop()!;
-              const match = /at (.*):(\d+):(\d+)$/.exec(stackTraceLine);
+              const match = /at (?:<[^>]+> \()?([^)]+):(\d+):(\d+)\)?$/.exec(stackTraceLine);
               if (match) {
                 const line = readFileSync(match[1], "utf-8").split("\n")[+match[2] - 1];
                 if (!run.errorLineMatch.test(line)) {
@@ -1589,6 +1607,11 @@ for (const [key, blob] of build.outputs) {
 
           // no idea why this logs. ¯\_(ツ)_/¯
           result = result.replace(/\[Event_?Loop\] enqueueTaskConcurrent\(RuntimeTranspilerStore\)\n/gi, "");
+          // when the inspector runs (can be due to VSCode extension), there is
+          // a bug that in debug modes the console logs extra stuff
+          if (name === "stderr" && process.env.BUN_INSPECT_CONNECT_TO) {
+            result = result.replace(/(?:^|\n)\/[^\n]*: CONSOLE LOG[^\n]*(\n|$)/g, "$1").trim();
+          }
 
           if (typeof expected === "string") {
             expected = dedent(expected).trim();
@@ -1626,6 +1649,8 @@ for (const [key, blob] of build.outputs) {
         }
       }
     }
+
+    rmdirSync(root, { recursive: true });
 
     return testRef(id, opts);
   })();

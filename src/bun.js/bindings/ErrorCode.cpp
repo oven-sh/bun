@@ -16,6 +16,7 @@
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/Symbol.h"
 #include "wtf/Assertions.h"
+#include "wtf/Vector.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/MakeString.h"
@@ -24,46 +25,64 @@
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/JSInternalFieldObjectImplInlines.h"
 #include "JSDOMException.h"
-
+#include "JSDOMExceptionHandling.h"
+#include <openssl/err.h>
 #include "ErrorCode.h"
+#include "ErrorStackTrace.h"
+#include "KeyObject.h"
 
-static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype = false)
-{
-    JSC::JSObject* prototype;
-
-    // Inherit from DOMException
-    // But preserve the error.stack property.
-    if (isDOMExceptionPrototype) {
-        auto* domGlobalObject = defaultGlobalObject(globalObject);
-        prototype = JSC::constructEmptyObject(globalObject, WebCore::JSDOMException::prototype(vm, *domGlobalObject));
-    } else {
-        switch (type) {
-        case JSC::ErrorType::TypeError:
-            prototype = JSC::constructEmptyObject(globalObject, globalObject->m_typeErrorStructure.prototype(globalObject));
-            break;
-        case JSC::ErrorType::RangeError:
-            prototype = JSC::constructEmptyObject(globalObject, globalObject->m_rangeErrorStructure.prototype(globalObject));
-            break;
-        case JSC::ErrorType::Error:
-            prototype = JSC::constructEmptyObject(globalObject, globalObject->errorPrototype());
-            break;
-        case JSC::ErrorType::URIError:
-            prototype = JSC::constructEmptyObject(globalObject, globalObject->m_URIErrorStructure.prototype(globalObject));
-            break;
-        case JSC::ErrorType::SyntaxError:
-            prototype = JSC::constructEmptyObject(globalObject, globalObject->m_syntaxErrorStructure.prototype(globalObject));
-            break;
-        default: {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: Add support for more error types");
-            break;
-        }
-        }
+namespace WTF {
+template<> class StringTypeAdapter<GCOwnedDataScope<StringView>, void> {
+public:
+    StringTypeAdapter(GCOwnedDataScope<StringView> string)
+        : m_string { string }
+    {
     }
 
-    prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), 0);
-    prototype->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(code)), 0);
+    unsigned length() const { return m_string->length(); }
+    bool is8Bit() const { return m_string->is8Bit(); }
+    template<typename CharacterType> void writeTo(std::span<CharacterType> destination) { m_string->getCharacters(destination); }
 
-    return prototype;
+private:
+    GCOwnedDataScope<StringView> m_string;
+};
+}
+
+JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto thisVal = callFrame->thisValue();
+
+    auto name = thisVal.get(globalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto code = thisVal.get(globalObject, WebCore::builtinNames(vm).codePublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto message = thisVal.get(globalObject, vm.propertyNames->message);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* name_s = name.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* code_s = code.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* message_s = message.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto nameView = name_s->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto codeView = code_s->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto messageView = message_s->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::StringBuilder builder;
+    builder.append(nameView);
+    builder.append(" ["_s);
+    builder.append(codeView);
+    builder.append("]: "_s);
+    builder.append(messageView);
+
+    return JSC::JSValue::encode(JSC::jsString(vm, builder.toString()));
 }
 
 // clang-format on
@@ -80,6 +99,40 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
 namespace Bun {
 
 using namespace JSC;
+using namespace WTF;
+
+static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
+{
+    JSC::JSObject* prototype;
+
+    switch (type) {
+    case JSC::ErrorType::TypeError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_typeErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::RangeError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_rangeErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::Error:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->errorPrototype());
+        break;
+    case JSC::ErrorType::URIError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_URIErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::SyntaxError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_syntaxErrorStructure.prototype(globalObject));
+        break;
+    default: {
+        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: Add support for more error types");
+        break;
+    }
+    }
+
+    prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), 0);
+    prototype->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(code)), 0);
+    prototype->putDirect(vm, vm.propertyNames->toString, JSC::JSFunction::create(vm, globalObject, 0, "toString"_s, NodeError_proto_toString, JSC::ImplementationVisibility::Private), 0);
+
+    return prototype;
+}
 
 #include "ErrorCode+Data.h"
 
@@ -128,28 +181,47 @@ static ErrorCodeCache* errorCache(Zig::GlobalObject* globalObject)
 }
 
 // clang-format on
-static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype = false)
+static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
 {
-    auto* prototype = createErrorPrototype(vm, globalObject, type, name, code, isDOMExceptionPrototype);
+    auto* prototype = createErrorPrototype(vm, globalObject, type, name, code);
     return ErrorInstance::createStructure(vm, globalObject, prototype);
 }
 
 JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
 {
+    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* cache = errorCache(globalObject);
     const auto& data = errors[static_cast<size_t>(code)];
     if (!cache->internalField(static_cast<unsigned>(code))) {
-        auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code, code == ErrorCode::ABORT_ERR);
+        auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code);
         cache->internalField(static_cast<unsigned>(code)).set(vm, cache, structure);
     }
 
     auto* structure = jsCast<Structure*>(cache->internalField(static_cast<unsigned>(code)).get());
-    return JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
+    auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
+    if (auto* thrown_exception = scope.exception()) [[unlikely]] {
+        scope.clearException();
+        // TODO investigate what can throw here and whether it will throw non-objects
+        // (this is better than before where we would have returned nullptr from createError if any
+        // exception were thrown by ErrorInstance::create)
+        return jsCast<JSObject*>(thrown_exception->value());
+    }
+    return created_error;
 }
 
 JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return errorCache(globalObject)->createError(vm, globalObject, code, jsString(vm, message), jsUndefined());
+}
+
+JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
+{
+    return createError(globalObject->vm(), globalObject, code, message);
+}
+
+JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
+{
+    return createError(vm, defaultGlobalObject(globalObject), code, message);
 }
 
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message)
@@ -168,54 +240,90 @@ JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode co
 
 JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
 {
-    auto& vm = globalObject->vm();
-    return createError(vm, globalObject, code, jsString(vm, message));
+    return createError(globalObject->vm(), globalObject, code, message);
 }
 
 JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JSValue message)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     return createError(vm, globalObject, code, message);
 }
 
-// export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString
-extern "C" ZigString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
+extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
 
-//
-WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
+void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue arg, bool quotesLikeInspect = false)
 {
     ASSERT(!arg.isEmpty());
-    if (!arg.isCell())
-        return arg.toWTFStringForConsole(globalObject);
+    if (!arg.isCell()) {
+        builder.append(arg.toWTFStringForConsole(globalObject));
+        return;
+    }
 
     auto cell = arg.asCell();
     switch (cell->type()) {
     case JSC::JSType::StringType: {
-        return arg.toWTFStringForConsole(globalObject);
+        JSString* jsString = jsDynamicCast<JSString*>(cell);
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto str = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        if (quotesLikeInspect) {
+            if (str->contains('\'')) {
+                builder.append('"');
+                if (str->is8Bit()) {
+                    const auto span = str->span<LChar>();
+                    for (const auto c : span) {
+                        if (c == '"') {
+                            builder.append("\\\""_s);
+                        } else {
+                            builder.append(c);
+                        }
+                    }
+                } else {
+                    const auto span = str->span<char16_t>();
+                    for (const auto c : span) {
+                        if (c == '"') {
+                            builder.append("\\\""_s);
+                        } else {
+                            builder.append(c);
+                        }
+                    }
+                }
+                builder.append('"');
+                return;
+            }
+
+            builder.append('\'');
+            builder.append(str);
+            builder.append('\'');
+            return;
+        }
+        builder.append(str);
+        return;
     }
     case JSC::JSType::SymbolType: {
         auto symbol = jsCast<Symbol*>(cell);
         auto result = symbol->tryGetDescriptiveString();
-        if (result.has_value())
-            return result.value();
-        return "Symbol"_s;
+        if (result.has_value()) {
+            builder.append(result.value());
+        } else {
+            builder.append("Symbol"_s);
+        }
+        return;
     }
     case JSC::JSType::InternalFunctionType:
     case JSC::JSType::JSFunctionType: {
-        auto& vm = globalObject->vm();
-        auto catchScope = DECLARE_CATCH_SCOPE(vm);
-        auto name = JSC::getCalculatedDisplayName(vm, cell->getObject());
-        if (catchScope.exception()) {
-            catchScope.clearException();
-            name = ""_s;
-        }
+        auto& vm = JSC::getVM(globalObject);
+        auto name = Zig::functionName(vm, globalObject, cell->getObject());
 
-        if (!name.isNull() && name.length() > 0) {
-            return makeString("[Function: "_s, name, ']');
+        if (!name.isEmpty()) {
+            builder.append("[Function: "_s);
+            builder.append(name);
+            builder.append(']');
+        } else {
+            builder.append("[Function (anonymous)]"_s);
         }
-
-        return "[Function: (anonymous)]"_s;
-        break;
+        return;
     }
 
     default: {
@@ -223,42 +331,49 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
     }
     }
 
-    ZigString zstring = Bun__inspect(globalObject, arg);
-    BunString bstring(BunStringTag::ZigString, BunStringImpl(zstring));
-    return bstring.toWTFString();
+    auto bstring = Bun__inspect(globalObject, arg);
+    auto&& str = bstring.transferToWTFString();
+    builder.append(str);
 }
 
-WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue value)
+void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue value)
 {
-    auto& vm = globalObject->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     ASSERT(!value.isEmpty());
 
     if (value.isNull()) {
-        return String("null"_s);
+        builder.append("null"_s);
+        return;
     }
     if (value.isUndefined()) {
-        return String("undefined"_s);
+        builder.append("undefined"_s);
+        return;
     }
     if (value.isNumber()) {
         double d = value.asNumber();
         double infinity = std::numeric_limits<double>::infinity();
-        if (value == 0) return (1 / d == -infinity) ? String("type number (-0)"_s) : String("type number (0)"_s);
-        if (d != d) return String("type number (NaN)"_s);
-        if (d == infinity) return String("type number (Infinity)"_s);
-        if (d == -infinity) return String("type number (-Infinity)"_s);
-        auto str = value.toStringOrNull(globalObject);
-        if (!str) return {};
-        return makeString("type number ("_s, str->getString(globalObject), ")"_s);
+        if (d != d) return builder.append("type number (NaN)"_s);
+        if (d == infinity) return builder.append("type number (Infinity)"_s);
+        if (d == -infinity) return builder.append("type number (-Infinity)"_s);
+        builder.append("type number ("_s);
+        builder.append(d);
+        builder.append(')');
+        return;
     }
     if (value.isBoolean()) {
-        return value.asBoolean() ? String("type boolean (true)"_s) : String("type boolean (false)"_s);
+        builder.append(value.asBoolean() ? "type boolean (true)"_s : "type boolean (false)"_s);
+        return;
     }
     if (value.isBigInt()) {
-        auto str = value.toString(globalObject);
-        if (!str) return {};
-        return makeString("type bigint ("_s, str->getString(globalObject), "n)"_s);
+        auto str = value.toStringOrNull(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        auto view = str->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        builder.append("type bigint ("_s);
+        builder.append(view);
+        builder.append("n)"_s);
+        return;
     }
 
     ASSERT(value.isCell());
@@ -267,98 +382,208 @@ WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue val
     if (cell->isSymbol()) {
         auto symbol = jsCast<Symbol*>(cell);
         auto result = symbol->tryGetDescriptiveString();
-        auto description = result.has_value() ? result.value() : String("Symbol()"_s);
-        return makeString("type symbol ("_s, description, ")"_s);
+        if (result.has_value()) {
+            builder.append("type symbol ("_s);
+            builder.append(result.value());
+            builder.append(")"_s);
+        } else {
+            builder.append("type symbol (Symbol())"_s);
+        }
+        return;
     }
     if (cell->isCallable()) {
-        auto name = JSC::getCalculatedDisplayName(vm, cell->getObject());
-        if (scope.exception()) {
-            scope.clearException();
-            name = String(""_s);
+        builder.append("function "_s);
+        auto name = Zig::functionName(vm, globalObject, cell->getObject());
+
+        if (!name.isEmpty()) {
+            builder.append(name);
         }
-        if (!name.isNull() && name.length() > 0) {
-            return makeString("function "_s, name);
-        }
-        return String("function"_s);
+        return;
     }
     if (cell->isString()) {
-        auto str = value.toString(globalObject)->getString(globalObject);
-        if (str.length() > 28) {
-            str = str.substring(0, 25);
-            str = makeString(str, "..."_s);
-            if (!str.contains('\'')) {
-                return makeString("type string ('"_s, str, "')"_s);
-            }
+        auto* jsString = jsCast<JSString*>(cell);
+        auto str = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+
+        StringView view = str;
+
+        const bool needsEllipsis = jsString->length() > 28;
+        // node checks for the presence of a single quote.
+        // - if it does not exist, use single quotes.
+        // - if it exists, json stringify (use double quotes).
+        // https://github.com/nodejs/node/blob/c3ed292d17c34578fd7806cb42da82bbe0cca103/lib/internal/errors.js#L1030
+        const bool needsEscape = str->contains('\'');
+        if (needsEllipsis) {
+            view = str->substring(0, 25);
         }
-        //       return `type string (${JSONStringify(value)})`;
-        str = value.toWTFStringForConsole(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        return makeString("type string ("_s, str, ")"_s);
+        builder.append("type string ("_s);
+        if (needsEscape) [[unlikely]] {
+            builder.append('"');
+            if (view.is8Bit()) {
+                const auto span = view.span<LChar>();
+                for (const auto c : span) {
+                    if (c == '"') {
+                        builder.append("\\\""_s);
+                    } else {
+                        builder.append(c);
+                    }
+                }
+            } else {
+                const auto span = view.span<char16_t>();
+                for (const auto c : span) {
+                    if (c == '"') {
+                        builder.append("\\\""_s);
+                    } else {
+                        builder.append(c);
+                    }
+                }
+            }
+        } else {
+            builder.append('\'');
+            builder.append(view);
+        }
+        if (needsEllipsis) {
+            builder.append("..."_s);
+        }
+        if (needsEscape) [[unlikely]] {
+            builder.append('"');
+        } else {
+            builder.append('\'');
+        }
+        builder.append(')');
+        return;
     }
     if (cell->isObject()) {
         auto constructor = value.get(globalObject, vm.propertyNames->constructor);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, void());
         if (constructor.toBoolean(globalObject)) {
             auto name = constructor.get(globalObject, vm.propertyNames->name);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, void());
             auto str = name.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            return makeString("an instance of "_s, str->getString(globalObject));
+            RETURN_IF_EXCEPTION(scope, void());
+            builder.append("an instance of "_s);
+            auto view = str->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            builder.append(view);
+            return;
         }
-        // return `${lazyInternalUtilInspect().inspect(value, { depth: -1 })}`;
-        auto str = JSValueToStringSafe(globalObject, value);
-        RETURN_IF_EXCEPTION(scope, {});
-        return str;
     }
 
     //       value = lazyInternalUtilInspect().inspect(value, { colors: false });
-    auto str = JSValueToStringSafe(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, {});
-    return str;
+    JSValueToStringSafe(globalObject, builder, value);
+}
+
+extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* globalObject, EncodedJSValue value)
+{
+    JSValue jsValue = JSValue::decode(value);
+    WTF::StringBuilder builder;
+    determineSpecificType(JSC::getVM(globalObject), globalObject, builder, jsValue);
+    return Bun::toStringRef(builder.toString());
 }
 
 namespace Message {
 
+void addList(WTF::StringBuilder& result, WTF::Vector<WTF::String>& types)
+{
+    switch (types.size()) {
+    case 0:
+        return;
+    case 1:
+        result.append(types.at(0));
+        return;
+    case 2:
+        result.append(types.at(0));
+        result.append(" or "_s);
+        result.append(types.at(1));
+        return;
+    case 3:
+        result.append(types.at(0));
+        result.append(", "_s);
+        result.append(types.at(1));
+        result.append(", or "_s);
+        result.append(types.at(2));
+        return;
+    default: {
+        for (unsigned i = 0; i < types.size() - 1; i++) {
+            result.append(types.at(i));
+            result.append(", "_s);
+        }
+        result.append("or "_s);
+        result.append(types.at(types.size() - 1));
+        return;
+    }
+    }
+}
+
+void addParameter(WTF::StringBuilder& result, const StringView& arg_name)
+{
+    if (arg_name.endsWith(" argument"_s)) {
+        result.append(arg_name);
+    } else {
+        result.append("\""_s);
+        result.append(arg_name);
+        result.append("\" "_s);
+        result.append(arg_name.contains('.') ? "property"_s : "argument"_s);
+    }
+}
+
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, const StringView& expected_type, JSValue actual_value)
 {
-    auto actual_value_string = determineSpecificType(globalObject, actual_value);
+    WTF::StringBuilder result;
+    result.append("The "_s);
+    addParameter(result, arg_name);
+    result.append(" must be of type "_s);
+    result.append(expected_type);
+    result.append(". Received "_s);
+    determineSpecificType(JSC::getVM(globalObject), globalObject, result, actual_value);
     RETURN_IF_EXCEPTION(scope, {});
-
-    return makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received "_s, actual_value_string);
+    return result.toString();
 }
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, ArgList expected_types, JSValue actual_value)
 {
     WTF::StringBuilder result;
 
-    auto actual_value_string = determineSpecificType(globalObject, actual_value);
-    RETURN_IF_EXCEPTION(scope, {});
-
     result.append("The "_s);
-
-    if (arg_name.contains(' ')) {
-        result.append(arg_name);
-    } else {
-        result.append("\""_s);
-        result.append(arg_name);
-        result.append("\" argument"_s);
-    }
-    result.append(" must be of type "_s);
+    addParameter(result, arg_name);
+    result.append(" must be "_s);
+    result.append("of type "_s);
 
     unsigned length = expected_types.size();
     if (length == 1) {
-        result.append(expected_types.at(0).toWTFString(globalObject));
+        auto* str = expected_types.at(0).toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        result.append(str->view(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+    } else if (length == 2) {
+        auto* str1 = expected_types.at(0).toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        result.append(str1->view(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+        result.append(" or "_s);
+        auto* str2 = expected_types.at(1).toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        result.append(str2->view(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
-        for (unsigned i = 0; i < length - 1; i++) {
+        for (unsigned i = 0, end = length - 1; i < end; i++) {
             JSValue expected_type = expected_types.at(i);
-            result.append(expected_type.toWTFString(globalObject));
+            auto* str = expected_type.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            result.append(str->view(globalObject));
+            RETURN_IF_EXCEPTION(scope, {});
             result.append(", "_s);
         }
         result.append("or "_s);
-        result.append(expected_types.at(length - 1).toWTFString(globalObject));
+        auto* str = expected_types.at(length - 1).toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        result.append(str->view(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    result.append(". Received "_s, actual_value_string);
+    result.append(". Received "_s);
+    determineSpecificType(JSC::getVM(globalObject), globalObject, result, actual_value);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return result.toString();
 }
@@ -376,10 +601,14 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue val_arg_name, JSValue val_expected_type, JSValue val_actual_value)
 {
-    auto arg_name = val_arg_name.toWTFString(globalObject);
+    auto* arg_name_str = val_arg_name.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto arg_name = arg_name_str->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto expected_type = val_expected_type.toWTFString(globalObject);
+    auto* expected_type_str = val_expected_type.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto expected_type = expected_type_str->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     return ERR_INVALID_ARG_TYPE(scope, globalObject, arg_name, expected_type, val_actual_value);
@@ -387,138 +616,430 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
 
 WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue val_arg_name, JSValue val_range, JSValue val_input)
 {
-    auto arg_name = val_arg_name.toWTFString(globalObject);
+    auto* arg_name_str = val_arg_name.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto arg_name = arg_name_str->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto range = val_range.toWTFString(globalObject);
+    auto* range_str = val_range.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto range = range_str->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto input = JSValueToStringSafe(globalObject, val_input);
+    WTF::StringBuilder builder;
+    builder.append("The value of \""_s);
+    builder.append(arg_name);
+    builder.append("\" is out of range. It must be "_s);
+    builder.append(range);
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, val_input);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received "_s, input);
+    return builder.toString();
 }
 
 }
 
 namespace ERR {
 
-JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
+EncodedJSValue INVALID_ARG_TYPE(ThrowScope& scope, JSGlobalObject* globalObject, ASCIILiteral message)
 {
-    auto arg_kind = arg_name.startsWith("options."_s) ? "property"_s : "argument"_s;
-    auto ty_first_char = expected_type[0];
-    auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
-
-    auto actual_value = determineSpecificType(globalObject, val_actual_value);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto message = makeString("The \""_s, arg_name, "\" "_s, arg_kind, " must be "_s, ty_kind, " "_s, expected_type, ". Received "_s, actual_value);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
+    scope.release();
     return {};
 }
+
+JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
+{
+    auto message = Message::ERR_INVALID_ARG_TYPE(throwScope, globalObject, arg_name, expected_type, val_actual_value);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
+    throwScope.release();
+    return {};
+}
+
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue val_arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
 {
-    auto arg_name = val_arg_name.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    auto arg_kind = arg_name.startsWith("options."_s) ? "property"_s : "argument"_s;
-
-    auto ty_first_char = expected_type[0];
-    auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
-
-    auto actual_value = determineSpecificType(globalObject, val_actual_value);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto message = makeString("The \""_s, arg_name, "\" "_s, arg_kind, " must be "_s, ty_kind, " "_s, expected_type, ". Received "_s, actual_value);
+    auto* jsString = val_arg_name.toString(globalObject);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    auto arg_name = jsString->view(globalObject);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    auto message = Message::ERR_INVALID_ARG_TYPE(throwScope, globalObject, arg_name, expected_type, val_actual_value);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_ARG_TYPE_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral arg_name, WTF::ASCIILiteral expected_type, WTF::ASCIILiteral expected_instance_types, JSC::JSValue val_actual_value)
+{
+    JSC::VM& vm = globalObject->vm();
+    WTF::StringBuilder builder;
+    builder.append("The \""_s);
+    builder.append(arg_name);
+    builder.append("\" argument must be of type "_s);
+    builder.append(expected_type);
+    builder.append(" or an instance of "_s);
+    builder.append(expected_instance_types);
+    builder.append(". Received "_s);
+    determineSpecificType(vm, globalObject, builder, val_actual_value);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_ARG_TYPE_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral arg_name, WTF::ASCIILiteral expected_instance_types, JSC::JSValue val_actual_value)
+{
+    JSC::VM& vm = globalObject->vm();
+    WTF::StringBuilder builder;
+    builder.append("The \""_s);
+    builder.append(arg_name);
+    builder.append("\" argument must be an instance of "_s);
+    builder.append(expected_instance_types);
+    builder.append(". Received "_s);
+    determineSpecificType(vm, globalObject, builder, val_actual_value);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+// When you want INVALID_ARG_TYPE to say "The argument must be an instance of X. Received Y." instead of "The argument must be of type X. Received Y."
+JSC::EncodedJSValue INVALID_ARG_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    ASCIILiteral type = String(arg_name).contains('.') ? "property"_s : "argument"_s;
+    WTF::StringBuilder builder;
+    builder.append("The \""_s);
+    builder.append(arg_name);
+    builder.append("\" "_s);
+    builder.append(type);
+    builder.append(" must be an instance of "_s);
+    builder.append(expected_type);
+    builder.append(". Received "_s);
+    determineSpecificType(vm, globalObject, builder, val_actual_value);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, builder.toString()));
+    throwScope.release();
     return {};
 }
 
 JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, double lower, double upper, JSC::JSValue actual)
 {
-    auto lowerStr = jsNumber(lower).toWTFString(globalObject);
-    auto upperStr = jsNumber(upper).toWTFString(globalObject);
-    auto actual_value = JSValueToStringSafe(globalObject, actual);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    WTF::StringBuilder builder;
+    builder.append("The value of \""_s);
+    builder.append(arg_name);
+    builder.append("\" is out of range. It must be >= "_s);
+    builder.append(lower);
+    builder.append(" and <= "_s);
+    builder.append(upper);
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, actual);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be >= "_s, lowerStr, " and <= "_s, upperStr, ". Received "_s, actual_value);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, builder.toString()));
+    throwScope.release();
     return {};
 }
+
 JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue arg_name_val, double lower, double upper, JSC::JSValue actual)
 {
-    auto arg_name = arg_name_val.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    auto lowerStr = jsNumber(lower).toWTFString(globalObject);
-    auto upperStr = jsNumber(upper).toWTFString(globalObject);
-    auto actual_value = JSValueToStringSafe(globalObject, actual);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    auto* jsString = arg_name_val.toString(globalObject);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    auto arg_name = jsString->view(globalObject);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be >= "_s, lowerStr, " and <= "_s, upperStr, ". Received "_s, actual_value);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
+    WTF::StringBuilder builder;
+    builder.append("The value of \""_s);
+    builder.append(arg_name);
+    builder.append("\" is out of range. It must be >= "_s);
+    builder.append(lower);
+    builder.append(" and <= "_s);
+    builder.append(upper);
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, actual);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, builder.toString()));
+    throwScope.release();
     return {};
 }
+
 JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue arg_name_val, double bound_num, Bound bound, JSC::JSValue actual)
 {
-    auto arg_name = arg_name_val.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    auto actual_value = JSValueToStringSafe(globalObject, actual);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    auto* jsString = arg_name_val.toString(globalObject);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    auto arg_name = jsString->view(globalObject);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
-    switch (bound) {
-    case LOWER: {
-        auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be >= "_s, bound_num, ". Received "_s, actual_value);
-        throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
-        return {};
-    }
-    case UPPER: {
-        auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be <= "_s, bound_num, ". Received "_s, actual_value);
-        throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
-        return {};
-    }
-    }
-}
-JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue arg_name_val, const WTF::String& msg, JSC::JSValue actual)
-{
-    auto arg_name = arg_name_val.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    auto actual_value = JSValueToStringSafe(globalObject, actual);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    WTF::StringBuilder builder;
+    builder.append("The value of \""_s);
+    builder.append(arg_name);
+    builder.append("\" is out of range. It must be "_s);
+    builder.append(bound == LOWER ? ">= "_s : "<= "_s);
+    builder.append(bound_num);
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, actual);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, msg, ". Received "_s, actual_value);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, builder.toString()));
+    throwScope.release();
     return {};
 }
+
+JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue arg_name_val, const WTF::String& msg, JSC::JSValue actual)
+{
+    auto* jsString = arg_name_val.toString(globalObject);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    auto arg_name = jsString->view(globalObject);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+
+    WTF::StringBuilder builder;
+    builder.append("The value of \""_s);
+    builder.append(arg_name);
+    builder.append("\" is out of range. It must be "_s);
+    builder.append(msg);
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, actual);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
 JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& msg, JSC::JSValue actual)
 {
-    auto actual_value = JSValueToStringSafe(globalObject, actual);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    WTF::StringBuilder builder;
+    builder.append("The value of \""_s);
+    builder.append(arg_name);
+    builder.append("\" is out of range. It must be "_s);
+    builder.append(msg);
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, actual);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, msg, ". Received "_s, actual_value);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral message)
+{
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
+    scope.release();
     return {};
 }
 
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value, const WTF::String& reason)
 {
-    ASCIILiteral type = String(name).find('.') != notFound ? "property"_s : "argument"_s;
+    ASCIILiteral type = String(name).contains('.') ? "property"_s : "argument"_s;
 
-    auto value_string = JSValueToStringSafe(globalObject, value);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    WTF::StringBuilder builder;
+    builder.append("The "_s);
+    builder.append(type);
+    builder.append(" '"_s);
+    builder.append(name);
+    builder.append("' "_s);
+    builder.append(reason);
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, value, true);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto message = makeString("The "_s, type, " '"_s, name, "' "_s, reason, ". Received "_s, value_string);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message));
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+JSC::EncodedJSValue INVALID_ARG_VALUE_RangeError(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value, const WTF::String& reason)
+{
+    auto& vm = JSC::getVM(globalObject);
+    ASCIILiteral type = StringView(name).contains('.') ? "property"_s : "argument"_s;
+    WTF::StringBuilder builder;
+
+    builder.append("The "_s);
+    builder.append(type);
+    builder.append(" '"_s);
+    builder.append(name);
+    builder.append("' "_s);
+    builder.append(reason);
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, value, true);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto* structure = createErrorStructure(vm, globalObject, ErrorType::RangeError, "RangeError"_s, "ERR_INVALID_ARG_VALUE"_s);
+    auto error = JSC::ErrorInstance::create(vm, structure, builder.toString(), jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, ErrorType::RangeError, true);
+    throwScope.throwException(globalObject, error);
+    throwScope.release();
     return {};
 }
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, const WTF::String& reason)
 {
-    auto name_string = JSValueToStringSafe(globalObject, name);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    WTF::StringBuilder builder;
+    builder.append("The argument '"_s);
+    auto& vm = JSC::getVM(globalObject);
+    determineSpecificType(vm, globalObject, builder, name);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto value_string = JSValueToStringSafe(globalObject, value);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    builder.append("' "_s);
+    builder.append(reason);
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, value, true);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto message = makeString("The argument '"_s, name_string, "' "_s, reason, ". Received "_s, value_string);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message));
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+// for validateOneOf
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, WTF::ASCIILiteral reason, JSC::JSArray* oneOf)
+{
+    WTF::StringBuilder builder;
+    builder.append("The argument '"_s);
+    JSValueToStringSafe(globalObject, builder, name);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+
+    builder.append("' "_s);
+    builder.append(reason);
+    unsigned length = oneOf->length();
+    for (size_t i = 0; i < length; i++) {
+        JSValue index = oneOf->getIndex(globalObject, i);
+        RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+        if (index.isString()) {
+            JSString* str = index.toString(globalObject);
+            RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+            builder.append('\'');
+            builder.append(str->view(globalObject));
+            RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+            builder.append('\'');
+        } else {
+            JSValueToStringSafe(globalObject, builder, index);
+            RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+        }
+
+        if (i < length - 1) {
+            builder.append(", "_s);
+        }
+    }
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, value, true);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, WTF::ASCIILiteral reason, JSC::JSValue value, const std::span<const ASCIILiteral> oneOf)
+{
+    WTF::StringBuilder builder;
+    builder.append("The "_s);
+    if (WTF::find(name.span(), '.') != WTF::notFound) {
+        builder.append("property '"_s);
+    } else {
+        builder.append("argument '"_s);
+    }
+    builder.append(name);
+    builder.append("' "_s);
+    builder.append(reason);
+
+    bool first = true;
+    for (ASCIILiteral oneOfStr : oneOf) {
+        if (!first) {
+            builder.append(", "_s);
+        }
+        first = false;
+        builder.append('`');
+        builder.append(oneOfStr);
+        builder.append('`');
+    }
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, WTF::ASCIILiteral reason, JSC::JSValue value, const std::span<const int32_t> oneOf)
+{
+    WTF::StringBuilder builder;
+    builder.append("The "_s);
+    if (WTF::find(name.span(), '.') != WTF::notFound) {
+        builder.append("property '"_s);
+    } else {
+        builder.append("argument '"_s);
+    }
+    builder.append(name);
+    builder.append("' "_s);
+    builder.append(reason);
+
+    bool first = true;
+    for (int32_t oneOfStr : oneOf) {
+        if (!first) {
+            builder.append(", "_s);
+        }
+        first = false;
+        builder.append(oneOfStr);
+    }
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, JSC::JSValue value, const WTF::String& reason)
+{
+    WTF::StringBuilder builder;
+
+    builder.append("The "_s);
+    if (name.contains('.')) {
+        builder.append("property '"_s);
+    } else {
+        builder.append("argument '"_s);
+    }
+    builder.append(name);
+    builder.append("' "_s);
+    builder.append(reason);
+    builder.append(". Received "_s);
+
+    JSValueToStringSafe(globalObject, builder, value, true);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_URL_SCHEME(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& expectedScheme)
+{
+    auto message = makeString("The URL must be of scheme "_s, expectedScheme);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_URL_SCHEME, message));
+    throwScope.release();
+    return {};
+}
+JSC::EncodedJSValue INVALID_FILE_URL_HOST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& platform)
+{
+    auto message = makeString("File URL host must be \"localhost\" or empty on "_s, platform);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_FILE_URL_HOST, message));
+    throwScope.release();
+    return {};
+}
+JSC::EncodedJSValue INVALID_FILE_URL_HOST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const ASCIILiteral platform)
+{
+    auto message = makeString("File URL host must be \"localhost\" or empty on "_s, platform);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_FILE_URL_HOST, message));
+    throwScope.release();
+    return {};
+}
+/// `File URL path {suffix}`
+JSC::EncodedJSValue INVALID_FILE_URL_PATH(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const ASCIILiteral suffix)
+{
+    auto message = makeString("File URL path "_s, suffix);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_FILE_URL_PATH, message));
+    throwScope.release();
     return {};
 }
 
@@ -526,6 +1047,20 @@ JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 {
     auto message = makeString("Unknown encoding: "_s, encoding);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue encodingValue)
+{
+    WTF::String encodingString = encodingValue.toWTFString(globalObject);
+    RELEASE_RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::StringBuilder builder;
+    builder.append("Unknown encoding: "_s);
+    builder.append(encodingString);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, builder.toString()));
+    scope.release();
     return {};
 }
 
@@ -533,6 +1068,7 @@ JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObje
 {
     auto message = makeString("Invalid state: "_s, statemsg);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_STATE, message));
+    throwScope.release();
     return {};
 }
 
@@ -540,41 +1076,442 @@ JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalOb
 {
     auto message = makeString("Cannot create a string longer than "_s, WTF::String ::MaxLength, " characters"_s);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message));
+    throwScope.release();
     return {};
 }
 
-JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral name)
 {
+    if (!name.isEmpty()) {
+        throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, makeString("\""_s, name, "\" is outside of buffer bounds"_s)));
+        throwScope.release();
+        return {};
+    }
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
+    throwScope.release();
     return {};
 }
 
 JSC::EncodedJSValue UNKNOWN_SIGNAL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue signal, bool triedUppercase)
 {
-    auto signal_string = JSValueToStringSafe(globalObject, signal);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto message_extra = triedUppercase ? " (signals must use all capital letters)"_s : ""_s;
-    auto message = makeString("Unknown signal: "_s, signal_string, message_extra);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_SIGNAL, message));
+    WTF::StringBuilder builder;
+    builder.append("Unknown signal: "_s);
+    JSValueToStringSafe(globalObject, builder, signal);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    if (triedUppercase) {
+        builder.append(" (signals must use all capital letters)"_s);
+    }
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_SIGNAL, builder.toString()));
+    throwScope.release();
     return {};
 }
 
 JSC::EncodedJSValue SOCKET_BAD_PORT(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue port, bool allowZero)
 {
     ASCIILiteral op = allowZero ? ">="_s : ">"_s;
+    WTF::StringBuilder builder;
+    JSValueToStringSafe(globalObject, builder, name);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    builder.append(" should be "_s);
+    builder.append(op);
+    builder.append(" 0 and < 65536. Received "_s);
+    JSValueToStringSafe(globalObject, builder, port);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto name_string = JSValueToStringSafe(globalObject, name);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    auto port_string = JSValueToStringSafe(globalObject, port);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto message = makeString(name_string, " should be "_s, op, " 0 and < 65536. Received "_s, port_string);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_SOCKET_BAD_PORT, message));
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_SOCKET_BAD_PORT, builder.toString()));
+    throwScope.release();
     return {};
 }
 
+JSC::EncodedJSValue UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "`process.setupUncaughtExceptionCapture()` was called while a capture callback was already active"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET, message));
+    throwScope.release();
+    return {};
 }
+
+JSC::EncodedJSValue ASSERTION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue msg)
+{
+    auto msg_string = msg.toWTFString(globalObject);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    auto message = msg_string;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_ASSERTION, message));
+    throwScope.release();
+    return {};
+}
+JSC::EncodedJSValue ASSERTION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral msg)
+{
+    auto message = msg;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_ASSERTION, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Invalid EC curve name"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_CURVE, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Invalid key type"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_UNKNOWN_CIPHER(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& cipherName)
+{
+    WTF::StringBuilder builder;
+    builder.append("Unknown cipher: "_s);
+    builder.append(cipherName);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_UNKNOWN_CIPHER, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_AUTH_TAG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_AUTH_TAG, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_IV(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_IV, "Invalid initialization vector"_s));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_UNSUPPORTED_OPERATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_UNSUPPORTED_OPERATION, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_UNSUPPORTED_OPERATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_UNSUPPORTED_OPERATION, "Unsupported crypto operation"_s));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_KEYLEN(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEYLEN, "Invalid key length"_s));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_STATE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message)
+{
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_STATE, message));
+    scope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_MESSAGELEN(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_MESSAGELEN, "Invalid message length"_s));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue MISSING_ARGS(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message)
+{
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_MISSING_ARGS, message));
+    scope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_OPERATION_FAILED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_KEYPAIR(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Invalid key pair"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEYPAIR, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_ECDH_INVALID_PUBLIC_KEY(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Public key is not valid for specified curve"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_ECDH_INVALID_FORMAT(ThrowScope& scope, JSGlobalObject* globalObject, const WTF::String& formatString)
+{
+    WTF::StringBuilder builder;
+    builder.append("Invalid ECDH format: "_s);
+    builder.append(formatString);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_ECDH_INVALID_FORMAT, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& curve)
+{
+    WTF::StringBuilder builder;
+    builder.append("Unsupported JWK EC curve: "_s);
+    builder.append(curve);
+    builder.append('.');
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_CURVE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral message, const char* curveName)
+{
+    WTF::StringBuilder builder;
+    builder.append(message);
+    if (curveName) {
+        builder.append(std::span<const char> { curveName, strlen(curveName) });
+    }
+    builder.append('.');
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_CURVE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_KEY_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE, "Unsupported JWK Key Type."_s));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_JWK(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_JWK, "Invalid JWK data"_s));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_JWK(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_JWK, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_SIGN_KEY_REQUIRED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "No key provided to sign"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_SIGN_KEY_REQUIRED, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSValue received, WTF::ASCIILiteral expected)
+{
+    WTF::StringBuilder builder;
+    builder.append("Invalid key object type "_s);
+    JSValueToStringSafe(globalObject, builder, received);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+
+    builder.append(". Expected "_s);
+    builder.append(expected);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, CryptoKeyType receivedType, ASCIILiteral expected)
+{
+    WTF::StringBuilder builder;
+    builder.append("Invalid key object type "_s);
+    switch (receivedType) {
+    case CryptoKeyType::Private:
+        builder.append("private"_s);
+        break;
+    case CryptoKeyType::Public:
+        builder.append("public"_s);
+        break;
+    case CryptoKeyType::Secret:
+        builder.append("secret"_s);
+        break;
+    }
+    builder.append(", expected "_s);
+    builder.append(expected);
+    builder.append('.');
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& receivedKeyEncoding, const WTF::String& expectedOperation)
+{
+    WTF::StringBuilder builder;
+    builder.append("The selected key encoding "_s);
+    builder.append(receivedKeyEncoding);
+    builder.append(' ');
+    builder.append(expectedOperation);
+    builder.append('.');
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& digest)
+{
+    WTF::StringBuilder builder;
+    builder.append("Invalid digest: "_s);
+    builder.append(digest);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_DIGEST, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral message, const WTF::StringView& digest)
+{
+    WTF::StringBuilder builder;
+    builder.append(message);
+    builder.append(digest);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_DIGEST, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_HASH_FINALIZED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_HASH_FINALIZED, "Digest already called"_s));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_HASH_UPDATE_FAILED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_HASH_UPDATE_FAILED, "Hash update failed"_s));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_TIMING_SAFE_EQUAL_LENGTH(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Input buffers must have the same byte length"_s;
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH, message));
+    scope.release();
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_UNKNOWN_DH_GROUP(JSC::ThrowScope& scope, JSGlobalObject* globalObject)
+{
+    auto message = "Unknown DH group"_s;
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_UNKNOWN_DH_GROUP, message));
+    scope.release();
+    return {};
+}
+
+JSC::EncodedJSValue OSSL_EVP_INVALID_DIGEST(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject)
+{
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OSSL_EVP_INVALID_DIGEST, "Invalid digest used"_s));
+    scope.release();
+    return {};
+}
+
+JSC::EncodedJSValue MISSING_PASSPHRASE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_MISSING_PASSPHRASE, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue KEY_GENERATION_JOB_FAILED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Key generation job failed"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_KEY_GENERATION_JOB_FAILED, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue INCOMPATIBLE_OPTION_PAIR(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral opt1, ASCIILiteral opt2)
+{
+    WTF::StringBuilder builder;
+    builder.append("Option \""_s);
+    builder.append(opt1);
+    builder.append("\" cannot be used in combination with option \""_s);
+    builder.append(opt2);
+    builder.append("\""_s);
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INCOMPATIBLE_OPTION_PAIR, builder.toString()));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue MISSING_OPTION(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral message)
+{
+    WTF::StringBuilder builder;
+    builder.append(message);
+    builder.append(" is required"_s);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_MISSING_OPTION, builder.toString()));
+    scope.release();
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const String& part, const String& input, int position)
+{
+    WTF::StringBuilder builder;
+    builder.append("The MIME syntax for a "_s);
+    builder.append(part);
+    builder.append(" in "_s);
+    builder.append(input);
+
+    builder.append(" is invalid"_s);
+    if (position != -1) {
+        builder.append(" at "_s);
+        builder.append(String::number(position));
+    }
+
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_MIME_SYNTAX, builder.toString()));
+    scope.release();
+    return {};
+}
+
+EncodedJSValue CLOSED_MESSAGE_PORT(ThrowScope& scope, JSGlobalObject* globalObject)
+{
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CLOSED_MESSAGE_PORT, "Cannot send data on closed MessagePort"_s));
+    scope.release();
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_THIS(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral expectedType)
+{
+    WTF::StringBuilder builder;
+    builder.append("Value of \"this\" must be of type "_s);
+    builder.append(expectedType);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_THIS, builder.toString()));
+    scope.release();
+    return {};
+}
+
+JSC::EncodedJSValue DLOPEN_DISABLED(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral message)
+{
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_DLOPEN_DISABLED, message));
+    scope.release();
+    return {};
+}
+
+} // namespace ERR
 
 static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)
 {
@@ -589,33 +1526,56 @@ static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalOb
         }
 
         const auto msg = Bun::Message::ERR_INVALID_ARG_TYPE(scope, globalObject, argName, expected_types, arg2);
+        RETURN_IF_EXCEPTION(scope, {});
         return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, msg);
     }
 
     const auto msg = Bun::Message::ERR_INVALID_ARG_TYPE(scope, globalObject, arg0, arg1, arg2);
+    RETURN_IF_EXCEPTION(scope, {});
     return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, msg);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, JSC::JSValue reason)
 {
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(name.isString());
+    auto* jsNameString = name.toString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
-    EXPECT_ARG_COUNT(3);
+    auto nameView = jsNameString->view(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto message = Message::ERR_OUT_OF_RANGE(scope, globalObject, callFrame->argument(0), callFrame->argument(1), callFrame->argument(2));
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
-}
+    ASCIILiteral type = nameView->contains('.') ? "property"_s : "argument"_s;
+    WTF::StringBuilder builder;
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
-{
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
-}
+    RETURN_IF_EXCEPTION(throwScope, {});
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_SERVER_NOT_RUNNING, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
-{
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_NOT_RUNNING, "Server is not running."_s));
+    ASSERT(reason.isUndefined() || reason.isString());
+
+    builder.append("The "_s);
+    builder.append(type);
+    builder.append(" '"_s);
+    builder.append(nameView);
+    builder.append("'"_s);
+
+    if (reason.isUndefined()) {
+        builder.append(" is invalid. Received "_s);
+        JSValueToStringSafe(globalObject, builder, value, true);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString());
+    }
+
+    auto* jsReasonString = reason.toString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto reasonView = jsReasonString->view(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    builder.append(' ');
+    builder.append(reasonView);
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, value, true);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString());
 }
 
 extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* globalObject, ErrorCode code, BunString* message)
@@ -623,123 +1583,69 @@ extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* glo
     return JSValue::encode(createError(globalObject, code, message->toWTFString(BunString::ZeroCopy)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_CHANNEL_CLOSED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode)
 {
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_CHANNEL_CLOSED, "Channel closed."_s));
+    char buf[256] = { 0 };
+    ERR_error_string_n(static_cast<uint32_t>(errorCode), buf, sizeof(buf));
+    auto message = String::fromUTF8(buf);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_STATE, message));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_SOCKET_BAD_TYPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope)
 {
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6"_s));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    EXPECT_ARG_COUNT(2);
-
-    auto actual = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto expected = callFrame->argument(1).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto message = makeString("Protocol \""_s, actual, "\" not supported. Expected \""_s, expected, "\""_s);
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_PROTOCOL, message));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_ARG_TYPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    EXPECT_ARG_COUNT(3);
-
-    auto arg_name = callFrame->argument(0);
-    auto expected_type = callFrame->argument(1);
-    auto actual_value = callFrame->argument(2);
-    return JSValue::encode(ERR_INVALID_ARG_TYPE(scope, globalObject, arg_name, expected_type, actual_value));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_BROTLI_INVALID_PARAM, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    EXPECT_ARG_COUNT(1);
-
-    auto param = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto message = makeString(param, " is not a valid Brotli parameter"_s);
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BROTLI_INVALID_PARAM, message));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_BUFFER_TOO_LARGE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    EXPECT_ARG_COUNT(1);
-
-    auto param = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto message = makeString("Cannot create a Buffer larger than "_s, param, " bytes"_s);
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_TOO_LARGE, message));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_ZLIB_INITIALIZATION_FAILED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed"_s));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_BUFFER_OUT_OF_BOUNDS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
-{
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_UNHANDLED_ERROR, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto err = callFrame->argument(0);
-
-    if (err.isUndefined()) {
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, "Unhandled error."_s));
-    }
-    if (err.isString()) {
-        auto err_str = err.getString(globalObject);
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, makeString("Unhandled error. ("_s, err_str, ")"_s)));
-    }
-    if (err.isCell()) {
-        auto cell = err.asCell();
-        if (cell->inherits<JSC::Exception>()) {
-            return JSC::JSValue::encode(jsCast<JSC::Exception*>(cell)->value());
-        }
-    }
-    auto err_str = err.toWTFString(globalObject);
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNHANDLED_ERROR, makeString("Unhandled error. ("_s, err_str, ")"_s)));
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Crypto operation failed"_s));
 }
 
 } // namespace Bun
+
+extern "C" JSC::EncodedJSValue Bun__wrapAbortError(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue causeParam)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto cause = JSC::JSValue::decode(causeParam);
+
+    if (cause.isUndefined()) {
+        return JSC::JSValue::encode(Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, globalObject->commonStrings().OperationWasAbortedString(globalObject)));
+    }
+
+    auto message = globalObject->commonStrings().OperationWasAbortedString(globalObject);
+    JSC::JSObject* options = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "cause"_s), cause);
+
+    auto error = Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, message, options);
+    return JSC::JSValue::encode(error);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto message = callFrame->argument(0);
+    auto options = callFrame->argument(1);
+    if (!options.isUndefined() && options.isCell() && !options.asCell()->isObject()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, options);
+
+    if (message.isUndefined() && options.isUndefined()) {
+        return JSValue::encode(Bun::createError(vm, lexicalGlobalObject, Bun::ErrorCode::ABORT_ERR, JSValue(globalObject->commonStrings().OperationWasAbortedString(globalObject))));
+    }
+
+    if (message.isUndefined()) message = globalObject->commonStrings().OperationWasAbortedString(globalObject);
+    auto error = Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, message, options);
+    return JSC::JSValue::encode(error);
+}
 
 JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason abortReason)
 {
     switch (abortReason) {
     case CommonAbortReason::Timeout: {
-        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, "The operation timed out"_s);
+        return createDOMException(globalObject, ExceptionCode::TimeoutError, "The operation timed out."_s);
     }
     case CommonAbortReason::UserAbort: {
-        // This message is a standardized error message. We cannot change it.
-        // https://webidl.spec.whatwg.org/#idl-DOMException:~:text=The%20operation%20was%20aborted.
-        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, "The operation was aborted."_s);
+        return createDOMException(globalObject, ExceptionCode::AbortError, "The operation was aborted."_s);
     }
     case CommonAbortReason::ConnectionClosed: {
-        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, "The connection was closed"_s);
+        return createDOMException(globalObject, ExceptionCode::AbortError, "The connection was closed."_s);
     }
     default: {
         break;
@@ -766,38 +1672,43 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JS
     }
 
     // Pathological case: the this value returns a string which is extremely long or causes an out of memory error.
-    const auto& typeString = thisValue.isString() ? String("a string"_s) : JSC::errorDescriptionForValue(globalObject, thisValue);
-    return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Expected this to be instanceof "_s, typeName, ", but received "_s, typeString));
+    WTF::StringBuilder builder;
+    builder.append("Expected this to be instanceof "_s);
+    builder.append(typeName);
+    builder.append(", but received "_s);
+    determineSpecificType(JSC::getVM(globalObject), globalObject, builder, thisValue);
+    return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, builder.toString());
 }
 
 JSC::EncodedJSValue Bun::throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, Bun::ErrorCode code, const WTF::String& message)
 {
-    return JSC::JSValue::encode(scope.throwException(globalObject, createError(globalObject, code, message)));
+    scope.throwException(globalObject, createError(globalObject, code, message));
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    EXPECT_ARG_COUNT(2);
+    EXPECT_ARG_COUNT(1);
 
     JSC::JSValue codeValue = callFrame->argument(0);
     RETURN_IF_EXCEPTION(scope, {});
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     if (!codeValue.isNumber()) {
         JSC::throwTypeError(globalObject, scope, "First argument to $ERR_ must be a number"_s);
-        return {};
+        RELEASE_AND_RETURN(scope, {});
     }
 #endif
 
     int code = codeValue.toInt32(globalObject);
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     if (code > Bun::NODE_ERROR_COUNT - 1 || code < 0) {
         JSC::throwTypeError(globalObject, scope, "Invalid error code. Use $ERR_* constants"_s);
-        return {};
+        RELEASE_AND_RETURN(scope, {});
     }
 #endif
 
@@ -808,15 +1719,795 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         JSValue arg0 = callFrame->argument(1);
         JSValue arg1 = callFrame->argument(2);
         JSValue arg2 = callFrame->argument(3);
-
         return JSValue::encode(ERR_INVALID_ARG_TYPE(scope, globalObject, arg0, arg1, arg2));
     }
+
+    case Bun::ErrorCode::ERR_INVALID_IP_ADDRESS: {
+        JSValue arg0 = callFrame->argument(1);
+
+        auto* jsString = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto param = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        WTF::StringBuilder builder;
+        builder.append("Invalid IP address: "_s);
+        builder.append(param);
+        return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_IP_ADDRESS, builder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_MIME_SYNTAX: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg2 = callFrame->argument(3);
+        auto str2 = arg2.toInt32(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return ERR::INVALID_MIME_SYNTAX(scope, globalObject, str0, str1, str2);
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_ADDRESS_FAMILY: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg2 = callFrame->argument(3);
+        auto str2 = arg2.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Invalid address family: "_s, str0, " "_s, str1, ":"_s, str2);
+        auto err = createError(globalObject, ErrorCode::ERR_INVALID_ADDRESS_FAMILY, message);
+        err->putDirect(vm, builtinNames(vm).hostPublicName(), arg1, 0);
+        err->putDirect(vm, builtinNames(vm).portPublicName(), arg2, 0);
+        return JSC::JSValue::encode(err);
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_ARG_VALUE: {
+        JSValue arg0 = callFrame->argument(1);
+        JSValue arg1 = callFrame->argument(2);
+        JSValue arg2 = callFrame->argument(3);
+        return JSValue::encode(ERR_INVALID_ARG_VALUE(scope, globalObject, arg0, arg1, arg2));
+    }
+
+    case Bun::ErrorCode::ERR_UNKNOWN_ENCODING: {
+        auto arg0 = callFrame->argument(1);
+        auto* jsString = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto param = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        WTF::StringBuilder builder;
+        builder.append("Unknown encoding: "_s);
+        builder.append(param);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_STREAM_DESTROYED: {
+        auto arg0 = callFrame->argument(1);
+        auto* jsString = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto param = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        WTF::StringBuilder builder;
+        builder.append("Cannot call "_s);
+        builder.append(param);
+        builder.append(" after a stream was destroyed"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_METHOD_NOT_IMPLEMENTED: {
+        auto arg0 = callFrame->argument(1);
+        auto* jsString = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto param = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        WTF::StringBuilder builder;
+        builder.append("The "_s);
+        builder.append(param);
+        builder.append(" method is not implemented"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_STREAM_ALREADY_FINISHED: {
+        auto arg0 = callFrame->argument(1);
+        auto* jsString = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto param = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        WTF::StringBuilder builder;
+        builder.append("Cannot call "_s);
+        builder.append(param);
+        builder.append(" after a stream was finished"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_MISSING_ARGS: {
+        switch (callFrame->argumentCount()) {
+        case 0: {
+            UNREACHABLE();
+        }
+        case 1: {
+            ASSERT("At least one arg needs to be specified");
+        }
+        case 2: {
+            JSValue arg0 = callFrame->argument(1);
+            // ["foo", "bar", "baz"] -> 'The "foo" or "bar" or "baz" argument must be specified'
+            if (auto* arr = jsDynamicCast<JSC::JSArray*>(arg0)) {
+                ASSERT(arr->length() > 0);
+                WTF::StringBuilder builder;
+                builder.append("The "_s);
+                for (unsigned i = 0, length = arr->length(); i < length; i++) {
+                    JSValue index = arr->getIndex(globalObject, i);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (i > 0) builder.append("or "_s);
+                    builder.append('"');
+                    auto* jsString = index.toString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    auto str = jsString->view(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    builder.append(str);
+                    builder.append('"');
+                    builder.append(' ');
+                }
+                builder.append("argument must be specified"_s);
+                return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+            }
+
+            auto* jsString = arg0.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto str0 = jsString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            WTF::StringBuilder builder;
+            builder.append("The \""_s);
+            builder.append(str0);
+            builder.append("\" argument must be specified"_s);
+            return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+        }
+        case 3: {
+            JSValue arg0 = callFrame->argument(1);
+            auto* jsString = arg0.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto str0 = jsString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSValue arg1 = callFrame->argument(2);
+            auto* jsString1 = arg1.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto str1 = jsString1->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            WTF::StringBuilder builder;
+            builder.append("The \""_s);
+            builder.append(str0);
+            builder.append("\" and \""_s);
+            builder.append(str1);
+            builder.append("\" arguments must be specified"_s);
+            return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+        }
+        default: {
+            WTF::StringBuilder result;
+            result.append("The "_s);
+            auto argumentCount = callFrame->argumentCount();
+            for (int i = 1; i < argumentCount; i += 1) {
+                if (i == argumentCount - 1) result.append("and "_s);
+                result.append('"');
+                JSValue arg = callFrame->argument(i);
+                auto* jsString = arg.toString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                auto str = jsString->view(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                result.append(str);
+                result.append('"');
+                if (i != argumentCount - 1) result.append(',');
+                result.append(' ');
+            }
+            result.append("arguments must be specified"_s);
+            return JSC::JSValue::encode(createError(globalObject, error, result.toString()));
+        }
+        }
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_RETURN_VALUE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto view0 = str0->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto view1 = str1->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        auto arg2 = callFrame->argument(3);
+
+        WTF::StringBuilder messageBuilder;
+        messageBuilder.append("Expected "_s);
+        messageBuilder.append(view0);
+        messageBuilder.append(" to be returned from the \""_s);
+        messageBuilder.append(view1);
+        messageBuilder.append("\" function but got "_s);
+        determineSpecificType(JSC::getVM(globalObject), globalObject, messageBuilder, arg2);
+        RETURN_IF_EXCEPTION(scope, {});
+        messageBuilder.append('.');
+
+        return JSC::JSValue::encode(createError(globalObject, error, messageBuilder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_OUT_OF_RANGE: {
+        auto arg0 = callFrame->argument(1);
+        auto arg1 = callFrame->argument(2);
+        auto arg2 = callFrame->argument(3);
+        return JSC::JSValue::encode(createError(globalObject, error, Message::ERR_OUT_OF_RANGE(scope, globalObject, arg0, arg1, arg2)));
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_STATE:
+    case Bun::ErrorCode::ERR_INVALID_STATE_TypeError:
+    case Bun::ErrorCode::ERR_INVALID_STATE_RangeError: {
+        auto arg0 = callFrame->argument(1);
+        auto* jsString = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto param = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        WTF::StringBuilder builder;
+        builder.append("Invalid state: "_s);
+        builder.append(param);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_PROTOCOL: {
+        auto arg0 = callFrame->argument(1);
+        auto* jsString0 = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto param0 = jsString0->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto* jsString1 = arg1.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto param1 = jsString1->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        WTF::StringBuilder builder;
+        builder.append("Protocol \""_s);
+        builder.append(param0);
+        builder.append("\" not supported. Expected \""_s);
+        builder.append(param1);
+        builder.append("\""_s);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_BROTLI_INVALID_PARAM: {
+        auto arg0 = callFrame->argument(1);
+        auto* jsString = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto param = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        WTF::StringBuilder builder;
+        builder.append(param);
+        builder.append(" is not a valid Brotli parameter"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_BUFFER_TOO_LARGE: {
+        auto arg0 = callFrame->argument(1);
+        auto* jsString = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto param = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        WTF::StringBuilder builder;
+        builder.append("Cannot create a Buffer larger than "_s);
+        builder.append(param);
+        builder.append(" bytes"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_UNHANDLED_ERROR: {
+        auto arg0 = callFrame->argument(1);
+
+        if (arg0.isUndefined()) {
+            auto message = "Unhandled error."_s;
+            return JSC::JSValue::encode(createError(globalObject, error, message));
+        }
+        if (arg0.isCell()) {
+            auto cell = arg0.asCell();
+            if (cell->inherits<JSC::Exception>()) {
+                return JSC::JSValue::encode(jsCast<JSC::Exception*>(cell)->value());
+            }
+        }
+
+        if (arg0.isString()) {
+            auto* jsString = arg0.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto str0 = jsString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            WTF::StringBuilder builder;
+            builder.append("Unhandled error. ("_s);
+            builder.append(str0);
+            builder.append(")"_s);
+            return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+        }
+
+        auto* jsString = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto str0 = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        WTF::StringBuilder builder;
+        builder.append("Unhandled error. ("_s);
+        builder.append(str0);
+        builder.append(")"_s);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_THIS: {
+        auto arg0 = callFrame->argument(1);
+        auto* jsString = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto str0 = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        WTF::StringBuilder builder;
+        builder.append("Value of \"this\" must be of type "_s);
+        builder.append(str0);
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+    }
+
+    case ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS: {
+        auto arg0 = callFrame->argument(1);
+        if (!arg0.isUndefined()) {
+            auto* jsString = arg0.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto str0 = jsString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            WTF::StringBuilder builder;
+            builder.append("\""_s);
+            builder.append(str0);
+            builder.append("\" is outside of buffer bounds"_s);
+            return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, builder.toString()));
+        }
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
+    }
+
+    case Bun::ErrorCode::ERR_TLS_INVALID_PROTOCOL_VERSION: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString(str0, " is not a valid "_s, str1, " TLS protocol version"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_INVALID_PROTOCOL_VERSION, message));
+    }
+
+    case Bun::ErrorCode::ERR_TLS_PROTOCOL_VERSION_CONFLICT: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("TLS protocol version "_s, str0, " conflicts with secureProtocol "_s, str1);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_PROTOCOL_VERSION_CONFLICT, message));
+    }
+
+    case Bun::ErrorCode::ERR_TLS_CERT_ALTNAME_INVALID: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto arg2 = callFrame->argument(3);
+        auto message = makeString("Hostname/IP does not match certificate's altnames: "_s, str0);
+        auto err = createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_INVALID, message);
+        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), arg0);
+        err->putDirect(vm, Identifier::fromString(vm, "host"_s), arg1);
+        err->putDirect(vm, Identifier::fromString(vm, "cert"_s), arg2);
+        return JSC::JSValue::encode(err);
+    }
+
+    case Bun::ErrorCode::ERR_USE_AFTER_CLOSE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString(str0, " was closed"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_USE_AFTER_CLOSE, message));
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_HTTP_TOKEN: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString(str0, " must be a valid HTTP token [\""_s, str1, "\"]"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_HTTP_TOKEN, message));
+    }
+
+    case Bun::ErrorCode::ERR_HTTP2_INVALID_HEADER_VALUE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Invalid value \""_s, str0, "\" for header \""_s, str1, "\""_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_INVALID_HEADER_VALUE, message));
+    }
+
+    case Bun::ErrorCode::ERR_HTTP2_STATUS_INVALID: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Invalid status code: "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_STATUS_INVALID, message));
+    }
+
+    case Bun::ErrorCode::ERR_HTTP2_INVALID_PSEUDOHEADER: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("\""_s, str0, "\" is an invalid pseudoheader or is used incorrectly"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_INVALID_PSEUDOHEADER, message));
+    }
+
+    case Bun::ErrorCode::ERR_HTTP2_STREAM_ERROR: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Stream closed with error code "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_STREAM_ERROR, message));
+    }
+
+    case Bun::ErrorCode::ERR_HTTP2_SESSION_ERROR: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Session closed with error code "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_SESSION_ERROR, message));
+    }
+
+    case Bun::ErrorCode::ERR_HTTP2_PAYLOAD_FORBIDDEN: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Responses with "_s, str0, " status must not have a payload"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_PAYLOAD_FORBIDDEN, message));
+    }
+
+    case Bun::ErrorCode::ERR_HTTP2_INVALID_INFO_STATUS: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Invalid informational status code: "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_INVALID_INFO_STATUS, message));
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_URL: {
+        auto arg0 = callFrame->argument(1);
+        auto arg1 = callFrame->argument(2);
+        // Don't include URL in message. (See https://github.com/nodejs/node/pull/38614)
+        auto err = createError(globalObject, ErrorCode::ERR_INVALID_URL, "Invalid URL"_s);
+        err->putDirect(vm, vm.propertyNames->input, arg0);
+        if (!arg1.isUndefinedOrNull()) err->putDirect(vm, Identifier::fromString(vm, "base"_s), arg1);
+        return JSC::JSValue::encode(err);
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_CHAR: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        WTF::StringBuilder builder;
+        builder.append("Invalid character in "_s);
+        builder.append(str0);
+        if (!arg1.isUndefined()) {
+            auto str1 = arg1.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            builder.append(" [\""_s);
+            builder.append(str1);
+            builder.append("\"]"_s);
+        }
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_CHAR, builder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_HTTP_INVALID_HEADER_VALUE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Invalid value \""_s, str0, "\" for header \""_s, str1, "\""_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_INVALID_HEADER_VALUE, message));
+    }
+
+    case Bun::ErrorCode::ERR_HTTP_HEADERS_SENT: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Cannot "_s, str0, " headers after they are sent to the client"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_HEADERS_SENT, message));
+    }
+
+    case Bun::ErrorCode::ERR_UNESCAPED_CHARACTERS: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString(str0, " contains unescaped characters"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNESCAPED_CHARACTERS, message));
+    }
+
+    case Bun::ErrorCode::ERR_HTTP_INVALID_STATUS_CODE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Invalid status code: "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_INVALID_STATUS_CODE, message));
+    }
+
+    case Bun::ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Invalid key object type "_s, str0, ", expected "_s, str1, "."_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, message));
+    }
+
+    case Bun::ErrorCode::ERR_CRYPTO_INCOMPATIBLE_KEY: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Incompatible "_s, str0, ": "_s, str1);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_CRYPTO_INCOMPATIBLE_KEY, message));
+    }
+
+    case Bun::ErrorCode::ERR_CHILD_PROCESS_IPC_REQUIRED: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Forked processes must have an IPC channel, missing value 'ipc' in "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_CHILD_PROCESS_IPC_REQUIRED, message));
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_ASYNC_ID: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Invalid "_s, str0, " value: "_s, str1);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ASYNC_ID, message));
+    }
+
+    case Bun::ErrorCode::ERR_ASYNC_TYPE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Invalid name for async \"type\": "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ASYNC_TYPE, message));
+    }
+
+    case Bun::ErrorCode::ERR_ASYNC_CALLBACK: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString(str0, " must be a function"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ASYNC_CALLBACK, message));
+    }
+
+    case Bun::ErrorCode::ERR_AMBIGUOUS_ARGUMENT: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("The \""_s, str0, "\" argument is ambiguous. "_s, str1);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_AMBIGUOUS_ARGUMENT, message));
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_FD_TYPE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Unsupported fd type: "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_FD_TYPE, message));
+    }
+
+    case Bun::ErrorCode::ERR_CHILD_PROCESS_STDIO_MAXBUFFER: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString(str0, " maxBuffer length exceeded"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_CHILD_PROCESS_STDIO_MAXBUFFER, message));
+    }
+
+    case Bun::ErrorCode::ERR_IP_BLOCKED: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("IP("_s, str0, ") is blocked by net.BlockList"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IP_BLOCKED, message));
+    }
+
+    case Bun::ErrorCode::ERR_VM_MODULE_STATUS: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Module status "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_STATUS, message));
+    }
+
+    case Bun::ErrorCode::ERR_VM_MODULE_LINK_FAILURE: {
+        auto arg0 = callFrame->argument(1);
+        auto message = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto cause = callFrame->argument(2);
+        JSObject* error = createError(globalObject, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, message);
+        RETURN_IF_EXCEPTION(scope, {});
+        error->putDirect(vm, Identifier::fromString(vm, "cause"_s), cause);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::encode(error);
+    }
+
+    case Bun::ErrorCode::ERR_ZSTD_INVALID_PARAM: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString(str0, " is not a valid zstd parameter"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ZSTD_INVALID_PARAM, message));
+    }
+
+    case ErrorCode::ERR_IPC_DISCONNECTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
+    case ErrorCode::ERR_SERVER_NOT_RUNNING:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_NOT_RUNNING, "Server is not running."_s));
+    case ErrorCode::ERR_IPC_CHANNEL_CLOSED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_CHANNEL_CLOSED, "Channel closed."_s));
+    case ErrorCode::ERR_SOCKET_BAD_TYPE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6"_s));
+    case ErrorCode::ERR_ZLIB_INITIALIZATION_FAILED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed"_s));
+    case ErrorCode::ERR_IPC_ONE_PIPE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_ONE_PIPE, "Child process can have only one IPC pipe"_s));
+    case ErrorCode::ERR_SOCKET_ALREADY_BOUND:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_ALREADY_BOUND, "Socket is already bound"_s));
+    case ErrorCode::ERR_SOCKET_BAD_BUFFER_SIZE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_BAD_BUFFER_SIZE, "Buffer size must be a positive integer"_s));
+    case ErrorCode::ERR_SOCKET_DGRAM_IS_CONNECTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_IS_CONNECTED, "Already connected"_s));
+    case ErrorCode::ERR_SOCKET_DGRAM_NOT_CONNECTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_NOT_CONNECTED, "Not connected"_s));
+    case ErrorCode::ERR_SOCKET_DGRAM_NOT_RUNNING:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_NOT_RUNNING, "Socket is not running"_s));
+    case ErrorCode::ERR_INVALID_CURSOR_POS:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_CURSOR_POS, "Cannot set cursor row without setting its column"_s));
+    case ErrorCode::ERR_INVALID_HANDLE_TYPE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_HANDLE_TYPE, "This handle type cannot be sent"_s));
+    case ErrorCode::ERR_MULTIPLE_CALLBACK:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_MULTIPLE_CALLBACK, "Callback called multiple times"_s));
+    case ErrorCode::ERR_STREAM_PREMATURE_CLOSE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_PREMATURE_CLOSE, "Premature close"_s));
+    case ErrorCode::ERR_STREAM_NULL_VALUES:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_NULL_VALUES, "May not write null values to stream"_s));
+    case ErrorCode::ERR_STREAM_CANNOT_PIPE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_CANNOT_PIPE, "Cannot pipe, not readable"_s));
+    case ErrorCode::ERR_STREAM_WRITE_AFTER_END:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_WRITE_AFTER_END, "write after end"_s));
+    case ErrorCode::ERR_STREAM_UNSHIFT_AFTER_END_EVENT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_UNSHIFT_AFTER_END_EVENT, "stream.unshift() after end event"_s));
+    case ErrorCode::ERR_STREAM_PUSH_AFTER_EOF:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_PUSH_AFTER_EOF, "stream.push() after EOF"_s));
+    case ErrorCode::ERR_STREAM_UNABLE_TO_PIPE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_UNABLE_TO_PIPE, "Cannot pipe to a closed or destroyed stream"_s));
+    case ErrorCode::ERR_ILLEGAL_CONSTRUCTOR:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s));
+    case ErrorCode::ERR_DIR_CLOSED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_DIR_CLOSED, "Directory handle was closed"_s));
+    case ErrorCode::ERR_SERVER_ALREADY_LISTEN:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_ALREADY_LISTEN, "Listen method has been called more than once without closing."_s));
+    case ErrorCode::ERR_SOCKET_CLOSED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED, "Socket is closed"_s));
+    case ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION, "Socket closed before the connection was established"_s));
+    case ErrorCode::ERR_TLS_RENEGOTIATION_DISABLED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_RENEGOTIATION_DISABLED, "TLS session renegotiation disabled for this socket"_s));
+    case ErrorCode::ERR_UNAVAILABLE_DURING_EXIT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNAVAILABLE_DURING_EXIT, "Cannot call function in process exit handler"_s));
+    case ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT, "Invalid subject alternative name string"_s));
+    case ErrorCode::ERR_TLS_SNI_FROM_SERVER:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_SNI_FROM_SERVER, "Cannot issue SNI from a TLS server-side socket"_s));
+    case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
+        auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
+
+        auto reason = JSC::jsString(vm, WTF::String("no cipher match"_s));
+        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), reason);
+
+        auto library = JSC::jsString(vm, WTF::String("SSL routines"_s));
+        err->putDirect(vm, Identifier::fromString(vm, "library"_s), library);
+
+        return JSC::JSValue::encode(err);
+    }
+    case ErrorCode::ERR_INVALID_URI:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
+    case ErrorCode::ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED, "Cannot set HTTP/2 pseudo-headers"_s));
+    case ErrorCode::ERR_HTTP2_INFO_STATUS_NOT_ALLOWED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_INFO_STATUS_NOT_ALLOWED, "Informational status codes cannot be used"_s));
+    case ErrorCode::ERR_HTTP2_HEADERS_SENT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_HEADERS_SENT, "Response has already been initiated."_s));
+    case ErrorCode::ERR_HTTP2_INVALID_STREAM:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_INVALID_STREAM, "The stream has been destroyed"_s));
+    case ErrorCode::ERR_HTTP2_NO_SOCKET_MANIPULATION:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_NO_SOCKET_MANIPULATION, "HTTP/2 sockets should not be directly manipulated (e.g. read and written)"_s));
+    case ErrorCode::ERR_HTTP2_SOCKET_UNBOUND:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_SOCKET_UNBOUND, "The socket has been disconnected from the Http2Session"_s));
+    case ErrorCode::ERR_HTTP2_MAX_PENDING_SETTINGS_ACK:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_MAX_PENDING_SETTINGS_ACK, "Maximum number of pending settings acknowledgements"_s));
+    case ErrorCode::ERR_HTTP2_INVALID_SESSION:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_INVALID_SESSION, "The session has been destroyed"_s));
+    case ErrorCode::ERR_HTTP2_TRAILERS_ALREADY_SENT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_TRAILERS_ALREADY_SENT, "Trailing headers have already been sent"_s));
+    case ErrorCode::ERR_HTTP2_TRAILERS_NOT_READY:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_TRAILERS_NOT_READY, "Trailing headers cannot be sent until after the wantTrailers event is emitted"_s));
+    case ErrorCode::ERR_HTTP2_SEND_FILE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_SEND_FILE, "Directories cannot be sent"_s));
+    case ErrorCode::ERR_HTTP2_SEND_FILE_NOSEEK:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_SEND_FILE_NOSEEK, "Offset or length can only be specified for regular files"_s));
+    case ErrorCode::ERR_HTTP2_PUSH_DISABLED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_PUSH_DISABLED, "HTTP/2 client has disabled push streams"_s));
+    case ErrorCode::ERR_HTTP2_HEADERS_AFTER_RESPOND:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_HEADERS_AFTER_RESPOND, "Cannot specify additional headers after response initiated"_s));
+    case ErrorCode::ERR_HTTP2_STATUS_101:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_STATUS_101, "HTTP status code 101 (Switching Protocols) is forbidden in HTTP/2"_s));
+    case ErrorCode::ERR_HTTP2_ALTSVC_INVALID_ORIGIN:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_ALTSVC_INVALID_ORIGIN, "HTTP/2 ALTSVC frames require a valid origin"_s));
+    case ErrorCode::ERR_HTTP2_INVALID_ORIGIN:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_INVALID_ORIGIN, "HTTP/2 ORIGIN frames require a valid origin"_s));
+    case ErrorCode::ERR_HTTP2_ALTSVC_LENGTH:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_ALTSVC_LENGTH, "HTTP/2 ALTSVC frames are limited to 16382 bytes"_s));
+    case ErrorCode::ERR_HTTP2_PING_LENGTH:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_PING_LENGTH, "HTTP2 ping payload must be 8 bytes"_s));
+    case ErrorCode::ERR_HTTP2_OUT_OF_STREAMS:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_OUT_OF_STREAMS, "No stream ID is available because maximum stream ID has been reached"_s));
+    case ErrorCode::ERR_HTTP_BODY_NOT_ALLOWED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_BODY_NOT_ALLOWED, "Adding content for this request method or response status is not allowed."_s));
+    case ErrorCode::ERR_HTTP_SOCKET_ASSIGNED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "Socket already assigned"_s));
+    case ErrorCode::ERR_STREAM_RELEASE_LOCK:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_RELEASE_LOCK, "Stream reader cancelled via releaseLock()"_s));
+    case ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT, "Socket connection timeout"_s));
+    case ErrorCode::ERR_TLS_HANDSHAKE_TIMEOUT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_HANDSHAKE_TIMEOUT, "TLS handshake timeout"_s));
+    case ErrorCode::ERR_VM_MODULE_ALREADY_LINKED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_ALREADY_LINKED, "Module has already been linked"_s));
+    case ErrorCode::ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA, "Cached data cannot be created for a module which has been evaluated"_s));
+    case ErrorCode::ERR_VM_MODULE_NOT_MODULE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
+    case ErrorCode::ERR_VM_MODULE_DIFFERENT_CONTEXT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_DIFFERENT_CONTEXT, "Linked modules must use the same context"_s));
+    case ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
+
     default: {
         break;
     }
     }
 
-    auto message = callFrame->argument(1).toWTFString(globalObject);
+    auto&& message = callFrame->argument(1).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSC::JSValue::encode(createError(globalObject, error, message));

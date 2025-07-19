@@ -1,29 +1,11 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
-const MediaList = css.MediaList;
-const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
-const Maybe = css.Maybe;
-const PrinterError = css.PrinterError;
 const PrintErr = css.PrintErr;
-const Dependency = css.Dependency;
-const dependencies = css.dependencies;
-const Url = css.css_values.url.Url;
-const Size2D = css.css_values.size.Size2D;
-const fontprops = css.css_properties.font;
-const LayerName = css.css_rules.layer.LayerName;
 const Location = css.css_rules.Location;
-const Angle = css.css_values.angle.Angle;
-const FontStyleProperty = css.css_properties.font.FontStyle;
-const FontFamily = css.css_properties.font.FontFamily;
-const FontWeight = css.css_properties.font.FontWeight;
-const FontStretch = css.css_properties.font.FontStretch;
-const CustomProperty = css.css_properties.custom.CustomProperty;
-const CustomPropertyName = css.css_properties.custom.CustomPropertyName;
-const DashedIdent = css.css_values.ident.DashedIdent;
 
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
@@ -42,6 +24,9 @@ pub const SupportsCondition = union(enum) {
         /// The property id for the declaration.
         property_id: css.PropertyId,
         /// The raw value of the declaration.
+        ///
+        /// What happens if the value is a URL? A URL in this context does nothing
+        /// e.g. `@supports (background-image: url('example.png'))`
         value: []const u8,
 
         pub fn eql(this: *const @This(), other: *const @This()) bool {
@@ -72,6 +57,18 @@ pub const SupportsCondition = union(enum) {
             .selector => {},
             .unknown => {},
         }
+    }
+
+    pub fn cloneWithImportRecords(
+        this: *const @This(),
+        allocator: std.mem.Allocator,
+        _: *bun.BabyList(bun.ImportRecord),
+    ) @This() {
+        return deepClone(this, allocator);
+    }
+
+    pub fn hash(this: *const @This(), hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
     }
 
     pub fn eql(this: *const SupportsCondition, other: *const SupportsCondition) bool {
@@ -219,7 +216,7 @@ pub const SupportsCondition = union(enum) {
         }
 
         if (conditions.items.len == 1) {
-            const ret = conditions.pop();
+            const ret = conditions.pop().?;
             defer conditions.deinit(input.allocator());
             return .{ .result = ret };
         }
@@ -328,7 +325,7 @@ pub const SupportsCondition = union(enum) {
                 try dest.writeChar('(');
 
                 const prefix: css.VendorPrefix = property_id.prefix().orNone();
-                if (!prefix.eq(css.VendorPrefix{ .none = true })) {
+                if (prefix != css.VendorPrefix{ .none = true }) {
                     try dest.writeChar('(');
                 }
 
@@ -350,7 +347,7 @@ pub const SupportsCondition = union(enum) {
                     }
                 }
 
-                if (!prefix.eq(css.VendorPrefix{ .none = true })) {
+                if (prefix != css.VendorPrefix{ .none = true }) {
                     try dest.writeChar(')');
                 }
                 try dest.writeChar(')');

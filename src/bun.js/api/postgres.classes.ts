@@ -29,7 +29,9 @@ export default [
       unref: {
         fn: "doUnref",
       },
-
+      flush: {
+        fn: "doFlush",
+      },
       queries: {
         getter: "getQueries",
         this: true,
@@ -67,6 +69,14 @@ export default [
       done: {
         fn: "doDone",
         length: 0,
+      },
+      setMode: {
+        fn: "setMode",
+        length: 1,
+      },
+      setPendingValue: {
+        fn: "setPendingValue",
+        length: 1,
       },
     },
     values: ["pendingValue", "target", "columns", "binding"],

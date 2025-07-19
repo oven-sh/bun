@@ -1,37 +1,20 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayListUnmanaged;
 
 pub const css = @import("../css_parser.zig");
 
-const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const Result = css.Result;
-
-const ContainerName = css.css_rules.container.ContainerName;
+const VendorPrefix = css.VendorPrefix;
+const Property = css.css_properties.Property;
 
 const LengthPercentage = css.css_values.length.LengthPercentage;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const CSSNumber = css.css_values.number.CSSNumber;
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Image = css.css_values.image.Image;
-const CssColor = css.css_values.color.CssColor;
-const Ratio = css.css_values.ratio.Ratio;
 const Length = css.css_values.length.LengthValue;
-const Rect = css.css_values.rect.Rect;
 const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
 const Angle = css.css_values.angle.Angle;
-const Url = css.css_values.url.Url;
-const Percentage = css.css_values.percentage.Percentage;
-
-const GenericBorder = css.css_properties.border.GenericBorder;
-const LineStyle = css.css_properties.border.LineStyle;
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
 pub const TransformList = struct {
@@ -78,7 +61,9 @@ pub const TransformList = struct {
                 scratchbuf,
                 base_writer,
                 css.PrinterOptions.defaultWithMinify(true),
-                dest.import_records,
+                dest.import_info,
+                dest.local_names,
+                dest.symbols,
             );
             defer p.deinit();
 
@@ -86,6 +71,8 @@ pub const TransformList = struct {
 
             return dest.writeStr(base.items);
         }
+
+        return this.toCssBase(W, dest);
     }
 
     fn toCssBase(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -96,6 +83,10 @@ pub const TransformList = struct {
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const @This(), other: *const @This()) bool {
+        return css.implementEql(@This(), this, other);
     }
 };
 
@@ -108,6 +99,10 @@ pub const Transform = union(enum) {
 
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
             return css.implementDeepClone(@This(), this, allocator);
+        }
+
+        pub fn eql(this: *const @This(), other: *const @This()) bool {
+            return css.implementEql(@This(), this, other);
         }
     },
     /// A translation in the X direction.
@@ -125,6 +120,10 @@ pub const Transform = union(enum) {
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
             return css.implementDeepClone(@This(), this, allocator);
         }
+
+        pub fn eql(this: *const @This(), other: *const @This()) bool {
+            return css.implementEql(@This(), this, other);
+        }
     },
     /// A 2D scale.
     scale: struct {
@@ -133,6 +132,10 @@ pub const Transform = union(enum) {
 
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
             return css.implementDeepClone(@This(), this, allocator);
+        }
+
+        pub fn eql(this: *const @This(), other: *const @This()) bool {
+            return css.implementEql(@This(), this, other);
         }
     },
     /// A scale in the X direction.
@@ -150,6 +153,10 @@ pub const Transform = union(enum) {
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
             return css.implementDeepClone(@This(), this, allocator);
         }
+
+        pub fn eql(this: *const @This(), other: *const @This()) bool {
+            return css.implementEql(@This(), this, other);
+        }
     },
     /// A 2D rotation.
     rotate: Angle,
@@ -166,6 +173,10 @@ pub const Transform = union(enum) {
         z: f32,
         angle: Angle,
 
+        pub fn eql(this: *const @This(), other: *const @This()) bool {
+            return css.implementEql(@This(), this, other);
+        }
+
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
             return css.implementDeepClone(@This(), this, allocator);
         }
@@ -177,6 +188,10 @@ pub const Transform = union(enum) {
 
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
             return css.implementDeepClone(@This(), this, allocator);
+        }
+
+        pub fn eql(this: *const @This(), other: *const @This()) bool {
+            return css.implementEql(@This(), this, other);
         }
     },
     /// A skew along the X axis.
@@ -773,6 +788,10 @@ pub const Transform = union(enum) {
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
     }
+
+    pub fn eql(this: *const @This(), other: *const @This()) bool {
+        return css.implementEql(@This(), this, other);
+    }
 };
 
 /// A 2D matrix.
@@ -814,17 +833,58 @@ pub fn Matrix3d(comptime T: type) type {
         m42: T,
         m43: T,
         m44: T,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     };
 }
 
 /// A value for the [transform-style](https://drafts.csswg.org/css-transforms-2/#transform-style-property) property.
-pub const TransformStyle = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+pub const TransformStyle = enum {
+    flat,
+    @"preserve-3d",
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
+};
 
 /// A value for the [transform-box](https://drafts.csswg.org/css-transforms-1/#transform-box) property.
-pub const TransformBox = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+pub const TransformBox = enum {
+    /// Uses the content box as reference box.
+    @"content-box",
+    /// Uses the border box as reference box.
+    @"border-box",
+    /// Uses the object bounding box as reference box.
+    @"fill-box",
+    /// Uses the stroke bounding box as reference box.
+    @"stroke-box",
+    /// Uses the nearest SVG viewport as reference box.
+    @"view-box",
+
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
+};
 
 /// A value for the [backface-visibility](https://drafts.csswg.org/css-transforms-2/#backface-visibility-property) property.
-pub const BackfaceVisibility = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+pub const BackfaceVisibility = enum {
+    visible,
+    hidden,
+
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
+};
 
 /// A value for the perspective property.
 pub const Perspective = union(enum) {
@@ -832,6 +892,17 @@ pub const Perspective = union(enum) {
     none,
     /// Distance to the center of projection.
     length: Length,
+
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
+
+    pub fn eql(this: *const @This(), other: *const @This()) bool {
+        return css.implementEql(@This(), this, other);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A value for the [translate](https://drafts.csswg.org/css-transforms-2/#propdef-translate) property.
@@ -847,7 +918,77 @@ pub const Translate = union(enum) {
         y: LengthPercentage,
         /// The z translation.
         z: Length,
+
+        pub fn __generateDeepClone() void {}
+
+        pub fn eql(this: *const @This(), other: *const @This()) bool {
+            return css.implementEql(@This(), this, other);
+        }
     },
+
+    pub fn parse(input: *css.Parser) css.Result(@This()) {
+        if (input.tryParse(css.Parser.expectIdentMatching, .{"none"}).isOk()) {
+            return .{ .result = .none };
+        }
+
+        const x = switch (LengthPercentage.parse(input)) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        };
+        const y = input.tryParse(LengthPercentage.parse, .{});
+        const z = if (y.isOk()) input.tryParse(Length.parse, .{}).asValue() else null;
+
+        return .{
+            .result = Translate{
+                .xyz = .{
+                    .x = x,
+                    .y = y.unwrapOr(comptime LengthPercentage.zero()),
+                    .z = z orelse Length.zero(),
+                },
+            },
+        };
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) PrintErr!void {
+        switch (this.*) {
+            .none => try dest.writeStr("none"),
+            .xyz => |xyz| {
+                try xyz.x.toCss(W, dest);
+                if (!xyz.y.isZero() or !xyz.z.isZero()) {
+                    try dest.writeChar(' ');
+                    try xyz.y.toCss(W, dest);
+                    if (!xyz.z.isZero()) {
+                        try dest.writeChar(' ');
+                        try xyz.z.toCss(W, dest);
+                    }
+                }
+            },
+        }
+        return;
+    }
+
+    pub fn toTransform(this: *const @This(), allocator: std.mem.Allocator) Transform {
+        return switch (this.*) {
+            .none => .{ .translate_3d = .{
+                .x = LengthPercentage.zero(),
+                .y = LengthPercentage.zero(),
+                .z = Length.zero(),
+            } },
+            .xyz => |xyz| .{ .translate_3d = .{
+                .x = xyz.x.deepClone(allocator),
+                .y = xyz.y.deepClone(allocator),
+                .z = xyz.z.deepClone(allocator),
+            } },
+        };
+    }
+
+    pub fn eql(this: *const @This(), other: *const @This()) bool {
+        return css.implementEql(@This(), this, other);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A value for the [rotate](https://drafts.csswg.org/css-transforms-2/#propdef-rotate) property.
@@ -860,6 +1001,112 @@ pub const Rotate = struct {
     z: f32,
     /// The angle of rotation.
     angle: Angle,
+
+    pub fn parse(input: *css.Parser) css.Result(@This()) {
+        if (input.tryParse(css.Parser.expectIdentMatching, .{"none"}).isOk()) {
+            return .{ .result = .{
+                .x = 0.0,
+                .y = 0.0,
+                .z = 1.0,
+                .angle = .{ .deg = 0.0 },
+            } };
+        }
+
+        const angle = input.tryParse(Angle.parse, .{});
+
+        const XYZ = struct { x: f32, y: f32, z: f32 };
+        const xyz = switch (input.tryParse(struct {
+            fn parse(i: *css.Parser) css.Result(XYZ) {
+                const location = i.currentSourceLocation();
+                const ident = switch (i.expectIdent()) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                };
+                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "x")) {
+                    return .{ .result = .{ .x = 1.0, .y = 0.0, .z = 0.0 } };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "y")) {
+                    return .{ .result = .{ .x = 0.0, .y = 1.0, .z = 0.0 } };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "z")) {
+                    return .{ .result = .{ .x = 0.0, .y = 0.0, .z = 1.0 } };
+                }
+                return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
+            }
+        }.parse, .{})) {
+            .result => |v| v,
+            .err => input.tryParse(struct {
+                fn parse(i: *css.Parser) css.Result(XYZ) {
+                    const x = switch (css.CSSNumberFns.parse(i)) {
+                        .result => |v| v,
+                        .err => |e| return .{ .err = e },
+                    };
+                    const y = switch (css.CSSNumberFns.parse(i)) {
+                        .result => |v| v,
+                        .err => |e| return .{ .err = e },
+                    };
+                    const z = switch (css.CSSNumberFns.parse(i)) {
+                        .result => |v| v,
+                        .err => |e| return .{ .err = e },
+                    };
+                    return .{ .result = .{ .x = x, .y = y, .z = z } };
+                }
+            }.parse, .{}).unwrapOr(.{ .x = 0.0, .y = 0.0, .z = 1.0 }),
+        };
+
+        const final_angle = switch (angle) {
+            .result => |v| v,
+            .err => switch (Angle.parse(input)) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            },
+        };
+
+        return .{ .result = .{
+            .x = xyz.x,
+            .y = xyz.y,
+            .z = xyz.z,
+            .angle = final_angle,
+        } };
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) PrintErr!void {
+        if (this.x == 0.0 and this.y == 0.0 and this.z == 1.0 and this.angle.isZero()) {
+            try dest.writeStr("none");
+            return;
+        }
+
+        if (this.x == 1.0 and this.y == 0.0 and this.z == 0.0) {
+            try dest.writeStr("x ");
+        } else if (this.x == 0.0 and this.y == 1.0 and this.z == 0.0) {
+            try dest.writeStr("y ");
+        } else if (!(this.x == 0.0 and this.y == 0.0 and this.z == 1.0)) {
+            try css.CSSNumberFns.toCss(&this.x, W, dest);
+            try dest.writeChar(' ');
+            try css.CSSNumberFns.toCss(&this.y, W, dest);
+            try dest.writeChar(' ');
+            try css.CSSNumberFns.toCss(&this.z, W, dest);
+            try dest.writeChar(' ');
+        }
+
+        try this.angle.toCss(W, dest);
+    }
+
+    /// Converts the rotation to a transform function.
+    pub fn toTransform(this: *const @This(), allocator: std.mem.Allocator) Transform {
+        return .{ .rotate_3d = .{
+            .x = this.x,
+            .y = this.y,
+            .z = this.z,
+            .angle = this.angle.deepClone(allocator),
+        } };
+    }
+
+    pub fn eql(this: *const @This(), other: *const @This()) bool {
+        return css.implementEql(@This(), this, other);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A value for the [scale](https://drafts.csswg.org/css-transforms-2/#propdef-scale) property.
@@ -875,5 +1122,178 @@ pub const Scale = union(enum) {
         y: NumberOrPercentage,
         /// Scale on the z axis.
         z: NumberOrPercentage,
+
+        pub fn __generateDeepClone() void {}
+
+        pub fn eql(this: *const @This(), other: *const @This()) bool {
+            return css.implementEql(@This(), this, other);
+        }
     },
+
+    pub fn parse(input: *css.Parser) css.Result(@This()) {
+        if (input.tryParse(css.Parser.expectIdentMatching, .{"none"}).isOk()) {
+            return .{ .result = .none };
+        }
+
+        const x = switch (NumberOrPercentage.parse(input)) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        };
+
+        const y = input.tryParse(NumberOrPercentage.parse, .{});
+        const z = if (y.isOk()) input.tryParse(NumberOrPercentage.parse, .{}).asValue() else null;
+
+        return .{ .result = .{ .xyz = .{
+            .x = x,
+            .y = if (y.asValue()) |val| val else x,
+            .z = if (z) |val| val else .{ .number = 1.0 },
+        } } };
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) PrintErr!void {
+        switch (this.*) {
+            .none => try dest.writeStr("none"),
+            .xyz => |xyz| {
+                try xyz.x.toCss(W, dest);
+                const z_val = xyz.z.intoF32();
+                if (!xyz.y.eql(&xyz.x) or z_val != 1.0) {
+                    try dest.writeChar(' ');
+                    try xyz.y.toCss(W, dest);
+                    if (z_val != 1.0) {
+                        try dest.writeChar(' ');
+                        try xyz.z.toCss(W, dest);
+                    }
+                }
+            },
+        }
+    }
+
+    pub fn toTransform(this: *const @This(), allocator: std.mem.Allocator) Transform {
+        return switch (this.*) {
+            .none => .{ .scale_3d = .{
+                .x = .{ .number = 1.0 },
+                .y = .{ .number = 1.0 },
+                .z = .{ .number = 1.0 },
+            } },
+            .xyz => |xyz| .{ .scale_3d = .{
+                .x = xyz.x.deepClone(allocator),
+                .y = xyz.y.deepClone(allocator),
+                .z = xyz.z.deepClone(allocator),
+            } },
+        };
+    }
+
+    pub fn eql(this: *const @This(), other: *const @This()) bool {
+        return css.implementEql(@This(), this, other);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+};
+
+pub const TransformHandler = struct {
+    transform: ?struct { TransformList, VendorPrefix } = null,
+    translate: ?Translate = null,
+    rotate: ?Rotate = null,
+    scale: ?Scale = null,
+    has_any: bool = false,
+
+    pub fn handleProperty(
+        this: *@This(),
+        property: *const css.Property,
+        dest: *css.DeclarationList,
+        context: *css.PropertyHandlerContext,
+    ) bool {
+        const individualProperty = struct {
+            fn individualProperty(self: *TransformHandler, allocator: std.mem.Allocator, comptime field: []const u8, val: anytype) void {
+                if (self.transform) |*transform| {
+                    transform.*[0].v.append(allocator, val.toTransform(allocator)) catch bun.outOfMemory();
+                } else {
+                    @field(self, field) = val.deepClone(allocator);
+                    self.has_any = true;
+                }
+            }
+        }.individualProperty;
+        const allocator = context.allocator;
+
+        switch (property.*) {
+            .transform => |val| {
+                const transform_val = val[0];
+                const vp = val[1];
+
+                // If two vendor prefixes for the same property have different
+                // values, we need to flush what we have immediately to preserve order.
+                if (this.transform) |current| {
+                    if (!current[0].eql(&transform_val) and !bun.bits.contains(css.VendorPrefix, current[1], vp)) {
+                        this.flush(allocator, dest, context);
+                    }
+                }
+
+                // Otherwise, update the value and add the prefix.
+                if (this.transform) |*transform| {
+                    transform.* = .{ transform_val.deepClone(allocator), bun.bits.@"or"(css.VendorPrefix, transform.*[1], vp) };
+                } else {
+                    this.transform = .{ transform_val.deepClone(allocator), vp };
+                    this.has_any = true;
+                }
+
+                this.translate = null;
+                this.rotate = null;
+                this.scale = null;
+            },
+            .translate => |val| individualProperty(this, allocator, "translate", val),
+            .rotate => |val| individualProperty(this, allocator, "rotate", val),
+            .scale => |val| individualProperty(this, allocator, "scale", val),
+            .unparsed => |unparsed| {
+                if (unparsed.property_id == .transform or
+                    unparsed.property_id == .translate or
+                    unparsed.property_id == .rotate or
+                    unparsed.property_id == .scale)
+                {
+                    this.flush(allocator, dest, context);
+                    const prop = if (unparsed.property_id == .transform)
+                        Property{ .unparsed = unparsed.getPrefixed(allocator, context.targets, css.prefixes.Feature.transform) }
+                    else
+                        property.deepClone(allocator);
+                    dest.append(allocator, prop) catch bun.outOfMemory();
+                } else return false;
+            },
+            else => return false,
+        }
+
+        return true;
+    }
+
+    pub fn finalize(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
+        this.flush(context.allocator, dest, context);
+    }
+
+    fn flush(this: *@This(), allocator: std.mem.Allocator, dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
+        if (!this.has_any) return;
+
+        this.has_any = false;
+
+        const transform = bun.take(&this.transform);
+        const translate = bun.take(&this.translate);
+        const rotate = bun.take(&this.rotate);
+        const scale = bun.take(&this.scale);
+
+        if (transform) |t| {
+            const prefix = context.targets.prefixes(t[1], css.prefixes.Feature.transform);
+            dest.append(allocator, Property{ .transform = .{ t[0], prefix } }) catch bun.outOfMemory();
+        }
+
+        if (translate) |t| {
+            dest.append(allocator, Property{ .translate = t }) catch bun.outOfMemory();
+        }
+
+        if (rotate) |r| {
+            dest.append(allocator, Property{ .rotate = r }) catch bun.outOfMemory();
+        }
+
+        if (scale) |s| {
+            dest.append(allocator, Property{ .scale = s }) catch bun.outOfMemory();
+        }
+    }
 };

@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
-import { describe, expect, it, test } from "bun:test";
-import path, { dirname, join, resolve } from "path";
+import { describe, expect, it } from "bun:test";
+import { resolve } from "path";
 
 declare global {
   var failingObject: any;
@@ -16,20 +16,32 @@ declare global {
 plugin({
   name: "url text file loader",
   setup(builder) {
-    builder.onResolve({ namespace: "http", filter: /.*/ }, ({ path }) => {
+    var chainedThis = builder.onResolve({ namespace: "http", filter: /.*/ }, ({ path }) => {
       return {
         path,
         namespace: "url",
       };
     });
+    expect(chainedThis).toBe(builder);
 
-    builder.onLoad({ filter: /.*/, namespace: "url" }, async ({ path, namespace }) => {
+    chainedThis = builder.onLoad({ filter: /.*/, namespace: "url" }, async ({ path, namespace }) => {
       const res = await fetch("http://" + path);
       return {
         exports: { default: await res.text() },
         loader: "object",
       };
     });
+    expect(chainedThis).toBe(builder);
+  },
+});
+
+plugin({
+  name: "recursion",
+  setup(builder) {
+    builder.onResolve({ filter: /.*/, namespace: "recursion" }, ({ path }) => ({
+      path: require.resolve("recursion:" + path),
+      namespace: "recursion",
+    }));
   },
 });
 
@@ -185,9 +197,10 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
+import { bunEnv, bunExe } from "harness";
+import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
-import { render as svelteRender } from 'svelte/server'; 
 
 describe("require", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", () => {
@@ -476,7 +489,63 @@ describe("errors", () => {
         return new Response(result);
       },
     });
-    const { default: text } = await import(`http://${server.hostname}:${server.port}/hey.txt`);
+    const sleep = ms => new Promise<string>(res => setTimeout(() => res("timeout"), ms));
+    const text = await Promise.race([
+      import(`http://${server.hostname}:${server.port}/hey.txt`).then(mod => mod.default) as Promise<string>,
+      sleep(2_500),
+    ]);
     expect(text).toBe(result);
   });
+});
+
+it("require(...).default without __esModule", () => {
+  {
+    const { default: mod } = require("my-virtual-module-with-default");
+    expect(mod).toBe("world");
+  }
+});
+
+it("require(...) with __esModule", () => {
+  {
+    const mod = require("my-virtual-module-with-__esModule");
+    expect(mod).toBe("world");
+  }
+});
+
+it("import(...) with __esModule", async () => {
+  const { default: mod } = await import("my-virtual-module-with-__esModule");
+  expect(mod).toBe("world");
+});
+
+it("import(...) without __esModule", async () => {
+  const { default: mod } = await import("my-virtual-module-with-default");
+  expect(mod).toBe("world");
+});
+
+it("recursion throws stack overflow", () => {
+  expect(() => {
+    require("recursion:recursion");
+  }).toThrow("Maximum call stack size exceeded");
+
+  try {
+    require("recursion:recursion");
+    throw -1;
+  } catch (e: any) {
+    if (e === -1) {
+      throw new Error("Expected error");
+    }
+    expect(e.message).toMatchInlineSnapshot(`"Maximum call stack size exceeded."`);
+  }
+});
+
+it("recursion throws stack overflow at entry point", () => {
+  const result = Bun.spawnSync({
+    cmd: [bunExe(), "--preload=./plugin-recursive-fixture.ts", "plugin-recursive-fixture-run.ts"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+
+  expect(result.stderr.toString()).toContain("RangeError: Maximum call stack size exceeded.");
 });

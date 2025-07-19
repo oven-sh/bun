@@ -1,7 +1,7 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const { Readable } = StreamModule;
-const { _ReadableFromWebForUndici: ReadableFromWeb } = StreamModule[Symbol.for("::bunternal::")];
+const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
@@ -337,7 +337,6 @@ class BalancedPoolMissingUpstreamError extends UndiciError {}
 class ResponseExceededMaxSizeError extends UndiciError {}
 class RequestRetryError extends UndiciError {}
 class SecureProxyConnectionError extends UndiciError {}
-class MockNotMatchedError extends UndiciError {}
 
 const errors = {
   AbortError,
@@ -437,9 +436,7 @@ const caches = {};
  * @param {boolean} [options.allowH2] Whether to allow HTTP/2 connections
  * @returns {function} A connector function
  */
-function buildConnector(options = {}) {
-  const { rejectUnauthorized = true, connectTimeout, maxCachedSessions = 100, allowH2 = false } = options;
-
+function buildConnector(_options = {}) {
   /**
    * @param {Object} options
    * @param {string} options.hostname
@@ -447,7 +444,7 @@ function buildConnector(options = {}) {
    * @param {string} [options.servername]
    * @param {AbortSignal} [options.signal]
    */
-  return function connect({ hostname, port, servername, signal }) {
+  return function connect(_) {
     notImplemented();
   };
 }

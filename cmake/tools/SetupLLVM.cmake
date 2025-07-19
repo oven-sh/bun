@@ -12,7 +12,7 @@ if(NOT ENABLE_LLVM)
   return()
 endif()
 
-set(DEFAULT_LLVM_VERSION "18.1.8")
+set(DEFAULT_LLVM_VERSION "19.1.7")
 
 optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
 
@@ -41,11 +41,11 @@ if(APPLE)
     endif()
   endif()
 
-  list(APPEND LLVM_PATHS ${HOMEBREW_PREFIX}/opt/llvm/bin)
-
   if(USE_LLVM_VERSION)
     list(APPEND LLVM_PATHS ${HOMEBREW_PREFIX}/opt/llvm@${LLVM_VERSION_MAJOR}/bin)
   endif()
+
+  list(APPEND LLVM_PATHS ${HOMEBREW_PREFIX}/opt/llvm/bin)
 endif()
 
 if(UNIX)
@@ -72,12 +72,14 @@ macro(find_llvm_command variable command)
     )
   endif()
 
+  math(EXPR LLVM_VERSION_NEXT_MAJOR "${LLVM_VERSION_MAJOR} + 1")
+
   find_command(
     VARIABLE ${variable}
     VERSION_VARIABLE LLVM_VERSION
     COMMAND ${commands}
     PATHS ${LLVM_PATHS}
-    VERSION >=${LLVM_VERSION_MAJOR}.1.0
+    VERSION ">=${LLVM_VERSION_MAJOR}.1.0 <${LLVM_VERSION_NEXT_MAJOR}.0.0"
   )
   list(APPEND CMAKE_ARGS -D${variable}=${${variable}})
 endmacro()

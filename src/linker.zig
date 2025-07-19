@@ -1,43 +1,23 @@
-// Most of this file should eventually be replaced with `bundle_v2.zig` or
-// `bundle_v2` should be split into several files.
-const bun = @import("root").bun;
+// This file is the old linker, used by Bun.Transpiler.
+const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 const FileDescriptorType = bun.FileDescriptor;
-const C = bun.C;
-const Ref = @import("./ast/base.zig").Ref;
 
 const std = @import("std");
-const lex = bun.js_lexer;
 const logger = bun.logger;
 const Options = @import("options.zig");
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const js_printer = bun.js_printer;
-const js_ast = bun.JSAst;
 
 const Fs = @import("fs.zig");
-const Api = @import("api/schema.zig").Api;
 const Resolver = @import("./resolver/resolver.zig");
-const sync = @import("sync.zig");
 const _import_record = @import("./import_record.zig");
 const ImportRecord = _import_record.ImportRecord;
-const ImportKind = _import_record.ImportKind;
 const allocators = @import("./allocators.zig");
-const MimeType = @import("./http/mime_type.zig");
-const resolve_path = @import("./resolver/resolve_path.zig");
 const _transpiler = bun.transpiler;
 const Transpiler = _transpiler.Transpiler;
 const ResolveQueue = _transpiler.ResolveQueue;
 const ResolverType = Resolver.Resolver;
-const ESModule = @import("./resolver/package_json.zig").ESModule;
-const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("url.zig").URL;
 const JSC = bun.JSC;
 const PluginRunner = bun.transpiler.PluginRunner;
@@ -102,7 +82,7 @@ pub const Linker = struct {
         file_path: Fs.Path,
         fd: ?FileDescriptorType,
     ) !Fs.FileSystem.RealFS.ModKey {
-        var file: std.fs.File = if (fd) |_fd| _fd.asFile() else try std.fs.openFileAbsolute(file_path.text, .{ .mode = .read_only });
+        var file: std.fs.File = if (fd) |_fd| _fd.stdFile() else try std.fs.openFileAbsolute(file_path.text, .{ .mode = .read_only });
         Fs.FileSystem.setMaxFd(file.handle);
         const modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
 
@@ -133,48 +113,6 @@ pub const Linker = struct {
         }
 
         return hash_name;
-    }
-
-    pub fn resolveCSS(
-        this: anytype,
-        path: Fs.Path,
-        url: string,
-        range: logger.Range,
-        kind: ImportKind,
-        origin: URL,
-        comptime import_path_format: Options.BundleOptions.ImportPathFormat,
-        comptime resolve_only: bool,
-    ) !string {
-        const dir = path.name.dirWithTrailingSlash();
-        if (strings.hasPrefix(url, "/")) {
-            if (comptime import_path_format == .absolute_url) {
-                return try origin.joinAlloc(this.allocator, "", url, "", "", url);
-            }
-
-            return url;
-        }
-
-        var resolve_result = try this.resolver.resolve(dir, url, kind);
-
-        if (resolve_result.is_external) {
-            return url;
-        }
-
-        if (resolve_only) {
-            return resolve_result.path_pair.primary.text;
-        }
-
-        var import_record = ImportRecord{ .range = range, .path = resolve_result.path_pair.primary, .kind = kind };
-        const loader = this.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
-
-        this.processImportRecord(loader, dir, &resolve_result, &import_record, origin, import_path_format) catch unreachable;
-        return import_record.path.text;
-    }
-
-    pub inline fn nodeModuleBundleImportPath(this: *const ThisLinker, origin: URL) string {
-        if (this.options.target.isBun()) return "/node_modules.server.bun";
-
-        return std.fmt.allocPrint(this.allocator, "{s}://{}{s}", .{ origin.displayProtocol(), origin.displayHost(), this.options.node_modules_bundle.?.bundle.import_from_name }) catch unreachable;
     }
 
     // This modifies the Ast in-place!
@@ -229,14 +167,13 @@ pub const Linker = struct {
                     }
 
                     if (comptime is_bun) {
-                        if (JSC.HardcodedModule.Aliases.get(import_record.path.text, linker.options.target)) |replacement| {
+                        if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
+                            if (replacement.tag == .builtin and import_record.kind.isCommonJS())
+                                continue;
                             import_record.path.text = replacement.path;
                             import_record.tag = replacement.tag;
                             import_record.is_external_without_side_effects = true;
-                            if (replacement.tag != .none) {
-                                externals.append(@intCast(record_index)) catch unreachable;
-                                continue;
-                            }
+                            continue;
                         }
                         if (strings.startsWith(import_record.path.text, "node:")) {
                             // if a module is not found here, it is not found at all
@@ -246,12 +183,6 @@ pub const Linker = struct {
                             if (had_resolve_errors) return error.ResolveMessage;
                             continue;
                         }
-
-                        // if (strings.eqlComptime(import_record.path.text, "process")) {
-                        //     import_record.path.text = "node:process";
-                        //     externals.append(record_index) catch unreachable;
-                        //     continue;
-                        // }
 
                         // TODO: this is technical debt
                         if (linker.options.rewrite_jest_for_tests) {
@@ -314,283 +245,6 @@ pub const Linker = struct {
                             }
                         }
                     }
-
-                    // var resolved_import_: anyerror!Resolver.Result = brk: {
-                    //     switch (import_record.tag) {
-                    //         else => {},
-                    //         // for fast refresh, attempt to read the version directly from the bundle instead of resolving it
-                    //         .react_refresh => {
-                    //             if (linker.options.jsx.use_embedded_refresh_runtime) {
-                    //                 import_record.path = Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", linker.options.jsx.refresh_runtime, "", ""), "bun");
-                    //                 continue :outer;
-                    //             }
-
-                    //             if (linker.tagged_resolutions.react_refresh != null) {
-                    //                 break :brk linker.tagged_resolutions.react_refresh.?;
-                    //             }
-                    //         },
-                    //     }
-
-                    //     if (comptime is_bun) {
-                    //         switch (linker.resolver.resolveAndAutoInstall(
-                    //             source_dir,
-                    //             import_record.path.text,
-                    //             import_record.kind,
-                    //             linker.options.global_cache,
-                    //         )) {
-                    //             .success => |_resolved_import| {
-                    //                 switch (import_record.tag) {
-                    //                     else => {},
-                    //                     .react_refresh => {
-                    //                         linker.tagged_resolutions.react_refresh = _resolved_import;
-                    //                         linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
-                    //                     },
-                    //                 }
-
-                    //                 break :brk _resolved_import;
-                    //             },
-                    //             .failure => |err| {
-                    //                 break :brk err;
-                    //             },
-                    //             .pending => |pending1| {
-                    //                 var pending = pending1;
-                    //                 if (!linker.resolver.opts.global_cache.canInstall()) {
-                    //                     break :brk error.InstallationPending;
-                    //                 }
-
-                    //                 pending.import_record_id = record_i;
-                    //                 try result.pending_imports.append(linker.allocator, pending);
-                    //                 continue;
-                    //             },
-                    //             .not_found => break :brk error.ModuleNotFound,
-                    //             // else => unreachable,
-                    //         }
-                    //     } else {
-                    //         if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |_resolved_import| {
-                    //             switch (import_record.tag) {
-                    //                 else => {},
-                    //                 .react_refresh => {
-                    //                     linker.tagged_resolutions.react_refresh = _resolved_import;
-                    //                     linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
-                    //                 },
-                    //             }
-
-                    //             break :brk _resolved_import;
-                    //         } else |err| {
-                    //             break :brk err;
-                    //         }
-                    //     }
-                    // };
-
-                    // if (resolved_import_) |*resolved_import| {
-                    //     if (resolved_import.is_external or resolved_import.is_standalone_module) {
-                    //         if (resolved_import.is_external)
-                    //             externals.append(record_index) catch unreachable;
-                    //         continue;
-                    //     }
-
-                    //     const path = resolved_import.pathConst() orelse {
-                    //         import_record.path.is_disabled = true;
-                    //         continue;
-                    //     };
-
-                    //     const loader = linker.options.loader(path.name.ext);
-
-                    //     linker.processImportRecord(
-                    //         loader,
-
-                    //         // Include trailing slash
-                    //         source_dir,
-                    //         resolved_import,
-                    //         import_record,
-                    //         origin,
-                    //         import_path_format,
-                    //     ) catch continue;
-
-                    //     // If we're importing a CommonJS module as ESM
-                    //     // We need to do the following transform:
-                    //     //      import React from 'react';
-                    //     //      =>
-                    //     //      import {_require} from 'RUNTIME_IMPORTS';
-                    //     //      import * as react_module from 'react';
-                    //     //      var React = _require(react_module).default;
-                    //     // UNLESS it's a namespace import
-                    //     // If it's a namespace import, assume it's safe.
-                    //     // We can do this in the printer instead of creating a bunch of AST nodes here.
-                    //     // But we need to at least tell the printer that this needs to happen.
-                    //     if (loader != .napi and resolved_import.shouldAssumeCommonJS(import_record.kind) and !is_bun) {
-                    //         import_record.do_commonjs_transform_in_printer = true;
-                    //         import_record.module_id = @as(u32, @truncate(bun.hash(path.pretty)));
-                    //     }
-                    // } else |err| {
-                    //     switch (err) {
-                    //         error.VersionSpecifierNotAllowedHere => {
-                    //             var subpath_buf: [512]u8 = undefined;
-
-                    //             if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
-                    //                 linker.log.addResolveError(
-                    //                     &result.source,
-                    //                     import_record.range,
-                    //                     linker.allocator,
-                    //                     "Unexpected version \"{s}\" in import specifier \"{s}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json for setting dependency versions",
-                    //                     .{ pkg.version, import_record.path.text },
-                    //                     import_record.kind,
-                    //                     err,
-                    //                 ) catch {};
-                    //             } else {
-                    //                 linker.log.addResolveError(
-                    //                     &result.source,
-                    //                     import_record.range,
-                    //                     linker.allocator,
-                    //                     "Unexpected version in import specifier \"{s}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json to specify the version",
-                    //                     .{import_record.path.text},
-                    //                     import_record.kind,
-                    //                     err,
-                    //                 ) catch {};
-                    //             }
-                    //             had_resolve_errors = true;
-                    //             continue;
-                    //         },
-
-                    //         error.NoMatchingVersion => {
-                    //             if (import_record.handles_import_errors) {
-                    //                 import_record.path.is_disabled = true;
-                    //                 continue;
-                    //             }
-
-                    //             had_resolve_errors = true;
-
-                    //             var package_name = import_record.path.text;
-                    //             var subpath_buf: [512]u8 = undefined;
-                    //             if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
-                    //                 package_name = pkg.name;
-                    //                 if (pkg.version.len > 0) {
-                    //                     linker.log.addResolveError(
-                    //                         &result.source,
-                    //                         import_record.range,
-                    //                         linker.allocator,
-                    //                         "Version \"{s}\" not found for package \"{s}\" (while resolving \"{s}\")",
-                    //                         .{ pkg.version, package_name, import_record.path.text },
-                    //                         import_record.kind,
-                    //                         err,
-                    //                     ) catch {};
-                    //                 } else {
-                    //                     linker.log.addResolveError(
-                    //                         &result.source,
-                    //                         import_record.range,
-                    //                         linker.allocator,
-                    //                         "No matching version found for package \"{s}\" (while resolving \"{s}\")",
-                    //                         .{ package_name, import_record.path.text },
-                    //                         import_record.kind,
-                    //                         err,
-                    //                     ) catch {};
-                    //                 }
-                    //             } else {
-                    //                 linker.log.addResolveError(
-                    //                     &result.source,
-                    //                     import_record.range,
-                    //                     linker.allocator,
-                    //                     "Package version not found: \"{s}\"",
-                    //                     .{import_record.path.text},
-                    //                     import_record.kind,
-                    //                     err,
-                    //                 ) catch {};
-                    //             }
-                    //             continue;
-                    //         },
-
-                    //         error.DistTagNotFound => {
-                    //             if (import_record.handles_import_errors) {
-                    //                 import_record.path.is_disabled = true;
-                    //                 continue;
-                    //             }
-
-                    //             had_resolve_errors = true;
-
-                    //             var package_name = import_record.path.text;
-                    //             var subpath_buf: [512]u8 = undefined;
-                    //             if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
-                    //                 package_name = pkg.name;
-                    //                 linker.log.addResolveError(
-                    //                     &result.source,
-                    //                     import_record.range,
-                    //                     linker.allocator,
-                    //                     "Version \"{s}\" not found for package \"{s}\" (while resolving \"{s}\")",
-                    //                     .{ pkg.version, package_name, import_record.path.text },
-                    //                     import_record.kind,
-                    //                     err,
-                    //                 ) catch {};
-                    //             } else {
-                    //                 linker.log.addResolveError(
-                    //                     &result.source,
-                    //                     import_record.range,
-                    //                     linker.allocator,
-                    //                     "Package tag not found: \"{s}\"",
-                    //                     .{import_record.path.text},
-                    //                     import_record.kind,
-                    //                     err,
-                    //                 ) catch {};
-                    //             }
-
-                    //             continue;
-                    //         },
-
-                    //         error.PackageManifestHTTP404 => {
-                    //             if (import_record.handles_import_errors) {
-                    //                 import_record.path.is_disabled = true;
-                    //                 continue;
-                    //             }
-
-                    //             had_resolve_errors = true;
-
-                    //             var package_name = import_record.path.text;
-                    //             var subpath_buf: [512]u8 = undefined;
-                    //             if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
-                    //                 package_name = pkg.name;
-                    //                 linker.log.addResolveError(
-                    //                     &result.source,
-                    //                     import_record.range,
-                    //                     linker.allocator,
-                    //                     "Package not found: \"{s}\" (while resolving \"{s}\")",
-                    //                     .{ package_name, import_record.path.text },
-                    //                     import_record.kind,
-                    //                     err,
-                    //                 ) catch {};
-                    //             } else {
-                    //                 linker.log.addResolveError(
-                    //                     &result.source,
-                    //                     import_record.range,
-                    //                     linker.allocator,
-                    //                     "Package not found: \"{s}\"",
-                    //                     .{package_name},
-                    //                     import_record.kind,
-                    //                     err,
-                    //                 ) catch {};
-                    //             }
-                    //             continue;
-                    //         },
-                    //         error.ModuleNotFound => {
-                    //             had_resolve_errors = try whenModuleNotFound(linker, import_record, result, is_bun);
-                    //         },
-                    //         else => {
-                    //             had_resolve_errors = true;
-
-                    //             try linker.log.addResolveError(
-                    //                 &result.source,
-                    //                 import_record.range,
-                    //                 linker.allocator,
-                    //                 "{s} resolving \"{s}\"",
-                    //                 .{
-                    //                     @errorName(err),
-                    //                     import_record.path.text,
-                    //                 },
-                    //                 import_record.kind,
-                    //                 err,
-                    //             );
-                    //             continue;
-                    //         },
-                    //     }
-                    // }
                 }
             },
 
@@ -759,56 +413,6 @@ pub const Linker = struct {
             },
 
             else => unreachable,
-        }
-    }
-
-    pub fn processImportRecord(
-        linker: *ThisLinker,
-        loader: Options.Loader,
-        source_dir: string,
-        resolve_result: *const Resolver.Result,
-        import_record: *ImportRecord,
-        origin: URL,
-        comptime import_path_format: Options.BundleOptions.ImportPathFormat,
-    ) !void {
-        linker.import_counter += 1;
-
-        const path = resolve_result.pathConst() orelse unreachable;
-
-        import_record.path = try linker.generateImportPath(
-            source_dir,
-            if (path.is_symlink and import_path_format == .absolute_url and !linker.options.target.isBun()) path.pretty else path.text,
-            loader == .file or loader == .wasm,
-            path.namespace,
-            origin,
-            import_path_format,
-        );
-
-        switch (loader) {
-            .css => {
-                if (!linker.options.target.isBun())
-                    _ = try linker.enqueueResolveResult(resolve_result);
-
-                // This saves us a less reliable string check
-                import_record.print_mode = .css;
-            },
-            .napi => {
-                import_record.print_mode = .napi_module;
-            },
-
-            .wasm, .file => {
-
-                // if we're building for web/node, always print as import path
-                // if we're building for bun
-                // it's more complicated
-                // loader plugins could be executed between when this is called and the import is evaluated
-                // but we want to preserve the semantics of "file" returning import paths for compatibility with frontend frameworkss
-                if (!linker.options.target.isBun()) {
-                    import_record.print_mode = .import_path;
-                }
-            },
-
-            else => {},
         }
     }
 

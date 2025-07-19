@@ -41,7 +41,7 @@ Running `bun install` will:
 
 - **Install** all `dependencies`, `devDependencies`, and `optionalDependencies`. Bun will install `peerDependencies` by default.
 - **Run** your project's `{pre|post}install` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
-- **Write** a `bun.lockb` lockfile to the project root.
+- **Write** a `bun.lock` lockfile to the project root.
 
 To install in production mode (i.e. without `devDependencies`):
 
@@ -141,6 +141,12 @@ To add a package as an optional dependency (`"optionalDependencies"`):
 
 ```bash
 $ bun add --optional lodash
+```
+
+To add a package as a peer dependency (`"peerDependencies"`):
+
+```bash
+$ bun add --peer @types/bun
 ```
 
 To install a package globally:

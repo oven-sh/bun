@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const E = bun.JSAst.E;
 const Expr = bun.JSAst.Expr;
@@ -509,16 +509,13 @@ pub const Parser = struct {
 pub const IniTestingAPIs = struct {
     const JSC = bun.JSC;
 
-    pub fn loadNpmrcFromJS(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+    pub fn loadNpmrcFromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arg = callframe.argument(0);
-        const npmrc_contents = arg.toBunString(globalThis);
+        const npmrc_contents = try arg.toBunString(globalThis);
         defer npmrc_contents.deref();
         const npmrc_utf8 = npmrc_contents.toUTF8(bun.default_allocator);
         defer npmrc_utf8.deinit();
-        const source = bun.logger.Source.initPathString("<js>", npmrc_utf8.slice());
+        const source = &bun.logger.Source.initPathString("<js>", npmrc_utf8.slice());
 
         var log = bun.logger.Log.init(bun.default_allocator);
         defer log.deinit();
@@ -530,10 +527,11 @@ pub const IniTestingAPIs = struct {
         const envjs = callframe.argument(1);
         const env = if (envjs.isEmptyOrUndefinedOrNull()) globalThis.bunVM().transpiler.env else brk: {
             var envmap = bun.DotEnv.Map.HashTable.init(allocator);
+            const envobj = envjs.getObject() orelse return globalThis.throwTypeError("env must be an object", .{});
             var object_iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = false,
                 .include_value = true,
-            }).init(globalThis, envjs);
+            }).init(globalThis, envobj);
             defer object_iter.deinit();
 
             try envmap.ensureTotalCapacity(object_iter.len);
@@ -541,9 +539,9 @@ pub const IniTestingAPIs = struct {
             while (try object_iter.next()) |key| {
                 const keyslice = try key.toOwnedSlice(allocator);
                 var value = object_iter.value;
-                if (value == .undefined) continue;
+                if (value.isUndefined()) continue;
 
-                const value_str = value.getZigString(globalThis);
+                const value_str = try value.getZigString(globalThis);
                 const slice = try value_str.toOwnedSlice(allocator);
 
                 envmap.put(keyslice, .{
@@ -567,7 +565,7 @@ pub const IniTestingAPIs = struct {
         install.* = std.mem.zeroes(bun.Schema.Api.BunInstall);
         var configs = std.ArrayList(ConfigIterator.Item).init(allocator);
         defer configs.deinit();
-        loadNpmrc(allocator, install, env, ".npmrc", &log, &source, &configs) catch {
+        loadNpmrc(allocator, install, env, ".npmrc", &log, source, &configs) catch {
             return log.toJS(globalThis, allocator, "error");
         };
 
@@ -593,12 +591,12 @@ pub const IniTestingAPIs = struct {
             default_registry_password.deref();
         }
 
-        return JSC.JSObject.create(.{
+        return (try JSC.JSObject.create(.{
             .default_registry_url = default_registry_url,
             .default_registry_token = default_registry_token,
             .default_registry_username = default_registry_username,
             .default_registry_password = default_registry_password,
-        }, globalThis).toJS();
+        }, globalThis)).toJS();
     }
 
     pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -606,7 +604,7 @@ pub const IniTestingAPIs = struct {
         const arguments = arguments_.slice();
 
         const jsstr = arguments[0];
-        const bunstr = jsstr.toBunString(globalThis);
+        const bunstr = try jsstr.toBunString(globalThis);
         defer bunstr.deref();
         const utf8str = bunstr.toUTF8(bun.default_allocator);
         defer utf8str.deinit();
@@ -877,14 +875,14 @@ pub fn loadNpmrcConfig(
     }
 
     for (npmrc_paths) |npmrc_path| {
-        const source = bun.sys.File.toSource(npmrc_path, allocator).unwrap() catch |err| {
+        const source = &(bun.sys.File.toSource(npmrc_path, allocator, .{ .convert_bom = true }).unwrap() catch |err| {
             if (auto_loaded) continue;
             Output.err(err, "failed to read .npmrc: \"{s}\"", .{npmrc_path});
             Global.crash();
-        };
+        });
         defer allocator.free(source.contents);
 
-        loadNpmrc(allocator, install, env, npmrc_path, &log, &source, &configs) catch |err| {
+        loadNpmrc(allocator, install, env, npmrc_path, &log, source, &configs) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
             }
@@ -1033,6 +1031,52 @@ pub fn loadNpmrc(
         }
     }
 
+    if (out.get("ignore-scripts")) |*ignore_scripts| {
+        if (ignore_scripts.asBool()) |ignore| {
+            install.ignore_scripts = ignore;
+        }
+    }
+
+    if (out.get("link-workspace-packages")) |*link_workspace_packages| {
+        if (link_workspace_packages.asBool()) |link| {
+            install.link_workspace_packages = link;
+        }
+    }
+
+    if (out.get("save-exact")) |*save_exact| {
+        if (save_exact.asBool()) |exact| {
+            install.exact = exact;
+        }
+    }
+
+    if (out.get("install-strategy")) |install_strategy_expr| {
+        if (install_strategy_expr.asString(allocator)) |install_strategy_str| {
+            if (bun.strings.eqlComptime(install_strategy_str, "hoisted")) {
+                install.node_linker = .hoisted;
+            } else if (bun.strings.eqlComptime(install_strategy_str, "linked")) {
+                install.node_linker = .isolated;
+            } else if (bun.strings.eqlComptime(install_strategy_str, "nested")) {
+                // TODO
+            } else if (bun.strings.eqlComptime(install_strategy_str, "shallow")) {
+                // TODO
+            }
+        }
+    }
+
+    if (out.get("node-linker")) |node_linker_expr| {
+        if (node_linker_expr.asString(allocator)) |node_linker_str| {
+            install.node_linker = bun.install.PackageManager.Options.NodeLinker.fromStr(node_linker_str) orelse
+                if (bun.strings.eqlComptime(node_linker_str, "pnpm"))
+                    // yarn
+                    .isolated
+                else if (bun.strings.eqlComptime(node_linker_str, "node-modules"))
+                    // yarn
+                    .hoisted
+                else
+                    null;
+        }
+    }
+
     var registry_map = install.scoped orelse bun.Schema.Api.NpmRegistryMap{};
 
     // Process scopes
@@ -1168,6 +1212,7 @@ pub fn loadNpmrc(
             const conf_item_url = bun.URL.parse(conf_item.registry_url);
 
             if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
+                // Apply config to default registry
                 const v: *bun.Schema.Api.NpmRegistry = brk: {
                     if (install.default_registry) |*r| break :brk r;
                     install.default_registry = bun.Schema.Api.NpmRegistry{
@@ -1194,7 +1239,6 @@ pub fn loadNpmrc(
                     },
                     .email, .certfile, .keyfile => unreachable,
                 }
-                continue;
             }
 
             for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
@@ -1206,6 +1250,7 @@ pub fn loadNpmrc(
                             continue;
                         }
                     }
+                    // Apply config to scoped registry
                     switch (conf_item.optname) {
                         ._authToken => {
                             if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;

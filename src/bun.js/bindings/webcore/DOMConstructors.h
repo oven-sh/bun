@@ -855,12 +855,14 @@ enum class DOMConstructorID : uint16_t {
     XSLTProcessor,
 
     // --bun--
+    Cookie,
+    CookieMap,
     EventEmitter,
 };
 
 static constexpr unsigned numberOfDOMConstructorsBase = 846;
 
-static constexpr unsigned bunExtraConstructors = 1;
+static constexpr unsigned bunExtraConstructors = 3;
 
 static constexpr unsigned numberOfDOMConstructors = numberOfDOMConstructorsBase + bunExtraConstructors;
 
@@ -873,6 +875,11 @@ public:
     DOMConstructors() = default;
     ConstructorArray& array() { return m_array; }
     const ConstructorArray& array() const { return m_array; }
+    template<typename Visitor>
+    void visit(Visitor& visitor)
+    {
+        visitor.append(m_array.begin(), m_array.end());
+    }
 
 private:
     ConstructorArray m_array {};

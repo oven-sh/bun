@@ -18,7 +18,7 @@ The first time this test is executed, Bun will evaluate the value passed into `e
 
 ```sh
 $ bun test test/snap
-bun test v1.x (9c68abdb)
+bun test v$BUN_LATEST_VERSION (9c68abdb)
 
 test/snap.test.ts:
 ✓ snapshot [1.48ms]
@@ -46,7 +46,7 @@ test
 The `snap.test.ts.snap` file is a JavaScript file that exports a serialized version of the value passed into `expect()`. The `{foo: "bar"}` object has been serialized to JSON.
 
 ```js
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`snapshot 1`] = `
 {
@@ -61,7 +61,7 @@ Later, when this test file is executed again, Bun will read the snapshot file an
 
 ```sh
 $ bun test
-bun test v1.x (9c68abdb)
+bun test v$BUN_LATEST_VERSION (9c68abdb)
 
 test/snap.test.ts:
 ✓ snapshot [1.05ms]
@@ -78,7 +78,7 @@ To update snapshots, use the `--update-snapshots` flag.
 
 ```sh
 $ bun test --update-snapshots
-bun test v1.x (9c68abdb)
+bun test v$BUN_LATEST_VERSION (9c68abdb)
 
 test/snap.test.ts:
 ✓ snapshot [0.86ms]

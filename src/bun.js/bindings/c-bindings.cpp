@@ -416,6 +416,7 @@ extern "C" void bun_restore_stdio()
 extern "C" void onExitSignal(int sig)
 {
     bun_restore_stdio();
+    signal(sig, SIG_DFL);
     raise(sig);
 }
 #endif
@@ -479,7 +480,7 @@ extern "C" void bun_initialize_process()
             err = dup2(devNullFd_, target_fd);
         } while (err < 0 && errno == EINTR);
 
-        if (UNLIKELY(err != 0)) {
+        if (err != 0) [[unlikely]] {
             abort();
         }
     };
@@ -487,7 +488,7 @@ extern "C" void bun_initialize_process()
     for (int fd = 0; fd < 3; fd++) {
         int result = isatty(fd);
         if (result == 0) {
-            if (UNLIKELY(errno == EBADF)) {
+            if (errno == EBADF) [[unlikely]] {
                 // the fd is invalid, let's make sure it's always valid
                 setDevNullFd(fd);
             }
@@ -499,7 +500,7 @@ extern "C" void bun_initialize_process()
                 err = tcgetattr(fd, &termios_to_restore_later[fd]);
             } while (err == -1 && errno == EINTR);
 
-            if (LIKELY(err == 0)) {
+            if (err == 0) [[likely]] {
                 anyTTYs = true;
             }
         }
@@ -879,4 +880,96 @@ extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = _PATH_DEFPATH;
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "C:\\Windows\\System32;C:\\Windows;";
 #else
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/usr/bin:/bin";
+#endif
+
+#if OS(DARWIN)
+#include <os/signpost.h>
+#include "generated_perf_trace_events.h"
+
+// The event names have to be compile-time constants.
+// So we trick the compiler into thinking they are by using a macro.
+extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_signpost_id_t spid, int trace_event_id)
+{
+#define EMIT_SIGNPOST(name, id)                                 \
+    case id:                                                    \
+        os_signpost_emit_with_type(log, type, spid, #name, ""); \
+        break;
+
+    switch (trace_event_id) {
+        FOR_EACH_TRACE_EVENT(EMIT_SIGNPOST)
+    default: {
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid trace event id. Please run scripts/generate-perf-trace-events.sh to update the list of trace events.");
+    }
+    }
+}
+
+#undef EMIT_SIGNPOST
+#undef FOR_EACH_TRACE_EVENT
+
+#define BLOB_HEADER_ALIGNMENT 16 * 1024
+
+extern "C" {
+struct BlobHeader {
+    uint32_t size;
+    uint8_t data[];
+} __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
+}
+
+extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
+
+extern "C" uint32_t* Bun__getStandaloneModuleGraphMachoLength()
+{
+    return &BUN_COMPILED.size;
+}
+
+#elif defined(_WIN32)
+// Windows PE section handling
+#include <windows.h>
+#include <winnt.h>
+
+static uint32_t* pe_section_size = nullptr;
+static uint8_t* pe_section_data = nullptr;
+
+// Helper function to find and map the .bun section
+static bool initializePESection()
+{
+    if (pe_section_size != nullptr) return true;
+
+    HMODULE hModule = GetModuleHandleA(NULL);
+    if (!hModule) return false;
+
+    PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)hModule;
+    if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) return false;
+
+    PIMAGE_NT_HEADERS ntHeaders = (PIMAGE_NT_HEADERS)((BYTE*)hModule + dosHeader->e_lfanew);
+    if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) return false;
+
+    PIMAGE_SECTION_HEADER sectionHeader = IMAGE_FIRST_SECTION(ntHeaders);
+
+    for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
+        if (strncmp((char*)sectionHeader->Name, ".bun", 4) == 0) {
+            // Found the .bun section
+            BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;
+            pe_section_size = (uint32_t*)sectionData;
+            pe_section_data = sectionData + sizeof(uint32_t);
+            return true;
+        }
+        sectionHeader++;
+    }
+
+    return false;
+}
+
+extern "C" uint32_t Bun__getStandaloneModuleGraphPELength()
+{
+    if (!initializePESection()) return 0;
+    return pe_section_size ? *pe_section_size : 0;
+}
+
+extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
+{
+    if (!initializePESection()) return nullptr;
+    return pe_section_data;
+}
+
 #endif

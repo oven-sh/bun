@@ -1,4 +1,4 @@
-// Jest Snapshot v1, https://goo.gl/fbAQLP
+// Jest Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`d0 d1 t1 1`] = `"hello\`snapshot\\"`;
 

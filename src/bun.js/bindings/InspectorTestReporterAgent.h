@@ -18,6 +18,7 @@ enum class DisconnectReason;
 
 class InspectorTestReporterAgent final : public InspectorAgentBase, public Inspector::TestReporterBackendDispatcherHandler {
     WTF_MAKE_NONCOPYABLE(InspectorTestReporterAgent);
+    WTF_MAKE_TZONE_ALLOCATED(InspectorTestReporterAgent);
 
 public:
     InspectorTestReporterAgent(JSC::JSGlobalObject&);
@@ -32,7 +33,7 @@ public:
     virtual Protocol::ErrorStringOr<void> disable() final;
 
     // Public API for reporting test events
-    void reportTestFound(JSC::CallFrame*, int testId, const String& name);
+    void reportTestFound(JSC::CallFrame*, int testId, const String& name, Protocol::TestReporter::TestType type = Protocol::TestReporter::TestType::Test, int parentId = -1);
     void reportTestStart(int testId);
     void reportTestEnd(int testId, Protocol::TestReporter::TestStatus status, double elapsed);
 

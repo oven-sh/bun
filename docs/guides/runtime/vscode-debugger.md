@@ -4,11 +4,11 @@ name: Debugging Bun with the VS Code extension
 
 {% note %}
 
-VSCode extension support is currently buggy. We recommend the [Web Debugger](https://bun.sh/guides/runtime/web-debugger) for now.
+VSCode extension support is currently buggy. We recommend the [Web Debugger](https://bun.com/guides/runtime/web-debugger) for now.
 
 {% /note %}
 
-Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-vscode/types/jsc.d.ts) so you can debug your code with an interactive debugger.
+Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts) so you can debug your code with an interactive debugger.
 
 ---
 

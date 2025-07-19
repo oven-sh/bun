@@ -3,38 +3,39 @@
 //
 // Generated bindings are available in `bun.generated.<basename>.*` in Zig,
 // or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
+import assert from "node:assert";
+import fs from "node:fs";
 import * as path from "node:path";
 import {
+  ArgStrategyChildItem,
   CodeWriter,
+  Func,
+  NodeValidator,
+  Struct,
   TypeImpl,
+  alignForward,
+  cAbiIntegerLimits,
   cAbiTypeName,
   cap,
   extDispatchVariant,
+  extInternalDispatchVariant,
   extJsFunction,
   files,
+  inspect,
+  isFunc,
+  pascal,
   snake,
   src,
   str,
-  Struct,
+  typeHashToNamespace,
+  typeHashToReachableType,
+  zid,
   type CAbiType,
   type DictionaryField,
   type ReturnStrategy,
   type TypeKind,
   type Variant,
-  typeHashToNamespace,
-  typeHashToReachableType,
-  zid,
-  ArgStrategyChildItem,
-  inspect,
-  pascal,
-  alignForward,
-  isFunc,
-  Func,
-  NodeValidator,
-  cAbiIntegerLimits,
-  extInternalDispatchVariant,
 } from "./bindgen-lib-internal";
-import assert from "node:assert";
 import { argParse, readdirRecursiveWithExclusionsAndExtensionsSync, writeIfNotChanged } from "./helpers";
 
 // arg parsing
@@ -497,10 +498,9 @@ function emitConvertValue(
         if (decl === "declare") {
           cpp.line(`${type.cppName()} ${storageLocation};`);
         }
-        cpp.line(`if (!convert${type.cppInternalName()}(&${storageLocation}, global, ${jsValueRef}))`);
-        cpp.indent();
-        cpp.line(`return {};`);
-        cpp.dedent();
+        cpp.line(`auto did_convert = convert${type.cppInternalName()}(&${storageLocation}, global, ${jsValueRef});`);
+        cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
+        cpp.line(`if (!did_convert) return {};`);
         break;
       }
       default:
@@ -592,7 +592,7 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
   cpp.line(`auto throwScope = DECLARE_THROW_SCOPE(vm);`);
   cpp.line(`bool isNullOrUndefined = value.isUndefinedOrNull();`);
   cpp.line(`auto* object = isNullOrUndefined ? nullptr : value.getObject();`);
-  cpp.line(`if (UNLIKELY(!isNullOrUndefined && !object)) {`);
+  cpp.line(`if (!isNullOrUndefined && !object) [[unlikely]] {`);
   cpp.line(`    throwTypeError(global, throwScope);`);
   cpp.line(`    return false;`);
   cpp.line(`}`);
@@ -760,7 +760,7 @@ function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   }
   w.line(`    };`);
   w.line(`    static constexpr SortedArrayMap enumerationMapping { mappings };`);
-  w.line(`    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); LIKELY(enumerationValue))`);
+  w.line(`    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]`);
   w.line(`        return *enumerationValue;`);
   w.line(`    return std::nullopt;`);
   w.line(`}`);
@@ -1016,7 +1016,9 @@ function emitCppVariationSelector(fn: Func, namespaceVar: string) {
     }
 
     if (variants.length === 1) {
-      cpp.line(`return ${extInternalDispatchVariant(namespaceVar, fn.name, variants[0].suffix)}(global, callFrame);`);
+      cpp.line(
+        `RELEASE_AND_RETURN(throwScope, ${extInternalDispatchVariant(namespaceVar, fn.name, variants[0].suffix)}(global, callFrame));`,
+      );
     } else {
       let argIndex = 0;
       let strategies: DistinguishStrategy[] | null = null;
@@ -1052,7 +1054,9 @@ function emitCppVariationSelector(fn: Func, namespaceVar: string) {
         const { condition, canThrow } = getDistinguishCode(s, arg.type, "distinguishingValue");
         cpp.line(`if (${condition}) {`);
         cpp.indent();
-        cpp.line(`return ${extInternalDispatchVariant(namespaceVar, fn.name, v.suffix)}(global, callFrame);`);
+        cpp.line(
+          `RELEASE_AND_RETURN(throwScope, ${extInternalDispatchVariant(namespaceVar, fn.name, v.suffix)}(global, callFrame));`,
+        );
         cpp.dedent();
         cpp.line(`}`);
         if (canThrow) {
@@ -1076,7 +1080,15 @@ const unsortedFiles = readdirRecursiveWithExclusionsAndExtensionsSync(src, ["nod
 // Sort for deterministic output
 for (const fileName of [...unsortedFiles].sort()) {
   const zigFile = path.relative(src, fileName.replace(/\.bind\.ts$/, ".zig"));
+  const zigFilePath = path.join(src, zigFile);
   let file = files.get(zigFile);
+  if (!fs.existsSync(zigFilePath)) {
+    // It would be nice if this would generate the file with the correct boilerplate
+    const bindName = path.basename(fileName);
+    throw new Error(
+      `${bindName} is missing a corresponding Zig file at ${zigFile}. Please create it and make sure it matches signatures in ${bindName}.`,
+    );
+  }
   if (!file) {
     file = { functions: [], typedefs: [] };
     files.set(zigFile, file);
@@ -1116,9 +1128,9 @@ const cpp = new CodeWriter();
 const cppInternal = new CodeWriter();
 const headers = new Set<string>();
 
-zig.line('const bun = @import("root").bun;');
+zig.line('const bun = @import("bun");');
 zig.line("const JSC = bun.JSC;");
-zig.line("const JSHostFunctionType = JSC.JSHostFunctionType;\n");
+zig.line("const JSHostFunctionType = JSC.JSHostFn;\n");
 
 zigInternal.line("const binding_internals = struct {");
 zigInternal.indent();
@@ -1354,7 +1366,7 @@ for (const [filename, { functions, typedefs }] of files) {
 
       switch (returnStrategy.type) {
         case "jsvalue":
-          zigInternal.add(`return JSC.toJSHostValue(${globalObjectArg}, `);
+          zigInternal.add(`return JSC.toJSHostCall(${globalObjectArg}, @src(), `);
           break;
         case "basic-out-param":
           zigInternal.add(`out.* = @as(bun.JSError!${returnStrategy.abiType}, `);
@@ -1364,7 +1376,12 @@ for (const [filename, { functions, typedefs }] of files) {
           break;
       }
 
-      zigInternal.line(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${fn.name + vari.suffix}(`);
+      zigInternal.add(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${fn.name + vari.suffix}`);
+      if (returnStrategy.type === "jsvalue") {
+        zigInternal.line(", .{");
+      } else {
+        zigInternal.line("(");
+      }
       zigInternal.indent();
       for (const arg of vari.args) {
         const argName = arg.zigMappedName!;
@@ -1412,7 +1429,7 @@ for (const [filename, { functions, typedefs }] of files) {
       zigInternal.dedent();
       switch (returnStrategy.type) {
         case "jsvalue":
-          zigInternal.line(`));`);
+          zigInternal.line(`});`);
           break;
         case "basic-out-param":
         case "void":
@@ -1437,7 +1454,7 @@ for (const [filename, { functions, typedefs }] of files) {
     const minArgCount = fn.variants.reduce((acc, vari) => Math.min(acc, vari.args.length), Number.MAX_SAFE_INTEGER);
     zig.line(`pub fn ${wrapperName}(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {`);
     zig.line(
-      `    return JSC.NewRuntimeFunction(global, JSC.ZigString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, false, null);`,
+      `    return JSC.host_fn.NewRuntimeFunction(global, JSC.ZigString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, false, null);`,
     );
     zig.line(`}`);
   }
@@ -1476,7 +1493,7 @@ zigInternal.line("};");
 zigInternal.line();
 zigInternal.line("comptime {");
 zigInternal.line(`    if (bun.Environment.export_cpp_apis) {`);
-zigInternal.line("        for (@typeInfo(binding_internals).Struct.decls) |decl| {");
+zigInternal.line('        for (@typeInfo(binding_internals).@"struct".decls) |decl| {');
 zigInternal.line("            _ = &@field(binding_internals, decl.name);");
 zigInternal.line("        }");
 zigInternal.line("    }");

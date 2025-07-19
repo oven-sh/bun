@@ -253,7 +253,14 @@ test("isAsyncFunction", () => {
     expect(types.isAsyncFunction(fn)).toBeTrue();
   }
 
-  for (let fn of [function normal() {}, function* generatorFn() {}]) {
+  for (let fn of [
+    function normal() {},
+    function* generatorFn() {},
+    function bound() {}.bind(),
+    Bun.sleep, // host function
+    Promise.resolve, // builtin function
+    async function asyncBound() {}.bind(), // node also returns false
+  ]) {
     expect(types.isAsyncFunction(fn)).toBeFalse();
   }
 });
@@ -262,7 +269,15 @@ test("isGeneratorFunction", () => {
     expect(types.isGeneratorFunction(fn)).toBeTrue();
   }
 
-  for (let fn of [function normal() {}, async function asyncFn() {}]) {
+  for (let fn of [
+    function normal() {},
+    async function asyncFn() {},
+    function bound() {}.bind(),
+    Bun.sleep, // host function
+    Promise.resolve, // builtin function
+    function* boundGenerator() {}.bind(), // node also returns false
+    async function* boundAsyncGenerator() {}.bind(), // node also returns false
+  ]) {
     expect(types.isGeneratorFunction(fn)).toBeFalse();
   }
 });
@@ -276,4 +291,30 @@ test("isKeyObject", () => {
   expect(types.isKeyObject({})).toBeFalse();
   expect(types.isKeyObject(null)).toBeFalse();
   expect(types.isKeyObject(undefined)).toBeFalse();
+});
+
+test("#11780", () => {
+  let resolveError;
+  try {
+    resolveError = require("OOGA_BOOGA");
+  } catch (e) {
+    resolveError = e;
+  }
+  expect(resolveError.constructor.name).toBe("ResolveMessage");
+  expect(types.isNativeError(resolveError)).toBeTrue();
+
+  const badCode = `
+export default /BADD~!!!!;
+
+  `;
+  const blob = new Blob([badCode], { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
+  let buildError;
+  try {
+    require(url);
+  } catch (e) {
+    buildError = e;
+  }
+  expect(types.isNativeError(buildError)).toBeTrue();
+  expect(buildError.constructor.name).toBe("BuildMessage");
 });

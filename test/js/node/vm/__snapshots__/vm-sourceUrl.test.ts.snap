@@ -1,0 +1,29 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`can get sourceURL from eval inside node:vm 1`] = `
+"evalmachine.<anonymous>:2
+Error: hello
+    at hellohello.js:2:16
+    at runInNewContext (unknown)
+    at <anonymous> (<this-url>:6:5)"
+`;
+
+exports[`can get sourceURL inside node:vm 1`] = `
+"4 |     return Bun.inspect(new Error("hello"));
+                           ^
+error: hello
+      at hello (hellohello.js:4:24)
+      at hellohello.js:7:6
+      at <anonymous> (<this-url>:21:15)
+"
+`;
+
+exports[`eval sourceURL is correct 1`] = `
+"4 |     return Bun.inspect(new Error("hello"));
+                           ^
+error: hello
+      at hello (hellohello.js:4:24)
+      at eval (hellohello.js:7:6)
+      at <anonymous> (<this-url>:39:15)
+"
+`;

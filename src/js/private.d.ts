@@ -113,6 +113,9 @@ declare module "bun" {
   var fetch: typeof globalThis.fetch;
 }
 
+/**
+ * `JSC::JSModuleLoader`
+ */
 declare var Loader: {
   registry: Map<string, LoaderEntry>;
 
@@ -149,9 +152,10 @@ declare interface Error {
   code?: string;
 }
 
-interface CommonJSModuleRecord {
+interface JSCommonJSModule {
   $require(id: string, mod: any, args_count: number, args: Array): any;
-  children: CommonJSModuleRecord[];
+  $requireNativeModule(id: string): any;
+  children: JSCommonJSModule[];
   exports: any;
   id: string;
   loaded: boolean;
@@ -159,6 +163,7 @@ interface CommonJSModuleRecord {
   path: string;
   paths: string[];
   require: typeof require;
+  filename: string;
 }
 
 /**
@@ -212,9 +217,24 @@ declare function $newZigFunction<T = (...args: any) => any>(
 /**
  * Retrieves a handle to a function defined in Zig or C++, defined in a
  * `.bind.ts` file. For more information on how to define bindgen functions, see
- * [bindgen's documentation](https://bun.sh/docs/project/bindgen).
+ * [bindgen's documentation](https://bun.com/docs/project/bindgen).
  * @param filename - The basename of the `.bind.ts` file.
  * @param symbol - The name of the function to call.
  */
 declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol: string): T;
-// NOTE: $debug, $assert, and $isPromiseResolved omitted
+// NOTE: $debug, $assert, and $isPromiseFulfilled omitted
+
+import "node:net";
+declare module "node:net" {
+  export function _normalizeArgs(args: any[]): unknown[];
+
+  interface Socket {
+    _handle: Bun.Socket<{ self: Socket; req?: object }> | null;
+    server: Server | null;
+  }
+
+  interface Server {
+    _handle: Bun.SocketListener<Socket> | null;
+    _connections: number;
+  }
+}

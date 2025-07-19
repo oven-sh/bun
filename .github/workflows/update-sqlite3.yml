@@ -55,7 +55,7 @@ jobs:
 
           # Convert numeric version to semantic version for display
           LATEST_MAJOR=$((10#$LATEST_VERSION_NUM / 1000000))
-          LATEST_MINOR=$((($LATEST_VERSION_NUM / 1000) % 1000))
+          LATEST_MINOR=$((($LATEST_VERSION_NUM / 10000) % 100))
           LATEST_PATCH=$((10#$LATEST_VERSION_NUM % 1000))
           LATEST_VERSION="$LATEST_MAJOR.$LATEST_MINOR.$LATEST_PATCH"
 
@@ -105,5 +105,7 @@ jobs:
             ## What does this PR do?
 
             Updates SQLite to version ${{ steps.check-version.outputs.latest }}
+
+            Compare: https://sqlite.org/src/vdiff?from=${{ steps.check-version.outputs.current }}&to=${{ steps.check-version.outputs.latest }}
 
             Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-sqlite3.yml)

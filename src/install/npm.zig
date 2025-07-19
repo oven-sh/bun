@@ -1,8 +1,8 @@
 const URL = @import("../url.zig").URL;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
-const MutableString = @import("../string_mutable.zig").MutableString;
-const Semver = @import("./semver.zig");
+const MutableString = bun.MutableString;
+const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const string = @import("../string_types.zig").string;
@@ -16,6 +16,7 @@ const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeMiniStore;
 const logger = bun.logger;
 const Output = bun.Output;
+const Global = bun.Global;
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
 const Environment = bun.Environment;
@@ -24,19 +25,13 @@ const HTTPClient = bun.http;
 const JSON = bun.JSON;
 const default_allocator = bun.default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const SlicedString = Semver.SlicedString;
-const FileSystem = @import("../fs.zig").FileSystem;
-const Dependency = @import("./dependency.zig");
-const VersionedURL = @import("./versioned_url.zig");
 const VersionSlice = @import("./install.zig").VersionSlice;
 const ObjectPool = @import("../pool.zig").ObjectPool;
 const Api = @import("../api/schema.zig").Api;
 const DotEnv = @import("../env_loader.zig");
 const http = bun.http;
 const OOM = bun.OOM;
-const Global = bun.Global;
-const PublishCommand = bun.CLI.PublishCommand;
 const File = bun.sys.File;
 
 const Npm = @This();
@@ -175,8 +170,8 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     }
 
     var log = logger.Log.init(allocator);
-    const source = logger.Source.initPathString("???", response_buf.list.items);
-    const json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+    const source = &logger.Source.initPathString("???", response_buf.list.items);
+    const json = JSON.parseUTF8(source, &log, allocator) catch |err| {
         switch (err) {
             error.OutOfMemory => |oom| return oom,
             else => {
@@ -204,8 +199,8 @@ pub fn responseError(
 ) OOM!noreturn {
     const message = message: {
         var log = logger.Log.init(allocator);
-        const source = logger.Source.initPathString("???", response_body.list.items);
-        const json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+        const source = &logger.Source.initPathString("???", response_body.list.items);
+        const json = JSON.parseUTF8(source, &log, allocator) catch |err| {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
                 else => break :message null,
@@ -510,7 +505,6 @@ pub const Registry = struct {
     }
 };
 
-const VersionMap = std.ArrayHashMapUnmanaged(Semver.Version, PackageVersion, Semver.Version.HashContext, false);
 const DistTagMap = extern struct {
     tags: ExternalStringList = ExternalStringList{},
     versions: VersionSlice = VersionSlice{},
@@ -730,9 +724,9 @@ pub const OperatingSystem = enum(u16) {
     pub fn jsFunctionOperatingSystemIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callframe.arguments_old(1);
         var operating_system = negatable(.none);
-        var iter = args.ptr[0].arrayIterator(globalObject);
-        while (iter.next()) |item| {
-            const slice = item.toSlice(globalObject, bun.default_allocator);
+        var iter = try args.ptr[0].arrayIterator(globalObject);
+        while (try iter.next()) |item| {
+            const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             operating_system.apply(slice.slice());
             if (globalObject.hasException()) return .zero;
@@ -847,9 +841,9 @@ pub const Architecture = enum(u16) {
     pub fn jsFunctionArchitectureIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callframe.arguments_old(1);
         var architecture = negatable(.none);
-        var iter = args.ptr[0].arrayIterator(globalObject);
-        while (iter.next()) |item| {
-            const slice = item.toSlice(globalObject, bun.default_allocator);
+        var iter = try args.ptr[0].arrayIterator(globalObject);
+        while (try iter.next()) |item| {
+            const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             architecture.apply(slice.slice());
             if (globalObject.hasException()) return .zero;
@@ -1077,9 +1071,10 @@ pub const PackageManifest = struct {
             scope: *const Registry.Scope,
             tmp_path: [:0]const u8,
             tmpdir: std.fs.Dir,
-            cache_dir: std.fs.Dir,
+            cache_dir_std: std.fs.Dir,
             outpath: [:0]const u8,
         ) !void {
+            const cache_dir: bun.FD = .fromStdDir(cache_dir_std);
             // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
             var stack_fallback = std.heap.stackFallback(64 * 1024, bun.default_allocator);
 
@@ -1115,7 +1110,7 @@ pub const PackageManifest = struct {
             else
                 tmp_path;
 
-            var is_using_o_tmpfile = if (Environment.isLinux) false else {};
+            var is_using_o_tmpfile = if (Environment.isLinux) false;
             const file = brk: {
                 const flags = bun.O.WRONLY;
                 const mask = if (Environment.isPosix) 0o664 else 0;
@@ -1148,7 +1143,7 @@ pub const PackageManifest = struct {
                 }
 
                 break :brk try bun.sys.File.openat(
-                    tmpdir,
+                    .fromStdDir(tmpdir),
                     path_to_use_for_opening_file,
                     flags | bun.O.CREAT | bun.O.TRUNC,
                     if (Environment.isPosix) 0o664 else 0,
@@ -1172,24 +1167,24 @@ pub const PackageManifest = struct {
             } else if (Environment.isLinux and is_using_o_tmpfile) {
                 defer file.close();
                 // Attempt #1.
-                bun.sys.linkatTmpfile(file.handle, bun.toFD(cache_dir), outpath).unwrap() catch {
+                bun.sys.linkatTmpfile(file.handle, cache_dir, outpath).unwrap() catch {
                     // Attempt #2: the file may already exist. Let's unlink and try again.
-                    bun.sys.unlinkat(bun.toFD(cache_dir), outpath).unwrap() catch {};
-                    try bun.sys.linkatTmpfile(file.handle, bun.toFD(cache_dir), outpath).unwrap();
+                    bun.sys.unlinkat(cache_dir, outpath).unwrap() catch {};
+                    try bun.sys.linkatTmpfile(file.handle, cache_dir, outpath).unwrap();
 
                     // There is no attempt #3. This is a cache, so it's not essential.
                 };
             } else {
                 defer file.close();
                 // Attempt #1. Rename the file.
-                const rc = bun.sys.renameat(bun.toFD(tmpdir), tmp_path, bun.toFD(cache_dir), outpath);
+                const rc = bun.sys.renameat(.fromStdDir(tmpdir), tmp_path, cache_dir, outpath);
 
                 switch (rc) {
                     .err => |err| {
                         // Fallback path: atomically swap from <tmp>/*.npm -> <cache>/*.npm, then unlink the temporary file.
                         defer {
                             // If atomically swapping fails, then we should still unlink the temporary file as a courtesy.
-                            bun.sys.unlinkat(bun.toFD(tmpdir), tmp_path).unwrap() catch {};
+                            bun.sys.unlinkat(.fromStdDir(tmpdir), tmp_path).unwrap() catch {};
                         }
 
                         if (switch (err.getErrno()) {
@@ -1198,9 +1193,15 @@ pub const PackageManifest = struct {
                         }) {
 
                             // Atomically swap the old file with the new file.
-                            try bun.sys.renameat2(bun.toFD(tmpdir.fd), tmp_path, bun.toFD(cache_dir.fd), outpath, .{
-                                .exchange = true,
-                            }).unwrap();
+                            try bun.sys.renameat2(
+                                .fromStdDir(tmpdir),
+                                tmp_path,
+                                cache_dir,
+                                outpath,
+                                .{
+                                    .exchange = true,
+                                },
+                            ).unwrap();
 
                             // Success.
                             return;
@@ -1227,13 +1228,14 @@ pub const PackageManifest = struct {
                 cache_dir: std.fs.Dir,
 
                 task: bun.ThreadPool.Task = .{ .callback = &run },
-                pub usingnamespace bun.New(@This());
+                pub const new = bun.TrivialNew(@This());
 
                 pub fn run(task: *bun.ThreadPool.Task) void {
+                    const tracer = bun.perf.trace("PackageManifest.Serializer.save");
+                    defer tracer.end();
+
                     const save_task: *@This() = @fieldParentPtr("task", task);
-                    defer {
-                        save_task.destroy();
-                    }
+                    defer bun.destroy(save_task);
 
                     Serializer.save(&save_task.manifest, save_task.scope, save_task.tmpdir, save_task.cache_dir) catch |err| {
                         if (PackageManager.verbose_install) {
@@ -1282,7 +1284,7 @@ pub const PackageManifest = struct {
         pub fn loadByFileID(allocator: std.mem.Allocator, scope: *const Registry.Scope, cache_dir: std.fs.Dir, file_id: u64) !?PackageManifest {
             var file_path_buf: [512 + 64]u8 = undefined;
             const file_name = try manifestFileName(&file_path_buf, file_id, scope);
-            const cache_file = File.openat(cache_dir, file_name, bun.O.RDONLY, 0).unwrap() catch return null;
+            const cache_file = File.openat(.fromStdDir(cache_dir), file_name, bun.O.RDONLY, 0).unwrap() catch return null;
             defer cache_file.close();
 
             delete: {
@@ -1290,11 +1292,13 @@ pub const PackageManifest = struct {
             }
 
             // delete the outdated/invalid manifest
-            try bun.sys.unlinkat(bun.toFD(cache_dir), file_name).unwrap();
+            try bun.sys.unlinkat(.fromStdDir(cache_dir), file_name).unwrap();
             return null;
         }
 
         pub fn loadByFile(allocator: std.mem.Allocator, scope: *const Registry.Scope, manifest_file: File) !?PackageManifest {
+            const tracer = bun.perf.trace("PackageManifest.Serializer.loadByFile");
+            defer tracer.end();
             const bytes = try manifest_file.readToEnd(allocator).unwrap();
             errdefer allocator.free(bytes);
 
@@ -1369,13 +1373,13 @@ pub const PackageManifest = struct {
                 return global.throw("expected manifest filename and registry string arguments", .{});
             }
 
-            const manifest_filename_str = args[0].toBunString(global);
+            const manifest_filename_str = try args[0].toBunString(global);
             defer manifest_filename_str.deref();
 
             const manifest_filename = manifest_filename_str.toUTF8(bun.default_allocator);
             defer manifest_filename.deinit();
 
-            const registry_str = args[1].toBunString(global);
+            const registry_str = try args[1].toBunString(global);
             defer registry_str.deref();
 
             const registry = registry_str.toUTF8(bun.default_allocator);
@@ -1419,7 +1423,7 @@ pub const PackageManifest = struct {
                     try writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)});
             }
 
-            var result = bun.String.fromUTF8(buf.items);
+            var result = bun.String.borrowUTF8(buf.items);
             defer result.deref();
 
             return result.toJSByParseJSON(global);
@@ -1549,7 +1553,7 @@ pub const PackageManifest = struct {
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
 
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
-    fn parse(
+    pub fn parse(
         allocator: std.mem.Allocator,
         scope: *const Registry.Scope,
         log: *logger.Log,
@@ -1559,20 +1563,27 @@ pub const PackageManifest = struct {
         etag: []const u8,
         public_max_age: u32,
     ) !?PackageManifest {
-        const source = logger.Source.initPathString(expected_name, json_buffer);
+        const source = &logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
         var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
         const json = JSON.parseUTF8(
-            &source,
+            source,
             log,
             arena.allocator(),
-        ) catch return null;
+        ) catch {
+            // don't use the arena memory!
+            var cloned_log: logger.Log = .init(bun.default_allocator);
+            try log.cloneToWithRecycled(&cloned_log, true);
+            log.* = cloned_log;
+
+            return null;
+        };
 
         if (json.asProperty("error")) |error_q| {
             if (error_q.expr.asString(allocator)) |err| {
-                log.addErrorFmt(&source, logger.Loc.Empty, allocator, "npm error: {s}", .{err}) catch unreachable;
+                log.addErrorFmt(source, logger.Loc.Empty, allocator, "npm error: {s}", .{err}) catch unreachable;
                 return null;
             }
         }
@@ -1643,7 +1654,7 @@ pub const PackageManifest = struct {
 
                     if (Environment.allow_assert) bun.assertWithLocation(parsed_version.valid, @src());
                     if (!parsed_version.valid) {
-                        log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
+                        log.addErrorFmt(source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
                         continue;
                     }
 
@@ -2164,7 +2175,7 @@ pub const PackageManifest = struct {
 
                                 if (count > 0 and
                                     ((comptime !is_peer) or
-                                    optional_peer_dep_names.items.len == 0))
+                                        optional_peer_dep_names.items.len == 0))
                                 {
                                     const name_map_hash = name_hasher.final();
                                     const version_map_hash = version_hasher.final();
@@ -2446,5 +2457,3 @@ pub const PackageManifest = struct {
         return result;
     }
 };
-
-const assert = bun.assert;

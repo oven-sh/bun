@@ -1,15 +1,7 @@
-const bun = @import("root").bun;
-const string = bun.string;
+const bun = @import("bun");
 const Output = bun.Output;
 const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
-const std = @import("std");
-const open = @import("../open.zig");
+
 const Command = bun.CLI.Command;
 
 pub const ExecCommand = struct {
@@ -29,7 +21,7 @@ pub const ExecCommand = struct {
         const cwd = switch (bun.sys.getcwd(&buf)) {
             .result => |p| p,
             .err => |e| {
-                Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ script, e.toSystemError() });
+                Output.err(e, "failed to run script <b>{s}<r>", .{script});
                 Global.exit(1);
             },
         };
@@ -39,8 +31,8 @@ pub const ExecCommand = struct {
         };
         const script_path = bun.path.join(parts, .auto);
 
-        const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, script_path, script) catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ script_path, @errorName(err) });
+        const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, script_path, script, null) catch |err| {
+            Output.err(err, "failed to run script <b>{s}<r>", .{script_path});
             Global.exit(1);
         };
 

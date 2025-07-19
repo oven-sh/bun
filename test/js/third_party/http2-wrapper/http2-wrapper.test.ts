@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { tls } from "harness";
-import http2Wrapper from "http2-wrapper";
-import type { AutoRequestOptions } from "http2-wrapper";
 import http from "http";
+import type { AutoRequestOptions } from "http2-wrapper";
+import http2Wrapper from "http2-wrapper";
 
 async function doRequest(options: AutoRequestOptions) {
   const { promise, resolve, reject } = Promise.withResolvers();
@@ -31,6 +31,7 @@ async function doRequest(options: AutoRequestOptions) {
 test("should allow http/1.1 when using http2-wrapper", async () => {
   {
     using server = Bun.serve({
+      port: 0,
       async fetch(req) {
         return new Response(
           JSON.stringify({
@@ -60,6 +61,7 @@ test("should allow http/1.1 when using http2-wrapper", async () => {
   {
     using server = Bun.serve({
       tls,
+      port: 0,
       hostname: "localhost",
       async fetch(req) {
         return new Response(

@@ -1,16 +1,9 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
-const Error = css.Error;
-const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
-const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
-const Maybe = css.Maybe;
-const PrinterError = css.PrinterError;
 const PrintErr = css.PrintErr;
 const Location = css.css_rules.Location;
-const style = css.css_rules.style;
 const CssRuleList = css.CssRuleList;
 
 pub fn MediaRule(comptime R: type) type {
@@ -25,10 +18,9 @@ pub fn MediaRule(comptime R: type) type {
         const This = @This();
 
         pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) css.MinifyErr!bool {
-            _ = this; // autofix
-            _ = context; // autofix
-            _ = parent_is_unused; // autofix
-            return false;
+            try this.rules.minify(context, parent_is_unused);
+
+            return this.rules.v.items.len == 0 or this.query.neverMatches();
         }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {

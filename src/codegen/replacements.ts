@@ -1,5 +1,6 @@
 import { LoaderKeys } from "../api/schema";
 import NodeErrors from "../bun.js/bindings/ErrorCode.ts";
+import jsclasses from "./../bun.js/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { registerNativeCall } from "./generate-js2native";
 
@@ -13,11 +14,29 @@ export const replacements: ReplacementRule[] = [
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
 
+let error_i = 0;
 for (let i = 0; i < NodeErrors.length; i++) {
-  const [code] = NodeErrors[i];
+  const [code, _constructor, _name, ...other_constructors] = NodeErrors[i];
   replacements.push({
     from: new RegExp(`\\b\\__intrinsic__${code}\\(`, "g"),
-    to: `$makeErrorWithCode(${i}, `,
+    to: `$makeErrorWithCode(${error_i}, `,
+  });
+  error_i += 1;
+  for (const con of other_constructors) {
+    if (con == null) continue;
+    replacements.push({
+      from: new RegExp(`\\b\\__intrinsic__${code}_${con.name}\\(`, "g"),
+      to: `$makeErrorWithCode(${error_i}, `,
+    });
+    error_i += 1;
+  }
+}
+
+for (let id = 0; id < jsclasses.length; id++) {
+  const name = jsclasses[id][0];
+  replacements.push({
+    from: new RegExp(`\\b\\__intrinsic__inherits${name}\\(`, "g"),
+    to: `$inherits(${id}, `,
   });
 }
 
@@ -25,11 +44,12 @@ for (let i = 0; i < NodeErrors.length; i++) {
 export const globalReplacements: ReplacementRule[] = [
   {
     from: /\bnotImplementedIssue\(\s*([0-9]+)\s*,\s*((?:"[^"]*"|'[^']+'))\s*\)/g,
-    to: "new TypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",
+    toRaw: "__intrinsic__makeTypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",
   },
   {
     from: /\bnotImplementedIssueFn\(\s*([0-9]+)\s*,\s*((?:"[^"]*"|'[^']+'))\s*\)/g,
-    to: "() => $throwTypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",
+    toRaw:
+      "() => void __intrinsic__throwTypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",
   },
 ];
 
@@ -74,7 +94,8 @@ replacements.push({
 export const enums = {
   Loader: LoaderKeys,
   ImportKind: [
-    "entry-point",
+    "entry-point-run",
+    "entry-point-build",
     "import-statement",
     "require-call",
     "dynamic-import",
@@ -136,7 +157,8 @@ for (const key in define) {
 
 export interface ReplacementRule {
   from: RegExp;
-  to: string;
+  to?: string;
+  toRaw?: string;
   global?: boolean;
 }
 
@@ -147,7 +169,9 @@ export const function_replacements = [
   "$newZigFunction",
   "$cpp",
   "$newCppFunction",
-  "$isPromiseResolved",
+  "$isPromiseFulfilled",
+  "$isPromiseRejected",
+  "$isPromisePending",
   "$bindgenFn",
 ];
 const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll("$", "")})`);
@@ -158,7 +182,10 @@ export function applyReplacements(src: string, length: number) {
   let rest = src.slice(length);
   slice = slice.replace(/([^a-zA-Z0-9_\$])\$([a-zA-Z0-9_]+\b)/gm, `$1__intrinsic__$2`);
   for (const replacement of replacements) {
-    slice = slice.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__").replaceAll("%", "$"));
+    slice = slice.replace(
+      replacement.from,
+      replacement.toRaw ?? replacement.to!.replaceAll("$", "__intrinsic__").replaceAll("%", "$"),
+    );
   }
   let match;
   if ((match = slice.match(function_regexp)) && rest.startsWith("(")) {
@@ -181,7 +208,7 @@ export function applyReplacements(src: string, length: number) {
       }
       return [
         slice.slice(0, match.index) +
-          "(IS_BUN_DEVELOPMENT?$assert(" +
+          "!(IS_BUN_DEVELOPMENT?$assert(" +
           checkSlice.result.slice(1, -1) +
           "," +
           JSON.stringify(
@@ -229,7 +256,7 @@ export function applyReplacements(src: string, length: number) {
       const id = registerNativeCall(kind, args[0], args[1], is_create_fn ? args[2] : undefined);
 
       return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
-    } else if (name === "isPromiseResolved") {
+    } else if (name === "isPromiseFulfilled") {
       const inner = sliceSourceCode(rest, true);
       let args;
       if (debug) {
@@ -237,6 +264,26 @@ export function applyReplacements(src: string, length: number) {
         args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),(__intrinsic__getPromiseInternalField(__intrinsic__lazy.temp, __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === (__intrinsic__lazy.temp = undefined, __intrinsic__promiseStateFulfilled))`;
       } else {
         args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0, -1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStateFulfilled)`;
+      }
+      return [slice.slice(0, match.index) + args, inner.rest, true];
+    } else if (name === "isPromiseRejected") {
+      const inner = sliceSourceCode(rest, true);
+      let args;
+      if (debug) {
+        // use a property on @lazy as a temporary holder for the expression. only in debug!
+        args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),(__intrinsic__getPromiseInternalField(__intrinsic__lazy.temp, __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === (__intrinsic__lazy.temp = undefined, __intrinsic__promiseStateRejected))`;
+      } else {
+        args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0, -1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStateRejected)`;
+      }
+      return [slice.slice(0, match.index) + args, inner.rest, true];
+    } else if (name === "isPromisePending") {
+      const inner = sliceSourceCode(rest, true);
+      let args;
+      if (debug) {
+        // use a property on @lazy as a temporary holder for the expression. only in debug!
+        args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),(__intrinsic__getPromiseInternalField(__intrinsic__lazy.temp, __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === (__intrinsic__lazy.temp = undefined, __intrinsic__promiseStatePending))`;
+      } else {
+        args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0, -1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStatePending)`;
       }
       return [slice.slice(0, match.index) + args, inner.rest, true];
     } else if (name === "bindgenFn") {
@@ -272,7 +319,7 @@ export function applyReplacements(src: string, length: number) {
 export function applyGlobalReplacements(src: string) {
   let result = src;
   for (const replacement of globalReplacements) {
-    result = result.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__"));
+    result = result.replace(replacement.from, replacement.toRaw ?? replacement.to!.replaceAll("$", "__intrinsic__"));
   }
   return result;
 }

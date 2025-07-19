@@ -1,16 +1,20 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
 fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
-    if (segment.len + 1 + bin.len > bun.MAX_PATH_BYTES) return null;
+    const prefix_len = segment.len + 1; // includes trailing path separator
+    const len = prefix_len + bin.len;
+    const len_z = len + 1; // includes null terminator
+    if (len_z > bun.MAX_PATH_BYTES) return null;
+
     bun.copy(u8, buf, segment);
     buf[segment.len] = std.fs.path.sep;
-    bun.copy(u8, buf[segment.len + 1 ..], bin);
-    buf[segment.len + 1 + bin.len ..][0] = 0;
-    const filepath = buf[0 .. segment.len + 1 + bin.len :0];
+    bun.copy(u8, buf[prefix_len..], bin);
+    buf[len] = 0;
+    const filepath = buf[0..len :0];
     if (!bun.sys.isExecutableFilePath(filepath)) return null;
-    return @as(u16, @intCast(filepath.len));
+    return @intCast(filepath.len);
 }
 
 // Like /usr/bin/which but without needing to exec a child process
@@ -20,8 +24,8 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
     bun.Output.scoped(.which, true)("path={s} cwd={s} bin={s}", .{ path, cwd, bin });
 
     if (bun.Environment.os == .windows) {
-        const convert_buf = bun.WPathBufferPool.get();
-        defer bun.WPathBufferPool.put(convert_buf);
+        const convert_buf = bun.w_path_buffer_pool.get();
+        defer bun.w_path_buffer_pool.put(convert_buf);
         const result = whichWin(convert_buf, path, cwd, bin) orelse return null;
         const result_converted = bun.strings.convertUTF16toUTF8InBuffer(buf, result) catch unreachable;
         buf[result_converted.len] = 0;
@@ -133,8 +137,8 @@ fn searchBinInPath(buf: *bun.WPathBuffer, path_buf: *bun.PathBuffer, path: []con
 /// It is similar to Get-Command in powershell.
 pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u16 {
     if (bin.len == 0) return null;
-    const path_buf = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(path_buf);
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
 
     const check_windows_extensions = !endsWithExtension(bin);
 

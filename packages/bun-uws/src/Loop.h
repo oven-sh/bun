@@ -24,6 +24,7 @@
 #include "LoopData.h"
 #include <libusockets.h>
 #include <iostream>
+#include "AsyncSocket.h"
 
 extern "C" int bun_is_exiting();
 
@@ -52,6 +53,15 @@ private:
         for (auto &p : loopData->preHandlers) {
             p.second((Loop *) loop);
         }
+
+        void *corkedSocket = loopData->getCorkedSocket();
+        if (corkedSocket) {
+            if (loopData->isCorkedSSL()) {
+                ((uWS::AsyncSocket<true> *) corkedSocket)->uncork();
+            } else {
+                ((uWS::AsyncSocket<false> *) corkedSocket)->uncork();
+            }
+        }
     }
 
     static void postCb(us_loop_t *loop) {
@@ -77,7 +87,7 @@ private:
         LoopData *loopData = (LoopData *) us_loop_ext((struct us_loop_t *) loop);
         loopData->dateTimer = us_create_timer((struct us_loop_t *) loop, 1, sizeof(LoopData *));
         loopData->updateDate();
-        
+
         memcpy(us_timer_ext(loopData->dateTimer), &loopData, sizeof(LoopData *));
         us_timer_set(loopData->dateTimer, [](struct us_timer_t *t) {
             LoopData *loopData;
@@ -93,7 +103,7 @@ private:
         ~LoopCleaner() {
             // There's no need to call this destructor if Bun is in the process of exiting.
             // This is both a performance thing, and also to prevent freeing some things which are not meant to be freed
-            // such as uv_tty_t 
+            // such as uv_tty_t
             if(loop && cleanMe && !bun_is_exiting()) {
                 cleanMe = false;
                 loop->free();
@@ -146,6 +156,10 @@ public:
 
         /* Reset lazyLoop */
         getLazyLoop().loop = nullptr;
+    }
+
+    static LoopData* data(struct us_loop_t *loop) {
+        return (LoopData *) us_loop_ext(loop);
     }
 
     void addPostHandler(void *key, MoveOnlyFunction<void(Loop *)> &&handler) {

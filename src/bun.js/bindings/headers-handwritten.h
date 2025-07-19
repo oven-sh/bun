@@ -53,6 +53,7 @@ typedef struct BunString {
     BunStringImpl impl;
 
     enum ZeroCopyTag { ZeroCopy };
+    enum NonNullTag { NonNull };
 
     // If it's not a WTFStringImpl, this does nothing
     inline void ref();
@@ -69,14 +70,22 @@ typedef struct BunString {
     // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use ZigString)
     WTF::String toWTFString(ZeroCopyTag) const;
 
+    // If the string is empty, this will ensure m_impl is non-null by
+    // using shared static emptyString.
+    WTF::String toWTFString(NonNullTag) const;
+
+    WTF::String transferToWTFString();
+
     // This one usually will clone the raw bytes.
     WTF::String toWTFString() const;
+
+    bool isEmpty() const;
 
 } BunString;
 
 typedef struct ZigErrorType {
     ZigErrorCode code;
-    void* ptr;
+    JSC::EncodedJSValue value;
 } ZigErrorType;
 typedef union ErrorableZigStringResult {
     ZigString value;
@@ -99,7 +108,7 @@ typedef struct ResolvedSource {
     BunString source_code;
     BunString source_url;
     bool isCommonJSModule;
-    uint32_t hash;
+    JSC::EncodedJSValue cjsCustomExtension;
     void* allocator;
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
@@ -124,7 +133,10 @@ typedef struct SystemError {
     BunString message;
     BunString path;
     BunString syscall;
+    BunString hostname;
+    /// MinInt if not specified
     int fd;
+    BunString dest;
 } SystemError;
 
 typedef void* ArrayBufferSink;
@@ -181,11 +193,11 @@ typedef struct ZigStackTrace {
 } ZigStackTrace;
 
 typedef struct ZigException {
-    unsigned char code;
+    unsigned char type;
     uint16_t runtime_type;
     int errno_;
     BunString syscall;
-    BunString code_;
+    BunString system_code;
     BunString path;
     BunString name;
     BunString message;
@@ -271,7 +283,7 @@ typedef void WebSocketClientTLS;
 
 #ifndef __cplusplus
 typedef struct Bun__ArrayBuffer Bun__ArrayBuffer;
-typedef struct Uint8Array_alias Uint8Array_alias;
+typedef struct JSC::JSUint8Array JSC::JSUint8Array;
 #endif
 
 #ifdef __cplusplus
@@ -283,7 +295,7 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunSt
 extern "C" void BunString__toWTFString(BunString*);
 
 namespace Bun {
-JSC::JSValue toJS(JSC::JSGlobalObject*, BunString);
+JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
 BunString toString(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 BunString toString(const char* bytes, size_t length);
 BunString toString(WTF::String& wtfString);
@@ -299,8 +311,6 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 // Be very careful using this, and ensure the memory owner does not get destroyed.
 BunString toStringView(WTF::StringView view);
 }
-
-using Uint8Array_alias = JSC::JSUint8Array;
 
 typedef struct {
     char* ptr;
@@ -335,16 +345,23 @@ extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
 extern "C" JSC::JSInternalPromise* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
-    const BunString* specifier,
-    const BunString* referrer,
+    BunString* specifier,
+    BunString* referrer,
     const BunString* typeAttribute,
-    ErrorableResolvedSource* result, bool allowPromise);
+    ErrorableResolvedSource* result,
+    bool allowPromise,
+    bool isCommonJSRequire,
+    BunLoaderType forceLoaderType);
 
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
+    ErrorableResolvedSource* result);
+extern "C" bool Bun__resolveAndFetchBuiltinModule(
+    void* bunVM,
+    const BunString* specifier,
     ErrorableResolvedSource* result);
 
 // Used in process.version
@@ -370,19 +387,24 @@ extern "C" const char* Bun__versions_usockets;
 
 extern "C" const char* Bun__version_sha;
 
-extern "C" void ZigString__free_global(const unsigned char* ptr, size_t len);
+extern "C" void ZigString__freeGlobal(const unsigned char* ptr, size_t len);
 
 extern "C" size_t Bun__encoding__writeLatin1(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
-extern "C" size_t Bun__encoding__writeUTF16(const UChar* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
+extern "C" size_t Bun__encoding__writeUTF16(const char16_t* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 
-extern "C" size_t Bun__encoding__byteLengthLatin1(const unsigned char* ptr, size_t len, Encoding encoding);
-extern "C" size_t Bun__encoding__byteLengthUTF16(const UChar* ptr, size_t len, Encoding encoding);
+extern "C" size_t Bun__encoding__byteLengthLatin1AsUTF8(const unsigned char* ptr, size_t len);
+extern "C" size_t Bun__encoding__byteLengthUTF16AsUTF8(const char16_t* ptr, size_t len);
 
 extern "C" int64_t Bun__encoding__constructFromLatin1(void*, const unsigned char* ptr, size_t len, Encoding encoding);
-extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, size_t len, Encoding encoding);
+extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const char16_t* ptr, size_t len, Encoding encoding);
 
+extern "C" void Bun__EventLoop__runCallback1(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1);
+extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
+extern "C" void Bun__EventLoop__runCallback3(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);
+
+/// @note throws a JS exception and returns false if a stack overflow occurs
 template<bool isStrict, bool enableAsymmetricMatchers>
-bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
+bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
 
 /**
  * @brief `Bun.deepMatch(a, b)`
@@ -423,12 +445,12 @@ bool Bun__deepMatch(
     JSC::JSValue subset,
     std::set<JSC::EncodedJSValue>* seenSubsetProperties,
     JSC::JSGlobalObject* globalObject,
-    JSC::ThrowScope* throwScope,
+    JSC::ThrowScope& throwScope,
     JSC::MarkedArgumentBuffer* gcBuffer,
     bool replacePropsWithAsymmetricMatchers,
     bool isMatchingObjectContaining);
 
-extern "C" void Bun__remapStackFramePositions(JSC::JSGlobalObject*, ZigStackFrame*, size_t);
+extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
 
 namespace Inspector {
 class ScriptArguments;
@@ -449,5 +471,19 @@ ALWAYS_INLINE void BunString::deref()
     }
 }
 
+#define CLEAR_IF_EXCEPTION(scope__) scope__.clearException();
+
 #endif // __cplusplus
 #endif // HEADERS_HANDWRITTEN
+
+#if ASSERT_ENABLED
+#define ASSERT_NO_PENDING_EXCEPTION(globalObject) DECLARE_CATCH_SCOPE(globalObject->vm()).assertNoExceptionExceptTermination()
+#else
+#define ASSERT_NO_PENDING_EXCEPTION(globalObject) void()
+#endif
+
+#if ASSERT_ENABLED
+#define ASSERT_PENDING_EXCEPTION(globalObject) EXCEPTION_ASSERT(!!DECLARE_CATCH_SCOPE(globalObject->vm()).exception());
+#else
+#define ASSERT_PENDING_EXCEPTION(globalObject) void()
+#endif

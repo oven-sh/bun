@@ -1,13 +1,10 @@
-import { BunFile, Loader, plugin } from "bun";
+import { BunFile, Loader } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import path, { dirname, join, resolve } from "path";
+import { bunEnv, bunExe, makeTree, tempDirWithFiles } from "harness";
+import path from "path";
+import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import source from "./native_plugin.cc" with { type: "file" };
 import notAPlugin from "./not_native_plugin.cc" with { type: "file" };
-import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
-import { bunEnv, bunExe, makeTree, tempDirWithFiles } from "harness";
-import { itBundled } from "bundler/expectBundled";
-import os from "os";
-import fs from "fs";
 
 describe("native-plugins", async () => {
   const cwd = process.cwd();
@@ -74,6 +71,11 @@ values;`,
     await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
   });
 
+  beforeEach(() => {
+    const tempdir2 = tempDirWithFiles("native-plugins", {});
+    process.chdir(tempdir2);
+  });
+
   afterEach(async () => {
     await Bun.$`rm -rf ${outdir}`;
     process.chdir(cwd);
@@ -92,7 +94,11 @@ values;`,
         {
           name: "xXx123_foo_counter_321xXx",
           setup(build) {
-            build.onBeforeParse({ filter: /\.ts/ }, { napiModule, symbol: "plugin_impl", external });
+            const chainedThis = build.onBeforeParse(
+              { filter: /\.ts/ },
+              { napiModule, symbol: "plugin_impl", external },
+            );
+            expect(chainedThis).toBe(build);
 
             build.onLoad({ filter: /lmao\.json/ }, async ({ defer }) => {
               await defer();
@@ -290,7 +296,6 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
           },
         },
       ],
-      throw: true,
     });
 
     const output = await Bun.$`${bunExe()} run dist/index.js`.cwd(tempdir).text();
@@ -314,43 +319,43 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
     const external = napiModule.createExternal();
 
-    const resultPromise = Bun.build({
-      outdir,
-      entrypoints: [path.join(tempdir, "index.ts")],
-      plugins: [
-        {
-          name: "xXx123_foo_counter_321xXx",
-          setup(build) {
-            napiModule.setThrowsErrors(external, true);
+    try {
+      const resultPromise = await Bun.build({
+        outdir,
+        entrypoints: [path.join(tempdir, "index.ts")],
+        plugins: [
+          {
+            name: "xXx123_foo_counter_321xXx",
+            setup(build) {
+              napiModule.setThrowsErrors(external, true);
 
-            build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl", external });
+              build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl", external });
 
-            build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
-              await defer();
-              let count = 0;
-              try {
-                count = napiModule.getFooCount(external);
-              } catch (e) {}
-              return {
-                contents: JSON.stringify({ fooCount: count }),
-                loader: "json",
-              };
-            });
+              build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
+                await defer();
+                let count = 0;
+                try {
+                  count = napiModule.getFooCount(external);
+                } catch (e) {}
+                return {
+                  contents: JSON.stringify({ fooCount: count }),
+                  loader: "json",
+                };
+              });
+            },
           },
-        },
-      ],
-    });
+        ],
+      });
+    } catch (e) {
+      const err = e as AggregateError;
+      expect(err.errors[0].message).toContain("Throwing an error");
+      expect(err.errors[0].level).toBe("error");
 
-    const result = await resultPromise;
-
-    if (result.success) console.log(result);
-    expect(result.success).toBeFalse();
-    const log = result.logs[0];
-    expect(log.message).toContain("Throwing an error");
-    expect(log.level).toBe("error");
-
-    const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
-    expect(compilationCtxFreedCount).toBe(0);
+      const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
+      expect(compilationCtxFreedCount).toBe(0);
+      return;
+    }
+    expect.unreachable("Should have caught an error");
   });
 
   it("works with versioning", async () => {
@@ -364,41 +369,42 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
     const external = napiModule.createExternal();
 
-    const resultPromise = Bun.build({
-      outdir,
-      entrypoints: [path.join(tempdir, "index.ts")],
-      plugins: [
-        {
-          name: "xXx123_foo_counter_321xXx",
-          setup(build) {
-            build.onBeforeParse({ filter }, { napiModule, symbol: "incompatible_version_plugin_impl", external });
+    try {
+      const resultPromise = await Bun.build({
+        outdir,
+        entrypoints: [path.join(tempdir, "index.ts")],
+        plugins: [
+          {
+            name: "xXx123_foo_counter_321xXx",
+            setup(build) {
+              build.onBeforeParse({ filter }, { napiModule, symbol: "incompatible_version_plugin_impl", external });
 
-            build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
-              await defer();
-              let count = 0;
-              try {
-                count = napiModule.getFooCount(external);
-              } catch (e) {}
-              return {
-                contents: JSON.stringify({ fooCount: count }),
-                loader: "json",
-              };
-            });
+              build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
+                await defer();
+                let count = 0;
+                try {
+                  count = napiModule.getFooCount(external);
+                } catch (e) {}
+                return {
+                  contents: JSON.stringify({ fooCount: count }),
+                  loader: "json",
+                };
+              });
+            },
           },
-        },
-      ],
-    });
+        ],
+      });
+    } catch (e) {
+      const err = e as AggregateError;
+      expect(err.errors[0].message).toContain(
+        "This plugin is built for a newer version of Bun than the one currently running.",
+      );
+      const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
+      expect(compilationCtxFreedCount).toBe(0);
+      return;
+    }
 
-    const result = await resultPromise;
-
-    if (result.success) console.log(result);
-    expect(result.success).toBeFalse();
-    const log = result.logs[0];
-    expect(log.message).toContain("This plugin is built for a newer version of Bun than the one currently running.");
-    expect(log.level).toBe("error");
-
-    const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
-    expect(compilationCtxFreedCount).toBe(0);
+    expect.unreachable("Should have caught an error");
   });
 
   // don't know how to reliably test this on windows
@@ -460,43 +466,46 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
     const external = napiModule.createExternal();
 
-    const resultPromise = Bun.build({
-      outdir,
-      entrypoints: [path.join(tempdir, "index.ts")],
-      plugins: [
-        {
-          name: "xXx123_foo_counter_321xXx",
-          setup(build) {
-            build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl_bad_free_function_pointer", external });
+    try {
+      const resultPromise = await Bun.build({
+        outdir,
+        entrypoints: [path.join(tempdir, "index.ts")],
+        plugins: [
+          {
+            name: "xXx123_foo_counter_321xXx",
+            setup(build) {
+              build.onBeforeParse(
+                { filter },
+                { napiModule, symbol: "plugin_impl_bad_free_function_pointer", external },
+              );
 
-            build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
-              await defer();
-              let count = 0;
-              try {
-                count = napiModule.getFooCount(external);
-              } catch (e) {}
-              return {
-                contents: JSON.stringify({ fooCount: count }),
-                loader: "json",
-              };
-            });
+              build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
+                await defer();
+                let count = 0;
+                try {
+                  count = napiModule.getFooCount(external);
+                } catch (e) {}
+                return {
+                  contents: JSON.stringify({ fooCount: count }),
+                  loader: "json",
+                };
+              });
+            },
           },
-        },
-      ],
-    });
+        ],
+      });
+    } catch (e) {
+      const err = e as AggregateError;
+      expect(err.errors[0].message).toContain(
+        "Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field.",
+      );
+      expect(err.errors[0].level).toBe("error");
+      const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
+      expect(compilationCtxFreedCount).toBe(0);
+      return;
+    }
 
-    const result = await resultPromise;
-
-    if (result.success) console.log(result);
-    expect(result.success).toBeFalse();
-    const log = result.logs[0];
-    expect(log.message).toContain(
-      "Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field.",
-    );
-    expect(log.level).toBe("error");
-
-    const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
-    expect(compilationCtxFreedCount).toBe(0);
+    expect.unreachable("Should have caught an error");
   });
 
   it("should fail gracefully when passing something that is NOT a bunler plugin", async () => {
@@ -543,7 +552,9 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       });
       expect.unreachable();
     } catch (e) {
-      expect(e.toString()).toContain('TypeError: Could not find the symbol "OOGA_BOOGA_420" in the given napi module.');
+      expect(e.toString()).toContain(
+        'TypeError [ERR_INVALID_ARG_TYPE]: Could not find the symbol "OOGA_BOOGA_420" in the given napi module.',
+      );
     }
   });
 

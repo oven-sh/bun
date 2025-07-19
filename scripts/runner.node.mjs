@@ -7,40 +7,62 @@
 // - It cannot use Bun APIs, since it is run using Node.js.
 // - It does not import dependencies, so it's faster to start.
 
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
-  constants as fs,
-  readFileSync,
-  mkdtempSync,
-  existsSync,
-  statSync,
-  mkdirSync,
   accessSync,
   appendFileSync,
+  existsSync,
+  constants as fs,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
   readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  unlink,
+  unlinkSync,
+  writeFileSync,
 } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
-import { join, basename, dirname, relative, sep } from "node:path";
+import { readFile } from "node:fs/promises";
+import { userInfo } from "node:os";
+import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 import {
+  getAbi,
+  getAbiVersion,
+  getArch,
+  getBranch,
   getBuildLabel,
   getBuildUrl,
+  getCommit,
+  getDistro,
+  getDistroVersion,
   getEnv,
   getFileUrl,
+  getHostname,
   getLoggedInUserCountOrDetails,
+  getOs,
+  getSecret,
   getShell,
   getWindowsExitReason,
   isBuildkite,
   isCI,
   isGithubAction,
+  isLinux,
   isMacOS,
   isWindows,
   isX64,
   printEnvironment,
+  reportAnnotationToBuildKite,
   startGroup,
   tmpdir,
   unzip,
+  uploadArtifact,
 } from "./utils.mjs";
-import { userInfo } from "node:os";
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
@@ -48,6 +70,14 @@ const testsPath = join(cwd, "test");
 const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
+const napiTimeout = 10 * 60_000;
+
+function getNodeParallelTestTimeout(testPath) {
+  if (testPath.includes("test-dns")) {
+    return 90_000;
+  }
+  return 10_000;
+}
 
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
@@ -56,6 +86,7 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: false,
     },
+    /** Path to bun binary */
     ["exec-path"]: {
       type: "string",
       default: "bun",
@@ -104,17 +135,172 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["retries"]: {
       type: "string",
-      default: isCI ? "4" : "0", // N retries = N+1 attempts
+      default: isCI ? "3" : "0", // N retries = N+1 attempts
+    },
+    ["junit"]: {
+      type: "boolean",
+      default: false, // Disabled for now, because it's too much $
+    },
+    ["junit-temp-dir"]: {
+      type: "string",
+      default: "junit-reports",
+    },
+    ["junit-upload"]: {
+      type: "boolean",
+      default: isBuildkite,
+    },
+    ["coredump-upload"]: {
+      type: "boolean",
+      default: isBuildkite && isLinux,
     },
   },
 });
+
+const cliOptions = options;
+
+if (cliOptions.junit) {
+  try {
+    cliOptions["junit-temp-dir"] = mkdtempSync(join(tmpdir(), cliOptions["junit-temp-dir"]));
+  } catch (err) {
+    cliOptions.junit = false;
+    console.error(`Error creating JUnit temp directory: ${err.message}`);
+  }
+}
 
 if (options["quiet"]) {
   isQuiet = true;
 }
 
 /**
- *
+ * @typedef {Object} TestExpectation
+ * @property {string} filename
+ * @property {string[]} expectations
+ * @property {string[] | undefined} bugs
+ * @property {string[] | undefined} modifiers
+ * @property {string | undefined} comment
+ */
+
+/**
+ * @returns {TestExpectation[]}
+ */
+function getTestExpectations() {
+  const expectationsPath = join(cwd, "test", "expectations.txt");
+  if (!existsSync(expectationsPath)) {
+    return [];
+  }
+  const lines = readFileSync(expectationsPath, "utf-8").split(/\r?\n/);
+
+  /** @type {TestExpectation[]} */
+  const expectations = [];
+
+  for (const line of lines) {
+    const content = line.trim();
+    if (!content || content.startsWith("#")) {
+      continue;
+    }
+
+    let comment;
+    const commentIndex = content.indexOf("#");
+    let cleanLine = content;
+    if (commentIndex !== -1) {
+      comment = content.substring(commentIndex + 1).trim();
+      cleanLine = content.substring(0, commentIndex).trim();
+    }
+
+    let modifiers = [];
+    let remaining = cleanLine;
+    let modifierMatch = remaining.match(/^\[(.*?)\]/);
+    if (modifierMatch) {
+      modifiers = modifierMatch[1].trim().split(/\s+/);
+      remaining = remaining.substring(modifierMatch[0].length).trim();
+    }
+
+    let expectationValues = ["Skip"];
+    const expectationMatch = remaining.match(/\[(.*?)\]$/);
+    if (expectationMatch) {
+      expectationValues = expectationMatch[1].trim().split(/\s+/);
+      remaining = remaining.substring(0, remaining.length - expectationMatch[0].length).trim();
+    }
+
+    const filename = remaining.trim();
+    if (filename) {
+      expectations.push({
+        filename,
+        expectations: expectationValues,
+        bugs: undefined,
+        modifiers: modifiers.length ? modifiers : undefined,
+        comment,
+      });
+    }
+  }
+
+  return expectations;
+}
+
+const skipArray = (() => {
+  const path = join(cwd, "test/no-validate-exceptions.txt");
+  if (!existsSync(path)) {
+    return [];
+  }
+  return readFileSync(path, "utf-8")
+    .split("\n")
+    .filter(line => !line.startsWith("#") && line.length > 0);
+})();
+
+/**
+ * Returns whether we should validate exception checks running the given test
+ * @param {string} test
+ * @returns {boolean}
+ */
+const shouldValidateExceptions = test => {
+  return !(skipArray.includes(test) || skipArray.includes("test/" + test));
+};
+
+/**
+ * @param {string} testPath
+ * @returns {string[]}
+ */
+function getTestModifiers(testPath) {
+  const ext = extname(testPath);
+  const filename = basename(testPath, ext);
+  const modifiers = filename.split("-").filter(value => value !== "bun");
+
+  const os = getOs();
+  const arch = getArch();
+  modifiers.push(os, arch, `${os}-${arch}`);
+
+  const distro = getDistro();
+  if (distro) {
+    modifiers.push(distro, `${os}-${distro}`, `${os}-${arch}-${distro}`);
+    const distroVersion = getDistroVersion();
+    if (distroVersion) {
+      modifiers.push(
+        distroVersion,
+        `${distro}-${distroVersion}`,
+        `${os}-${distro}-${distroVersion}`,
+        `${os}-${arch}-${distro}-${distroVersion}`,
+      );
+    }
+  }
+
+  const abi = getAbi();
+  if (abi) {
+    modifiers.push(abi, `${os}-${abi}`, `${os}-${arch}-${abi}`);
+    const abiVersion = getAbiVersion();
+    if (abiVersion) {
+      modifiers.push(
+        abiVersion,
+        `${abi}-${abiVersion}`,
+        `${os}-${abi}-${abiVersion}`,
+        `${os}-${arch}-${abi}-${abiVersion}`,
+      );
+    }
+  }
+
+  return modifiers.map(value => value.toUpperCase());
+}
+
+/**
  * @returns {Promise<TestResult[]>}
  */
 async function runTests() {
@@ -126,10 +312,14 @@ async function runTests() {
   }
   !isQuiet && console.log("Bun:", execPath);
 
+  const expectations = getTestExpectations();
+  const modifiers = getTestModifiers(execPath);
+  !isQuiet && console.log("Modifiers:", modifiers);
+
   const revision = getRevision(execPath);
   !isQuiet && console.log("Revision:", revision);
 
-  const tests = getRelevantTests(testsPath);
+  const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
 
   /** @type {VendorTest[] | undefined} */
@@ -191,7 +381,7 @@ async function runTests() {
       failure ||= result;
       flaky ||= true;
 
-      if (attempt >= maxAttempts) {
+      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
         flaky = false;
         failedResults.push(failure);
       }
@@ -245,16 +435,27 @@ async function runTests() {
 
   if (!failedResults.length) {
     for (const testPath of tests) {
-      const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
-      if (title.startsWith("test/js/node/test/parallel/")) {
+      const absoluteTestPath = join(testsPath, testPath);
+      const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
+      if (isNodeTest(testPath)) {
+        const testContent = readFileSync(absoluteTestPath, "utf-8");
+        const runWithBunTest =
+          title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");
+        const subcommand = runWithBunTest ? "test" : "run";
+        const env = {
+          FORCE_COLOR: "0",
+          NO_COLOR: "1",
+          BUN_DEBUG_QUIET_LOGS: "1",
+        };
+        if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
+          env.BUN_JSC_validateExceptionChecks = "1";
+        }
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
-            args: [title],
-            timeout: 10_000,
-            env: {
-              FORCE_COLOR: "0",
-            },
+            args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
+            timeout: getNodeParallelTestTimeout(title),
+            env,
             stdout: chunk => pipeTestStdout(process.stdout, chunk),
             stderr: chunk => pipeTestStdout(process.stderr, chunk),
           });
@@ -271,9 +472,9 @@ async function runTests() {
             stdoutPreview: stdoutPreview,
           };
         });
-        continue;
+      } else {
+        await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
       }
-      await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
     }
   }
 
@@ -318,6 +519,167 @@ async function runTests() {
     reportOutputToGitHubAction("failing_tests_count", failedResults.length);
     const markdown = formatTestToMarkdown(failedResults);
     reportOutputToGitHubAction("failing_tests", markdown);
+  }
+
+  // Generate and upload JUnit reports if requested
+  if (options["junit"]) {
+    const junitTempDir = options["junit-temp-dir"];
+    mkdirSync(junitTempDir, { recursive: true });
+
+    // Generate JUnit reports for tests that don't use bun test
+    const nonBunTestResults = [...okResults, ...flakyResults, ...failedResults].filter(result => {
+      // Check if this is a test that wasn't run with bun test
+      const isNodeTest =
+        isJavaScript(result.testPath) && !isTestStrict(result.testPath) && !result.testPath.includes("vendor");
+      return isNodeTest;
+    });
+
+    // If we have tests not covered by bun test JUnit reports, generate a report for them
+    if (nonBunTestResults.length > 0) {
+      const nonBunTestJunitPath = join(junitTempDir, "non-bun-test-results.xml");
+      generateJUnitReport(nonBunTestJunitPath, nonBunTestResults);
+      !isQuiet &&
+        console.log(
+          `Generated JUnit report for ${nonBunTestResults.length} non-bun test results at ${nonBunTestJunitPath}`,
+        );
+
+      // Upload this report immediately if we're on BuildKite
+      if (isBuildkite && options["junit-upload"]) {
+        const uploadSuccess = await uploadJUnitToBuildKite(nonBunTestJunitPath);
+        if (uploadSuccess) {
+          // Delete the file after successful upload to prevent redundant uploads
+          try {
+            unlinkSync(nonBunTestJunitPath);
+            !isQuiet && console.log(`Uploaded and deleted non-bun test JUnit report`);
+          } catch (unlinkError) {
+            !isQuiet && console.log(`Uploaded but failed to delete non-bun test JUnit report: ${unlinkError.message}`);
+          }
+        } else {
+          !isQuiet && console.log(`Failed to upload non-bun test JUnit report to BuildKite`);
+        }
+      }
+    }
+
+    // Check for any JUnit reports that may not have been uploaded yet
+    // Since we're deleting files after upload, any remaining files need to be uploaded
+    if (isBuildkite && options["junit-upload"]) {
+      try {
+        // Only process XML files and skip the non-bun test results which we've already uploaded
+        const allJunitFiles = readdirSync(junitTempDir).filter(
+          file => file.endsWith(".xml") && file !== "non-bun-test-results.xml",
+        );
+
+        if (allJunitFiles.length > 0) {
+          !isQuiet && console.log(`Found ${allJunitFiles.length} remaining JUnit reports to upload...`);
+
+          // Process each remaining JUnit file - these are files we haven't processed yet
+          let uploadedCount = 0;
+
+          for (const file of allJunitFiles) {
+            const filePath = join(junitTempDir, file);
+
+            if (existsSync(filePath)) {
+              try {
+                const uploadSuccess = await uploadJUnitToBuildKite(filePath);
+                if (uploadSuccess) {
+                  // Delete the file after successful upload
+                  try {
+                    unlinkSync(filePath);
+                    uploadedCount++;
+                  } catch (unlinkError) {
+                    !isQuiet && console.log(`Uploaded but failed to delete ${file}: ${unlinkError.message}`);
+                  }
+                }
+              } catch (err) {
+                console.error(`Error uploading JUnit file ${file}:`, err);
+              }
+            }
+          }
+
+          if (uploadedCount > 0) {
+            !isQuiet && console.log(`Uploaded and deleted ${uploadedCount} remaining JUnit reports`);
+          } else {
+            !isQuiet && console.log(`No JUnit reports needed to be uploaded`);
+          }
+        } else {
+          !isQuiet && console.log(`No remaining JUnit reports found to upload`);
+        }
+      } catch (err) {
+        console.error(`Error checking for remaining JUnit reports:`, err);
+      }
+    }
+  }
+
+  if (options["coredump-upload"]) {
+    try {
+      // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
+      const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
+      let coresDir = sysctl.stdout;
+      if (sysctl.ok) {
+        if (coresDir.startsWith("|")) {
+          throw new Error("cores are being piped not saved");
+        }
+        // change /foo/bar/%e-%p.core to /foo/bar
+        coresDir = dirname(sysctl.stdout);
+      } else {
+        throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
+      }
+
+      const coresDirBase = dirname(coresDir);
+      const coresDirName = basename(coresDir);
+      const coreFileNames = readdirSync(coresDir);
+
+      if (coreFileNames.length > 0) {
+        console.log(`found ${coreFileNames.length} cores in ${coresDir}`);
+        let totalBytes = 0;
+        let totalBlocks = 0;
+        for (const f of coreFileNames) {
+          const stat = statSync(join(coresDir, f));
+          totalBytes += stat.size;
+          totalBlocks += stat.blocks;
+        }
+        console.log(`total apparent size = ${totalBytes} bytes`);
+        console.log(`total size on disk = ${512 * totalBlocks} bytes`);
+        const outdir = mkdtempSync(join(tmpdir(), "cores-upload"));
+        const outfileName = `${coresDirName}.tar.gz.age`;
+        const outfileAbs = join(outdir, outfileName);
+
+        // This matches an age identity known by Bun employees. Core dumps from CI have to be kept
+        // secret since they will contain API keys.
+        const ageRecipient = "age1eunsrgxwjjpzr48hm0y98cw2vn5zefjagt4r0qj4503jg2nxedqqkmz6fu"; // reject external PRs changing this, see above
+
+        // Run tar in the parent directory of coresDir so that it creates archive entries with
+        // coresDirName in them. This way when you extract the tarball you get a folder named
+        // bun-cores-XYZ containing core files, instead of a bunch of core files strewn in your
+        // current directory
+        const before = Date.now();
+        const zipAndEncrypt = await spawnSafe({
+          command: "bash",
+          args: [
+            "-c",
+            // tar -S: handle sparse files efficiently
+            `set -euo pipefail && tar -Sc "$0" | gzip -1 | age -e -r ${ageRecipient} -o "$1"`,
+            // $0
+            coresDirName,
+            // $1
+            outfileAbs,
+          ],
+          cwd: coresDirBase,
+          stdout: () => {},
+          timeout: 60_000,
+        });
+        const elapsed = Date.now() - before;
+        if (!zipAndEncrypt.ok) {
+          throw new Error(zipAndEncrypt.error);
+        }
+        console.log(`saved core dumps to ${outfileAbs} (${statSync(outfileAbs).size} bytes) in ${elapsed} ms`);
+        await uploadArtifact(outfileAbs);
+      } else {
+        console.log(`no cores found in ${coresDir}`);
+      }
+    } catch (err) {
+      console.error("Error collecting and uploading core dumps:", err);
+    }
   }
 
   if (!isCI && !isQuiet) {
@@ -488,11 +850,14 @@ async function spawnSafe(options) {
     (error = /(Internal assertion failure)/i.exec(buffer)) ||
     (error = /(Illegal instruction) at address/i.exec(buffer)) ||
     (error = /panic: (.*) at address/i.exec(buffer)) ||
-    (error = /oh no: Bun has crashed/i.exec(buffer))
+    (error = /oh no: Bun has crashed/i.exec(buffer)) ||
+    (error = /(ERROR: AddressSanitizer)/.exec(buffer)) ||
+    (error = /(SIGABRT)/.exec(buffer))
   ) {
     const [, message] = error || [];
     error = message ? message.split("\n")[0].toLowerCase() : "crash";
     error = error.indexOf("\\n") !== -1 ? error.substring(0, error.indexOf("\\n")) : error;
+    error = `pid ${subprocess.pid} ${error}`;
   } else if (signalCode) {
     if (signalCode === "SIGTERM" && duration >= timeout) {
       error = "timeout";
@@ -529,13 +894,38 @@ async function spawnSafe(options) {
   };
 }
 
+let _combinedPath = "";
+function getCombinedPath(execPath) {
+  if (!_combinedPath) {
+    _combinedPath = addPath(realpathSync(dirname(execPath)), process.env.PATH);
+    // If we're running bun-profile.exe, try to make a symlink to bun.exe so
+    // that anything looking for "bun" will find it
+    if (isCI && basename(execPath, extname(execPath)).toLowerCase() !== "bun") {
+      const existingPath = execPath;
+      const newPath = join(dirname(execPath), "bun" + extname(execPath));
+      try {
+        // On Windows, we might run into permissions issues with symlinks.
+        // If that happens, fall back to a regular hardlink.
+        symlinkSync(existingPath, newPath, "file");
+      } catch (error) {
+        try {
+          linkSync(existingPath, newPath);
+        } catch (error) {
+          console.warn(`Failed to link bun`, error);
+        }
+      }
+    }
+  }
+  return _combinedPath;
+}
+
 /**
- * @param {string} execPath
+ * @param {string} execPath Path to bun binary
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
 async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
-  const path = addPath(dirname(execPath), process.env.PATH);
+  const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
   const shellPath = getShell();
@@ -555,12 +945,21 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
-    // Used in Node.js tests.
-    TEST_TMPDIR: tmpdirPath,
+    TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
   };
+
+  if (basename(execPath).includes("asan")) {
+    bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0";
+  }
+
+  if (isWindows && bunEnv.Path) {
+    delete bunEnv.Path;
+  }
+
   if (env) {
     Object.assign(bunEnv, env);
   }
+
   if (isWindows) {
     delete bunEnv["PATH"];
     bunEnv["Path"] = path;
@@ -580,11 +979,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       stderr,
     });
   } finally {
-    // try {
-    //   rmSync(tmpdirPath, { recursive: true, force: true });
-    // } catch (error) {
-    //   console.warn(error);
-    // }
+    try {
+      rmSync(tmpdirPath, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(error);
+    }
   }
 }
 
@@ -634,17 +1033,54 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   const absPath = join(options["cwd"], testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
   const args = options["args"] ?? [];
+
+  const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`];
+
+  // This will be set if a JUnit file is generated
+  let junitFilePath = null;
+
+  // In CI, we want to use JUnit for all tests
+  // Create a unique filename for each test run using a hash of the test path
+  // This ensures we can run tests in parallel without file conflicts
+  if (cliOptions.junit) {
+    const testHash = createHash("sha1").update(testPath).digest("base64url");
+    const junitTempDir = cliOptions["junit-temp-dir"];
+
+    // Create the JUnit file path
+    junitFilePath = `${junitTempDir}/test-${testHash}.xml`;
+
+    // Add JUnit reporter
+    testArgs.push("--reporter=junit");
+    testArgs.push(`--reporter-outfile=${junitFilePath}`);
+  }
+
+  testArgs.push(absPath);
+
+  const env = {
+    GITHUB_ACTIONS: "true", // always true so annotations are parsed
+  };
+  if (basename(execPath).includes("asan") && shouldValidateExceptions(relative(cwd, absPath))) {
+    env.BUN_JSC_validateExceptionChecks = "1";
+  }
+
   const { ok, error, stdout } = await spawnBun(execPath, {
-    args: isReallyTest ? ["test", ...args, `--timeout=${perTestTimeout}`, absPath] : [...args, absPath],
+    args: isReallyTest ? testArgs : [...args, absPath],
     cwd: options["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
-    env: {
-      GITHUB_ACTIONS: "true", // always true so annotations are parsed
-    },
+    env,
     stdout: chunk => pipeTestStdout(process.stdout, chunk),
     stderr: chunk => pipeTestStdout(process.stderr, chunk),
   });
   const { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
+
+  // If we generated a JUnit file and we're on BuildKite, upload it immediately
+  if (junitFilePath && isReallyTest && isBuildkite && cliOptions["junit-upload"]) {
+    // Give the file system a moment to finish writing the file
+    if (existsSync(junitFilePath)) {
+      addToJunitUploadQueue(junitFilePath);
+    }
+  }
+
   return {
     testPath,
     ok,
@@ -664,6 +1100,9 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
 function getTestTimeout(testPath) {
   if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
     return integrationTimeout;
+  }
+  if (/napi/i.test(testPath) || /v8/i.test(testPath)) {
+    return napiTimeout;
   }
   return testTimeout;
 }
@@ -854,19 +1293,39 @@ function isJavaScriptTest(path) {
  * @param {string} path
  * @returns {boolean}
  */
-function isTest(path) {
-  if (path.replaceAll(sep, "/").startsWith("js/node/test/parallel/") && targetDoesRunNodeTests()) return true;
-  if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
-  return isTestStrict(path);
+function isNodeTest(path) {
+  // Do not run node tests on macOS x64 in CI
+  // TODO: Unclear why we decided to do this?
+  if (isCI && isMacOS && isX64) {
+    return false;
+  }
+  const unixPath = path.replaceAll(sep, "/");
+  return unixPath.includes("js/node/test/parallel/") || unixPath.includes("js/node/test/sequential/");
 }
 
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
+function isClusterTest(path) {
+  const unixPath = path.replaceAll(sep, "/");
+  return unixPath.includes("js/node/cluster/test-") && unixPath.endsWith(".ts");
+}
+
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
+function isTest(path) {
+  return isNodeTest(path) || isClusterTest(path) ? true : isTestStrict(path);
+}
+
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
 function isTestStrict(path) {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
-}
-
-function targetDoesRunNodeTests() {
-  if (isMacOS && isX64) return false;
-  return true;
 }
 
 /**
@@ -890,8 +1349,10 @@ function getTests(cwd) {
       if (isHidden(filename)) {
         continue;
       }
-      if (entry.isFile() && isTest(filename)) {
-        yield filename;
+      if (entry.isFile()) {
+        if (isTest(filename)) {
+          yield filename;
+        }
       } else if (entry.isDirectory()) {
         yield* getFiles(cwd, filename);
       }
@@ -1027,15 +1488,17 @@ async function getVendorTests(cwd) {
 
 /**
  * @param {string} cwd
+ * @param {string[]} testModifiers
+ * @param {TestExpectation[]} testExpectations
  * @returns {string[]}
  */
-function getRelevantTests(cwd) {
+function getRelevantTests(cwd, testModifiers, testExpectations) {
   let tests = getTests(cwd);
   const availableTests = [];
   const filteredTests = [];
 
   if (options["node-tests"]) {
-    tests = tests.filter(testPath => testPath.includes("js/node/test/parallel/"));
+    tests = tests.filter(isNodeTest);
   }
 
   const isMatch = (testPath, filter) => {
@@ -1070,6 +1533,25 @@ function getRelevantTests(cwd) {
         }
       }
       !isQuiet && console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
+    }
+  }
+
+  const skipExpectations = testExpectations
+    .filter(
+      ({ modifiers, expectations }) =>
+        !modifiers?.length || testModifiers.some(modifier => modifiers?.includes(modifier)),
+    )
+    .map(({ filename }) => filename.replace("test/", ""));
+  if (skipExpectations.length) {
+    const skippedTests = availableTests.filter(testPath => skipExpectations.some(filter => isMatch(testPath, filter)));
+    if (skippedTests.length) {
+      for (const testPath of skippedTests) {
+        const index = availableTests.indexOf(testPath);
+        if (index !== -1) {
+          availableTests.splice(index, 1);
+        }
+      }
+      !isQuiet && console.log("Skipping tests:", skipExpectations, skippedTests.length, "/", availableTests.length);
     }
   }
 
@@ -1169,13 +1651,17 @@ async function getExecPathFromBuildKite(target, buildId) {
     await spawnSafe({
       command: "buildkite-agent",
       args,
+      timeout: 60000,
     });
 
-    for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
-      if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
-        zipPath = join(releasePath, entry);
-        break downloadLoop;
-      }
+    zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
+      .filter(filename => /^bun.*\.zip$/i.test(filename))
+      .map(filename => join(releasePath, filename))
+      .sort((a, b) => b.includes("profile") - a.includes("profile"))
+      .at(0);
+
+    if (zipPath) {
+      break downloadLoop;
     }
 
     console.warn(`Waiting for ${target}.zip to be available...`);
@@ -1191,12 +1677,12 @@ async function getExecPathFromBuildKite(target, buildId) {
   const releaseFiles = readdirSync(releasePath, { recursive: true, encoding: "utf-8" });
   for (const entry of releaseFiles) {
     const execPath = join(releasePath, entry);
-    if (/bun(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
+    if (/bun(?:-[a-z]+)?(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
       return execPath;
     }
   }
 
-  console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`);
+  console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`, releaseFiles);
   throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
 }
 
@@ -1288,7 +1774,9 @@ function formatTestToMarkdown(result, concise) {
     if (error) {
       markdown += ` - ${error}`;
     }
-    markdown += ` on ${platform}`;
+    if (platform) {
+      markdown += ` on ${platform}`;
+    }
 
     if (concise) {
       markdown += "</li>\n";
@@ -1349,48 +1837,6 @@ function listArtifactsFromBuildKite(glob, step) {
   const cause = error ?? signal ?? `code ${status}`;
   console.warn("Failed to list artifacts from BuildKite:", cause, stderr);
   return [];
-}
-
-/**
- * @typedef {object} BuildkiteAnnotation
- * @property {string} [context]
- * @property {string} label
- * @property {string} content
- * @property {"error" | "warning" | "info"} [style]
- * @property {number} [priority]
- * @property {number} [attempt]
- */
-
-/**
- * @param {BuildkiteAnnotation} annotation
- */
-function reportAnnotationToBuildKite({ context, label, content, style = "error", priority = 3, attempt = 0 }) {
-  const { error, status, signal, stderr } = spawnSync(
-    "buildkite-agent",
-    ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],
-    {
-      input: content,
-      stdio: ["pipe", "ignore", "pipe"],
-      encoding: "utf-8",
-      timeout: spawnTimeout,
-      cwd,
-    },
-  );
-  if (status === 0) {
-    return;
-  }
-  if (attempt > 0) {
-    const cause = error ?? signal ?? `code ${status}`;
-    throw new Error(`Failed to create annotation: ${label}`, { cause });
-  }
-  const buildLabel = getTestLabel();
-  const buildUrl = getBuildUrl();
-  const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
-  let errorMessage = `<details><summary><code>${label}</code> - annotation error on ${platform}</summary>`;
-  if (stderr) {
-    errorMessage += `\n\n\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\`\n\n</details>\n\n`;
-  }
-  reportAnnotationToBuildKite({ label: `${label}-error`, content: errorMessage, attempt: attempt + 1 });
 }
 
 /**
@@ -1526,6 +1972,19 @@ function getExitCode(outcome) {
   return 1;
 }
 
+// A flaky segfault, sigtrap, or sigill must never be ignored.
+// If it happens in CI, it will happen to our users.
+// Flaky AddressSanitizer errors cannot be ignored since they still represent real bugs.
+function isAlwaysFailure(error) {
+  error = ((error || "") + "").toLowerCase().trim();
+  return (
+    error.includes("segmentation fault") ||
+    error.includes("illegal instruction") ||
+    error.includes("sigtrap") ||
+    error.includes("error: addresssanitizer")
+  );
+}
+
 /**
  * @param {string} signal
  */
@@ -1534,6 +1993,297 @@ function onExit(signal) {
   startGroup(label, () => {
     process.exit(getExitCode("cancel"));
   });
+}
+
+let getBuildkiteAnalyticsToken = () => {
+  let token = getSecret("TEST_REPORTING_API", { required: true });
+  getBuildkiteAnalyticsToken = () => token;
+  return token;
+};
+
+/**
+ * Generate a JUnit XML report from test results
+ * @param {string} outfile - The path to write the JUnit XML report to
+ * @param {TestResult[]} results - The test results to include in the report
+ */
+function generateJUnitReport(outfile, results) {
+  !isQuiet && console.log(`Generating JUnit XML report: ${outfile}`);
+
+  // Start the XML document
+  let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+
+  // Add an overall testsuite container with metadata
+  const totalTests = results.length;
+  const totalFailures = results.filter(r => r.status === "fail").length;
+  const timestamp = new Date().toISOString();
+
+  // Calculate total time
+  const totalTime = results.reduce((sum, result) => {
+    const duration = result.duration || 0;
+    return sum + duration / 1000; // Convert ms to seconds
+  }, 0);
+
+  // Create a unique package name to identify this run
+  const packageName = `bun.internal.${process.env.BUILDKITE_PIPELINE_SLUG || "tests"}`;
+
+  xml += `<testsuites name="${escapeXml(packageName)}" tests="${totalTests}" failures="${totalFailures}" time="${totalTime.toFixed(3)}" timestamp="${timestamp}">\n`;
+
+  // Group results by test file
+  const testSuites = new Map();
+
+  for (const result of results) {
+    const { testPath, ok, status, error, tests, stdoutPreview, stdout, duration = 0 } = result;
+
+    if (!testSuites.has(testPath)) {
+      testSuites.set(testPath, {
+        name: testPath,
+        tests: [],
+        failures: 0,
+        errors: 0,
+        skipped: 0,
+        time: 0,
+        timestamp: timestamp,
+        hostname: getHostname(),
+        stdout: stdout || stdoutPreview || "",
+      });
+    }
+
+    const suite = testSuites.get(testPath);
+
+    // For test suites with granular test information
+    if (tests.length > 0) {
+      for (const test of tests) {
+        const { test: testName, status: testStatus, duration: testDuration = 0, errors: testErrors = [] } = test;
+
+        suite.time += testDuration / 1000; // Convert to seconds
+
+        const testCase = {
+          name: testName,
+          classname: `${packageName}.${testPath.replace(/[\/\\]/g, ".")}`,
+          time: testDuration / 1000, // Convert to seconds
+        };
+
+        if (testStatus === "fail") {
+          suite.failures++;
+
+          // Collect error details
+          let errorMessage = "Test failed";
+          let errorType = "AssertionError";
+          let errorContent = "";
+
+          if (testErrors && testErrors.length > 0) {
+            const primaryError = testErrors[0];
+            errorMessage = primaryError.name || "Test failed";
+            errorType = primaryError.name || "AssertionError";
+            errorContent = primaryError.stack || primaryError.name;
+
+            if (testErrors.length > 1) {
+              errorContent +=
+                "\n\nAdditional errors:\n" +
+                testErrors
+                  .slice(1)
+                  .map(e => e.stack || e.name)
+                  .join("\n");
+            }
+          } else {
+            errorContent = error || "Unknown error";
+          }
+
+          testCase.failure = {
+            message: errorMessage,
+            type: errorType,
+            content: errorContent,
+          };
+        } else if (testStatus === "skip" || testStatus === "todo") {
+          suite.skipped++;
+          testCase.skipped = {
+            message: testStatus === "skip" ? "Test skipped" : "Test marked as todo",
+          };
+        }
+
+        suite.tests.push(testCase);
+      }
+    } else {
+      // For test suites without granular test information (e.g., bun install tests)
+      suite.time += duration / 1000; // Convert to seconds
+
+      const testCase = {
+        name: basename(testPath),
+        classname: `${packageName}.${testPath.replace(/[\/\\]/g, ".")}`,
+        time: duration / 1000, // Convert to seconds
+      };
+
+      if (status === "fail") {
+        suite.failures++;
+        testCase.failure = {
+          message: "Test failed",
+          type: "AssertionError",
+          content: error || "Unknown error",
+        };
+      }
+
+      suite.tests.push(testCase);
+    }
+  }
+
+  // Write each test suite to the XML
+  for (const [name, suite] of testSuites) {
+    xml += `  <testsuite name="${escapeXml(name)}" tests="${suite.tests.length}" failures="${suite.failures}" errors="${suite.errors}" skipped="${suite.skipped}" time="${suite.time.toFixed(3)}" timestamp="${suite.timestamp}" hostname="${escapeXml(suite.hostname)}">\n`;
+
+    // Include system-out if we have stdout
+    if (suite.stdout) {
+      xml += `    <system-out><![CDATA[${suite.stdout}]]></system-out>\n`;
+    }
+
+    // Write each test case
+    for (const test of suite.tests) {
+      xml += `    <testcase name="${escapeXml(test.name)}" classname="${escapeXml(test.classname)}" time="${test.time.toFixed(3)}"`;
+
+      if (test.skipped) {
+        xml += `>\n      <skipped message="${escapeXml(test.skipped.message)}"/>\n    </testcase>\n`;
+      } else if (test.failure) {
+        xml += `>\n`;
+        xml += `      <failure message="${escapeXml(test.failure.message)}" type="${escapeXml(test.failure.type)}"><![CDATA[${test.failure.content}]]></failure>\n`;
+        xml += `    </testcase>\n`;
+      } else {
+        xml += `/>\n`;
+      }
+    }
+
+    xml += `  </testsuite>\n`;
+  }
+
+  xml += `</testsuites>`;
+
+  // Create directory if it doesn't exist
+  const dir = dirname(outfile);
+  mkdirSync(dir, { recursive: true });
+
+  // Write to file
+  writeFileSync(outfile, xml);
+  !isQuiet && console.log(`JUnit XML report written to ${outfile}`);
+}
+
+let isUploadingToBuildKite = false;
+const junitUploadQueue = [];
+async function addToJunitUploadQueue(junitFilePath) {
+  junitUploadQueue.push(junitFilePath);
+
+  if (!isUploadingToBuildKite) {
+    drainJunitUploadQueue();
+  }
+}
+
+async function drainJunitUploadQueue() {
+  isUploadingToBuildKite = true;
+  while (junitUploadQueue.length > 0) {
+    const testPath = junitUploadQueue.shift();
+    await uploadJUnitToBuildKite(testPath)
+      .then(uploadSuccess => {
+        unlink(testPath, () => {
+          if (!uploadSuccess) {
+            console.error(`Failed to upload JUnit report for ${testPath}`);
+          }
+        });
+      })
+      .catch(err => {
+        console.error(`Error uploading JUnit report for ${testPath}:`, err);
+      });
+  }
+  isUploadingToBuildKite = false;
+}
+
+/**
+ * Upload JUnit XML report to BuildKite Test Analytics
+ * @param {string} junitFile - Path to the JUnit XML file to upload
+ * @returns {Promise<boolean>} - Whether the upload was successful
+ */
+async function uploadJUnitToBuildKite(junitFile) {
+  const fileName = basename(junitFile);
+  !isQuiet && console.log(`Uploading JUnit file "${fileName}" to BuildKite Test Analytics...`);
+
+  // Get BuildKite environment variables for run_env fields
+  const buildId = getEnv("BUILDKITE_BUILD_ID", false);
+  const buildUrl = getEnv("BUILDKITE_BUILD_URL", false);
+  const branch = getBranch();
+  const commit = getCommit();
+  const buildNumber = getEnv("BUILDKITE_BUILD_NUMBER", false);
+  const jobId = getEnv("BUILDKITE_JOB_ID", false);
+  const message = getEnv("BUILDKITE_MESSAGE", false);
+
+  try {
+    // Add a unique test suite identifier to help with correlation in BuildKite
+    const testId = fileName.replace(/\.xml$/, "");
+
+    // Use fetch and FormData instead of curl
+    const formData = new FormData();
+
+    // Add the JUnit file data
+    formData.append("data", new Blob([await readFile(junitFile)]), fileName);
+    formData.append("format", "junit");
+    formData.append("run_env[CI]", "buildkite");
+
+    // Add additional fields
+    if (buildId) formData.append("run_env[key]", buildId);
+    if (buildUrl) formData.append("run_env[url]", buildUrl);
+    if (branch) formData.append("run_env[branch]", branch);
+    if (commit) formData.append("run_env[commit_sha]", commit);
+    if (buildNumber) formData.append("run_env[number]", buildNumber);
+    if (jobId) formData.append("run_env[job_id]", jobId);
+    if (message) formData.append("run_env[message]", message);
+
+    // Add custom tags
+    formData.append("tags[runtime]", "bun");
+    formData.append("tags[suite]", testId);
+
+    // Add additional context information specific to this run
+    formData.append("run_env[source]", "junit-import");
+    formData.append("run_env[collector]", "bun-runner");
+
+    const url = "https://analytics-api.buildkite.com/v1/uploads";
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Token token="${getBuildkiteAnalyticsToken()}"`,
+      },
+      body: formData,
+    });
+
+    if (response.ok) {
+      !isQuiet && console.log(`JUnit file "${fileName}" successfully uploaded to BuildKite Test Analytics`);
+
+      try {
+        // Consume the body to ensure Node releases the memory.
+        await response.arrayBuffer();
+      } catch (error) {
+        // Don't care if this fails.
+      }
+
+      return true;
+    } else {
+      const errorText = await response.text();
+      console.error(`Failed to upload JUnit file "${fileName}": HTTP ${response.status}`, errorText);
+      return false;
+    }
+  } catch (error) {
+    console.error(`Error uploading JUnit file "${fileName}":`, error);
+    return false;
+  }
+}
+
+/**
+ * Escape XML special characters
+ * @param {string} str - String to escape
+ * @returns {string} - Escaped string
+ */
+function escapeXml(str) {
+  if (typeof str !== "string") return "";
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 export async function main() {

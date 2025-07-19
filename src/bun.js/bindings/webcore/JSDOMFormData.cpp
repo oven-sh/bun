@@ -110,10 +110,10 @@ static JSC_DECLARE_CUSTOM_GETTER(jsDOMFormDataConstructor);
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMFormDataPrototype_getLength, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto* thisObject = jsDynamicCast<JSDOMFormData*>(JSValue::decode(thisValue));
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
 
     size_t length = thisObject->wrapped().count();
@@ -156,12 +156,12 @@ using JSDOMFormDataDOMConstructor = JSDOMConstructor<JSDOMFormData>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMFormDataDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSDOMFormDataDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "FormData"_s);
     auto object = DOMFormData::create(context);
     if constexpr (IsExceptionOr<decltype(object)>)
@@ -264,10 +264,10 @@ void JSDOMFormData::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMFormDataConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSDOMFormDataPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSDOMFormData::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -350,7 +350,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_deleteBody(JSC:
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
@@ -370,7 +370,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_getBody(JSC::JS
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto* nameStr = argument0.value().toString(lexicalGlobalObject);
@@ -392,7 +392,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_getAllBody(JSC:
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto* nameStr = argument0.value().toString(lexicalGlobalObject);
@@ -401,16 +401,19 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_getAllBody(JSC:
     RETURN_IF_EXCEPTION(throwScope, {});
     auto entries = impl.getAll(name);
     JSC::JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(throwScope, {});
     for (auto entry : entries) {
         if (auto string = std::get_if<String>(&entry)) {
             result->push(lexicalGlobalObject, jsString(vm, *string));
+            RETURN_IF_EXCEPTION(throwScope, {});
         } else {
             auto blob = std::get<RefPtr<Blob>>(entry);
             result->push(lexicalGlobalObject, toJS(lexicalGlobalObject, castedThis->globalObject(), blob.get()));
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_getAll, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -425,7 +428,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_hasBody(JSC::JS
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());

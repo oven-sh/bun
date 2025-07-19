@@ -1,14 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "skipLibCheck": false,
-
+    "skipLibCheck": true,
     "declaration": true,
     "emitDeclarationOnly": true,
     "noEmit": false,
     "declarationDir": "out"
   },
-  "files": ["ambient.d.ts"], // ambient defines .txt and .toml loaders
   "include": ["**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }

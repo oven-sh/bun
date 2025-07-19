@@ -2,7 +2,6 @@
 //! combines `Bun.build` and `Bun.serve`, providing a hot-reloading development
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
-
 pub const production = @import("./production.zig");
 pub const DevServer = @import("./DevServer.zig");
 pub const FrameworkRouter = @import("./FrameworkRouter.zig");
@@ -12,10 +11,11 @@ pub const api_name = "app";
 
 /// Zig version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub const UserOptions = struct {
+    /// This arena contains some miscellaneous allocations at startup
     arena: std.heap.ArenaAllocator,
     allocations: StringRefList,
 
-    root: []const u8,
+    root: [:0]const u8,
     framework: Framework,
     bundler_options: SplitBundlerOptions,
 
@@ -67,7 +67,7 @@ pub const UserOptions = struct {
         return .{
             .arena = arena,
             .allocations = allocations,
-            .root = root,
+            .root = try alloc.dupeZ(u8, root),
             .framework = framework,
             .bundler_options = bundler_options,
         };
@@ -75,8 +75,10 @@ pub const UserOptions = struct {
 };
 
 /// Each string stores its allocator since some may hold reference counts to JSC
-const StringRefList = struct {
+pub const StringRefList = struct {
     strings: std.ArrayListUnmanaged(ZigString.Slice),
+
+    pub const empty: StringRefList = .{ .strings = .{} };
 
     pub fn track(al: *StringRefList, str: ZigString.Slice) []const u8 {
         al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
@@ -87,32 +89,28 @@ const StringRefList = struct {
         for (al.strings.items) |item| item.deinit();
         al.strings.clearAndFree(bun.default_allocator);
     }
-
-    pub const empty: StringRefList = .{ .strings = .{} };
 };
 
 pub const SplitBundlerOptions = struct {
     plugin: ?*Plugin = null,
-    all: BuildConfigSubset = .{},
     client: BuildConfigSubset = .{},
     server: BuildConfigSubset = .{},
     ssr: BuildConfigSubset = .{},
 
     pub const empty: SplitBundlerOptions = .{
         .plugin = null,
-        .all = .{},
         .client = .{},
         .server = .{},
         .ssr = .{},
     };
 
-    pub fn parsePluginArray(opts: *SplitBundlerOptions, plugin_array: JSValue, global: *JSC.JSGlobalObject) !void {
+    pub fn parsePluginArray(opts: *SplitBundlerOptions, plugin_array: JSValue, global: *JSC.JSGlobalObject) bun.JSError!void {
         const plugin = opts.plugin orelse Plugin.create(global, .bun);
         opts.plugin = plugin;
         const empty_object = JSValue.createEmptyObject(global, 0);
 
-        var iter = plugin_array.arrayIterator(global);
-        while (iter.next()) |plugin_config| {
+        var iter = try plugin_array.arrayIterator(global);
+        while (try iter.next()) |plugin_config| {
             if (!plugin_config.isObject()) {
                 return global.throwInvalidArguments("Expected plugin to be an object", .{});
             }
@@ -154,13 +152,9 @@ const BuildConfigSubset = struct {
     ignoreDCEAnnotations: ?bool = null,
     conditions: bun.StringArrayHashMapUnmanaged(void) = .{},
     drop: bun.StringArrayHashMapUnmanaged(void) = .{},
-    // TODO: plugins
-
-    pub fn loadFromJs(config: *BuildConfigSubset, value: JSValue, arena: Allocator) !void {
-        _ = config; // autofix
-        _ = value; // autofix
-        _ = arena; // autofix
-    }
+    env: bun.Schema.Api.DotEnvBehavior = ._none,
+    env_prefix: ?[]const u8 = null,
+    define: bun.Schema.Api.StringMap = .{ .keys = &.{}, .values = &.{} },
 };
 
 /// A "Framework" in our eyes is simply set of bundler options that a framework
@@ -220,6 +214,52 @@ pub const Framework = struct {
         };
     }
 
+    /// Default that requires no packages or configuration.
+    /// - If `react-refresh` is installed, enable react fast refresh with it.
+    ///     - Otherwise, if `react` is installed, use a bundled copy of
+    ///     react-refresh so that it still works.
+    /// - If any file system router types are provided, configure using
+    ///   the above react configuration.
+    /// The provided allocator is not stored.
+    pub fn auto(
+        arena: std.mem.Allocator,
+        resolver: *bun.resolver.Resolver,
+        file_system_router_types: []FileSystemRouterType,
+    ) !Framework {
+        var fw: Framework = Framework.none;
+
+        if (file_system_router_types.len > 0) {
+            fw = try react(arena);
+            arena.free(fw.file_system_router_types);
+            fw.file_system_router_types = file_system_router_types;
+        }
+
+        if (resolveOrNull(resolver, "react-refresh/runtime")) |rfr| {
+            fw.react_fast_refresh = .{ .import_source = rfr };
+        } else if (resolveOrNull(resolver, "react")) |_| {
+            fw.react_fast_refresh = .{ .import_source = "react-refresh/runtime/index.js" };
+            try fw.built_in_modules.put(
+                arena,
+                "react-refresh/runtime/index.js",
+                if (Environment.codegen_embed)
+                    .{ .code = @embedFile("node-fallbacks/react-refresh.js") }
+                else
+                    .{ .code = bun.runtimeEmbedFile(.codegen, "node-fallbacks/react-refresh.js") },
+            );
+        }
+
+        return fw;
+    }
+
+    /// Unopiniated default.
+    pub const none: Framework = .{
+        .is_built_in_react = false,
+        .file_system_router_types = &.{},
+        .server_components = null,
+        .react_fast_refresh = null,
+        .built_in_modules = .empty,
+    };
+
     pub const FileSystemRouterType = struct {
         root: []const u8,
         prefix: []const u8,
@@ -250,7 +290,7 @@ pub const Framework = struct {
         import_source: []const u8 = "react-refresh/runtime",
     };
 
-    pub const react_install_command = "bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun";
+    pub const react_install_command = "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
 
     pub fn addReactInstallCommandNote(log: *bun.logger.Log) !void {
         try log.addMsg(.{
@@ -306,15 +346,22 @@ pub const Framework = struct {
         path.* = result.path().?.text;
     }
 
+    inline fn resolveOrNull(r: *bun.resolver.Resolver, path: []const u8) ?[]const u8 {
+        return (r.resolve(r.fs.top_level_dir, path, .stmt) catch {
+            r.log.reset();
+            return null;
+        }).pathConst().?.text;
+    }
+
     fn fromJS(
         opts: JSValue,
         global: *JSC.JSGlobalObject,
         refs: *StringRefList,
         bundler_options: *SplitBundlerOptions,
         arena: Allocator,
-    ) !Framework {
+    ) bun.JSError!Framework {
         if (opts.isString()) {
-            const str = try opts.toBunString2(global);
+            const str = try opts.toBunString(global);
             defer str.deref();
 
             // Deprecated
@@ -344,7 +391,7 @@ pub const Framework = struct {
                 break :brk null;
 
             if (rfr == .true) break :brk .{};
-            if (rfr == .false or rfr == .null or rfr == .undefined) break :brk null;
+            if (rfr == .false or rfr.isUndefinedOrNull()) break :brk null;
 
             if (!rfr.isObject()) {
                 return global.throwInvalidArguments("'framework.reactFastRefresh' must be an object or 'true'", .{});
@@ -354,7 +401,7 @@ pub const Framework = struct {
                 return global.throwInvalidArguments("'framework.reactFastRefresh' is missing 'importSource'", .{});
             };
 
-            const str = try prop.toBunString2(global);
+            const str = try prop.toBunString(global);
             defer str.deref();
 
             break :brk .{
@@ -364,7 +411,7 @@ pub const Framework = struct {
         const server_components: ?ServerComponents = sc: {
             const sc: JSValue = try opts.get(global, "serverComponents") orelse
                 break :sc null;
-            if (sc == .false or sc == .null or sc == .undefined) break :sc null;
+            if (sc == .false or sc.isUndefinedOrNull()) break :sc null;
 
             if (!sc.isObject()) {
                 return global.throwInvalidArguments("'framework.serverComponents' must be an object or 'undefined'", .{});
@@ -399,13 +446,13 @@ pub const Framework = struct {
             const array = try opts.getArray(global, "builtInModules") orelse
                 break :built_in_modules .{};
 
-            const len = array.getLength(global);
+            const len = try array.getLength(global);
             var files: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{};
             try files.ensureTotalCapacity(arena, len);
 
-            var it = array.arrayIterator(global);
+            var it = try array.arrayIterator(global);
             var i: usize = 0;
-            while (it.next()) |file| : (i += 1) {
+            while (try it.next()) |file| : (i += 1) {
                 if (!file.isObject()) {
                     return global.throwInvalidArguments("'builtInModules[{d}]' is not an object", .{i});
                 }
@@ -430,16 +477,16 @@ pub const Framework = struct {
             const array: JSValue = try opts.getArray(global, "fileSystemRouterTypes") orelse {
                 return global.throwInvalidArguments("Missing 'framework.fileSystemRouterTypes'", .{});
             };
-            const len = array.getLength(global);
+            const len = try array.getLength(global);
             if (len > 256) {
                 return global.throwInvalidArguments("Framework can only define up to 256 file-system router types", .{});
             }
             const file_system_router_types = try arena.alloc(FileSystemRouterType, len);
 
-            var it = array.arrayIterator(global);
+            var it = try array.arrayIterator(global);
             var i: usize = 0;
             errdefer for (file_system_router_types[0..i]) |*fsr| fsr.style.deinit();
-            while (it.next()) |fsr_opts| : (i += 1) {
+            while (try it.next()) |fsr_opts| : (i += 1) {
                 const root = try getOptionalString(fsr_opts, global, "root", refs, arena) orelse {
                     return global.throwInvalidArguments("'fileSystemRouterTypes[{d}]' is missing 'root'", .{i});
                 };
@@ -458,17 +505,17 @@ pub const Framework = struct {
 
                 const extensions: []const []const u8 = if (try fsr_opts.get(global, "extensions")) |exts_js| exts: {
                     if (exts_js.isString()) {
-                        const str = try exts_js.toSlice2(global, arena);
+                        const str = try exts_js.toSlice(global, arena);
                         defer str.deinit();
                         if (bun.strings.eqlComptime(str.slice(), "*")) {
                             break :exts &.{};
                         }
                     } else if (exts_js.isArray()) {
-                        var it_2 = exts_js.arrayIterator(global);
+                        var it_2 = try exts_js.arrayIterator(global);
                         var i_2: usize = 0;
-                        const extensions = try arena.alloc([]const u8, exts_js.getLength(global));
-                        while (it_2.next()) |array_item| : (i_2 += 1) {
-                            const slice = refs.track(try array_item.toSlice2(global, arena));
+                        const extensions = try arena.alloc([]const u8, try exts_js.getLength(global));
+                        while (try it_2.next()) |array_item| : (i_2 += 1) {
+                            const slice = refs.track(try array_item.toSlice(global, arena));
                             if (bun.strings.eqlComptime(slice, "*"))
                                 return global.throwInvalidArguments("'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array.", .{});
 
@@ -489,11 +536,11 @@ pub const Framework = struct {
 
                 const ignore_dirs: []const []const u8 = if (try fsr_opts.get(global, "ignoreDirs")) |exts_js| exts: {
                     if (exts_js.isArray()) {
-                        var it_2 = array.arrayIterator(global);
+                        var it_2 = try array.arrayIterator(global);
                         var i_2: usize = 0;
                         const dirs = try arena.alloc([]const u8, len);
-                        while (it_2.next()) |array_item| : (i_2 += 1) {
-                            dirs[i_2] = refs.track(try array_item.toSlice2(global, arena));
+                        while (try it_2.next()) |array_item| : (i_2 += 1) {
+                            dirs[i_2] = refs.track(try array_item.toSlice(global, arena));
                         }
                         break :exts dirs;
                     }
@@ -538,16 +585,59 @@ pub const Framework = struct {
         return framework;
     }
 
-    pub fn initBundler(
+    pub fn initTranspiler(
         framework: *Framework,
-        allocator: std.mem.Allocator,
+        arena: std.mem.Allocator,
         log: *bun.logger.Log,
         mode: Mode,
-        comptime renderer: Graph,
+        renderer: Graph,
         out: *bun.transpiler.Transpiler,
+        bundler_options: *const BuildConfigSubset,
     ) !void {
+        const source_map: bun.options.SourceMapOption = switch (mode) {
+            // Source maps must always be external, as DevServer special cases
+            // the linking and part of the generation of these. It also relies
+            // on source maps always being enabled.
+            .development => .external,
+            // TODO: follow user configuration
+            else => .none,
+        };
+
+        return initTranspilerWithSourceMap(
+            framework,
+            arena,
+            log,
+            mode,
+            renderer,
+            out,
+            bundler_options,
+            source_map,
+        );
+    }
+
+    pub fn initTranspilerWithSourceMap(
+        framework: *Framework,
+        arena: std.mem.Allocator,
+        log: *bun.logger.Log,
+        mode: Mode,
+        renderer: Graph,
+        out: *bun.transpiler.Transpiler,
+        bundler_options: *const BuildConfigSubset,
+        source_map: bun.options.SourceMapOption,
+    ) !void {
+        const JSAst = bun.JSAst;
+
+        var ast_memory_allocator: JSAst.ASTMemoryAllocator = undefined;
+        ast_memory_allocator.initWithoutStack(arena);
+        var ast_scope = JSAst.ASTMemoryAllocator.Scope{
+            .previous = JSAst.Stmt.Data.Store.memory_allocator,
+            .current = &ast_memory_allocator,
+        };
+        ast_scope.enter();
+        defer ast_scope.exit();
+
         out.* = try bun.Transpiler.init(
-            allocator, // TODO: this is likely a memory leak
+            arena,
             log,
             std.mem.zeroes(bun.Schema.Api.TransformOptions),
             null,
@@ -579,7 +669,7 @@ pub const Framework = struct {
         out.options.react_fast_refresh = mode == .development and renderer == .client and framework.react_fast_refresh != null;
         out.options.server_components = framework.server_components != null;
 
-        out.options.conditions = try bun.options.ESMConditions.init(allocator, out.options.target.defaultConditions());
+        out.options.conditions = try bun.options.ESMConditions.init(arena, out.options.target.defaultConditions());
         if (renderer == .server and framework.server_components != null) {
             try out.options.conditions.appendSlice(&.{"react-server"});
         }
@@ -587,36 +677,56 @@ pub const Framework = struct {
             // Support `esm-env` package using this condition.
             try out.options.conditions.appendSlice(&.{"development"});
         }
+        // Ensure "node" condition is included for server-side rendering
+        // This helps with package.json imports field resolution
+        if (renderer == .server or renderer == .ssr) {
+            try out.options.conditions.appendSlice(&.{"node"});
+        }
+        if (bundler_options.conditions.count() > 0) {
+            try out.options.conditions.appendSlice(bundler_options.conditions.keys());
+        }
 
         out.options.production = mode != .development;
-
         out.options.tree_shaking = mode != .development;
         out.options.minify_syntax = mode != .development;
         out.options.minify_identifiers = mode != .development;
         out.options.minify_whitespace = mode != .development;
-
-        out.options.experimental.css = true;
         out.options.css_chunking = true;
-
         out.options.framework = framework;
+        out.options.inline_entrypoint_import_meta_main = true;
+        if (bundler_options.ignoreDCEAnnotations) |ignore|
+            out.options.ignore_dce_annotations = ignore;
 
-        out.options.source_map = switch (mode) {
-            // Source maps must always be linked, as DevServer special cases the
-            // linking and part of the generation of these.
-            .development => .external,
-            // TODO: follow user configuration
-            else => .none,
-        };
+        out.options.source_map = source_map;
+        if (bundler_options.env != ._none) {
+            out.options.env.behavior = bundler_options.env;
+            out.options.env.prefix = bundler_options.env_prefix orelse "";
+        }
+        out.resolver.opts = out.options;
 
         out.configureLinker();
         try out.configureDefines();
 
         out.options.jsx.development = mode == .development;
 
-        try addImportMetaDefines(allocator, out.options.define, mode, switch (renderer) {
+        try addImportMetaDefines(arena, out.options.define, mode, switch (renderer) {
             .client => .client,
             .server, .ssr => .server,
         });
+
+        if ((bundler_options.define.keys.len + bundler_options.drop.count()) > 0) {
+            for (bundler_options.define.keys, bundler_options.define.values) |k, v| {
+                const parsed = try bun.options.Define.Data.parse(k, v, false, false, log, arena);
+                try out.options.define.insert(arena, k, parsed);
+            }
+
+            for (bundler_options.drop.keys()) |drop_item| {
+                if (drop_item.len > 0) {
+                    const parsed = try bun.options.Define.Data.parse(drop_item, "", true, true, log, arena);
+                    try out.options.define.insert(arena, drop_item, parsed);
+                }
+            }
+        }
 
         if (mode != .development) {
             // Hide information about the source repository, at the cost of debugging quality.
@@ -638,23 +748,39 @@ fn getOptionalString(
 ) !?[]const u8 {
     const value = try target.get(global, property) orelse
         return null;
-    if (value == .undefined or value == .null)
+    if (value.isUndefinedOrNull())
         return null;
-    const str = try value.toBunString2(global);
+    const str = try value.toBunString(global);
     return allocations.track(str.toUTF8(arena));
 }
 
-pub inline fn getHmrRuntime(side: Side) [:0]const u8 {
+pub const HmrRuntime = struct {
+    code: [:0]const u8,
+    /// The number of lines in the HMR runtime. This is used for sourcemap
+    /// generation, where the first n lines are skipped. In release, these
+    /// are always precalculated.
+    line_count: u32,
+
+    pub fn init(code: [:0]const u8) HmrRuntime {
+        return .{
+            .code = code,
+            .line_count = @intCast(std.mem.count(u8, code, "\n")),
+        };
+    }
+};
+
+pub fn getHmrRuntime(side: Side) callconv(bun.callconv_inline) HmrRuntime {
     return if (Environment.codegen_embed)
         switch (side) {
-            .client => @embedFile("bake-codegen/bake.client.js"),
-            .server => @embedFile("bake-codegen/bake.server.js"),
+            .client => .init(@embedFile("bake-codegen/bake.client.js")),
+            .server => .init(@embedFile("bake-codegen/bake.server.js")),
         }
-    else switch (side) {
-        .client => bun.runtimeEmbedFile(.codegen_eager, "bake.client.js"),
-        // may not be live-reloaded
-        .server => bun.runtimeEmbedFile(.codegen, "bake.server.js"),
-    };
+    else
+        .init(switch (side) {
+            .client => bun.runtimeEmbedFile(.codegen_eager, "bake.client.js"),
+            // server runtime is loaded once, so it is pointless to make this eager.
+            .server => bun.runtimeEmbedFile(.codegen, "bake.server.js"),
+        });
 }
 
 pub const Mode = enum {
@@ -722,14 +848,6 @@ pub fn addImportMetaDefines(
         "import.meta.env.STATIC",
         Define.Data.initBoolean(mode == .production_static),
     );
-
-    if (mode != .development) {
-        try define.insert(
-            allocator,
-            "import.meta.hot",
-            Define.Data.initBoolean(false),
-        );
-    }
 }
 
 pub const server_virtual_source: bun.logger.Source = .{
@@ -787,7 +905,7 @@ pub fn printWarning() void {
         bun.Output.warn(
             \\Be advised that Bun Bake is highly experimental, and its API
             \\will have breaking changes. Join the <magenta>#bake<r> Discord
-            \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
+            \\channel to help us find bugs: <blue>https://bun.com/discord<r>
             \\
             \\
         , .{});
@@ -798,11 +916,10 @@ pub fn printWarning() void {
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
-const validators = bun.JSC.Node.validators;
 const ZigString = JSC.ZigString;
 const Plugin = JSC.API.JSBundler.Plugin;

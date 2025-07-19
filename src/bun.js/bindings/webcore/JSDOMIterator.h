@@ -225,12 +225,12 @@ template<typename JSIterator> JSC::JSValue iteratorForEach(JSC::JSGlobalObject& 
         JSC::MarkedArgumentBuffer arguments;
         appendForEachArguments<JSIterator>(lexicalGlobalObject, *thisObject.globalObject(), arguments, value);
         arguments.append(&thisObject);
-        if (UNLIKELY(arguments.hasOverflowed())) {
+        if (arguments.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(&lexicalGlobalObject, scope);
             return {};
         }
         JSC::profiledCall(&lexicalGlobalObject, ProfilingReason::API, callback, callData, thisValue, arguments);
-        if (UNLIKELY(scope.exception()))
+        if (scope.exception()) [[unlikely]]
             break;
     }
     return JSC::jsUndefined();
@@ -258,7 +258,7 @@ JSC::JSValue JSDOMIteratorBase<JSWrapper, IteratorTraits>::next(JSC::JSGlobalObj
 template<typename JSWrapper, typename IteratorTraits>
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMIteratorPrototype<JSWrapper, IteratorTraits>::next(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto iterator = JSC::jsDynamicCast<JSDOMIteratorBase<JSWrapper, IteratorTraits>*>(callFrame->thisValue());
@@ -266,7 +266,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMIteratorPrototype<JSWrapper, I
         return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Cannot call next() on a non-Iterator object"_s);
     }
 
-    return JSC::JSValue::encode(iterator->next(*globalObject));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(iterator->next(*globalObject)));
 }
 
 template<typename JSWrapper, typename IteratorTraits>

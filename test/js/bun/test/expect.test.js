@@ -43,6 +43,47 @@ describe("expect()", () => {
       }
     });
   };
+  describe("toBe()", () => {
+    let obj = {};
+    it.each([
+      [0, 0.0],
+      [+0, +0],
+      [0, +0],
+      [-0, -0],
+      [1, 1],
+      [1, 1.0],
+      [NaN, NaN],
+      [Infinity, Infinity],
+      [obj, obj],
+      [Symbol.for("a"), Symbol.for("a")],
+    ])("expect(%p).toBe(%p) == true", (a, b) => {
+      expect(a).toBe(b);
+      expect(b).toBe(a);
+    });
+    it.each([
+      [0, false],
+      [0, ""],
+      [0, -0],
+      [+0, -0],
+      [1, 2],
+      [1, true],
+      [1, "1"],
+      [Infinity, -Infinity],
+      ["foo", "Foo"],
+      ["foo", "bar"],
+      ["", " "],
+      ["", " "],
+      ["", true],
+      [{}, {}], //
+      [new Set(), new Set()], //
+      [function a() {}, function a() {}], //
+      [Symbol.for("a"), Symbol.for("b")],
+      [Symbol("a"), Symbol("a")],
+    ])("expect(%p).toBe(%p) == false", (a, b) => {
+      expect(a).not.toBe(b);
+      expect(b).not.toBe(a);
+    });
+  });
 
   test("rejects", async () => {
     await expect(Promise.reject(4)).rejects.toBe(4);
@@ -1663,6 +1704,12 @@ describe("expect()", () => {
     expect(array2).toEqual(expect.arrayContaining([{ a: 1, b: 2 }]));
     expect(array2).toEqual(expect.arrayContaining([{ a: { a: 1 } }]));
     expect(array2).not.toEqual(expect.arrayContaining([{ a: 2, b: 3 }]));
+  });
+
+  test("toEqual ArrayBuffer with SharedArrayBuffer", () => {
+    const ab1 = new SharedArrayBuffer(1);
+    expect(ab1).toEqual(new SharedArrayBuffer(1));
+    expect(ab1).not.toEqual(new ArrayBuffer(1));
   });
 
   test("symbol based keys in arrays are processed correctly", () => {
@@ -4110,13 +4157,13 @@ describe("expect()", () => {
       expect(expect.objectContaining({ first: { second: {} } })).not.toEqual({
         first: { second: {}, third: {} },
       });
-      expect(
+      (expect(
         expect.objectContaining({
           answer: 42,
           foo: { bar: "baz", foobar: "qux" },
         }),
       ).not.toEqual({ foo: { bar: "baz" } }),
-        expect(expect.objectContaining({ [foo]: "foo" })).not.toEqual({ [bar]: "bar" });
+        expect(expect.objectContaining({ [foo]: "foo" })).not.toEqual({ [bar]: "bar" }));
     });
 
     test("ObjectContaining matches defined properties", () => {

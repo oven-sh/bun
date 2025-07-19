@@ -6,9 +6,9 @@ const { randomUUID } = require("crypto");
 
 const s3Dest = randomUUID() + "-s3-stream-leak-fixture";
 
-const s3file = Bun.s3(s3Dest);
+const s3file = Bun.s3.file(s3Dest);
 async function readLargeFile() {
-  await Bun.s3(s3Dest).text();
+  await Bun.s3.file(s3Dest).text();
 }
 async function run(inputType) {
   await s3file.write(inputType);

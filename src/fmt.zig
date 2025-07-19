@@ -1,15 +1,12 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const strings = bun.strings;
 const string = bun.string;
 const js_lexer = bun.js_lexer;
-const ComptimeStringMap = bun.ComptimeStringMap;
 const fmt = std.fmt;
 const Environment = bun.Environment;
 const sha = bun.sha;
-
-pub usingnamespace std.fmt;
 
 pub const TableSymbols = struct {
     enable_ansi_colors: bool,
@@ -285,7 +282,7 @@ pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !vo
     var slice = slice_;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice, true);
+        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
         if (result.read == 0 or result.written == 0)
             break;
         try writer.writeAll(chunk[0..result.written]);
@@ -311,7 +308,7 @@ pub fn formatUTF16TypeWithPathOptions(comptime Slice: type, slice_: Slice, write
     var slice = slice_;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice, true);
+        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
         if (result.read == 0 or result.written == 0)
             break;
 
@@ -1344,7 +1341,7 @@ pub fn quote(self: string) bun.fmt.QuotedFormatter {
     };
 }
 
-pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.EnumLiteral)) type {
+pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.enum_literal)) type {
     return struct {
         pretty: bool = true,
         const output = brk: {
@@ -1375,7 +1372,7 @@ pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.Enum
     };
 }
 
-pub fn enumTagList(comptime Enum: type, comptime separator: @Type(.EnumLiteral)) EnumTagListFormatter(Enum, separator) {
+pub fn enumTagList(comptime Enum: type, comptime separator: @Type(.enum_literal)) EnumTagListFormatter(Enum, separator) {
     return EnumTagListFormatter(Enum, separator){};
 }
 
@@ -1491,12 +1488,12 @@ pub const SizeFormatter = struct {
     }
 };
 
-pub fn size(value: anytype, opts: SizeFormatter.Options) SizeFormatter {
+pub fn size(bytes: anytype, opts: SizeFormatter.Options) SizeFormatter {
     return .{
-        .value = switch (@TypeOf(value)) {
-            f64, f32, f128 => @intFromFloat(value),
-            i64, isize => @intCast(value),
-            else => value,
+        .value = switch (@TypeOf(bytes)) {
+            f64, f32, f128 => @intFromFloat(bytes),
+            i64, isize => @intCast(bytes),
+            else => bytes,
         },
         .opts = opts,
     };
@@ -1575,6 +1572,33 @@ pub fn hexIntLower(value: anytype) HexIntFormatter(@TypeOf(value), true) {
 pub fn hexIntUpper(value: anytype) HexIntFormatter(@TypeOf(value), false) {
     const Formatter = HexIntFormatter(@TypeOf(value), false);
     return Formatter{ .value = value };
+}
+
+/// Equivalent to `{d:.<precision>}` but trims trailing zeros
+/// if decimal part is less than `precision` digits.
+fn TrimmedPrecisionFormatter(comptime precision: usize) type {
+    return struct {
+        num: f64,
+        precision: usize,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const whole = @trunc(self.num);
+            try writer.print("{d}", .{whole});
+            const rem = self.num - whole;
+            if (rem != 0) {
+                var buf: [2 + precision]u8 = undefined;
+                var formatted = std.fmt.bufPrint(&buf, "{d:." ++ std.fmt.comptimePrint("{d}", .{precision}) ++ "}", .{rem}) catch unreachable;
+                formatted = formatted[2..];
+                const trimmed = std.mem.trimRight(u8, formatted, "0");
+                try writer.print(".{s}", .{trimmed});
+            }
+        }
+    };
+}
+
+pub fn trimmedPrecision(value: f64, comptime precision: usize) TrimmedPrecisionFormatter(precision) {
+    const Formatter = TrimmedPrecisionFormatter(precision);
+    return Formatter{ .num = value, .precision = precision };
 }
 
 const FormatDurationData = struct {
@@ -1756,42 +1780,56 @@ pub const js_bindings = struct {
             return global.throwError(err, "while formatting");
         };
 
-        return bun.String.createUTF8(buffer.list.items);
+        return bun.String.cloneUTF8(buffer.list.items);
     }
 };
 
+// Equivalent to ERR_OUT_OF_RANGE from
 fn NewOutOfRangeFormatter(comptime T: type) type {
     return struct {
         value: T,
         min: i64 = std.math.maxInt(i64),
         max: i64 = std.math.maxInt(i64),
         field_name: []const u8,
+        msg: []const u8 = "",
 
         pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-            try writer.writeAll("The value of \"");
-            try writer.writeAll(self.field_name);
-            try writer.writeAll("\" ");
+            if (self.field_name.len > 0) {
+                try writer.writeAll("The value of \"");
+                try writer.writeAll(self.field_name);
+                try writer.writeAll("\" is out of range. It must be ");
+            } else {
+                if (comptime Environment.isDebug) {
+                    @panic("Set field_name plz");
+                }
+                try writer.writeAll("The value is out of range. It must be ");
+            }
+
             const min = self.min;
             const max = self.max;
+            const msg = self.msg;
 
             if (min != std.math.maxInt(i64) and max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "must be >= {d} and <= {d}.", .{ min, max });
+                try std.fmt.format(writer, ">= {d} and <= {d}.", .{ min, max });
             } else if (min != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "must be >= {d}.", .{min});
+                try std.fmt.format(writer, ">= {d}.", .{min});
             } else if (max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "must be <= {d}.", .{max});
+                try std.fmt.format(writer, "<= {d}.", .{max});
+            } else if (msg.len > 0) {
+                try writer.writeAll(msg);
+                try writer.writeByte('.');
             } else {
-                try writer.writeAll("must be within the range of values for type ");
+                try writer.writeAll("within the range of values for type ");
                 try writer.writeAll(comptime @typeName(T));
                 try writer.writeAll(".");
             }
 
             if (comptime T == f64 or T == f32) {
-                try std.fmt.format(writer, " Received: {}", .{double(self.value)});
+                try std.fmt.format(writer, " Received {}", .{double(self.value)});
             } else if (comptime T == []const u8) {
-                try std.fmt.format(writer, " Received: {s}", .{self.value});
+                try std.fmt.format(writer, " Received {s}", .{self.value});
             } else {
-                try std.fmt.format(writer, " Received: {d}", .{self.value});
+                try std.fmt.format(writer, " Received {d}", .{self.value});
             }
         }
     };
@@ -1800,12 +1838,15 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
 const DoubleOutOfRangeFormatter = NewOutOfRangeFormatter(f64);
 const IntOutOfRangeFormatter = NewOutOfRangeFormatter(i64);
 const StringOutOfRangeFormatter = NewOutOfRangeFormatter([]const u8);
+const BunStringOutOfRangeFormatter = NewOutOfRangeFormatter(bun.String);
 
 fn OutOfRangeFormatter(comptime T: type) type {
     if (T == f64 or T == f32) {
         return DoubleOutOfRangeFormatter;
     } else if (T == []const u8) {
         return StringOutOfRangeFormatter;
+    } else if (T == bun.String) {
+        return BunStringOutOfRangeFormatter;
     }
 
     return IntOutOfRangeFormatter;
@@ -1815,10 +1856,11 @@ pub const OutOfRangeOptions = struct {
     min: i64 = std.math.maxInt(i64),
     max: i64 = std.math.maxInt(i64),
     field_name: []const u8,
+    msg: []const u8 = "",
 };
 
 pub fn outOfRange(value: anytype, options: OutOfRangeOptions) OutOfRangeFormatter(@TypeOf(value)) {
-    return .{ .value = value, .min = options.min, .max = options.max, .field_name = options.field_name };
+    return .{ .value = value, .min = options.min, .max = options.max, .field_name = options.field_name, .msg = options.msg };
 }
 
 /// esbuild has an 8 character truncation of a base32 encoded bytes. this

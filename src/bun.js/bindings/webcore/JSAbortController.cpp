@@ -98,12 +98,12 @@ using JSAbortControllerDOMConstructor = JSDOMConstructor<JSAbortController>;
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSAbortControllerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSAbortControllerDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "AbortController"_s);
     auto object = AbortController::create(*context);
     if constexpr (IsExceptionOr<decltype(object)>)
@@ -189,7 +189,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsAbortControllerConstructor, (JSGlobalObject * lexical
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSAbortControllerPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSAbortController::getConstructor(vm, prototype->globalObject()));
 }

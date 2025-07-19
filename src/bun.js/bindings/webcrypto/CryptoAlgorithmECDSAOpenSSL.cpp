@@ -52,7 +52,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmECDSA::platformSign(const CryptoAlgo
 
     // We use ECDSA_do_sign rather than EVP API because the latter handles ECDSA signature in DER format
     // while this function is supposed to return simply concatinated "r" and "s".
-    auto sig = ECDSASigPtr(ECDSA_do_sign(digest->data(), digest->size(), ecKey));
+    auto sig = ECDSASigPtr(ECDSA_do_sign(digest->begin(), digest->size(), ecKey));
     if (!sig)
         return Exception { OperationError };
 
@@ -61,7 +61,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmECDSA::platformSign(const CryptoAlgo
         if (derSigLength <= 0)
             return Exception { OperationError };
         Vector<uint8_t> signature(derSigLength);
-        uint8_t* p = signature.data();
+        uint8_t* p = signature.begin();
         if (i2d_ECDSA_SIG(sig.get(), &p) != derSigLength)
             return Exception { OperationError };
         return signature;
@@ -81,7 +81,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmECDSA::platformSign(const CryptoAlgo
 ExceptionOr<bool> CryptoAlgorithmECDSA::platformVerify(const CryptoAlgorithmEcdsaParams& parameters, const CryptoKeyEC& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
 {
     if (parameters.encoding == CryptoAlgorithmECDSAEncoding::DER) {
-        const uint8_t* p = signature.data();
+        const uint8_t* p = signature.begin();
 
         auto sig = ECDSASigPtr(d2i_ECDSA_SIG(nullptr, &p, signature.size()));
         if (!sig)
@@ -99,7 +99,7 @@ ExceptionOr<bool> CryptoAlgorithmECDSA::platformVerify(const CryptoAlgorithmEcds
         if (!ecKey)
             return Exception { OperationError };
 
-        int ret = ECDSA_do_verify(digest->data(), digest->size(), sig.get(), ecKey);
+        int ret = ECDSA_do_verify(digest->begin(), digest->size(), sig.get(), ecKey);
         return ret == 1;
     } else {
         size_t keySizeInBytes = (key.keySizeInBits() + 7) / 8;
@@ -109,8 +109,8 @@ ExceptionOr<bool> CryptoAlgorithmECDSA::platformVerify(const CryptoAlgorithmEcds
             return false;
 
         auto sig = ECDSASigPtr(ECDSA_SIG_new());
-        auto r = BN_bin2bn(signature.data(), keySizeInBytes, nullptr);
-        auto s = BN_bin2bn(signature.data() + keySizeInBytes, keySizeInBytes, nullptr);
+        auto r = BN_bin2bn(signature.begin(), keySizeInBytes, nullptr);
+        auto s = BN_bin2bn(signature.begin() + keySizeInBytes, keySizeInBytes, nullptr);
 
         if (!ECDSA_SIG_set0(sig.get(), r, s))
             return Exception { OperationError };
@@ -127,7 +127,7 @@ ExceptionOr<bool> CryptoAlgorithmECDSA::platformVerify(const CryptoAlgorithmEcds
         if (!ecKey)
             return Exception { OperationError };
 
-        int ret = ECDSA_do_verify(digest->data(), digest->size(), sig.get(), ecKey);
+        int ret = ECDSA_do_verify(digest->begin(), digest->size(), sig.get(), ecKey);
         return ret == 1;
     }
 }

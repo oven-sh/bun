@@ -1,4 +1,4 @@
-This document describes the build process for Windows. If you run into problems, please join the [#contributing channel on our Discord](http://bun.sh/discord) for help.
+This document describes the build process for Windows. If you run into problems, please join the [#contributing channel on our Discord](http://bun.com/discord) for help.
 
 It is strongly recommended to use [PowerShell 7 (`pwsh.exe`)](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows?view=powershell-7.4) instead of the default `powershell.exe`.
 
@@ -47,7 +47,7 @@ By default, running unverified scripts are blocked.
 Bun v1.1 or later. We use Bun to run it's own code generators.
 
 ```ps1
-> irm bun.sh/install.ps1 | iex
+> irm bun.com/install.ps1 | iex
 ```
 
 [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload. While installing, make sure to install Git as well, if Git for Windows is not already installed.
@@ -60,7 +60,7 @@ Visual Studio can be installed graphically using the wizard or through WinGet:
 
 After Visual Studio, you need the following:
 
-- LLVM 18.1.8
+- LLVM 19.1.7
 - Go
 - Rust
 - NASM
@@ -81,7 +81,7 @@ After Visual Studio, you need the following:
 > irm https://get.scoop.sh | iex
 > scoop install nodejs-lts go rust nasm ruby perl ccache
 # scoop seems to be buggy if you install llvm and the rest at the same time
-> scoop install llvm@18.1.8
+> scoop install llvm@19.1.7
 ```
 
 {% /codetabs %}
@@ -136,7 +136,7 @@ You should add this to `$Env:PATH`. The simplest way to do so is to open the sta
 
 ## Tests
 
-You can run the test suite either using `bun test <path>`, or by using the wrapper script `packages\bun-internal-test`. The internal test package is a wrapper cli to run every test file in a separate instance of bun.exe, to prevent a crash in the test runner from stopping the entire suite.
+You can run the test suite either using `bun test <path>` or by using the wrapper script `bun node:test <path>`. The `bun node:test` command runs every test file in a separate instance of bun.exe, to prevent a crash in the test runner from stopping the entire suite.
 
 ```ps1
 # Setup

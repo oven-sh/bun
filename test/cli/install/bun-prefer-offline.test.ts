@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { writeFile } from "fs/promises";
-import { bunEnv, bunExe } from "harness";
-import { join } from "path";
+import { bunEnv as bunEnv_, bunExe } from "harness";
+import path, { join } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -18,6 +18,15 @@ beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
+
+let bunEnv: Record<string, string>;
+beforeEach(() => {
+  bunEnv = {
+    ...bunEnv_,
+  };
+
+  console.log(package_dir);
+});
 
 it("should use cache when --prefer-offline is passed even with expired data", async () => {
   const urls: string[] = [];
@@ -37,7 +46,7 @@ it("should use cache when --prefer-offline is passed even with expired data", as
           "content-type": "application/octet-stream",
           // Set cache control to expire in the past
           "cache-control": "max-age=3600",
-          "date": new Date(Date.now() - 7200000).toUTCString(), // 2 hours ago
+          "last-modified": new Date(Date.now() - 7200000).toUTCString(), // 2 hours ago
         },
       });
     }
@@ -74,7 +83,7 @@ it("should use cache when --prefer-offline is passed even with expired data", as
           "content-type": "application/json",
           // Set cache control to expire in the past
           "cache-control": "max-age=3600",
-          "date": new Date(Date.now() - 7200000).toUTCString(), // 2 hours ago
+          "last-modified": new Date(Date.now() - 7200000).toUTCString(), // 2 hours ago
         },
       },
     );
@@ -87,7 +96,7 @@ it("should use cache when --prefer-offline is passed even with expired data", as
       name: "test-prefer-offline",
       version: "1.0.0",
       dependencies: {
-        "bar": "0.0.2",
+        "bar": "^0.0.2",
       },
     }),
   );
@@ -97,14 +106,13 @@ it("should use cache when --prefer-offline is passed even with expired data", as
     const { stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+      },
       stdio: ["ignore", "ignore", "pipe"],
     });
 
     const stderrText = await new Response(stderr).text();
-    if ((await exited) !== 0) {
-      console.log("First install STDERR:", stderrText);
-    }
     expect(await exited).toBe(0);
     expect(stderrText).not.toContain("error:");
   }
@@ -117,15 +125,14 @@ it("should use cache when --prefer-offline is passed even with expired data", as
   urls.length = 0;
   const firstRequestCount = requested;
 
-  // Add a new dependency to package.json to force a registry lookup
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
       name: "test-prefer-offline",
       version: "1.0.0",
       dependencies: {
-        "bar": "0.0.2",
-        "moo": "0.1.0", // This will force a registry lookup
+        // Update from exact to inexact to force a registry lookup.
+        "bar": ">=0.0.2",
       },
     }),
   );
@@ -133,18 +140,25 @@ it("should use cache when --prefer-offline is passed even with expired data", as
   // Second install with --prefer-offline - this should NOT make network requests
   {
     const { stderr, exited } = spawn({
-      cmd: [bunExe(), "install", "--prefer-offline"],
+      cmd: [bunExe(), "install", "--prefer-offline", "--verbose"],
       cwd: package_dir,
-      env: bunEnv,
-      stdio: ["ignore", "ignore", "pipe"],
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP: (Date.now() + 7200000).toString(),
+        BUN_DEBUG: "/tmp/all.log",
+        BUN_DEBUG_ALL: "1",
+        BUN_DEBUG_QUIET_LOGS: undefined,
+      },
+      stdio: ["ignore", "inherit", "pipe"],
     });
 
     const stderrText = await new Response(stderr).text();
     const exitCode = await exited;
 
-    // With --prefer-offline and no cached manifest, the install should fail
-    expect(exitCode).toBe(1);
-    expect(stderrText).toContain("failed to resolve");
+    // With --prefer-offline and no cached manifest, the install should NOT fail
+    expect(exitCode).toBe(0);
+    expect(stderrText).not.toContain("failed to resolve");
+    console.log(stderrText);
   }
 
   // Verify no new network requests were made (the key behavior we want)
@@ -152,7 +166,7 @@ it("should use cache when --prefer-offline is passed even with expired data", as
   expect(requested).toBe(firstRequestCount);
 
   // Since the install failed, the lockfile should remain from the first install
-  const lockfileExists = await Bun.file(join(package_dir, "bun.lockb")).exists();
+  const lockfileExists = await Bun.file(join(package_dir, "bun.lock")).exists();
   expect(lockfileExists).toBe(true);
 });
 
@@ -172,7 +186,7 @@ it("should make network requests without --prefer-offline even with expired cach
         headers: {
           "content-type": "application/octet-stream",
           "cache-control": "max-age=3600",
-          "date": new Date(Date.now() - 7200000).toUTCString(), // 2 hours ago
+          "last-modified": new Date(Date.now() - 7200000).toUTCString(), // 2 hours ago
         },
       });
     }
@@ -207,7 +221,7 @@ it("should make network requests without --prefer-offline even with expired cach
         headers: {
           "content-type": "application/json",
           "cache-control": "max-age=3600",
-          "date": new Date(Date.now() - 7200000).toUTCString(), // 2 hours ago
+          "last-modified": new Date(Date.now() - 7200000).toUTCString(), // 2 hours ago
         },
       },
     );

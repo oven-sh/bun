@@ -489,7 +489,7 @@ pub const Registry = struct {
             new_etag,
             @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp()))))) + 300,
         )) |package| {
-            if (package_manager.options.enable.manifest_cache) {
+            if (package_manager.options.enable.manifest_cache != .disabled) {
                 PackageManifest.Serializer.saveAsync(
                     &package,
                     scope,

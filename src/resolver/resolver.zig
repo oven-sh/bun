@@ -2364,9 +2364,9 @@ pub const Resolver = struct {
         }
 
         if (r.opts.prefer_offline_install) {
-            if (pm.resolveFromDiskCache(esm.name, version)) |package_id| {
-                input_package_id_.* = package_id;
-                return .{ .resolution = pm.lockfile.packages.items(.resolution)[package_id] };
+            if (pm.resolveFromDiskCache(esm.name, version)) |result| {
+                input_package_id_.* = result.package_id;
+                return .{ .resolution = pm.lockfile.packages.items(.resolution)[result.package_id] };
             }
         }
 

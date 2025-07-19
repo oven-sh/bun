@@ -874,20 +874,16 @@ pub fn init(
     manager.lockfile = try ctx.allocator.create(Lockfile);
     JSC.MiniEventLoop.global = &manager.event_loop.mini;
     if (!manager.options.enable.cache) {
-        manager.options.enable.manifest_cache = false;
-        manager.options.enable.manifest_cache_control = false;
+        manager.options.enable.manifest_cache = .disabled;
     }
 
     if (env.get("BUN_MANIFEST_CACHE")) |manifest_cache| {
         if (strings.eqlComptime(manifest_cache, "1")) {
-            manager.options.enable.manifest_cache = true;
-            manager.options.enable.manifest_cache_control = false;
+            manager.options.enable.manifest_cache = .write_only;
         } else if (strings.eqlComptime(manifest_cache, "2")) {
-            manager.options.enable.manifest_cache = true;
-            manager.options.enable.manifest_cache_control = true;
+            manager.options.enable.manifest_cache = .ttl;
         } else {
-            manager.options.enable.manifest_cache = false;
-            manager.options.enable.manifest_cache_control = false;
+            manager.options.enable.manifest_cache = .disabled;
         }
     }
 
@@ -1048,20 +1044,16 @@ pub fn initWithRuntimeOnce(
     }
 
     if (!manager.options.enable.cache) {
-        manager.options.enable.manifest_cache = false;
-        manager.options.enable.manifest_cache_control = false;
+        manager.options.enable.manifest_cache = .disabled;
     }
 
     if (env.get("BUN_MANIFEST_CACHE")) |manifest_cache| {
         if (strings.eqlComptime(manifest_cache, "1")) {
-            manager.options.enable.manifest_cache = true;
-            manager.options.enable.manifest_cache_control = false;
+            manager.options.enable.manifest_cache = .write_only;
         } else if (strings.eqlComptime(manifest_cache, "2")) {
-            manager.options.enable.manifest_cache = true;
-            manager.options.enable.manifest_cache_control = true;
+            manager.options.enable.manifest_cache = .ttl;
         } else {
-            manager.options.enable.manifest_cache = false;
-            manager.options.enable.manifest_cache_control = false;
+            manager.options.enable.manifest_cache = .disabled;
         }
     }
 

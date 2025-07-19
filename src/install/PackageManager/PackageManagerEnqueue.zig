@@ -667,56 +667,61 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                             );
 
                         if (!dependency.behavior.isPeer() or install_peer) {
-                            if (!this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) {
-                                if (this.options.enable.manifest_cache) {
-                                    var expired = false;
-                                    if (this.manifests.byNameHashAllowExpired(
-                                        this,
-                                        this.scopeForPackageName(name_str),
-                                        name_hash,
-                                        &expired,
-                                        .load_from_memory_fallback_to_disk,
-                                    )) |manifest| {
-                                        loaded_manifest = manifest.*;
+                            const has_created_network_task = this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired());
+                            const should_read_from_cache = switch (this.options.enable.manifest_cache) {
+                                .prefer_offline, .ttl => !has_created_network_task,
+                                .write_only, .disabled => false,
+                            };
 
-                                        // If it's an exact package version already living in the cache
-                                        // We can skip the network request, even if it's beyond the caching period
-                                        if (version.tag == .npm and version.value.npm.version.isExact()) {
-                                            if (loaded_manifest.?.findByVersion(version.value.npm.version.head.head.range.left.version)) |find_result| {
-                                                if (getOrPutResolvedPackageWithFindResult(
-                                                    this,
-                                                    name_hash,
-                                                    name,
-                                                    dependency,
-                                                    version,
-                                                    id,
-                                                    dependency.behavior,
-                                                    &loaded_manifest.?,
-                                                    find_result,
-                                                    install_peer,
-                                                    successFn,
-                                                ) catch null) |new_resolve_result| {
-                                                    resolve_result_ = new_resolve_result;
-                                                    _ = this.network_dedupe_map.remove(task_id);
-                                                    continue :retry_with_new_resolve_result;
-                                                }
+                            if (should_read_from_cache) {
+                                var expired = false;
+                                if (this.manifests.byNameHashAllowExpired(
+                                    this,
+                                    this.scopeForPackageName(name_str),
+                                    name_hash,
+                                    &expired,
+                                    .load_from_memory_fallback_to_disk,
+                                )) |manifest| {
+                                    loaded_manifest = manifest.*;
+
+                                    // If it's an exact package version already living in the cache
+                                    // We can skip the network request, even if it's beyond the caching period
+                                    if (version.tag == .npm and version.value.npm.version.isExact()) {
+                                        if (loaded_manifest.?.findByVersion(version.value.npm.version.head.head.range.left.version)) |find_result| {
+                                            if (getOrPutResolvedPackageWithFindResult(
+                                                this,
+                                                name_hash,
+                                                name,
+                                                dependency,
+                                                version,
+                                                id,
+                                                dependency.behavior,
+                                                &loaded_manifest.?,
+                                                find_result,
+                                                install_peer,
+                                                successFn,
+                                            ) catch null) |new_resolve_result| {
+                                                resolve_result_ = new_resolve_result;
+                                                _ = this.network_dedupe_map.remove(task_id);
+                                                continue :retry_with_new_resolve_result;
                                             }
                                         }
+                                    }
 
-                                        // Was it recent enough to just load it without the network call?
-                                        if (this.options.enable.manifest_cache_control and (!expired or this.options.prefer_offline)) {
-                                            _ = this.network_dedupe_map.remove(task_id);
-                                            continue :retry_from_manifests_ptr;
-                                        }
+                                    // Either:
+                                    // - Was it recent enough to just load it without the network call?
+                                    // - Did the user pass `--prefer-offline`?
+                                    if (!expired) {
+                                        _ = this.network_dedupe_map.remove(task_id);
+                                        debug("manifest cache hit for {s}@{s}", .{ name_str, this.lockfile.str(&version.literal) });
+                                        continue :retry_from_manifests_ptr;
+                                    } else {
+                                        debug("manifest cache expired for {s}@{s}", .{ name_str, this.lockfile.str(&version.literal) });
                                     }
                                 }
+                            }
 
-                                // Check if prefer_offline is set and we have no cached manifest
-                                if (this.options.prefer_offline) {
-                                    // Skip this network task when prefer_offline is set
-                                    return;
-                                }
-
+                            if (!has_created_network_task) {
                                 if (PackageManager.verbose_install) {
                                     Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name_str});
                                 }
@@ -1567,6 +1572,7 @@ fn getOrPutResolvedPackage(
 
             // Resolve the version from the loaded NPM manifest
             const name_str = this.lockfile.str(&name);
+
             const manifest = this.manifests.byNameHash(
                 this,
                 this.scopeForPackageName(name_str),

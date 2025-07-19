@@ -41,7 +41,7 @@ pub fn scopeForPackageName(this: *const PackageManager, name: string) *const Npm
     ) orelse &this.options.scope;
 }
 
-pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.ArrayList(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.ArrayList(Semver.Version) {
+pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, package_name: []const u8, tags_buf: *std.ArrayList(u8), allocator: std.mem.Allocator) !std.ArrayList(Semver.Version) {
     var list = std.ArrayList(Semver.Version).init(allocator);
     var dir = this.getCacheDirectory().openDir(package_name, .{
         .iterate = true,
@@ -54,7 +54,7 @@ pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.A
 
     while (try iter.next()) |entry| {
         if (entry.kind != .directory and entry.kind != .sym_link) continue;
-        const name = entry.name;
+        const name = PackageManagerDirectories.CacheVersion.unversionedName(entry.name) orelse continue;
         const sliced = SlicedString.init(name, name);
         const parsed = Semver.Version.parse(sliced);
         if (!parsed.valid or parsed.wildcard != .none) continue;
@@ -63,7 +63,7 @@ pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.A
         var version = parsed.version.min();
         const total = version.tag.build.len() + version.tag.pre.len();
         if (total > 0) {
-            tags_buf.ensureUnusedCapacity(total) catch unreachable;
+            try tags_buf.ensureUnusedCapacity(total);
             var available = tags_buf.items.ptr[tags_buf.items.len..tags_buf.capacity];
             const new_version = version.cloneInto(name, &available);
             tags_buf.items.len += total;
@@ -76,7 +76,10 @@ pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.A
     return list;
 }
 
-pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, version: Dependency.Version) ?PackageID {
+pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, version: Dependency.Version) ?struct {
+    package_id: PackageID,
+    is_first_time: bool,
+} {
     if (version.tag != .npm) {
         // only npm supported right now
         // tags are more ambiguous
@@ -89,7 +92,7 @@ pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, ver
     var stack_fallback = std.heap.stackFallback(4096, arena_alloc);
     const allocator = stack_fallback.get();
     var tags_buf = std.ArrayList(u8).init(allocator);
-    const installed_versions = this.getInstalledVersionsFromDiskCache(&tags_buf, package_name, allocator) catch |err| {
+    const installed_versions = this.getInstalledVersionsFromDiskCache(package_name, &tags_buf, allocator) catch |err| {
         Output.debug("error getting installed versions from disk cache: {s}", .{bun.span(@errorName(err))});
         return null;
     };
@@ -101,30 +104,32 @@ pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, ver
         @as([]const u8, tags_buf.items),
         Semver.Version.sortGt,
     );
+    const npm_version = &version.value.npm.version;
     for (installed_versions.items) |installed_version| {
-        if (version.value.npm.version.satisfies(installed_version, this.lockfile.buffers.string_bytes.items, tags_buf.items)) {
-            var buf: bun.PathBuffer = undefined;
-            const npm_package_path = this.pathForCachedNPMPath(&buf, package_name, installed_version) catch |err| {
+        const satisfies = npm_version.satisfies(installed_version, this.lockfile.buffers.string_bytes.items, tags_buf.items);
+
+        if (satisfies) {
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
+            const npm_package_path = this.pathForCachedNPMPath(buf, package_name, installed_version) catch |err| {
                 Output.debug("error getting path for cached npm path: {s}", .{bun.span(@errorName(err))});
                 return null;
             };
+            var npm_info = version.npm().?;
+            npm_info.version = Semver.Query.Group.from(installed_version);
             const dependency = Dependency.Version{
                 .tag = .npm,
+                .literal = version.literal,
                 .value = .{
-                    .npm = .{
-                        .name = String.init(package_name, package_name),
-                        .version = Semver.Query.Group.from(installed_version),
-                    },
+                    .npm = npm_info,
                 },
             };
             switch (FolderResolution.getOrPut(.{ .cache_folder = npm_package_path }, dependency, ".", this)) {
                 .new_package_id => |id| {
-                    this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id]);
-                    return id;
+                    return .{ .package_id = id, .is_first_time = true };
                 },
                 .package_id => |id| {
-                    this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id]);
-                    return id;
+                    return .{ .package_id = id, .is_first_time = false };
                 },
                 .err => |err| {
                     Output.debug("error getting or putting folder resolution: {s}", .{bun.span(@errorName(err))});
@@ -241,3 +246,5 @@ const PackageManager = bun.install.PackageManager;
 const PackageNameHash = bun.install.PackageNameHash;
 const Resolution = bun.install.Resolution;
 const invalid_package_id = bun.install.invalid_package_id;
+
+const PackageManagerDirectories = @import("./PackageManagerDirectories.zig");

@@ -266,7 +266,7 @@ pub fn runTasks(
 
                         entry.value_ptr.manifest.pkg.public_max_age = timestamp_this_tick.?;
 
-                        if (manager.options.enable.manifest_cache) {
+                        if (manager.options.enable.manifest_cache != .disabled) {
                             Npm.PackageManifest.Serializer.saveAsync(
                                 &entry.value_ptr.manifest,
                                 manager.scopeForPackageName(name.slice()),

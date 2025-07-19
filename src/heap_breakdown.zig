@@ -112,6 +112,10 @@ pub const Zone = opaque {
         malloc_zone_free(zone, @ptrCast(ptr));
     }
 
+    pub fn isInstance(allocator_: std.mem.Allocator) bool {
+        return allocator_.vtable == &vtable;
+    }
+
     pub extern fn malloc_default_zone() *Zone;
     pub extern fn malloc_create_zone(start_size: vm_size_t, flags: c_uint) *Zone;
     pub extern fn malloc_destroy_zone(zone: *Zone) void;

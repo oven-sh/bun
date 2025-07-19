@@ -3102,7 +3102,8 @@ pub const Parser = struct {
         // If we added to `p.symbols` it's going to fuck up all the indices
         // in the `symbols` array.
         bun.assert(p.symbols.items.len == 0);
-        p.symbols = symbols.listManaged(p.allocator);
+        var symbols_ = symbols;
+        p.symbols = symbols_.listManaged(p.allocator);
 
         try p.prepareForVisitPass();
 

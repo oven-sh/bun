@@ -76,6 +76,10 @@ pub inline fn assert(this: *const MemoryReportingAllocator) void {
     }
 }
 
+pub fn isInstance(allocator_: std.mem.Allocator) bool {
+    return allocator_.vtable == &VTable;
+}
+
 pub const VTable = std.mem.Allocator.VTable{
     .alloc = &alloc,
     .resize = &resize,

@@ -166,7 +166,8 @@ pub fn drain(this: *ByteBlobLoader) bun.ByteList {
     temporary = temporary[this.offset..];
     temporary = temporary[0..@min(16384, @min(temporary.len, this.remain))];
 
-    const cloned = bun.ByteList.init(temporary).listManaged(bun.default_allocator).clone() catch bun.outOfMemory();
+    var byte_list = bun.ByteList.init(temporary);
+    const cloned = byte_list.listManaged(bun.default_allocator).clone() catch bun.outOfMemory();
     this.offset +|= @as(Blob.SizeType, @truncate(cloned.items.len));
     this.remain -|= @as(Blob.SizeType, @truncate(cloned.items.len));
 

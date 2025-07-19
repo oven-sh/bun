@@ -159,6 +159,10 @@ pub const Arena = struct {
         const value = mimalloc.mi_heap_realloc_aligned(@ptrCast(this), buf.ptr, new_len, aligned_size);
         return @ptrCast(value);
     }
+
+    pub fn isInstance(allocator_: Allocator) bool {
+        return allocator_.vtable == &c_allocator_vtable;
+    }
 };
 
 const c_allocator_vtable = Allocator.VTable{

@@ -121,7 +121,7 @@ const BufferedIoClosed = struct {
         /// BufferedInput/Output uses jsc vm allocator
         pub fn deinit(this: *BufferedIoState, jsc_vm_allocator: Allocator) void {
             if (this.state == .closed and this.owned) {
-                var list = bun.ByteList.listManaged(this.state.closed, jsc_vm_allocator);
+                var list = this.state.closed.listManaged(jsc_vm_allocator);
                 list.deinit();
                 this.state.closed = .{};
             }

@@ -245,7 +245,7 @@ pub const AnyRoute = union(enum) {
 
         if (argument.as(Response)) |response_ptr| {
             if (response_ptr.body.value == .Route) {
-                return .{.html = response_ptr.value.Route.dupeRef() };
+                return .{.html = response_ptr.body.value.Route.dupeRef() };
             }
         }
 

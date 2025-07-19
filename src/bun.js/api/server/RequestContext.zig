@@ -545,8 +545,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             var any_js_calls = false;
             var vm = this.server.?.vm;
-            const server = this.server orelse return;
-            const globalThis = server.globalThis;
+            const globalThis = this.server.?.globalThis;
             defer {
                 // This is a task in the event loop.
                 // If we called into JavaScript, we must drain the microtask queue
@@ -1372,7 +1371,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 this.endWithoutBody(this.shouldCloseConnection());
                 return;
             };
-            const globalThis = server.globalThis;
+            const globalThis = this.server.?.globalThis;
             if (response.getFetchHeaders()) |headers| {
                 // first respect the headers
                 if (headers.fastGet(.TransferEncoding)) |transfer_encoding| {
@@ -1713,8 +1712,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // If a ReadableStream can trivially be converted to a Blob, do so.
             // If it's a WTFStringImpl and it cannot be used as a UTF-8 string, convert it to a Blob.
             value.toBlobIfPossible();
-            const server = this.server orelse return;
-            const globalThis = server.globalThis;
+            const globalThis = this.server.?.globalThis;
             switch (value.*) {
                 .Error => |*err_ref| {
                     _ = value.use();

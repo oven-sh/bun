@@ -782,4 +782,6 @@ const Body = JSC.WebCore.Body;
 const Request = JSC.WebCore.Request;
 const Blob = JSC.WebCore.Blob;
 
+const HTMLBundle = JSC.API.HTMLBundle;
+
 const s3 = bun.S3;

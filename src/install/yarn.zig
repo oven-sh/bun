@@ -33,13 +33,13 @@ pub const YarnLock = struct {
         // The integrity hash
         integrity: ?string = null,
         // Dependencies of this package
-        dependencies: ?std.StringHashMap(string) = null,
+        dependencies: ?bun.StringHashMap(string) = null,
         // Optional dependencies
-        optionalDependencies: ?std.StringHashMap(string) = null,
+        optionalDependencies: ?bun.StringHashMap(string) = null,
         // Peer dependencies
-        peerDependencies: ?std.StringHashMap(string) = null,
+        peerDependencies: ?bun.StringHashMap(string) = null,
         // Dev dependencies
-        devDependencies: ?std.StringHashMap(string) = null,
+        devDependencies: ?bun.StringHashMap(string) = null,
         // For git dependencies
         commit: ?string = null,
         // For workspace dependencies
@@ -80,33 +80,33 @@ pub const YarnLock = struct {
                 spec;
 
             // Handle npm: aliased dependencies like "old@npm:abbrev@1.0.x"
-            if (std.mem.indexOf(u8, unquoted, "@npm:")) |npm_idx| {
+            if (strings.indexOf(unquoted, "@npm:")) |npm_idx| {
                 return unquoted[0..npm_idx];
             }
 
             // Handle remote tarball URLs like "remote@https://registry.npmjs.org/..."
-            if (std.mem.indexOf(u8, unquoted, "@https://")) |url_idx| {
+            if (strings.indexOf(unquoted, "@https://")) |url_idx| {
                 return unquoted[0..url_idx];
             }
 
             // Handle git URLs like "full-git-url@git+https://..."
-            if (std.mem.indexOf(u8, unquoted, "@git+")) |git_idx| {
+            if (strings.indexOf(unquoted, "@git+")) |git_idx| {
                 return unquoted[0..git_idx];
             }
 
             // Handle github shorthand like "ghshort@github:..."
-            if (std.mem.indexOf(u8, unquoted, "@github:")) |gh_idx| {
+            if (strings.indexOf(unquoted, "@github:")) |gh_idx| {
                 return unquoted[0..gh_idx];
             }
 
             // Handle file dependencies like "symlink@file:..."
-            if (std.mem.indexOf(u8, unquoted, "@file:")) |file_idx| {
+            if (strings.indexOf(unquoted, "@file:")) |file_idx| {
                 return unquoted[0..file_idx];
             }
 
-            if (std.mem.indexOf(u8, unquoted, "@")) |idx| {
+            if (strings.indexOf(unquoted, "@")) |idx| {
                 if (idx == 0) {
-                    if (std.mem.indexOf(u8, unquoted[1..], "@")) |second_idx| {
+                    if (strings.indexOf(unquoted[1..], "@")) |second_idx| {
                         // Handle scoped packages, e.g. "@scope/pkg@1.0.0"
                         return unquoted[0 .. second_idx + 1];
                     }
@@ -124,34 +124,34 @@ pub const YarnLock = struct {
                 spec;
 
             // Handle npm: aliased dependencies like "old@npm:abbrev@1.0.x"
-            if (std.mem.indexOf(u8, unquoted, "@npm:")) |npm_idx| {
+            if (strings.indexOf(unquoted, "@npm:")) |npm_idx| {
                 return unquoted[npm_idx + 1 ..];
             }
 
             // Handle remote tarball URLs like "remote@https://registry.npmjs.org/..."
-            if (std.mem.indexOf(u8, unquoted, "@https://")) |url_idx| {
+            if (strings.indexOf(unquoted, "@https://")) |url_idx| {
                 return unquoted[url_idx + 1 ..];
             }
 
             // Handle git URLs like "full-git-url@git+https://..."
-            if (std.mem.indexOf(u8, unquoted, "@git+")) |git_idx| {
+            if (strings.indexOf(unquoted, "@git+")) |git_idx| {
                 return unquoted[git_idx + 1 ..];
             }
 
             // Handle github shorthand like "ghshort@github:..."
-            if (std.mem.indexOf(u8, unquoted, "@github:")) |gh_idx| {
+            if (strings.indexOf(unquoted, "@github:")) |gh_idx| {
                 return unquoted[gh_idx + 1 ..];
             }
 
             // Handle file dependencies like "symlink@file:..."
-            if (std.mem.indexOf(u8, unquoted, "@file:")) |file_idx| {
+            if (strings.indexOf(unquoted, "@file:")) |file_idx| {
                 return unquoted[file_idx + 1 ..];
             }
 
-            if (std.mem.indexOf(u8, unquoted, "@")) |idx| {
+            if (strings.indexOf(unquoted, "@")) |idx| {
                 if (idx == 0) {
                     // Handle scoped packages
-                    if (std.mem.indexOf(u8, unquoted[1..], "@")) |second_idx| {
+                    if (strings.indexOf(unquoted[1..], "@")) |second_idx| {
                         return unquoted[second_idx + 2 ..];
                     }
                     return null;
@@ -206,7 +206,7 @@ pub const YarnLock = struct {
                 );
             }
 
-            if (std.mem.indexOf(u8, url, "#")) |hash_idx| {
+            if (strings.indexOf(url, "#")) |hash_idx| {
                 commit = url[hash_idx + 1 ..];
                 url = url[0..hash_idx];
             }
@@ -217,7 +217,7 @@ pub const YarnLock = struct {
         pub fn parseNpmAlias(version: []const u8) struct { package: []const u8, version: []const u8 } {
             // version is in format "npm:package@version"
             const npm_part = version[4..]; // Skip "npm:"
-            if (std.mem.indexOf(u8, npm_part, "@")) |at_idx| {
+            if (strings.indexOf(npm_part, "@")) |at_idx| {
                 return .{
                     .package = npm_part[0..at_idx],
                     .version = npm_part[at_idx + 1 ..],
@@ -246,15 +246,15 @@ pub const YarnLock = struct {
 
     // Parse a yarn.lock file content
     pub fn parse(self: *YarnLock, content: []const u8) !void {
-        var lines = std.mem.splitSequence(u8, content, "\n");
+        var lines = strings.split(content, "\n");
         var current_entry: ?Entry = null;
         var current_specs = std.ArrayList([]const u8).init(self.allocator);
         defer current_specs.deinit();
 
-        var current_deps: ?std.StringHashMap(string) = null;
-        var current_optional_deps: ?std.StringHashMap(string) = null;
-        var current_peer_deps: ?std.StringHashMap(string) = null;
-        var current_dev_deps: ?std.StringHashMap(string) = null;
+        var current_deps: ?bun.StringHashMap(string) = null;
+        var current_optional_deps: ?bun.StringHashMap(string) = null;
+        var current_peer_deps: ?bun.StringHashMap(string) = null;
+        var current_dev_deps: ?bun.StringHashMap(string) = null;
         var in_dependencies = false;
         var in_optional_dependencies = false;
         var in_peer_dependencies = false;
@@ -268,11 +268,11 @@ pub const YarnLock = struct {
             var indent: usize = 0;
             while (indent < line.len and line[indent] == ' ') indent += 1;
 
-            const trimmed = std.mem.trim(u8, line[indent..], " \r\t");
+            const trimmed = strings.trim(line[indent..], " \r\t");
             if (trimmed.len == 0) continue;
 
             // New entry starts with no indentation and ends with a colon
-            if (indent == 0 and std.mem.endsWith(u8, trimmed, ":")) {
+            if (indent == 0 and strings.endsWithComptime(trimmed, ":")) {
                 // Save previous entry if it exists
                 if (current_entry) |*entry| {
                     entry.dependencies = current_deps;
@@ -285,9 +285,9 @@ pub const YarnLock = struct {
                 // Parse specs
                 current_specs.clearRetainingCapacity();
                 const specs_str = trimmed[0 .. trimmed.len - 1]; // Remove trailing colon
-                var specs_it = std.mem.splitSequence(u8, specs_str, ",");
+                var specs_it = strings.split(specs_str, ",");
                 while (specs_it.next()) |spec| {
-                    const spec_trimmed = std.mem.trim(u8, spec, " \"");
+                    const spec_trimmed = strings.trim(spec, " \"");
                     try current_specs.append(try self.allocator.dupe(u8, spec_trimmed));
                 }
 
@@ -313,47 +313,47 @@ pub const YarnLock = struct {
             // Handle indented lines (key-value pairs or dependency sections)
             if (indent > 0) {
                 // Check for dependency sections first
-                if (std.mem.eql(u8, trimmed, "dependencies")) {
+                if (strings.eqlComptime(trimmed, "dependencies")) {
                     in_dependencies = true;
                     in_optional_dependencies = false;
                     in_peer_dependencies = false;
                     in_dev_dependencies = false;
-                    current_deps = std.StringHashMap(string).init(self.allocator);
+                    current_deps = bun.StringHashMap(string).init(self.allocator);
                     continue;
                 }
 
-                if (std.mem.eql(u8, trimmed, "optionalDependencies")) {
+                if (strings.eqlComptime(trimmed, "optionalDependencies")) {
                     in_optional_dependencies = true;
                     in_dependencies = false;
                     in_peer_dependencies = false;
                     in_dev_dependencies = false;
-                    current_optional_deps = std.StringHashMap(string).init(self.allocator);
+                    current_optional_deps = bun.StringHashMap(string).init(self.allocator);
                     continue;
                 }
 
-                if (std.mem.eql(u8, trimmed, "peerDependencies")) {
+                if (strings.eqlComptime(trimmed, "peerDependencies")) {
                     in_peer_dependencies = true;
                     in_dependencies = false;
                     in_optional_dependencies = false;
                     in_dev_dependencies = false;
-                    current_peer_deps = std.StringHashMap(string).init(self.allocator);
+                    current_peer_deps = bun.StringHashMap(string).init(self.allocator);
                     continue;
                 }
 
-                if (std.mem.eql(u8, trimmed, "devDependencies")) {
+                if (strings.eqlComptime(trimmed, "devDependencies")) {
                     in_dev_dependencies = true;
                     in_dependencies = false;
                     in_optional_dependencies = false;
                     in_peer_dependencies = false;
-                    current_dev_deps = std.StringHashMap(string).init(self.allocator);
+                    current_dev_deps = bun.StringHashMap(string).init(self.allocator);
                     continue;
                 }
 
                 // Handle dependencies
                 if (in_dependencies or in_optional_dependencies or in_peer_dependencies or in_dev_dependencies) {
-                    if (std.mem.indexOf(u8, trimmed, " ")) |space_idx| {
-                        const key = std.mem.trim(u8, trimmed[0..space_idx], " \"");
-                        const value = std.mem.trim(u8, trimmed[space_idx + 1 ..], " \"");
+                    if (strings.indexOf(trimmed, " ")) |space_idx| {
+                        const key = strings.trim(trimmed[0..space_idx], " \"");
+                        const value = strings.trim(trimmed[space_idx + 1 ..], " \"");
                         const map = if (in_dependencies) &current_deps.? else if (in_optional_dependencies) &current_optional_deps.? else if (in_peer_dependencies) &current_peer_deps.? else &current_dev_deps.?;
                         try map.put(key, value);
                     }
@@ -361,11 +361,11 @@ pub const YarnLock = struct {
                 }
 
                 // Handle regular key-value pairs
-                if (std.mem.indexOf(u8, trimmed, " ")) |space_idx| {
-                    const key = std.mem.trim(u8, trimmed[0..space_idx], " ");
-                    const value = std.mem.trim(u8, trimmed[space_idx + 1 ..], " \"");
+                if (strings.indexOf(trimmed, " ")) |space_idx| {
+                    const key = strings.trim(trimmed[0..space_idx], " ");
+                    const value = strings.trim(trimmed[space_idx + 1 ..], " \"");
 
-                    if (std.mem.eql(u8, key, "version")) {
+                    if (strings.eqlComptime(key, "version")) {
                         current_entry.?.version = value;
                         // Check for special version types
                         if (Entry.isWorkspaceDependency(value)) {
@@ -384,25 +384,25 @@ pub const YarnLock = struct {
                             // For remote tarballs, use the URL as resolved
                             current_entry.?.resolved = value;
                         }
-                    } else if (std.mem.eql(u8, key, "resolved")) {
+                    } else if (strings.eqlComptime(key, "resolved")) {
                         current_entry.?.resolved = value;
-                    } else if (std.mem.eql(u8, key, "integrity")) {
+                    } else if (strings.eqlComptime(key, "integrity")) {
                         current_entry.?.integrity = value;
-                    } else if (std.mem.eql(u8, key, "os")) {
+                    } else if (strings.eqlComptime(key, "os")) {
                         // Parse os array
                         var os_list = std.ArrayList([]const u8).init(self.allocator);
-                        var os_it = std.mem.splitSequence(u8, value[1 .. value.len - 1], ",");
+                        var os_it = strings.split(value[1 .. value.len - 1], ",");
                         while (os_it.next()) |os| {
-                            const trimmed_os = std.mem.trim(u8, os, " \"");
+                            const trimmed_os = strings.trim(os, " \"");
                             try os_list.append(trimmed_os);
                         }
                         current_entry.?.os = try os_list.toOwnedSlice();
-                    } else if (std.mem.eql(u8, key, "cpu")) {
+                    } else if (strings.eqlComptime(key, "cpu")) {
                         // Parse cpu array
                         var cpu_list = std.ArrayList([]const u8).init(self.allocator);
-                        var cpu_it = std.mem.splitSequence(u8, value[1 .. value.len - 1], ",");
+                        var cpu_it = strings.split(value[1 .. value.len - 1], ",");
                         while (cpu_it.next()) |cpu| {
-                            const trimmed_cpu = std.mem.trim(u8, cpu, " \"");
+                            const trimmed_cpu = strings.trim(cpu, " \"");
                             try cpu_list.append(trimmed_cpu);
                         }
                         current_entry.?.cpu = try cpu_list.toOwnedSlice();
@@ -424,7 +424,7 @@ pub const YarnLock = struct {
     fn findEntryBySpec(self: *YarnLock, spec: []const u8) ?*Entry {
         for (self.entries.items) |*entry| {
             for (entry.specs) |entry_spec| {
-                if (std.mem.eql(u8, entry_spec, spec)) {
+                if (strings.eql(entry_spec, spec)) {
                     return entry;
                 }
             }
@@ -436,7 +436,7 @@ pub const YarnLock = struct {
 // Helper to process dependencies from a map
 const processDeps = struct {
     fn process(
-        deps: std.StringHashMap(string),
+        deps: bun.StringHashMap(string),
         is_optional: bool,
         is_peer: bool,
         is_dev: bool,
@@ -497,7 +497,7 @@ const processDeps = struct {
                 // Find package ID for this dependency
                 for (yarn_lock_.entries.items, 0..) |entry_, i| {
                     for (entry_.specs) |entry_spec| {
-                        if (std.mem.eql(u8, entry_spec, dep_spec)) {
+                        if (strings.eql(entry_spec, dep_spec)) {
                             res_buf[count] = @intCast(i + 1); // +1 because root package is at index 0
                             break;
                         }

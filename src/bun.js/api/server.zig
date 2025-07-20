@@ -2646,10 +2646,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *FileRoute, file_route, entry.path, entry.method);
                         },
                         .directory => |directory_route| {
-                            // For directory routes, we need to handle all sub-paths, so append /* to the path
+                            // Directory routes need to handle all sub-paths, so register with wildcard
                             if (std.mem.eql(u8, entry.path, "/")) {
+                                // For root path, register as "/*" to handle all paths
                                 ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *DirectoryRoute, directory_route, "/*", entry.method);
                             } else {
+                                // For other paths, register as "path/*" to handle sub-paths
                                 const dir_path = std.fmt.allocPrint(bun.default_allocator, "{s}/*", .{entry.path}) catch bun.outOfMemory();
                                 defer bun.default_allocator.free(dir_path);
                                 ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *DirectoryRoute, directory_route, dir_path, entry.method);

@@ -165,6 +165,18 @@ This command is equivalent to:
 $ bun install --frozen-lockfile
 ```
 
+{% callout type="warning" %}
+**⚠️ Important**: To use `bun ci`, you **must** commit your `bun.lock` file to version control. The lockfile contains the exact resolved versions and integrity hashes that `bun ci` uses to ensure consistent installs across all environments.
+{% /callout %}
+
+### Why commit the lockfile?
+
+Committing `bun.lock` to version control provides two key benefits:
+
+1. **Faster installs**: The lockfile contains pre-resolved dependency trees and integrity hashes, eliminating the need for Bun to resolve versions and verify packages during installation.
+
+2. **Guaranteed consistency**: Every team member and CI environment gets identical dependency versions, preventing "works on my machine" issues caused by different package versions.
+
 ### When to use `bun ci`
 
 - **CI/CD pipelines**: Ensures all builds use identical dependency versions
@@ -189,9 +201,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4  # Checks out code including bun.lock
       - uses: oven-sh/setup-bun@v2
-      - run: bun ci  # Use bun ci instead of bun install
+      - run: bun ci  # Uses committed bun.lock for reproducible installs
       - run: bun test
 ```
 

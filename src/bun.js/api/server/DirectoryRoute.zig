@@ -223,7 +223,7 @@ fn serveFile(this: *DirectoryRoute, req: *uws.Request, resp: AnyResponse, method
         return;
     };
     
-    const blob = Blob.initWithStore(store, this.server.?.vm().global);
+    const blob = Blob.initWithStore(store, this.server.?.globalThis());
     
     // Create a FileRoute to handle the actual file serving
     const file_route = FileRoute.initFromBlob(blob, .{

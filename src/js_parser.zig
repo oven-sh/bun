@@ -9149,7 +9149,7 @@ fn NewParser_(
                             break;
                         }
                     }
-                } else if (loader == .file or loader == .text) {
+                } else if (loader == .file or loader == .text or loader == .bytes) {
                     for (stmt.items) |*item| {
                         if (!(strings.eqlComptime(item.alias, "default"))) {
                             try p.log.addError(

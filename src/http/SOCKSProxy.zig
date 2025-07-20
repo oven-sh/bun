@@ -9,6 +9,7 @@ destination_port: u16 = 0,
 proxy_url: URL,
 allocator: std.mem.Allocator,
 ref_count: RefCount,
+write_buffer: std.ArrayList(u8),
 
 const SOCKSState = enum {
     init,
@@ -55,27 +56,39 @@ const SOCKSReply = enum(u8) {
 };
 
 pub fn create(allocator: std.mem.Allocator, proxy_url: URL, destination_host: []const u8, destination_port: u16) !*SOCKSProxy {
+    // Clone the destination_host to ensure memory safety
+    const cloned_host = try allocator.dupe(u8, destination_host);
+    
     const socks_proxy = bun.new(SOCKSProxy, .{
         .ref_count = .init(),
         .proxy_url = proxy_url,
-        .destination_host = destination_host,
+        .destination_host = cloned_host,
         .destination_port = destination_port,
         .allocator = allocator,
+        .write_buffer = std.ArrayList(u8).init(allocator),
     });
 
     return socks_proxy;
 }
 
-pub fn sendAuthHandshake(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+pub fn sendAuthHandshake(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
     // SOCKS5 authentication handshake
     // +----+----------+----------+
     // |VER | NMETHODS | METHODS  |
     // +----+----------+----------+
     // | 1  |    1     | 1 to 255 |
     // +----+----------+----------+
-    var auth_request = [_]u8{ @intFromEnum(SOCKSVersion.v5), 1, @intFromEnum(SOCKSAuthMethod.no_auth) };
+    const auth_request = [_]u8{ @intFromEnum(SOCKSVersion.v5), 1, @intFromEnum(SOCKSAuthMethod.no_auth) };
 
-    _ = socket.write(&auth_request);
+    // Buffer the write in case it's incomplete
+    this.write_buffer.clearRetainingCapacity();
+    try this.write_buffer.appendSlice(&auth_request);
+    
+    const bytes_written = socket.write(this.write_buffer.items);
+    if (bytes_written != this.write_buffer.items.len) {
+        return error.IncompleteWrite;
+    }
+    
     this.state = .auth_handshake;
 }
 
@@ -87,45 +100,49 @@ pub fn sendConnectRequest(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewH
     // | 1  |  1  | X'00' |  1   | Variable |    2     |
     // +----+-----+-------+------+----------+----------+
 
-    var buffer = std.ArrayList(u8).init(this.allocator);
-    defer buffer.deinit();
+    // Clear and reuse the write buffer
+    this.write_buffer.clearRetainingCapacity();
 
     // Version, Command, Reserved
-    try buffer.appendSlice(&[_]u8{ @intFromEnum(SOCKSVersion.v5), @intFromEnum(SOCKSCommand.connect), 0x00 });
+    try this.write_buffer.appendSlice(&[_]u8{ @intFromEnum(SOCKSVersion.v5), @intFromEnum(SOCKSCommand.connect), 0x00 });
 
     // Address type and address
     if (strings.isIPAddress(this.destination_host)) {
         if (strings.indexOf(this.destination_host, ":")) |_| {
             // IPv6
-            try buffer.append(@intFromEnum(SOCKSAddressType.ipv6));
+            try this.write_buffer.append(@intFromEnum(SOCKSAddressType.ipv6));
             const parsed = std.net.Ip6Address.parse(this.destination_host, 0) catch {
                 return error.InvalidIPv6Address;
             };
-            try buffer.appendSlice(std.mem.asBytes(&parsed.sa.addr));
+            try this.write_buffer.appendSlice(std.mem.asBytes(&parsed.sa.addr));
         } else {
             // IPv4
-            try buffer.append(@intFromEnum(SOCKSAddressType.ipv4));
+            try this.write_buffer.append(@intFromEnum(SOCKSAddressType.ipv4));
             const parsed = std.net.Ip4Address.parse(this.destination_host, 0) catch {
                 return error.InvalidIPv4Address;
             };
-            try buffer.appendSlice(std.mem.asBytes(&parsed.sa.addr));
+            try this.write_buffer.appendSlice(std.mem.asBytes(&parsed.sa.addr));
         }
     } else {
         // Domain name
-        try buffer.append(@intFromEnum(SOCKSAddressType.domain_name));
+        try this.write_buffer.append(@intFromEnum(SOCKSAddressType.domain_name));
         if (this.destination_host.len > 255) {
             return error.DomainNameTooLong;
         }
-        try buffer.append(@intCast(this.destination_host.len));
-        try buffer.appendSlice(this.destination_host);
+        try this.write_buffer.append(@intCast(this.destination_host.len));
+        try this.write_buffer.appendSlice(this.destination_host);
     }
 
     // Port (big-endian)
     const port_bytes = std.mem.toBytes(std.mem.nativeToBig(u16, this.destination_port));
-    try buffer.appendSlice(&port_bytes);
+    try this.write_buffer.appendSlice(&port_bytes);
 
-    // Send the request
-    _ = socket.write(buffer.items);
+    // Send the request with proper buffering
+    const bytes_written = socket.write(this.write_buffer.items);
+    if (bytes_written != this.write_buffer.items.len) {
+        return error.IncompleteWrite;
+    }
+    
     this.state = .connect_request;
 }
 
@@ -228,6 +245,10 @@ pub fn detachAndDeref(this: *SOCKSProxy) void {
 }
 
 fn deinit(this: *SOCKSProxy) void {
+    // Free cloned destination_host memory
+    this.allocator.free(this.destination_host);
+    // Clean up write buffer
+    this.write_buffer.deinit();
     bun.destroy(this);
 }
 

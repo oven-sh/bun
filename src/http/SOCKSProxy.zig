@@ -62,7 +62,7 @@ pub fn create(allocator: std.mem.Allocator, proxy_url: URL, destination_host: []
         .destination_port = destination_port,
         .allocator = allocator,
     });
-    
+
     return socks_proxy;
 }
 
@@ -74,7 +74,7 @@ pub fn sendAuthHandshake(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewHT
     // | 1  |    1     | 1 to 255 |
     // +----+----------+----------+
     var auth_request = [_]u8{ @intFromEnum(SOCKSVersion.v5), 1, @intFromEnum(SOCKSAuthMethod.no_auth) };
-    
+
     _ = socket.write(&auth_request);
     this.state = .auth_handshake;
 }
@@ -136,45 +136,45 @@ pub fn handleData(this: *SOCKSProxy, client: *HTTPClient, data: []const u8, comp
             if (data.len < 2) {
                 return error.IncompleteSOCKSResponse;
             }
-            
+
             const version = data[0];
             const method = data[1];
-            
+
             if (version != @intFromEnum(SOCKSVersion.v5)) {
                 return error.UnsupportedSOCKSVersion;
             }
-            
+
             if (method == @intFromEnum(SOCKSAuthMethod.no_acceptable)) {
                 return error.SOCKSAuthenticationFailed;
             }
-            
+
             if (method == @intFromEnum(SOCKSAuthMethod.no_auth)) {
                 this.state = .auth_complete;
                 try this.sendConnectRequest(is_ssl, socket);
             } else {
                 return error.UnsupportedSOCKSAuthMethod;
             }
-            
+
             return true; // Data was consumed by SOCKS handshake
         },
         .connect_request => {
             if (data.len < 4) {
                 return error.IncompleteSOCKSResponse;
             }
-            
+
             const version = data[0];
             const reply = data[1];
             // data[2] is reserved
             const atyp = data[3];
-            
+
             if (version != @intFromEnum(SOCKSVersion.v5)) {
                 return error.UnsupportedSOCKSVersion;
             }
-            
+
             if (reply != @intFromEnum(SOCKSReply.succeeded)) {
                 return error.SOCKSConnectionFailed;
             }
-            
+
             // Parse the bound address (we don't need it, but need to skip it)
             var offset: usize = 4;
             switch (atyp) {
@@ -187,22 +187,22 @@ pub fn handleData(this: *SOCKSProxy, client: *HTTPClient, data: []const u8, comp
                 else => return error.UnsupportedSOCKSAddressType,
             }
             offset += 2; // port
-            
+
             if (data.len < offset) {
                 return error.IncompleteSOCKSResponse;
             }
-            
+
             this.state = .connected;
             log("SOCKS proxy connected successfully", .{});
-            
+
             // SOCKS handshake complete, HTTP traffic can now flow through the tunnel
             // Don't change proxy_tunneling flag - let the normal flow handle it
-            
+
             // If there's any remaining data after the SOCKS response, process it as HTTP
             if (data.len > offset) {
                 return false; // Let HTTP client process remaining data
             }
-            
+
             return true; // Data was consumed by SOCKS handshake
         },
         .connected => {

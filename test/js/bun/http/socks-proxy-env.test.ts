@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { spawn, type ChildProcess } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 describe("SOCKS proxy environment variables", () => {
   let mockSocksServer: ChildProcess;
@@ -13,7 +13,10 @@ describe("SOCKS proxy environment variables", () => {
 
     // Start a mock SOCKS5 server for testing
     mockSocksServer = spawn({
-      cmd: ["node", "-e", `
+      cmd: [
+        "node",
+        "-e",
+        `
         const net = require('net');
         const server = net.createServer((socket) => {
           console.log('SOCKS connection received');
@@ -52,7 +55,8 @@ describe("SOCKS proxy environment variables", () => {
         server.listen(${socksPort}, () => {
           console.log('Mock SOCKS server listening on port ${socksPort}');
         });
-      `],
+      `,
+      ],
       stdout: "inherit",
       stderr: "inherit",
     });
@@ -80,12 +84,12 @@ describe("SOCKS proxy environment variables", () => {
 
   test("should connect through SOCKS5 proxy via http_proxy environment variable", async () => {
     const originalProxy = process.env.http_proxy;
-    
+
     try {
       process.env.http_proxy = `socks5://127.0.0.1:${socksPort}`;
-      
+
       const response = await fetch(`http://127.0.0.1:${httpPort}/test`);
-      
+
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("Hello from HTTP server via SOCKS");
     } finally {
@@ -99,12 +103,12 @@ describe("SOCKS proxy environment variables", () => {
 
   test("should connect through SOCKS5h proxy via http_proxy environment variable", async () => {
     const originalProxy = process.env.http_proxy;
-    
+
     try {
       process.env.http_proxy = `socks5h://127.0.0.1:${socksPort}`;
-      
+
       const response = await fetch(`http://localhost:${httpPort}/test`);
-      
+
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("Hello from HTTP server via SOCKS");
     } finally {

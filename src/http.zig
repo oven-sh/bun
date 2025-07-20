@@ -1310,7 +1310,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
 
 fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, start_payload: []const u8) void {
     log("startProxyHandshake", .{});
-    
+
     if (this.http_proxy) |proxy| {
         if (proxy.isSOCKS()) {
             // Start SOCKS proxy handshake

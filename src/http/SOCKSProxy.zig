@@ -88,7 +88,7 @@ pub fn sendAuthHandshake(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewHT
     this.write_buffer.clearRetainingCapacity();
     this.write_buffer.appendSlice(&auth_request) catch return;
     this.write_offset = 0;
-    
+
     this.flushWriteBuffer(is_ssl, socket);
 }
 
@@ -98,13 +98,13 @@ fn flushWriteBuffer(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewHTTPCon
         this.completeWrite();
         return;
     }
-    
+
     const remaining = this.write_buffer.items[this.write_offset..];
     const bytes_written = socket.write(remaining);
-    
+
     if (bytes_written > 0) {
         this.write_offset += @intCast(bytes_written);
-        
+
         if (this.write_offset >= this.write_buffer.items.len) {
             // All data has been written
             this.completeWrite();

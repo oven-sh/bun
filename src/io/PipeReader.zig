@@ -856,9 +856,7 @@ pub const WindowsBufferedReader = struct {
 
     pub fn getReadBufferWithStableMemoryAddress(this: *WindowsBufferedReader, suggested_size: usize) []u8 {
         this.flags.has_inflight_read = true;
-        this._buffer.ensureUnusedCapacity(suggested_size) catch bun.outOfMemory();
-        const res = this._buffer.allocatedSlice()[this._buffer.items.len..];
-        return res;
+        return bun.default_allocator.alloc(u8, suggested_size) catch bun.outOfMemory();
     }
 
     pub fn startWithCurrentPipe(this: *WindowsBufferedReader) bun.JSC.Maybe(void) {
@@ -921,7 +919,8 @@ pub const WindowsBufferedReader = struct {
     fn onStreamRead(handle: *uv.uv_handle_t, nread: uv.ReturnCodeI64, buf: *const uv.uv_buf_t) callconv(.C) void {
         const stream = bun.cast(*uv.uv_stream_t, handle);
         var this = bun.cast(*WindowsBufferedReader, stream.data);
-
+        var to_free = buf.base[0..buf.len];
+        defer bun.default_allocator.free(to_free);
         const nread_int = nread.int();
 
         bun.sys.syslog("onStreamRead(0x{d}) = {d}", .{ @intFromPtr(this), nread_int });
@@ -946,8 +945,13 @@ pub const WindowsBufferedReader = struct {
                 }
                 // we got some data we can slice the buffer!
                 const len: usize = @intCast(nread_int);
-                var slice = buf.slice();
-                this.onRead(.{ .result = len }, slice[0..len], .progress);
+
+                // Append the data, ensure we free the uv_buf_t before calling into onRead.
+                this.buffer().appendSlice(to_free[0..len]) catch bun.outOfMemory();
+                bun.default_allocator.free(to_free);
+                to_free = &.{};
+
+                this.onRead(.{ .result = len }, this.buffer().items[this.buffer().items.len - len ..], .progress);
             },
         }
     }
@@ -956,11 +960,25 @@ pub const WindowsBufferedReader = struct {
         const result = fs.result;
         const nread_int = result.int();
         bun.sys.syslog("onFileRead({}) = {d}", .{ bun.FD.fromUV(fs.file.fd), nread_int });
+        var buffer_to_free: []u8 = &.{};
+        defer bun.default_allocator.free(buffer_to_free);
+        var this: *WindowsBufferedReader = bun.cast(*WindowsBufferedReader, fs.data);
+
+        if (this.source) |*source| {
+            if (source.* == .file) {
+                buffer_to_free = source.file.iov.slice();
+                source.file.iov = .{
+                    .base = undefined,
+                    .len = 0,
+                };
+            }
+        }
+
         if (nread_int == uv.UV_ECANCELED) {
             fs.deinit();
             return;
         }
-        var this: *WindowsBufferedReader = bun.cast(*WindowsBufferedReader, fs.data);
+
         fs.deinit();
         if (this.flags.is_done) return;
 
@@ -988,6 +1006,12 @@ pub const WindowsBufferedReader = struct {
                                 const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
                                 file.iov = uv.uv_buf_t.init(buf);
                                 if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
+                                    bun.default_allocator.free(buf);
+                                    file.iov = .{
+                                        .base = undefined,
+                                        .len = 0,
+                                    };
+
                                     this.flags.is_paused = true;
                                     // we should inform the error if we are unable to keep reading
                                     this.onRead(.{ .err = err }, "", .progress);
@@ -1000,14 +1024,17 @@ pub const WindowsBufferedReader = struct {
                 const len: usize = @intCast(nread_int);
                 this._offset += len;
                 // we got some data lets get the current iov
-                if (this.source) |source| {
-                    if (source == .file) {
-                        var buf = source.file.iov.slice();
-                        return this.onRead(.{ .result = len }, buf[0..len], .progress);
+                if (this.source) |*source| {
+                    if (source.* == .file) {
+                        // Append the data, ensure we free the uv_buf_t before calling into onRead.
+                        this.buffer().appendSlice(buffer_to_free[0..len]) catch bun.outOfMemory();
+                        bun.default_allocator.free(buffer_to_free);
+                        buffer_to_free = &.{};
+
+                        return this.onRead(.{ .result = len }, this.buffer().items[this.buffer().items.len - len ..], .progress);
                     }
                 }
-                // ops we should not hit this lets fail with EPIPE
-                bun.assert(false);
+
                 return this.onRead(.{ .err = bun.sys.Error.fromCode(bun.sys.E.PIPE, .read) }, "", .progress);
             },
         }

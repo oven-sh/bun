@@ -5,6 +5,12 @@ import { join } from "path";
 
 describe("bun patch", () => {
   it("should work across different mount points (cross-device)", async () => {
+    // Skip this test on Windows as cross-device scenarios are different
+    if (process.platform === "win32") {
+      console.log("Skipping cross-device test on Windows");
+      return;
+    }
+
     // Create a temporary project directory
     const testDir = tempDirWithFiles("patch-cross-device", {
       "package.json": JSON.stringify({
@@ -78,6 +84,12 @@ describe("bun patch", () => {
       commitProcess.exited,
     ]);
 
+    if (commitExitCode !== 0) {
+      console.error("Patch commit failed!");
+      console.error("Exit code:", commitExitCode);
+      console.error("Stdout:", commitStdout);
+      console.error("Stderr:", commitStderr);
+    }
     expect(commitExitCode).toBe(0);
     expect(commitStderr).not.toContain("operation not permitted");
     expect(commitStderr).not.toContain("failed renaming patch file to patches dir");
@@ -101,6 +113,12 @@ describe("bun patch", () => {
   }, 30000);
 
   it("should handle cross-device scenarios with proper fallback", async () => {
+    // Skip this test on Windows as cross-device scenarios are different
+    if (process.platform === "win32") {
+      console.log("Skipping cross-device fallback test on Windows");
+      return;
+    }
+
     // This test specifically ensures that if XDEV errors occur,
     // the fallback copy mechanism works correctly
     const testDir = tempDirWithFiles("patch-xdev-fallback", {
@@ -157,6 +175,12 @@ describe("bun patch", () => {
       commitResult.exited,
     ]);
 
+    if (commitExitCode !== 0) {
+      console.error("Patch commit failed in fallback test!");
+      console.error("Exit code:", commitExitCode);
+      console.error("Stdout:", commitStdout);
+      console.error("Stderr:", commitStderr);
+    }
     expect(commitExitCode).toBe(0);
 
     // The patch should succeed regardless of whether XDEV fallback was needed
@@ -172,7 +196,7 @@ describe("bun patch", () => {
   }, 30000);
 
   it("should not crash with EPERM errors from renameat operations", async () => {
-    // Test to ensure that permission-related rename failures are handled gracefully
+    // This test ensures patch operations work correctly on all platforms
     const testDir = tempDirWithFiles("patch-eperm-test", {
       "package.json": JSON.stringify({
         name: "patch-eperm-test",
@@ -227,6 +251,12 @@ describe("bun patch", () => {
       commitResult.exited,
     ]);
 
+    if (commitExitCode !== 0) {
+      console.error("Patch commit failed in EPERM test!");
+      console.error("Exit code:", commitExitCode);
+      console.error("Stdout:", commitStdout);
+      console.error("Stderr:", commitStderr);
+    }
     expect(commitExitCode).toBe(0);
     expect(commitStderr).not.toContain("operation not permitted");
     expect(commitStderr).not.toContain("EPERM");

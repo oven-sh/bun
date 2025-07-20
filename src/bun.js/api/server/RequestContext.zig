@@ -1767,30 +1767,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         if (this.method == .HEAD or this.method == .GET) {
                             if (status_code != 200 or headers_ref != null) {
                                 if (route_ptr.data.state == .html) {
-                                    var temp = StaticRoute.initFromAnyBlob(&route_ptr.data.state.html.blob, .{
-                                        .server = route_ptr.data.server,
-                                        .status_code = status_code,
-                                        .headers = headers_ref,
-                                    });
-                                    defer temp.deref();
-                                    temp.onWithMethod(this.method, resp_any);
-                                    if (headers_ref) |h| h.deref();
+                                    this.sendHtmlRoute(route_ptr.data.state.html, resp_any, status_code, headers_ref);
                                 } else {
-                                    const pending = bun.new(HTMLBundle.Route.PendingResponse, .{
-                                        .method = this.method,
-                                        .resp = resp_any,
-                                        .server = route_ptr.data.server,
-                                        .route = route_ptr.data,
-                                        .status_code = status_code,
-                                        .headers = headers_ref,
-                                    });
-                                    route_ptr.data.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
-                                    route_ptr.data.ref();
-                                    resp_any.onAborted(*HTMLBundle.Route.PendingResponse, HTMLBundle.Route.PendingResponse.onAborted, pending);
-                                    this.flags.has_marked_pending = true;
-                                    if (route_ptr.data.state == .pending) {
-                                        route_ptr.data.scheduleBundle(route_ptr.data.server.?) catch bun.outOfMemory();
-                                    }
+                                    this.addPendingRoute(route_ptr.data, resp_any, status_code, headers_ref);
                                 }
                                 return;
                             }
@@ -1806,22 +1785,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                     switch (route_ptr.data.state) {
                         .html => |html| {
-                            if (status_code != 200 or headers_ref != null) {
-                                var temp = StaticRoute.initFromAnyBlob(&html.blob, .{
-                                    .server = route_ptr.data.server,
-                                    .status_code = status_code,
-                                    .headers = headers_ref,
-                                });
-                                defer temp.deref();
-                                temp.onWithMethod(this.method, resp_any);
-                                if (headers_ref) |h| h.deref();
-                            } else if (this.method == .HEAD) {
-                                html.onHEAD(resp_any);
-                            } else {
-                                html.on(resp_any);
-                            }
+                            this.sendHtmlRoute(html, resp_any, status_code, headers_ref);
                         },
                         .err => |log| {
+                            if (bun.Environment.enable_logs)
+                                ctxLog("HTML route build failed", .{});
                             if (srv.config.isDevelopment()) {
                                 _ = log;
                             }
@@ -1829,22 +1797,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             resp_any.endWithoutBody(false);
                         },
                         else => {
-                            const pending = bun.new(HTMLBundle.Route.PendingResponse, .{
-                                .method = this.method,
-                                .resp = resp_any,
-                                .server = route_ptr.data.server,
-                                .route = route_ptr.data,
-                                .status_code = status_code,
-                                .headers = headers_ref,
-                            });
-                            route_ptr.data.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
-                            route_ptr.data.ref();
-                            resp_any.onAborted(*HTMLBundle.Route.PendingResponse, HTMLBundle.Route.PendingResponse.onAborted, pending);
-                            this.flags.has_marked_pending = true;
-                            if (route_ptr.data.state == .pending) {
-                                route_ptr.data.scheduleBundle(route_ptr.data.server.?) catch bun.outOfMemory();
-                            }
-                        },
+                            this.addPendingRoute(route_ptr.data, resp_any, status_code, headers_ref);
+                        }
                     }
                     return;
                 },
@@ -2545,6 +2499,49 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return true;
             }
             return false;
+        }
+
+        fn sendHtmlRoute(this: *RequestContext, html: *StaticRoute, resp_any: uws.AnyResponse, status_code: u16, headers_ref: ?*FetchHeaders) void {
+            if (bun.Environment.enable_logs)
+                ctxLog("sendHtmlRoute status={d} method={s}", .{ status_code, @tagName(this.method) });
+
+            if (status_code != 200 or headers_ref != null) {
+                var temp = StaticRoute.initFromAnyBlob(&html.blob, .{ .server = html.server, .status_code = status_code, .headers = headers_ref });
+
+                defer temp.deref();
+                temp.onWithMethod(this.method, resp_any);
+                if (headers_ref) |h| h.deref();
+            } else if (this.method == .HEAD) {
+                html.onHEAD(resp_any);
+            } else {
+                html.on(resp_any);
+            }
+        }
+
+        fn addPendingRoute(
+            this: *RequestContext,
+            route: *HTMLBundle.Route,
+            resp_any: uws.AnyResponse,
+            status_code: u16,
+            headers_ref: ?*FetchHeaders,
+        ) void {
+            if (bun.Environment.enable_logs)
+                ctxLog("pending HTML route state={s} status={d}", .{ @tagName(route.state), status_code });
+            const pending = bun.new(HTMLBundle.Route.PendingResponse, .{
+                .method = this.method,
+                .resp = resp_any,
+                .server = route.server,
+                .route = route,
+                .status_code = status_code,
+                .headers = headers_ref,
+            });
+            route.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
+            route.ref();
+            resp_any.onAborted(*HTMLBundle.Route.PendingResponse, HTMLBundle.Route.PendingResponse.onAborted, pending);
+            this.flags.has_marked_pending = true;
+            if (route.state == .pending) {
+                route.scheduleBundle(route.server.?) catch bun.outOfMemory();
+            }
         }
 
         comptime {

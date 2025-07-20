@@ -1764,13 +1764,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     }
 
                     if (this.req) |req| {
+                        if (route_ptr.data.state == .html) {
+                            this.sendHtmlRoute(route_ptr.data.state.html, resp_any, status_code, headers_ref);
+                            return;
+                        }
                         if (this.method == .HEAD or this.method == .GET) {
                             if (status_code != 200 or headers_ref != null) {
-                                if (route_ptr.data.state == .html) {
-                                    this.sendHtmlRoute(route_ptr.data.state.html, resp_any, status_code, headers_ref);
-                                } else {
-                                    this.addPendingRoute(route_ptr.data, resp_any, status_code, headers_ref);
-                                }
+                                this.addPendingRoute(route_ptr.data, resp_any, status_code, headers_ref);
                                 return;
                             }
                         }

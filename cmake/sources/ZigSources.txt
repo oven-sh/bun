@@ -546,6 +546,7 @@ src/http/MimeType.zig
 src/http/ProxyTunnel.zig
 src/http/SendFile.zig
 src/http/Signals.zig
+src/http/SOCKSProxy.zig
 src/http/ThreadSafeStreamBuffer.zig
 src/http/URLPath.zig
 src/http/websocket_client.zig

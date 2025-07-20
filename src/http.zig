@@ -200,6 +200,11 @@ pub fn onClose(
         tunnel.shutdown();
         tunnel.detachAndDeref();
     }
+    if (client.socks_proxy) |socks| {
+        client.socks_proxy = null;
+        socks.shutdown();
+        socks.detachAndDeref();
+    }
     const in_progress = client.state.stage != .done and client.state.stage != .fail and client.state.flags.is_redirect_pending == false;
     if (client.state.flags.is_redirect_pending) {
         // if the connection is closed and we are pending redirect just do the redirect
@@ -433,6 +438,7 @@ request_content_len_buf: ["-4294967295".len]u8 = undefined,
 http_proxy: ?URL = null,
 proxy_authorization: ?[]u8 = null,
 proxy_tunnel: ?*ProxyTunnel = null,
+socks_proxy: ?*SOCKSProxy = null,
 signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
@@ -451,6 +457,10 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
     }
+    if (this.socks_proxy) |socks| {
+        this.socks_proxy = null;
+        socks.detachAndDeref();
+    }
     this.unix_socket_path.deinit();
     this.unix_socket_path = JSC.ZigString.Slice.empty;
 }
@@ -460,7 +470,7 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
         // TODO keepalive for unix sockets
         if (this.unix_socket_path.length() > 0) return false;
         // is not possible to reuse Proxy with TSL, so disable keepalive if url is tunneling HTTPS
-        if (this.proxy_tunnel != null or (this.http_proxy != null and this.url.isHTTPS())) {
+        if (this.proxy_tunnel != null or this.socks_proxy != null or (this.http_proxy != null and this.url.isHTTPS())) {
             log("Keep-Alive release (proxy tunneling https)", .{});
             return false;
         }
@@ -708,6 +718,14 @@ pub fn doRedirect(
             log("close socket in redirect", .{});
             NewHTTPContext(is_ssl).closeSocket(socket);
         }
+    } else if (this.socks_proxy) |socks| {
+        log("close the socks proxy in redirect", .{});
+        this.socks_proxy = null;
+        socks.detachAndDeref();
+        if (!socket.isClosed()) {
+            log("close socket in redirect", .{});
+            NewHTTPContext(is_ssl).closeSocket(socket);
+        }
     } else {
         // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
         if (this.isKeepAlivePossible()) {
@@ -738,6 +756,10 @@ pub fn doRedirect(
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
+    }
+    if (this.socks_proxy) |socks| {
+        this.socks_proxy = null;
+        socks.detachAndDeref();
     }
 
     return this.start(.{ .bytes = request_body }, body_out_str);
@@ -883,8 +905,13 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
 
     const request = this.buildRequest(this.state.original_request_body.len());
 
-    if (this.http_proxy) |_| {
-        if (this.url.isHTTPS()) {
+    if (this.http_proxy) |proxy| {
+        if (proxy.isSOCKS()) {
+            log("start SOCKS proxy tunneling", .{});
+            // SOCKS proxy - always requires tunneling regardless of target protocol
+            this.flags.proxy_tunneling = true;
+            // Don't write any HTTP headers yet - SOCKS handshake happens first
+        } else if (this.url.isHTTPS()) {
             log("start proxy tunneling (https proxy)", .{});
             //DO the tunneling!
             this.flags.proxy_tunneling = true;
@@ -1283,9 +1310,23 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
 
 fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, start_payload: []const u8) void {
     log("startProxyHandshake", .{});
-    // if we have options we pass them (ca, reject_unauthorized, etc) otherwise use the default
-    const ssl_options = if (this.tls_props != null) this.tls_props.?.* else JSC.API.ServerConfig.SSLConfig.zero;
-    ProxyTunnel.start(this, is_ssl, socket, ssl_options, start_payload);
+    
+    if (this.http_proxy) |proxy| {
+        if (proxy.isSOCKS()) {
+            // Start SOCKS proxy handshake
+            this.socks_proxy = SOCKSProxy.create(this.allocator, proxy, this.url.hostname, this.url.getPortAuto()) catch |err| {
+                this.closeAndFail(err, is_ssl, socket);
+                return;
+            };
+            if (this.socks_proxy) |socks| {
+                socks.sendAuthHandshake(is_ssl, socket);
+            }
+        } else {
+            // HTTP proxy - use existing ProxyTunnel
+            const ssl_options = if (this.tls_props != null) this.tls_props.?.* else JSC.API.ServerConfig.SSLConfig.zero;
+            ProxyTunnel.start(this, is_ssl, socket, ssl_options, start_payload);
+        }
+    }
 }
 
 inline fn handleShortRead(
@@ -1399,10 +1440,22 @@ pub fn handleOnDataHeaders(
         return;
     }
 
-    if (this.flags.proxy_tunneling and this.proxy_tunnel == null) {
+    if (this.flags.proxy_tunneling and this.proxy_tunnel == null and this.socks_proxy == null) {
         // we are proxing we dont need to cloneMetadata yet
         this.startProxyHandshake(is_ssl, socket, body_buf);
         return;
+    }
+
+    // Handle SOCKS proxy data
+    if (this.socks_proxy) |socks| {
+        const consumed = socks.handleData(this, body_buf, is_ssl, socket) catch |err| {
+            this.closeAndFail(err, is_ssl, socket);
+            return;
+        };
+        if (consumed) {
+            return; // SOCKS handshake consumed the data
+        }
+        // Fall through to normal HTTP processing if SOCKS proxy is connected
     }
 
     // we have body data incoming so we clone metadata and keep going
@@ -1537,6 +1590,11 @@ fn fail(this: *HTTPClient, err: anyerror) void {
         // always detach the socket from the tunnel in case of fail
         tunnel.detachAndDeref();
     }
+    if (this.socks_proxy) |socks| {
+        this.socks_proxy = null;
+        socks.shutdown();
+        socks.detachAndDeref();
+    }
     if (this.state.stage != .done and this.state.stage != .fail) {
         this.state.request_stage = .fail;
         this.state.response_stage = .fail;
@@ -1622,6 +1680,15 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
                 this.proxy_tunnel = null;
                 tunnel.shutdown();
                 tunnel.detachAndDeref();
+                if (!socket.isClosed()) {
+                    log("close socket", .{});
+                    NewHTTPContext(is_ssl).closeSocket(socket);
+                }
+            } else if (this.socks_proxy) |socks| {
+                log("close the socks proxy", .{});
+                this.socks_proxy = null;
+                socks.shutdown();
+                socks.detachAndDeref();
                 if (!socket.isClosed()) {
                     log("close socket", .{});
                     NewHTTPContext(is_ssl).closeSocket(socket);
@@ -2159,7 +2226,7 @@ pub fn handleResponseMetadata(
         }
     }
 
-    if (this.flags.proxy_tunneling and this.proxy_tunnel == null) {
+    if (this.flags.proxy_tunneling and this.proxy_tunnel == null and this.socks_proxy == null) {
         if (response.status_code == 200) {
             // signal to continue the proxing
             return ShouldContinue.continue_streaming;
@@ -2452,6 +2519,7 @@ const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
 const uws = bun.uws;
 const HTTPCertError = @import("./http/HTTPCertError.zig");
 const ProxyTunnel = @import("./http/ProxyTunnel.zig");
+const SOCKSProxy = @import("./http/SOCKSProxy.zig");
 pub const Headers = @import("./http/Headers.zig");
 pub const MimeType = @import("./http/MimeType.zig");
 pub const URLPath = @import("./http/URLPath.zig");

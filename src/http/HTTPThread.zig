@@ -263,6 +263,9 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                 if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
                     return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
                 }
+                if (url.isSOCKS()) {
+                    return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+                }
                 return error.UnsupportedProxyProtocol;
             }
             return try custom_context.connect(client, client.url.hostname, client.url.getPortAuto());
@@ -272,6 +275,9 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
         if (url.href.len > 0) {
             // https://github.com/oven-sh/bun/issues/11343
             if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
+                return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+            }
+            if (url.isSOCKS()) {
                 return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
             }
             return error.UnsupportedProxyProtocol;

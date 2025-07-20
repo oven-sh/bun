@@ -482,11 +482,12 @@ pub fn runTasks(
         manager.decrementPendingTasks();
 
         if (task.log.msgs.items.len > 0) {
-            try task.log.print(Output.errorWriter());
+            // Append task log to manager log instead of printing directly
+            // This avoids race conditions when multiple tasks complete simultaneously
+            try task.log.appendTo(manager.log);
             if (task.log.errors > 0) {
                 manager.any_failed_to_install = true;
             }
-            task.log.deinit();
         }
 
         switch (task.tag) {
@@ -857,6 +858,12 @@ pub fn runTasks(
                 }
             },
         }
+    }
+    
+    // Print any accumulated logs from tasks to avoid race conditions
+    if (manager.log.msgs.items.len > 0) {
+        manager.log.print(Output.errorWriter()) catch {};
+        manager.log.reset();
     }
 }
 

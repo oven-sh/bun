@@ -99,14 +99,18 @@ describe("yarn.lock migration", () => {
           tempFiles["yarn.lock"] = fs.readFileSync(join(originalDir, "yarn.lock"), "utf8");
         }
 
-        // Copy the tarball file
-        if (fs.existsSync(join(originalDir, "abbrev-1.1.1.tgz"))) {
-          const tarballContent = fs.readFileSync(join(originalDir, "abbrev-1.1.1.tgz"));
-          // We can't copy binary files this way, so let's skip the tarball test for now
-        }
+        // We'll copy the tarball file after creating the temp directory
       }
 
       const tempDir = tempDirWithFiles(`yarn-migration-${testDir}`, tempFiles);
+
+      // Copy binary files (like tarballs) after temp directory creation  
+      if (testDir === "yarn-stuff") {
+        const tarballPath = join(originalDir, "abbrev-1.1.1.tgz");
+        if (fs.existsSync(tarballPath)) {
+          fs.copyFileSync(tarballPath, join(tempDir, "abbrev-1.1.1.tgz"));
+        }
+      }
 
       console.log(`Testing ${testDir} in ${tempDir}`);
 
@@ -179,10 +183,14 @@ describe("yarn.lock migration", () => {
         expect(bunVersions[packageName]).toBe(yarnVersion);
       }
 
-      // Also verify that bun didn't install extra packages
-      for (const [packageName, bunVersion] of Object.entries(bunVersions)) {
-        if (!yarnVersions[packageName]) {
-          console.warn(`Bun installed extra package: ${packageName}@${bunVersion}`);
+      // For file dependencies, Bun may install additional transitive dependencies
+      // This is expected behavior and not an error
+      if (testDir !== "yarn-lock-mkdirp-file-dep" && testDir !== "yarn-stuff") {
+        // Also verify that bun didn't install extra packages (for non-file dependency tests)
+        for (const [packageName, bunVersion] of Object.entries(bunVersions)) {
+          if (!yarnVersions[packageName]) {
+            console.warn(`Bun installed extra package: ${packageName}@${bunVersion}`);
+          }
         }
       }
     }, 60000); // 60 second timeout for each test

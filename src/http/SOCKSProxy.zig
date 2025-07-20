@@ -58,7 +58,7 @@ const SOCKSReply = enum(u8) {
 pub fn create(allocator: std.mem.Allocator, proxy_url: URL, destination_host: []const u8, destination_port: u16) !*SOCKSProxy {
     // Clone the destination_host to ensure memory safety
     const cloned_host = try allocator.dupe(u8, destination_host);
-    
+
     const socks_proxy = bun.new(SOCKSProxy, .{
         .ref_count = .init(),
         .proxy_url = proxy_url,
@@ -83,12 +83,12 @@ pub fn sendAuthHandshake(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewHT
     // Buffer the write in case it's incomplete
     this.write_buffer.clearRetainingCapacity();
     try this.write_buffer.appendSlice(&auth_request);
-    
+
     const bytes_written = socket.write(this.write_buffer.items);
     if (bytes_written != this.write_buffer.items.len) {
         return error.IncompleteWrite;
     }
-    
+
     this.state = .auth_handshake;
 }
 
@@ -142,7 +142,7 @@ pub fn sendConnectRequest(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewH
     if (bytes_written != this.write_buffer.items.len) {
         return error.IncompleteWrite;
     }
-    
+
     this.state = .connect_request;
 }
 

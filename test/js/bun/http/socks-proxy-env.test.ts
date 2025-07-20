@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 describe("SOCKS proxy environment variables", () => {
   test("should read SOCKS proxy from http_proxy environment variable", async () => {

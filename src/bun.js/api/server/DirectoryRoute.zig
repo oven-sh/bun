@@ -214,7 +214,11 @@ fn serveFile(this: *DirectoryRoute, req: *uws.Request, resp: AnyResponse, method
     defer bun.default_allocator.free(full_path);
     
     // Create a PathOrFileDescriptor from the full path
-    const path_or_fd = JSC.Node.PathOrFileDescriptor{ .path = .{ .slice_with_underlying_string = bun.SliceWithUnderlyingString.fromUTF8(full_path) } };
+    const path_or_fd = JSC.Node.PathOrFileDescriptor{
+        .path = JSC.Node.PathLike{
+            .string = bun.PathString.init(full_path),
+        },
+    };
     
     // Create a blob from the file path
     const store = Blob.Store.initFile(path_or_fd, null, bun.default_allocator) catch {

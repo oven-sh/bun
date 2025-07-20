@@ -245,7 +245,6 @@ linker = "hoisted"
 
 ## CI/CD
 
-
 Use the official [`oven-sh/setup-bun`](https://github.com/oven-sh/setup-bun) action to install `bun` in a GitHub Actions pipeline:
 
 ```yaml#.github/workflows/release.yml
@@ -291,7 +290,5 @@ jobs:
       - name: Build app
         run: bun run build
 ```
-
-
 
 {% bunCLIUsage command="install" /%}

@@ -26,7 +26,7 @@ pub const InstallCompletionsCommand = struct {
 
         // Check and update bunx symlinks in both PATH and same directory as bun executable
         var found_correct_symlink = false;
-        
+
         // Check if bunx exists in PATH and update if stale
         if (bun.which(&buf, bun.getenvZ("PATH") orelse cwd, cwd, bunx_name)) |existing_bunx_path| {
             var link_target_buf: bun.PathBuffer = undefined;

@@ -21,45 +21,86 @@ pub const InstallCompletionsCommand = struct {
 
     fn installBunxSymlinkPosix(cwd: []const u8) !void {
         var buf: bun.PathBuffer = undefined;
-
-        // don't install it if it's already there
-        if (bun.which(&buf, bun.getenvZ("PATH") orelse cwd, cwd, bunx_name) != null)
-            return;
-
-        // first try installing the symlink into the same directory as the bun executable
         const exe = try bun.selfExePath();
         var target_buf: bun.PathBuffer = undefined;
-        var target = std.fmt.bufPrint(&target_buf, "{s}/" ++ bunx_name, .{std.fs.path.dirname(exe).?}) catch unreachable;
-        std.posix.symlink(exe, target) catch {
-            outer: {
+
+        // Check and update bunx symlinks in both PATH and same directory as bun executable
+        var found_correct_symlink = false;
+        
+        // Check if bunx exists in PATH and update if stale
+        if (bun.which(&buf, bun.getenvZ("PATH") orelse cwd, cwd, bunx_name)) |existing_bunx_path| {
+            var link_target_buf: bun.PathBuffer = undefined;
+            switch (bun.sys.readlink(existing_bunx_path, &link_target_buf)) {
+                .result => |link_target| {
+                    if (strings.eql(link_target, exe)) {
+                        found_correct_symlink = true;
+                    } else {
+                        // Remove stale symlink so we can create a new one
+                        _ = bun.sys.unlink(existing_bunx_path);
+                    }
+                },
+                .err => {
+                    // If readlink fails, remove the existing file
+                    _ = bun.sys.unlink(existing_bunx_path);
+                },
+            }
+        }
+
+        // Check if bunx exists in the same directory as bun executable and update if stale
+        var target = std.fmt.bufPrintZ(&target_buf, "{s}/" ++ bunx_name, .{std.fs.path.dirname(exe).?}) catch unreachable;
+        var same_dir_is_correct = false;
+        {
+            var link_target_buf: bun.PathBuffer = undefined;
+            switch (bun.sys.readlink(target, &link_target_buf)) {
+                .result => |link_target| {
+                    if (strings.eql(link_target, exe)) {
+                        same_dir_is_correct = true;
+                    } else {
+                        // Remove stale symlink so we can create a new one
+                        _ = bun.sys.unlink(target);
+                    }
+                },
+                .err => {
+                    // If readlink fails (file doesn't exist or isn't a symlink), we'll create one
+                },
+            }
+        }
+
+        // If both symlinks are correct, no need to create new ones
+        if (found_correct_symlink and same_dir_is_correct) {
+            return;
+        }
+
+        // First try installing the symlink into the same directory as the bun executable
+        switch (bun.sys.symlink(exe, target)) {
+            .result => {},
+            .err => {
                 if (bun.getenvZ("BUN_INSTALL")) |install_dir| {
-                    target = std.fmt.bufPrint(&target_buf, "{s}/bin/" ++ bunx_name, .{install_dir}) catch unreachable;
-                    std.posix.symlink(exe, target) catch break :outer;
-                    return;
+                    target = std.fmt.bufPrintZ(&target_buf, "{s}/bin/" ++ bunx_name, .{install_dir}) catch unreachable;
+                    switch (bun.sys.symlink(exe, target)) {
+                        .result => return,
+                        .err => {},
+                    }
                 }
-            }
 
-            // if that fails, try $HOME/.bun/bin
-            outer: {
+                // if that fails, try $HOME/.bun/bin
                 if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
-                    target = std.fmt.bufPrint(&target_buf, "{s}/.bun/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
-                    std.posix.symlink(exe, target) catch break :outer;
-                    return;
+                    target = std.fmt.bufPrintZ(&target_buf, "{s}/.bun/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
+                    switch (bun.sys.symlink(exe, target)) {
+                        .result => return,
+                        .err => {},
+                    }
                 }
-            }
 
-            // if that fails, try $HOME/.local/bin
-            outer: {
+                // if that fails, try $HOME/.local/bin
                 if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
-                    target = std.fmt.bufPrint(&target_buf, "{s}/.local/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
-                    std.posix.symlink(exe, target) catch break :outer;
-                    return;
+                    target = std.fmt.bufPrintZ(&target_buf, "{s}/.local/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
+                    _ = bun.sys.symlink(exe, target);
                 }
-            }
 
-            // otherwise...give up?
-
-        };
+                // otherwise...give up?
+            },
+        }
     }
 
     fn installBunxSymlinkWindows(_: []const u8) !void {
@@ -71,6 +112,7 @@ pub const InstallCompletionsCommand = struct {
 
         var bunx_path_buf: bun.WPathBuffer = undefined;
 
+        // Always delete both .cmd and .exe versions first to ensure clean state
         std.os.windows.DeleteFile(try bun.strings.concatBufT(u16, &bunx_path_buf, .{
             &bun.windows.nt_object_prefix,
             image_dirname,
@@ -85,14 +127,15 @@ pub const InstallCompletionsCommand = struct {
         const bunx_path = bunx_path_with_z[0 .. bunx_path_with_z.len - 1 :0];
         std.os.windows.DeleteFile(bunx_path, .{ .dir = null }) catch {};
 
+        // Force recreation of hardlink to ensure it points to current bun.exe
         if (bun.windows.CreateHardLinkW(bunx_path, image_path, null) == 0) {
-            // if hard link fails, use a cmd script
+            // if hard link fails, use a cmd script that dynamically finds bun.exe
             const script = "@%~dp0bun.exe x %*\n";
 
             const bunx_cmd_with_z = try bun.strings.concatBufT(u16, &bunx_path_buf, .{
                 &bun.windows.nt_object_prefix,
                 image_dirname,
-                comptime bun.strings.literal(u16, bunx_name ++ ".exe\x00"),
+                comptime bun.strings.literal(u16, bunx_name ++ ".cmd\x00"),
             });
             const bunx_cmd = bunx_cmd_with_z[0 .. bunx_cmd_with_z.len - 1 :0];
             // TODO: fix this zig bug, it is one line change to a few functions.

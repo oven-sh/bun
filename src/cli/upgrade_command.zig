@@ -841,7 +841,7 @@ pub const UpgradeCommand = struct {
                 };
             }
 
-            // Ensure completions are up to date.
+            // Ensure completions are up to date, including bunx symlink/hardlink
             {
                 var completions_argv = [_]string{
                     target_filename,
@@ -851,13 +851,24 @@ pub const UpgradeCommand = struct {
                 env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch bun.outOfMemory();
                 var std_map = try env_loader.map.stdEnvMap(ctx.allocator);
                 defer std_map.deinit();
-                _ = std.process.Child.run(.{
+                if (std.process.Child.run(.{
                     .allocator = ctx.allocator,
                     .argv = &completions_argv,
                     .cwd = target_dirname,
                     .max_output_bytes = 4096,
                     .env_map = std_map.get(),
-                }) catch {};
+                })) |result| {
+                    if (result.term.Exited != 0) {
+                        Output.prettyErrorln("<r><yellow>warn<r>: Completions update exited with code {d}", .{result.term.Exited});
+                        if (result.stderr.len > 0) {
+                            Output.prettyErrorln("stderr: {s}", .{result.stderr});
+                        }
+                        Output.note("You may need to run 'bun completions' manually to update bunx", .{});
+                    }
+                } else |err| {
+                    Output.prettyErrorln("<r><yellow>warn<r>: Failed to update completions and bunx: {s}", .{@errorName(err)});
+                    Output.note("You may need to run 'bun completions' manually to update bunx", .{});
+                }
             }
 
             Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());

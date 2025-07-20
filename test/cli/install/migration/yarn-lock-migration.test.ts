@@ -104,7 +104,7 @@ describe("yarn.lock migration", () => {
 
       const tempDir = tempDirWithFiles(`yarn-migration-${testDir}`, tempFiles);
 
-      // Copy binary files (like tarballs) after temp directory creation  
+      // Copy binary files (like tarballs) after temp directory creation
       if (testDir === "yarn-stuff") {
         const tarballPath = join(originalDir, "abbrev-1.1.1.tgz");
         if (fs.existsSync(tarballPath)) {

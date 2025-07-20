@@ -85,7 +85,7 @@ pub const PatchFile = struct {
                         }).asErr()) |e| return e.withoutPath();
                     }
 
-                    if (bun.sys.renameat(patch_dir, from_path, patch_dir, to_path).asErr()) |e| {
+                    if (bun.sys.renameatConcurrently(patch_dir, from_path, patch_dir, to_path, .{ .move_fallback = true }).asErr()) |e| {
                         return e.withoutPath();
                     }
                 },

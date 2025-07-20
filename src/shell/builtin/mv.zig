@@ -92,7 +92,7 @@ pub const ShellMvBatchedTask = struct {
             return;
         }
 
-        switch (Syscall.renameat(this.cwd, src, this.cwd, this.target)) {
+        switch (Syscall.renameatConcurrently(this.cwd, src, this.cwd, this.target, .{ .move_fallback = true })) {
             .err => |e| {
                 if (e.getErrno() == .NOTDIR) {
                     this.err = e.withPath(this.target);
@@ -111,7 +111,7 @@ pub const ShellMvBatchedTask = struct {
         buf[path_in_dir_.len] = 0;
         const path_in_dir = buf[0..path_in_dir_.len :0];
 
-        switch (Syscall.renameat(this.cwd, src, this.target_fd.?, path_in_dir)) {
+        switch (Syscall.renameatConcurrently(this.cwd, src, this.target_fd.?, path_in_dir, .{ .move_fallback = true })) {
             .err => |e| {
                 const target_path = ResolvePath.joinZ(&[_][]const u8{
                     this.target,

@@ -1,7 +1,7 @@
-import { beforeAll, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { join, relative } from "path";
-import { rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "fs";
+import { join } from "path";
 
 describe("bun patch", () => {
   it("should work across different mount points (cross-device)", async () => {
@@ -11,9 +11,9 @@ describe("bun patch", () => {
         name: "patch-test",
         version: "1.0.0",
         dependencies: {
-          "is-number": "^7.0.0"
-        }
-      })
+          "is-number": "^7.0.0",
+        },
+      }),
     });
 
     // Install dependencies first
@@ -22,7 +22,7 @@ describe("bun patch", () => {
       env: bunEnv,
       cwd: testDir,
       stderr: "pipe",
-      stdout: "pipe"
+      stdout: "pipe",
     });
 
     const [installStdout, installStderr, installExitCode] = await Promise.all([
@@ -41,7 +41,7 @@ describe("bun patch", () => {
       env: bunEnv,
       cwd: testDir,
       stderr: "pipe",
-      stdout: "pipe"
+      stdout: "pipe",
     });
 
     const [patchStdout, patchStderr, patchExitCode] = await Promise.all([
@@ -69,7 +69,7 @@ describe("bun patch", () => {
       env: bunEnv,
       cwd: testDir,
       stderr: "pipe",
-      stdout: "pipe"
+      stdout: "pipe",
     });
 
     const [commitStdout, commitStderr, commitExitCode] = await Promise.all([
@@ -85,15 +85,15 @@ describe("bun patch", () => {
     // Verify the patch was created successfully
     const finalPackageJson = JSON.parse(readFileSync(join(testDir, "package.json"), "utf8"));
     expect(finalPackageJson.patchedDependencies).toBeDefined();
-    
+
     // The patch key includes the version number
     const patchKey = Object.keys(finalPackageJson.patchedDependencies)[0];
     expect(patchKey).toMatch(/^is-number@/);
-    
+
     // Verify the patch file exists
     const patchFile = finalPackageJson.patchedDependencies[patchKey];
     expect(existsSync(join(testDir, patchFile))).toBe(true);
-    
+
     // Verify cross-device fallback was used (optional - shows it's working)
     if (commitStderr.includes("renameatConcurrently() failed with E.XDEV")) {
       console.log("✓ Cross-device fallback was triggered and handled correctly");
@@ -108,9 +108,9 @@ describe("bun patch", () => {
         name: "patch-xdev-test",
         version: "1.0.0",
         dependencies: {
-          "ms": "^2.1.0"
-        }
-      })
+          "ms": "^2.1.0",
+        },
+      }),
     });
 
     // Install dependencies
@@ -119,7 +119,7 @@ describe("bun patch", () => {
       env: bunEnv,
       cwd: testDir,
       stderr: "pipe",
-      stdout: "pipe"
+      stdout: "pipe",
     });
     await installResult.exited;
 
@@ -129,7 +129,7 @@ describe("bun patch", () => {
       env: bunEnv,
       cwd: testDir,
       stderr: "pipe",
-      stdout: "pipe"
+      stdout: "pipe",
     });
     await patchResult.exited;
 
@@ -142,13 +142,13 @@ describe("bun patch", () => {
 
     // Enable debug logging to verify fallback is triggered when needed
     const debugEnv = { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "0" };
-    
+
     const commitResult = Bun.spawn({
       cmd: [bunExe(), "patch", "--commit", patchDir],
       env: debugEnv,
       cwd: testDir,
       stderr: "pipe",
-      stdout: "pipe"
+      stdout: "pipe",
     });
 
     const [commitStdout, commitStderr, commitExitCode] = await Promise.all([
@@ -158,7 +158,7 @@ describe("bun patch", () => {
     ]);
 
     expect(commitExitCode).toBe(0);
-    
+
     // The patch should succeed regardless of whether XDEV fallback was needed
     const finalPackageJson = JSON.parse(readFileSync(join(testDir, "package.json"), "utf8"));
     expect(finalPackageJson.patchedDependencies).toBeDefined();
@@ -178,9 +178,9 @@ describe("bun patch", () => {
         name: "patch-eperm-test",
         version: "1.0.0",
         dependencies: {
-          "lodash": "^4.17.21"
-        }
-      })
+          "lodash": "^4.17.21",
+        },
+      }),
     });
 
     // Install dependencies
@@ -189,7 +189,7 @@ describe("bun patch", () => {
       env: bunEnv,
       cwd: testDir,
       stderr: "pipe",
-      stdout: "pipe"
+      stdout: "pipe",
     });
     const installExitCode = await installResult.exited;
     expect(installExitCode).toBe(0);
@@ -200,7 +200,7 @@ describe("bun patch", () => {
       env: bunEnv,
       cwd: testDir,
       stderr: "pipe",
-      stdout: "pipe"
+      stdout: "pipe",
     });
     const patchExitCode = await patchResult.exited;
     expect(patchExitCode).toBe(0);
@@ -218,7 +218,7 @@ describe("bun patch", () => {
       env: bunEnv,
       cwd: testDir,
       stderr: "pipe",
-      stdout: "pipe"
+      stdout: "pipe",
     });
 
     const [commitStdout, commitStderr, commitExitCode] = await Promise.all([

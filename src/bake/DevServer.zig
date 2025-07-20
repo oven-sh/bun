@@ -4184,7 +4184,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 prev_dependency.next_dependency = edge.next_dependency;
             } else {
                 assert_eql(g.first_dep.items[edge.imported.get()].unwrap(), edge_index);
-                g.first_dep.items[edge.imported.get()] = .none;
+                g.first_dep.items[edge.imported.get()] = edge.next_dependency;
             }
             if (edge.next_dependency.unwrap()) |next| {
                 const next_dependency = &g.edges.items[next.get()];
@@ -4874,7 +4874,15 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             const keys = g.bundled_files.keys();
 
-            // Disconnect all imports
+            // Clean up the tailwind hack map if this file is tracked there
+            const dev = g.owner();
+            if (dev.has_tailwind_plugin_hack) |*map| {
+                if (map.fetchSwapRemove(abs_path)) |entry| {
+                    dev.allocator.free(entry.key);
+                }
+            }
+
+            // Disconnect all imports (edges where this file imports others)
             var it: ?EdgeIndex = g.first_import.items[index.get()].unwrap();
             while (it) |edge_index| {
                 const dep = g.edges.items[edge_index.get()];
@@ -5262,14 +5270,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 g.edges.items[edge_index.get()] = undefined;
             }
 
-            if (edge_index.get() == (g.edges.items.len - 1)) {
-                g.edges.items.len -= 1;
-            } else {
-                g.edges_free_list.append(g.owner().allocator, edge_index) catch {
-                    // Leak an edge object; Ok since it may get cleaned up by
-                    // the next incremental graph garbage-collection cycle.
-                };
-            }
+            g.edges_free_list.append(g.owner().allocator, edge_index) catch {
+                // Leak an edge object; Ok since it may get cleaned up by
+                // the next incremental graph garbage-collection cycle.
+            };
         }
 
         pub fn owner(g: *@This()) *DevServer {

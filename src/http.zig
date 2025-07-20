@@ -1319,10 +1319,7 @@ fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTP
                 return;
             };
             if (this.socks_proxy) |socks| {
-                socks.sendAuthHandshake(is_ssl, socket) catch |err| {
-                    this.fail(err);
-                    return;
-                };
+                socks.sendAuthHandshake(is_ssl, socket);
             }
         } else {
             // HTTP proxy - use existing ProxyTunnel

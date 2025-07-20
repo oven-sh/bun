@@ -10,12 +10,15 @@ proxy_url: URL,
 allocator: std.mem.Allocator,
 ref_count: RefCount,
 write_buffer: std.ArrayList(u8),
+write_offset: usize = 0,
 
 const SOCKSState = enum {
     init,
     auth_handshake,
+    auth_handshake_pending,
     auth_complete,
     connect_request,
+    connect_request_pending,
     connected,
     failed,
 };
@@ -66,12 +69,13 @@ pub fn create(allocator: std.mem.Allocator, proxy_url: URL, destination_host: []
         .destination_port = destination_port,
         .allocator = allocator,
         .write_buffer = std.ArrayList(u8).init(allocator),
+        .write_offset = 0,
     });
 
     return socks_proxy;
 }
 
-pub fn sendAuthHandshake(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
+pub fn sendAuthHandshake(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     // SOCKS5 authentication handshake
     // +----+----------+----------+
     // |VER | NMETHODS | METHODS  |
@@ -80,16 +84,54 @@ pub fn sendAuthHandshake(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewHT
     // +----+----------+----------+
     const auth_request = [_]u8{ @intFromEnum(SOCKSVersion.v5), 1, @intFromEnum(SOCKSAuthMethod.no_auth) };
 
-    // Buffer the write in case it's incomplete
+    // Prepare write buffer
     this.write_buffer.clearRetainingCapacity();
-    try this.write_buffer.appendSlice(&auth_request);
+    this.write_buffer.appendSlice(&auth_request) catch return;
+    this.write_offset = 0;
+    
+    this.flushWriteBuffer(is_ssl, socket);
+}
 
-    const bytes_written = socket.write(this.write_buffer.items);
-    if (bytes_written != this.write_buffer.items.len) {
-        return error.IncompleteWrite;
+fn flushWriteBuffer(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    if (this.write_offset >= this.write_buffer.items.len) {
+        // All data has been written
+        this.completeWrite();
+        return;
     }
+    
+    const remaining = this.write_buffer.items[this.write_offset..];
+    const bytes_written = socket.write(remaining);
+    
+    if (bytes_written > 0) {
+        this.write_offset += @intCast(bytes_written);
+        
+        if (this.write_offset >= this.write_buffer.items.len) {
+            // All data has been written
+            this.completeWrite();
+        } else {
+            // Still have data to write, mark as pending
+            this.markWritePending();
+        }
+    } else {
+        // No bytes written, mark as pending and wait for socket to be writable
+        this.markWritePending();
+    }
+}
 
-    this.state = .auth_handshake;
+fn markWritePending(this: *SOCKSProxy) void {
+    switch (this.state) {
+        .auth_handshake => this.state = .auth_handshake_pending,
+        .connect_request => this.state = .connect_request_pending,
+        else => {},
+    }
+}
+
+fn completeWrite(this: *SOCKSProxy) void {
+    switch (this.state) {
+        .auth_handshake, .auth_handshake_pending => this.state = .auth_handshake,
+        .connect_request, .connect_request_pending => this.state = .connect_request,
+        else => {},
+    }
 }
 
 pub fn sendConnectRequest(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
@@ -137,18 +179,29 @@ pub fn sendConnectRequest(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewH
     const port_bytes = std.mem.toBytes(std.mem.nativeToBig(u16, this.destination_port));
     try this.write_buffer.appendSlice(&port_bytes);
 
-    // Send the request with proper buffering
-    const bytes_written = socket.write(this.write_buffer.items);
-    if (bytes_written != this.write_buffer.items.len) {
-        return error.IncompleteWrite;
-    }
-
+    // Reset write offset and start writing
+    this.write_offset = 0;
     this.state = .connect_request;
+    this.flushWriteBuffer(is_ssl, socket);
+}
+
+pub fn onWritable(this: *SOCKSProxy, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    // Socket is writable again, try to continue any pending writes
+    switch (this.state) {
+        .auth_handshake_pending, .connect_request_pending => {
+            this.flushWriteBuffer(is_ssl, socket);
+        },
+        else => {},
+    }
 }
 
 pub fn handleData(this: *SOCKSProxy, client: *HTTPClient, data: []const u8, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !bool {
     _ = client;
     switch (this.state) {
+        .auth_handshake_pending => {
+            // Still writing auth handshake, ignore incoming data for now
+            return true;
+        },
         .auth_handshake => {
             if (data.len < 2) {
                 return error.IncompleteSOCKSResponse;
@@ -173,6 +226,10 @@ pub fn handleData(this: *SOCKSProxy, client: *HTTPClient, data: []const u8, comp
             }
 
             return true; // Data was consumed by SOCKS handshake
+        },
+        .connect_request_pending => {
+            // Still writing connect request, ignore incoming data for now
+            return true;
         },
         .connect_request => {
             if (data.len < 4) {

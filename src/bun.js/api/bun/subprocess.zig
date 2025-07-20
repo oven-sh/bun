@@ -1579,12 +1579,12 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
         pipe.onAttachedProcessExit(&status);
     }
 
-    var did_update_has_pending_activity = false;
-    defer if (!did_update_has_pending_activity) this.updateHasPendingActivity();
-
-    const loop = jsc_vm.eventLoop();
-
     if (!is_sync) {
+        var did_update_has_pending_activity = false;
+        defer if (!did_update_has_pending_activity) this.updateHasPendingActivity();
+
+        const loop = jsc_vm.eventLoop();
+
         if (this_jsvalue != .zero) {
             if (consumeExitedPromise(this_jsvalue, globalThis)) |promise| {
                 loop.enter();

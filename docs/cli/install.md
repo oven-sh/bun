@@ -144,6 +144,57 @@ $ bun install --frozen-lockfile
 
 For more information on Bun's lockfile `bun.lock`, refer to [Package manager > Lockfile](https://bun.com/docs/install/lockfile).
 
+## CI installs
+
+For continuous integration and production environments where reproducible installs are critical, use `bun ci`:
+
+```bash
+$ bun ci
+```
+
+The `bun ci` command is an alias for `bun install --frozen-lockfile`. It will:
+
+- **Install exact versions** specified in the lockfile (`bun.lock`)
+- **Fail if inconsistencies exist** between `package.json` and `bun.lock`
+- **Never update the lockfile** - the lockfile remains read-only
+- **Install all dependency types**: `dependencies`, `devDependencies`, `optionalDependencies`, and `peerDependencies`
+
+This command is equivalent to:
+
+```bash
+$ bun install --frozen-lockfile
+```
+
+### When to use `bun ci`
+
+- **CI/CD pipelines**: Ensures all builds use identical dependency versions
+- **Production deployments**: Guarantees reproducible installs
+- **Team consistency**: Prevents "works on my machine" issues
+- **Docker builds**: Use in Dockerfiles for consistent container builds
+
+### Error conditions
+
+`bun ci` will exit with an error code if:
+
+- No `bun.lock` file exists in the project
+- Dependencies in `package.json` don't match the locked versions
+- Required dependencies cannot be resolved to the exact locked versions
+
+### CI/CD example
+
+```yaml#.github/workflows/test.yml
+name: Test
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun ci  # Use bun ci instead of bun install
+      - run: bun test
+```
+
 ## Omitting dependencies
 
 To omit dev, peer, or optional dependencies use the `--omit` flag.
@@ -259,7 +310,7 @@ jobs:
       - name: Install bun
         uses: oven-sh/setup-bun@v2
       - name: Install dependencies
-        run: bun install
+        run: bun ci
       - name: Build app
         run: bun run build
 ```

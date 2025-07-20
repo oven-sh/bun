@@ -32,7 +32,7 @@ The interface displays packages grouped by dependency type:
     □ react                   17.0.2   18.2.0   18.3.1
     □ lodash                  4.17.20  4.17.21  4.17.21
 
-  devDependencies             Current  Target   Latest  
+  devDependencies             Current  Target   Latest
     □ typescript              4.8.0    5.0.0    5.3.3
     □ @types/node             16.11.7  18.0.0   20.11.5
 

@@ -28,16 +28,16 @@ The interface displays packages grouped by dependency type:
 ```
 ? Select packages to update - Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest
 
-  dependencies                     Current  Target   Latest
-    □ react                        17.0.2   18.2.0   18.3.1
-    □ lodash                       4.17.20  4.17.21  4.17.21
+  dependencies                Current  Target   Latest
+    □ react                   17.0.2   18.2.0   18.3.1
+    □ lodash                  4.17.20  4.17.21  4.17.21
 
-  devDependencies                  Current  Target   Latest
-    □ typescript                   4.8.0    5.0.0    5.3.3
-    □ @types/node                  16.11.7  18.0.0   20.11.5
+  devDependencies             Current  Target   Latest  
+    □ typescript              4.8.0    5.0.0    5.3.3
+    □ @types/node             16.11.7  18.0.0   20.11.5
 
-  optionalDependencies            Current  Target   Latest
-    □ some-optional-package        1.0.0    1.1.0    1.2.0
+  optionalDependencies        Current  Target   Latest
+    □ some-optional-package   1.0.0    1.1.0    1.2.0
 ```
 
 **Sections:**

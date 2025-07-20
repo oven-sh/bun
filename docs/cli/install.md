@@ -146,66 +146,17 @@ For more information on Bun's lockfile `bun.lock`, refer to [Package manager > L
 
 ## CI installs
 
-For continuous integration and production environments where reproducible installs are critical, use `bun ci`:
+For CI/CD and production environments, use `bun ci` for reproducible installs:
 
 ```bash
 $ bun ci
 ```
 
-The `bun ci` command is an alias for `bun install --frozen-lockfile`. It will:
-
-- **Install exact versions** specified in the lockfile (`bun.lock`)
-- **Fail if inconsistencies exist** between `package.json` and `bun.lock`
-- **Never update the lockfile** - the lockfile remains read-only
-- **Install all dependency types**: `dependencies`, `devDependencies`, `optionalDependencies`, and `peerDependencies`
-
-This command is equivalent to:
-
-```bash
-$ bun install --frozen-lockfile
-```
+This is equivalent to `bun install --frozen-lockfile`. It installs exact versions from `bun.lock` and fails if `package.json` doesn't match the lockfile.
 
 {% callout type="warning" %}
-**⚠️ Important**: To use `bun ci`, you **must** commit your `bun.lock` file to version control. The lockfile contains the exact resolved versions and integrity hashes that `bun ci` uses to ensure consistent installs across all environments.
+**⚠️ Important**: You must commit `bun.lock` to version control for `bun ci` to work.
 {% /callout %}
-
-### Why commit the lockfile?
-
-Committing `bun.lock` to version control provides two key benefits:
-
-1. **Faster installs**: The lockfile contains pre-resolved dependency trees and integrity hashes, eliminating the need for Bun to resolve versions and verify packages during installation.
-
-2. **Guaranteed consistency**: Every team member and CI environment gets identical dependency versions, preventing "works on my machine" issues caused by different package versions.
-
-### When to use `bun ci`
-
-- **CI/CD pipelines**: Ensures all builds use identical dependency versions
-- **Production deployments**: Guarantees reproducible installs
-- **Team consistency**: Prevents "works on my machine" issues
-- **Docker builds**: Use in Dockerfiles for consistent container builds
-
-### Error conditions
-
-`bun ci` will exit with an error code if:
-
-- No `bun.lock` file exists in the project
-- Dependencies in `package.json` don't match the locked versions
-- Required dependencies cannot be resolved to the exact locked versions
-
-### CI/CD example
-
-```yaml#.github/workflows/test.yml
-name: Test
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4  # Checks out code including bun.lock
-      - uses: oven-sh/setup-bun@v2
-      - run: bun ci  # Uses committed bun.lock for reproducible installs
-      - run: bun test
-```
 
 ## Omitting dependencies
 

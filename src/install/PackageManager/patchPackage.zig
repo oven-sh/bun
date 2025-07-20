@@ -190,7 +190,27 @@ pub fn doPatchCommit(
     const resolution_label = std.fmt.bufPrint(&resolution_buf, "{s}@{}", .{ name, pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix) }) catch unreachable;
 
     const patchfile_contents = brk: {
-        const new_folder = changes_dir;
+        var new_folder_buf: bun.PathBuffer = undefined;
+        const new_folder = new_folder: {
+            // Resolve symbolic links in the changes directory path to handle isolated linker
+            var changes_dir_z: bun.PathBuffer = undefined;
+            const changes_dir_len = changes_dir.len;
+            @memcpy(changes_dir_z[0..changes_dir_len], changes_dir);
+            changes_dir_z[changes_dir_len] = 0;
+            const changes_dir_null_terminated = changes_dir_z[0..changes_dir_len :0];
+            
+            const resolved_path = std.fs.cwd().realpathZ(changes_dir_null_terminated, &new_folder_buf) catch |err| switch (err) {
+                error.FileNotFound, error.NotDir => {
+                    // If realpath fails, fall back to the original path
+                    break :new_folder changes_dir;
+                },
+                else => {
+                    Output.err(error.InvalidPath, "failed to resolve path {s}: {s}", .{ changes_dir, @errorName(err) });
+                    Global.crash();
+                },
+            };
+            break :new_folder resolved_path;
+        };
         var buf2: bun.PathBuffer = undefined;
         var buf3: bun.PathBuffer = undefined;
         const old_folder = old_folder: {

@@ -1155,13 +1155,11 @@ pub const WindowsBufferedReader = struct {
             },
             else => {
                 var buf = this.buffer();
-                if (comptime bun.Environment.allow_assert) {
+                if (comptime bun.Environment.is_canary) {
                     if (slice.len > 0 and !bun.isSliceInBuffer(slice, buf.allocatedSlice())) {
                         @panic("uv_read_cb: buf is not in buffer! This is a bug in bun. Please report it.");
                     }
                 }
-                // move cursor foward
-                buf.items.len += amount.result;
                 _ = this._onReadChunk(slice[0..amount.result], hasMore);
             },
         }

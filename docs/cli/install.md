@@ -265,7 +265,7 @@ jobs:
         run: bun run build
 ```
 
-For CI/CD environments that want to enforce reproducible builds on every install, use `bun ci` to fail the build if the package.json is out of sync with the lockfile:
+For CI/CD environments that want to enforce reproducible builds, use `bun ci` to fail the build if the package.json is out of sync with the lockfile:
 
 ```bash
 $ bun ci

@@ -951,7 +951,7 @@ pub const WindowsBufferedReader = struct {
                 bun.default_allocator.free(to_free);
                 to_free = &.{};
 
-                this.onRead(.{ .result = len }, this.buffer().items[this.buffer().items.len - len..this.buffer().items.len], .progress);
+                this.onRead(.{ .result = len }, this.buffer().items[this.buffer().items.len - len .. this.buffer().items.len], .progress);
             },
         }
     }
@@ -1031,7 +1031,7 @@ pub const WindowsBufferedReader = struct {
                         bun.default_allocator.free(buffer_to_free);
                         buffer_to_free = &.{};
 
-                        return this.onRead(.{ .result = len }, this.buffer().items[this.buffer().items.len - len..this.buffer().items.len], .progress);
+                        return this.onRead(.{ .result = len }, this.buffer().items[this.buffer().items.len - len .. this.buffer().items.len], .progress);
                     }
                 }
 

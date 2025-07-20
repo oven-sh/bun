@@ -144,20 +144,6 @@ $ bun install --frozen-lockfile
 
 For more information on Bun's lockfile `bun.lock`, refer to [Package manager > Lockfile](https://bun.com/docs/install/lockfile).
 
-## CI installs
-
-For CI/CD and production environments, use `bun ci` for reproducible installs:
-
-```bash
-$ bun ci
-```
-
-This is equivalent to `bun install --frozen-lockfile`. It installs exact versions from `bun.lock` and fails if `package.json` doesn't match the lockfile.
-
-{% callout type="warning" %}
-**⚠️ Important**: You must commit `bun.lock` to version control for `bun ci` to work.
-{% /callout %}
-
 ## Omitting dependencies
 
 To omit dev, peer, or optional dependencies use the `--omit` flag.
@@ -259,7 +245,15 @@ linker = "hoisted"
 
 ## CI/CD
 
-Looking to speed up your CI? Use the official [`oven-sh/setup-bun`](https://github.com/oven-sh/setup-bun) action to install `bun` in a GitHub Actions pipeline.
+For CI/CD environments, use `bun ci` instead of `bun install` for reproducible builds:
+
+```bash
+$ bun ci
+```
+
+This is equivalent to `bun install --frozen-lockfile`. It installs exact versions from `bun.lock` and fails if `package.json` doesn't match the lockfile. You must commit `bun.lock` to version control.
+
+Use the official [`oven-sh/setup-bun`](https://github.com/oven-sh/setup-bun) action to install `bun` in a GitHub Actions pipeline:
 
 ```yaml#.github/workflows/release.yml
 name: bun-types

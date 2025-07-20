@@ -12,6 +12,7 @@
 #include <signal.h>
 #include <sys/syscall.h>
 #include <sys/resource.h>
+#include <cstdint>
 
 extern char** environ;
 
@@ -45,6 +46,8 @@ typedef struct bun_spawn_request_t {
     const char* chdir;
     bool detached;
     bun_spawn_file_action_list_t actions;
+    uid_t uid;
+    gid_t gid;
 } bun_spawn_request_t;
 
 extern "C" ssize_t posix_spawn_bun(
@@ -91,6 +94,20 @@ extern "C" ssize_t posix_spawn_bun(
 
         if (request->chdir) {
             if (chdir(request->chdir) != 0) {
+                return childFailed();
+            }
+        }
+
+        // Set group ID before user ID when dropping privileges
+        // We use UINT32_MAX as the sentinel value for "not set"
+        if (request->gid != UINT32_MAX) {
+            if (setgid(request->gid) != 0) {
+                return childFailed();
+            }
+        }
+
+        if (request->uid != UINT32_MAX) {
+            if (setuid(request->uid) != 0) {
                 return childFailed();
             }
         }

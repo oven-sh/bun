@@ -971,6 +971,8 @@ pub const PosixSpawnOptions = struct {
     detached: bool = false,
     windows: void = {},
     argv0: ?[*:0]const u8 = null,
+    uid: ?std.posix.uid_t = null,
+    gid: ?std.posix.gid_t = null,
     stream: bool = true,
     sync: bool = false,
     can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool = false,
@@ -1051,6 +1053,8 @@ pub const WindowsSpawnOptions = struct {
     detached: bool = false,
     windows: WindowsOptions = .{},
     argv0: ?[*:0]const u8 = null,
+    uid: void = {},
+    gid: void = {},
     stream: bool = true,
     use_execve_on_macos: bool = false,
     can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool = false,
@@ -1231,6 +1235,16 @@ pub fn spawnProcessPosix(
     var attr = try PosixSpawn.Attr.init();
     defer attr.deinit();
 
+    // On Linux, set uid/gid in the attr struct
+    if (comptime Environment.isLinux) {
+        if (options.uid) |uid| {
+            attr.uid = uid;
+        }
+        if (options.gid) |gid| {
+            attr.gid = gid;
+        }
+    }
+
     var flags: i32 = bun.c.POSIX_SPAWN_SETSIGDEF | bun.c.POSIX_SPAWN_SETSIGMASK;
 
     if (comptime Environment.isMac) {
@@ -1282,6 +1296,8 @@ pub fn spawnProcessPosix(
 
     attr.set(@intCast(flags)) catch {};
     attr.resetSignals() catch {};
+
+    // uid/gid is only supported on Linux, silently ignored on other platforms
 
     if (options.ipc) |ipc| {
         try actions.inherit(ipc);

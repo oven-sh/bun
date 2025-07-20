@@ -7220,6 +7220,40 @@ declare module "bun" {
        * @default undefined (no limit)
        */
       maxBuffer?: number;
+
+      /**
+       * The user ID to run the subprocess as (Linux only).
+       *
+       * On macOS and Windows, this option is silently ignored.
+       *
+       * @platform Linux
+       * @example
+       * ```ts
+       * // Run as user with UID 1000
+       * const subprocess = Bun.spawn({
+       *   cmd: ["id"],
+       *   uid: 1000,
+       * });
+       * ```
+       */
+      uid?: number;
+
+      /**
+       * The group ID to run the subprocess as (Linux only).
+       *
+       * On macOS and Windows, this option is silently ignored.
+       *
+       * @platform Linux
+       * @example
+       * ```ts
+       * // Run as group with GID 1000
+       * const subprocess = Bun.spawn({
+       *   cmd: ["id"],
+       *   gid: 1000,
+       * });
+       * ```
+       */
+      gid?: number;
     }
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined

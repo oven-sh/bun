@@ -32,7 +32,7 @@ The interface displays packages grouped by dependency type:
     □ react                        17.0.2   18.2.0   18.3.1
     □ lodash                       4.17.20  4.17.21  4.17.21
 
-  devDependencies                  Current  Target   Latest  
+  devDependencies                  Current  Target   Latest
     □ typescript                   4.8.0    5.0.0    5.3.3
     □ @types/node                  16.11.7  18.0.0   20.11.5
 
@@ -41,10 +41,12 @@ The interface displays packages grouped by dependency type:
 ```
 
 **Sections:**
+
 - Packages are grouped under section headers: `dependencies`, `devDependencies`, `peerDependencies`, `optionalDependencies`
 - Each section shows column headers aligned with the package data
 
 **Columns:**
+
 - **Package**: Package name (may have suffix like ` dev`, ` peer`, ` optional` for clarity)
 - **Current**: Currently installed version
 - **Target**: Version that would be installed (respects semver constraints)
@@ -80,8 +82,9 @@ The interface displays packages grouped by dependency type:
 ### Package Grouping
 
 Packages are organized in sections by dependency type:
+
 - **dependencies** - Regular runtime dependencies
-- **devDependencies** - Development dependencies  
+- **devDependencies** - Development dependencies
 - **peerDependencies** - Peer dependencies
 - **optionalDependencies** - Optional dependencies
 

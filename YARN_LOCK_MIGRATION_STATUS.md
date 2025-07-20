@@ -6,7 +6,7 @@ This document provides the complete context and current state of the yarn.lock m
 
 ## Current Status: ✅ FULLY WORKING WITH ALL DEPENDENCY TYPES
 
-The yarn.lock migration feature is **fully functional and comprehensively tested** as of commit `ce7fbdb83`.
+The yarn.lock migration feature is **fully functional and comprehensively tested** as of commit `09a19945d`.
 
 ### What Works
 - ✅ Bun can read and parse yarn.lock files
@@ -173,7 +173,8 @@ cat bun.lock  # Text format lockfile created after migration
 ### Commit History
 - `4f7bcbca0` - Fix yarn.zig compilation errors
 - `7eaf98404` - Add yarn.lock migration test
-- `ce7fbdb83` - Complete yarn.lock migration implementation for all dependency types
+- `52ea95c4f` - Revert "Complete yarn.lock migration implementation for all dependency types"
+- `09a19945d` - Fix yarn.lock migration tests without modifying fixtures
 
 ## Testing Checklist
 

@@ -27,22 +27,22 @@ describe("bun patch with isolated linker", async () => {
     // Install with isolated linker
     const { stderr: installStderr } = await $`${bunExe()} i --linker=isolated`.env(bunEnv).cwd(tempdir);
     expect(installStderr.toString()).not.toContain("error");
-    
+
     // Try to patch the package
     const { stderr: patchStderr, stdout: patchStdout } = await $`${bunExe()} patch is-even@1.0.0`
       .env(bunEnv)
       .cwd(tempdir)
       .throws(false);
-    
+
     console.log("Patch stdout:", patchStdout.toString());
     console.log("Patch stderr:", patchStderr.toString());
-    
+
     // Should not fail with errors about bad_file_mode or FileNotFound
     expect(patchStderr.toString()).not.toContain("bad_file_mode");
     expect(patchStderr.toString()).not.toContain("FileNotFound");
     expect(patchStderr.toString()).not.toContain("error overwriting folder in node_modules");
     expect(patchStderr.toString()).not.toContain("failed to parse patchfile");
-    
+
     // Should indicate success
     expect(patchStdout.toString()).toContain("To patch is-even, edit the following folder:");
     expect(patchStdout.toString()).toContain("node_modules");
@@ -55,12 +55,12 @@ describe("bun patch with isolated linker", async () => {
     `;
 
     await $`echo ${dummyCode} > node_modules/is-even/index.js`.env(bunEnv).cwd(tempdir);
-    
+
     const { stderr: commitStderr } = await $`${bunExe()} patch --commit node_modules/is-even`
       .env(bunEnv)
       .cwd(tempdir)
       .throws(false);
-    
+
     console.log("Commit stderr:", commitStderr.toString());
     expect(commitStderr.toString()).not.toContain("error");
 
@@ -73,7 +73,7 @@ describe("bun patch with isolated linker", async () => {
     const tempdir = tempDirWithFiles("patch-isolated-path", {
       "package.json": JSON.stringify({
         "name": "bun-patch-isolated-path-test",
-        "module": "index.ts", 
+        "module": "index.ts",
         "type": "module",
         "dependencies": {
           "is-even": "1.0.0",
@@ -87,22 +87,22 @@ describe("bun patch with isolated linker", async () => {
     // Install with isolated linker
     const { stderr: installStderr } = await $`${bunExe()} i --linker=isolated`.env(bunEnv).cwd(tempdir);
     expect(installStderr.toString()).not.toContain("error");
-    
+
     // Try to patch the package by path
     const { stderr: patchStderr, stdout: patchStdout } = await $`${bunExe()} patch node_modules/is-even`
       .env(bunEnv)
       .cwd(tempdir)
       .throws(false);
-    
+
     console.log("Patch stdout:", patchStdout.toString());
     console.log("Patch stderr:", patchStderr.toString());
-    
+
     // Should not fail with errors about bad_file_mode or FileNotFound
     expect(patchStderr.toString()).not.toContain("bad_file_mode");
     expect(patchStderr.toString()).not.toContain("FileNotFound");
     expect(patchStderr.toString()).not.toContain("error overwriting folder in node_modules");
     expect(patchStderr.toString()).not.toContain("failed to parse patchfile");
-    
+
     // Should indicate success
     expect(patchStdout.toString()).toContain("To patch is-even, edit the following folder:");
     expect(patchStdout.toString()).toContain("node_modules/is-even");
@@ -115,12 +115,12 @@ describe("bun patch with isolated linker", async () => {
     `;
 
     await $`echo ${dummyCode} > node_modules/is-even/index.js`.env(bunEnv).cwd(tempdir);
-    
+
     const { stderr: commitStderr } = await $`${bunExe()} patch --commit node_modules/is-even`
       .env(bunEnv)
       .cwd(tempdir)
       .throws(false);
-    
+
     console.log("Commit stderr:", commitStderr.toString());
     expect(commitStderr.toString()).not.toContain("error");
 

@@ -198,7 +198,7 @@ pub fn doPatchCommit(
             @memcpy(changes_dir_z[0..changes_dir_len], changes_dir);
             changes_dir_z[changes_dir_len] = 0;
             const changes_dir_null_terminated = changes_dir_z[0..changes_dir_len :0];
-            
+
             const resolved_path = std.fs.cwd().realpathZ(changes_dir_null_terminated, &new_folder_buf) catch |err| switch (err) {
                 error.FileNotFound, error.NotDir => {
                     // If realpath fails, fall back to the original path

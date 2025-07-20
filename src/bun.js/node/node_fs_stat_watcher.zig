@@ -4,7 +4,7 @@ const bun = @import("bun");
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 
-const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
+const UnboundedQueue = bun.threading.UnboundedQueue;
 const EventLoopTimer = @import("../api/Timer.zig").EventLoopTimer;
 const VirtualMachine = JSC.VirtualMachine;
 const EventLoop = JSC.EventLoop;
@@ -35,7 +35,7 @@ pub const StatWatcherScheduler = struct {
     watchers: WatcherQueue = WatcherQueue{},
 
     event_loop_timer: EventLoopTimer = .{
-        .next = .{},
+        .next = .epoch,
         .tag = .StatWatcherScheduler,
     },
 

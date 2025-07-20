@@ -1293,7 +1293,7 @@ pub fn runFromThreadPool(this: *ParseTask) void {
                 } };
             }
 
-            if (this.ctx.graph.pool.usesIOPool()) {
+            if (ThreadPool.usesIOPool()) {
                 this.ctx.graph.pool.scheduleInsideThreadPool(this);
                 return;
             }
@@ -1392,7 +1392,7 @@ const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
 const base64 = bun.base64;
 pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = @import("../thread_pool.zig");
+const ThreadPoolLib = bun.ThreadPool;
 const BabyList = @import("../baby_list.zig").BabyList;
 const Fs = @import("../fs.zig");
 const _resolver = @import("../resolver/resolver.zig");

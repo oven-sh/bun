@@ -675,7 +675,7 @@ pub const Version = extern struct {
                         }
                     },
                     '-' => {
-                        if (state != .pre) {
+                        if (state == .none) {
                             state = .pre;
                             start = i + 1;
                         }
@@ -739,6 +739,129 @@ pub const Version = extern struct {
         version: Version.Partial = .{},
         len: u32 = 0,
     };
+
+    pub fn parseStrict(sliced_string: SlicedString) ParseResult {
+        var input = sliced_string.slice;
+        var result = ParseResult{};
+
+        var part_i: u8 = 0;
+        var part_start_i: usize = 0;
+        var last_char_i: usize = 0;
+
+        if (input.len == 0) {
+            result.valid = false;
+            return result;
+        }
+        var is_done = false;
+
+        var i: usize = 0;
+
+        // Only skip a single leading 'v' if present
+        if (input.len > 0 and input[0] == 'v') {
+            i = 1;
+        }
+
+        if (i == input.len) {
+            result.valid = false;
+            return result;
+        }
+
+        // two passes :(
+        while (i < input.len) {
+            if (is_done) {
+                break;
+            }
+
+            switch (input[i]) {
+                '0'...'9' => {
+                    part_start_i = i;
+                    i += 1;
+
+                    while (i < input.len and switch (input[i]) {
+                        '0'...'9' => true,
+                        else => false,
+                    }) {
+                        i += 1;
+                    }
+
+                    last_char_i = i;
+
+                    switch (part_i) {
+                        0 => {
+                            result.version.major = parseVersionNumber(input[part_start_i..last_char_i]);
+                            part_i = 1;
+                        },
+                        1 => {
+                            result.version.minor = parseVersionNumber(input[part_start_i..last_char_i]);
+                            part_i = 2;
+                        },
+                        2 => {
+                            result.version.patch = parseVersionNumber(input[part_start_i..last_char_i]);
+                            part_i = 3;
+                        },
+                        else => {},
+                    }
+
+                    if (i < input.len and switch (input[i]) {
+                        // `.` is expected only if there are remaining core version numbers
+                        '.' => part_i != 3,
+                        else => false,
+                    }) {
+                        i += 1;
+                    }
+                },
+                '.' => {
+                    result.valid = false;
+                    is_done = true;
+                    break;
+                },
+                '-', '+' => {
+                    // Just a plain tag with no version is invalid.
+                    if (part_i < 3) {
+                        result.valid = false;
+                        is_done = true;
+                        break;
+                    }
+
+                    part_start_i = i;
+                    const tag_result = Tag.parse(sliced_string.sub(input[part_start_i..]));
+
+                    // dirty
+                    const tag_input = input[part_start_i .. part_start_i + tag_result.len];
+                    const build_marker_index = std.mem.indexOfScalar(u8, tag_input, '+');
+                    const pre_marker_index = std.mem.indexOfScalar(u8, tag_input, '-');
+                    if ((tag_result.tag.pre.isEmpty() and tag_result.tag.build.isEmpty()) or
+                        // disallow `1.0.0-a+`
+                        ((build_marker_index != null) and tag_result.tag.build.isEmpty()) or
+                        // disallow `1.0.0-+a`, but not `1.0.0+a-`
+                        ((pre_marker_index != null) and tag_result.tag.pre.isEmpty() and pre_marker_index.? < build_marker_index.?))
+                    {
+                        result.valid = false;
+                        is_done = true;
+                        break;
+                    }
+
+                    result.version.tag = tag_result.tag;
+                    i += tag_result.len;
+                    break;
+                },
+                else => {
+                    last_char_i = 0;
+                    result.valid = false;
+                    is_done = true;
+                    break;
+                },
+            }
+        }
+
+        if (part_i < 2) {
+            result.valid = false;
+        }
+
+        result.len = @as(u32, @intCast(i));
+
+        return result;
+    }
 
     pub fn parse(sliced_string: SlicedString) ParseResult {
         var input = sliced_string.slice;

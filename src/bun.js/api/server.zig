@@ -2647,12 +2647,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         },
                         .directory => |directory_route| {
                             // For directory routes, we need to handle all sub-paths, so append /* to the path
-                            const dir_path = if (std.mem.eql(u8, entry.path, "/")) 
-                                std.fmt.allocPrint(bun.default_allocator, "/*", .{}) catch bun.outOfMemory()
-                            else 
-                                std.fmt.allocPrint(bun.default_allocator, "{s}/*", .{entry.path}) catch bun.outOfMemory();
-                            defer bun.default_allocator.free(dir_path);
-                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *DirectoryRoute, directory_route, dir_path, entry.method);
+                            if (std.mem.eql(u8, entry.path, "/")) {
+                                ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *DirectoryRoute, directory_route, "/*", entry.method);
+                            } else {
+                                const dir_path = std.fmt.allocPrint(bun.default_allocator, "{s}/*", .{entry.path}) catch bun.outOfMemory();
+                                defer bun.default_allocator.free(dir_path);
+                                ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *DirectoryRoute, directory_route, dir_path, entry.method);
+                            }
                         },
                         .html => |html_bundle_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route.data, entry.path, entry.method);

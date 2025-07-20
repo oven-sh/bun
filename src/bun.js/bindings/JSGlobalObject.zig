@@ -44,24 +44,23 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(err);
     }
 
-    pub inline fn throwMissingArgumentsValue(this: *JSGlobalObject, comptime arg_names: []const []const u8) bun.JSError {
+    pub inline fn throwMissingArgumentsValue(this: *JSGlobalObject, arg_names: []const []const u8) bun.JSError {
         return switch (arg_names.len) {
-            0 => @compileError("requires at least one argument"),
             1 => this.ERR(.MISSING_ARGS, "The \"{s}\" argument must be specified", .{arg_names[0]}).throw(),
             2 => this.ERR(.MISSING_ARGS, "The \"{s}\" and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1] }).throw(),
             3 => this.ERR(.MISSING_ARGS, "The \"{s}\", \"{s}\", and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1], arg_names[2] }).throw(),
-            else => @compileError("implement this message"),
+            else => bun.unreachablePanic("implement this message", .{}),
         };
     }
 
     /// "Expected {field} to be a {typename} for '{name}'."
     pub fn createInvalidArgumentType(
         this: *JSGlobalObject,
-        comptime name_: []const u8,
-        comptime field: []const u8,
-        comptime typename: []const u8,
+        name_: []const u8,
+        field: []const u8,
+        typename: []const u8,
     ) JSC.JSValue {
-        return this.ERR(.INVALID_ARG_TYPE, comptime std.fmt.comptimePrint("Expected {s} to be a {s} for '{s}'.", .{ field, typename, name_ }), .{}).toJS();
+        return this.ERR(.INVALID_ARG_TYPE, "Expected {s} to be a {s} for '{s}'.", .{ field, typename, name_ }).toJS();
     }
 
     pub fn toJS(this: *JSC.JSGlobalObject, value: anytype) bun.JSError!JSC.JSValue {
@@ -71,9 +70,9 @@ pub const JSGlobalObject = opaque {
     /// "Expected {field} to be a {typename} for '{name}'."
     pub fn throwInvalidArgumentType(
         this: *JSGlobalObject,
-        comptime name_: []const u8,
-        comptime field: []const u8,
-        comptime typename: []const u8,
+        name_: []const u8,
+        field: []const u8,
+        typename: []const u8,
     ) bun.JSError {
         return this.throwValue(this.createInvalidArgumentType(name_, field, typename));
     }
@@ -107,12 +106,12 @@ pub const JSGlobalObject = opaque {
     pub fn throwInvalidArgumentPropertyValue(
         this: *JSGlobalObject,
         argname: []const u8,
-        comptime expected: ?[]const u8,
+        expected: ?[]const u8,
         value: JSValue,
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        if (comptime expected) |_expected| {
+        if (expected) |_expected| {
             return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Expected {s}, received {}", .{ argname, _expected, actual_string_value }).throw();
         } else {
             return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Received {}", .{ argname, actual_string_value }).throw();
@@ -208,18 +207,18 @@ pub const JSGlobalObject = opaque {
 
     pub fn createNotEnoughArguments(
         this: *JSGlobalObject,
-        comptime name_: []const u8,
-        comptime expected: usize,
+        name_: []const u8,
+        expected: usize,
         got: usize,
     ) JSC.JSValue {
-        return this.toTypeError(.MISSING_ARGS, "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.", .{ expected, got });
+        return this.toTypeError(.MISSING_ARGS, "Not enough arguments to '{s}'. Expected {d}, got {d}.", .{ name_, expected, got });
     }
 
     /// Not enough arguments passed to function named `name_`
     pub fn throwNotEnoughArguments(
         this: *JSGlobalObject,
-        comptime name_: []const u8,
-        comptime expected: usize,
+        name_: []const u8,
+        expected: usize,
         got: usize,
     ) bun.JSError {
         return this.throwValue(this.createNotEnoughArguments(name_, expected, got));
@@ -640,7 +639,7 @@ pub const JSGlobalObject = opaque {
     // returns false if it throws
     pub fn validateObject(
         this: *JSGlobalObject,
-        comptime arg_name: [:0]const u8,
+        arg_name: [:0]const u8,
         value: JSValue,
         opts: struct {
             allowArray: bool = false,

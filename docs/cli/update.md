@@ -35,6 +35,7 @@ The interface displays packages in a table format:
 ```
 
 **Columns:**
+
 - **Package**: Package name with dependency type (`dev`, `peer`, `optional`)
 - **Current**: Currently installed version
 - **Target**: Version that would be installed (respects semver constraints)
@@ -43,6 +44,7 @@ The interface displays packages in a table format:
 ### Keyboard Controls
 
 **Selection:**
+
 - **Space**: Toggle package selection
 - **Enter**: Confirm selections and update
 - **a/A**: Select all packages
@@ -50,16 +52,18 @@ The interface displays packages in a table format:
 - **i/I**: Invert selection
 
 **Navigation:**
+
 - **↑/↓ Arrow keys** or **j/k**: Move cursor
 - **l/L**: Toggle between target and latest version for current package
 
 **Exit:**
+
 - **Ctrl+C** or **Ctrl+D**: Cancel without updating
 
 ### Visual Indicators
 
 - **☑** Selected packages (will be updated)
-- **□** Unselected packages  
+- **□** Unselected packages
 - **>** Current cursor position
 - **Colors**: Red (major), yellow (minor), green (patch) version changes
 - **Underlined**: Currently selected update target
@@ -67,6 +71,7 @@ The interface displays packages in a table format:
 ### Package Types
 
 The interface groups and labels packages by their dependency type:
+
 - Regular dependencies (no label)
 - `dev` - Development dependencies
 - `peer` - Peer dependencies

@@ -956,4 +956,238 @@ export { greeting };`,
       process.chdir(originalCwd);
     }
   });
+
+  describe("files option", () => {
+    test("should support virtual files with string content", async () => {
+      const result = await Bun.build({
+        entrypoints: ["./main.js"],
+        files: {
+          "./main.js": "export default 'Hello from virtual file!';",
+          "./utils.js": "export const helper = () => 'helper function';",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("Hello from virtual file!");
+    });
+
+    test("should support virtual files with Buffer content", async () => {
+      const buffer = Buffer.from("export const value = 42;", "utf-8");
+      
+      const result = await Bun.build({
+        entrypoints: ["./index.js"],
+        files: {
+          "./index.js": buffer,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("42");
+    });
+
+    test("should support virtual files with Blob content", async () => {
+      const blob = new Blob(["export const name = 'blob-content';"], { type: "text/javascript" });
+      
+      const result = await Bun.build({
+        entrypoints: ["./blob-entry.js"],
+        files: {
+          "./blob-entry.js": blob,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("blob-content");
+    });
+
+    test("should support imports between virtual files", async () => {
+      const result = await Bun.build({
+        entrypoints: ["./entry.js"],
+        files: {
+          "./entry.js": "import { greeting } from './lib.js'; export default greeting;",
+          "./lib.js": "export const greeting = 'Hello World';",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("Hello World");
+    });
+
+    test("should prioritize virtual files over filesystem files", async () => {
+      const dir = tempDirWithFiles("virtual-override", {
+        "real-file.js": "export const source = 'filesystem';",
+      });
+
+      const result = await Bun.build({
+        entrypoints: ["./entry.js"],
+        files: {
+          "./entry.js": "import { source } from './real-file.js'; export default source;",
+          [`${dir}/real-file.js`]: "export const source = 'virtual';",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("virtual");
+    });
+
+    test("should handle CSS virtual files", async () => {
+      const result = await Bun.build({
+        entrypoints: ["./styles.css"],
+        files: {
+          "./styles.css": "@import './base.css'; .main { color: red; }",
+          "./base.css": ".base { margin: 0; }",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("margin: 0");
+      expect(output).toContain("color: red");
+    });
+
+    test("should handle TypeScript virtual files", async () => {
+      const result = await Bun.build({
+        entrypoints: ["./main.ts"],
+        files: {
+          "./main.ts": `
+            interface User {
+              name: string;
+              age: number;
+            }
+            const user: User = { name: "John", age: 30 };
+            export default user.name;
+          `,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("John");
+    });
+
+    test("should handle JSX virtual files", async () => {
+      const result = await Bun.build({
+        entrypoints: ["./component.jsx"],
+        files: {
+          "./component.jsx": `
+            export default function Hello() {
+              return <div>Hello JSX!</div>;
+            }
+          `,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("Hello JSX!");
+    });
+
+    test("should handle JSON virtual files", async () => {
+      const result = await Bun.build({
+        entrypoints: ["./index.js"],
+        files: {
+          "./index.js": "import config from './config.json'; export default config.name;",
+          "./config.json": JSON.stringify({ name: "virtual-config", version: "1.0.0" }),
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("virtual-config");
+    });
+
+    test("should handle relative path imports in virtual files", async () => {
+      const result = await Bun.build({
+        entrypoints: ["./src/main.js"],
+        files: {
+          "./src/main.js": "import { util } from '../lib/utils.js'; export default util;",
+          "./lib/utils.js": "export const util = 'utility function';",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("utility function");
+    });
+
+    test("should support mixed virtual and real files", async () => {
+      const dir = tempDirWithFiles("mixed-files", {
+        "real.js": "export const realValue = 'from-filesystem';",
+      });
+
+      const result = await Bun.build({
+        entrypoints: ["./main.js"],
+        files: {
+          "./main.js": `
+            import { realValue } from '${join(dir, "real.js")}';
+            import { virtualValue } from './virtual.js';
+            export default { real: realValue, virtual: virtualValue };
+          `,
+          "./virtual.js": "export const virtualValue = 'from-memory';",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("from-filesystem");
+      expect(output).toContain("from-memory");
+    });
+
+    test("should handle error in virtual files gracefully", async () => {
+      const result = await Bun.build({
+        entrypoints: ["./broken.js"],
+        files: {
+          "./broken.js": "invalid syntax !!",
+        },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.logs).toBeDefined();
+    });
+
+    test("should support absolute paths in files", async () => {
+      const result = await Bun.build({
+        entrypoints: ["/absolute/entry.js"],
+        files: {
+          "/absolute/entry.js": "export default 'absolute path works';",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("absolute path works");
+    });
+
+    test("should handle empty files object", async () => {
+      const dir = tempDirWithFiles("empty-files", {
+        "index.js": "export default 'real file';",
+      });
+
+      const result = await Bun.build({
+        entrypoints: [join(dir, "index.js")],
+        files: {},
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("real file");
+    });
+  });
 });

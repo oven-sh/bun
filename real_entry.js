@@ -1,0 +1,1 @@
+import { greeting } from './virtual.js'; console.log(greeting);

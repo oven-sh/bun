@@ -117,6 +117,8 @@ pub const BundleV2 = struct {
     plugins: ?*JSC.API.JSBundler.Plugin,
     completion: ?*JSBundleCompletionTask,
     source_code_length: usize,
+    /// Virtual files provided via the files option in Bun.build
+    files: bun.StringHashMap(bun.webcore.Blob.Any),
 
     /// There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
     resolve_tasks_waiting_for_import_source_index: std.AutoArrayHashMapUnmanaged(Index.Int, BabyList(struct { to_source_index: Index, import_record_index: u32 })) = .{},
@@ -812,6 +814,7 @@ pub const BundleV2 = struct {
             .plugins = null,
             .completion = null,
             .source_code_length = 0,
+            .files = bun.StringHashMap(bun.webcore.Blob.Any).init(allocator),
             .thread_lock = bun.DebugThreadLock.initLocked(),
         };
         if (bake_options) |bo| {
@@ -2232,6 +2235,13 @@ pub const BundleV2 = struct {
         }
 
         this.free_list.clearAndFree();
+        
+        // Cleanup virtual files
+        var files_iter = this.files.iterator();
+        while (files_iter.next()) |entry| {
+            entry.value_ptr.detach();
+        }
+        this.files.deinit();
     }
 
     pub fn runFromJSInNewThread(

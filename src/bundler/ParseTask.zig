@@ -644,6 +644,44 @@ fn getCodeForParseTaskWithoutPlugins(
                 };
             }
 
+            // Check virtual files before reading from filesystem
+            // Try exact path first, then normalized versions
+            const virtual_blob = blk: {
+                // Try exact path
+                if (task.ctx.files.get(file_path.text)) |blob| break :blk blob;
+                
+                // Try with leading dot slash
+                var with_dot_buf: bun.PathBuffer = undefined;
+                if (!strings.hasPrefixComptime(file_path.text, "./")) {
+                    const with_dot = std.fmt.bufPrint(&with_dot_buf, "./{s}", .{file_path.text}) catch file_path.text;
+                    if (task.ctx.files.get(with_dot)) |blob| break :blk blob;
+                }
+                
+                // Try without leading dot slash
+                const without_dot = if (strings.hasPrefixComptime(file_path.text, "./"))
+                    file_path.text[2..]
+                else
+                    file_path.text;
+                if (task.ctx.files.get(without_dot)) |blob| break :blk blob;
+                
+                break :blk null;
+            };
+            
+            if (virtual_blob) |blob_any| {
+                const slice = blob_any.slice();
+                
+                // Duplicate the contents using the same allocator strategy
+                const virtual_contents = if (loader.shouldCopyForBundling())
+                    try bun.default_allocator.dupe(u8, slice)
+                else
+                    try allocator.dupe(u8, slice);
+                
+                break :brk .{ 
+                    .contents = virtual_contents, 
+                    .fd = bun.invalid_fd 
+                };
+            }
+
             break :brk resolver.caches.fs.readFileWithAllocator(
                 // TODO: this allocator may be wrong for native plugins
                 if (loader.shouldCopyForBundling())

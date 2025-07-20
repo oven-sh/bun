@@ -59,6 +59,7 @@ pub const JSBundler = struct {
         env_behavior: Api.DotEnvBehavior = .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        files: bun.StringHashMap(WebCore.Blob.Any) = bun.StringHashMap(WebCore.Blob.Any).init(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -75,6 +76,7 @@ pub const JSBundler = struct {
                     .owned_chunk = OwnedString.initEmpty(allocator),
                     .owned_asset = OwnedString.initEmpty(allocator),
                 },
+                .files = bun.StringHashMap(WebCore.Blob.Any).init(allocator),
             };
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
@@ -472,6 +474,27 @@ pub const JSBundler = struct {
                 this.throw_on_error = flag;
             }
 
+            if (try config.getOwnObject(globalThis, "files")) |files| {
+                var files_iter = try JSC.JSPropertyIterator(.{
+                    .skip_empty_name = true,
+                    .include_value = true,
+                }).init(globalThis, files);
+                defer files_iter.deinit();
+
+                while (try files_iter.next()) |prop| {
+                    const file_value = files_iter.value;
+                    
+                    // Convert the JS value to a Body.Value and then to Blob.Any
+                    var body_value = try WebCore.Body.Value.fromJS(globalThis, file_value);
+                    const blob_any = body_value.useAsAnyBlob();
+                    
+                    const key = try prop.toOwnedSlice(allocator);
+                    
+                    // Store the blob in the files hash map
+                    try this.files.put(key, blob_any);
+                }
+            }
+
             return this;
         }
 
@@ -531,6 +554,14 @@ pub const JSBundler = struct {
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
+            
+            // Cleanup files hash map
+            var files_iter = self.files.iterator();
+            while (files_iter.next()) |entry| {
+                bun.default_allocator.free(entry.key_ptr.*);
+                entry.value_ptr.detach();
+            }
+            self.files.deinit();
         }
     };
 

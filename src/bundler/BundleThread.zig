@@ -133,6 +133,15 @@ pub fn BundleThread(CompletionStruct: type) type {
                 else => @compileError("Unknown completion struct: " ++ CompletionStruct),
             };
             completion.transpiler = this;
+            
+            // Copy virtual files from config to BundleV2
+            if (CompletionStruct == BundleV2.JSBundleCompletionTask) {
+                var files_iter = completion.config.files.iterator();
+                while (files_iter.next()) |entry| {
+                    const key = try allocator.dupe(u8, entry.key_ptr.*);
+                    try this.files.put(key, entry.value_ptr.*);
+                }
+            }
 
             defer {
                 this.graph.pool.reset();

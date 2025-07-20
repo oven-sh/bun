@@ -67,25 +67,45 @@ pub fn on(this: *DirectoryRoute, req: *uws.Request, resp: AnyResponse, method: b
 
     const url = req.url();
     
+    // Always log for debugging
+    std.debug.print("DirectoryRoute: URL={s}, directory={s}\n", .{ url, this.directory_path });
+    
     // Try to resolve the file path
     const file_path = this.resolveFilePath(url) catch {
+        if (bun.Environment.enable_logs) {
+            bun.Output.scoped(.DirectoryRoute, false)("Failed to resolve file path for URL: {s}", .{url});
+        }
         req.setYield(true);
         this.deref();
         return;
     };
     defer bun.default_allocator.free(file_path);
+    
+    if (bun.Environment.enable_logs) {
+        bun.Output.scoped(.DirectoryRoute, false)("Resolved file path: {s}", .{file_path});
+    }
 
     // Try to open the file using openat
     const open_flags = bun.O.RDONLY | bun.O.CLOEXEC | bun.O.NONBLOCK;
     const fd_result = bun.sys.openatA(this.directory_fd, file_path, open_flags, 0);
     
     if (fd_result == .err) {
+        if (bun.Environment.enable_logs) {
+            bun.Output.scoped(.DirectoryRoute, false)("Failed to open file: {s}, error: {s}", .{ file_path, @tagName(fd_result.err.getErrno()) });
+        }
+        
         // Try with .html extension
         if (this.tryWithHtmlExtension(file_path)) |html_path| {
             defer bun.default_allocator.free(html_path);
+            if (bun.Environment.enable_logs) {
+                bun.Output.scoped(.DirectoryRoute, false)("Trying with .html extension: {s}", .{html_path});
+            }
             const html_fd_result = bun.sys.openatA(this.directory_fd, html_path, open_flags, 0);
             
             if (html_fd_result == .result) {
+                if (bun.Environment.enable_logs) {
+                    bun.Output.scoped(.DirectoryRoute, false)("Found file with .html extension: {s}", .{html_path});
+                }
                 this.serveFile(req, resp, method, html_fd_result.result, html_path);
                 return;
             }
@@ -94,15 +114,24 @@ pub fn on(this: *DirectoryRoute, req: *uws.Request, resp: AnyResponse, method: b
         // Try index.html or index.htm for directories
         if (this.tryIndexFiles(file_path)) |index_path| {
             defer bun.default_allocator.free(index_path);
+            if (bun.Environment.enable_logs) {
+                bun.Output.scoped(.DirectoryRoute, false)("Trying index file: {s}", .{index_path});
+            }
             const index_fd_result = bun.sys.openatA(this.directory_fd, index_path, open_flags, 0);
             
             if (index_fd_result == .result) {
+                if (bun.Environment.enable_logs) {
+                    bun.Output.scoped(.DirectoryRoute, false)("Found index file: {s}", .{index_path});
+                }
                 this.serveFile(req, resp, method, index_fd_result.result, index_path);
                 return;
             }
         }
         
         // File not found, yield to next handler
+        if (bun.Environment.enable_logs) {
+            bun.Output.scoped(.DirectoryRoute, false)("File not found, yielding to next handler", .{});
+        }
         req.setYield(true);
         this.deref();
         return;

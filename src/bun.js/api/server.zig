@@ -2646,15 +2646,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *FileRoute, file_route, entry.path, entry.method);
                         },
                         .directory => |directory_route| {
-                            // Directory routes need to handle all sub-paths, so register with wildcard
+                            // Directory routes need to handle the exact path AND all sub-paths
                             if (std.mem.eql(u8, entry.path, "/")) {
-                                // For root path, register as "/*" to handle all paths
-                                ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *DirectoryRoute, directory_route, "/*", entry.method);
+                                // For root path, register "*" first then "/" to handle all paths and root
+                                ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *DirectoryRoute, directory_route, "*", entry.method);
+                                ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *DirectoryRoute, directory_route, "/", entry.method);
                             } else {
-                                // For other paths, register as "path/*" to handle sub-paths
+                                // For other paths, register wildcard first then exact path
                                 const dir_path = std.fmt.allocPrint(bun.default_allocator, "{s}/*", .{entry.path}) catch bun.outOfMemory();
                                 defer bun.default_allocator.free(dir_path);
                                 ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *DirectoryRoute, directory_route, dir_path, entry.method);
+                                ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *DirectoryRoute, directory_route, entry.path, entry.method);
                             }
                         },
                         .html => |html_bundle_route| {

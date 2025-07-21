@@ -1604,8 +1604,13 @@ pub const BundleV2 = struct {
             .plugins = plugins,
             .log = Logger.Log.init(bun.default_allocator),
             .task = undefined,
+            .compile_target = config.compile_target,
         });
         completion.task = JSBundleCompletionTask.TaskCompletion.init(completion);
+        
+        // Important: Null out the pointer in the config so it's not double-freed
+        var mutable_config = &completion.config;
+        mutable_config.compile_target = null;
 
         if (plugins) |plugin| {
             plugin.setConfig(completion);
@@ -1685,6 +1690,7 @@ pub const BundleV2 = struct {
         transpiler: *BundleV2 = undefined,
         plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
         started_at_ns: u64 = 0,
+        compile_target: ?*CompileTarget = null,
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
@@ -1748,6 +1754,7 @@ pub const BundleV2 = struct {
             transpiler.options.css_chunking = config.css_chunking;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
+            transpiler.options.compile = config.compile;
 
             transpiler.configureLinker();
             try transpiler.configureDefines();
@@ -2283,7 +2290,53 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        return try this.linker.generateChunksInParallel(chunks, false);
+        const output_files_list = try this.linker.generateChunksInParallel(chunks, false);
+        
+        // ADD COMPILE LOGIC HERE
+        if (this.transpiler.options.compile) {
+            defer {
+                for (output_files_list.items) |*file| {
+                    file.deinit();
+                }
+                output_files_list.deinit();
+            }
+
+            const outfile = if (this.transpiler.options.output_dir.len > 0)
+                // This logic might need adjustment based on how --outfile is handled.
+                // For now, assume the first entry point name.
+                this.transpiler.options.entry_points[0]
+            else
+                "a.out";
+            
+            // The JS task holds the compile target.
+            const compile_target_from_js = this.completion.?.compile_target;
+            var default_compile_target: CompileTarget = .{};
+            const target = compile_target_from_js orelse &default_compile_target;
+
+            bun.StandaloneModuleGraph.toExecutable(
+                target,
+                this.graph.allocator,
+                output_files_list.items,
+                std.fs.cwd(), // Assumes CWD, might need to use rootdir
+                "", // module_prefix
+                outfile,
+                this.transpiler.env,
+                this.transpiler.options.output_format,
+                false, // windows_hide_console, TODO: expose this option
+                null, // windows_icon, TODO: expose this option
+            ) catch |err| {
+                // Handle the new errors from StandaloneModuleGraph
+                this.transpiler.log.addError(null, .{}, @errorName(err)) catch {};
+                // Propagate the error to fail the Bun.build() promise
+                return err;
+            };
+
+            // When compiling, we don't return build artifacts. Return an empty list.
+            return std.ArrayList(options.OutputFile).init(this.graph.allocator);
+        }
+        // END ADDED BLOCK
+
+        return output_files_list;
     }
 
     fn shouldAddWatcherPlugin(bv2: *BundleV2, namespace: []const u8, path: []const u8) bool {
@@ -4154,6 +4207,7 @@ pub const URL = @import("../url.zig").URL;
 pub const Resolver = _resolver.Resolver;
 pub const TOML = @import("../toml/toml_parser.zig").TOML;
 pub const Dependency = js_ast.Dependency;
+pub const CompileTarget = @import("../compile_target.zig");
 pub const JSAst = js_ast.BundledAst;
 pub const Loader = options.Loader;
 pub const Index = @import("../ast/base.zig").Index;

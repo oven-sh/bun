@@ -16,6 +16,23 @@ const macho = bun.macho;
 const pe = bun.pe;
 const w = std.os.windows;
 
+const StandaloneError = error{
+    TempFileFailed,
+    CopyFailed,
+    OpenFailed,
+    ReadFailed,
+    WriteFailed,
+    SeekFailed,
+    MachoInitFailed,
+    MachoWriteFailed,
+    PEInitFailed,
+    PEWriteFailed,
+    DownloadFailed,
+    GetSelfExePathFailed,
+    MoveFailed,
+    DisableConsoleFailed,
+};
+
 pub const StandaloneModuleGraph = struct {
     bytes: []const u8 = "",
     files: bun.StringArrayHashMap(File),
@@ -505,12 +522,9 @@ pub const StandaloneModuleGraph = struct {
         windows_hide_console: bool = false,
     };
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FileDescriptor {
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) StandaloneError!bun.FileDescriptor {
         var buf: bun.PathBuffer = undefined;
-        var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
-            Global.exit(1);
-        });
+        var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch return StandaloneError.TempFileFailed);
 
         const cleanup = struct {
             pub fn toClean(name: [:0]const u8, fd: bun.FileDescriptor) void {
@@ -537,10 +551,7 @@ pub const StandaloneModuleGraph = struct {
                 out_buf[zname.len] = 0;
                 const out = out_buf[0..zname.len :0];
 
-                bun.copyFile(in, out).unwrap() catch |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
-                    Global.exit(1);
-                };
+                bun.copyFile(in, out).unwrap() catch return StandaloneError.CopyFailed;
                 const file = bun.sys.openFileAtWindows(
                     bun.invalid_fd,
                     out,
@@ -549,10 +560,7 @@ pub const StandaloneModuleGraph = struct {
                         .disposition = w.FILE_OPEN,
                         .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
                     },
-                ).unwrap() catch |e| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{e});
-                    Global.exit(1);
-                };
+                ).unwrap() catch return StandaloneError.OpenFailed;
 
                 break :brk file;
             }
@@ -604,8 +612,7 @@ pub const StandaloneModuleGraph = struct {
                                     else => break,
                                 }
 
-                                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{err});
-                                Global.exit(1);
+                                return StandaloneError.OpenFailed;
                             }
                         },
                     }
@@ -625,9 +632,8 @@ pub const StandaloneModuleGraph = struct {
                                 }
                             }
 
-                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only\n{}", .{err});
                             cleanup(zname, fd);
-                            Global.exit(1);
+                            return StandaloneError.OpenFailed;
                         },
                     }
                 }
@@ -636,10 +642,9 @@ pub const StandaloneModuleGraph = struct {
 
             defer self_fd.close();
 
-            bun.copyFile(self_fd, fd).unwrap() catch |err| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
+            bun.copyFile(self_fd, fd).unwrap() catch {
                 cleanup(zname, fd);
-                Global.exit(1);
+                return StandaloneError.CopyFailed;
             };
             break :brk fd;
         };
@@ -843,22 +848,16 @@ pub const StandaloneModuleGraph = struct {
         output_format: bun.options.Format,
         windows_hide_console: bool,
         windows_icon: ?[]const u8,
-    ) !void {
+    ) StandaloneError!void {
         const bytes = try toBytes(allocator, module_prefix, output_files, output_format);
         if (bytes.len == 0) return;
 
-        const fd = inject(
+        const fd = try inject(
             bytes,
             if (target.isDefault())
-                bun.selfExePath() catch |err| {
-                    Output.err(err, "failed to get self executable path", .{});
-                    Global.exit(1);
-                }
+                try bun.selfExePath() catch return StandaloneError.GetSelfExePathFailed
             else
-                download(allocator, target, env) catch |err| {
-                    Output.err(err, "failed to download cross-compiled bun executable", .{});
-                    Global.exit(1);
-                },
+                try download(allocator, target, env) catch return StandaloneError.DownloadFailed,
             .{ .windows_hide_console = windows_hide_console },
             target,
         );
@@ -883,7 +882,7 @@ pub const StandaloneModuleGraph = struct {
 
                 _ = bun.windows.deleteOpenedFile(fd);
 
-                Global.exit(1);
+                return StandaloneError.MoveFailed;
             };
             fd.close();
 
@@ -898,10 +897,7 @@ pub const StandaloneModuleGraph = struct {
         }
 
         var buf: bun.PathBuffer = undefined;
-        const temp_location = bun.getFdPath(fd, &buf) catch |err| {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get path for fd: {s}", .{@errorName(err)});
-            Global.exit(1);
-        };
+        const temp_location = bun.getFdPath(fd, &buf) catch return StandaloneError.ReadFailed;
 
         bun.sys.moveFileZWithHandle(
             fd,
@@ -919,7 +915,7 @@ pub const StandaloneModuleGraph = struct {
                 &(try std.posix.toPosixPath(temp_location)),
             );
 
-            Global.exit(1);
+            return StandaloneError.MoveFailed;
         };
     }
 

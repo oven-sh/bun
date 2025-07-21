@@ -19,6 +19,7 @@ const logger = bun.logger;
 const Loader = options.Loader;
 const Target = options.Target;
 const Index = @import("../../ast/base.zig").Index;
+const CompileTarget = @import("../../compile_target.zig");
 
 const debug = bun.Output.scoped(.Transpiler, false);
 
@@ -59,6 +60,8 @@ pub const JSBundler = struct {
         env_behavior: Api.DotEnvBehavior = .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        compile: bool = false,
+        compile_target: ?*CompileTarget = null,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -80,7 +83,24 @@ pub const JSBundler = struct {
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
             var did_set_target = false;
-            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
+            if (try config.getOptional(globalThis, "target", ZigString.Slice)) |target_slice| {
+                defer target_slice.deinit();
+                const target_str = target_slice.slice();
+
+                if (bun.strings.hasPrefixComptime(target_str, "bun-")) {
+                    this.compile_target = try allocator.create(CompileTarget);
+                    this.compile_target.?.* = CompileTarget.from(target_str);
+                    // Set the build target based on the compile target's OS
+                    this.target = .bun;
+                    did_set_target = true;
+                } else {
+                    // Try to parse as enum target first
+                    if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
+                        this.target = target;
+                        did_set_target = true;
+                    }
+                }
+            } else if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
                 this.target = target;
                 did_set_target = true;
             }
@@ -284,6 +304,10 @@ pub const JSBundler = struct {
 
             if (try config.getBooleanLoose(globalThis, "ignoreDCEAnnotations")) |flag| {
                 this.ignore_dce_annotations = flag;
+            }
+
+            if (try config.getBooleanLoose(globalThis, "compile")) |compile_flag| {
+                this.compile = compile_flag;
             }
 
             if (try config.getTruthy(globalThis, "conditions")) |conditions_value| {
@@ -531,6 +555,9 @@ pub const JSBundler = struct {
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
+            if (self.compile_target) |target| {
+                allocator.destroy(target);
+            }
         }
     };
 

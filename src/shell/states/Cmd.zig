@@ -256,6 +256,12 @@ pub fn init(
 }
 
 pub fn next(this: *Cmd) Yield {
+    // Check if aborted before continuing execution
+    if (this.base.interpreter.isAborted()) {
+        this.onExit(128);
+        return .suspended;
+    }
+    
     while (this.state != .done) {
         switch (this.state) {
             .idle => {

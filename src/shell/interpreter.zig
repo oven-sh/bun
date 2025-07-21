@@ -277,6 +277,9 @@ pub const Interpreter = struct {
     /// This should be allocated using the arena
     jsobjs: []JSValue,
 
+    /// Optional AbortSignal for cancelling shell execution
+    abort_signal: ?*JSC.WebCore.AbortSignal,
+
     root_shell: ShellExecEnv,
     root_io: IO,
 
@@ -682,6 +685,7 @@ pub const Interpreter = struct {
         var quiet: bool = false;
         var cwd: ?bun.String = null;
         var export_env: ?EnvMap = null;
+        var abort_signal: ?*JSC.WebCore.AbortSignal = null;
 
         if (parsed_shell_script.args == null) return globalThis.throw("shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.", .{});
 
@@ -692,6 +696,7 @@ pub const Interpreter = struct {
             &quiet,
             &cwd,
             &export_env,
+            &abort_signal,
         );
 
         const cwd_string: ?bun.JSC.ZigString.Slice = if (cwd) |c| brk: {
@@ -707,6 +712,7 @@ pub const Interpreter = struct {
             jsobjs.items[0..],
             export_env,
             if (cwd_string) |c| c.slice() else null,
+            abort_signal,
         )) {
             .result => |i| i,
             .err => |*e| {
@@ -793,6 +799,7 @@ pub const Interpreter = struct {
         jsobjs: []JSValue,
         export_env_: ?EnvMap,
         cwd_: ?[]const u8,
+        abort_signal: ?*JSC.WebCore.AbortSignal,
     ) shell.Result(*ThisInterpreter) {
         const export_env = brk: {
             if (event_loop == .js) break :brk if (export_env_) |e| e else EnvMap.init(allocator);
@@ -859,6 +866,7 @@ pub const Interpreter = struct {
             .args = shargs,
             .allocator = allocator,
             .jsobjs = jsobjs,
+            .abort_signal = if (abort_signal) |signal| signal.ref() else null,
 
             .root_shell = ShellExecEnv{
                 .shell_env = EnvMap.init(allocator),
@@ -942,6 +950,7 @@ pub const Interpreter = struct {
             jsobjs,
             null,
             null,
+            null, // no abort signal for standalone shell
         )) {
             .err => |*e| {
                 e.throwMini();
@@ -1011,6 +1020,7 @@ pub const Interpreter = struct {
             jsobjs,
             null,
             cwd,
+            null, // no abort signal for standalone shell
         )) {
             .err => |*e| {
                 e.throwMini();
@@ -1095,8 +1105,22 @@ pub const Interpreter = struct {
         return Maybe(void).success;
     }
 
+    /// Check if the command should be aborted due to AbortSignal
+    pub fn isAborted(this: *ThisInterpreter) bool {
+        if (this.abort_signal) |signal| {
+            return signal.aborted();
+        }
+        return false;
+    }
+
     pub fn run(this: *ThisInterpreter) !Maybe(void) {
         log("Interpreter(0x{x}) run", .{@intFromPtr(this)});
+        
+        // Check abort signal before starting
+        if (this.isAborted()) {
+            return .{ .err = Syscall.Error.fromCode(.ECANCELED, .TODO) };
+        }
+        
         if (this.setupIOBeforeRun().asErr()) |e| {
             return .{ .err = e };
         }
@@ -1111,6 +1135,13 @@ pub const Interpreter = struct {
     pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         log("Interpreter(0x{x}) runFromJS", .{@intFromPtr(this)});
         _ = callframe; // autofix
+
+        // Check abort signal before starting
+        if (this.isAborted()) {
+            defer this.deinitEverything();
+            const shellerr = bun.shell.ShellErr.newSys(Syscall.Error.fromCode(.ECANCELED, .TODO));
+            return try throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
+        }
 
         if (this.setupIOBeforeRun().asErr()) |e| {
             defer this.deinitEverything();
@@ -1198,6 +1229,9 @@ pub const Interpreter = struct {
         this.root_io.deref();
         this.keep_alive.disable();
         this.root_shell.deinitImpl(false, false);
+        if (this.abort_signal) |signal| {
+            signal.unref();
+        }
         this.this_jsvalue = .zero;
     }
 
@@ -1207,6 +1241,9 @@ pub const Interpreter = struct {
         }
         if (this.root_shell._buffered_stdout == .owned) {
             this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+        }
+        if (this.abort_signal) |signal| {
+            signal.unref();
         }
         this.this_jsvalue = .zero;
         this.allocator.destroy(this);
@@ -1223,6 +1260,9 @@ pub const Interpreter = struct {
             str.deinit();
         }
         this.vm_args_utf8.deinit();
+        if (this.abort_signal) |signal| {
+            signal.unref();
+        }
         this.this_jsvalue = .zero;
         this.allocator.destroy(this);
     }

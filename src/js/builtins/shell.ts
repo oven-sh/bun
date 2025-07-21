@@ -195,6 +195,14 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       return this;
     }
 
+    signal(abortSignal: AbortSignal | undefined): this {
+      this.#throwIfRunning();
+      if (abortSignal !== undefined) {
+        this.#args!.setAbortSignal(abortSignal);
+      }
+      return this;
+    }
+
     async text(encoding) {
       const { stdout } = (await this.#quiet()) as ShellOutput;
       return stdout.toString(encoding);

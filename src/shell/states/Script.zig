@@ -62,6 +62,11 @@ pub fn start(this: *Script) Yield {
 }
 
 pub fn next(this: *Script) Yield {
+    // Check if aborted before continuing execution
+    if (this.base.interpreter.isAborted()) {
+        return this.finish(128); // 128 is typically used for signals
+    }
+    
     switch (this.state) {
         .normal => {
             if (this.state.normal.idx >= this.node.stmts.len) return .suspended;

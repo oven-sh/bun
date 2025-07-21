@@ -10,6 +10,7 @@ export_env: ?EnvMap = null,
 quiet: bool = false,
 cwd: ?bun.String = null,
 this_jsvalue: JSValue = .zero,
+abort_signal: ?*JSC.WebCore.AbortSignal = null,
 
 pub fn take(
     this: *ParsedShellScript,
@@ -19,17 +20,20 @@ pub fn take(
     out_quiet: *bool,
     out_cwd: *?bun.String,
     out_export_env: *?EnvMap,
+    out_abort_signal: *?*JSC.WebCore.AbortSignal,
 ) void {
     out_args.* = this.args.?;
     out_jsobjs.* = this.jsobjs;
     out_quiet.* = this.quiet;
     out_cwd.* = this.cwd;
     out_export_env.* = this.export_env;
+    out_abort_signal.* = this.abort_signal;
 
     this.args = null;
     this.jsobjs = std.ArrayList(JSValue).init(bun.default_allocator);
     this.cwd = null;
     this.export_env = null;
+    this.abort_signal = null;
 }
 
 pub fn finalize(
@@ -43,6 +47,9 @@ pub fn finalize(
         jsobj.unprotect();
     }
     if (this.args) |a| a.deinit();
+    if (this.abort_signal) |signal| {
+        signal.unref();
+    }
     bun.destroy(this);
 }
 
@@ -98,6 +105,27 @@ pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
     }
     this.export_env = env;
     return .js_undefined;
+}
+
+pub fn setAbortSignal(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const signal_js = callframe.argument(0);
+    if (signal_js.isUndefined() or signal_js.isNull()) {
+        if (this.abort_signal) |signal| {
+            signal.unref();
+        }
+        this.abort_signal = null;
+        return .js_undefined;
+    }
+
+    if (signal_js.as(JSC.WebCore.AbortSignal)) |signal| {
+        if (this.abort_signal) |prev_signal| {
+            prev_signal.unref();
+        }
+        this.abort_signal = signal.ref();
+        return .js_undefined;
+    }
+
+    return globalThis.throwInvalidArguments("signal must be an AbortSignal", .{});
 }
 
 pub fn createParsedShellScript(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {

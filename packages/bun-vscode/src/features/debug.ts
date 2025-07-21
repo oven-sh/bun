@@ -72,10 +72,16 @@ export function registerDebugger(context: vscode.ExtensionContext, factory?: vsc
   }
 }
 
+function getWorkspaceFolderForPath(filePath?: string): vscode.WorkspaceFolder | undefined {
+  if (!filePath) return undefined;
+  return vscode.workspace.workspaceFolders?.find(folder => filePath.startsWith(folder.uri.fsPath));
+}
+
 function runFileCommand(resource?: vscode.Uri): void {
   const path = getActivePath(resource);
+  const workspaceFolder = getWorkspaceFolderForPath(path);
   if (path) {
-    vscode.debug.startDebugging(undefined, {
+    vscode.debug.startDebugging(workspaceFolder, {
       ...RUN_CONFIGURATION,
       noDebug: true,
       program: path,
@@ -84,17 +90,18 @@ function runFileCommand(resource?: vscode.Uri): void {
   }
 }
 
-export function debugCommand(command: string) {
-  vscode.debug.startDebugging(undefined, {
+function debugFileCommand(resource?: vscode.Uri) {
+  const path = getActivePath(resource);
+  const workspaceFolder = getWorkspaceFolderForPath(path);
+  if (path) debugCommand(path, workspaceFolder);
+}
+
+export function debugCommand(command: string, workspaceFolder?: vscode.WorkspaceFolder) {
+  vscode.debug.startDebugging(workspaceFolder, {
     ...DEBUG_CONFIGURATION,
     program: command,
     runtime: getRuntime(),
   });
-}
-
-function debugFileCommand(resource?: vscode.Uri) {
-  const path = getActivePath(resource);
-  if (path) debugCommand(path);
 }
 
 async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {

@@ -106,7 +106,7 @@ fn performSecurityScanOnAdds(
 
     try code_writer.print(
         \\try {{
-        \\  const provider = await import('{s}');
+        \\  const {{provider}} = await import('{s}');
         \\  const packages = {s};
         \\
         \\  if (provider.version !== '1') {{
@@ -153,7 +153,23 @@ fn performSecurityScanOnAdds(
     }
 
     if (!result.status.isOK()) {
-        Output.errGeneric("Security provider failed with exit code", .{});
+        switch (result.status) {
+            .exited => |exited| {
+                Output.errGeneric("Security provider failed with exit code: {d}", .{exited.code});
+            },
+            .signaled => |signal| {
+                Output.errGeneric("Security provider was terminated by signal: {s}", .{@tagName(signal)});
+            },
+            .err => |err| {
+                Output.errGeneric("Security provider failed with error: {s}", .{@tagName(err.getErrno())});
+            },
+            else => {
+                Output.errGeneric("Security provider failed", .{});
+            },
+        }
+        if (result.stderr.items.len > 0) {
+            Output.errGeneric("Stderr: {s}", .{result.stderr.items});
+        }
         Global.exit(1);
     }
 

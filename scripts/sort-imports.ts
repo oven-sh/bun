@@ -17,9 +17,9 @@ const usage = String.raw`
 Usage: bun scripts/sortImports [options] <files...>
 
 Options:
-  --help                   Show this help message
-  --include-pub            Also sort ${"`pub`"} imports
-  --keep-unused            Don't remove unused imports
+  --help         Show this help message
+  --include-pub  Also sort ${"`pub`"} imports
+  --keep-unused  Don't remove unused imports
 
 Examples:
   bun scripts/sortImports src

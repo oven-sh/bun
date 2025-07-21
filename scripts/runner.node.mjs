@@ -502,9 +502,6 @@ async function runTests() {
           NO_COLOR: "1",
           BUN_DEBUG_QUIET_LOGS: "1",
         };
-        if (typeof remapPort == "number") {
-          env.BUN_CRASH_REPORT_URL = `http://localhost:${remapPort}`;
-        }
         if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
           env.BUN_JSC_validateExceptionChecks = "1";
         }
@@ -988,11 +985,13 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_DEBUG_QUIET_LOGS: "1",
     BUN_GARBAGE_COLLECTOR_LEVEL: "1",
     BUN_JSC_randomIntegrityAuditRate: "1.0",
-    BUN_ENABLE_CRASH_REPORTING: "0", // change this to '1' if https://github.com/oven-sh/bun/issues/13012 is implemented
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
+    ...(typeof remapPort == "number"
+      ? { BUN_CRASH_REPORT_URL: `http://localhost:${remapPort}` }
+      : { BUN_ENABLE_CRASH_REPORTING: "0" }),
   };
 
   if (basename(execPath).includes("asan")) {
@@ -1049,8 +1048,14 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       }
     }
 
-    if (typeof remapPort == "number") {
+    // Skip this if the remap server didn't work or if Bun exited normally
+    // (tests in which a subprocess crashed should at least set exit code 1)
+    if (typeof remapPort == "number" && result.exitCode !== 0) {
       try {
+        // When Bun crashes, it exits before the subcommand it runs to upload the crash report has necessarily finished.
+        // So wait a little bit to make sure that the crash report has at least started uploading
+        // (once the server sees the /ack request then /traces will wait for any crashes to finish processing)
+        await setTimeoutPromise(500);
         const response = await fetch(`http://localhost:${remapPort}/traces`);
         if (!response.ok || response.status !== 200) throw new Error(`server responded with code ${response.status}`);
         const traces = await response.json();
@@ -1159,9 +1164,6 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   };
   if (basename(execPath).includes("asan") && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
-  }
-  if (typeof remapPort == "number") {
-    env.BUN_CRASH_REPORT_URL = `http://localhost:${remapPort}`;
   }
 
   const { ok, error, stdout } = await spawnBun(execPath, {

@@ -248,6 +248,7 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
     }
 }
 
+/// Called from multiple threads
 pub fn spawnPackageLifecycleScripts(
     this: *PackageManager,
     ctx: Command.Context,

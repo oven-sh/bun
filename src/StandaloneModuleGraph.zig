@@ -691,7 +691,8 @@ pub const StandaloneModuleGraph = struct {
                     cleanup(zname, cloned_executable_fd);
                     Global.exit(1);
                 };
-                if (comptime !Environment.isWindows) {
+                // Set executable permissions on POSIX hosts, regardless of target OS
+                if (comptime Environment.isPosix) {
                     _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
                 }
                 return cloned_executable_fd;
@@ -797,7 +798,8 @@ pub const StandaloneModuleGraph = struct {
 
                 // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
                 _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
-                if (comptime !Environment.isWindows) {
+                // Set executable permissions on POSIX hosts, regardless of target OS
+                if (comptime Environment.isPosix) {
                     _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
                 }
 

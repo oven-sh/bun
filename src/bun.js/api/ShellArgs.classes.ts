@@ -22,6 +22,10 @@ export default [
         fn: "setQuiet",
         length: 0,
       },
+      setAbortSignal: {
+        fn: "setAbortSignal",
+        length: 1,
+      },
     },
   }),
 ];

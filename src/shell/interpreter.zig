@@ -1118,7 +1118,7 @@ pub const Interpreter = struct {
         
         // Check abort signal before starting
         if (this.isAborted()) {
-            return .{ .err = Syscall.Error.fromCode(.ECANCELED, .TODO) };
+            return .{ .err = Syscall.Error.fromCode(.INTR, .TODO) };
         }
         
         if (this.setupIOBeforeRun().asErr()) |e| {
@@ -1139,7 +1139,7 @@ pub const Interpreter = struct {
         // Check abort signal before starting
         if (this.isAborted()) {
             defer this.deinitEverything();
-            const shellerr = bun.shell.ShellErr.newSys(Syscall.Error.fromCode(.ECANCELED, .TODO));
+            const shellerr = bun.shell.ShellErr.newSys(Syscall.Error.fromCode(.INTR, .TODO));
             return try throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
         }
 

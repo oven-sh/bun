@@ -1219,27 +1219,30 @@ fn validateComposesFromProperties(
     }
 }
 
-const bun = @import("bun");
-const strings = bun.strings;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
-const ImportRecord = bun.ImportRecord;
-const Part = bun.bundle_v2.Part;
-const Loader = bun.Loader;
 const std = @import("std");
-const debug = LinkerContext.debug;
-const EntryPoint = bun.bundle_v2.EntryPoint;
 
-const JSMeta = bun.bundle_v2.JSMeta;
-const js_ast = bun.bundle_v2.js_ast;
-const Ref = bun.bundle_v2.js_ast.Ref;
+const bun = @import("bun");
 const Environment = bun.Environment;
-const ResolvedExports = bun.bundle_v2.ResolvedExports;
-const ExportData = bun.bundle_v2.ExportData;
 const FeatureFlags = bun.FeatureFlags;
+const ImportRecord = bun.ImportRecord;
+const Loader = bun.Loader;
 const Logger = bun.logger;
-const RefImportData = bun.bundle_v2.RefImportData;
-const ImportData = bun.bundle_v2.ImportData;
-const Dependency = js_ast.Dependency;
 const options = bun.options;
+const strings = bun.strings;
+
+const EntryPoint = bun.bundle_v2.EntryPoint;
+const ExportData = bun.bundle_v2.ExportData;
+const ImportData = bun.bundle_v2.ImportData;
+const Index = bun.bundle_v2.Index;
+const JSMeta = bun.bundle_v2.JSMeta;
+const Part = bun.bundle_v2.Part;
+const RefImportData = bun.bundle_v2.RefImportData;
+const ResolvedExports = bun.bundle_v2.ResolvedExports;
 const Symbol = bun.bundle_v2.Symbol;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const debug = LinkerContext.debug;
+
+const js_ast = bun.bundle_v2.js_ast;
+const Dependency = js_ast.Dependency;
+const Ref = bun.bundle_v2.js_ast.Ref;

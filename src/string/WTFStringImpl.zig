@@ -1,9 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-
 pub const WTFStringImpl = *WTFStringImplStruct;
-const ZigString = bun.JSC.ZigString;
 
 pub const WTFStringImplStruct = extern struct {
     m_refCount: u32 = 0,
@@ -267,3 +262,9 @@ pub const StringImplAllocator = struct {
 
     pub const VTablePtr = &VTable;
 };
+
+const bun = @import("bun");
+const std = @import("std");
+
+const JSC = bun.JSC;
+const ZigString = bun.JSC.ZigString;

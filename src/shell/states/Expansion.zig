@@ -848,36 +848,37 @@ pub const ShellGlobTask = struct {
 };
 
 const std = @import("std");
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-
 const Allocator = std.mem.Allocator;
 
-const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const GlobWalker = bun.shell.interpret.GlobWalker;
-const ShellExecEnv = Interpreter.ShellExecEnv;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-const EnvStr = bun.shell.interpret.EnvStr;
-
-const Script = bun.shell.Interpreter.Script;
-const Cmd = bun.shell.Interpreter.Cmd;
-const Assigns = bun.shell.Interpreter.Assigns;
-const CondExpr = bun.shell.Interpreter.CondExpr;
-const Subshell = bun.shell.Interpreter.Subshell;
+const bun = @import("bun");
+const assert = bun.assert;
 
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 const Maybe = JSC.Maybe;
-const assert = bun.assert;
+
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
+
+const Interpreter = bun.shell.Interpreter;
+const Assigns = bun.shell.Interpreter.Assigns;
+const Cmd = bun.shell.Interpreter.Cmd;
+const CondExpr = bun.shell.Interpreter.CondExpr;
+const IO = bun.shell.Interpreter.IO;
+const Script = bun.shell.Interpreter.Script;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Subshell = bun.shell.Interpreter.Subshell;
+
 const Arena = bun.shell.interpret.Arena;
 const Braces = bun.shell.interpret.Braces;
+const EnvStr = bun.shell.interpret.EnvStr;
+const GlobWalker = bun.shell.interpret.GlobWalker;
 const OOM = bun.shell.interpret.OOM;
-const WorkPoolTask = bun.shell.interpret.WorkPoolTask;
-const WorkPool = bun.shell.interpret.WorkPool;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const Syscall = bun.shell.interpret.Syscall;
+const WorkPool = bun.shell.interpret.WorkPool;
+const WorkPoolTask = bun.shell.interpret.WorkPoolTask;
+const log = bun.shell.interpret.log;

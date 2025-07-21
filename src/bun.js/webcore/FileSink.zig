@@ -740,14 +740,17 @@ comptime {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const uv = bun.windows.libuv;
-const Output = bun.Output;
 const Environment = bun.Environment;
+const Output = bun.Output;
+const uv = bun.windows.libuv;
+
 const JSC = bun.jsc;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+
 const webcore = bun.webcore;
 const Blob = webcore.Blob;
 const Sink = webcore.Sink;
 const streams = webcore.streams;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;

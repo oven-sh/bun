@@ -1,5 +1,7 @@
 //! Bun's cross-platform filesystem watcher. Runs on its own thread.
+
 const Watcher = @This();
+
 const DebugLogScope = bun.Output.Scoped(.watcher, false);
 const log = DebugLogScope.log;
 
@@ -126,7 +128,6 @@ pub fn getHash(filepath: string) HashType {
 
 pub const WatchItemIndex = u16;
 pub const max_eviction_count = 8096;
-const WindowsWatcher = @import("./watcher/WindowsWatcher.zig");
 // TODO: some platform-specific behavior is implemented in
 // this file instead of the platform-specific file.
 // ideally, the constants above can be inlined
@@ -673,13 +674,15 @@ pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: bun.Sto
     }
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const FeatureFlags = bun.FeatureFlags;
+const WindowsWatcher = @import("./watcher/WindowsWatcher.zig");
 const options = @import("./options.zig");
-const Mutex = bun.Mutex;
+const std = @import("std");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Mutex = bun.Mutex;
+const Output = bun.Output;
+const string = bun.string;
+const strings = bun.strings;

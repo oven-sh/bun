@@ -1763,8 +1763,6 @@ fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, 
     return false;
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

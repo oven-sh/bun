@@ -1,31 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const std = @import("std");
-const Progress = bun.Progress;
-
-const logger = bun.logger;
-
-const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
-
-const Command = @import("../cli.zig").Command;
-
-const fs = @import("../fs.zig");
-const URL = @import("../url.zig").URL;
-const HTTP = bun.http;
-const JSON = bun.JSON;
-const Archive = @import("../libarchive/libarchive.zig").Archive;
-const DotEnv = @import("../env_loader.zig");
-const which = @import("../which.zig").which;
-const Headers = bun.http.Headers;
-
 pub var initialized_store = false;
 pub fn initializeStore() void {
     if (initialized_store) return;
@@ -1007,3 +979,29 @@ pub fn @"export"() void {
     _ = &upgrade_js_bindings;
     Version.@"export"();
 }
+
+const DotEnv = @import("../env_loader.zig");
+const fs = @import("../fs.zig");
+const linker = @import("../linker.zig");
+const std = @import("std");
+const Archive = @import("../libarchive/libarchive.zig").Archive;
+const Command = @import("../cli.zig").Command;
+const URL = @import("../url.zig").URL;
+const which = @import("../which.zig").which;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.JSON;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.JSAst;
+const logger = bun.logger;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const strings = bun.strings;
+
+const HTTP = bun.http;
+const Headers = bun.http.Headers;

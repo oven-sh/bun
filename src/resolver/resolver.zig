@@ -1,44 +1,7 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const FeatureFlags = bun.FeatureFlags;
-const PathString = bun.PathString;
-const default_allocator = bun.default_allocator;
-const FD = bun.FD;
-
-const ast = @import("../import_record.zig");
-const logger = bun.logger;
-const options = @import("../options.zig");
-const Fs = @import("../fs.zig");
-const std = @import("std");
-const cache = @import("../cache.zig");
-const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
-const PackageJSON = @import("./package_json.zig").PackageJSON;
-const ESModule = @import("./package_json.zig").ESModule;
-const BrowserMap = @import("./package_json.zig").BrowserMap;
-const CacheSet = cache.Set;
 pub const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
-const ResolvePath = @import("./resolve_path.zig");
-const NodeFallbackModules = @import("../node_fallbacks.zig");
-const Mutex = bun.Mutex;
-const FileDescriptorType = bun.FileDescriptor;
-const JSC = bun.JSC;
 
-const allocators = @import("../allocators.zig");
-const Msg = logger.Msg;
-const Path = Fs.Path;
 const debuglog = Output.scoped(.Resolver, true);
-const PackageManager = @import("../install/install.zig").PackageManager;
-const Dependency = @import("../install/dependency.zig");
-const Install = @import("../install/install.zig");
-const Package = @import("../install/lockfile.zig").Package;
-const Resolution = @import("../install/resolution.zig").Resolution;
-const Semver = bun.Semver;
-const DotEnv = @import("../env_loader.zig");
 
 pub fn isPackagePath(path: string) bool {
     // Always check for posix absolute paths (starts with "/")
@@ -449,8 +412,6 @@ const BinFolderArray = std.BoundedArray(string, 128);
 var bin_folders: BinFolderArray = undefined;
 var bin_folders_lock: Mutex = .{};
 var bin_folders_loaded: bool = false;
-
-const Timer = @import("../system_timer.zig").Timer;
 
 pub const AnyResolveWatcher = struct {
     context: *anyopaque,
@@ -4355,4 +4316,47 @@ comptime {
     @export(&Resolver.nodeModulePathsJSValue, .{ .name = "Resolver__nodeModulePathsJSValue" });
 }
 
+const Dependency = @import("../install/dependency.zig");
+const DotEnv = @import("../env_loader.zig");
+const NodeFallbackModules = @import("../node_fallbacks.zig");
+const ResolvePath = @import("./resolve_path.zig");
+const allocators = @import("../allocators.zig");
+const ast = @import("../import_record.zig");
+const options = @import("../options.zig");
+const std = @import("std");
+const Package = @import("../install/lockfile.zig").Package;
+const Resolution = @import("../install/resolution.zig").Resolution;
+const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
+const Timer = @import("../system_timer.zig").Timer;
+
+const cache = @import("../cache.zig");
+const CacheSet = cache.Set;
+
+const Fs = @import("../fs.zig");
+const Path = Fs.Path;
+
+const Install = @import("../install/install.zig");
+const PackageManager = @import("../install/install.zig").PackageManager;
+
+const BrowserMap = @import("./package_json.zig").BrowserMap;
+const ESModule = @import("./package_json.zig").ESModule;
+const PackageJSON = @import("./package_json.zig").PackageJSON;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const FeatureFlags = bun.FeatureFlags;
+const FileDescriptorType = bun.FileDescriptor;
+const JSC = bun.JSC;
+const MutableString = bun.MutableString;
+const Mutex = bun.Mutex;
+const Output = bun.Output;
+const PathString = bun.PathString;
+const Semver = bun.Semver;
 const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+
+const logger = bun.logger;
+const Msg = logger.Msg;

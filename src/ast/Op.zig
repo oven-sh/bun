@@ -281,8 +281,6 @@ pub const Table = brk: {
     break :brk table;
 };
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

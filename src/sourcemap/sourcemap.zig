@@ -1,15 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const JSAst = bun.JSAst;
-const Logger = bun.logger;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const StringJoiner = bun.StringJoiner;
-const JSPrinter = bun.js_printer;
-const URL = bun.URL;
-const FileSystem = bun.fs.FileSystem;
-
 pub const SourceMap = @This();
 const debug = bun.Output.scoped(.SourceMap, false);
 
@@ -1977,8 +1965,6 @@ pub const DebugIDFormatter = struct {
     }
 };
 
-const assert = bun.assert;
-
 pub const coverage = @import("./CodeCoverage.zig");
 pub const VLQ = @import("./VLQ.zig");
 pub const LineOffsetTable = @import("./LineOffsetTable.zig");
@@ -1986,3 +1972,17 @@ pub const JSSourceMap = @import("./JSSourceMap.zig");
 
 const decodeVLQAssumeValid = VLQ.decodeAssumeValid;
 const decodeVLQ = VLQ.decode;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSAst = bun.JSAst;
+const JSPrinter = bun.js_printer;
+const Logger = bun.logger;
+const MutableString = bun.MutableString;
+const StringJoiner = bun.StringJoiner;
+const URL = bun.URL;
+const assert = bun.assert;
+const string = bun.string;
+const strings = bun.strings;
+const FileSystem = bun.fs.FileSystem;

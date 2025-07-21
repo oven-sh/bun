@@ -1,10 +1,10 @@
 // This file contains the underlying implementation for sync & async functions
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
-pub const constants = @import("node_fs_constant.zig");
-pub const Binding = @import("node_fs_binding.zig").Binding;
-pub const Watcher = @import("node_fs_watcher.zig").FSWatcher;
-pub const StatWatcher = @import("node_fs_stat_watcher.zig").StatWatcher;
+pub const constants = @import("./node_fs_constant.zig");
+pub const Binding = @import("./node_fs_binding.zig").Binding;
+pub const Watcher = @import("./node_fs_watcher.zig").FSWatcher;
+pub const StatWatcher = @import("./node_fs_stat_watcher.zig").StatWatcher;
 
 pub const default_permission = if (Environment.isPosix)
     Syscall.S.IRUSR |
@@ -22,9 +22,6 @@ else
 // an extra stack buffer in the async case.
 pub const Flavor = enum { sync, @"async" };
 
-const ArrayBuffer = JSC.MarkedArrayBuffer;
-const Buffer = bun.api.node.Buffer;
-const FileSystemFlags = JSC.Node.FileSystemFlags;
 pub const Async = struct {
     pub const access = NewAsyncFSTask(Return.Access, Arguments.Access, NodeFS.access);
     pub const appendFile = NewAsyncFSTask(Return.AppendFile, Arguments.AppendFile, NodeFS.appendFile);
@@ -6897,41 +6894,48 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
     }
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const windows = bun.windows;
-const c = bun.c;
-const E = bun.sys.E;
-const string = bun.string;
-const JSC = bun.JSC;
-const PathString = bun.PathString;
-const Environment = bun.Environment;
-const system = std.posix.system;
-const Maybe = JSC.Maybe;
-const Encoding = JSC.Node.Encoding;
-
-const FileDescriptor = bun.FileDescriptor;
-const FD = bun.FD;
-
-const AbortSignal = bun.webcore.AbortSignal;
-
 const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 
-const posix = std.posix;
-const linux = std.os.linux;
-const PathLike = JSC.Node.PathLike;
-const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
-const DirIterator = @import("./dir_iterator.zig");
-const FileSystem = @import("../../fs.zig").FileSystem;
-const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
-const TimeLike = JSC.Node.TimeLike;
-const Mode = bun.Mode;
-const uv = bun.windows.libuv;
-const uid_t = JSC.Node.uid_t;
-const gid_t = JSC.Node.gid_t;
 const ReadPosition = i64;
-const StringOrBuffer = JSC.Node.StringOrBuffer;
 const NodeFSFunctionEnum = std.meta.DeclEnum(NodeFS);
 
+const DirIterator = @import("./dir_iterator.zig");
+const FileSystem = @import("../../fs.zig").FileSystem;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const FileDescriptor = bun.FileDescriptor;
+const Mode = bun.Mode;
+const PathString = bun.PathString;
+const c = bun.c;
+const string = bun.string;
+const strings = bun.strings;
+const AbortSignal = bun.webcore.AbortSignal;
+const Buffer = bun.api.node.Buffer;
+
+const JSC = bun.JSC;
+const ArrayBuffer = JSC.MarkedArrayBuffer;
+const Maybe = JSC.Maybe;
+const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
+
+const Encoding = JSC.Node.Encoding;
+const FileSystemFlags = JSC.Node.FileSystemFlags;
+const PathLike = JSC.Node.PathLike;
+const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
+const StringOrBuffer = JSC.Node.StringOrBuffer;
+const TimeLike = JSC.Node.TimeLike;
+const gid_t = JSC.Node.gid_t;
+const uid_t = JSC.Node.uid_t;
+
+const E = bun.sys.E;
 const SystemErrno = bun.sys.SystemErrno;
+
+const windows = bun.windows;
+const uv = bun.windows.libuv;
+
+const std = @import("std");
+const linux = std.os.linux;
+
+const posix = std.posix;
+const system = std.posix.system;

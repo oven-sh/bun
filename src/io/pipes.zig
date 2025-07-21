@@ -1,7 +1,3 @@
-const Async = bun.Async;
-const bun = @import("bun");
-const Environment = bun.Environment;
-
 pub const PollOrFd = union(enum) {
     /// When it's a pipe/fifo
     poll: *Async.FilePoll,
@@ -103,3 +99,7 @@ pub const ReadState = enum {
     /// Received an EAGAIN
     drained,
 };
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;

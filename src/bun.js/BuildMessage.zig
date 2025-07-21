@@ -1,14 +1,3 @@
-const bun = @import("bun");
-const logger = bun.logger;
-const std = @import("std");
-const string = bun.string;
-const Resolver = @import("../resolver//resolver.zig").Resolver;
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const default_allocator = bun.default_allocator;
-const ZigString = JSC.ZigString;
-const JSValue = JSC.JSValue;
-
 pub const BuildMessage = struct {
     pub const js = JSC.Codegen.JSBuildMessage;
     pub const toJS = js.toJS;
@@ -197,3 +186,16 @@ pub const BuildMessage = struct {
         this.msg.deinit(bun.default_allocator);
     }
 };
+
+const std = @import("std");
+const Resolver = @import("../resolver//resolver.zig").Resolver;
+
+const bun = @import("bun");
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
+const string = bun.string;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;

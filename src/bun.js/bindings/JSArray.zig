@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const JSArrayIterator = @import("./JSArrayIterator.zig").JSArrayIterator;
-
 pub const JSArray = opaque {
     // TODO(@paperclover): this can throw
     extern fn JSArray__constructArray(*JSGlobalObject, [*]const JSValue, usize) JSValue;
@@ -22,3 +16,10 @@ pub const JSArray = opaque {
         return JSValue.fromCell(array).arrayIterator(global);
     }
 };
+
+const bun = @import("bun");
+const JSArrayIterator = @import("./JSArrayIterator.zig").JSArrayIterator;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

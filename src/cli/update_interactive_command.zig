@@ -1101,8 +1101,6 @@ pub const UpdateInteractiveCommand = struct {
 
 extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

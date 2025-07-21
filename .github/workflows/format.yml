@@ -47,7 +47,7 @@ jobs:
       - name: Zig Format
         run: |
           zig fmt src
-          ./scripts/sort-imports.ts src
+          ./scripts/sort-imports.ts --no-include-pub src
           zig fmt src
       - name: Prettier Format
         run: |

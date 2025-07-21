@@ -1257,8 +1257,6 @@ pub const ErrorCode = enum(i32) {
     protocol_error = 32,
 };
 
-const CppWebSocket = @import("./websocket_client/CppWebSocket.zig").CppWebSocket;
-
 pub const Mask = struct {
     pub fn fill(globalThis: *JSC.JSGlobalObject, mask_buf: *[4]u8, output_: []u8, input_: []const u8) void {
         mask_buf.* = globalThis.bunVM().rareData().entropySlice(4)[0..4].*;
@@ -1513,20 +1511,22 @@ const Copy = union(enum) {
     }
 };
 
-const std = @import("std");
-const JSC = bun.JSC;
-const bun = @import("bun");
+const log = Output.scoped(.WebSocketClient, false);
 
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const uws = bun.uws;
-const Async = bun.Async;
+const WebSocketDeflate = @import("./websocket_client/WebSocketDeflate.zig");
+const std = @import("std");
+const CppWebSocket = @import("./websocket_client/CppWebSocket.zig").CppWebSocket;
+
 const Opcode = @import("./websocket.zig").Opcode;
 const WebsocketHeader = @import("./websocket.zig").WebsocketHeader;
-const BoringSSL = bun.BoringSSL;
-const WebSocketDeflate = @import("./websocket_client/WebSocketDeflate.zig");
 
-const log = Output.scoped(.WebSocketClient, false);
+const bun = @import("bun");
+const Async = bun.Async;
+const BoringSSL = bun.BoringSSL;
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+const uws = bun.uws;

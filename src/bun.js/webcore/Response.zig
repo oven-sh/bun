@@ -390,7 +390,7 @@ pub fn constructJSON(
             const err = globalThis.createTypeErrorInstance("Value is not JSON serializable", .{});
             return globalThis.throwValue(err);
         }
-        
+
         // BigInt has a different error message to match Node.js exactly
         if (json_value.isBigInt()) {
             const err = globalThis.createTypeErrorInstance("Do not know how to serialize a BigInt", .{});

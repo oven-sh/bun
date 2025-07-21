@@ -2629,7 +2629,7 @@ pub const bindings = struct {
                         defer result.deinit();
                         break :blk String.cloneUTF8(result.items);
                     } else String.cloneUTF8(archive_entry.pathname());
-                    
+
                     const kind = bun.sys.kindFromMode(archive_entry.filetype());
                     const perm = archive_entry.perm();
 

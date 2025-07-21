@@ -1,6 +1,5 @@
 const std = @import("std");
 const bun = @import("bun");
-const builtin = @import("builtin");
 const wchar_t = u16;
 
 // Match libarchive's platform-specific type definitions

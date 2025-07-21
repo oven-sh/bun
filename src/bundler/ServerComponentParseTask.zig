@@ -185,8 +185,9 @@ fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.Refe
         });
 
         if (is_default) {
+            const ref = try b.newSymbol(.other, "default");
             // export default registerClientReference(...);
-            try b.appendStmt(S.ExportDefault{ .value = .{ .expr = value }, .default_name = .{} });
+            try b.appendStmt(S.ExportDefault{ .value = .{ .expr = value }, .default_name = .{ .ref = ref } });
         } else {
             // export const Component = registerClientReference(...);
             const export_ref = try b.newSymbol(.other, key);
@@ -212,7 +213,7 @@ const options = @import("../options.zig");
 const js_parser = bun.js_parser;
 const js_ast = @import("../js_ast.zig");
 pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = @import("../thread_pool.zig");
+const ThreadPoolLib = bun.ThreadPool;
 const BabyList = @import("../baby_list.zig").BabyList;
 const OOM = bun.OOM;
 

@@ -1,6 +1,6 @@
 --- a/libarchive/archive_write_add_filter_gzip.c	2025-07-21 06:29:58.505101515 +0000
-+++ b/libarchive/archive_write_add_filter_gzip.c	2025-07-21 06:30:45.761624910 +0000
-@@ -59,6 +59,7 @@
++++ b/libarchive/archive_write_add_filter_gzip.c	2025-07-21 06:44:09.023676935 +0000
+@@ -59,12 +59,13 @@
  	int		 compression_level;
  	int		 timestamp;
  	char	*original_filename;
@@ -8,6 +8,13 @@
  #ifdef HAVE_ZLIB_H
  	z_stream	 stream;
  	int64_t		 total_in;
+ 	unsigned char	*compressed;
+ 	size_t		 compressed_buffer_size;
+-	unsigned long	 crc;
++	uint32_t	 crc;
+ #else
+ 	struct archive_write_program_data *pdata;
+ #endif
 @@ -108,6 +109,7 @@
  		return (ARCHIVE_FATAL);
  	}
@@ -21,7 +28,7 @@
  	}
  
 +	if (strcmp(key, "os") == 0) {
-+		if (value == NULL)
++		if (value == NULL) 
 +			return (ARCHIVE_WARN);
 +
 +		if (strcmp(value, "FAT") == 0) data->os = 0;

@@ -4,8 +4,8 @@
     "": {
       "name": "bun",
       "devDependencies": {
+        "bun-tracestrings": "github:oven-sh/bun.report#808da65",
         "esbuild": "^0.21.4",
-        "bun-tracestrings": "github:oven-sh/bun.report#cca3c22",
         "mitata": "^0.1.11",
         "peechy": "0.4.34",
         "prettier": "^3.5.3",
@@ -164,7 +164,7 @@
 
     "buffer-equal-constant-time": ["buffer-equal-constant-time@1.0.1", "", {}, "sha512-zRpUiDwd/xk6ADqPMATG8vc9VPrkck7T07OIx0gnjmJAnHnTVXNQG3vfvWNuiZIkwu9KrKdA1iJKfsfTVxE6NA=="],
 
-    "bun-tracestrings": ["bun-tracestrings@github:oven-sh/bun.report#cca3c22", { "dependencies": { "@octokit/webhooks-methods": "^5.1.0", "@sentry/types": "^7.112.2", "@types/bun": "^1.2.6", "html-minifier": "^4.0.0", "lightningcss": "^1.24.1", "marked": "^12.0.1", "octokit": "^3.2.0", "prettier": "^3.2.5", "typescript": "^5.0.0" }, "bin": { "ci-remap-server": "./bin/ci-remap-server.ts" } }, "oven-sh-bun.report-cca3c22"],
+    "bun-tracestrings": ["bun-tracestrings@github:oven-sh/bun.report#808da65", { "dependencies": { "@octokit/webhooks-methods": "^5.1.0", "@sentry/types": "^7.112.2", "@types/bun": "^1.2.6", "html-minifier": "^4.0.0", "lightningcss": "^1.24.1", "marked": "^12.0.1", "octokit": "^3.2.0", "prettier": "^3.2.5", "typescript": "^5.0.0" }, "bin": { "ci-remap-server": "./bin/ci-remap-server.ts" } }, "oven-sh-bun.report-808da65"],
 
     "bun-types": ["bun-types@workspace:packages/bun-types"],
 

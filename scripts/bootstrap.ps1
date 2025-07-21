@@ -1,4 +1,4 @@
-# Version: 10
+# Version: 11
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on Windows 10 or newer with PowerShell.
 
@@ -212,6 +212,8 @@ function Install-Common-Software {
     # Install-Tailscale
     Install-Buildkite
   }
+  # Needed to remap stack traces
+  Install-PdbAddr2line
 }
 
 function Install-Pwsh {
@@ -250,6 +252,10 @@ function Install-Bun {
 function Install-Cygwin {
   Install-Package cygwin
   Add-To-Path "C:\tools\cygwin\bin"
+}
+
+function Install-PdbAddr2line {
+  Execute-Command cargo install --examples "pdb-addr2line@0.11.2"
 }
 
 function Install-Tailscale {

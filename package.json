@@ -7,7 +7,7 @@
     "./packages/@types/bun"
   ],
   "devDependencies": {
-    "bun-tracestrings": "github:oven-sh/bun.report#cca3c22",
+    "bun-tracestrings": "github:oven-sh/bun.report#808da65",
     "esbuild": "^0.21.4",
     "mitata": "^0.1.11",
     "peechy": "0.4.34",

@@ -4580,7 +4580,76 @@ pub const Expect = struct {
         return toHaveReturnedTimesFn(this, globalThis, callframe, null);
     }
 
-    pub const toHaveReturnedWith = notImplementedJSCFn;
+    pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        JSC.markBinding(@src());
+
+        const thisValue = callframe.this();
+        const arguments = callframe.arguments_old(1).slice();
+        defer this.postMatch(globalThis);
+
+        const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveReturnedWith", "<green>expected<r>");
+
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("toHaveReturnedWith() requires 1 argument", .{});
+        }
+
+        const expected = arguments[0];
+        incrementExpectCallCounter();
+
+        const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
+        if (!returns.jsType().isArray()) return globalThis.throw("Expected value must be a mock function: {}", .{value});
+
+        const return_count = @as(i32, @intCast(try returns.getLength(globalThis)));
+        var pass = false;
+
+        // Check each return value to see if any match the expected value
+        for (0..@intCast(return_count)) |i| {
+            const index: u32 = @intCast(i);
+            const result = returns.getDirectIndex(globalThis, index);
+            
+            // Mock results have the structure { type: "return" | "throw" | "incomplete", value: any }
+            if (result.isObject()) {
+                const result_type = try result.get(globalThis, "type") orelse .js_undefined;
+                if (result_type.isString()) {
+                    const type_str = try result_type.toBunString(globalThis);
+                    defer type_str.deref();
+                    
+                    // Only consider successful returns
+                    if (type_str.eqlComptime("return")) {
+                        const result_value = try result.get(globalThis, "value") orelse .js_undefined;
+                        const is_same = try result_value.isSameValue(expected, globalThis);
+                        if (is_same) {
+                            pass = true;
+                            break;
+                        }
+                        const is_deep_equal = try result_value.deepEquals(expected, globalThis);
+                        if (is_deep_equal) {
+                            pass = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        const signature = comptime getSignature("toHaveReturnedWith", "<green>expected<r>", false);
+        
+        if (pass == this.flags.not) {
+            var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+            defer formatter.deinit();
+
+            if (this.flags.not) {
+                const not_signature = comptime getSignature("toHaveReturnedWith", "<green>expected<r>", true);
+                return this.throw(globalThis, not_signature, "\n\n" ++ "Expected mock function not to have returned: <green>{any}<r>\n", .{expected});
+            } else {
+                const received_fmt = "\n\n" ++ "Expected mock function to have returned: <green>{any}<r>\n" ++ "But it did not.\n";
+                return this.throw(globalThis, signature, received_fmt, .{expected});
+            }
+        }
+
+        return .js_undefined;
+    }
+
     pub const toHaveLastReturnedWith = notImplementedJSCFn;
     pub const toHaveNthReturnedWith = notImplementedJSCFn;
 

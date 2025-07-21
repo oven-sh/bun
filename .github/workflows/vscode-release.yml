@@ -20,6 +20,9 @@ jobs:
         with:
           bun-version: "1.2.18"
 
+      - name: Install dependencies (root)
+        run: bun install
+
       - name: Install dependencies
         run: bun install
         working-directory: packages/bun-vscode

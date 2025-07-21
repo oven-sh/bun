@@ -472,12 +472,12 @@ export class BunTestController implements vscode.Disposable {
         let testName = name.replace(/%%/g, "%").replace(/%#/g, (testIndex + 1).toString());
         if (Array.isArray(val)) {
           let idx = 0;
-          testName = testName.replace(/%[isfdoj#%]/g, () => {
+          testName = testName.replace(/%[isfdojp#%]/g, () => {
             const v = val[idx++];
             return typeof v === "object" ? JSON.stringify(v) : String(v);
           });
         } else {
-          testName = testName.replace(/%[isfdoj#%]/g, () => {
+          testName = testName.replace(/%[isfdojp#%]/g, () => {
             return typeof val === "object" ? JSON.stringify(val) : String(val);
           });
         }
@@ -726,11 +726,11 @@ export class BunTestController implements vscode.Disposable {
     const inspectorUrl =
       this.signal.url.startsWith("ws") || this.signal.url.startsWith("tcp")
         ? `${this.signal!.url}?wait=1`
-        : `${this.signal!.url}`;
+        : undefined;
 
     // right now there isnt a way to tell socket method to wait for the connection
-    if (!inspectorUrl.includes("?wait=1")) {
-      args.push("--inspect-wait");
+    if (!inspectorUrl?.includes("?wait=1")) {
+      args.push(`--inspect-wait=${this.signal!.url}`);
     }
 
     const proc = spawn(bunCommand, args, {
@@ -1332,8 +1332,8 @@ export class BunTestController implements vscode.Disposable {
 
       t = t.replaceAll(/\$\{[^}]+\}/g, ".*?");
       t = t.replaceAll(/\\\$\\\{[^}]+\\\}/g, ".*?");
-      t = t.replaceAll(/\\%[isfdoj#%]|(\\%)|(\\#)/g, ".*?");
-      t = t.replaceAll(/\\$[\w]/g, ".*?");
+      t = t.replaceAll(/\\%[isfdojp#%]|(\\%)|(\\#)/g, ".*?");
+      t = t.replaceAll(/\$[\w\.\[\]]+/g, ".*?");
 
       if (test?.tags?.some(tag => tag.id === "test" || tag.id === "it")) {
         testNames.push(`^ ${t}$`);

@@ -1,7 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const Environment = bun.Environment;
-const Allocator = std.mem.Allocator;
 const vm_size_t = usize;
 
 pub const enabled = Environment.allow_assert and Environment.isMac;
@@ -137,3 +133,9 @@ pub const Zone = opaque {
     pub extern fn malloc_get_zone_name(zone: *Zone) ?[*:0]const u8;
     pub extern fn malloc_zone_pressure_relief(zone: *Zone, goal: usize) usize;
 };
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;

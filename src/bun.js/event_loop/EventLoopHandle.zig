@@ -168,11 +168,13 @@ pub const EventLoopTaskPtr = union {
 };
 
 const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Async = bun.Async;
-const VirtualMachine = JSC.VirtualMachine;
-const MiniEventLoop = JSC.MiniEventLoop;
 const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Async = bun.Async;
+
+const JSC = bun.JSC;
 const AnyEventLoop = JSC.AnyEventLoop;
 const EventLoopKind = JSC.EventLoopKind;
+const MiniEventLoop = JSC.MiniEventLoop;
+const VirtualMachine = JSC.VirtualMachine;

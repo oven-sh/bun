@@ -1,18 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const Exception = JSC.Exception;
-const JSErrorCode = JSC.JSErrorCode;
-const JSRuntimeType = JSC.JSRuntimeType;
-const ZigStackTrace = JSC.ZigStackTrace;
-const ZigStackFrame = JSC.ZigStackFrame;
-const ZigURL = @import("../../url.zig").URL;
-const Api = @import("../../api/schema.zig").Api;
-const String = bun.String;
-const string = bun.string;
-
 /// Represents a JavaScript exception with additional information
 pub const ZigException = extern struct {
     type: JSErrorCode,
@@ -177,3 +162,20 @@ pub const ZigException = extern struct {
         }
     }
 };
+
+const std = @import("std");
+const Api = @import("../../api/schema.zig").Api;
+const ZigURL = @import("../../url.zig").URL;
+
+const bun = @import("bun");
+const String = bun.String;
+const string = bun.string;
+
+const JSC = bun.JSC;
+const Exception = JSC.Exception;
+const JSErrorCode = JSC.JSErrorCode;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSRuntimeType = JSC.JSRuntimeType;
+const JSValue = JSC.JSValue;
+const ZigStackFrame = JSC.ZigStackFrame;
+const ZigStackTrace = JSC.ZigStackTrace;

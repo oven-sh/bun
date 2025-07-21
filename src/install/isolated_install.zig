@@ -980,8 +980,6 @@ pub fn installIsolatedPackages(
     }
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

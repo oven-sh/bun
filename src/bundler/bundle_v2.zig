@@ -3528,8 +3528,6 @@ pub const UseDirective = js_ast.UseDirective;
 pub const ServerComponentBoundary = js_ast.ServerComponentBoundary;
 pub const ServerComponentParseTask = @import("./ServerComponentParseTask.zig").ServerComponentParseTask;
 
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-
 const RefVoidMap = std.ArrayHashMapUnmanaged(Ref, void, Ref.ArrayHashCtx, false);
 pub const RefImportData = std.ArrayHashMapUnmanaged(Ref, ImportData, Ref.ArrayHashCtx, false);
 pub const ResolvedExports = bun.StringArrayHashMapUnmanaged(ExportData);
@@ -4120,19 +4118,9 @@ pub fn allocatorHasPointer(allocator: std.mem.Allocator) bool {
     return allocator.vtable == &ExternalFreeFunctionAllocator.vtable;
 }
 
-const Transpiler = bun.Transpiler;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
-
 pub const std = @import("std");
 pub const lex = @import("../js_lexer.zig");
 pub const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
 pub const Part = js_ast.Part;
 pub const js_printer = @import("../js_printer.zig");
 pub const js_ast = @import("../js_ast.zig");
@@ -4141,7 +4129,6 @@ pub const sourcemap = bun.sourcemap;
 pub const StringJoiner = bun.StringJoiner;
 pub const base64 = bun.base64;
 pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = bun.ThreadPool;
 pub const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 pub const BabyList = @import("../baby_list.zig").BabyList;
 pub const Fs = @import("../fs.zig");
@@ -4192,9 +4179,22 @@ pub const bake = bun.bake;
 pub const lol = bun.LOLHTML;
 pub const DataURL = @import("../resolver/resolver.zig").DataURL;
 
-pub const DeferredBatchTask = @import("DeferredBatchTask.zig").DeferredBatchTask;
-pub const ThreadPool = @import("ThreadPool.zig").ThreadPool;
-pub const ParseTask = @import("ParseTask.zig").ParseTask;
-pub const LinkerContext = @import("LinkerContext.zig").LinkerContext;
-pub const LinkerGraph = @import("LinkerGraph.zig").LinkerGraph;
-pub const Graph = @import("Graph.zig");
+pub const DeferredBatchTask = @import("./DeferredBatchTask.zig").DeferredBatchTask;
+pub const ThreadPool = @import("./ThreadPool.zig").ThreadPool;
+pub const ParseTask = @import("./ParseTask.zig").ParseTask;
+pub const LinkerContext = @import("./LinkerContext.zig").LinkerContext;
+pub const LinkerGraph = @import("./LinkerGraph.zig").LinkerGraph;
+pub const Graph = @import("./Graph.zig");
+
+const options = @import("../options.zig");
+const IdentityContext = @import("../identity_context.zig").IdentityContext;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Output = bun.Output;
+const ThreadPoolLib = bun.ThreadPool;
+const Transpiler = bun.Transpiler;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;

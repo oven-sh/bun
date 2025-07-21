@@ -63,8 +63,6 @@ pub const ExternalStringList = ExternalSlice(ExternalString);
 pub const ExternalPackageNameHashList = ExternalSlice(PackageNameHash);
 pub const VersionSlice = ExternalSlice(Semver.Version);
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

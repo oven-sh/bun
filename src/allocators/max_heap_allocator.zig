@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-
 /// Single allocation only.
 ///
 pub const MaxHeapAllocator = struct {
@@ -55,3 +52,6 @@ pub const MaxHeapAllocator = struct {
         return allocator.vtable == &vtable;
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

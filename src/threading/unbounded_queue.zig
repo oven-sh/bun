@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
-const meta = std.meta;
-const atomic = std.atomic;
-const builtin = std.builtin;
-
-const assertf = bun.assertf;
-
 pub const cache_line_length = switch (@import("builtin").target.cpu.arch) {
     .x86_64, .aarch64, .powerpc64 => 128,
     .arm, .mips, .mips64, .riscv64 => 32,
@@ -131,3 +122,11 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
         }
     };
 }
+
+const bun = @import("bun");
+const assertf = bun.assertf;
+
+const std = @import("std");
+const atomic = std.atomic;
+const builtin = std.builtin;
+const meta = std.meta;

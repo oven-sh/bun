@@ -192,9 +192,11 @@ pub fn memoryCost(this: *const ByteBlobLoader) usize {
 }
 
 const bun = @import("bun");
+
 const jsc = bun.jsc;
-const webcore = bun.webcore;
-const streams = webcore.streams;
-const Blob = webcore.Blob;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
+
+const webcore = bun.webcore;
+const Blob = webcore.Blob;
+const streams = webcore.streams;

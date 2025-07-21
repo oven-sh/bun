@@ -4,7 +4,9 @@
 //!
 //! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
 //! Requires updating bindgen.
+
 const SocketAddress = @This();
+
 pub const js = JSC.Codegen.JSSocketAddress;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
@@ -486,7 +488,6 @@ inline fn asV6(this: *const SocketAddress) *const inet.sockaddr_in6 {
 // WTF::StringImpl and  WTF::StaticStringImpl have the same shape
 // (StringImplShape) so this is fine. We should probably add StaticStringImpl
 // bindings though.
-const StaticStringImpl = bun.WTF.StringImpl;
 extern "c" const IPv4: StaticStringImpl;
 extern "c" const IPv6: StaticStringImpl;
 const ipv4: bun.String = .{ .tag = .WTFStringImpl, .value = .{ .WTFStringImpl = IPv4 } };
@@ -644,19 +645,6 @@ comptime {
     std.debug.assert(AF.INET6.int() == ares.AF.INET6);
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const ares = bun.c_ares;
-const net = std.net;
-const Environment = bun.Environment;
-const string = bun.string;
-
-const JSC = bun.JSC;
-const CallFrame = JSC.CallFrame;
-const JSValue = JSC.JSValue;
-
-const isDebug = bun.Environment.isDebug;
-
 pub const inet = if (bun.Environment.isWindows)
 win: {
     const ws2 = std.os.windows.ws2_32;
@@ -688,3 +676,18 @@ win: {
         pub const sockaddr_in6 = std.posix.sockaddr.in6;
     };
 };
+
+const bun = @import("bun");
+const ares = bun.c_ares;
+const string = bun.string;
+const StaticStringImpl = bun.WTF.StringImpl;
+
+const Environment = bun.Environment;
+const isDebug = bun.Environment.isDebug;
+
+const JSC = bun.JSC;
+const CallFrame = JSC.CallFrame;
+const JSValue = JSC.JSValue;
+
+const std = @import("std");
+const net = std.net;

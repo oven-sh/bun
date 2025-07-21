@@ -872,22 +872,25 @@ pub const SHA256 = StaticCryptoHasher(Hashers.SHA256, "SHA256");
 pub const SHA384 = StaticCryptoHasher(Hashers.SHA384, "SHA384");
 pub const SHA512 = StaticCryptoHasher(Hashers.SHA512, "SHA512");
 pub const SHA512_256 = StaticCryptoHasher(Hashers.SHA512_256, "SHA512_256");
-const Crypto = JSC.API.Bun.Crypto;
-const Hashers = @import("../../../sha.zig");
 
+const Hashers = @import("../../../sha.zig");
 const std = @import("std");
+
 const bun = @import("bun");
+const default_allocator = bun.default_allocator;
 const string = bun.string;
 const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const JSC = bun.JSC;
-const ZigString = JSC.ZigString;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const CallFrame = JSC.CallFrame;
-const HMAC = Crypto.HMAC;
-const EVP = Crypto.EVP;
 const BoringSSL = bun.BoringSSL.c;
-const createCryptoError = Crypto.createCryptoError;
-const VirtualMachine = JSC.VirtualMachine;
 const host_fn = bun.jsc.host_fn;
+
+const JSC = bun.JSC;
+const CallFrame = JSC.CallFrame;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;
+const ZigString = JSC.ZigString;
+
+const Crypto = JSC.API.Bun.Crypto;
+const EVP = Crypto.EVP;
+const HMAC = Crypto.HMAC;
+const createCryptoError = Crypto.createCryptoError;

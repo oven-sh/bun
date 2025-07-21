@@ -1,4 +1,5 @@
 const MemoryReportingAllocator = @This();
+
 const log = bun.Output.scoped(.MEM, false);
 
 child_allocator: std.mem.Allocator,
@@ -88,7 +89,8 @@ pub const VTable = std.mem.Allocator.VTable{
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
-const jsc = bun.jsc;
 const Environment = bun.Environment;
 const Output = bun.Output;
+const jsc = bun.jsc;

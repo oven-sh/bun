@@ -1030,22 +1030,22 @@ const TypeAndFlags = packed struct(i32) {
     unused: u23 = 0,
 };
 
+fn @"export"() void {
+    _ = BakeProdResolve;
+    _ = BakeProdLoad;
+}
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const OutputFile = bun.options.OutputFile;
-
 const bake = bun.bake;
-const FrameworkRouter = bake.FrameworkRouter;
-const OpaqueFileId = FrameworkRouter.OpaqueFileId;
+const OutputFile = bun.options.OutputFile;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
 
-fn @"export"() void {
-    _ = BakeProdResolve;
-    _ = BakeProdLoad;
-}
+const FrameworkRouter = bake.FrameworkRouter;
+const OpaqueFileId = FrameworkRouter.OpaqueFileId;

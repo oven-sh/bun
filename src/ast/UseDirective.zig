@@ -55,8 +55,6 @@ pub const UseDirective = enum(u2) {
     }
 };
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

@@ -409,25 +409,24 @@ const JSChunkKeyFormatter = struct {
     }
 };
 
-const bun = @import("bun");
-const resolve_path = bun.bundle_v2.resolve_path;
-const Fs = bun.bundle_v2.Fs;
-const options = bun.options;
-const BabyList = bun.BabyList;
-const Index = bun.bundle_v2.Index;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-
-const string = bun.string;
-
-const std = @import("std");
-const sourcemap = bun.sourcemap;
-
-const AutoBitSet = bun.bit_set.AutoBitSet;
-const bundler = bun.bundle_v2;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const options = bun.options;
+const sourcemap = bun.sourcemap;
+const string = bun.string;
+const AutoBitSet = bun.bit_set.AutoBitSet;
+
+const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
-const PathTemplate = bundler.PathTemplate;
 const EntryPoint = bundler.EntryPoint;
+const Fs = bun.bundle_v2.Fs;
+const Index = bun.bundle_v2.Index;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const PathTemplate = bundler.PathTemplate;
+const resolve_path = bun.bundle_v2.resolve_path;

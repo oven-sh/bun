@@ -1,6 +1,7 @@
 //! Discovers routes from the filesystem, as instructed by the framework
 //! configuration. Agnotic to all different paradigms. Supports incrementally
 //! updating for DevServer, or serializing to a binary for use in production.
+
 const FrameworkRouter = @This();
 
 /// Metadata for route files is specified out of line, either in DevServer where
@@ -1363,15 +1364,17 @@ pub const JSFrameworkRouter = struct {
 };
 
 const std = @import("std");
-const mem = std.mem;
-const Allocator = mem.Allocator;
 
 const bun = @import("bun");
 const strings = bun.strings;
-const Resolver = bun.resolver.Resolver;
-const DirInfo = bun.resolver.DirInfo;
 
 const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
 const CallFrame = JSC.CallFrame;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+
+const DirInfo = bun.resolver.DirInfo;
+const Resolver = bun.resolver.Resolver;
+
+const mem = std.mem;
+const Allocator = mem.Allocator;

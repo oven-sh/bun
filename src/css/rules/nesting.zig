@@ -1,4 +1,3 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -29,3 +28,5 @@ pub fn NestingRule(comptime R: type) type {
         }
     };
 }
+
+const std = @import("std");

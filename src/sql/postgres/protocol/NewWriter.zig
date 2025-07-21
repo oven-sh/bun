@@ -113,8 +113,6 @@ pub fn NewWriter(comptime Context: type) type {
     return NewWriterWrap(Context, Context.offset, Context.write, Context.pwrite);
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const std = @import("std");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;

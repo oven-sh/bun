@@ -1,3 +1,5 @@
+const TextEncoder = @This();
+
 pub export fn TextEncoder__encode8(
     globalThis: *JSGlobalObject,
     ptr: [*]const u8,
@@ -254,11 +256,12 @@ comptime {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const strings = bun.strings;
-const JSC = bun.JSC;
 const Environment = bun.Environment;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const ArrayBuffer = JSC.ArrayBuffer;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const ArrayBuffer = JSC.ArrayBuffer;
-const TextEncoder = @This();

@@ -1,9 +1,3 @@
-const JSC = bun.JSC;
-const std = @import("std");
-const bun = @import("bun");
-const mem = std.mem;
-const strings = @import("./string_immutable.zig");
-
 /// Comptime string map optimized for small sets of disparate string keys.
 /// Works by separating the keys by length at comptime and only checking strings of
 /// equal length at runtime.
@@ -557,3 +551,11 @@ const TestEnum2 = enum {
         .{ "00", .FL },
     });
 };
+
+const strings = @import("./string_immutable.zig");
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+
+const std = @import("std");
+const mem = std.mem;

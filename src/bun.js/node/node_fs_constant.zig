@@ -1,7 +1,3 @@
-const bun = @import("bun");
-const Environment = bun.Environment;
-const std = @import("std");
-
 fn get(comptime name: []const u8) comptime_int {
     return if (@hasDecl(bun.O, name))
         return @field(bun.O, name)
@@ -140,3 +136,8 @@ pub const S_IXOTH = std.posix.S.IXOTH;
 /// is available on Windows operating systems only. On other operating systems,
 /// this flag is ignored.
 pub const UV_FS_O_FILEMAP = 536870912;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;

@@ -57,34 +57,14 @@
 //! responsible for managing the memory so we can call
 //! `allocScope.leakSlice(str)` to tell it not to track the allocation anymore
 //! and let `EnvStr` handle it.
-const std = @import("std");
-const builtin = @import("builtin");
 const string = []const u8;
-const bun = @import("bun");
-const posix = std.posix;
 pub const Arena = std.heap.ArenaAllocator;
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
-const JSC = bun.JSC;
-const JSValue = bun.JSC.JSValue;
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const which = bun.which;
 pub const Braces = @import("./braces.zig");
 pub const Syscall = bun.sys;
-const Glob = @import("../glob.zig");
-const ResolvePath = bun.path;
-const TaggedPointerUnion = bun.TaggedPointerUnion;
 pub const WorkPoolTask = JSC.WorkPoolTask;
 pub const WorkPool = JSC.WorkPool;
-const windows = bun.windows;
-const uv = windows.libuv;
-const Maybe = JSC.Maybe;
-const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
-const Yield = shell.Yield;
 
 pub const Pipe = [2]bun.FileDescriptor;
-const shell = bun.shell;
-const ast = shell.AST;
 pub const SmolList = shell.SmolList;
 
 pub const GlobWalker = Glob.BunGlobWalkerZ;
@@ -101,8 +81,6 @@ pub fn OOM(e: anyerror) noreturn {
 }
 
 pub const log = bun.Output.scoped(.SHELL, false);
-
-const assert = bun.assert;
 
 /// This is a zero-sized type returned by `.needsIO()`, designed to ensure
 /// functions which rely on IO are not called when they do don't need it.
@@ -1978,3 +1956,30 @@ pub fn unreachableState(context: []const u8, state: []const u8) noreturn {
     @branchHint(.cold);
     return bun.Output.panic("Bun shell has reached an unreachable state \"{s}\" in the {s} context. This indicates a bug, please open a GitHub issue.", .{ state, context });
 }
+
+const Glob = @import("../glob.zig");
+const builtin = @import("builtin");
+const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
+
+const bun = @import("bun");
+const ResolvePath = bun.path;
+const TaggedPointerUnion = bun.TaggedPointerUnion;
+const assert = bun.assert;
+const which = bun.which;
+
+const JSC = bun.JSC;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const JSValue = bun.JSC.JSValue;
+const Maybe = JSC.Maybe;
+
+const shell = bun.shell;
+const Yield = shell.Yield;
+const ast = shell.AST;
+
+const windows = bun.windows;
+const uv = windows.libuv;
+
+const std = @import("std");
+const ArrayList = std.ArrayList;
+const posix = std.posix;
+const Allocator = std.mem.Allocator;

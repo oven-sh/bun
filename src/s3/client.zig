@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const picohttp = bun.picohttp;
-
 pub const ACL = @import("./acl.zig").ACL;
 pub const S3HttpDownloadStreamingTask = @import("./download_stream.zig").S3HttpDownloadStreamingTask;
 pub const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
@@ -13,17 +8,14 @@ pub const Error = @import("./error.zig");
 pub const throwSignError = Error.throwSignError;
 pub const getJSSignError = Error.getJSSignError;
 
-const Credentials = @import("./credentials.zig");
 pub const S3Credentials = Credentials.S3Credentials;
 pub const S3CredentialsWithOptions = Credentials.S3CredentialsWithOptions;
 
-const S3SimpleRequest = @import("./simple_request.zig");
 pub const S3HttpSimpleTask = S3SimpleRequest.S3HttpSimpleTask;
 pub const S3UploadResult = S3SimpleRequest.S3UploadResult;
 pub const S3StatResult = S3SimpleRequest.S3StatResult;
 pub const S3DownloadResult = S3SimpleRequest.S3DownloadResult;
 pub const S3DeleteResult = S3SimpleRequest.S3DeleteResult;
-const S3ListObjects = @import("./list_objects.zig");
 pub const S3ListObjectsResult = S3SimpleRequest.S3ListObjectsResult;
 pub const S3ListObjectsOptions = @import("./list_objects.zig").S3ListObjectsOptions;
 pub const getListObjectsOptionsFromJS = S3ListObjects.getListObjectsOptionsFromJS;
@@ -680,3 +672,12 @@ pub fn readableStream(
     );
     return readable_value;
 }
+
+const Credentials = @import("./credentials.zig");
+const S3ListObjects = @import("./list_objects.zig");
+const S3SimpleRequest = @import("./simple_request.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const picohttp = bun.picohttp;

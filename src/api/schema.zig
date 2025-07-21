@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const js_ast = bun.JSAst;
-const OOM = bun.OOM;
-
 pub const Reader = struct {
     const Self = @This();
     pub const ReadError = error{EOF};
@@ -3370,3 +3365,9 @@ pub const Api = struct {
         }
     };
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const js_ast = bun.JSAst;

@@ -1,18 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Output = bun.Output;
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const default_allocator = bun.default_allocator;
-const CAPI = JSC.C;
-const ZigString = JSC.ZigString;
-const strings = bun.strings;
-const string = bun.string;
-const JSLexer = bun.js_lexer;
-const JSPromise = JSC.JSPromise;
-const expect = @import("./expect.zig");
-
 pub const EventType = enum(u8) {
     Event,
     MessageEvent,
@@ -2158,3 +2143,20 @@ pub const JestPrettyFormat = struct {
         return true;
     }
 };
+
+const expect = @import("./expect.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const JSLexer = bun.js_lexer;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const CAPI = JSC.C;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSPromise = JSC.JSPromise;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;

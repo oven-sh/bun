@@ -1,11 +1,4 @@
-const mem = @import("std").mem;
-const std = @import("std");
-const bun = @import("bun");
 const log = bun.Output.scoped(.mimalloc, true);
-const assert = bun.assert;
-const Allocator = mem.Allocator;
-const mimalloc = @import("./mimalloc.zig");
-const Environment = @import("../env.zig");
 
 fn mimalloc_free(
     _: *anyopaque,
@@ -150,3 +143,13 @@ const z_allocator_vtable = Allocator.VTable{
     .remap = &std.mem.Allocator.noRemap,
     .free = &ZAllocator.free_with_z_allocator,
 };
+
+const Environment = @import("../env.zig");
+const mimalloc = @import("./mimalloc.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const assert = bun.assert;
+
+const mem = @import("std").mem;
+const Allocator = mem.Allocator;

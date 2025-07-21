@@ -1,12 +1,3 @@
-const mem = @import("std").mem;
-const std = @import("std");
-
-const mimalloc = @import("./mimalloc.zig");
-const Environment = @import("../env.zig");
-const FeatureFlags = @import("../feature_flags.zig");
-const Allocator = mem.Allocator;
-const assert = bun.assert;
-const bun = @import("bun");
 const log = bun.Output.scoped(.mimalloc, true);
 
 pub const Arena = struct {
@@ -171,3 +162,14 @@ const c_allocator_vtable = Allocator.VTable{
     .remap = &Arena.remap,
     .free = &Arena.free,
 };
+
+const Environment = @import("../env.zig");
+const FeatureFlags = @import("../feature_flags.zig");
+const mimalloc = @import("./mimalloc.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const assert = bun.assert;
+
+const mem = @import("std").mem;
+const Allocator = mem.Allocator;

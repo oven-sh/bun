@@ -20,28 +20,10 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-const std = @import("std");
-const bun = @import("bun");
 
-const isAllAscii = @import("../string_immutable.zig").isAllASCII;
-const mem = std.mem;
 const isWindows = @import("builtin").os.tag == .windows;
 
-const Arena = std.heap.ArenaAllocator;
-const ArrayList = std.ArrayListUnmanaged;
-const BunString = bun.String;
-const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
-const Codepoint = CodepointIterator.Cursor.CodePointType;
-const DirIterator = @import("../bun.js/node/dir_iterator.zig");
-const match = @import("./match.zig").match;
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
-const ResolvePath = @import("../resolver/resolve_path.zig");
-const Syscall = bun.sys;
-const ZigString = bun.JSC.ZigString;
-
 // const Codepoint = u32;
-const Cursor = CodepointIterator.Cursor;
 
 const log = bun.Output.scoped(.Glob, false);
 
@@ -1672,8 +1654,6 @@ inline fn skipGlobstars(glob: []const u32, glob_index: *u32) void {
     glob_index.* -= 2;
 }
 
-const MatchAscii = struct {};
-
 pub fn matchWildcardFilepath(glob: []const u8, path: []const u8) bool {
     const needle = glob[1..];
     const needle_len: u32 = @intCast(needle.len);
@@ -1686,3 +1666,25 @@ pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
 }
 
 pub const matchImpl = match;
+
+const DirIterator = @import("../bun.js/node/dir_iterator.zig");
+const ResolvePath = @import("../resolver/resolve_path.zig");
+const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
+const isAllAscii = @import("../string_immutable.zig").isAllASCII;
+const match = @import("./match.zig").match;
+
+const Cursor = CodepointIterator.Cursor;
+const Codepoint = CodepointIterator.Cursor.CodePointType;
+
+const bun = @import("bun");
+const BunString = bun.String;
+const Syscall = bun.sys;
+
+const JSC = bun.JSC;
+const Maybe = JSC.Maybe;
+const ZigString = bun.JSC.ZigString;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const mem = std.mem;
+const Arena = std.heap.ArenaAllocator;

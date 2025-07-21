@@ -1,15 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-
-const std = @import("std");
-const Schema = @import("./api/schema.zig");
-const Ref = @import("ast/base.zig").Ref;
-const JSAst = bun.JSAst;
-
-const Api = Schema.Api;
 fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []const u8 {
     const FallbackMessage = struct {
         pub var has_printed = false;
@@ -455,3 +443,16 @@ pub const Runtime = struct {
         }
     };
 };
+
+const std = @import("std");
+const Ref = @import("./ast/base.zig").Ref;
+
+const Schema = @import("./api/schema.zig");
+const Api = Schema.Api;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSAst = bun.JSAst;
+const Output = bun.Output;
+const string = bun.string;
+const strings = bun.strings;

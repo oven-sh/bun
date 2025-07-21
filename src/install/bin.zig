@@ -1,20 +1,3 @@
-const ExternalStringList = @import("./install.zig").ExternalStringList;
-const Semver = bun.Semver;
-const ExternalString = Semver.ExternalString;
-const String = Semver.String;
-const std = @import("std");
-const strings = bun.strings;
-const Environment = @import("../env.zig");
-const stringZ = bun.stringZ;
-const bun = @import("bun");
-const path = bun.path;
-const string = bun.string;
-const Install = @import("./install.zig");
-const Dependency = @import("./dependency.zig");
-const OOM = bun.OOM;
-const JSON = bun.JSON;
-const Lockfile = Install.Lockfile;
-
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
 /// - file path (relative to the package root)
@@ -1057,3 +1040,23 @@ pub const Bin = extern struct {
         }
     };
 };
+
+const Dependency = @import("./dependency.zig");
+const Environment = @import("../env.zig");
+const std = @import("std");
+
+const Install = @import("./install.zig");
+const ExternalStringList = @import("./install.zig").ExternalStringList;
+const Lockfile = Install.Lockfile;
+
+const bun = @import("bun");
+const JSON = bun.JSON;
+const OOM = bun.OOM;
+const path = bun.path;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const strings = bun.strings;
+
+const Semver = bun.Semver;
+const ExternalString = Semver.ExternalString;
+const String = Semver.String;

@@ -1,10 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const std = @import("std");
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const ErrorableString = JSC.ErrorableString;
-
 export const NodeModuleModule__findPath = JSC.host_fn.wrap3(findPath);
 
 // https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666
@@ -182,3 +175,11 @@ fn onRequireExtensionModifyBinding(
 comptime {
     @export(&onRequireExtensionModifyBinding, .{ .name = "NodeModuleModule__onRequireExtensionModify" });
 }
+
+const bun = @import("bun");
+const std = @import("std");
+
+const JSC = bun.JSC;
+const ErrorableString = JSC.ErrorableString;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

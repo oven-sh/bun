@@ -1,13 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
-const global_allocators = @import("./allocators/memory_allocator.zig");
-const c_allocator = global_allocators.c_allocator;
-const z_allocator = global_allocators.z_allocator;
-
-const Allocator = std.mem.Allocator;
-const enabled = bun.Environment.ci_assert;
-
 fn noAlloc(ptr: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
     _ = ptr;
     _ = len;
@@ -90,3 +80,12 @@ pub const AllocPtr = struct {
         );
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const enabled = bun.Environment.ci_assert;
+
+const global_allocators = @import("./allocators/memory_allocator.zig");
+const c_allocator = global_allocators.c_allocator;
+const z_allocator = global_allocators.z_allocator;

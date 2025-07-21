@@ -1,3 +1,5 @@
+const Hardlinker = @This();
+
 src_dir: FD,
 src: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
 dest: bun.RelPath(.{ .sep = .auto, .unit = .os }),
@@ -171,9 +173,6 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
     return .success;
 }
 
-// @sortImports
-
-const Hardlinker = @This();
 const Walker = @import("../../walker_skippable.zig");
 
 const bun = @import("bun");

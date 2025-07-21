@@ -1651,10 +1651,70 @@ pub fn migrateYarnLockfile(
     // Update root tree to include ALL dependencies (flat structure)
     
     if (all_dep_list.items.len > 0) {
-        const all_deps_off = @as(u32, @intCast(hoisted_off));
+        // Separate regular and parent/child scoped dependencies
+        var regular_deps = std.ArrayList(DependencyID).init(allocator);
+        var scoped_deps = std.ArrayList(DependencyID).init(allocator);
+        defer regular_deps.deinit();
+        defer scoped_deps.deinit();
+        
+        // Helper to check if a dependency is parent/child scoped
+        const isParentChildScoped = struct {
+            fn check(name: []const u8) bool {
+                // If starts with @, it's org-scoped - check for second slash
+                if (name.len > 0 and name[0] == '@') {
+                    const first_slash = strings.indexOfChar(name, '/') orelse return false;
+                    // Check if there's another slash after the first one
+                    return strings.indexOfChar(name[first_slash + 1..], '/') != null;
+                }
+                // Not org-scoped, any slash makes it parent/child scoped
+                return strings.indexOfChar(name, '/') != null;
+            }
+        }.check;
+        
+        // Separate dependencies into regular and scoped
         for (all_dep_list.items) |dep_id| {
+            const dep = this.buffers.dependencies.items[dep_id];
+            const dep_name = dep.name.slice(this.buffers.string_bytes.items);
+            
+            if (isParentChildScoped(dep_name)) {
+                try scoped_deps.append(dep_id);
+            } else {
+                try regular_deps.append(dep_id);
+            }
+        }
+        
+        // Sort each group alphabetically
+        const DepSorter = struct {
+            lockfile: *const Lockfile,
+            
+            pub fn isLessThan(sorter: @This(), lhs: DependencyID, rhs: DependencyID) bool {
+                const deps = sorter.lockfile.buffers.dependencies.items;
+                const buf = sorter.lockfile.buffers.string_bytes.items;
+                
+                const l_dep = deps[lhs];
+                const r_dep = deps[rhs];
+                
+                return l_dep.name.order(&r_dep.name, buf, buf) == .lt;
+            }
+        };
+        
+        const sorter = DepSorter{ .lockfile = this };
+        std.sort.pdq(DependencyID, regular_deps.items, sorter, DepSorter.isLessThan);
+        std.sort.pdq(DependencyID, scoped_deps.items, sorter, DepSorter.isLessThan);
+        
+        // Add dependencies to hoisted_dependencies: regular first, then scoped
+        const all_deps_off = @as(u32, @intCast(hoisted_off));
+        
+        // Add regular dependencies first
+        for (regular_deps.items) |dep_id| {
             try this.buffers.hoisted_dependencies.append(allocator, dep_id);
         }
+        
+        // Then add scoped dependencies
+        for (scoped_deps.items) |dep_id| {
+            try this.buffers.hoisted_dependencies.append(allocator, dep_id);
+        }
+        
         // Set root tree dependencies to all packages
         this.buffers.trees.items[0].dependencies = .{
             .off = all_deps_off,

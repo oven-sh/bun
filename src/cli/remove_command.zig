@@ -4,8 +4,6 @@ pub const RemoveCommand = struct {
     }
 };
 
-// @sortImports
-
 const bun = @import("bun");
 const Command = bun.CLI.Command;
 

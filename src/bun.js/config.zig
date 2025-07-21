@@ -1,9 +1,3 @@
-const bun = @import("bun");
-
-const std = @import("std");
-
-const Api = @import("../api/schema.zig").Api;
-
 pub const DefaultBunDefines = struct {
     pub const Keys = struct {
         const window = "window";
@@ -26,3 +20,7 @@ pub fn configureTransformOptionsForBun(_: std.mem.Allocator, _args: Api.Transfor
     args.target = Api.Target.bun;
     return args;
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const Api = @import("../api/schema.zig").Api;

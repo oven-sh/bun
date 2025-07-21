@@ -2,7 +2,9 @@
 //!
 //! Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes
 //! sense. If that changes, this should be renamed `ScriptExecutionContext`.
+
 const VirtualMachine = @This();
+
 export var has_bun_garbage_collector_flag_enabled = false;
 pub export var isBunTest: bool = false;
 
@@ -189,7 +191,7 @@ commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.C
 /// The value is decremented when defaults are restored.
 has_mutated_built_in_extensions: u32 = 0,
 
-pub const ProcessAutoKiller = @import("ProcessAutoKiller.zig");
+pub const ProcessAutoKiller = @import("./ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
 pub const OnException = fn (*ZigException) void;
@@ -567,7 +569,9 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
                 error.JSExecutionTerminated => {}, // we are returning anyway
             };
             _ = Bun__handleUnhandledRejection(globalObject, reason, promise);
-            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
             return;
         },
         .warn_with_error_code => {
@@ -575,7 +579,9 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
                 error.JSExecutionTerminated => {}, // we are returning anyway
             };
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
-            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
             this.exit_handler.exit_code = 1;
             return;
         },
@@ -586,7 +592,9 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             _ = this.uncaughtException(globalObject, wrapped_reason, true);
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
-            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
             return;
         },
         .throw => {
@@ -935,7 +943,6 @@ fn getOriginTimestamp() u64 {
 pub inline fn isLoaded() bool {
     return VMHolder.vm != null;
 }
-const RuntimeTranspilerStore = JSC.ModuleLoader.RuntimeTranspilerStore;
 pub fn initWithModuleGraph(
     opts: Options,
 ) !*VirtualMachine {
@@ -1301,6 +1308,8 @@ pub fn initWorker(
     return vm;
 }
 
+extern fn BakeCreateProdGlobal(console_ptr: *anyopaque) *JSC.JSGlobalObject;
+
 pub fn initBake(opts: Options) anyerror!*VirtualMachine {
     JSC.markBinding(@src());
     const allocator = opts.allocator;
@@ -1353,7 +1362,16 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
     vm.regular_event_loop.concurrent_tasks = .{};
     vm.event_loop = &vm.regular_event_loop;
-    vm.eventLoop().ensureWaker();
+    if (comptime bun.Environment.isWindows) {
+        vm.eventLoop().ensureWaker();
+        vm.global = BakeCreateProdGlobal(vm.console);
+        vm.jsc = vm.global.vm();
+        uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
+    } else {
+        vm.global = BakeCreateProdGlobal(vm.console);
+        vm.jsc = vm.global.vm();
+        vm.eventLoop().ensureWaker();
+    }
 
     vm.transpiler.macro_context = null;
     vm.transpiler.resolver.store_fd = opts.store_fd;
@@ -1870,7 +1888,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                             specifier,
                         }) catch unreachable,
                     ),
-                ),
+                ) catch |e| globalThis.takeException(e),
             );
         },
     }
@@ -1966,15 +1984,13 @@ export fn Bun__logUnhandledException(exception: JSValue) void {
     get().runErrorHandler(exception, null);
 }
 
-pub fn clearEntryPoint(
-    this: *VirtualMachine,
-) void {
+pub fn clearEntryPoint(this: *VirtualMachine) bun.JSError!void {
     if (this.main.len == 0) {
         return;
     }
 
     var str = ZigString.init(main_file_name);
-    this.global.deleteModuleRegistryEntry(&str);
+    try this.global.deleteModuleRegistryEntry(&str);
 }
 
 fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
@@ -2107,7 +2123,7 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
         const promise = if (!this.main_is_html_entrypoint)
             JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name)) orelse return error.JSError
         else
-            Bun__loadHTMLEntryPoint(this.global);
+            try bun.jsc.fromJSHostCallGeneric(this.global, @src(), Bun__loadHTMLEntryPoint, .{this.global});
 
         this.pending_internal_promise = promise;
         JSValue.fromCell(promise).ensureStillAlive();
@@ -2355,16 +2371,16 @@ pub fn printErrorlikeObject(
             pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                 iterator(vm, globalObject, nextValue, ctx.?, false);
             }
-            inline fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+            fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                 const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
                 VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
             }
         };
         var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list, .formatter = formatter };
         if (comptime allow_ansi_color) {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor);
+            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor) catch return; // TODO: properly propagate exception upwards
         } else {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor);
+            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return; // TODO: properly propagate exception upwards
         }
         return;
     }
@@ -3614,65 +3630,73 @@ pub const ExitHandler = struct {
     }
 };
 
-const std = @import("std");
-const bun = @import("bun");
-const Environment = bun.Environment;
-const JSC = bun.jsc;
-const JSGlobalObject = JSC.JSGlobalObject;
-const Async = bun.Async;
-const Transpiler = bun.Transpiler;
-const ImportWatcher = JSC.hot_reloader.ImportWatcher;
-const MutableString = bun.MutableString;
-const default_allocator = bun.default_allocator;
-const ErrorableString = JSC.ErrorableString;
-const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
-const Exception = JSC.Exception;
-const Allocator = std.mem.Allocator;
-const Fs = @import("../fs.zig");
-const Resolver = @import("../resolver/resolver.zig");
-const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
-const logger = bun.logger;
-const Api = @import("../api/schema.zig").Api;
-const ConsoleObject = JSC.ConsoleObject;
-const Node = JSC.Node;
-const ZigException = JSC.ZigException;
-const ZigStackTrace = JSC.ZigStackTrace;
-const ErrorableResolvedSource = JSC.ErrorableResolvedSource;
-const ResolvedSource = JSC.ResolvedSource;
-const JSInternalPromise = JSC.JSInternalPromise;
-const JSModuleLoader = JSC.JSModuleLoader;
-const VM = JSC.VM;
-const Config = @import("./config.zig");
-const URL = @import("../url.zig").URL;
-const Bun = JSC.API.Bun;
-const EventLoop = JSC.EventLoop;
-const PackageManager = @import("../install/install.zig").PackageManager;
-const IPC = @import("ipc.zig");
-const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
-const Watcher = bun.Watcher;
-const node_module_module = @import("./bindings/NodeModuleModule.zig");
-const ServerEntryPoint = bun.transpiler.EntryPoints.ServerEntryPoint;
-const JSValue = JSC.JSValue;
-const PluginRunner = bun.transpiler.PluginRunner;
-const SavedSourceMap = JSC.SavedSourceMap;
-const ModuleLoader = JSC.ModuleLoader;
-const uws = bun.uws;
-const Output = bun.Output;
-const strings = bun.strings;
-const SourceMap = bun.sourcemap;
-const ZigString = JSC.ZigString;
-const String = bun.String;
-const Ordinal = bun.Ordinal;
 const string = []const u8;
-const FetchFlags = ModuleLoader.FetchFlags;
+
+const Config = @import("./config.zig");
+const Counters = @import("./Counters.zig");
+const Fs = @import("../fs.zig");
+const IPC = @import("./ipc.zig");
+const Resolver = @import("../resolver/resolver.zig");
 const Runtime = @import("../runtime.zig");
+const node_module_module = @import("./bindings/NodeModuleModule.zig");
+const std = @import("std");
+const Api = @import("../api/schema.zig").Api;
+const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
+const DNSResolver = @import("./api/bun/dns_resolver.zig").DNSResolver;
+const PackageManager = @import("../install/install.zig").PackageManager;
+const URL = @import("../url.zig").URL;
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const DotEnv = bun.DotEnv;
+const Environment = bun.Environment;
+const Global = bun.Global;
+const MutableString = bun.MutableString;
+const Ordinal = bun.Ordinal;
+const Output = bun.Output;
+const SourceMap = bun.sourcemap;
+const String = bun.String;
+const Transpiler = bun.Transpiler;
+const Watcher = bun.Watcher;
+const default_allocator = bun.default_allocator;
 const js_ast = bun.JSAst;
 const js_printer = bun.js_printer;
-const node_fallbacks = ModuleLoader.node_fallbacks;
+const logger = bun.logger;
 const options = bun.options;
-const webcore = bun.webcore;
-const Global = bun.Global;
-const DotEnv = bun.DotEnv;
+const strings = bun.strings;
+const uws = bun.uws;
+const PluginRunner = bun.transpiler.PluginRunner;
+
+const JSC = bun.jsc;
+const ConsoleObject = JSC.ConsoleObject;
+const ErrorableResolvedSource = JSC.ErrorableResolvedSource;
+const ErrorableString = JSC.ErrorableString;
+const EventLoop = JSC.EventLoop;
+const Exception = JSC.Exception;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSInternalPromise = JSC.JSInternalPromise;
+const JSModuleLoader = JSC.JSModuleLoader;
+const JSValue = JSC.JSValue;
+const Node = JSC.Node;
+const ResolvedSource = JSC.ResolvedSource;
+const SavedSourceMap = JSC.SavedSourceMap;
+const VM = JSC.VM;
+const ZigException = JSC.ZigException;
+const ZigStackTrace = JSC.ZigStackTrace;
+const ZigString = JSC.ZigString;
+const Bun = JSC.API.Bun;
+
+const ModuleLoader = JSC.ModuleLoader;
+const FetchFlags = ModuleLoader.FetchFlags;
+const RuntimeTranspilerStore = JSC.ModuleLoader.RuntimeTranspilerStore;
+const node_fallbacks = ModuleLoader.node_fallbacks;
+
 const HotReloader = JSC.hot_reloader.HotReloader;
+const ImportWatcher = JSC.hot_reloader.ImportWatcher;
+
+const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
+const ServerEntryPoint = bun.transpiler.EntryPoints.ServerEntryPoint;
+
+const webcore = bun.webcore;
 const Body = webcore.Body;
-const Counters = @import("./Counters.zig");

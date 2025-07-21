@@ -771,18 +771,23 @@ pub fn edit(
 
 const trusted_dependencies_string = "trustedDependencies";
 
-const std = @import("std");
-const bun = @import("bun");
-const JSAst = bun.JSAst;
-const Expr = JSAst.Expr;
-const G = JSAst.G;
-const E = JSAst.E;
-const PackageManager = bun.install.PackageManager;
 const string = []const u8;
-const UpdateRequest = bun.install.PackageManager.UpdateRequest;
+
+const std = @import("std");
+
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Semver = bun.Semver;
-const Dependency = bun.install.Dependency;
-const invalid_package_id = bun.install.invalid_package_id;
 const logger = bun.logger;
 const strings = bun.strings;
+
+const JSAst = bun.JSAst;
+const E = JSAst.E;
+const Expr = JSAst.Expr;
+const G = JSAst.G;
+
+const Dependency = bun.install.Dependency;
+const invalid_package_id = bun.install.invalid_package_id;
+
+const PackageManager = bun.install.PackageManager;
+const UpdateRequest = bun.install.PackageManager.UpdateRequest;

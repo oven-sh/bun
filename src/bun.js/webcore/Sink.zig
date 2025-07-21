@@ -5,7 +5,7 @@ vtable: VTable,
 status: Status = Status.closed,
 used: bool = false,
 
-pub const ArrayBufferSink = @import("ArrayBufferSink.zig");
+pub const ArrayBufferSink = @import("./ArrayBufferSink.zig");
 
 pub const pending = Sink{
     .ptr = @as(*anyopaque, @ptrFromInt(0xaaaaaaaa)),
@@ -251,12 +251,12 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         const DetachPtrFn = *const fn (JSValue) callconv(.C) void;
 
         const assignToStreamExtern = @extern(AssignToStreamFn, .{ .name = abi_name ++ "__assignToStream" });
-        const onCloseExtern = @extern(OnCloseFn, .{ .name = abi_name ++ "__onClose" });
+        const onCloseExtern = @extern(OnCloseFn, .{ .name = abi_name ++ "__onClose" }).*;
         const onReadyExtern = @extern(OnReadyFn, .{ .name = abi_name ++ "__onReady" });
         const onStartExtern = @extern(OnStartFn, .{ .name = abi_name ++ "__onStart" });
         const createObjectExtern = @extern(CreateObjectFn, .{ .name = abi_name ++ "__createObject" });
         const setDestroyCallbackExtern = @extern(SetDestroyCallbackFn, .{ .name = abi_name ++ "__setDestroyCallback" });
-        const detachPtrExtern = @extern(DetachPtrFn, .{ .name = abi_name ++ "__detachPtr" });
+        const detachPtrExtern = @extern(DetachPtrFn, .{ .name = abi_name ++ "__detachPtr" }).*;
 
         pub fn assignToStream(globalThis: *JSGlobalObject, stream: JSValue, ptr: *anyopaque, jsvalue_ptr: **anyopaque) JSValue {
             return assignToStreamExtern(globalThis, stream, ptr, jsvalue_ptr);
@@ -264,7 +264,8 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
         pub fn onClose(ptr: JSValue, reason: JSValue) void {
             JSC.markBinding(@src());
-            return onCloseExtern(ptr, reason);
+            const globalThis = bun.jsc.VirtualMachine.get().global; // TODO: this should be got from a parameter
+            return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), onCloseExtern, .{ ptr, reason }) catch return; // TODO: properly propagate exception upwards
         }
 
         pub fn onReady(ptr: JSValue, amount: JSValue, offset: JSValue) void {
@@ -287,8 +288,8 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             return setDestroyCallbackExtern(value, callback);
         }
 
-        pub fn detachPtr(ptr: JSValue) void {
-            return detachPtrExtern(ptr);
+        pub fn detachPtr(globalThis: *JSGlobalObject, ptr: JSValue) bun.JSError!void {
+            return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), detachPtrExtern, .{ptr});
         }
 
         pub fn construct(globalThis: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -316,7 +317,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             this.sink.finalize();
         }
 
-        pub fn detach(this: *ThisSink) void {
+        pub fn detach(this: *ThisSink, globalThis: *JSGlobalObject) void {
             if (comptime !@hasField(SinkType, "signal"))
                 return;
 
@@ -326,7 +327,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             this.sink.signal.clear();
             const value = @as(JSValue, @enumFromInt(@as(JSC.JSValue.backing_int, @bitCast(@intFromPtr(ptr)))));
             value.unprotect();
-            detachPtr(value);
+            detachPtr(globalThis, value) catch {}; // TODO: properly propagate exception upwards
         }
 
         // The code generator encodes two distinct failure types using 0 and 1
@@ -611,7 +612,6 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 }
 
 const Detached = opaque {};
-const Subprocess = bun.api.Subprocess;
 pub const DestructorPtr = bun.TaggedPointerUnion(.{
     Detached,
     Subprocess,
@@ -643,12 +643,16 @@ pub export fn Bun__onSinkDestroyed(
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const Syscall = bun.sys;
 const Output = bun.Output;
+const Syscall = bun.sys;
+const Subprocess = bun.api.Subprocess;
+
 const JSC = bun.jsc;
-const webcore = bun.webcore;
-const streams = webcore.streams;
-const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+
+const webcore = bun.webcore;
 const Blob = webcore.Blob;
+const streams = webcore.streams;

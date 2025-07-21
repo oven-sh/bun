@@ -1,35 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const stringZ = bun.stringZ;
-const strings = bun.strings;
-const Progress = bun.Progress;
-const install = bun.install;
-const String = bun.Semver.String;
-const PackageManager = install.PackageManager;
-const Lockfile = install.Lockfile;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
-const BuntagHashBuf = install.BuntagHashBuf;
-const buntaghashbuf_make = install.buntaghashbuf_make;
-const Repository = install.Repository;
-const Resolution = install.Resolution;
-const MutableString = bun.MutableString;
-const logger = bun.logger;
-const Npm = install.Npm;
-const initializeStore = install.initializeStore;
-const JSON = bun.JSON;
-const Walker = @import("../walker_skippable.zig");
-const ThreadPool = bun.ThreadPool;
-const JSC = bun.JSC;
-const Syscall = bun.sys;
-const FileSystem = bun.fs.FileSystem;
-const Path = bun.path;
-const PackageID = install.PackageID;
-
 pub const PackageInstall = struct {
     /// TODO: Change to bun.FD.Dir
     cache_dir: std.fs.Dir,
@@ -71,7 +39,7 @@ pub const PackageInstall = struct {
         packages_with_blocked_scripts: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, usize) = .{},
     };
 
-    pub const Method = enum {
+    pub const Method = enum(u8) {
         clonefile,
 
         /// Slower than clonefile
@@ -1496,3 +1464,37 @@ pub const PackageInstall = struct {
         return this.installWithCopyfile(destination_dir);
     }
 };
+
+const Walker = @import("../walker_skippable.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSC = bun.JSC;
+const JSON = bun.JSON;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Path = bun.path;
+const Progress = bun.Progress;
+const Syscall = bun.sys;
+const ThreadPool = bun.ThreadPool;
+const logger = bun.logger;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const strings = bun.strings;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const FileSystem = bun.fs.FileSystem;
+const String = bun.Semver.String;
+
+const install = bun.install;
+const BuntagHashBuf = install.BuntagHashBuf;
+const Lockfile = install.Lockfile;
+const Npm = install.Npm;
+const PackageID = install.PackageID;
+const PackageManager = install.PackageManager;
+const Repository = install.Repository;
+const Resolution = install.Resolution;
+const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
+const buntaghashbuf_make = install.buntaghashbuf_make;
+const initializeStore = install.initializeStore;

@@ -1,7 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const DevServer = bun.bake.DevServer;
-
 const InspectorBunFrontendDevServerAgentHandle = opaque {
     const c = struct {
         extern "c" fn InspectorBunFrontendDevServerAgent__notifyClientConnected(agent: *InspectorBunFrontendDevServerAgentHandle, devServerId: i32, connectionId: i32) void;
@@ -115,4 +111,7 @@ pub const BunFrontendDevServerAgent = struct {
     }
 };
 
+const bun = @import("bun");
+const JSC = bun.JSC;
+const DevServer = bun.bake.DevServer;
 const DebuggerId = JSC.Debugger.DebuggerId;

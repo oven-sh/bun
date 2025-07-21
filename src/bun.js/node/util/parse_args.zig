@@ -1,21 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const String = bun.String;
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ZigString = JSC.ZigString;
-
-const validators = @import("./validators.zig");
-
-const utils = @import("./parse_args_utils.zig");
-const OptionValueType = utils.OptionValueType;
-const OptionDefinition = utils.OptionDefinition;
-const findOptionByShortName = utils.findOptionByShortName;
-const classifyToken = utils.classifyToken;
-const isOptionLikeValue = utils.isOptionLikeValue;
-
 const log = bun.Output.scoped(.parseArgs, true);
 
 /// Represents a slice of a JSValue array
@@ -760,3 +742,22 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     result.put(globalThis, ZigString.static("positionals"), state.positionals);
     return result;
 }
+
+const std = @import("std");
+const validators = @import("./validators.zig");
+
+const utils = @import("./parse_args_utils.zig");
+const OptionDefinition = utils.OptionDefinition;
+const OptionValueType = utils.OptionValueType;
+const classifyToken = utils.classifyToken;
+const findOptionByShortName = utils.findOptionByShortName;
+const isOptionLikeValue = utils.isOptionLikeValue;
+
+const bun = @import("bun");
+const String = bun.String;
+const string = bun.string;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;

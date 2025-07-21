@@ -626,15 +626,17 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const assert = bun.assert;
-const ascii_u16_vector_size = strings.ascii_u16_vector_size;
-const AsciiU16Vector = strings.AsciiU16Vector;
-const utf16Codepoint = strings.utf16Codepoint;
-const toUTF16Literal = strings.toUTF16Literal;
+
 const strings = bun.strings;
-const AsciiVectorU16U1 = strings.AsciiVectorU16U1;
+const AsciiU16Vector = strings.AsciiU16Vector;
 const AsciiVector = strings.AsciiVector;
-const ascii_vector_size = strings.ascii_vector_size;
 const AsciiVectorU1 = strings.AsciiVectorU1;
+const AsciiVectorU16U1 = strings.AsciiVectorU16U1;
+const ascii_u16_vector_size = strings.ascii_u16_vector_size;
+const ascii_vector_size = strings.ascii_vector_size;
+const toUTF16Literal = strings.toUTF16Literal;
+const utf16Codepoint = strings.utf16Codepoint;

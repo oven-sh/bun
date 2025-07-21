@@ -1,3 +1,5 @@
+const EnvMap = @This();
+
 map: MapType,
 
 pub const Iterator = MapType.Iterator;
@@ -100,8 +102,7 @@ fn derefStrings(this: *EnvMap) void {
     }
 }
 
-const EnvMap = @This();
 const bun = @import("bun");
-const Allocator = std.mem.Allocator;
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const EnvStr = bun.shell.EnvStr;

@@ -1,6 +1,4 @@
 // TODO: prefer generating this file via translate_c
-const bun = @import("root").bun;
-const std = @import("std");
 
 pub const brotli_alloc_func = ?*const fn (?*anyopaque, usize) callconv(.C) ?*anyopaque;
 pub const brotli_free_func = ?*const fn (?*anyopaque, *anyopaque) callconv(.C) void;
@@ -331,3 +329,6 @@ pub const BROTLI_MAX_QUALITY = 11;
 pub const BROTLI_DEFAULT_QUALITY = 11;
 pub const BROTLI_DEFAULT_WINDOW = 22;
 pub const BROTLI_DEFAULT_MODE = BROTLI_MODE_GENERIC;
+
+const std = @import("std");
+const bun = @import("root").bun;

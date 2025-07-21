@@ -1,5 +1,3 @@
-const JSType = JSC.C.JSType;
-
 pub const fetch_error_no_args = "fetch() expects a string but received no arguments.";
 pub const fetch_error_blank_url = "fetch() URL must not be a blank string.";
 pub const fetch_error_unexpected_body = "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
@@ -193,7 +191,7 @@ pub const FetchTasklet = struct {
                     // just grab the ref
                     return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
                 }
-                const readable = body_value.toReadableStream(globalThis);
+                const readable = try body_value.toReadableStream(globalThis);
                 if (!readable.isEmptyOrUndefinedOrNull() and body_value == .Locked and body_value.Locked.readable.has()) {
                     return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
                 }
@@ -1865,6 +1863,12 @@ pub fn Bun__fetch_(
 
     // redirect: "follow" | "error" | "manual" | undefined;
     redirect_type = extract_redirect_type: {
+        // First, try to use the Request object's redirect if available
+        if (request) |req| {
+            redirect_type = req.redirect;
+        }
+
+        // Then check options/init objects which can override the Request's redirect
         const objects_to_try = [_]JSValue{
             options_object orelse .zero,
             request_init_object orelse .zero,
@@ -2067,7 +2071,7 @@ pub fn Bun__fetch_(
                 if (req.body.value.Locked.readable.has()) {
                     break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
                 }
-                const readable = req.body.value.toReadableStream(globalThis);
+                const readable = try req.body.value.toReadableStream(globalThis);
                 if (!readable.isEmptyOrUndefinedOrNull() and req.body.value == .Locked and req.body.value.Locked.readable.has()) {
                     break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
                 }
@@ -2113,7 +2117,7 @@ pub fn Bun__fetch_(
                             break :brk headers__;
                         }
 
-                        if (FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
+                        if (try FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
                             fetch_headers_to_deref = headers__;
                             break :brk headers__;
                         }
@@ -2147,7 +2151,7 @@ pub fn Bun__fetch_(
                             break :brk headers__;
                         }
 
-                        if (FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
+                        if (try FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
                             fetch_headers_to_deref = headers__;
                             break :brk headers__;
                         }
@@ -2342,7 +2346,7 @@ pub fn Bun__fetch_(
         prepare_body: {
             // is a S3 file we can use chunked here
 
-            if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
+            if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
                 var old = body;
                 defer old.detach();
                 body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };
@@ -2686,35 +2690,41 @@ fn setHeaders(headers: *?Headers, new_headers: []const picohttp.Header, allocato
     }
 }
 
+const X509 = @import("../api/bun/x509.zig");
 const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
-const string = bun.string;
+const Method = @import("../../http/Method.zig").Method;
+const ZigURL = @import("../../url.zig").URL;
+const SSLConfig = @import("../api/server.zig").ServerConfig.SSLConfig;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
 const MutableString = bun.MutableString;
-const ZigString = JSC.ZigString;
-const JSValue = JSC.JSValue;
+const Mutex = bun.Mutex;
+const Output = bun.Output;
+const picohttp = bun.picohttp;
+const s3 = bun.S3;
+const string = bun.string;
+const BoringSSL = bun.BoringSSL.c;
+const FetchHeaders = bun.webcore.FetchHeaders;
+const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
+
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSPromise = JSC.JSPromise;
-const ZigURL = @import("../../url.zig").URL;
-const Output = bun.Output;
-const http = bun.http;
+const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
-const FetchRedirect = http.FetchRedirect;
-const Blob = JSC.WebCore.Blob;
-const Response = JSC.WebCore.Response;
-const Request = JSC.WebCore.Request;
-const Headers = bun.http.Headers;
-const Method = @import("../../http/Method.zig").Method;
+const ZigString = JSC.ZigString;
+const JSType = JSC.C.JSType;
+
 const Body = JSC.WebCore.Body;
-const Async = bun.Async;
-const SSLConfig = @import("../api/server.zig").ServerConfig.SSLConfig;
-const Mutex = bun.Mutex;
-const BoringSSL = bun.BoringSSL.c;
-const X509 = @import("../api/bun/x509.zig");
-const FetchHeaders = bun.webcore.FetchHeaders;
-const Environment = bun.Environment;
-const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
+const Request = JSC.WebCore.Request;
+const Response = JSC.WebCore.Response;
+
+const Blob = JSC.WebCore.Blob;
 const AnyBlob = JSC.WebCore.Blob.Any;
-const s3 = bun.S3;
-const picohttp = bun.picohttp;
+
+const http = bun.http;
+const FetchRedirect = http.FetchRedirect;
+const Headers = bun.http.Headers;

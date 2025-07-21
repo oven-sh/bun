@@ -1,3 +1,5 @@
+const HTTPClient = @This();
+
 // This becomes Arena.allocator
 pub var default_allocator: std.mem.Allocator = undefined;
 pub var default_arena: Arena = undefined;
@@ -511,7 +513,6 @@ const host_header_name = "Host";
 const content_length_header_name = "Content-Length";
 const chunked_encoded_header = picohttp.Header{ .name = "Transfer-Encoding", .value = "chunked" };
 const connection_header = picohttp.Header{ .name = "Connection", .value = "keep-alive" };
-const connection_closing_header = picohttp.Header{ .name = "Connection", .value = "close" };
 const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
 
 const accept_encoding_no_compression = "identity";
@@ -2415,8 +2416,6 @@ pub fn handleResponseMetadata(
     }
 }
 
-const assert = bun.assert;
-
 // Exists for heap stats reasons.
 pub const ThreadlocalAsyncHTTP = struct {
     pub const new = bun.TrivialNew(@This());
@@ -2425,33 +2424,7 @@ pub const ThreadlocalAsyncHTTP = struct {
     async_http: AsyncHTTP,
 };
 
-const bun = @import("bun");
-const picohttp = bun.picohttp;
-const JSC = bun.JSC;
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const FeatureFlags = bun.FeatureFlags;
-
-const std = @import("std");
-const URL = @import("./url.zig").URL;
-
 pub const Method = @import("./http/Method.zig").Method;
-const Api = @import("./api/schema.zig").Api;
-const HTTPClient = @This();
-const StringBuilder = bun.StringBuilder;
-const posix = std.posix;
-const SOCK = posix.SOCK;
-const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
-const BoringSSL = bun.BoringSSL.c;
-const Progress = bun.Progress;
-const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
-const uws = bun.uws;
-const HTTPCertError = @import("./http/HTTPCertError.zig");
-const ProxyTunnel = @import("./http/ProxyTunnel.zig");
 pub const Headers = @import("./http/Headers.zig");
 pub const MimeType = @import("./http/MimeType.zig");
 pub const URLPath = @import("./http/URLPath.zig");
@@ -2468,3 +2441,30 @@ pub const FetchRedirect = @import("./http/FetchRedirect.zig").FetchRedirect;
 pub const InitError = @import("./http/InitError.zig").InitError;
 pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;
 pub const SendFile = @import("./http/SendFile.zig");
+
+const HTTPCertError = @import("./http/HTTPCertError.zig");
+const ProxyTunnel = @import("./http/ProxyTunnel.zig");
+const std = @import("std");
+const Api = @import("./api/schema.zig").Api;
+const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
+const URL = @import("./url.zig").URL;
+const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Global = bun.Global;
+const JSC = bun.JSC;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const StringBuilder = bun.StringBuilder;
+const assert = bun.assert;
+const picohttp = bun.picohttp;
+const string = bun.string;
+const strings = bun.strings;
+const uws = bun.uws;
+const BoringSSL = bun.BoringSSL.c;
+
+const posix = std.posix;
+const SOCK = posix.SOCK;

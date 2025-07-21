@@ -34,7 +34,5 @@ pub const ColumnIdentifier = union(enum) {
     }
 };
 
-// @sortImports
-
 const std = @import("std");
 const Data = @import("../Data.zig").Data;

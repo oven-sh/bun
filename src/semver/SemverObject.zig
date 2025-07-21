@@ -1,3 +1,5 @@
+const SemverObject = @This();
+
 pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
     const object = JSC.JSValue.createEmptyObject(globalThis, 2);
 
@@ -126,13 +128,12 @@ pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun
 }
 
 const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
 
+const bun = @import("bun");
 const JSC = bun.JSC;
-const SlicedString = bun.Semver.SlicedString;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
 
 const Query = bun.Semver.Query;
+const SlicedString = bun.Semver.SlicedString;
 const Version = bun.Semver.Version;
-const SemverObject = @This();

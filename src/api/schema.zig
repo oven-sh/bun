@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const js_ast = bun.JSAst;
-const OOM = bun.OOM;
-
 pub const Reader = struct {
     const Self = @This();
     pub const ReadError = error{EOF};
@@ -1956,6 +1951,27 @@ pub const Api = struct {
 
         _,
 
+        pub fn fromJS(global: *bun.JSC.JSGlobalObject, value: bun.JSC.JSValue) bun.JSError!?SourceMapMode {
+            if (value.isString()) {
+                const str = try value.toSliceOrNull(global);
+                defer str.deinit();
+                const utf8 = str.slice();
+                if (bun.strings.eqlComptime(utf8, "none")) {
+                    return .none;
+                }
+                if (bun.strings.eqlComptime(utf8, "inline")) {
+                    return .@"inline";
+                }
+                if (bun.strings.eqlComptime(utf8, "external")) {
+                    return .external;
+                }
+                if (bun.strings.eqlComptime(utf8, "linked")) {
+                    return .linked;
+                }
+            }
+            return null;
+        }
+
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
             return try writer.write(@tagName(self));
         }
@@ -3023,6 +3039,8 @@ pub const Api = struct {
 
         link_workspace_packages: ?bool = null,
 
+        node_linker: ?bun.install.PackageManager.Options.NodeLinker = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 
@@ -3347,3 +3365,9 @@ pub const Api = struct {
         }
     };
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const js_ast = bun.JSAst;

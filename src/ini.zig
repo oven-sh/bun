@@ -1,16 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const E = bun.JSAst.E;
-const Expr = bun.JSAst.Expr;
-const Loc = bun.logger.Loc;
-const js_ast = bun.JSAst;
-const Rope = js_ast.E.Object.Rope;
-const Output = bun.Output;
-const Global = bun.Global;
-const Registry = bun.install.Npm.Registry;
-const OOM = bun.OOM;
-
 pub const Parser = struct {
     opts: Options = .{},
     source: bun.logger.Source,
@@ -801,6 +788,16 @@ pub const ConfigIterator = struct {
     }
 };
 
+const NodeLinkerMap = bun.ComptimeStringMap(bun.install.PackageManager.Options.NodeLinker, .{
+    // yarn
+    .{ "pnpm", .isolated },
+    .{ "node-modules", .hoisted },
+
+    // pnpm
+    .{ "isolated", .isolated },
+    .{ "hoisted", .hoisted },
+});
+
 pub const ScopeIterator = struct {
     allocator: Allocator,
     config: *E.Object,
@@ -1031,9 +1028,44 @@ pub fn loadNpmrc(
         }
     }
 
-    if (out.get("ignore-scripts")) |ignore_scripts| {
-        if (ignore_scripts.isBoolean()) {
-            install.ignore_scripts = ignore_scripts.data.e_boolean.value;
+    if (out.get("ignore-scripts")) |*ignore_scripts| {
+        if (ignore_scripts.asBool()) |ignore| {
+            install.ignore_scripts = ignore;
+        }
+    }
+
+    if (out.get("link-workspace-packages")) |*link_workspace_packages| {
+        if (link_workspace_packages.asBool()) |link| {
+            install.link_workspace_packages = link;
+        }
+    }
+
+    if (out.get("save-exact")) |*save_exact| {
+        if (save_exact.asBool()) |exact| {
+            install.exact = exact;
+        }
+    }
+
+    if (out.get("install-strategy")) |install_strategy_expr| {
+        if (install_strategy_expr.asString(allocator)) |install_strategy_str| {
+            if (bun.strings.eqlComptime(install_strategy_str, "hoisted")) {
+                install.node_linker = .hoisted;
+            } else if (bun.strings.eqlComptime(install_strategy_str, "linked")) {
+                install.node_linker = .isolated;
+            } else if (bun.strings.eqlComptime(install_strategy_str, "nested")) {
+                // TODO
+            } else if (bun.strings.eqlComptime(install_strategy_str, "shallow")) {
+                // TODO
+            }
+        }
+    }
+
+    // yarn & pnpm option
+    if (out.get("node-linker")) |node_linker_expr| {
+        if (node_linker_expr.asString(allocator)) |node_linker_str| {
+            if (NodeLinkerMap.get(node_linker_str)) |node_linker| {
+                install.node_linker = node_linker;
+            }
         }
     }
 
@@ -1298,3 +1330,18 @@ fn @"handle _auth"(
     v.password = password;
     return;
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Loc = bun.logger.Loc;
+const Registry = bun.install.Npm.Registry;
+
+const js_ast = bun.JSAst;
+const E = bun.JSAst.E;
+const Expr = bun.JSAst.Expr;
+const Rope = js_ast.E.Object.Rope;

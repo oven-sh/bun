@@ -3,13 +3,15 @@
 //! objects that reference the filesystem (Blob.Store.File). This is how
 //! operations like writing `Store.File` to another `Store.File` knows to use a
 //! basic file copy instead of a naive read write loop.
+
 const Blob = @This();
+
 const debug = Output.scoped(.Blob, false);
 
-pub const Store = @import("blob/Store.zig");
-pub const read_file = @import("blob/read_file.zig");
-pub const write_file = @import("blob/write_file.zig");
-pub const copy_file = @import("blob/copy_file.zig");
+pub const Store = @import("./blob/Store.zig");
+pub const read_file = @import("./blob/read_file.zig");
+pub const write_file = @import("./blob/write_file.zig");
+pub const copy_file = @import("./blob/copy_file.zig");
 
 pub const new = bun.TrivialNew(@This());
 pub const js = JSC.Codegen.JSBlob;
@@ -518,7 +520,7 @@ pub fn fromURLSearchParams(
     };
     search_params.toString(URLSearchParamsConverter, &converter, URLSearchParamsConverter.convert);
     var store = Blob.Store.init(converter.buf, allocator);
-    store.mime_type = MimeType.all.@"application/x-www-form-urlencoded";
+    store.mime_type = MimeType.Compact.from(.@"application/x-www-form-urlencoded").toMimeType();
 
     var blob = Blob.initWithStore(store, globalThis);
     blob.content_type = store.mime_type.value;
@@ -1031,7 +1033,7 @@ pub fn writeFileWithSourceDestination(ctx: *JSC.JSGlobalObject, source_blob: *Bl
         return file_copier.promise.value();
     } else if (destination_type == .file and source_type == .s3) {
         const s3 = &source_store.data.s3;
-        if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(
+        if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(
             ctx,
             source_blob,
             @truncate(s3.options.partSize),
@@ -1068,7 +1070,7 @@ pub fn writeFileWithSourceDestination(ctx: *JSC.JSGlobalObject, source_blob: *Bl
         switch (source_store.data) {
             .bytes => |bytes| {
                 if (bytes.len > S3.MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
-                    if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(
+                    if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(
                         ctx,
                         source_blob,
                         @truncate(s3.options.partSize),
@@ -1135,7 +1137,7 @@ pub fn writeFileWithSourceDestination(ctx: *JSC.JSGlobalObject, source_blob: *Bl
             },
             .file, .s3 => {
                 // stream
-                if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(
+                if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(
                     ctx,
                     source_blob,
                     @truncate(s3.options.partSize),
@@ -1333,7 +1335,7 @@ pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOr
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        _ = response.body.value.toReadableStream(globalThis);
+                        _ = try response.body.value.toReadableStream(globalThis);
                         if (locked.readable.get(globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
@@ -1394,7 +1396,7 @@ pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOr
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        _ = request.body.value.toReadableStream(globalThis);
+                        _ = try request.body.value.toReadableStream(globalThis);
                         if (locked.readable.get(globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
@@ -1962,7 +1964,7 @@ pub fn getStream(
 
         recommended_chunk_size = @as(SizeType, @intCast(@max(0, @as(i52, @truncate(arguments[0].toInt64())))));
     }
-    const stream = JSC.WebCore.ReadableStream.fromBlobCopyRef(
+    const stream = try JSC.WebCore.ReadableStream.fromBlobCopyRef(
         globalThis,
         this,
         recommended_chunk_size,
@@ -4699,38 +4701,38 @@ pub fn FileCloser(comptime This: type) type {
     };
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const MimeType = http.MimeType;
-const http = bun.http;
-const JSC = bun.JSC;
-const io = bun.io;
-const Output = bun.Output;
-const strings = bun.strings;
-const string = bun.string;
-const default_allocator = bun.default_allocator;
-const JSError = bun.JSError;
-const assert = bun.assert;
-const streams = bun.webcore.streams;
-
-const Environment = @import("../../env.zig");
-const ZigString = JSC.ZigString;
-const JSPromise = JSC.JSPromise;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-
-const VirtualMachine = JSC.VirtualMachine;
-const StringJoiner = bun.StringJoiner;
-
-const invalid_fd = bun.invalid_fd;
-const Response = JSC.WebCore.Response;
-const Request = JSC.WebCore.Request;
-
-const libuv = bun.windows.libuv;
-
-const S3 = bun.S3;
-const S3File = @import("S3File.zig");
-const PathOrBlob = JSC.Node.PathOrBlob;
 const WriteFilePromise = write_file.WriteFilePromise;
 const WriteFileWaitFromLockedValueTask = write_file.WriteFileWaitFromLockedValueTask;
 const NewReadFileHandler = read_file.NewReadFileHandler;
+
+const Environment = @import("../../env.zig");
+const S3File = @import("./S3File.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+const Output = bun.Output;
+const S3 = bun.S3;
+const StringJoiner = bun.StringJoiner;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const invalid_fd = bun.invalid_fd;
+const io = bun.io;
+const string = bun.string;
+const strings = bun.strings;
+const libuv = bun.windows.libuv;
+const streams = bun.webcore.streams;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSPromise = JSC.JSPromise;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;
+const ZigString = JSC.ZigString;
+const PathOrBlob = JSC.Node.PathOrBlob;
+
+const Request = JSC.WebCore.Request;
+const Response = JSC.WebCore.Response;
+
+const http = bun.http;
+const MimeType = http.MimeType;

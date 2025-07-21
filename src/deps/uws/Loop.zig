@@ -289,10 +289,12 @@ const c = struct {
     pub extern fn uws_res_clear_corked_socket(loop: *Loop) void;
 };
 
-const bun = @import("bun");
-const uws = bun.uws;
-
-const InternalLoopData = uws.InternalLoopData;
-const Environment = bun.Environment;
-const std = @import("std");
 const log = bun.Output.scoped(.Loop, false);
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+
+const uws = bun.uws;
+const InternalLoopData = uws.InternalLoopData;

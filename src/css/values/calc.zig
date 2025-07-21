@@ -1,9 +1,5 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const Angle = css.css_values.angle.Angle;
@@ -205,42 +201,56 @@ pub fn Calc(comptime V: type) type {
         }
 
         // TODO: intoValueOwned
-        pub fn intoValue(this: @This(), allocator: std.mem.Allocator) V {
+        pub fn intoValue(this: @This(), allocator: std.mem.Allocator) Result(V) {
             switch (V) {
                 Angle => return switch (this) {
-                    .value => |v| v.*,
-                    // TODO: give a better error message
-                    else => bun.unreachablePanic("", .{}),
+                    .value => |v| .{ .result = v.* },
+                    else => .{ .err = css.ParseError(css.ParserError){
+                        .kind = .{ .custom = .{ .unexpected_value = .{
+                            .expected = "angle value",
+                            .received = @tagName(this),
+                        } } },
+                        .location = css.SourceLocation{ .line = 0, .column = 0 },
+                    } },
                 },
                 CSSNumber => return switch (this) {
-                    .value => |v| v.*,
-                    .number => |n| n,
-                    // TODO: give a better error message
-                    else => bun.unreachablePanic("", .{}),
+                    .value => |v| .{ .result = v.* },
+                    .number => |n| .{ .result = n },
+                    else => .{ .err = css.ParseError(css.ParserError){
+                        .kind = .{ .custom = .{ .unexpected_value = .{
+                            .expected = "number value",
+                            .received = @tagName(this),
+                        } } },
+                        .location = css.SourceLocation{ .line = 0, .column = 0 },
+                    } },
                 },
-                Length => return Length{
+                Length => return .{ .result = Length{
                     .calc = bun.create(allocator, Calc(Length), this),
-                },
+                } },
                 Percentage => return switch (this) {
-                    .value => |v| v.*,
-                    // TODO: give a better error message
-                    else => bun.unreachablePanic("", .{}),
+                    .value => |v| .{ .result = v.* },
+                    else => .{ .result = Percentage{ .v = std.math.nan(f32) } },
                 },
                 Time => return switch (this) {
-                    .value => |v| v.*,
-                    // TODO: give a better error message
-                    else => bun.unreachablePanic("", .{}),
+                    .value => |v| .{ .result = v.* },
+                    else => .{ .err = css.ParseError(css.ParserError){
+                        .kind = .{ .custom = .{ .unexpected_value = .{
+                            .expected = "time value",
+                            .received = @tagName(this),
+                        } } },
+                        .location = css.SourceLocation{ .line = 0, .column = 0 },
+                    } },
                 },
-                DimensionPercentage(LengthValue) => return DimensionPercentage(LengthValue){ .calc = bun.create(
+                DimensionPercentage(LengthValue) => return .{ .result = DimensionPercentage(LengthValue){ .calc = bun.create(
                     allocator,
                     Calc(DimensionPercentage(LengthValue)),
                     this,
-                ) },
-                DimensionPercentage(Angle) => return DimensionPercentage(Angle){ .calc = bun.create(
+                ) } },
+                DimensionPercentage(Angle) => return .{ .result = DimensionPercentage(Angle){ .calc = bun.create(
                     allocator,
                     Calc(DimensionPercentage(Angle)),
                     this,
-                ) },
+                ) } },
                 else => @compileError("Unimplemented, intoValue() for V = " ++ @typeName(V)),
             }
         }
@@ -253,34 +263,50 @@ pub fn Calc(comptime V: type) type {
         }
 
         // TODO: change to addOwned()
-        pub fn add(this: @This(), allocator: std.mem.Allocator, rhs: @This()) @This() {
+        pub fn add(this: @This(), allocator: std.mem.Allocator, rhs: @This()) Result(@This()) {
             if (this == .value and rhs == .value) {
                 // PERF: we can reuse the allocation here
-                return intoCalc(addValue(allocator, this.value.*, rhs.value.*), allocator);
+                return .{ .result = intoCalc(addValue(allocator, this.value.*, rhs.value.*), allocator) };
             } else if (this == .number and rhs == .number) {
-                return .{ .number = this.number + rhs.number };
+                return .{ .result = .{ .number = this.number + rhs.number } };
             } else if (this == .value) {
                 // PERF: we can reuse the allocation here
-                return intoCalc(addValue(allocator, this.value.*, intoValue(rhs, allocator)), allocator);
+                const rhs_value = switch (intoValue(rhs, allocator)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                };
+                return .{ .result = intoCalc(addValue(allocator, this.value.*, rhs_value), allocator) };
             } else if (rhs == .value) {
                 // PERF: we can reuse the allocation here
-                return intoCalc(addValue(allocator, intoValue(this, allocator), rhs.value.*), allocator);
+                const this_value = switch (intoValue(this, allocator)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                };
+                return .{ .result = intoCalc(addValue(allocator, this_value, rhs.value.*), allocator) };
             } else if (this == .function) {
-                return This{
+                return .{ .result = This{
                     .sum = .{
                         .left = bun.create(allocator, This, this),
                         .right = bun.create(allocator, This, rhs),
                     },
-                };
+                } };
             } else if (rhs == .function) {
-                return This{
+                return .{ .result = This{
                     .sum = .{
                         .left = bun.create(allocator, This, this),
                         .right = bun.create(allocator, This, rhs),
                     },
-                };
+                } };
             } else {
-                return intoCalc(addValue(allocator, intoValue(this, allocator), intoValue(rhs, allocator)), allocator);
+                const this_value = switch (intoValue(this, allocator)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                };
+                const rhs_value = switch (intoValue(rhs, allocator)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                };
+                return .{ .result = intoCalc(addValue(allocator, this_value, rhs_value), allocator) };
             }
         }
 
@@ -875,14 +901,20 @@ pub fn Calc(comptime V: type) type {
                             .result => |vv| vv,
                             .err => |e| return .{ .err = e },
                         };
-                        cur = cur.add(input.allocator(), next);
+                        cur = switch (cur.add(input.allocator(), next)) {
+                            .result => |v| v,
+                            .err => |e| return .{ .err = e },
+                        };
                     } else if (next_tok.* == .delim and next_tok.delim == '-') {
                         var rhs = switch (This.parseProduct(input, ctx, parse_ident)) {
                             .result => |vv| vv,
                             .err => |e| return .{ .err = e },
                         };
                         rhs = rhs.mulF32(input.allocator(), -1.0);
-                        cur = cur.add(input.allocator(), rhs);
+                        cur = switch (cur.add(input.allocator(), rhs)) {
+                            .result => |v| v,
+                            .err => |e| return .{ .err = e },
+                        };
                     } else {
                         return .{ .err = input.newUnexpectedTokenError(next_tok.*) };
                     }
@@ -1852,3 +1884,9 @@ pub const Constant = enum {
 fn absf(a: f32) f32 {
     return @abs(a);
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

@@ -1,14 +1,5 @@
 //! bun.sys.sys_uv is a polyfill of bun.sys but with libuv.
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
-const bun = @import("bun");
-
-const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
-const uv = bun.windows.libuv;
-
-const Environment = bun.Environment;
-const FileDescriptor = bun.FileDescriptor;
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
 
 comptime {
     bun.assert(Environment.isWindows);
@@ -406,3 +397,12 @@ pub inline fn write(fd: FileDescriptor, buf: []const u8) Maybe(usize) {
 }
 
 pub const Tag = @import("./sys.zig").Tag;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FileDescriptor = bun.FileDescriptor;
+const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
+const uv = bun.windows.libuv;
+
+const JSC = bun.JSC;
+const Maybe = JSC.Maybe;

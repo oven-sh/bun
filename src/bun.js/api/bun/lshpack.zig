@@ -1,5 +1,3 @@
-const bun = @import("bun");
-
 const lshpack_header = extern struct {
     name: [*]const u8 = undefined,
     name_len: usize = 0,
@@ -65,3 +63,5 @@ extern fn lshpack_wrapper_init(alloc: lshpack_wrapper_alloc, free: lshpack_wrapp
 extern fn lshpack_wrapper_deinit(self: *HPACK) void;
 extern fn lshpack_wrapper_decode(self: *HPACK, src: [*]const u8, src_len: usize, output: *lshpack_header) usize;
 extern fn lshpack_wrapper_encode(self: *HPACK, name: [*]const u8, name_len: usize, value: [*]const u8, value_len: usize, never_index: c_int, buffer: [*]u8, buffer_len: usize, buffer_offset: usize) usize;
+
+const bun = @import("bun");

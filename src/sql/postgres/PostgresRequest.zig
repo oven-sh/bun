@@ -115,7 +115,7 @@ pub fn writeBind(
             },
             .timestamp, .timestamptz => {
                 const l = try writer.length();
-                try writer.int8(types.date.fromJS(globalObject, value));
+                try writer.int8(try types.date.fromJS(globalObject, value));
                 try l.writeExcludingSelf();
             },
             .bytea => {
@@ -325,8 +325,6 @@ pub fn onData(
 pub const Queue = std.fifo.LinearFifo(*PostgresSQLQuery, .Dynamic);
 
 const debug = bun.Output.scoped(.Postgres, false);
-
-// @sortImports
 
 const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");

@@ -1,11 +1,6 @@
 // Transfer all the data between two file descriptors in the most efficient way.
 // The copy starts at offset 0, the initial offsets are preserved.
 // No metadata is transferred over.
-const std = @import("std");
-const posix = std.posix;
-const math = std.math;
-const bun = @import("bun");
-const Environment = bun.Environment;
 
 pub const CopyFileRangeError = error{
     FileTooBig,
@@ -140,7 +135,6 @@ pub fn copyFile(in: InputType, out: InputType) CopyFileReturnType {
     var state: CopyFileState = .{};
     return copyFileWithState(in, out, &state);
 }
-const Platform = bun.analytics.GenerateHeader.GeneratePlatform;
 
 var can_use_copy_file_range = std.atomic.Value(i32).init(0);
 pub inline fn disableCopyFileRangeSyscall() void {
@@ -205,9 +199,6 @@ pub fn can_use_ioctl_ficlone() bool {
 
     return result == 1;
 }
-
-const fd_t = std.posix.fd_t;
-const Maybe = bun.sys.Maybe;
 
 pub fn copyFileRange(in: fd_t, out: fd_t, len: usize, flags: u32, copy_file_state: *CopyFileState) Maybe(usize) {
     if (canUseCopyFileRangeSyscall() and !copy_file_state.has_seen_exdev and !copy_file_state.has_copy_file_range_failed) {
@@ -302,3 +293,14 @@ pub fn copyFileReadWriteLoop(
         .err => |err| return .{ .err = err },
     }
 }
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Maybe = bun.sys.Maybe;
+const Platform = bun.analytics.GenerateHeader.GeneratePlatform;
+
+const std = @import("std");
+const math = std.math;
+
+const posix = std.posix;
+const fd_t = std.posix.fd_t;

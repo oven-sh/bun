@@ -449,13 +449,13 @@ pub const AsyncModule = struct {
 
         var spec = bun.String.init(ZigString.init(this.specifier).withEncoding());
         var ref = bun.String.init(ZigString.init(this.referrer).withEncoding());
-        Bun__onFulfillAsyncModule(
+        bun.jsc.fromJSHostCallGeneric(this.globalThis, @src(), Bun__onFulfillAsyncModule, .{
             this.globalThis,
             this.promise.get().?,
             &errorable,
             &spec,
             &ref,
-        );
+        }) catch {};
         this.deinit();
         jsc_vm.allocator.destroy(this);
     }
@@ -468,7 +468,7 @@ pub const AsyncModule = struct {
         specifier_: bun.String,
         referrer_: bun.String,
         log: *logger.Log,
-    ) bun.JSExecutionTerminated!void {
+    ) bun.JSError!void {
         JSC.markBinding(@src());
         var specifier = specifier_;
         var referrer = referrer_;
@@ -508,14 +508,13 @@ pub const AsyncModule = struct {
 
         debug("fulfill: {any}", .{specifier});
 
-        Bun__onFulfillAsyncModule(
+        try bun.jsc.fromJSHostCallGeneric(globalThis, @src(), Bun__onFulfillAsyncModule, .{
             globalThis,
             promise,
             &errorable,
             &specifier,
             &referrer,
-        );
-        try scope.assertNoExceptionExceptTermination();
+        });
     }
 
     pub fn resolveError(this: *AsyncModule, vm: *VirtualMachine, import_record_id: u32, result: PackageResolveError) !void {
@@ -2143,24 +2142,20 @@ pub const RuntimeTranspilerStore = struct {
         };
     }
 
-    // This is run at the top of the event loop on the JS thread.
-    pub fn drain(this: *RuntimeTranspilerStore) bun.JSExecutionTerminated!void {
+    pub fn runFromJSThread(this: *RuntimeTranspilerStore, event_loop: *JSC.EventLoop, global: *JSC.JSGlobalObject, vm: *JSC.VirtualMachine) void {
         var batch = this.queue.popBatch();
+        const jsc_vm = vm.jsc;
         var iter = batch.iterator();
         if (iter.next()) |job| {
             // we run just one job first to see if there are more
-            try job.runFromJSThread();
+            job.runFromJSThread() catch |err| global.reportUncaughtExceptionFromError(err);
         } else {
             return;
         }
-        var vm: *VirtualMachine = @fieldParentPtr("transpiler_store", this);
-        const event_loop = vm.eventLoop();
-        const global = vm.global;
-        const jsc_vm = vm.jsc;
         while (iter.next()) |job| {
             // if there are more, we need to drain the microtasks from the previous run
-            try event_loop.drainMicrotasksWithGlobal(global, jsc_vm);
-            try job.runFromJSThread();
+            event_loop.drainMicrotasksWithGlobal(global, jsc_vm) catch return;
+            job.runFromJSThread() catch |err| global.reportUncaughtExceptionFromError(err);
         }
 
         // immediately after this is called, the microtasks will be drained again.
@@ -2267,7 +2262,7 @@ pub const RuntimeTranspilerStore = struct {
             this.vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&this.vm.transpiler_store));
         }
 
-        pub fn runFromJSThread(this: *TranspilerJob) bun.JSExecutionTerminated!void {
+        pub fn runFromJSThread(this: *TranspilerJob) bun.JSError!void {
             var vm = this.vm;
             const promise = this.promise.swap();
             const globalThis = this.globalThis;
@@ -3064,47 +3059,52 @@ export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
     return HardcodedModule.Alias.bun_aliases.get(str) != null;
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
+const debug = Output.scoped(.ModuleLoader, true);
 
-const Fs = @import("../fs.zig");
-const ast = @import("../import_record.zig");
-const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
-const ParseResult = bun.transpiler.ParseResult;
-const logger = bun.logger;
-const Api = @import("../api/schema.zig").Api;
-const options = @import("../options.zig");
-const Transpiler = bun.Transpiler;
-const PluginRunner = bun.transpiler.PluginRunner;
-const js_printer = bun.js_printer;
-const js_ast = bun.JSAst;
 const Analytics = @import("../analytics/analytics_thread.zig");
-const ZigString = bun.JSC.ZigString;
-const Runtime = @import("../runtime.zig");
-const ImportRecord = ast.ImportRecord;
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const JSC = bun.JSC;
-const JSValue = bun.JSC.JSValue;
-const node_module_module = @import("./bindings/NodeModuleModule.zig");
-
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const ResolvedSource = bun.JSC.ResolvedSource;
-const Bun = JSC.API.Bun;
-const PackageManager = @import("../install/install.zig").PackageManager;
-const Install = @import("../install/install.zig");
-const VirtualMachine = bun.JSC.VirtualMachine;
 const Dependency = @import("../install/dependency.zig");
-const Async = bun.Async;
-const String = bun.String;
+const Fs = @import("../fs.zig");
+const Runtime = @import("../runtime.zig");
+const node_module_module = @import("./bindings/NodeModuleModule.zig");
+const std = @import("std");
+const Api = @import("../api/schema.zig").Api;
+const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
+const panic = std.debug.panic;
+
+const ast = @import("../import_record.zig");
+const ImportRecord = ast.ImportRecord;
+
+const Install = @import("../install/install.zig");
+const PackageManager = @import("../install/install.zig").PackageManager;
+
+const options = @import("../options.zig");
 const ModuleType = options.ModuleType;
 
-const debug = Output.scoped(.ModuleLoader, true);
-const panic = std.debug.panic;
+const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
+const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const String = bun.String;
+const Transpiler = bun.Transpiler;
+const js_ast = bun.JSAst;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const JSValue = bun.JSC.JSValue;
+const ResolvedSource = bun.JSC.ResolvedSource;
+const VirtualMachine = bun.JSC.VirtualMachine;
+const ZigString = bun.JSC.ZigString;
+const Bun = JSC.API.Bun;
+
+const ParseResult = bun.transpiler.ParseResult;
+const PluginRunner = bun.transpiler.PluginRunner;
+const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;

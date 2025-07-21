@@ -1,32 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const logger = bun.logger;
-const File = bun.sys.File;
-
-const Install = @import("./install.zig");
-const Resolution = @import("./resolution.zig").Resolution;
-const Dependency = @import("./dependency.zig");
-const Npm = @import("./npm.zig");
-const Integrity = @import("./integrity.zig").Integrity;
-const Bin = @import("./bin.zig").Bin;
-
-const Semver = bun.Semver;
-const String = Semver.String;
-const stringHash = String.Builder.stringHash;
-
-const Lockfile = @import("./lockfile.zig");
-const LoadResult = Lockfile.LoadResult;
-
-const JSAst = bun.JSAst;
-const E = JSAst.E;
-
 const debug = Output.scoped(.migrate, false);
 
 pub fn detectAndLoadOtherLockfile(
@@ -750,8 +721,6 @@ pub fn migrateNPMLockfile(
 
                             const id = found.new_package_id;
 
-                            const is_workspace = resolutions[id].tag == .workspace;
-
                             dependencies_buf[0] = Dependency{
                                 .name = dep_name,
                                 .name_hash = name_hash,
@@ -761,7 +730,7 @@ pub fn migrateNPMLockfile(
                                     .optional = dep_key == .optionalDependencies,
                                     .dev = dep_key == .devDependencies,
                                     .peer = dep_key == .peerDependencies,
-                                    .workspace = is_workspace,
+                                    .workspace = false,
                                 },
                             };
                             resolutions_buf[0] = id;
@@ -1049,3 +1018,31 @@ fn packageNameFromPath(pkg_path: []const u8) []const u8 {
 
     return pkg_path[pkg_name_start..];
 }
+
+const Dependency = @import("./dependency.zig");
+const Install = @import("./install.zig");
+const Npm = @import("./npm.zig");
+const std = @import("std");
+const Bin = @import("./bin.zig").Bin;
+const Integrity = @import("./integrity.zig").Integrity;
+const Resolution = @import("./resolution.zig").Resolution;
+const Allocator = std.mem.Allocator;
+
+const Lockfile = @import("./lockfile.zig");
+const LoadResult = Lockfile.LoadResult;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+const File = bun.sys.File;
+
+const JSAst = bun.JSAst;
+const E = JSAst.E;
+
+const Semver = bun.Semver;
+const String = Semver.String;
+const stringHash = String.Builder.stringHash;

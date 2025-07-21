@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSPromise = @import("JSPromise.zig").JSPromise;
-const JSInternalPromise = @import("JSInternalPromise.zig").JSInternalPromise;
-const VM = JSC.VM;
-
 pub const AnyPromise = union(enum) {
     normal: *JSPromise,
     internal: *JSInternalPromise,
@@ -88,3 +79,13 @@ pub const AnyPromise = union(enum) {
         bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const JSInternalPromise = @import("./JSInternalPromise.zig").JSInternalPromise;
+const JSPromise = @import("./JSPromise.zig").JSPromise;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VM = JSC.VM;

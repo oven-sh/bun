@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const Output = bun.Output;
-const Global = bun.Global;
-
-const Command = bun.CLI.Command;
-
 pub const ExecCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         const script = ctx.positionals[1];
@@ -46,3 +40,8 @@ pub const ExecCommand = struct {
         // }
     }
 };
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const Command = bun.CLI.Command;

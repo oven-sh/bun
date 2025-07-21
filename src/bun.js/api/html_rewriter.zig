@@ -1,15 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const JSC = bun.JSC;
-const ZigString = JSC.ZigString;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const Response = bun.webcore.Response;
-const LOLHTML = bun.LOLHTML;
-const host_fn = JSC.host_fn;
-const JSError = bun.JSError;
-
 const SelectorMap = std.ArrayListUnmanaged(*LOLHTML.HTMLSelector);
 pub const LOLHTMLContext = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
@@ -168,7 +156,7 @@ pub const HTMLRewriter = struct {
         this.builder.deinit();
     }
 
-    pub fn beginTransform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
+    pub fn beginTransform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) bun.JSError!JSValue {
         const new_context = this.context;
         new_context.ref();
         return BufferOutputSink.init(new_context, global, response, this.builder);
@@ -179,15 +167,8 @@ pub const HTMLRewriter = struct {
             if (response.body.value == .Used) {
                 return global.throwInvalidArguments("Response body already used", .{});
             }
-
-            const out = this.beginTransform(global, response);
-
-            if (out != .zero) {
-                if (out.toError()) |err| {
-                    return global.throwValue(err);
-                }
-            }
-
+            const out = try this.beginTransform(global, response);
+            if (out.toError()) |err| return global.throwValue(err);
             return out;
         }
 
@@ -203,7 +184,7 @@ pub const HTMLRewriter = struct {
 
         if (kind != .other) {
             {
-                const body_value = JSC.WebCore.Body.extract(global, response_value) catch return .zero;
+                const body_value = try JSC.WebCore.Body.extract(global, response_value);
                 const resp = bun.new(Response, Response{
                     .init = .{
                         .status_code = 200,
@@ -211,7 +192,7 @@ pub const HTMLRewriter = struct {
                     .body = body_value,
                 });
                 defer resp.finalize();
-                const out_response_value = this.beginTransform(global, resp);
+                const out_response_value = try this.beginTransform(global, resp);
                 out_response_value.ensureStillAlive();
                 var out_response = out_response_value.as(Response) orelse return out_response_value;
                 var blob = out_response.body.value.useAsAnyBlobAllowNonUTF8String();
@@ -407,7 +388,7 @@ pub const HTMLRewriter = struct {
         tmp_sync_error: ?*JSC.JSValue = null,
 
         // const log = bun.Output.scoped(.BufferOutputSink, false);
-        pub fn init(context: *LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSC.JSValue {
+        pub fn init(context: *LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) bun.JSError!JSC.JSValue {
             var sink = bun.new(BufferOutputSink, .{
                 .ref_count = .init(),
                 .global = global,
@@ -475,7 +456,7 @@ pub const HTMLRewriter = struct {
 
             // https://github.com/oven-sh/bun/issues/3334
             if (original.init.headers) |headers| {
-                result.init.headers = headers.cloneThis(global);
+                result.init.headers = try headers.cloneThis(global);
             }
 
             // Hold off on cloning until we're actually done.
@@ -1927,3 +1908,17 @@ pub const Element = struct {
         return attr_iter.toJS(globalObject);
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+const LOLHTML = bun.LOLHTML;
+const string = bun.string;
+const Response = bun.webcore.Response;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
+const host_fn = JSC.host_fn;

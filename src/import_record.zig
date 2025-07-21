@@ -1,10 +1,3 @@
-const fs = bun.fs;
-const bun = @import("bun");
-const logger = bun.logger;
-const std = @import("std");
-const Index = @import("ast/base.zig").Index;
-const Api = @import("./api/schema.zig").Api;
-
 pub const ImportKind = enum(u8) {
     /// An entry point provided to `bun run` or `bun`
     entry_point_run = 0,
@@ -211,3 +204,11 @@ pub const ImportRecord = struct {
         napi_module,
     };
 };
+
+const std = @import("std");
+const Api = @import("./api/schema.zig").Api;
+const Index = @import("./ast/base.zig").Index;
+
+const bun = @import("bun");
+const fs = bun.fs;
+const logger = bun.logger;

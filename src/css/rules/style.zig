@@ -1,6 +1,4 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const Location = css.css_rules.Location;
@@ -247,3 +245,6 @@ pub fn StyleRule(comptime R: type) type {
         }
     };
 }
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

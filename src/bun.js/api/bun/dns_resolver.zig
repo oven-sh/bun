@@ -1,23 +1,6 @@
-const default_allocator = bun.default_allocator;
-const bun = @import("bun");
-const Environment = bun.Environment;
-
-const Global = bun.Global;
-const strings = bun.strings;
-const string = bun.string;
-const Output = bun.Output;
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const c_ares = bun.c_ares;
-const Async = bun.Async;
 const GetAddrInfoAsyncCallback = fn (i32, ?*std.c.addrinfo, ?*anyopaque) callconv(.C) void;
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
 const IANA_DNS_PORT = 53;
-const EventLoopTimer = bun.api.Timer.EventLoopTimer;
-const timespec = bun.timespec;
 
 const LibInfo = struct {
     // static int32_t (*getaddrinfo_async_start)(mach_port_t*,
@@ -179,8 +162,6 @@ const LibC = struct {
     }
 };
 
-const libuv = bun.windows.libuv;
-
 /// The windows implementation borrows the struct used for libc getaddrinfo
 const LibUVBackend = struct {
     const log = Output.scoped(.LibUVBackend, false);
@@ -258,8 +239,6 @@ const LibUVBackend = struct {
         return promise;
     }
 };
-
-const GetAddrInfo = bun.dns.GetAddrInfo;
 
 pub fn normalizeDNSName(name: []const u8, backend: *GetAddrInfo.Backend) []const u8 {
     if (backend.* == .c_ares) {
@@ -1871,7 +1850,7 @@ pub const DNSResolver = struct {
     options: c_ares.ChannelOptions = .{},
 
     event_loop_timer: EventLoopTimer = .{
-        .next = .{},
+        .next = .epoch,
         .tag = .DNSResolver,
     },
 
@@ -3516,3 +3495,24 @@ pub const DNSResolver = struct {
         @export(&js_getDNSCacheStats, .{ .name = "Bun__DNS__getCacheStats" });
     }
 };
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const c_ares = bun.c_ares;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+const timespec = bun.timespec;
+const GetAddrInfo = bun.dns.GetAddrInfo;
+const libuv = bun.windows.libuv;
+const EventLoopTimer = bun.api.Timer.EventLoopTimer;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

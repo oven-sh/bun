@@ -125,6 +125,13 @@ pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
     return wbuf[0 .. utf16.len + bun.windows.nt_object_prefix.len :0];
 }
 
+pub fn addLongPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
+    wbuf[0..bun.windows.long_path_prefix.len].* = bun.windows.long_path_prefix;
+    @memcpy(wbuf[bun.windows.long_path_prefix.len..][0..utf16.len], utf16);
+    wbuf[utf16.len + bun.windows.long_path_prefix.len] = 0;
+    return wbuf[0 .. utf16.len + bun.windows.long_path_prefix.len :0];
+}
+
 pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]u16 {
     if (hasPrefixComptimeType(u16, utf16, bun.windows.nt_object_prefix)) {
         @memcpy(wbuf[0..utf16.len], utf16);
@@ -501,15 +508,18 @@ fn basenameWindows(comptime T: type, input: []const T) []const T {
     return input[start_index + 1 .. end_index];
 }
 
-const bun = @import("bun");
+const string = []const u8;
+
 const std = @import("std");
+
+const bun = @import("bun");
 const Environment = bun.Environment;
+const assert = bun.assert;
+
 const strings = bun.strings;
-const hasPrefixComptime = strings.hasPrefixComptime;
-const hasPrefixComptimeType = strings.hasPrefixComptimeType;
-const trimPrefixComptime = strings.trimPrefixComptime;
 const copyUTF16IntoUTF8 = strings.copyUTF16IntoUTF8;
 const eqlComptimeT = strings.eqlComptimeT;
-const string = []const u8;
-const assert = bun.assert;
+const hasPrefixComptime = strings.hasPrefixComptime;
+const hasPrefixComptimeType = strings.hasPrefixComptimeType;
 const hasPrefixComptimeUTF16 = strings.hasPrefixComptimeUTF16;
+const trimPrefixComptime = strings.trimPrefixComptime;

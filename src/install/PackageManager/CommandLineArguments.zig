@@ -48,6 +48,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
     clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
+    clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
 };
 
@@ -65,6 +66,7 @@ pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
 
 pub const update_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
+    clap.parseParam("-i, --interactive                     Show an interactive list of outdated packages to select for update") catch unreachable,
     clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
 });
 
@@ -80,6 +82,8 @@ pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--allow-same-version                   Allow bumping to the same version") catch unreachable,
     clap.parseParam("-m, --message <STR>                    Use the given message for the commit") catch unreachable,
     clap.parseParam("--preid <STR>                          Identifier to be used to prefix premajor, preminor, prepatch or prerelease version increments") catch unreachable,
+    clap.parseParam("--top                                Show only the first level of dependencies") catch unreachable,
+    clap.parseParam("--depth <NUM>                          Maximum depth of the dependency tree to display") catch unreachable,
     clap.parseParam("<POS> ...                         ") catch unreachable,
 });
 
@@ -150,6 +154,12 @@ const publish_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
 });
 
+const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
+    clap.parseParam("<POS> ...                              Package name to explain why it's installed") catch unreachable,
+    clap.parseParam("--top                                  Show only the top dependency tree instead of nested ones") catch unreachable,
+    clap.parseParam("--depth <NUM>                          Maximum depth of the dependency tree to display") catch unreachable,
+});
+
 cache_dir: ?string = null,
 lockfile: string = "",
 token: string = "",
@@ -177,6 +187,7 @@ ignore_scripts: bool = false,
 trusted: bool = false,
 no_summary: bool = false,
 latest: bool = false,
+interactive: bool = false,
 json_output: bool = false,
 filters: []const string = &.{},
 
@@ -207,11 +218,17 @@ save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
 
+node_linker: ?Options.NodeLinker = null,
+
 // `bun pm version` options
 git_tag_version: bool = true,
 allow_same_version: bool = false,
 preid: string = "",
 message: ?string = null,
+
+// `bun pm why` options
+top_only: bool = false,
+depth: ?usize = null,
 
 const PatchOpts = union(enum) {
     nothing: struct {},
@@ -282,6 +299,9 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\
                 \\  <d>Update all dependencies to latest:<r>
                 \\  <b><green>bun update<r> <cyan>--latest<r>
+                \\
+                \\  <d>Interactive update (select packages to update):<r>
+                \\  <b><green>bun update<r> <cyan>-i<r>
                 \\
                 \\  <d>Update specific packages:<r>
                 \\  <b><green>bun update<r> <blue>zod jquery@3<r>
@@ -621,6 +641,33 @@ pub fn printHelp(subcommand: Subcommand) void {
             Output.pretty(outro_text, .{});
             Output.flush();
         },
+        .why => {
+            const intro_text =
+                \\
+                \\<b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> <blue>\<package\><r>
+                \\
+                \\  Explain why a package is installed.
+                \\
+                \\<b>Flags:<r>
+            ;
+
+            const outro_text =
+                \\
+                \\
+                \\<b>Examples:<r>
+                \\  <d>$<r> <b><green>bun why<r> <blue>react<r>
+                \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
+                \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
+                \\
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/why<r>.
+                \\
+            ;
+
+            Output.pretty(intro_text, .{});
+            clap.simpleHelp(why_params);
+            Output.pretty(outro_text, .{});
+            Output.flush();
+        },
     }
 }
 
@@ -640,6 +687,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         .outdated => outdated_params,
         .pack => pack_params,
         .publish => publish_params,
+        .why => why_params,
 
         // TODO: we will probably want to do this for other *_params. this way extra params
         // are not included in the help text
@@ -664,9 +712,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     }
 
     var cli = CommandLineArguments{};
+    cli.positionals = args.positionals();
     cli.yarn = args.flag("--yarn");
     cli.production = args.flag("--production");
-    cli.frozen_lockfile = args.flag("--frozen-lockfile");
+    cli.frozen_lockfile = args.flag("--frozen-lockfile") or (cli.positionals.len > 0 and strings.eqlComptime(cli.positionals[0], "ci"));
     cli.no_progress = args.flag("--no-progress");
     cli.dry_run = args.flag("--dry-run");
     cli.global = args.flag("--global");
@@ -681,6 +730,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.no_summary = args.flag("--no-summary");
     cli.ca = args.options("--ca");
     cli.lockfile_only = args.flag("--lockfile-only");
+
+    if (args.option("--linker")) |linker| {
+        cli.node_linker = .fromStr(linker);
+    }
 
     if (args.option("--cache-dir")) |cache_dir| {
         cli.cache_dir = cache_dir;
@@ -844,6 +897,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
     if (comptime subcommand == .update) {
         cli.latest = args.flag("--latest");
+        cli.interactive = args.flag("--interactive");
     }
 
     const specified_backend: ?PackageInstall.Method = brk: {
@@ -866,8 +920,6 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         }
         cli.registry = registry;
     }
-
-    cli.positionals = args.positionals();
 
     if (subcommand == .patch and cli.positionals.len < 2) {
         Output.errGeneric("Missing pkg to patch\n", .{});
@@ -916,26 +968,33 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         }
     }
 
+    // `bun pm why` and `bun why` options
+    if (comptime subcommand == .pm or subcommand == .why) {
+        cli.top_only = args.flag("--top");
+        if (args.option("--depth")) |depth| {
+            cli.depth = std.fmt.parseInt(usize, depth, 10) catch {
+                Output.errGeneric("invalid depth value: '{s}', must be a positive integer", .{depth});
+                Global.exit(1);
+            };
+        }
+    }
+
     return cli;
 }
 
-const PackageInstall = bun.install.PackageInstall;
 const Options = @import("./PackageManagerOptions.zig");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
 const std = @import("std");
-
-const JSON = bun.JSON;
-
-const Path = bun.path;
-
-const URL = bun.URL;
-
-const clap = bun.clap;
 const PackageManagerCommand = @import("../../cli/package_manager_command.zig").PackageManagerCommand;
 
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.JSON;
+const Output = bun.Output;
+const Path = bun.path;
+const URL = bun.URL;
+const clap = bun.clap;
+const string = bun.string;
+const strings = bun.strings;
+const PackageInstall = bun.install.PackageInstall;
 const Subcommand = bun.install.PackageManager.Subcommand;

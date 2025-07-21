@@ -1,16 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const strings = bun.strings;
-const SignResult = @import("./credentials.zig").S3Credentials.SignResult;
-const S3Error = @import("./error.zig").S3Error;
-const getSignErrorCodeAndMessage = @import("./error.zig").getSignErrorCodeAndMessage;
-const S3Credentials = @import("./credentials.zig").S3Credentials;
-const picohttp = bun.picohttp;
-const ACL = @import("./acl.zig").ACL;
-const StorageClass = @import("./storage_class.zig").StorageClass;
-const ListObjects = @import("./list_objects.zig");
-
 pub const S3StatResult = union(enum) {
     success: struct {
         size: usize = 0,
@@ -447,3 +434,19 @@ pub fn executeSimpleS3Request(
     task.http.schedule(bun.default_allocator, &batch);
     bun.http.http_thread.schedule(batch);
 }
+
+const ListObjects = @import("./list_objects.zig");
+const std = @import("std");
+const ACL = @import("./acl.zig").ACL;
+const StorageClass = @import("./storage_class.zig").StorageClass;
+
+const S3Credentials = @import("./credentials.zig").S3Credentials;
+const SignResult = @import("./credentials.zig").S3Credentials.SignResult;
+
+const S3Error = @import("./error.zig").S3Error;
+const getSignErrorCodeAndMessage = @import("./error.zig").getSignErrorCodeAndMessage;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const picohttp = bun.picohttp;
+const strings = bun.strings;

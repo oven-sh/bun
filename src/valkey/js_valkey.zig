@@ -853,19 +853,22 @@ const Options = struct {
     }
 };
 
-const std = @import("std");
-const bun = @import("bun");
-const valkey = @import("valkey.zig");
-const protocol = @import("valkey_protocol.zig");
-const JSC = bun.JSC;
-const String = bun.String;
 const debug = bun.Output.scoped(.RedisJS, false);
-const uws = bun.uws;
 
-const JSValue = JSC.JSValue;
-const Socket = uws.AnySocket;
+const Command = @import("./ValkeyCommand.zig");
+const std = @import("std");
+const valkey = @import("./valkey.zig");
+
+const protocol = @import("./valkey_protocol.zig");
 const RedisError = protocol.RedisError;
-const Command = @import("ValkeyCommand.zig");
-const BoringSSL = bun.BoringSSL;
 
+const bun = @import("bun");
+const BoringSSL = bun.BoringSSL;
+const String = bun.String;
 const Timer = bun.api.Timer;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;
+
+const uws = bun.uws;
+const Socket = uws.AnySocket;

@@ -1,15 +1,9 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-
 pub const css = @import("./css_parser.zig");
 pub const Error = css.Error;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const Result = css.Result;
 
-const ArrayList = std.ArrayListUnmanaged;
 pub const DeclarationList = ArrayList(css.Property);
 
 const BackgroundHandler = css.css_properties.background.BackgroundHandler;
@@ -458,3 +452,10 @@ pub const DeclarationHandler = struct {
         };
     }
 };
+
+const bun = @import("bun");
+const logger = bun.logger;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

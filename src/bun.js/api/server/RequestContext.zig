@@ -1115,7 +1115,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (assignment_result.toError()) |err_value| {
                 streamLog("returned an error", .{});
-                response_stream.detach();
+                response_stream.detach(globalThis);
                 this.sink = null;
                 response_stream.sink.destroy();
                 return this.handleReject(err_value);
@@ -1123,7 +1123,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (resp.hasResponded()) {
                 streamLog("done", .{});
-                response_stream.detach();
+                response_stream.detach(globalThis);
                 this.sink = null;
                 response_stream.sink.destroy();
                 stream.done(globalThis);
@@ -1191,7 +1191,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 } else {
                     // if is not a promise we treat it as Error
                     streamLog("returned an error", .{});
-                    response_stream.detach();
+                    response_stream.detach(globalThis);
                     this.sink = null;
                     response_stream.sink.destroy();
                     return this.handleReject(assignment_result);
@@ -1199,7 +1199,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
 
             if (this.isAbortedOrEnded()) {
-                response_stream.detach();
+                response_stream.detach(globalThis);
                 stream.cancel(globalThis);
                 defer this.readable_stream_ref.deinit();
 
@@ -1217,7 +1217,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 response_stream.sink.buffer.len == 0);
 
             if (!stream.isLocked(globalThis) and !is_in_progress) {
-                if (JSC.WebCore.ReadableStream.fromJS(stream.value, globalThis)) |comparator| {
+                if (JSC.WebCore.ReadableStream.fromJS(stream.value, globalThis) catch null) |comparator| { // TODO: properly propagate exception upwards
                     if (std.meta.activeTag(comparator.ptr) == std.meta.activeTag(stream.ptr)) {
                         streamLog("is not locked", .{});
                         this.renderMissing();
@@ -1229,7 +1229,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             streamLog("is in progress, but did not return a Promise. Finalizing request context", .{});
             response_stream.sink.onFirstWrite = null;
             response_stream.sink.ctx = null;
-            response_stream.detach();
+            response_stream.detach(globalThis);
             stream.cancel(globalThis);
             response_stream.sink.markDone();
             this.renderMissing();
@@ -1587,7 +1587,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 wrote_anything = wrapper.sink.wrote > 0;
 
                 wrapper.sink.finalize();
-                wrapper.detach();
+                wrapper.detach(wrapper.sink.globalThis);
                 req.sink = null;
                 wrapper.sink.destroy();
             }
@@ -1643,7 +1643,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 wrapper.sink.done = true;
                 req.flags.aborted = req.flags.aborted or wrapper.sink.aborted;
                 wrapper.sink.finalize();
-                wrapper.detach();
+                wrapper.detach(wrapper.sink.globalThis);
                 req.sink = null;
                 wrapper.sink.destroy();
             }
@@ -1790,7 +1790,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                     if (lock.onReceiveValue != null or lock.task != null) {
                         // someone else is waiting for the stream or waiting for `onStartStreaming`
-                        const readable = value.toReadableStream(globalThis);
+                        const readable = value.toReadableStream(globalThis) catch return; // TODO: properly propagate exception upwards
                         readable.ensureStillAlive();
                         this.doRenderWithBody(value);
                         return;
@@ -2123,7 +2123,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.cookies) |cookies| {
                 this.cookies = null;
                 defer cookies.deref();
-                cookies.write(this.server.?.globalThis, ssl_enabled, @ptrCast(this.resp.?));
+                cookies.write(this.server.?.globalThis, ssl_enabled, @ptrCast(this.resp.?)) catch return; // TODO: properly propagate exception upwards
             }
 
             if (needs_content_type and
@@ -2517,32 +2517,37 @@ fn writeHeaders(
     }
 }
 
-const WebCore = JSC.WebCore;
-const bun = @import("bun");
-const uws = bun.uws;
+const ctxLog = Output.scoped(.RequestContext, false);
+const string = []const u8;
+
 const std = @import("std");
+const Fallback = @import("../../../runtime.zig").Fallback;
+const writeStatus = @import("../server.zig").writeStatus;
+const linux = std.os.linux;
+
+const bun = @import("bun");
 const Environment = bun.Environment;
+const JSError = bun.JSError;
+const Output = bun.Output;
+const S3 = bun.S3;
+const String = bun.String;
+const assert = bun.assert;
+const logger = bun.logger;
+const uws = bun.uws;
+const Api = bun.Schema.Api;
+
 const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;
+const AnyRequestContext = JSC.API.AnyRequestContext;
+
+const WebCore = JSC.WebCore;
+const Blob = JSC.WebCore.Blob;
+const Body = JSC.WebCore.Body;
+const FetchHeaders = JSC.WebCore.FetchHeaders;
 const Request = JSC.WebCore.Request;
 const Response = JSC.WebCore.Response;
-const FetchHeaders = JSC.WebCore.FetchHeaders;
-const Body = JSC.WebCore.Body;
-const Blob = JSC.WebCore.Blob;
-const MimeType = bun.http.MimeType;
+
 const HTTP = bun.http;
-const Output = bun.Output;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const String = bun.String;
-const JSError = bun.JSError;
-const linux = std.os.linux;
-const S3 = bun.S3;
-const logger = bun.logger;
-const assert = bun.assert;
-const ctxLog = Output.scoped(.RequestContext, false);
-const Api = bun.Schema.Api;
-const string = []const u8;
-const AnyRequestContext = JSC.API.AnyRequestContext;
-const VirtualMachine = JSC.VirtualMachine;
-const writeStatus = @import("../server.zig").writeStatus;
-const Fallback = @import("../../../runtime.zig").Fallback;
+const MimeType = bun.http.MimeType;

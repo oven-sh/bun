@@ -236,7 +236,6 @@ const SocketHandlers: SocketHandler = {
   open(socket) {
     const self = socket.data;
     if (!self) return;
-    // socket.timeout(Math.ceil(self.timeout / 1000));
     if (self.timeout) {
       self.setTimeout(self.timeout);
     }
@@ -862,7 +861,6 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
 Socket.prototype[kAttach] = function (port, socket) {
   socket.data = this;
   socket[owner_symbol] = this;
-  // socket.timeout(Math.ceil(this.timeout / 1000));
   if (this.timeout) {
     this.setTimeout(this.timeout);
   }

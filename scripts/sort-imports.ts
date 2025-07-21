@@ -102,6 +102,10 @@ function parseDeclarations(
       continue;
     }
 
+    if (declarations.has(name)) {
+      unusedLineIndices.push(i);
+      continue;
+    }
     declarations.set(name, {
       whole: line,
       index: i,

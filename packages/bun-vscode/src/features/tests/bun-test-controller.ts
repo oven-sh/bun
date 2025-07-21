@@ -581,7 +581,7 @@ export class BunTestController implements vscode.Disposable {
       this.disconnectInspector();
     });
 
-    if ('onDidDispose' in run) {
+    if ("onDidDispose" in run) {
       (run.onDidDispose as vscode.Event<void>)(() => {
         run?.end?.();
         this.closeAllActiveProcesses();

@@ -934,7 +934,8 @@ if(WIN32)
     target_link_options(${bun} PUBLIC
       /LTCG
       /OPT:REF
-      /OPT:NOICF
+      /OPT:ICF
+      /FILEALIGN:0x200
       /DEBUG:FULL
       /delayload:ole32.dll
       /delayload:WINMM.dll

@@ -1046,9 +1046,9 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                     }
 
                                     if (i < text.len and text[i] == '}') {
+                                        try writer.writeAll("}");
                                         i += 1;
                                     }
-                                    try writer.writeAll("}");
                                     text = text[i..];
                                     i = 0;
                                     if (text.len > 0 and text[0] == char) {

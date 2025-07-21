@@ -61,6 +61,7 @@ pub fn installIsolatedPackages(
                 // check for cycles
                 const nodes_slice = nodes.slice();
                 const node_pkg_ids = nodes_slice.items(.pkg_id);
+                const node_dep_ids = nodes_slice.items(.dep_id);
                 const node_parent_ids = nodes_slice.items(.parent_id);
                 const node_nodes = nodes_slice.items(.nodes);
 
@@ -68,9 +69,20 @@ pub fn installIsolatedPackages(
                 while (curr_id != .invalid) {
                     if (node_pkg_ids[curr_id.get()] == entry.pkg_id) {
                         // skip the new node, and add the previously added node to parent so it appears in
-                        // 'node_modules/.bun/parent@version/node_modules'
-                        node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
-                        continue :next_node;
+                        // 'node_modules/.bun/parent@version/node_modules'.
+
+                        const dep_id = node_dep_ids[curr_id.get()];
+                        if (dep_id == invalid_dependency_id or entry.dep_id == invalid_dependency_id) {
+                            node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
+                            continue :next_node;
+                        }
+
+                        // ensure the dependency name is the same before skipping the cycle. if they aren't
+                        // we lose dependency name information for the symlinks
+                        if (dependencies[dep_id].name_hash == dependencies[entry.dep_id].name_hash) {
+                            node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
+                            continue :next_node;
+                        }
                     }
                     curr_id = node_parent_ids[curr_id.get()];
                 }
@@ -567,7 +579,7 @@ pub fn installIsolatedPackages(
 
     {
         var root_node: *Progress.Node = undefined;
-        // var download_node: Progress.Node = undefined;
+        var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
         var scripts_node: Progress.Node = undefined;
         var progress = &manager.progress;
@@ -575,12 +587,13 @@ pub fn installIsolatedPackages(
         if (manager.options.log_level.showProgress()) {
             progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             root_node = progress.start("", 0);
-            // download_node = root_node.start(ProgressStrings.download(), 0);
+            download_node = root_node.start(ProgressStrings.download(), 0);
             install_node = root_node.start(ProgressStrings.install(), store.entries.len);
             scripts_node = root_node.start(ProgressStrings.script(), 0);
 
             manager.downloads_node = null;
             manager.scripts_node = &scripts_node;
+            manager.downloads_node = &download_node;
         }
 
         const nodes_slice = store.nodes.slice();
@@ -618,6 +631,7 @@ pub fn installIsolatedPackages(
             .preallocated_tasks = .init(bun.default_allocator),
             .trusted_dependencies_mutex = .{},
             .trusted_dependencies_from_update_requests = manager.findTrustedDependenciesFromUpdateRequests(),
+            .supported_backend = .init(PackageInstall.supported_method),
         };
 
         // add the pending task count upfront
@@ -659,7 +673,7 @@ pub fn installIsolatedPackages(
                         continue;
                     }
                     entry_steps[entry_id.get()].store(.done, .monotonic);
-                    installer.onTaskComplete(entry_id, .success);
+                    installer.onTaskComplete(entry_id, .skipped);
                     continue;
                 },
                 .symlink => {
@@ -889,6 +903,15 @@ pub fn installIsolatedPackages(
                         wait.err = err;
                         return true;
                     };
+
+                    if (wait.manager.scripts_node) |node| {
+                        // if we're just waiting for scripts, make it known. -1 because the root task needs to wait for everything
+                        const pending_lifecycle_scripts = wait.manager.pending_lifecycle_script_tasks.load(.monotonic);
+                        if (pending_lifecycle_scripts > 0 and pending_lifecycle_scripts == wait.manager.pendingTaskCount() -| 1) {
+                            node.activate();
+                            wait.manager.progress.refresh();
+                        }
+                    }
 
                     return wait.manager.pendingTaskCount() == 0;
                 }

@@ -1,0 +1,67 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`CLAUDECODE=1 shows quiet test output (only failures) 1`] = `
+"test2.test.js:
+4 |       test("passing test", () => {
+5 |         expect(1).toBe(1);
+6 |       });
+7 | 
+8 |       test("failing test", () => {
+9 |         expect(1).toBe(2);
+                      ^
+error: expect(received).toBe(expected)
+
+Expected: 2
+Received: 1
+    at <anonymous> (file:NN:NN)
+(fail) failing test
+
+ 1 pass
+ 1 skip
+ 1 todo
+ 1 fail
+ 2 expect() calls
+Ran 4 tests across 1 file.
+bun test <version> (<revision>)"
+`;
+
+exports[`CLAUDECODE=1 vs CLAUDECODE=0 comparison: normal 1`] = `
+"test3.test.js:
+(pass) passing test
+(pass) another passing test
+(skip) skipped test
+(todo) todo test
+
+ 2 pass
+ 1 skip
+ 1 todo
+ 0 fail
+ 2 expect() calls
+Ran 4 tests across 1 file.
+bun test <version> (<revision>)"
+`;
+
+exports[`CLAUDECODE=1 vs CLAUDECODE=0 comparison: quiet 1`] = `
+"2 pass
+ 1 skip
+ 1 todo
+ 0 fail
+ 2 expect() calls
+Ran 4 tests across 1 file.
+bun test <version> (<revision>)"
+`;
+
+exports[`CLAUDECODE flag handles no test files found: no-tests-normal 1`] = `
+"No tests found!
+
+Tests need ".test", "_test_", ".spec" or "_spec_" in the filename (ex: "MyApp.test.ts")
+
+Learn more about bun test: https://bun.com/docs/cli/test
+bun test <version> (<revision>)"
+`;
+
+exports[`CLAUDECODE flag handles no test files found: no-tests-quiet 1`] = `
+"error: 0 test files matching **{.test,.spec,_test_,_spec_}.{js,ts,jsx,tsx} in --cwd="<dir>"
+
+bun test <version> (<revision>)"
+`;

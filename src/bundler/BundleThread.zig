@@ -135,7 +135,6 @@ pub fn BundleThread(CompletionStruct: type) type {
             completion.transpiler = this;
 
             defer {
-                this.graph.pool.reset();
                 ast_memory_allocator.pop();
                 this.deinitWithoutFreeingArena();
             }

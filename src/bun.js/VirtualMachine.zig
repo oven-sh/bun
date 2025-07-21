@@ -1312,6 +1312,8 @@ pub fn initWorker(
     return vm;
 }
 
+extern fn BakeCreateProdGlobal(console_ptr: *anyopaque) *JSC.JSGlobalObject;
+
 pub fn initBake(opts: Options) anyerror!*VirtualMachine {
     JSC.markBinding(@src());
     const allocator = opts.allocator;
@@ -1365,7 +1367,16 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
     vm.regular_event_loop.concurrent_tasks = .{};
     vm.event_loop = &vm.regular_event_loop;
-    vm.eventLoop().ensureWaker();
+    if (comptime bun.Environment.isWindows) {
+        vm.eventLoop().ensureWaker();
+        vm.global = BakeCreateProdGlobal(vm.console);
+        vm.jsc = vm.global.vm();
+        uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
+    } else {
+        vm.global = BakeCreateProdGlobal(vm.console);
+        vm.jsc = vm.global.vm();
+        vm.eventLoop().ensureWaker();
+    }
 
     vm.transpiler.macro_context = null;
     vm.transpiler.resolver.store_fd = opts.store_fd;

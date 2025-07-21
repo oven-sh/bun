@@ -535,6 +535,10 @@ pub fn load(
 
         this.lockfile_only = cli.lockfile_only;
 
+        if (cli.node_linker) |node_linker| {
+            this.node_linker = node_linker;
+        }
+
         const disable_progress_bar = default_disable_progress_bar or cli.no_progress;
 
         if (cli.verbose) {

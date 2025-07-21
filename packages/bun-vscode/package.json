@@ -279,6 +279,14 @@
                 "type": "boolean",
                 "description": "If the debugger should stop on the first line of the program.",
                 "default": false
+              },
+              "localRoot": {
+                "type": "string",
+                "description": "The local path that maps to \"remoteRoot\" when attaching to a remote Bun process."
+              },
+              "remoteRoot": {
+                "type": "string",
+                "description": "The remote path to the code when attaching. File paths reported by Bun that start with this path will be mapped back to 'localRoot'."
               }
             }
           }

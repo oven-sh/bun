@@ -9,7 +9,7 @@ heap: bun.io.heap.IntrusiveField(EventLoopTimer) = .{},
 
 pub fn initPaused(tag: Tag) EventLoopTimer {
     return .{
-        .next = .{},
+        .next = .epoch,
         .tag = tag,
     };
 }
@@ -227,21 +227,22 @@ pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Ar
 
 pub fn deinit(_: *EventLoopTimer) void {}
 
-const timespec = bun.timespec;
-
 /// A timer created by WTF code and invoked by Bun's event loop
 const WTFTimer = @import("../../WTFTimer.zig");
-const VirtualMachine = JSC.VirtualMachine;
-const TimerObjectInternals = @import("../Timer.zig").TimerObjectInternals;
-const TimeoutObject = @import("../Timer.zig").TimeoutObject;
-const ImmediateObject = @import("../Timer.zig").ImmediateObject;
-const StatWatcherScheduler = @import("../../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+
+const std = @import("std");
 const DNSResolver = @import("../bun/dns_resolver.zig").DNSResolver;
+const StatWatcherScheduler = @import("../../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+
+const ImmediateObject = @import("../Timer.zig").ImmediateObject;
+const TimeoutObject = @import("../Timer.zig").TimeoutObject;
+const TimerObjectInternals = @import("../Timer.zig").TimerObjectInternals;
 
 const bun = @import("bun");
-const std = @import("std");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
-
+const timespec = bun.timespec;
 const uws = bun.uws;
+
+const JSC = bun.JSC;
+const VirtualMachine = JSC.VirtualMachine;
 const api = JSC.API;

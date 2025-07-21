@@ -1,13 +1,4 @@
-const bun = @import("bun");
-const std = @import("std");
-const Async = bun.Async;
-const JSC = bun.JSC;
-const uv = bun.windows.libuv;
-const Source = @import("./source.zig").Source;
 const log = bun.Output.scoped(.PipeWriter, true);
-const FileType = @import("./pipes.zig").FileType;
-const OOM = bun.OOM;
-const Environment = bun.Environment;
 
 pub const WriteResult = union(enum) {
     done: usize,
@@ -174,8 +165,6 @@ pub fn PosixPipeWriter(
         }
     };
 }
-
-const PollOrFd = @import("./pipes.zig").PollOrFd;
 
 /// See below for the expected signature of `function_table`. In many cases, the
 /// function table can be the same as `Parent`. `anytype` is used because of a
@@ -1501,3 +1490,16 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
 
 pub const BufferedWriter = if (bun.Environment.isPosix) PosixBufferedWriter else WindowsBufferedWriter;
 pub const StreamingWriter = if (bun.Environment.isPosix) PosixStreamingWriter else WindowsStreamingWriter;
+
+const std = @import("std");
+const Source = @import("./source.zig").Source;
+
+const FileType = @import("./pipes.zig").FileType;
+const PollOrFd = @import("./pipes.zig").PollOrFd;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const OOM = bun.OOM;
+const uv = bun.windows.libuv;

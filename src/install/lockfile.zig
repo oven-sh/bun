@@ -1,3 +1,5 @@
+const Lockfile = @This();
+
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
 format: FormatVersion = FormatVersion.current,
 
@@ -25,28 +27,6 @@ trusted_dependencies: ?TrustedDependenciesSet = null,
 patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
-
-node_linker: NodeLinker = .auto,
-
-pub const NodeLinker = enum(u8) {
-    // If workspaces are used: isolated
-    // If not: hoisted
-    // Used when nodeLinker is absent from package.json/bun.lock/bun.lockb
-    auto,
-
-    hoisted,
-    isolated,
-
-    pub fn fromStr(input: string) ?NodeLinker {
-        if (strings.eqlComptime(input, "hoisted")) {
-            return .hoisted;
-        }
-        if (strings.eqlComptime(input, "isolated")) {
-            return .isolated;
-        }
-        return null;
-    }
-};
 
 pub const DepSorter = struct {
     lockfile: *const Lockfile,
@@ -593,7 +573,7 @@ pub fn getWorkspacePkgIfWorkspaceDep(this: *const Lockfile, id: DependencyID) Pa
 /// Does this tree id belong to a workspace (including workspace root)?
 /// TODO(dylan-conway) fix!
 pub fn isWorkspaceTreeId(this: *const Lockfile, id: Tree.Id) bool {
-    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspaceOnly();
+    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspace();
 }
 
 /// Returns the package id of the workspace the install is taking place in.
@@ -654,8 +634,6 @@ pub fn cleanWithLogger(
     try new.packages.ensureTotalCapacity(old.allocator, old.packages.len);
     try new.buffers.preallocate(old.buffers, old.allocator);
     try new.patched_dependencies.ensureTotalCapacity(old.allocator, old.patched_dependencies.entries.len);
-
-    new.node_linker = old.node_linker;
 
     old.scratch.dependency_list_queue.head = 0;
 
@@ -1032,7 +1010,7 @@ pub const Printer = struct {
             .ok => {},
         }
 
-        const writer = Output.writer();
+        const writer = Output.writerBuffered();
         try printWithLockfile(allocator, lockfile, format, @TypeOf(writer), writer);
         Output.flush();
     }
@@ -1085,8 +1063,8 @@ pub const Printer = struct {
         }
     }
 
-    pub const Tree = @import("lockfile/printer/tree_printer.zig");
-    pub const Yarn = @import("lockfile/printer/Yarn.zig");
+    pub const Tree = @import("./lockfile/printer/tree_printer.zig");
+    pub const Yarn = @import("./lockfile/printer/Yarn.zig");
 };
 
 pub fn verifyData(this: *const Lockfile) !void {
@@ -1241,7 +1219,6 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .workspace_versions = .{},
         .overrides = .{},
         .catalogs = .{},
-        .node_linker = .auto,
         .meta_hash = zero_hash,
     };
 }
@@ -1619,14 +1596,14 @@ pub const DependencyIDList = std.ArrayListUnmanaged(DependencyID);
 pub const StringBuffer = std.ArrayListUnmanaged(u8);
 pub const ExternalStringBuffer = std.ArrayListUnmanaged(ExternalString);
 
-pub const jsonStringify = @import("lockfile/lockfile_json_stringify_for_debugging.zig").jsonStringify;
+pub const jsonStringify = @import("./lockfile/lockfile_json_stringify_for_debugging.zig").jsonStringify;
 pub const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
-pub const Buffers = @import("lockfile/Buffers.zig");
-pub const Serializer = @import("lockfile/bun.lockb.zig");
-pub const CatalogMap = @import("lockfile/CatalogMap.zig");
-pub const OverrideMap = @import("lockfile/OverrideMap.zig");
-pub const Package = @import("lockfile/Package.zig").Package;
-pub const Tree = @import("lockfile/Tree.zig");
+pub const Buffers = @import("./lockfile/Buffers.zig");
+pub const Serializer = @import("./lockfile/bun.lockb.zig");
+pub const CatalogMap = @import("./lockfile/CatalogMap.zig");
+pub const OverrideMap = @import("./lockfile/OverrideMap.zig");
+pub const Package = @import("./lockfile/Package.zig").Package;
+pub const Tree = @import("./lockfile/Tree.zig");
 
 pub fn deinit(this: *Lockfile) void {
     this.buffers.deinit(this.allocator);
@@ -2027,57 +2004,63 @@ pub const PatchedDep = extern struct {
     }
 };
 
-const Lockfile = @This();
 const MetaHash = [std.crypto.hash.sha2.Sha512T256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
+pub const StringPool = String.Builder.StringPool;
+
+const Dependency = @import("./dependency.zig");
+const DotEnv = @import("../env_loader.zig");
+const Path = @import("../resolver/resolve_path.zig");
+const TextLockfile = @import("./lockfile/bun.lock.zig");
+const migration = @import("./migration.zig");
 const std = @import("std");
+const Crypto = @import("../sha.zig").Hashers;
+const Resolution = @import("./resolution.zig").Resolution;
+const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
+const which = @import("../which.zig").which;
+const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
 const Allocator = std.mem.Allocator;
+
+const Fs = @import("../fs.zig");
+const FileSystem = Fs.FileSystem;
+
+const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
+const IdentityContext = @import("../identity_context.zig").IdentityContext;
+
 const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const GlobalStringBuilder = bun.StringBuilder;
+const JSON = bun.JSON;
+const MutableString = bun.MutableString;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const string = bun.string;
 const stringZ = bun.stringZ;
 const strings = bun.strings;
-const assert = bun.assert;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Environment = bun.Environment;
 const File = bun.sys.File;
-const Global = bun.Global;
-const GlobalStringBuilder = bun.StringBuilder;
-const Install = bun.install;
-const JSON = bun.JSON;
-const MutableString = bun.MutableString;
-const OOM = bun.OOM;
-const Output = bun.Output;
-const PackageID = Install.PackageID;
-const PackageInstall = Install.PackageInstall;
-const PackageManager = Install.PackageManager;
-const PackageNameAndVersionHash = Install.PackageNameAndVersionHash;
-const PackageNameHash = Install.PackageNameHash;
+
 const Semver = bun.Semver;
+const ExternalString = Semver.ExternalString;
 const SlicedString = Semver.SlicedString;
 const String = Semver.String;
+
+const Install = bun.install;
+const DependencyID = Install.DependencyID;
+const ExternalSlice = Install.ExternalSlice;
+const Features = Install.Features;
+const PackageID = Install.PackageID;
+const PackageInstall = Install.PackageInstall;
+const PackageNameAndVersionHash = Install.PackageNameAndVersionHash;
+const PackageNameHash = Install.PackageNameHash;
 const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const initializeStore = Install.initializeStore;
 const invalid_dependency_id = Install.invalid_dependency_id;
 const invalid_package_id = Install.invalid_package_id;
-pub const StringPool = String.Builder.StringPool;
-const DependencyID = Install.DependencyID;
-const ExternalSlice = Install.ExternalSlice;
-const ExternalString = Semver.ExternalString;
-const Features = Install.Features;
-const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
-const DotEnv = @import("../env_loader.zig");
-const Fs = @import("../fs.zig");
-const FileSystem = Fs.FileSystem;
-const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const Path = @import("../resolver/resolve_path.zig");
-const Crypto = @import("../sha.zig").Hashers;
-const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
-const which = @import("../which.zig").which;
-const Dependency = @import("./dependency.zig");
-const TextLockfile = @import("./lockfile/bun.lock.zig");
-const migration = @import("./migration.zig");
-const Resolution = @import("./resolution.zig").Resolution;
+
+const PackageManager = Install.PackageManager;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;

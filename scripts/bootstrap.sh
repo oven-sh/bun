@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 16
+# Version: 17
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1510,12 +1510,12 @@ configure_core_dumps() {
 		# disable apport.service if it exists since it will override the core_pattern
 		if which systemctl >/dev/null; then
 			if systemctl list-unit-files apport.service >/dev/null; then
-				execute_sudo "$systemctl" disable --now apport.service || true
+				execute_sudo "$systemctl" disable --now apport.service
 			fi
 		fi
 
 		# load the new configuration (ignore permission errors)
-		execute_sudo sysctl -p "$sysctl_file" || true
+		execute_sudo sysctl -p "$sysctl_file"
 
 		# ensure that a regular user will be able to run sysctl
 		if [ -d /sbin ]; then

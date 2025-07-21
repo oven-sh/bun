@@ -112,7 +112,7 @@ pub fn deinit(this: *Ast) void {
     if (this.import_records.len > 0) this.import_records.deinitWithAllocator(bun.default_allocator);
 }
 
-// @sortImports
+pub const Class = G.Class;
 
 const std = @import("std");
 const Runtime = @import("../runtime.zig").Runtime;
@@ -128,6 +128,7 @@ const Ast = js_ast.Ast;
 const CharFreq = js_ast.CharFreq;
 const ExportsKind = js_ast.ExportsKind;
 const Expr = js_ast.Expr;
+const G = js_ast.G;
 const InlinedEnumValue = js_ast.InlinedEnumValue;
 const LocRef = js_ast.LocRef;
 const NamedExport = js_ast.NamedExport;
@@ -138,6 +139,3 @@ const RefHashCtx = js_ast.RefHashCtx;
 const Scope = js_ast.Scope;
 const SlotCounts = js_ast.SlotCounts;
 const Symbol = js_ast.Symbol;
-
-const G = js_ast.G;
-pub const Class = G.Class;

@@ -1,4 +1,5 @@
 //! Bun's filesystem watcher implementation for windows using kernel32
+
 const WindowsWatcher = @This();
 
 mutex: Mutex = .{},
@@ -283,12 +284,14 @@ pub fn createWatchEvent(event: FileEvent, index: WatchItemIndex) WatchEvent {
     };
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const Output = bun.Output;
 const log = Output.scoped(.watcher, false);
-const Mutex = bun.Mutex;
+
+const std = @import("std");
 const w = std.os.windows;
 
-const WatchItemIndex = bun.Watcher.WatchItemIndex;
+const bun = @import("bun");
+const Mutex = bun.Mutex;
+const Output = bun.Output;
+
 const WatchEvent = bun.Watcher.WatchEvent;
+const WatchItemIndex = bun.Watcher.WatchItemIndex;

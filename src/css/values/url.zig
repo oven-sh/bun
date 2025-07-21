@@ -1,8 +1,5 @@
-const std = @import("std");
-const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const UrlDependency = css.dependencies.UrlDependency;
@@ -142,3 +139,8 @@ pub const Url = struct {
         return css.implementHash(@This(), this, hasher);
     }
 };
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

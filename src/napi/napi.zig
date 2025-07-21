@@ -1,12 +1,6 @@
-const std = @import("std");
-const JSC = bun.JSC;
-const bun = @import("bun");
-const JSValue = JSC.JSValue;
 const TODO_EXCEPTION: JSC.C.ExceptionRef = null;
 
 const log = bun.Output.scoped(.napi, false);
-
-const Async = bun.Async;
 
 /// This is `struct napi_env__` from napi.h
 pub const NapiEnv = opaque {
@@ -1011,9 +1005,6 @@ pub extern fn napi_get_instance_data(env: napi_env, data: [*]*anyopaque) napi_st
 pub extern fn napi_detach_arraybuffer(env: napi_env, arraybuffer: napi_value) napi_status;
 pub extern fn napi_is_detached_arraybuffer(env: napi_env, value: napi_value, result: *bool) napi_status;
 
-const WorkPool = @import("../work_pool.zig").WorkPool;
-const WorkPoolTask = @import("../work_pool.zig").Task;
-
 /// must be globally allocated
 pub const napi_async_work = struct {
     task: WorkPoolTask = .{ .callback = &runFromThreadPool },
@@ -1186,7 +1177,7 @@ pub export fn napi_create_buffer_copy(env_: napi_env, length: usize, data: [*]u8
     const result = result_ orelse {
         return env.invalidArg();
     };
-    var buffer = JSC.JSValue.createBufferFromLength(env.toJS(), length);
+    var buffer = JSC.JSValue.createBufferFromLength(env.toJS(), length) catch return env.setLastError(.pending_exception);
     if (buffer.asArrayBuffer(env.toJS())) |array_buf| {
         if (length > 0) {
             @memcpy(array_buf.slice()[0..length], data[0..length]);
@@ -2482,3 +2473,14 @@ pub const NapiFinalizerTask = struct {
         this.runOnJSThread();
     }
 };
+
+const std = @import("std");
+
+const WorkPool = @import("../work_pool.zig").WorkPool;
+const WorkPoolTask = @import("../work_pool.zig").Task;
+
+const bun = @import("bun");
+const Async = bun.Async;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;

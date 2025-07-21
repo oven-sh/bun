@@ -2481,6 +2481,19 @@ declare module "bun" {
      * This defaults to `true`.
      */
     throw?: boolean;
+
+    /**
+     * Custom tsconfig.json file path to use for path resolution.
+     * Equivalent to `--tsconfig-override` in the CLI.
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   tsconfig: './custom-tsconfig.json'
+     * });
+     * ```
+     */
+    tsconfig?: string;
   }
 
   /**

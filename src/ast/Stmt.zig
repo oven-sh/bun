@@ -406,8 +406,6 @@ pub fn caresAboutScope(self: *Stmt) bool {
     };
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

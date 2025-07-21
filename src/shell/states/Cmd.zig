@@ -95,8 +95,6 @@ pub const ShellAsyncSubprocessDone = struct {
     }
 };
 
-const Subprocess = bun.shell.subproc.ShellSubprocess;
-
 pub const Exec = union(enum) {
     none,
     bltn: Builtin,
@@ -420,13 +418,12 @@ fn initSubproc(this: *Cmd) Yield {
 
     var arena = &this.spawn_arena;
     // var arena_allocator = arena.allocator();
-    var spawn_args = Subprocess.SpawnArgs.default(arena, this.base.interpreter.event_loop, false);
+    var spawn_args = Subprocess.SpawnArgs.default(arena, this, this.base.interpreter.event_loop, false);
 
-    spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
     spawn_args.cmd_parent = this;
     spawn_args.cwd = this.base.shell.cwdZ();
 
-    const args = args: {
+    {
         this.args.append(null) catch bun.outOfMemory();
 
         log("Cmd(0x{x}, {s}) IO: {}", .{ @intFromPtr(this), if (this.args.items.len > 0) this.args.items[0] orelse "<no args>" else "<no args>", this.io });
@@ -499,10 +496,7 @@ fn initSubproc(this: *Cmd) Yield {
         this.base.allocator().free(first_arg_real);
         const duped = this.base.allocator().dupeZ(u8, bun.span(resolved)) catch bun.outOfMemory();
         this.args.items[0] = duped;
-
-        break :args this.args;
-    };
-    spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args.items, .capacity = args.capacity };
+    }
 
     // Fill the env from the export end and cmd local env
     {
@@ -516,7 +510,7 @@ fn initSubproc(this: *Cmd) Yield {
     defer shellio.deref();
     this.io.to_subproc_stdio(&spawn_args.stdio, &shellio);
 
-    if (this.initRedirections(&spawn_args)) |yield| return yield;
+    if (this.initRedirections(&spawn_args) catch .failed) |yield| return yield;
 
     const buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
     log("cmd ({x}) set buffered closed => {any}", .{ @intFromPtr(this), buffered_closed });
@@ -551,7 +545,7 @@ fn initSubproc(this: *Cmd) Yield {
     return .suspended;
 }
 
-fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) ?Yield {
+fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?Yield {
     if (this.node.redirect_file) |redirect| {
         const in_cmd_subst = false;
 
@@ -573,35 +567,34 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) ?Yield {
                 } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob__| {
                     const blob = blob__.dupe();
                     if (this.node.redirect.stdin) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no) catch return .failed;
+                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no);
                     } else if (this.node.redirect.stdout) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no) catch return .failed;
+                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no);
                     } else if (this.node.redirect.stderr) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no) catch return .failed;
+                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no);
                     }
-                } else if (JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
+                } else if (try JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
                     _ = rstream;
                     @panic("TODO SHELL READABLE STREAM");
                 } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Response)) |req| {
                     req.getBodyValue().toBlobIfPossible();
                     if (this.node.redirect.stdin) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no) catch return .failed;
+                        try spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no);
                     }
                     if (this.node.redirect.stdout) {
-                        spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no) catch return .failed;
+                        try spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no);
                     }
                     if (this.node.redirect.stderr) {
-                        spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no) catch return .failed;
+                        try spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no);
                     }
                 } else {
                     const jsval = this.base.interpreter.jsobjs[val.idx];
-                    global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)}) catch {}; // TODO: propagate
-                    return .failed;
+                    return global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)});
                 }
             },
             .atom => {
                 if (this.redirection_file.items.len == 0) {
-                    return this.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{spawn_args.argv.items[0] orelse "<unknown>"});
+                    return this.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{spawn_args.cmd_parent.args.items[0] orelse "<unknown>"});
                 }
                 const path = this.redirection_file.items[0..this.redirection_file.items.len -| 1 :0];
                 log("Expanded Redirect: {s}\n", .{this.redirection_file.items[0..]});
@@ -797,38 +790,37 @@ pub fn bufferedOutputCloseStderr(this: *Cmd, err: ?JSC.SystemError) void {
 }
 
 const std = @import("std");
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
-
 const Allocator = std.mem.Allocator;
 
-const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellExecEnv = Interpreter.ShellExecEnv;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-const ShellSyscall = bun.shell.interpret.ShellSyscall;
-
-const Assigns = bun.shell.Interpreter.Assigns;
-const If = bun.shell.Interpreter.If;
-const Async = bun.shell.Interpreter.Async;
-const Binary = bun.shell.Interpreter.Binary;
-const Expansion = bun.shell.Interpreter.Expansion;
-const Stmt = bun.shell.Interpreter.Stmt;
-const Pipeline = bun.shell.Interpreter.Pipeline;
-
+const bun = @import("bun");
 const JSC = bun.JSC;
 const assert = bun.assert;
+const which = bun.which;
+
+const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
+const Subprocess = bun.shell.subproc.ShellSubprocess;
+
+const Interpreter = bun.shell.Interpreter;
+const Assigns = bun.shell.Interpreter.Assigns;
+const Async = bun.shell.Interpreter.Async;
+const Binary = bun.shell.Interpreter.Binary;
+const Builtin = bun.shell.Interpreter.Builtin;
+const Expansion = bun.shell.Interpreter.Expansion;
+const IO = bun.shell.Interpreter.IO;
+const If = bun.shell.Interpreter.If;
+const Pipeline = bun.shell.Interpreter.Pipeline;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Stmt = bun.shell.Interpreter.Stmt;
+
 const Arena = bun.shell.interpret.Arena;
 const CowFd = bun.shell.interpret.CowFd;
-const Builtin = bun.shell.Interpreter.Builtin;
-
+const ShellSyscall = bun.shell.interpret.ShellSyscall;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;
+const stderr_no = bun.shell.interpret.stderr_no;
 const stdin_no = bun.shell.interpret.stdin_no;
 const stdout_no = bun.shell.interpret.stdout_no;
-const stderr_no = bun.shell.interpret.stderr_no;
-
-const which = bun.which;

@@ -1,49 +1,7 @@
 const Bun = @This();
-const default_allocator = bun.default_allocator;
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Global = bun.Global;
-const strings = bun.strings;
-const string = bun.string;
-const Output = bun.Output;
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const Sys = @import("../../sys.zig");
 
-const logger = bun.logger;
-const options = @import("../../options.zig");
-const Transpiler = bun.Transpiler;
-const js_printer = bun.js_printer;
-const Analytics = @import("../../analytics/analytics_thread.zig");
-const ZigString = bun.JSC.ZigString;
-const Runtime = @import("../../runtime.zig");
-const WebCore = bun.JSC.WebCore;
-const Request = WebCore.Request;
-const Response = WebCore.Response;
-const Headers = WebCore.Headers;
-const Fetch = WebCore.Fetch;
-const HTTP = bun.http;
-const JSC = bun.JSC;
-const JSValue = bun.JSC.JSValue;
-const host_fn = JSC.host_fn;
-
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const Node = bun.JSC.Node;
-const JSPromise = bun.JSC.JSPromise;
-const VM = bun.JSC.VM;
-const URL = @import("../../url.zig").URL;
-const VirtualMachine = JSC.VirtualMachine;
-const uws = bun.uws;
-const Fallback = Runtime.Fallback;
-const MimeType = HTTP.MimeType;
-const Blob = JSC.WebCore.Blob;
-const BoringSSL = bun.BoringSSL.c;
-const Arena = @import("../../allocators/mimalloc_arena.zig").Arena;
-
-const Async = bun.Async;
 const httplog = Output.scoped(.Server, false);
 const ctxLog = Output.scoped(.RequestContext, false);
-const SocketAddress = @import("bun/socket.zig").SocketAddress;
 
 pub const WebSocketServerContext = @import("./server/WebSocketServerContext.zig");
 pub const HTTPStatusText = @import("./server/HTTPStatusText.zig");
@@ -62,8 +20,6 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub const StaticRoute = @import("./server/StaticRoute.zig");
 pub const FileRoute = @import("./server/FileRoute.zig");
-
-const HTMLBundle = JSC.API.HTMLBundle;
 
 pub const AnyRoute = union(enum) {
     /// Serve a static file
@@ -157,7 +113,7 @@ pub const AnyRoute = union(enum) {
 
         try builder.appendSlice(relative_path);
 
-        const fetch_headers = JSC.WebCore.FetchHeaders.createFromJS(init_ctx.global, try argument.get(init_ctx.global, "headers") orelse return null);
+        const fetch_headers = try JSC.WebCore.FetchHeaders.createFromJS(init_ctx.global, try argument.get(init_ctx.global, "headers") orelse return null);
         defer if (fetch_headers) |headers| headers.deref();
         if (init_ctx.global.hasException()) return error.JSError;
 
@@ -427,7 +383,7 @@ const ServePlugins = struct {
         } };
 
         global.bunVM().eventLoop().enter();
-        const result = JSBundlerPlugin__loadAndResolvePluginsForServe(plugin, plugin_js_array, bunfig_folder_bunstr);
+        const result = try bun.jsc.fromJSHostCall(global, @src(), JSBundlerPlugin__loadAndResolvePluginsForServe, .{ plugin, plugin_js_array, bunfig_folder_bunstr });
         global.bunVM().eventLoop().exit();
 
         // handle the case where js synchronously throws an error
@@ -842,7 +798,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                             var fetch_headers_to_use: *WebCore.FetchHeaders = headers_value.as(WebCore.FetchHeaders) orelse brk: {
                                 if (headers_value.isObject()) {
-                                    if (WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
+                                    if (try WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
                                         fetch_headers_to_deref = fetch_headers;
                                         break :brk fetch_headers;
                                     }
@@ -970,7 +926,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                         var fetch_headers_to_use: *WebCore.FetchHeaders = headers_value.as(WebCore.FetchHeaders) orelse brk: {
                             if (headers_value.isObject()) {
-                                if (WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
+                                if (try WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
                                     fetch_headers_to_deref = fetch_headers;
                                     break :brk fetch_headers;
                                 }
@@ -1231,7 +1187,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     if (try opts.fastGet(ctx, .headers)) |headers_| {
                         if (headers_.as(WebCore.FetchHeaders)) |headers__| {
                             headers = headers__;
-                        } else if (WebCore.FetchHeaders.createFromJS(ctx, headers_)) |headers__| {
+                        } else if (try WebCore.FetchHeaders.createFromJS(ctx, headers_)) |headers__| {
                             headers = headers__;
                         }
                     }
@@ -1252,7 +1208,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     method,
                 );
             } else if (first_arg.as(Request)) |request_| {
-                request_.cloneInto(
+                try request_.cloneInto(
                     &existing_request,
                     bun.default_allocator,
                     ctx,
@@ -2076,11 +2032,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }) orelse return;
 
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
-            var response_value = Bun__ServerRouteList__callRoute(server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req);
-
-            if (server.globalThis.tryTakeException()) |exception| {
-                response_value = exception;
-            }
+            const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
@@ -2327,11 +2279,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, false, method) orelse return;
             prepared.ctx.upgrade_context = upgrade_ctx; // set the upgrade context
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
-            var response_value = Bun__ServerRouteList__callRoute(server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req);
-
-            if (server.globalThis.tryTakeException()) |exception| {
-                response_value = exception;
-            }
+            const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
@@ -3255,8 +3203,6 @@ pub const AnyServer = struct {
 
 extern fn Bun__addInspector(bool, *anyopaque, *JSC.JSGlobalObject) void;
 
-const assert = bun.assert;
-
 pub export fn Server__setIdleTimeout(server: JSC.JSValue, seconds: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
     Server__setIdleTimeout_(server, seconds, globalThis) catch |err| switch (err) {
         error.JSError => {},
@@ -3426,3 +3372,51 @@ fn throwSSLErrorIfNecessary(globalThis: *JSC.JSGlobalObject) bool {
 
     return false;
 }
+
+const Analytics = @import("../../analytics/analytics_thread.zig");
+const Sys = @import("../../sys.zig");
+const options = @import("../../options.zig");
+const std = @import("std");
+const Arena = @import("../../allocators/mimalloc_arena.zig").Arena;
+const SocketAddress = @import("./bun/socket.zig").SocketAddress;
+const URL = @import("../../url.zig").URL;
+const Allocator = std.mem.Allocator;
+
+const Runtime = @import("../../runtime.zig");
+const Fallback = Runtime.Fallback;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const Transpiler = bun.Transpiler;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+const uws = bun.uws;
+const BoringSSL = bun.BoringSSL.c;
+
+const JSC = bun.JSC;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const JSPromise = bun.JSC.JSPromise;
+const JSValue = bun.JSC.JSValue;
+const Node = bun.JSC.Node;
+const VM = bun.JSC.VM;
+const VirtualMachine = JSC.VirtualMachine;
+const ZigString = bun.JSC.ZigString;
+const host_fn = JSC.host_fn;
+const HTMLBundle = JSC.API.HTMLBundle;
+
+const WebCore = bun.JSC.WebCore;
+const Blob = JSC.WebCore.Blob;
+const Fetch = WebCore.Fetch;
+const Headers = WebCore.Headers;
+const Request = WebCore.Request;
+const Response = WebCore.Response;
+
+const HTTP = bun.http;
+const MimeType = HTTP.MimeType;

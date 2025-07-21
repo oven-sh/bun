@@ -1,19 +1,6 @@
 //! Originally, we tried using LIEF to inject the module graph into a MachO segment
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
-const bun = @import("bun");
-const std = @import("std");
-const Schema = bun.Schema.Api;
-const strings = bun.strings;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const Syscall = bun.sys;
-const SourceMap = bun.sourcemap;
-const StringPointer = bun.StringPointer;
-
-const macho = bun.macho;
-const w = std.os.windows;
 
 pub const StandaloneModuleGraph = struct {
     bytes: []const u8 = "",
@@ -134,6 +121,19 @@ pub const StandaloneModuleGraph = struct {
             }
 
             return null;
+        }
+    };
+
+    const PE = struct {
+        pub extern "C" fn Bun__getStandaloneModuleGraphPELength() u32;
+        pub extern "C" fn Bun__getStandaloneModuleGraphPEData() ?[*]u8;
+
+        pub fn getData() ?[]const u8 {
+            const length = Bun__getStandaloneModuleGraphPELength();
+            if (length == 0) return null;
+
+            const data_ptr = Bun__getStandaloneModuleGraphPEData() orelse return null;
+            return data_ptr[0..length];
         }
     };
 
@@ -682,6 +682,44 @@ pub const StandaloneModuleGraph = struct {
                 }
                 return cloned_executable_fd;
             },
+            .windows => {
+                const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
+                if (input_result.err) |err| {
+                    Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                }
+                var pe_file = bun.pe.PEFile.init(bun.default_allocator, input_result.bytes.items) catch |err| {
+                    Output.prettyErrorln("Error initializing PE file: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                defer pe_file.deinit();
+                pe_file.addBunSection(bytes) catch |err| {
+                    Output.prettyErrorln("Error adding Bun section to PE file: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                input_result.bytes.deinit();
+
+                switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                    .err => |err| {
+                        Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        Global.exit(1);
+                    },
+                    else => {},
+                }
+
+                var file = bun.sys.File{ .handle = cloned_executable_fd };
+                const writer = file.writer();
+                pe_file.write(writer) catch |err| {
+                    Output.prettyErrorln("Error writing PE file: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                return cloned_executable_fd;
+            },
             else => {
                 var total_byte_count: usize = undefined;
                 if (Environment.isWindows) {
@@ -886,6 +924,22 @@ pub const StandaloneModuleGraph = struct {
             }
             const offsets = std.mem.bytesAsValue(Offsets, macho_bytes_slice).*;
             return try StandaloneModuleGraph.fromBytes(allocator, @constCast(macho_bytes), offsets);
+        }
+
+        if (comptime Environment.isWindows) {
+            const pe_bytes = PE.getData() orelse return null;
+            if (pe_bytes.len < @sizeOf(Offsets) + trailer.len) {
+                Output.debugWarn("bun standalone module graph is too small to be valid", .{});
+                return null;
+            }
+            const pe_bytes_slice = pe_bytes[pe_bytes.len - @sizeOf(Offsets) - trailer.len ..];
+            const trailer_bytes = pe_bytes[pe_bytes.len - trailer.len ..][0..trailer.len];
+            if (!bun.strings.eqlComptime(trailer_bytes, trailer)) {
+                Output.debugWarn("bun standalone module graph has invalid trailer", .{});
+                return null;
+            }
+            const offsets = std.mem.bytesAsValue(Offsets, pe_bytes_slice).*;
+            return try StandaloneModuleGraph.fromBytes(allocator, @constCast(pe_bytes), offsets);
         }
 
         // Do not invoke libuv here.
@@ -1252,3 +1306,18 @@ pub const StandaloneModuleGraph = struct {
         bun.assert(header_list.items.len == string_payload_start_location);
     }
 };
+
+const std = @import("std");
+const w = std.os.windows;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const SourceMap = bun.sourcemap;
+const StringPointer = bun.StringPointer;
+const Syscall = bun.sys;
+const macho = bun.macho;
+const pe = bun.pe;
+const strings = bun.strings;
+const Schema = bun.Schema.Api;

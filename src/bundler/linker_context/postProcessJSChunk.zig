@@ -859,43 +859,40 @@ pub fn generateEntryPointTailJS(
     };
 }
 
-const bun = @import("bun");
-const strings = bun.strings;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
-const ImportRecord = bun.ImportRecord;
-const Part = bun.bundle_v2.Part;
 const std = @import("std");
 
-const JSMeta = bun.bundle_v2.JSMeta;
-const JSAst = bun.bundle_v2.JSAst;
-const js_ast = bun.bundle_v2.js_ast;
-const Ref = bun.bundle_v2.js_ast.Ref;
-const ResolvedExports = bun.bundle_v2.ResolvedExports;
+const bun = @import("bun");
+const ImportRecord = bun.ImportRecord;
 const Logger = bun.logger;
-const RefImportData = bun.bundle_v2.RefImportData;
+const MutableString = bun.MutableString;
+const StringJoiner = bun.StringJoiner;
 const options = bun.options;
+const strings = bun.strings;
+
+const Chunk = bun.bundle_v2.Chunk;
+const CompileResult = bun.bundle_v2.CompileResult;
+const CompileResultForSourceMap = bun.bundle_v2.CompileResultForSourceMap;
+const Fs = bun.bundle_v2.Fs;
+const Index = bun.bundle_v2.Index;
+const JSAst = bun.bundle_v2.JSAst;
+const JSMeta = bun.bundle_v2.JSMeta;
+const Part = bun.bundle_v2.Part;
+const RefImportData = bun.bundle_v2.RefImportData;
+const ResolvedExports = bun.bundle_v2.ResolvedExports;
+const ThreadPool = bun.bundle_v2.ThreadPool;
 const js_printer = bun.bundle_v2.js_printer;
 const renamer = bun.bundle_v2.renamer;
-const Chunk = bun.bundle_v2.Chunk;
 
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
-const B = js_ast.B;
-
-const Binding = js_ast.Binding;
-
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const GenerateChunkCtx = bun.bundle_v2.LinkerContext.GenerateChunkCtx;
-const ThreadPool = bun.bundle_v2.ThreadPool;
 
+const js_ast = bun.bundle_v2.js_ast;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const Ref = bun.bundle_v2.js_ast.Ref;
+const S = js_ast.S;
 const Scope = js_ast.Scope;
-const Fs = bun.bundle_v2.Fs;
-const CompileResult = bun.bundle_v2.CompileResult;
-const StringJoiner = bun.StringJoiner;
-
-const CompileResultForSourceMap = bun.bundle_v2.CompileResultForSourceMap;
-
-const MutableString = bun.MutableString;
+const Stmt = js_ast.Stmt;

@@ -1,3 +1,5 @@
+const RareData = @This();
+
 websocket_deflate: ?*WebSocketDeflate.RareData = null,
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
 editor_context: EditorContext = EditorContext{},
@@ -135,7 +137,11 @@ pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []
         ) catch bun.outOfMemory();
     }
 
-    return this.mime_types.?.get(str);
+    if (this.mime_types.?.get(str)) |entry| {
+        return bun.http.MimeType.Compact.from(entry).toMimeType();
+    }
+
+    return null;
 }
 
 pub const HotMap = struct {
@@ -502,21 +508,21 @@ pub fn websocketDeflate(this: *RareData) *WebSocketDeflate.RareData {
     };
 }
 
-const EditorContext = @import("../open.zig").EditorContext;
-const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
-const Blob = JSC.WebCore.Blob;
-const default_allocator = bun.default_allocator;
-const Output = bun.Output;
-const RareData = @This();
-const Syscall = bun.sys;
-const JSC = bun.JSC;
-const std = @import("std");
-const BoringSSL = bun.BoringSSL.c;
-const bun = @import("bun");
-const UUID = @import("./uuid.zig");
-const Async = bun.Async;
-const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const IPC = @import("./ipc.zig");
-const uws = bun.uws;
-const api = bun.api;
+const UUID = @import("./uuid.zig");
 const WebSocketDeflate = @import("../http/websocket_client/WebSocketDeflate.zig");
+const std = @import("std");
+const EditorContext = @import("../open.zig").EditorContext;
+const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const JSC = bun.JSC;
+const Output = bun.Output;
+const Syscall = bun.sys;
+const api = bun.api;
+const default_allocator = bun.default_allocator;
+const uws = bun.uws;
+const BoringSSL = bun.BoringSSL.c;
+const Blob = JSC.WebCore.Blob;

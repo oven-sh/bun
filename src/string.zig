@@ -1,18 +1,11 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = bun.JSC.JSValue;
-const OOM = bun.OOM;
-const JSError = bun.JSError;
-
-pub const HashedString = @import("string/HashedString.zig");
-pub const MutableString = @import("string/MutableString.zig");
-pub const PathString = @import("string/PathString.zig").PathString;
-pub const SmolStr = @import("string/SmolStr.zig").SmolStr;
-pub const StringBuilder = @import("string/StringBuilder.zig");
-pub const StringJoiner = @import("string/StringJoiner.zig");
-pub const WTFStringImpl = @import("string/WTFStringImpl.zig").WTFStringImpl;
-pub const WTFStringImplStruct = @import("string/WTFStringImpl.zig").WTFStringImplStruct;
+pub const HashedString = @import("./string/HashedString.zig");
+pub const MutableString = @import("./string/MutableString.zig");
+pub const PathString = @import("./string/PathString.zig").PathString;
+pub const SmolStr = @import("./string/SmolStr.zig").SmolStr;
+pub const StringBuilder = @import("./string/StringBuilder.zig");
+pub const StringJoiner = @import("./string/StringJoiner.zig");
+pub const WTFStringImpl = @import("./string/WTFStringImpl.zig").WTFStringImpl;
+pub const WTFStringImplStruct = @import("./string/WTFStringImpl.zig").WTFStringImplStruct;
 
 pub const Tag = enum(u8) {
     /// String is not valid. Observed on some failed operations.
@@ -34,8 +27,6 @@ pub const Tag = enum(u8) {
     Empty = 4,
 };
 
-const ZigString = bun.JSC.ZigString;
-
 pub const StringImpl = extern union {
     ZigString: ZigString,
     WTFStringImpl: WTFStringImpl,
@@ -54,7 +45,7 @@ pub const String = extern struct {
     pub const empty = String{ .tag = .Empty, .value = .{ .ZigString = .Empty } };
 
     pub const dead = String{ .tag = .Dead, .value = .{ .Dead = {} } };
-    pub const StringImplAllocator = @import("string/WTFStringImpl.zig").StringImplAllocator;
+    pub const StringImplAllocator = @import("./string/WTFStringImpl.zig").StringImplAllocator;
 
     extern fn BunString__fromLatin1(bytes: [*]const u8, len: usize) String;
     extern fn BunString__fromBytes(bytes: [*]const u8, len: usize) String;
@@ -854,9 +845,9 @@ pub const String = extern struct {
         return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createUTF8ForJS, .{ globalObject, builder.items.ptr, builder.items.len });
     }
 
-    pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {
+    pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) bun.JSError!f64 {
         JSC.markBinding(@src());
-        return Bun__parseDate(globalObject, this);
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__parseDate, .{ globalObject, this });
     }
 
     pub fn ref(this: String) void {
@@ -1271,3 +1262,13 @@ comptime {
     bun.assert_eql(@sizeOf(bun.String), 24);
     bun.assert_eql(@alignOf(bun.String), 8);
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+const OOM = bun.OOM;
+
+const JSC = bun.JSC;
+const JSValue = bun.JSC.JSValue;
+const ZigString = bun.JSC.ZigString;

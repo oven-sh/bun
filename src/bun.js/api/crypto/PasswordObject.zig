@@ -754,17 +754,19 @@ pub const JSPasswordObject = struct {
     }
 };
 
+const unknown_password_algorithm_message = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
+
 const std = @import("std");
+
 const bun = @import("bun");
+const Async = bun.Async;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
 const string = bun.string;
 const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const JSC = bun.JSC;
-const Async = bun.Async;
-const ZigString = JSC.ZigString;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const CallFrame = JSC.CallFrame;
-const assert = bun.assert;
 
-const unknown_password_algorithm_message = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
+const JSC = bun.JSC;
+const CallFrame = JSC.CallFrame;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;

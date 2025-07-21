@@ -1,3 +1,5 @@
+const PostgresSQLConnection = @This();
+
 socket: Socket,
 status: Status = Status.connecting,
 ref_count: u32 = 1,
@@ -1713,11 +1715,13 @@ const debug = bun.Output.scoped(.Postgres, false);
 
 const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection
 
-// @sortImports
+pub const js = JSC.Codegen.JSPostgresSQLConnection;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;
 
 const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
 const PostgresRequest = @import("./PostgresRequest.zig");
-const PostgresSQLConnection = @This();
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
 const SocketMonitor = @import("./SocketMonitor.zig");
@@ -1741,11 +1745,6 @@ const assert = bun.assert;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const AutoFlusher = JSC.WebCore.AutoFlusher;
-
-pub const js = JSC.Codegen.JSPostgresSQLConnection;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
-pub const toJS = js.toJS;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;

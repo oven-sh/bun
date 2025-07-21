@@ -1,4 +1,5 @@
 const ArrayBufferSink = @This();
+
 pub const JSSink = webcore.Sink.JSSink(@This(), "ArrayBufferSink");
 
 bytes: bun.ByteList,
@@ -173,13 +174,17 @@ pub fn memoryCost(this: *const ArrayBufferSink) usize {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
 const Syscall = bun.sys;
-const Sink = webcore.Sink;
-const webcore = bun.webcore;
-const streams = webcore.streams;
-const Signal = webcore.streams.Signal;
+
+const JSC = bun.JSC;
+const ArrayBuffer = JSC.ArrayBuffer;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const ArrayBuffer = JSC.ArrayBuffer;
+
+const webcore = bun.webcore;
+const Sink = webcore.Sink;
+
+const streams = webcore.streams;
+const Signal = webcore.streams.Signal;

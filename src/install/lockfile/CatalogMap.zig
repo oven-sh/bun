@@ -1,3 +1,5 @@
+const CatalogMap = @This();
+
 const Map = std.ArrayHashMapUnmanaged(String, Dependency, String.ArrayHashContext, true);
 
 default: Map = .{},
@@ -113,9 +115,11 @@ pub fn parseAppend(
     source: *const logger.Source,
     expr: Expr,
     builder: *Lockfile.StringBuilder,
-) OOM!void {
+) OOM!bool {
+    var found_any = false;
     if (expr.get("catalog")) |default_catalog| {
         const group = try this.getOrPutGroup(lockfile, .empty);
+        found_any = true;
         switch (default_catalog.data) {
             .e_object => |obj| {
                 for (obj.properties.slice()) |item| {
@@ -171,6 +175,7 @@ pub fn parseAppend(
     }
 
     if (expr.get("catalogs")) |catalogs| {
+        found_any = true;
         switch (catalogs.data) {
             .e_object => |catalog_names| {
                 for (catalog_names.properties.slice()) |catalog| {
@@ -234,6 +239,8 @@ pub fn parseAppend(
             else => {},
         }
     }
+
+    return found_any;
 }
 
 pub fn sort(this: *CatalogMap, lockfile: *const Lockfile) void {
@@ -365,15 +372,17 @@ pub fn clone(this: *CatalogMap, pm: *PackageManager, old: *Lockfile, new: *Lockf
     return new_catalog;
 }
 
-const CatalogMap = @This();
+const string = []const u8;
+
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const bun = @import("bun");
+const OOM = bun.OOM;
+const logger = bun.logger;
+const Expr = bun.JSAst.Expr;
+const String = bun.Semver.String;
+
 const Dependency = bun.install.Dependency;
 const Lockfile = bun.install.Lockfile;
 const PackageManager = bun.install.PackageManager;
-const String = bun.Semver.String;
-const Expr = bun.JSAst.Expr;
-const logger = bun.logger;
-const Allocator = std.mem.Allocator;
-const string = []const u8;
-const OOM = bun.OOM;

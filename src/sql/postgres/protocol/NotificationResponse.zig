@@ -1,3 +1,5 @@
+const NotificationResponse = @This();
+
 pid: int4 = 0,
 channel: bun.ByteList = .{},
 payload: bun.ByteList = .{},
@@ -20,9 +22,6 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 
 pub const decode = DecoderWrap(NotificationResponse, decodeInternal).decode;
 
-// @sortImports
-
-const NotificationResponse = @This();
 const bun = @import("bun");
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
 const NewReader = @import("./NewReader.zig").NewReader;

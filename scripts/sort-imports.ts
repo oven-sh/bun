@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { readdirSync } from "fs";
 import path from "path";
 
@@ -19,7 +20,6 @@ Options:
   --help                   Show this help message
   --no-include-pub         Exclude pub imports from sorting
   --no-remove-unused       Don't remove unused imports
-  --include-unsorted       Process files even if they don't have @sortImports marker
 
 Examples:
   bun scripts/sortImports src
@@ -36,7 +36,7 @@ if (filePaths.length === 0) {
 const config = {
   includePub: !args.includes("--no-include-pub"),
   removeUnused: !args.includes("--no-remove-unused"),
-  includeUnsorted: args.includes("--include-unsorted"),
+  normalizePaths: "./",
 };
 
 // Type definitions
@@ -68,11 +68,11 @@ function parseDeclarations(
     const line = lines[i];
 
     if (line === "// @sortImports") {
-      lines[i] = "";
+      lines[i] = DELETED_LINE;
       continue;
     }
 
-    const inlineDeclPattern = /^(?:pub )?const ([a-zA-Z0-9_]+) = (.+);$/;
+    const inlineDeclPattern = /^(?:pub )?const ([a-zA-Z0-9_]+) = (.+);(\s*\/\/[^\n]*)?$/;
     const match = line.match(inlineDeclPattern);
 
     if (!match) continue;
@@ -275,8 +275,6 @@ function sortGroupsAndDeclarations(groups: Map<string, Group>): string[] {
 // Generate the sorted output
 function generateSortedOutput(lines: string[], groups: Map<string, Group>, sortedGroupKeys: string[]): string[] {
   const outputLines = [...lines];
-  outputLines.push("");
-  outputLines.push("// @sortImports");
 
   for (const groupKey of sortedGroupKeys) {
     const groupDeclarations = groups.get(groupKey)!;
@@ -288,22 +286,36 @@ function generateSortedOutput(lines: string[], groups: Map<string, Group>, sorte
     // Add declarations to output and mark original lines for removal
     for (const declaration of groupDeclarations.declarations) {
       outputLines.push(declaration.whole);
-      outputLines[declaration.index] = "";
+      outputLines[declaration.index] = DELETED_LINE;
     }
   }
 
   return outputLines;
 }
 
+function extractThisDeclaration(declarations: Map<string, Declaration>): Declaration | null {
+  for (const declaration of declarations.values()) {
+    if (declaration.value === "@This()") {
+      declarations.delete(declaration.key);
+      return declaration;
+    }
+  }
+  return null;
+}
+
+const DELETED_LINE = "%DELETED_LINE%";
+
 // Main execution function for a single file
 async function processFile(filePath: string): Promise<void> {
   const originalFileContents = await Bun.file(filePath).text();
   let fileContents = originalFileContents;
 
-  if (!config.includeUnsorted && !originalFileContents.includes("// @sortImports")) {
-    return;
+  if (config.normalizePaths === "") {
+    fileContents = fileContents.replaceAll(`@import("./`, `@import("`);
+  } else if (config.normalizePaths === "./") {
+    fileContents = fileContents.replaceAll(/@import\("([A-Za-z0-9_-][^"]*\.zig)"\)/g, '@import("./$1")');
+    fileContents = fileContents.replaceAll(`@import("./../`, `@import("../`);
   }
-  console.log(`Processing: ${filePath}`);
 
   let needsRecurse = true;
   while (needsRecurse) {
@@ -312,6 +324,7 @@ async function processFile(filePath: string): Promise<void> {
     const lines = fileContents.split("\n");
 
     const { declarations, unusedLineIndices } = parseDeclarations(lines, fileContents);
+    const thisDeclaration = extractThisDeclaration(declarations);
     const groups = groupDeclarationsByImportPath(declarations);
 
     promoteItemsWithChildGroups(groups);
@@ -323,12 +336,32 @@ async function processFile(filePath: string): Promise<void> {
     // Remove unused declarations
     if (config.removeUnused) {
       for (const line of unusedLineIndices) {
-        sortedLines[line] = "";
+        sortedLines[line] = DELETED_LINE;
         needsRecurse = true;
       }
     }
+    if (thisDeclaration) {
+      sortedLines[thisDeclaration.index] = DELETED_LINE;
+    }
+    if (thisDeclaration) {
+      let firstNonFileCommentLine = 0;
+      for (const line of sortedLines) {
+        if (line.startsWith("//!")) {
+          firstNonFileCommentLine++;
+        } else {
+          break;
+        }
+      }
+      const insert = [thisDeclaration.whole, ""];
+      if (firstNonFileCommentLine > 0) insert.unshift("");
+      sortedLines.splice(firstNonFileCommentLine, 0, ...insert);
+    }
     fileContents = sortedLines.join("\n");
   }
+
+  // Remove deleted lines
+  fileContents = fileContents.replaceAll(DELETED_LINE + "\n", "");
+  // fileContents = fileContents.replaceAll(DELETED_LINE, ""); // any remaining lines
 
   // Remove any leading newlines
   fileContents = fileContents.replace(/^\n+/, "");
@@ -343,7 +376,6 @@ async function processFile(filePath: string): Promise<void> {
   if (fileContents === "\n") fileContents = "";
 
   if (fileContents === originalFileContents) {
-    console.log(`✓ No changes: ${filePath}`);
     return;
   }
 
@@ -369,7 +401,7 @@ async function main() {
           successCount++;
         } catch (error) {
           errorCount++;
-          console.error(`Failed to process ${filePath}`);
+          console.error(`Failed to process ${path.join(filePath, file)}:\n`, error);
         }
       }
       continue;
@@ -380,7 +412,7 @@ async function main() {
       successCount++;
     } catch (error) {
       errorCount++;
-      console.error(`Failed to process ${filePath}`);
+      console.error(`Failed to process ${filePath}:\n`, error);
     }
   }
 

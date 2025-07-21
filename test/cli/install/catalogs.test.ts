@@ -217,55 +217,35 @@ describe("workspace catalog dependencies", () => {
       }),
     );
 
-    // Run install - first try normal install, if it fails allow errors
-    let err;
-    try {
-      const result = await runBunInstall(bunEnv, packageDir);
-      err = result.err;
-    } catch {
-      // If normal install fails, run with error tolerance
-      const result = await runBunInstall(bunEnv, packageDir, { allowErrors: true, savesLockfile: false, expectedExitCode: 1 });
-      err = result.err;
-    }
+    await runBunInstall(bunEnv, packageDir);
 
-    // Check what was installed - this test verifies the fix works when catalog resolution is functioning
+    // Both subpackages should be able to require their respective versions
+    // Package a should have access to no-deps@1.0.0
     const pkgANodeModules = join(packageDir, "packages", "a", "node_modules");
     const pkgBNodeModules = join(packageDir, "packages", "b", "node_modules");
-    const rootNodeModules = join(packageDir, "node_modules");
     
-    // Check if dependencies were resolved properly
-    const catalogResolutionWorking = !err.includes("failed to resolve");
-    
-    if (catalogResolutionWorking) {
-      // Verify both packages get their correct versions when catalogs work
-      let hasNoDepsV1 = false;
-      if (await exists(join(pkgANodeModules, "no-deps", "package.json"))) {
-        const pkgJson = await file(join(pkgANodeModules, "no-deps", "package.json")).json();
-        hasNoDepsV1 = pkgJson.version === "1.0.0";
-      } else if (await exists(join(rootNodeModules, "no-deps", "package.json"))) {
-        const pkgJson = await file(join(rootNodeModules, "no-deps", "package.json")).json();
-        hasNoDepsV1 = pkgJson.version === "1.0.0";
-      }
-
-      let hasNoDepsV2 = false;
-      if (await exists(join(pkgBNodeModules, "no-deps", "package.json"))) {
-        const pkgJson = await file(join(pkgBNodeModules, "no-deps", "package.json")).json();
-        hasNoDepsV2 = pkgJson.version === "2.0.0";
-      } else if (await exists(join(rootNodeModules, "no-deps", "package.json"))) {
-        const pkgJson = await file(join(rootNodeModules, "no-deps", "package.json")).json();
-        hasNoDepsV2 = pkgJson.version === "2.0.0";
-      }
-
-      expect(hasNoDepsV1).toBe(true);
-      expect(hasNoDepsV2).toBe(true);
-    } else {
-      // If catalog resolution is still broken, at least verify the fix improved the situation
-      // by ensuring catalogs are parsed early (this test validates the ordering fix)
-      expect(err).toContain("failed to resolve");
-      
-      // The key improvement is that this test now passes consistently rather than
-      // having different behavior between workspace packages due to catalog parsing order
+    // Package a should have access to no-deps@1.0.0 either in its own node_modules or root
+    let hasNoDepsV1 = false;
+    if (await exists(join(pkgANodeModules, "no-deps", "package.json"))) {
+      const pkgJson = await file(join(pkgANodeModules, "no-deps", "package.json")).json();
+      hasNoDepsV1 = pkgJson.version === "1.0.0";
+    } else if (await exists(join(packageDir, "node_modules", "no-deps", "package.json"))) {
+      const pkgJson = await file(join(packageDir, "node_modules", "no-deps", "package.json")).json();
+      hasNoDepsV1 = pkgJson.version === "1.0.0";
     }
+
+    // Package b should have access to no-deps@2.0.0 either in its own node_modules or root
+    let hasNoDepsV2 = false;
+    if (await exists(join(pkgBNodeModules, "no-deps", "package.json"))) {
+      const pkgJson = await file(join(pkgBNodeModules, "no-deps", "package.json")).json();
+      hasNoDepsV2 = pkgJson.version === "2.0.0";
+    } else if (await exists(join(packageDir, "node_modules", "no-deps", "package.json"))) {
+      const pkgJson = await file(join(packageDir, "node_modules", "no-deps", "package.json")).json();
+      hasNoDepsV2 = pkgJson.version === "2.0.0";
+    }
+
+    expect(hasNoDepsV1).toBe(true);
+    expect(hasNoDepsV2).toBe(true);
   });
 });
 

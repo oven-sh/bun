@@ -212,8 +212,6 @@ function Install-Common-Software {
     # Install-Tailscale
     Install-Buildkite
   }
-  # Needed to remap stack traces
-  Install-PdbAddr2line
 }
 
 function Install-Pwsh {
@@ -254,10 +252,6 @@ function Install-Cygwin {
   Add-To-Path "C:\tools\cygwin\bin"
 }
 
-function Install-PdbAddr2line {
-  Execute-Command cargo install --examples "pdb-addr2line@0.11.2"
-}
-
 function Install-Tailscale {
   Install-Package tailscale
 }
@@ -288,6 +282,8 @@ function Install-Build-Essentials {
     strawberryperl `
     mingw
   Install-Rust
+  # Needed to remap stack traces
+  Install-PdbAddr2line
   Install-Llvm
 }
 
@@ -346,6 +342,10 @@ function Install-Rust {
   Set-Env "CARGO_HOME" "$rustPath\cargo"
   Set-Env "RUSTUP_HOME" "$rustPath\rustup"
   Add-To-Path "$rustPath\cargo\bin"
+}
+
+function Install-PdbAddr2line {
+  Execute-Command cargo install --examples "pdb-addr2line@0.11.2"
 }
 
 function Install-Llvm {

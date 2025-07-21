@@ -16,8 +16,6 @@ pub fn toJS(
     return parse_result;
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const Data = @import("../Data.zig").Data;

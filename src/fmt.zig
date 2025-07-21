@@ -1,13 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Output = bun.Output;
-const strings = bun.strings;
-const string = bun.string;
-const js_lexer = bun.js_lexer;
-const fmt = std.fmt;
-const Environment = bun.Environment;
-const sha = bun.sha;
-
 pub const TableSymbols = struct {
     enable_ansi_colors: bool,
 
@@ -1889,3 +1879,14 @@ fn truncatedHash32Impl(int: u64, comptime fmt_str: []const u8, _: std.fmt.Format
         chars[in_bytes[7] & 31],
     });
 }
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const js_lexer = bun.js_lexer;
+const sha = bun.sha;
+const string = bun.string;
+const strings = bun.strings;
+
+const std = @import("std");
+const fmt = std.fmt;

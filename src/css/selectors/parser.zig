@@ -1,8 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-
 pub const css = @import("../css_parser.zig");
 const CSSStringFns = css.CSSStringFns;
 
@@ -11,7 +6,6 @@ pub const PrintErr = css.PrintErr;
 
 const Result = css.Result;
 const SmallList = css.SmallList;
-const ArrayList = std.ArrayListUnmanaged;
 
 const impl = css.selector.impl;
 const serialize = css.selector.serialize;
@@ -43,8 +37,6 @@ pub fn ValidSelectorImpl(comptime T: type) void {
     _ = T.SelectorImpl.VendorPrefix;
     _ = T.SelectorImpl.PseudoElement;
 }
-
-const selector_builder = @import("./builder.zig");
 
 pub const attrs = struct {
     pub fn NamespaceUrl(comptime Impl: type) type {
@@ -350,8 +342,6 @@ fn compute_simple_selector_specificity(
         },
     }
 }
-
-const SelectorBuilder = selector_builder.SelectorBuilder;
 
 /// Build up a Selector.
 /// selector : simple_selector_sequence [ combinator simple_selector_sequence ]* ;
@@ -3654,3 +3644,13 @@ pub fn parse_attribute_flags(input: *css.Parser) Result(AttributeFlags) {
         return .{ .err = location.newBasicUnexpectedTokenError(token.*) };
     }
 }
+
+const selector_builder = @import("./builder.zig");
+const SelectorBuilder = selector_builder.SelectorBuilder;
+
+const bun = @import("bun");
+const logger = bun.logger;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

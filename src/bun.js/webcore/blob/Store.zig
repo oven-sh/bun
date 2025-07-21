@@ -559,17 +559,17 @@ pub const Bytes = struct {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
-const strings = bun.strings;
 const assert = bun.assert;
+const strings = bun.strings;
+const webcore = bun.webcore;
 const MimeType = bun.http.MimeType;
+const node = bun.api.node;
 
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 
-const node = bun.api.node;
-
-const webcore = bun.webcore;
 const Blob = webcore.Blob;
 const SizeType = Blob.SizeType;

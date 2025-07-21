@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 pub const css = @import("../css_parser.zig");
 
 const VendorPrefix = css.VendorPrefix;
@@ -133,3 +130,6 @@ pub const FallbackHandler = struct {
         }
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

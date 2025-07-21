@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-
 pub const WTF = struct {
     extern fn WTF__parseDouble(bytes: [*]const u8, length: usize, counted: *usize) f64;
 
@@ -33,3 +30,6 @@ pub const WTF = struct {
         return buffer[0..@intCast(res)];
     }
 };
+
+const bun = @import("bun");
+const JSC = bun.JSC;

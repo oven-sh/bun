@@ -19,7 +19,5 @@ pub fn write(data: []const u8) void {
 
 const debug = bun.Output.scoped(.Postgres, false);
 
-// @sortImports
-
 const bun = @import("bun");
 const std = @import("std");

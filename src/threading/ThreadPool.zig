@@ -1,3 +1,5 @@
+const ThreadPool = @This();
+
 // Thank you @kprotty.
 //
 // This file contains code derived from the following source:
@@ -25,16 +27,6 @@
 //   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 //   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 //   SOFTWARE.
-
-const std = @import("std");
-const bun = @import("bun");
-const ThreadPool = @This();
-const Futex = bun.threading.Futex;
-const WaitGroup = bun.threading.WaitGroup;
-
-const Environment = bun.Environment;
-const assert = bun.assert;
-const Atomic = std.atomic.Value;
 
 sleep_on_idle_network_thread: bool = true,
 stack_size: u32,
@@ -535,8 +527,6 @@ fn join(self: *ThreadPool) void {
     const thread = self.threads.load(.acquire) orelse return;
     thread.join_event.notify();
 }
-
-const Output = bun.Output;
 
 pub const Thread = struct {
     next: ?*Thread = null,
@@ -1044,3 +1034,14 @@ pub const Node = struct {
         }
     };
 };
+
+const std = @import("std");
+const Atomic = std.atomic.Value;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const assert = bun.assert;
+
+const Futex = bun.threading.Futex;
+const WaitGroup = bun.threading.WaitGroup;

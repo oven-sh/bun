@@ -362,8 +362,6 @@ fn addDependenciesToSet(
     }
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

@@ -1,11 +1,6 @@
 // This file contains code derived from the following source:
 //   https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc#file-sync2-zig
 
-const std = @import("std");
-const bun = @import("bun");
-const Mutex = bun.threading.Mutex;
-const Condition = bun.threading.Condition;
-
 pub fn Channel(
     comptime T: type,
     comptime buffer_type: std.fifo.LinearFifoBufferType,
@@ -169,3 +164,9 @@ pub fn Channel(
         }
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+
+const Condition = bun.threading.Condition;
+const Mutex = bun.threading.Mutex;

@@ -1,6 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const Printer = css.Printer;
@@ -270,3 +267,6 @@ pub const UnicodeBidi = css.DefineEnumProperty(@compileError(css.todo_stuff.dept
 
 /// A value for the [box-decoration-break](https://www.w3.org/TR/css-break-3/#break-decoration) property.
 pub const BoxDecorationBreak = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;

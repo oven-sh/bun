@@ -1,30 +1,8 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FileDescriptor = bun.FileDescriptor;
-const FeatureFlags = bun.FeatureFlags;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const Mutex = bun.Mutex;
 const Fs = @This();
-const path_handler = @import("./resolver/resolve_path.zig");
-const PathString = bun.PathString;
-const allocators = bun.allocators;
-const OOM = bun.OOM;
-const FD = bun.FD;
-
-const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const PathBuffer = bun.PathBuffer;
-const WPathBuffer = bun.WPathBuffer;
 
 pub const debug = Output.scoped(.fs, true);
 
-// pub const FilesystemImplementation = @import("fs_impl.zig");
+// pub const FilesystemImplementation = @import("./fs_impl.zig");
 
 pub const Preallocate = struct {
     pub const Counts = struct {
@@ -1975,3 +1953,26 @@ pub const Path = struct {
 
 // }
 pub const StatHash = @import("./fs/stat_hash.zig");
+
+const path_handler = @import("./resolver/resolve_path.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const FeatureFlags = bun.FeatureFlags;
+const FileDescriptor = bun.FileDescriptor;
+const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
+const MutableString = bun.MutableString;
+const Mutex = bun.Mutex;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const PathBuffer = bun.PathBuffer;
+const PathString = bun.PathString;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const WPathBuffer = bun.WPathBuffer;
+const allocators = bun.allocators;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const strings = bun.strings;

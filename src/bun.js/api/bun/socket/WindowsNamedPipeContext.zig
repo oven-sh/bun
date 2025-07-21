@@ -276,10 +276,11 @@ pub fn deinit(this: *WindowsNamedPipeContext) void {
     bun.destroy(this);
 }
 
-const uws = bun.uws;
-const uv = bun.windows.libuv;
 const bun = @import("bun");
 const JSC = bun.JSC;
 const Output = bun.Output;
-const TLSSocket = JSC.API.TLSSocket;
+const uws = bun.uws;
+const uv = bun.windows.libuv;
+
 const TCPSocket = JSC.API.TCPSocket;
+const TLSSocket = JSC.API.TLSSocket;

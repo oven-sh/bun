@@ -654,27 +654,27 @@ fn debugCssOrderImpl(this: *LinkerContext, order: *const BabyList(Chunk.CssImpor
     }
 }
 
-const bun = @import("bun");
-const BabyList = bun.BabyList;
-const Index = bun.bundle_v2.Index;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-
-const Environment = bun.Environment;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const js_ast = bun.js_ast;
-const ImportRecord = bun.ImportRecord;
-
-const Symbol = js_ast.Symbol;
-const B = js_ast.B;
-const bundler = bun.bundle_v2;
-const Graph = bundler.Graph;
-const LinkerGraph = bundler.LinkerGraph;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
-const Chunk = bundler.Chunk;
 
+const std = @import("std");
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const Environment = bun.Environment;
+const ImportRecord = bun.ImportRecord;
+const default_allocator = bun.default_allocator;
+
+const bundler = bun.bundle_v2;
+const Chunk = bundler.Chunk;
+const Graph = bundler.Graph;
+const Index = bun.bundle_v2.Index;
+const LinkerGraph = bundler.LinkerGraph;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const debug = LinkerContext.debug;
+
+const js_ast = bun.js_ast;
+const B = js_ast.B;
+const Symbol = js_ast.Symbol;

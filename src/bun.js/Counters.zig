@@ -1,3 +1,5 @@
+const Counters = @This();
+
 spawnSync_blocking: i32 = 0,
 spawn_memfd: i32 = 0,
 
@@ -13,9 +15,9 @@ pub fn createCountersObject(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame
     return globalObject.bunVM().counters.toJS(globalObject);
 }
 
-const Counters = @This();
 const Field = std.meta.FieldEnum(Counters);
 
 const std = @import("std");
+
 const bun = @import("bun");
 const JSC = bun.JSC;

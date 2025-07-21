@@ -1,15 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const DotEnv = @import("env_loader.zig");
-
 pub const opener = switch (@import("builtin").target.os.tag) {
     .macos => "/usr/bin/open",
     .windows => "start",
@@ -445,3 +433,15 @@ pub const EditorContext = struct {
         this.editor = Editor.none;
     }
 };
+
+const DotEnv = @import("./env_loader.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const strings = bun.strings;

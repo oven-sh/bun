@@ -1054,8 +1054,6 @@ pub fn generateNetworkTaskForTarball(
     return network_task;
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

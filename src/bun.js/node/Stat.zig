@@ -203,7 +203,8 @@ pub const Stats = union(enum) {
     }
 };
 
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Environment = bun.Environment;
 const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSC = bun.JSC;

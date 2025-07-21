@@ -1,16 +1,7 @@
-const std = @import("std");
-const bun = @import("bun");
+pub const args = @import("./clap/args.zig");
 
-const heap = std.heap;
-const io = std.io;
-const mem = std.mem;
-const testing = std.testing;
-const Output = @import("../../output.zig");
-
-pub const args = @import("clap/args.zig");
-
-pub const ComptimeClap = @import("clap/comptime.zig").ComptimeClap;
-pub const StreamingClap = @import("clap/streaming.zig").StreamingClap;
+pub const ComptimeClap = @import("./clap/comptime.zig").ComptimeClap;
+pub const StreamingClap = @import("./clap/streaming.zig").StreamingClap;
 
 /// The names a ::Param can have.
 pub const Names = struct {
@@ -661,3 +652,12 @@ fn testUsage(expected: []const u8, params: []const Param(Help)) !void {
     try usage(fbs.writer(), params);
     testing.expectEqualStrings(expected, fbs.getWritten());
 }
+
+const Output = @import("../../output.zig");
+const bun = @import("bun");
+
+const std = @import("std");
+const heap = std.heap;
+const io = std.io;
+const mem = std.mem;
+const testing = std.testing;

@@ -18,8 +18,8 @@ Usage: bun scripts/sortImports [options] <files...>
 
 Options:
   --help                   Show this help message
-  --no-include-pub         Exclude pub imports from sorting
-  --no-remove-unused       Don't remove unused imports
+  --include-pub            Also sort ${"`pub`"} imports
+  --keep-unused            Don't remove unused imports
 
 Examples:
   bun scripts/sortImports src
@@ -34,8 +34,8 @@ if (filePaths.length === 0) {
 }
 
 const config = {
-  includePub: !args.includes("--no-include-pub"),
-  removeUnused: !args.includes("--no-remove-unused"),
+  includePub: args.includes("--include-pub"),
+  removeUnused: !args.includes("--keep-unused"),
   normalizePaths: "./",
 };
 

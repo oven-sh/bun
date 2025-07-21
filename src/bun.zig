@@ -1280,6 +1280,14 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![:0]u8 {
     return allocator.dupeZ(u8, temp_slice);
 }
 
+pub fn getFdPathOS(fd: FileDescriptor, buf: *bun.OSPathBuffer) ![]bun.OSPathChar {
+    if (comptime Environment.isWindows) {
+        return try getFdPathW(fd, buf);
+    }
+
+    return try getFdPath(fd, buf);
+}
+
 /// TODO: move to bun.sys and add a method onto FileDescriptor
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.

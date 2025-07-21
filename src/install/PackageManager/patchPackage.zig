@@ -196,14 +196,16 @@ pub fn doPatchCommit(
         defer new_folder.close();
 
         const old_folder = old_folder: {
-            const cache_dir_path = switch (bun.sys.getFdPath(.fromStdDir(cache_dir), &buf2)) {
+            const buf4 = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf4);
+            const cache_dir_path = switch (bun.sys.getFdPath(.fromStdDir(cache_dir), buf4)) {
                 .result => |s| s,
                 .err => |e| {
                     Output.err(e, "failed to read from cache", .{});
                     Global.crash();
                 },
             };
-            break :old_folder bun.path.join(&[_][]const u8{
+            break :old_folder bun.path.joinStringBuf(&buf2, &[_][]const u8{
                 cache_dir_path,
                 cache_dir_subpath,
             }, .posix);
@@ -371,7 +373,9 @@ pub fn doPatchCommit(
         };
 
         if (contents.items.len == 0) {
-            Output.pretty("\n<r>No changes detected, comparing <red>{s}<r> to <green>{s}<r>\n", .{ old_folder, new_folder });
+            const buf = bun.os_path_buffer_pool.get();
+            defer bun.os_path_buffer_pool.put(buf);
+            Output.pretty("\n<r>No changes detected, comparing <red>{s}<r> to <green>{}<r>\n", .{ old_folder, bun.fmt.fmtOSPath(try bun.getFdPathOS(new_folder, buf), .{}) });
             Output.flush();
             contents.deinit();
             return null;

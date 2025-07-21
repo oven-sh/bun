@@ -723,12 +723,15 @@ export class BunTestController implements vscode.Disposable {
       }
     }
 
-    const inspectorUrl =
-      this.signal.url.startsWith("ws") || this.signal.url.startsWith("tcp") ? `${this.signal!.url}?wait=1` : undefined;
+    let inspectorUrl: string | undefined =
+      this.signal.url.startsWith("ws") || this.signal.url.startsWith("tcp")
+        ? `${this.signal!.url}?wait=1`
+        : `${this.signal!.url}`;
 
     // right now there isnt a way to tell socket method to wait for the connection
     if (!inspectorUrl?.includes("?wait=1")) {
       args.push(`--inspect-wait=${this.signal!.url}`);
+      inspectorUrl = undefined;
     }
 
     const proc = spawn(bunCommand, args, {

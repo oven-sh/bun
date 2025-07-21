@@ -241,7 +241,7 @@ function getTestExpectations() {
   return expectations;
 }
 
-const skipArray = (() => {
+const skipsForExceptionValidation = (() => {
   const path = join(cwd, "test/no-validate-exceptions.txt");
   if (!existsSync(path)) {
     return [];
@@ -251,7 +251,7 @@ const skipArray = (() => {
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
 
-const skipArrayLeaks = (() => {
+const skipsForLeaksan = (() => {
   const path = join(cwd, "test/no-validate-leaksan.txt");
   if (!existsSync(path)) {
     return [];
@@ -267,7 +267,7 @@ const skipArrayLeaks = (() => {
  * @returns {boolean}
  */
 const shouldValidateExceptions = test => {
-  return !(skipArray.includes(test) || skipArray.includes("test/" + test));
+  return !(skipsForExceptionValidation.includes(test) || skipsForExceptionValidation.includes("test/" + test));
 };
 
 /**
@@ -276,7 +276,7 @@ const shouldValidateExceptions = test => {
  * @returns {boolean}
  */
 const shouldValidateLeakSan = test => {
-  return !(skipArrayLeaks.includes(test) || skipArrayLeaks.includes("test/" + test));
+  return !(skipsForLeaksan.includes(test) || skipsForLeaksan.includes("test/" + test));
 };
 
 /**

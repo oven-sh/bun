@@ -283,6 +283,15 @@ pub const Runtime = struct {
             /// - Ban "use server" functions since it is on the client-side
             client_side,
 
+            pub fn isServerSide(mode: ServerComponentsMode) bool {
+                return switch (mode) {
+                    .wrap_exports_for_server_reference,
+                    .wrap_anon_server_functions,
+                    => true,
+                    else => false,
+                };
+            }
+
             pub fn wrapsExports(mode: ServerComponentsMode) bool {
                 return switch (mode) {
                     .wrap_exports_for_client_reference,

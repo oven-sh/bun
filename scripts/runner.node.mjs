@@ -461,7 +461,7 @@ async function runTests() {
     console.log("run in", cwd);
     let exiting = false;
 
-    const server = spawn(execPath, ["run", "ci-remap-server", execPath, cwd], {
+    const server = spawn(execPath, ["run", "ci-remap-server", execPath, cwd, getCommit()], {
       stdio: ["ignore", "pipe", "inherit"],
       cwd, // run in main repo
       env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },

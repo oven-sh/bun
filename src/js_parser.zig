@@ -17528,7 +17528,16 @@ fn NewParser_(
                         // Why? Because we *don't* want to check for uses of
                         // `useState` _inside_ React, and we know React uses
                         // commonjs so it will never be `.e_import_identifier`.
-                        e_.target.data == .e_import_identifier) {
+                        check_for_usestate: {
+                            if (e_.target.data == .e_import_identifier) break :check_for_usestate true;
+                            // Also check for `React.useState(...)`
+                            if (e_.target.data == .e_dot and e_.target.data.e_dot.target.data == .e_import_identifier) {
+                                const id = e_.target.data.e_dot.target.data.e_import_identifier;
+                                const name = p.symbols.items[id.ref.innerIndex()].original_name;
+                                break :check_for_usestate bun.strings.eqlComptime(name, "React");
+                            }
+                            break :check_for_usestate false;
+                        }) {
                             bun.assert(p.options.features.server_components.isServerSide());
                             if (bun.strings.eqlComptime(original_name, "useState")) {
                                 p.log.addError(

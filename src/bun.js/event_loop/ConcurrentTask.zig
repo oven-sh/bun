@@ -55,5 +55,5 @@ const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
 const Task = JSC.Task;
-const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
+const UnboundedQueue = bun.threading.UnboundedQueue;
 const ManagedTask = JSC.ManagedTask;

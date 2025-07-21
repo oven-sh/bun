@@ -1,7 +1,6 @@
 pub fn generateCompileResultForJSChunk(task: *ThreadPoolLib.Task) void {
     const part_range: *const PendingPartRange = @fieldParentPtr("task", task);
     const ctx = part_range.ctx;
-    defer ctx.wg.finish();
     var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
     defer worker.unget();
 

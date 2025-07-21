@@ -680,6 +680,8 @@ if(WIN32)
   endif()
   configure_file(${CWD}/src/bun.ico ${CODEGEN_PATH}/bun.ico COPYONLY)
   set(BUN_ICO_PATH ${CODEGEN_PATH}/bun.ico)
+  configure_file(${CWD}/src/bun.exe.manifest ${CODEGEN_PATH}/bun.exe.manifest COPYONLY)
+  set(BUN_MANIFEST_PATH ${CODEGEN_PATH}/bun.exe.manifest)
   configure_file(
     ${CWD}/src/windows-app-info.rc
     ${CODEGEN_PATH}/windows-app-info.rc

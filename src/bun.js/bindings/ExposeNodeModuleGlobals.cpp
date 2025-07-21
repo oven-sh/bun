@@ -67,7 +67,7 @@ FOREACH_EXPOSED_BUILTIN_IMR(DECL_GETTER)
 
 } // namespace ExposeNodeModuleGlobalGetters
 
-extern "C" void Bun__ExposeNodeModuleGlobals(Zig::GlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::GlobalObject* globalObject)
 {
 
     auto& vm = JSC::getVM(globalObject);

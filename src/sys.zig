@@ -4942,6 +4942,7 @@ pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDe
             if (err.getErrno() == .XDEV) {
                 try copyFileZSlowWithHandle(from_handle, to_dir, destination).unwrap();
                 _ = unlinkat(from_dir, filename);
+                return;
             }
 
             return bun.errnoToZigErr(err.errno);
@@ -5008,9 +5009,34 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
             _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
         }
 
+        // Seek to the beginning of the input file
+        switch (lseek(in_handle, 0, std.posix.SEEK.SET)) {
+            .result => |pos| {
+                std.debug.print("[DEBUG] copyFileZSlowWithHandle - seeked to position: {d}\n", .{pos});
+            },
+            .err => |err| {
+                std.debug.print("[DEBUG] copyFileZSlowWithHandle - failed to seek input file: {}\n", .{err});
+            },
+        }
+        
+        std.debug.print("[DEBUG] copyFileZSlowWithHandle - copying from fd {d} to fd {d}, source size: {d}\n", .{ in_handle.cast(), out_handle.cast(), stat_.size });
         switch (bun.copyFile(in_handle, out_handle)) {
-            .err => |e| return .{ .err = e },
-            .result => {},
+            .err => |e| {
+                std.debug.print("[DEBUG] copyFileZSlowWithHandle - copyFile failed: {}\n", .{e});
+                return .{ .err = e };
+            },
+            .result => {
+                std.debug.print("[DEBUG] copyFileZSlowWithHandle - copyFile succeeded\n", .{});
+                // Check the size of the output file after copying
+                switch (fstat(out_handle)) {
+                    .result => |out_stat| {
+                        std.debug.print("[DEBUG] copyFileZSlowWithHandle - output file size after copy: {d}\n", .{out_stat.size});
+                    },
+                    .err => |err| {
+                        std.debug.print("[DEBUG] copyFileZSlowWithHandle - failed to stat output file: {}\n", .{err});
+                    },
+                }
+            },
         }
 
         if (comptime Environment.isPosix) {

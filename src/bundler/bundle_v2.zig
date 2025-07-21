@@ -2292,60 +2292,124 @@ pub const BundleV2 = struct {
 
         const output_files_list = try this.linker.generateChunksInParallel(chunks, false);
         
-        // ADD COMPILE LOGIC HERE
+        // Handle compile: true option
         if (this.transpiler.options.compile) {
-            defer {
-                for (output_files_list.items) |*file| {
-                    file.deinit();
-                }
-                output_files_list.deinit();
-            }
-
-            const outfile = if (this.transpiler.options.output_dir.len > 0)
-                // This logic might need adjustment based on how --outfile is handled.
-                // For now, assume the first entry point name.
-                this.transpiler.options.entry_points[0]
-            else
-                "a.out";
-            
-            // The JS task holds the compile target.
-            const compile_target_from_js = this.completion.?.compile_target;
+            std.debug.print("[DEBUG] Entering compile mode\n", .{});
+            // Extract the compile target from the completion task
+            const compile_target_from_js = if (this.completion) |completion| completion.compile_target else null;
             var default_compile_target: CompileTarget = .{};
             const target = compile_target_from_js orelse &default_compile_target;
 
+            // Determine output file name - use proper basename logic
+            const entry_point = this.transpiler.options.entry_points[0];
+            const basename = std.fs.path.basename(entry_point);
+            const name_without_ext = if (std.mem.lastIndexOfScalar(u8, basename, '.')) |dot_index|
+                basename[0..dot_index]
+            else
+                basename;
+                
+            // Create output path in the specified output directory
+            var outfile_buf: bun.PathBuffer = undefined;
+            const outfile = if (this.transpiler.options.output_dir.len > 0) blk: {
+                break :blk std.fmt.bufPrint(&outfile_buf, "{s}{c}{s}", .{
+                    this.transpiler.options.output_dir,
+                    std.fs.path.sep,
+                    name_without_ext,
+                }) catch "a.out";
+            } else name_without_ext;
+            
+            std.debug.print("[DEBUG] Output file path: {s}\n", .{outfile});
+
+            // For compile mode, we need to load saved files into buffers for embedding
+            var output_files_for_executable = std.ArrayList(options.OutputFile).init(this.graph.allocator);
+            defer output_files_for_executable.deinit();
+            
+            for (output_files_list.items) |*output_file| {
+                if (output_file.value == .saved) {
+                    // Read the saved file content into a buffer  
+                    // Check if dest_path is absolute or relative to output_dir
+                    const file_path = if (std.fs.path.isAbsolute(output_file.dest_path))
+                        output_file.dest_path
+                    else if (this.transpiler.options.output_dir.len > 0) blk: {
+                        var path_buf: bun.PathBuffer = undefined;
+                        break :blk std.fmt.bufPrint(&path_buf, "{s}{c}{s}", .{
+                            this.transpiler.options.output_dir,
+                            std.fs.path.sep,
+                            output_file.dest_path,
+                        }) catch output_file.dest_path;
+                    } else output_file.dest_path;
+                    
+                    std.debug.print("[DEBUG] Attempting to read file: {s}\n", .{file_path});
+                    const file_content = std.fs.cwd().readFileAlloc(this.graph.allocator, file_path, 16 * 1024 * 1024) catch |err| {
+                        std.debug.print("[DEBUG] Failed to read saved file {s}: {}\n", .{ file_path, err });
+                        continue;
+                    };
+                    
+                    // Create a new output file with buffer content
+                    var new_output_file = output_file.*;
+                    new_output_file.value = .{ .buffer = .{ .allocator = this.graph.allocator, .bytes = file_content } };
+                    try output_files_for_executable.append(new_output_file);
+                    std.debug.print("[DEBUG] Loaded saved file into buffer: {s} ({d} bytes)\n", .{ file_path, file_content.len });
+                } else {
+                    try output_files_for_executable.append(output_file.*);
+                }
+            }
+
+            // Generate standalone executable from bundled output
+            std.debug.print("[DEBUG] Calling toExecutable with {} output files\n", .{output_files_for_executable.items.len});
+            
+            // For toExecutable to work correctly, we need to pass the directory and filename separately
+            var output_dir_owned: ?std.fs.Dir = null;
+            const output_dir = if (std.fs.path.dirname(outfile)) |dirname| blk: {
+                const dir = std.fs.cwd().openDir(dirname, .{}) catch |err| {
+                    std.debug.print("[DEBUG] Failed to open output directory {s}: {}\n", .{ dirname, err });
+                    return err;
+                };
+                output_dir_owned = dir;
+                break :blk dir;
+            } else std.fs.cwd();
+            defer if (output_dir_owned) |*dir| dir.close();
+            
+            const output_filename = std.fs.path.basename(outfile);
+            std.debug.print("[DEBUG] Output directory: {s}, filename: {s}\n", .{ 
+                if (std.fs.path.dirname(outfile)) |dir| dir else ".", 
+                output_filename 
+            });
+            
             bun.StandaloneModuleGraph.toExecutable(
                 target,
                 this.graph.allocator,
-                output_files_list.items,
-                std.fs.cwd(), // Assumes CWD, might need to use rootdir
+                output_files_for_executable.items,
+                output_dir,
                 "", // module_prefix
-                outfile,
+                output_filename,
                 this.transpiler.env,
                 this.transpiler.options.output_format,
                 false, // windows_hide_console, TODO: expose this option
                 null, // windows_icon, TODO: expose this option
             ) catch |err| {
-                // Handle the new errors from StandaloneModuleGraph
+                std.debug.print("[DEBUG] toExecutable failed with error: {}\n", .{err});
                 this.transpiler.log.addError(null, .{}, @errorName(err)) catch {};
-                // Propagate the error to fail the Bun.build() promise
                 return err;
             };
+            std.debug.print("[DEBUG] toExecutable completed successfully\n", .{});
+            
+            // Debug: Check if the executable was actually created
+            if (std.fs.cwd().access(outfile, .{})) {
+                std.debug.print("[DEBUG] Executable file created successfully at: {s}\n", .{outfile});
+            } else |err| {
+                std.debug.print("[DEBUG] Executable file NOT found after toExecutable: {} at path: {s}\n", .{ err, outfile });
+            }
 
-            // Return a BuildArtifact representing the executable
-            var executable_output = std.ArrayList(options.OutputFile).init(this.graph.allocator);
-            try executable_output.append(options.OutputFile{
-                .loader = .file,
-                .src_path = Fs.Path.init(this.transpiler.options.entry_points[0]),
-                .dest_path = outfile,
-                .value = .{ .saved = .{} },
-                .size = 0, // Will be set correctly by the file system
-                .output_kind = .@"entry-point",
-                .side = null,
-                .entry_point_index = 0,
-            });
-            return executable_output;
+            // Clean up the intermediate output files since we've created an executable
+            for (output_files_list.items) |*file| {
+                file.deinit();
+            }
+            output_files_list.deinit();
+
+            // Return empty output list for compile mode (executable was written to disk)
+            return std.ArrayList(options.OutputFile).init(this.graph.allocator);
         }
-        // END ADDED BLOCK
 
         return output_files_list;
     }

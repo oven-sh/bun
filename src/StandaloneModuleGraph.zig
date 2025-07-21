@@ -380,7 +380,9 @@ pub const StandaloneModuleGraph = struct {
         var entry_point_id: ?usize = null;
         var string_builder = bun.StringBuilder{};
         var module_count: usize = 0;
-        for (output_files) |output_file| {
+        std.debug.print("[DEBUG] toBytes - processing {d} output files\n", .{output_files.len});
+        for (output_files, 0..) |output_file, i| {
+            std.debug.print("[DEBUG] toBytes - file {d}: dest_path={s}, output_kind={}, side={?}, value={}\n", .{ i, output_file.dest_path, output_file.output_kind, output_file.side, output_file.value });
             string_builder.countZ(output_file.dest_path);
             string_builder.countZ(prefix);
             if (output_file.value == .buffer) {
@@ -395,10 +397,15 @@ pub const StandaloneModuleGraph = struct {
                     string_builder.cap += (output_file.value.buffer.bytes.len + 255) / 256 * 256 + 256;
                 } else {
                     if (entry_point_id == null) {
-                        if (output_file.side == null or output_file.side.? == .server) {
+                        std.debug.print("[DEBUG] toBytes - checking entry-point: side={?}, output_kind={}\n", .{ output_file.side, output_file.output_kind });
+                        // For standalone executables, accept client-side entry points as well as server-side
+                        if (output_file.side == null or output_file.side.? == .server or output_file.side.? == .client) {
                             if (output_file.output_kind == .@"entry-point") {
+                                std.debug.print("[DEBUG] toBytes - setting entry_point_id = {d}\n", .{module_count});
                                 entry_point_id = module_count;
                             }
+                        } else {
+                            std.debug.print("[DEBUG] toBytes - skipping entry-point due to side: {?}\n", .{output_file.side});
                         }
                     }
 
@@ -408,7 +415,11 @@ pub const StandaloneModuleGraph = struct {
             }
         }
 
-        if (module_count == 0 or entry_point_id == null) return &[_]u8{};
+        std.debug.print("[DEBUG] toBytes - module_count: {d}, entry_point_id: {?}\n", .{ module_count, entry_point_id });
+        if (module_count == 0 or entry_point_id == null) {
+            std.debug.print("[DEBUG] toBytes - returning empty array because module_count={d} or entry_point_id={?}\n", .{ module_count, entry_point_id });
+            return &[_]u8{};
+        }
 
         string_builder.cap += @sizeOf(CompiledModuleGraphFile) * output_files.len;
         string_builder.cap += trailer.len;
@@ -853,7 +864,9 @@ pub const StandaloneModuleGraph = struct {
         windows_hide_console: bool,
         windows_icon: ?[]const u8,
     ) anyerror!void {
+        std.debug.print("[DEBUG] StandaloneModuleGraph.toExecutable entry - outfile: {s}\n", .{outfile});
         const bytes = try toBytes(allocator, module_prefix, output_files, output_format);
+        std.debug.print("[DEBUG] toBytes returned {d} bytes\n", .{bytes.len});
         if (bytes.len == 0) return;
 
         const fd = try inject(
@@ -866,6 +879,7 @@ pub const StandaloneModuleGraph = struct {
             target,
         );
         bun.debugAssert(fd.kind == .system);
+        std.debug.print("[DEBUG] After inject, about to check Environment.isWindows: {}\n", .{Environment.isWindows});
 
         if (Environment.isWindows) {
             var outfile_buf: bun.OSPathBuffer = undefined;
@@ -902,14 +916,27 @@ pub const StandaloneModuleGraph = struct {
 
         var buf: bun.PathBuffer = undefined;
         const temp_location = bun.getFdPath(fd, &buf) catch |err| return err;
+        
+        const dest_basename = std.fs.path.basename(outfile);
+        std.debug.print("[DEBUG] toExecutable - temp_location: {s}\n", .{temp_location});
+        std.debug.print("[DEBUG] toExecutable - outfile: {s}\n", .{outfile});
+        std.debug.print("[DEBUG] toExecutable - dest_basename: {s}\n", .{dest_basename});
+        
+        // Check the size of the temporary file before moving
+        if (std.fs.cwd().statFile(temp_location)) |temp_stat| {
+            std.debug.print("[DEBUG] toExecutable - temp file size: {d} bytes\n", .{temp_stat.size});
+        } else |err| {
+            std.debug.print("[DEBUG] toExecutable - failed to stat temp file: {}\n", .{err});
+        }
 
         bun.sys.moveFileZWithHandle(
             fd,
             bun.FD.cwd(),
             bun.sliceTo(&(try std.posix.toPosixPath(temp_location)), 0),
             .fromStdDir(root_dir),
-            bun.sliceTo(&(try std.posix.toPosixPath(std.fs.path.basename(outfile))), 0),
+            bun.sliceTo(&(try std.posix.toPosixPath(dest_basename)), 0),
         ) catch |err| {
+            std.debug.print("[DEBUG] toExecutable - moveFileZWithHandle failed: {}\n", .{err});
             if (err == error.IsDir or err == error.EISDIR) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> {} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.quote(outfile)});
             } else {

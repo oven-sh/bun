@@ -1416,7 +1416,7 @@ pub const Import = struct {
     }
 };
 
-// @sortImports
+pub const Class = G.Class;
 
 const std = @import("std");
 
@@ -1438,10 +1438,8 @@ const Expr = js_ast.Expr;
 const ExprNodeIndex = js_ast.ExprNodeIndex;
 const ExprNodeList = js_ast.ExprNodeList;
 const Flags = js_ast.Flags;
+const G = js_ast.G;
 const Op = js_ast.Op;
 const OptionalChain = js_ast.OptionalChain;
 const Ref = js_ast.Ref;
 const ToJSError = js_ast.ToJSError;
-
-const G = js_ast.G;
-pub const Class = G.Class;

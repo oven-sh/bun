@@ -1,10 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const VM = JSC.VM;
-const ZigString = JSC.ZigString;
-const String = bun.String;
-
 pub const DOMURL = opaque {
     pub extern fn WebCore__DOMURL__cast_(JSValue0: JSValue, arg1: *VM) ?*DOMURL;
     pub extern fn WebCore__DOMURL__href_(arg0: ?*DOMURL, arg1: *ZigString) void;
@@ -57,3 +50,11 @@ pub const DOMURL = opaque {
         return out;
     }
 };
+
+const bun = @import("bun");
+const String = bun.String;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;
+const VM = JSC.VM;
+const ZigString = JSC.ZigString;

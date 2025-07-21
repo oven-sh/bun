@@ -95,8 +95,6 @@ pub const ShellAsyncSubprocessDone = struct {
     }
 };
 
-const Subprocess = bun.shell.subproc.ShellSubprocess;
-
 pub const Exec = union(enum) {
     none,
     bltn: Builtin,
@@ -792,38 +790,37 @@ pub fn bufferedOutputCloseStderr(this: *Cmd, err: ?JSC.SystemError) void {
 }
 
 const std = @import("std");
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
-
 const Allocator = std.mem.Allocator;
 
-const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellExecEnv = Interpreter.ShellExecEnv;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-const ShellSyscall = bun.shell.interpret.ShellSyscall;
-
-const Assigns = bun.shell.Interpreter.Assigns;
-const If = bun.shell.Interpreter.If;
-const Async = bun.shell.Interpreter.Async;
-const Binary = bun.shell.Interpreter.Binary;
-const Expansion = bun.shell.Interpreter.Expansion;
-const Stmt = bun.shell.Interpreter.Stmt;
-const Pipeline = bun.shell.Interpreter.Pipeline;
-
+const bun = @import("bun");
 const JSC = bun.JSC;
 const assert = bun.assert;
+const which = bun.which;
+
+const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
+const Subprocess = bun.shell.subproc.ShellSubprocess;
+
+const Interpreter = bun.shell.Interpreter;
+const Assigns = bun.shell.Interpreter.Assigns;
+const Async = bun.shell.Interpreter.Async;
+const Binary = bun.shell.Interpreter.Binary;
+const Builtin = bun.shell.Interpreter.Builtin;
+const Expansion = bun.shell.Interpreter.Expansion;
+const IO = bun.shell.Interpreter.IO;
+const If = bun.shell.Interpreter.If;
+const Pipeline = bun.shell.Interpreter.Pipeline;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Stmt = bun.shell.Interpreter.Stmt;
+
 const Arena = bun.shell.interpret.Arena;
 const CowFd = bun.shell.interpret.CowFd;
-const Builtin = bun.shell.Interpreter.Builtin;
-
+const ShellSyscall = bun.shell.interpret.ShellSyscall;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;
+const stderr_no = bun.shell.interpret.stderr_no;
 const stdin_no = bun.shell.interpret.stdin_no;
 const stdout_no = bun.shell.interpret.stdout_no;
-const stderr_no = bun.shell.interpret.stderr_no;
-
-const which = bun.which;

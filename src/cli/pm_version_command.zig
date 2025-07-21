@@ -1,18 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Global = bun.Global;
-const Output = bun.Output;
-const strings = bun.strings;
-const string = bun.string;
-const Command = bun.CLI.Command;
-const PackageManager = bun.install.PackageManager;
-const Semver = bun.Semver;
-const logger = bun.logger;
-const JSON = bun.JSON;
-const RunCommand = bun.RunCommand;
-const Environment = bun.Environment;
-const JSPrinter = bun.js_printer;
-
 pub const PmVersionCommand = struct {
     const VersionType = enum {
         patch,
@@ -642,3 +627,19 @@ pub const PmVersionCommand = struct {
         }
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.JSON;
+const JSPrinter = bun.js_printer;
+const Output = bun.Output;
+const RunCommand = bun.RunCommand;
+const Semver = bun.Semver;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+const Command = bun.CLI.Command;
+const PackageManager = bun.install.PackageManager;

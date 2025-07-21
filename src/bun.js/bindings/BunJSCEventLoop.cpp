@@ -17,6 +17,9 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* vm)
     ASSERT(!drop_all_locks.has_value());
     if (vm) {
         bool previouslyHadAccess = vm->heap.hasHeapAccess();
+        // sanity check for debug builds to ensure we're not doing a
+        // use-after-free here
+        ASSERT(vm->refCount() > 0);
         drop_all_locks.emplace(*vm);
         if (previouslyHadAccess) {
             vm->heap.releaseAccess();

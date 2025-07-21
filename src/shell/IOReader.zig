@@ -262,14 +262,13 @@ pub const AsyncDeinitReader = struct {
     }
 };
 
-const SmolList = bun.shell.SmolList;
-
 const std = @import("std");
+
 const bun = @import("bun");
-const shell = bun.shell;
-const Yield = shell.Yield;
-
-const Interpreter = bun.shell.Interpreter;
-const log = bun.shell.interpret.log;
-
 const JSC = bun.JSC;
+
+const shell = bun.shell;
+const Interpreter = bun.shell.Interpreter;
+const SmolList = bun.shell.SmolList;
+const Yield = shell.Yield;
+const log = bun.shell.interpret.log;

@@ -1,8 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const std = @import("std");
-const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
-
 const NodeFSFunction = fn (this: *JSC.Node.fs.Binding, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue;
 
 const NodeFSFunctionEnum = std.meta.DeclEnum(node.fs.NodeFS);
@@ -237,4 +232,9 @@ pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.
     }
 }
 
+const std = @import("std");
+
+const bun = @import("bun");
+const JSC = bun.JSC;
 const node = bun.api.node;
+const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;

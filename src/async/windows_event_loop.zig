@@ -1,10 +1,3 @@
-const bun = @import("bun");
-const Output = bun.Output;
-const JSC = bun.JSC;
-const uws = bun.uws;
-const Environment = bun.Environment;
-const std = @import("std");
-const uv = bun.windows.libuv;
 pub const Loop = uv.Loop;
 
 pub const KeepAlive = struct {
@@ -118,8 +111,6 @@ pub const KeepAlive = struct {
         this.unrefConcurrently(loop.virtual_machine);
     }
 };
-
-const Posix = @import("./posix_event_loop.zig");
 
 pub const FilePoll = struct {
     fd: bun.FileDescriptor,
@@ -419,3 +410,13 @@ pub const Closer = struct {
         bun.destroy(closer);
     }
 };
+
+const Posix = @import("./posix_event_loop.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const Output = bun.Output;
+const uws = bun.uws;
+const uv = bun.windows.libuv;

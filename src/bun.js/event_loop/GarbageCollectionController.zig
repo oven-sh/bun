@@ -17,6 +17,7 @@
 //!
 //! Thread Safety: This type must be unique per JavaScript thread and is not
 //! thread-safe. Each VirtualMachine instance should have its own controller.
+
 const GarbageCollectionController = @This();
 
 gc_timer: *uws.Timer = undefined,
@@ -167,8 +168,10 @@ pub const GCTimerState = enum {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
+const Environment = bun.Environment;
+const uws = bun.uws;
+
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
-const uws = bun.uws;
-const Environment = bun.Environment;

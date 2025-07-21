@@ -1,39 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Command = bun.CLI.Command;
-const Output = bun.Output;
-const Global = bun.Global;
-const http = bun.http;
-const OOM = bun.OOM;
-const HeaderBuilder = http.HeaderBuilder;
-const MutableString = bun.MutableString;
-const URL = bun.URL;
-const install = bun.install;
-const PackageManager = install.PackageManager;
-const strings = bun.strings;
-const string = bun.string;
-const stringZ = bun.stringZ;
-const File = bun.sys.File;
-const JSON = bun.JSON;
-const sha = bun.sha;
-const path = bun.path;
-const FileSystem = bun.fs.FileSystem;
-const Environment = bun.Environment;
-const Archive = bun.libarchive.lib.Archive;
-const logger = bun.logger;
-const Dependency = install.Dependency;
-const Pack = bun.CLI.PackCommand;
-const Lockfile = install.Lockfile;
-const MimeType = http.MimeType;
-const Expr = bun.js_parser.Expr;
-const prompt = bun.CLI.InitCommand.prompt;
-const Npm = install.Npm;
-const Run = bun.CLI.RunCommand;
-const DotEnv = bun.DotEnv;
-const Open = @import("../open.zig");
-const E = bun.JSAst.E;
-const G = bun.JSAst.G;
-
 pub const PublishCommand = struct {
     pub fn Context(comptime directory_publish: bool) type {
         return struct {
@@ -1377,3 +1341,44 @@ pub const PublishCommand = struct {
         return buf.items;
     }
 };
+
+const Open = @import("../open.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const DotEnv = bun.DotEnv;
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.JSON;
+const MutableString = bun.MutableString;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const URL = bun.URL;
+const logger = bun.logger;
+const path = bun.path;
+const sha = bun.sha;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const strings = bun.strings;
+const Expr = bun.js_parser.Expr;
+const File = bun.sys.File;
+const FileSystem = bun.fs.FileSystem;
+const Archive = bun.libarchive.lib.Archive;
+
+const Command = bun.CLI.Command;
+const Pack = bun.CLI.PackCommand;
+const Run = bun.CLI.RunCommand;
+const prompt = bun.CLI.InitCommand.prompt;
+
+const E = bun.JSAst.E;
+const G = bun.JSAst.G;
+
+const http = bun.http;
+const HeaderBuilder = http.HeaderBuilder;
+const MimeType = http.MimeType;
+
+const install = bun.install;
+const Dependency = install.Dependency;
+const Lockfile = install.Lockfile;
+const Npm = install.Npm;
+const PackageManager = install.PackageManager;

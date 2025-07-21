@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-
 pub const JSPropertyIteratorOptions = struct {
     skip_empty_name: bool,
     include_value: bool,
@@ -151,3 +148,6 @@ const JSPropertyIteratorImpl = opaque {
     extern "c" fn Bun__JSPropertyIterator__deinit(iter: *JSPropertyIteratorImpl) void;
     extern "c" fn Bun__JSPropertyIterator__getLongestPropertyName(iter: *JSPropertyIteratorImpl, globalObject: *JSC.JSGlobalObject, object: *JSC.JSObject) usize;
 };
+
+const bun = @import("bun");
+const JSC = bun.JSC;

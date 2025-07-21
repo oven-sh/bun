@@ -1,5 +1,6 @@
 //! A generic wrapper for the HTTP(s) Server`RequestContext`s.
 //! Only really exists because of `NewServer()` and `NewRequestContext()` generics.
+
 const AnyRequestContext = @This();
 
 pub const Pointer = bun.TaggedPointerUnion(.{
@@ -220,10 +221,11 @@ pub fn deref(self: AnyRequestContext) void {
     }
 }
 
+const DebugHTTPSServer = @import("../server.zig").DebugHTTPSServer;
+const DebugHTTPServer = @import("../server.zig").DebugHTTPServer;
+const HTTPSServer = @import("../server.zig").HTTPSServer;
+const HTTPServer = @import("../server.zig").HTTPServer;
+
 const bun = @import("bun");
 const JSC = bun.JSC;
 const uws = bun.uws;
-const HTTPServer = @import("../server.zig").HTTPServer;
-const HTTPSServer = @import("../server.zig").HTTPSServer;
-const DebugHTTPServer = @import("../server.zig").DebugHTTPServer;
-const DebugHTTPSServer = @import("../server.zig").DebugHTTPSServer;

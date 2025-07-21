@@ -126,7 +126,7 @@ pub const TSNamespaceMember = struct {
     };
 };
 
-// @sortImports
+pub const Class = G.Class;
 
 const std = @import("std");
 
@@ -135,7 +135,5 @@ const logger = bun.logger;
 
 const js_ast = bun.js_ast;
 const E = js_ast.E;
-const Ref = js_ast.Ref;
-
 const G = js_ast.G;
-pub const Class = G.Class;
+const Ref = js_ast.Ref;

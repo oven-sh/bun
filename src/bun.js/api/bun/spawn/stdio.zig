@@ -1,13 +1,3 @@
-const std = @import("std");
-const default_allocator = bun.default_allocator;
-const bun = @import("bun");
-const Environment = bun.Environment;
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const Output = bun.Output;
-
-const uv = bun.windows.libuv;
 pub const Stdio = union(enum) {
     inherit,
     capture: struct { fd: bun.FileDescriptor, buf: *bun.ByteList },
@@ -496,3 +486,15 @@ pub const Stdio = union(enum) {
         return;
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const uv = bun.windows.libuv;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

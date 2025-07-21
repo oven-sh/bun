@@ -427,12 +427,14 @@ pub const BunFrontendDevServerAgent = @import("./api/server/InspectorBunFrontend
 pub const HTTPServerAgent = @import("./bindings/HTTPServerAgent.zig");
 
 const std = @import("std");
+
 const bun = @import("bun");
-const uv = bun.windows.libuv;
-const Output = bun.Output;
 const Environment = bun.Environment;
+const Output = bun.Output;
+const uv = bun.windows.libuv;
+
 const jsc = bun.jsc;
-const VirtualMachine = jsc.VirtualMachine;
-const ZigException = jsc.ZigException;
 const Debugger = jsc.Debugger;
 const JSGlobalObject = jsc.JSGlobalObject;
+const VirtualMachine = jsc.VirtualMachine;
+const ZigException = jsc.ZigException;

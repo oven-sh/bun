@@ -93,12 +93,14 @@ pub fn dispose(this: *ImmediateObject, globalThis: *JSGlobalObject, _: *JSC.Call
     return .js_undefined;
 }
 
-const bun = @import("bun");
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const TimerObjectInternals = @import("../Timer.zig").TimerObjectInternals;
 const Debugger = @import("../../Debugger.zig");
-const ID = @import("../Timer.zig").ID;
+const bun = @import("bun");
+
 const EventLoopTimer = @import("../Timer.zig").EventLoopTimer;
-const JSValue = JSC.JSValue;
+const ID = @import("../Timer.zig").ID;
+const TimerObjectInternals = @import("../Timer.zig").TimerObjectInternals;
+
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;

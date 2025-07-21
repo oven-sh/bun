@@ -3,11 +3,10 @@
 //!
 //! Prefer adding new code into a separate file and adding an import, or putting
 //! code in the relevant namespace.
-const bun = @This();
-const builtin = @import("builtin");
-const std = @import("std");
 
-pub const Environment = @import("env.zig");
+const bun = @This();
+
+pub const Environment = @import("./env.zig");
 
 pub const use_mimalloc = true;
 
@@ -134,10 +133,10 @@ pub const JSExecutionTerminated = error{
 
 pub const JSOOM = OOM || JSError;
 
-pub const detectCI = @import("ci_info.zig").detectCI;
+pub const detectCI = @import("./ci_info.zig").detectCI;
 
 /// Cross-platform system APIs
-pub const sys = @import("sys.zig");
+pub const sys = @import("./sys.zig");
 /// Deprecated: use bun.sys.S
 pub const S = sys.S;
 pub const O = sys.O;
@@ -145,15 +144,15 @@ pub const Mode = sys.Mode;
 
 // Platform-specific system APIs. If something can be implemented on multiple
 // platforms, it does not belong in these three namespaces.
-pub const windows = @import("windows.zig");
-pub const darwin = @import("darwin.zig");
-pub const linux = @import("linux.zig");
+pub const windows = @import("./windows.zig");
+pub const darwin = @import("./darwin.zig");
+pub const linux = @import("./linux.zig");
 
 /// Translated from `c-headers-for-zig.h` for the current platform.
 pub const c = @import("translated-c-headers");
 
 pub const sha = @import("./sha.zig");
-pub const FeatureFlags = @import("feature_flags.zig");
+pub const FeatureFlags = @import("./feature_flags.zig");
 pub const meta = @import("./meta.zig");
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
@@ -167,12 +166,12 @@ pub const bun_js = @import("./bun_js.zig");
 // This file is gennerated, but cant be placed in the build/debug/codegen
 // folder because zig will complain about outside-of-module stuff
 /// All functions and interfaces provided from Bun's `bindgen` utility.
-pub const gen = @import("bun.js/bindings/GeneratedBindings.zig");
+pub const gen = @import("./bun.js/bindings/GeneratedBindings.zig");
 
 comptime {
     // This file is gennerated, but cant be placed in the build/debug/codegen
     // folder because zig will complain about outside-of-module stuff
-    _ = &@import("bun.js/bindings/GeneratedJS2Native.zig");
+    _ = &@import("./bun.js/bindings/GeneratedJS2Native.zig");
     _ = &gen; // reference bindings
 }
 
@@ -189,7 +188,7 @@ pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWi
 pub const glob = @import("./glob.zig");
 pub const patch = @import("./patch.zig");
 pub const ini = @import("./ini.zig");
-pub const bits = @import("bits.zig");
+pub const bits = @import("./bits.zig");
 pub const css = @import("./css/css_parser.zig");
 pub const csrf = @import("./csrf.zig");
 pub const validators = @import("./bun.js/node/util/validators.zig");
@@ -199,7 +198,7 @@ pub const shell = @import("./shell/shell.zig");
 pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
 
-pub const FD = @import("fd.zig").FD;
+pub const FD = @import("./fd.zig").FD;
 
 /// Deprecated: Use `FD` instead.
 pub const FileDescriptor = FD;
@@ -249,7 +248,7 @@ pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {
 
 pub const libarchive = @import("./libarchive/libarchive.zig");
 
-pub const StringTypes = @import("string_types.zig");
+pub const StringTypes = @import("./string_types.zig");
 pub const stringZ = StringTypes.stringZ;
 pub const string = StringTypes.string;
 pub const CodePoint = StringTypes.CodePoint;
@@ -650,8 +649,8 @@ pub fn isHeapMemory(memory: anytype) bool {
     return false;
 }
 
-pub const Mimalloc = @import("allocators/mimalloc.zig");
-pub const AllocationScope = @import("allocators/AllocationScope.zig");
+pub const Mimalloc = @import("./allocators/mimalloc.zig");
+pub const AllocationScope = @import("./allocators/AllocationScope.zig");
 
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
 pub const isSliceInBufferT = allocators.isSliceInBufferT;
@@ -688,14 +687,13 @@ pub const JSC = jsc;
 
 /// Bindings to JavaScriptCore and other JavaScript primatives.
 /// Web and runtime-specific APIs should go in `webcore` and `api`.
-pub const jsc = @import("bun.js/jsc.zig");
+pub const jsc = @import("./bun.js/jsc.zig");
 /// JavaScript Web APIs
-pub const webcore = @import("bun.js/webcore.zig");
+pub const webcore = @import("./bun.js/webcore.zig");
 /// "api" in this context means "the Bun APIs", as in "the exposed JS APIs"
-pub const api = @import("bun.js/api.zig");
+pub const api = @import("./bun.js/api.zig");
 
 pub const logger = @import("./logger.zig");
-pub const ThreadPool = @import("./thread_pool.zig");
 pub const default_thread_stack_size = ThreadPool.default_thread_stack_size;
 pub const picohttp = @import("./deps/picohttp.zig");
 pub const uws = @import("./deps/uws.zig");
@@ -1036,7 +1034,6 @@ pub fn U32HashMap(comptime Type: type) type {
     return std.HashMap(u32, Type, U32HashMapContext, std.hash_map.default_max_load_percentage);
 }
 
-const CopyFile = @import("./copy_file.zig");
 pub const copyFileErrnoConvert = CopyFile.copyFileErrorConvert;
 pub const copyFileRange = CopyFile.copyFileRange;
 pub const canUseCopyFileRangeSyscall = CopyFile.canUseCopyFileRangeSyscall;
@@ -1850,7 +1847,8 @@ pub const ParseTask = bundle_v2.ParseTask;
 pub const threading = @import("./threading.zig");
 pub const Mutex = threading.Mutex;
 pub const Futex = threading.Futex;
-pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
+pub const ThreadPool = threading.ThreadPool;
+pub const UnboundedQueue = threading.UnboundedQueue;
 
 pub fn threadlocalAllocator() std.mem.Allocator {
     if (comptime use_mimalloc) {
@@ -1934,8 +1932,7 @@ pub const zstd = @import("./deps/zstd.zig");
 pub const StringPointer = Schema.Api.StringPointer;
 pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").StandaloneModuleGraph;
 
-const _string = @import("./string.zig");
-pub const strings = @import("string_immutable.zig");
+pub const strings = @import("./string_immutable.zig");
 pub const String = _string.String;
 pub const ZigString = JSC.ZigString;
 pub const StringJoiner = _string.StringJoiner;
@@ -2980,7 +2977,7 @@ pub fn SliceIterator(comptime T: type) type {
 // TODO: migrate
 pub const ArenaAllocator = std.heap.ArenaAllocator;
 
-pub const crash_handler = @import("crash_handler.zig");
+pub const crash_handler = @import("./crash_handler.zig");
 pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
 
 const assertion_failure_msg = "Internal assertion failure";
@@ -3405,7 +3402,7 @@ pub fn memmove(output: []u8, input: []const u8) void {
 pub const hmac = @import("./hmac.zig");
 pub const libdeflate = @import("./deps/libdeflate.zig");
 
-pub const bake = @import("bake/bake.zig");
+pub const bake = @import("./bake/bake.zig");
 
 /// like std.enums.tagName, except it doesn't lose the sentinel value.
 pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
@@ -3737,9 +3734,7 @@ pub noinline fn throwStackOverflow() StackOverflow!void {
 const StackOverflow = error{StackOverflow};
 
 pub const S3 = @import("./s3/client.zig");
-pub const ptr = @import("ptr.zig");
-
-const Allocator = std.mem.Allocator;
+pub const ptr = @import("./ptr.zig");
 
 /// Memory is typically not decommitted immediately when freed.
 /// Sensitive information that's kept in memory can be read in various ways until the OS
@@ -3756,7 +3751,7 @@ pub const pe = @import("./pe.zig");
 pub const valkey = @import("./valkey/index.zig");
 pub const highway = @import("./highway.zig");
 
-pub const MemoryReportingAllocator = @import("allocators/MemoryReportingAllocator.zig");
+pub const MemoryReportingAllocator = @import("./allocators/MemoryReportingAllocator.zig");
 
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
 
@@ -3767,3 +3762,9 @@ pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item)
         else => std.mem.indexOfScalar(T, list.items, item) != null,
     };
 }
+
+const CopyFile = @import("./copy_file.zig");
+const _string = @import("./string.zig");
+const builtin = @import("builtin");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

@@ -123,12 +123,14 @@ pub fn dispose(this: *TimeoutObject, globalThis: *JSGlobalObject, _: *JSC.CallFr
     return .js_undefined;
 }
 
-const bun = @import("bun");
-const JSC = bun.JSC;
-const TimerObjectInternals = @import("../Timer.zig").TimerObjectInternals;
 const Debugger = @import("../../Debugger.zig");
+const bun = @import("bun");
+
+const EventLoopTimer = @import("../Timer.zig").EventLoopTimer;
 const ID = @import("../Timer.zig").ID;
 const Kind = @import("../Timer.zig").Kind;
-const EventLoopTimer = @import("../Timer.zig").EventLoopTimer;
-const JSValue = JSC.JSValue;
+const TimerObjectInternals = @import("../Timer.zig").TimerObjectInternals;
+
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

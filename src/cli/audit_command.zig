@@ -1,17 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Command = @import("../cli.zig").Command;
-const PackageManager = @import("../install/install.zig").PackageManager;
-const Output = bun.Output;
-const Global = bun.Global;
-const strings = bun.strings;
-const http = bun.http;
-const HeaderBuilder = http.HeaderBuilder;
-const MutableString = bun.MutableString;
-const URL = @import("../url.zig").URL;
-const logger = bun.logger;
-const libdeflate = @import("../deps/libdeflate.zig");
-
 const VulnerabilityInfo = struct {
     severity: []const u8,
     title: []const u8,
@@ -738,3 +724,19 @@ fn printEnhancedAuditReport(
 
     return 0;
 }
+
+const libdeflate = @import("../deps/libdeflate.zig");
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+const PackageManager = @import("../install/install.zig").PackageManager;
+const URL = @import("../url.zig").URL;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const http = bun.http;
+const HeaderBuilder = http.HeaderBuilder;

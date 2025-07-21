@@ -5,7 +5,7 @@ vtable: VTable,
 status: Status = Status.closed,
 used: bool = false,
 
-pub const ArrayBufferSink = @import("ArrayBufferSink.zig");
+pub const ArrayBufferSink = @import("./ArrayBufferSink.zig");
 
 pub const pending = Sink{
     .ptr = @as(*anyopaque, @ptrFromInt(0xaaaaaaaa)),
@@ -612,7 +612,6 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 }
 
 const Detached = opaque {};
-const Subprocess = bun.api.Subprocess;
 pub const DestructorPtr = bun.TaggedPointerUnion(.{
     Detached,
     Subprocess,
@@ -644,12 +643,16 @@ pub export fn Bun__onSinkDestroyed(
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const Syscall = bun.sys;
 const Output = bun.Output;
+const Syscall = bun.sys;
+const Subprocess = bun.api.Subprocess;
+
 const JSC = bun.jsc;
-const webcore = bun.webcore;
-const streams = webcore.streams;
-const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+
+const webcore = bun.webcore;
 const Blob = webcore.Blob;
+const streams = webcore.streams;

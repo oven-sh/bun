@@ -722,25 +722,26 @@ inline fn emptyWithStatus(_: *JSC.JSGlobalObject, status: u16) Response {
 // TODO: move to http.zig. this has nothing to do with JSC or WebCore
 
 const std = @import("std");
-const bun = @import("bun");
-const MimeType = bun.http.MimeType;
-const http = bun.http;
-const JSC = bun.JSC;
-
 const Method = @import("../../http/Method.zig").Method;
-const FetchHeaders = bun.webcore.FetchHeaders;
+
+const bun = @import("bun");
 const Output = bun.Output;
-const string = bun.string;
 const default_allocator = bun.default_allocator;
-
-const ZigString = JSC.ZigString;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-
-const InternalBlob = JSC.WebCore.Blob.Internal;
-const BodyMixin = JSC.WebCore.Body.Mixin;
-const Body = JSC.WebCore.Body;
-const Request = JSC.WebCore.Request;
-const Blob = JSC.WebCore.Blob;
-
 const s3 = bun.S3;
+const string = bun.string;
+const FetchHeaders = bun.webcore.FetchHeaders;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
+const Request = JSC.WebCore.Request;
+
+const Blob = JSC.WebCore.Blob;
+const InternalBlob = JSC.WebCore.Blob.Internal;
+
+const Body = JSC.WebCore.Body;
+const BodyMixin = JSC.WebCore.Body.Mixin;
+
+const http = bun.http;
+const MimeType = bun.http.MimeType;

@@ -1,15 +1,3 @@
-const std = @import("std");
-const Api = @import("./api/schema.zig").Api;
-const resolve_path = @import("./resolver/resolve_path.zig");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const JSC = bun.JSC;
-
 // This is close to WHATWG URL, but we don't want the validation errors
 pub const URL = struct {
     const log = Output.scoped(.URL, false);
@@ -1276,7 +1264,6 @@ pub const FormData = struct {
     }
 };
 
-const ParamsList = @import("./router.zig").Param.List;
 pub const CombinedScanner = struct {
     query: Scanner,
     pathname: PathnameScanner,
@@ -1463,4 +1450,16 @@ pub const Scanner = struct {
     }
 };
 
+const resolve_path = @import("./resolver/resolve_path.zig");
+const std = @import("std");
+const Api = @import("./api/schema.zig").Api;
+const ParamsList = @import("./router.zig").Param.List;
 const expect = std.testing.expect;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;

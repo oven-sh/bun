@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
-const Allocator = std.mem.Allocator;
-const strings = bun.strings;
-const js_lexer = bun.js_lexer;
-const string = bun.string;
-
 const MutableString = @This();
 
 allocator: Allocator,
@@ -462,3 +454,11 @@ pub fn writeAll(self: *MutableString, bytes: string) Allocator.Error!usize {
     try self.list.appendSlice(self.allocator, bytes);
     return bytes.len;
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const js_lexer = bun.js_lexer;
+const string = bun.string;
+const strings = bun.strings;

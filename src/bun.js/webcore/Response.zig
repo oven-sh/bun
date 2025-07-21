@@ -385,6 +385,11 @@ pub fn constructJSON(
     const json_value = args.nextEat() orelse JSC.JSValue.zero;
 
     if (@intFromEnum(json_value) != 0) {
+        // Validate top-level values that are not JSON serializable (Node.js compatibility)
+        if (json_value.isUndefined() or json_value.isSymbol() or json_value.jsType() == .JSFunction) {
+            const err = globalThis.createTypeErrorInstance("Value is not JSON serializable", .{});
+            return globalThis.throwValue(err);
+        }
         var str = bun.String.empty;
         // calling JSON.stringify on an empty string adds extra quotes
         // so this is correct

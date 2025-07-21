@@ -310,6 +310,12 @@ pub noinline fn computeChunks(
     // Determine the order of JS files (and parts) within the chunk ahead of time
     try this.findAllImportedPartsInJSOrder(temp_allocator, chunks);
 
+    // Handle empty chunks case
+    if (chunks.len == 0) {
+        this.unique_key_buf = "";
+        return chunks;
+    }
+
     const unique_key_item_len = std.fmt.count("{any}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
     var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator, unique_key_item_len * chunks.len);
     this.unique_key_buf = unique_key_builder.allocatedSlice();

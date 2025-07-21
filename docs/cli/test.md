@@ -258,7 +258,7 @@ Set any of the following environment variables to enable AI-friendly output:
 
 - `CLAUDECODE=1` - For Claude Code
 - `REPL_ID=1` - For Replit
-- `IS_CODE_AGENT=1` - Generic AI agent flag
+- `AGENT=1` - Generic AI agent flag
 
 ### Behavior
 
@@ -267,7 +267,6 @@ When an AI agent environment is detected:
 - Only test failures are displayed in detail
 - Passing, skipped, and todo test indicators are hidden
 - Summary statistics remain intact
-- JUnit XML reporting is preserved
 
 ```bash
 # Example: Enable quiet output for Claude Code

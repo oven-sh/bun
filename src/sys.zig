@@ -2821,6 +2821,7 @@ pub fn unlinkW(from: [:0]const u16) Maybe(void) {
         return err;
     }
 
+    log("DeleteFileW({s}) = 0", .{bun.fmt.fmtPath(u16, from, .{})});
     return Maybe(void).success;
 }
 
@@ -2841,6 +2842,10 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
         log("unlink({s}) = 0", .{from});
         return Maybe(void).success;
     }
+}
+
+pub fn rmdir(to: anytype) Maybe(void) {
+    return rmdirat(FD.cwd(), to);
 }
 
 pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
@@ -3782,16 +3787,9 @@ pub fn link(comptime T: type, src: [:0]const T, dest: [:0]const T) Maybe(void) {
             return sys_uv.link(src, dest);
         }
 
-        const ret = bun.windows.CreateHardLinkW(dest, src, null);
-        if (Maybe(void).errnoSys(ret, .link)) |err| {
-            log("CreateHardLinkW({s}, {s}) = {s}", .{
-                bun.fmt.fmtPath(T, dest, .{}),
-                bun.fmt.fmtPath(T, src, .{}),
-                @tagName(err.getErrno()),
-            });
-            return err;
+        if (bun.windows.CreateHardLinkW(dest, src, null) == 0) {
+            return Maybe(void).errno(bun.windows.getLastErrno(), .link);
         }
-
         log("CreateHardLinkW({s}, {s}) = 0", .{
             bun.fmt.fmtPath(T, dest, .{}),
             bun.fmt.fmtPath(T, src, .{}),
@@ -3804,7 +3802,7 @@ pub fn link(comptime T: type, src: [:0]const T, dest: [:0]const T) Maybe(void) {
     }
 
     const ret = std.c.link(src, dest);
-    if (Maybe(void).errnoSysP(ret, .link, src)) |err| {
+    if (Maybe(void).errnoSysPD(ret, .link, src, dest)) |err| {
         log("link({s}, {s}) = {s}", .{ src, dest, @tagName(err.getErrno()) });
         return err;
     }

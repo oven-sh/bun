@@ -293,3 +293,34 @@ devTest("SSG pages router - file loading with Bun.file", {
     expect(await c2.elemText("div div")).toBe("This is the second post content");
   },
 });
+
+devTest("SSG pages router - named import edge case", {
+  framework: "react",
+  fixture: "ssg-pages-router",
+  files: {
+    "pages/index.tsx": `
+      import Markdoc, * as md from '../src/ooga'
+
+      console.log(md);
+
+      export default function IndexPage() {
+        return <h1>Welcome to SSG</h1>;
+      }
+    `,
+    "src/ooga.ts": `var Markdoc = function () {
+  return {
+    parse: () => {},
+    transform: () => {},
+  };
+};
+
+export { Markdoc as default };`,
+    "posts/hello-world.txt": "This is the content of hello world post",
+    "posts/second-post.txt": "This is the second post content",
+  },
+  async test(dev) {
+    // Should not error
+    await using c1 = await dev.client("/");
+    expect(await c1.elemText("h1")).toBe("Welcome to SSG");
+  },
+});

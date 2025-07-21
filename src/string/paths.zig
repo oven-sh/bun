@@ -125,6 +125,13 @@ pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
     return wbuf[0 .. utf16.len + bun.windows.nt_object_prefix.len :0];
 }
 
+pub fn addLongPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
+    wbuf[0..bun.windows.long_path_prefix.len].* = bun.windows.long_path_prefix;
+    @memcpy(wbuf[bun.windows.long_path_prefix.len..][0..utf16.len], utf16);
+    wbuf[utf16.len + bun.windows.long_path_prefix.len] = 0;
+    return wbuf[0 .. utf16.len + bun.windows.long_path_prefix.len :0];
+}
+
 pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]u16 {
     if (hasPrefixComptimeType(u16, utf16, bun.windows.nt_object_prefix)) {
         @memcpy(wbuf[0..utf16.len], utf16);

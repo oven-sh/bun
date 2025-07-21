@@ -500,7 +500,7 @@ const Batch = bun.ThreadPool.Batch;
 const SSLConfig = @import("../bun.js/api/server.zig").ServerConfig.SSLConfig;
 
 const HTTPCallbackPair = .{ *AsyncHTTP, HTTPClientResult };
-const Channel = @import("../sync.zig").Channel;
+const Channel = bun.threading.Channel;
 pub const HTTPChannel = Channel(HTTPCallbackPair, .{ .Static = 1000 });
 // 32 pointers much cheaper than 1000 pointers
 const SingleHTTPChannel = struct {

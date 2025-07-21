@@ -801,6 +801,16 @@ pub const ConfigIterator = struct {
     }
 };
 
+const NodeLinkerMap = bun.ComptimeStringMap(bun.install.PackageManager.Options.NodeLinker, .{
+    // yarn
+    .{ "pnpm", .isolated },
+    .{ "node-modules", .hoisted },
+
+    // pnpm
+    .{ "isolated", .isolated },
+    .{ "hoisted", .hoisted },
+});
+
 pub const ScopeIterator = struct {
     allocator: Allocator,
     config: *E.Object,
@@ -1063,17 +1073,12 @@ pub fn loadNpmrc(
         }
     }
 
+    // yarn & pnpm option
     if (out.get("node-linker")) |node_linker_expr| {
         if (node_linker_expr.asString(allocator)) |node_linker_str| {
-            install.node_linker = bun.install.PackageManager.Options.NodeLinker.fromStr(node_linker_str) orelse
-                if (bun.strings.eqlComptime(node_linker_str, "pnpm"))
-                    // yarn
-                    .isolated
-                else if (bun.strings.eqlComptime(node_linker_str, "node-modules"))
-                    // yarn
-                    .hoisted
-                else
-                    null;
+            if (NodeLinkerMap.get(node_linker_str)) |node_linker| {
+                install.node_linker = node_linker;
+            }
         }
     }
 

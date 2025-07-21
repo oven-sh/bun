@@ -1,0 +1,9 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`bun update --interactive snapshots should format mixed package types with proper spacing: update-interactive-formatting 1`] = `"bun update --interactive vX.X.X"`;
+
+exports[`bun update --interactive snapshots should not crash with various package name lengths: update-interactive-no-crash 1`] = `"bun update --interactive vX.X.X"`;
+
+exports[`bun update --interactive snapshots should handle extremely long package names without crashing: update-interactive-long-names 1`] = `"bun update --interactive vX.X.X"`;
+
+exports[`bun update --interactive snapshots should handle complex version strings without crashing: update-interactive-complex-versions 1`] = `"bun update --interactive vX.X.X"`;

@@ -468,7 +468,7 @@ const strings = bun.strings;
 const stringZ = bun.stringZ;
 const JSC = bun.JSC;
 const NewHTTPContext = bun.http.NewHTTPContext;
-const UnboundedQueue = @import("../bun.js/unbounded_queue.zig").UnboundedQueue;
+const UnboundedQueue = bun.threading.UnboundedQueue;
 const AsyncHTTP = bun.http.AsyncHTTP;
 pub const Queue = UnboundedQueue(AsyncHTTP, .next);
 

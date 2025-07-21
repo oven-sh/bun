@@ -96,10 +96,24 @@ pub const Symlinker = struct {
                     if (strings.eqlLong(current_link, this.fallback_junction_target.slice(), true)) {
                         return .success;
                     }
+
+                    // this existing link is pointing to the wrong package.
+                    // on windows rmdir must be used for symlinks created to point
+                    // at directories, even if the target no longer exists
+                    switch (sys.rmdir(this.dest.sliceZ())) {
+                        .result => {},
+                        .err => |err| switch (err.getErrno()) {
+                            .PERM => {
+                                _ = sys.unlink(this.dest.sliceZ());
+                            },
+                            else => {},
+                        },
+                    }
+                } else {
+                    // this existing link is pointing to the wrong package
+                    _ = sys.unlink(this.dest.sliceZ());
                 }
 
-                // this existing link is pointing to the wrong package
-                _ = sys.unlink(this.dest.sliceZ());
                 return this.symlink();
             },
         };

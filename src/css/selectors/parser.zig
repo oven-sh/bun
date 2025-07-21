@@ -1732,6 +1732,24 @@ pub fn GenericSelector(comptime Impl: type) type {
             return parse(&selector_parser, input);
         }
 
+        pub fn iterRawMatchOrder(this: *const This) RawMatchOrderIterator {
+            return RawMatchOrderIterator{
+                .slice = this.components.items,
+            };
+        }
+
+        const RawMatchOrderIterator = struct {
+            slice: []const GenericComponent(Impl),
+            i: usize = 0,
+
+            pub fn next(this: *@This()) ?GenericComponent(Impl) {
+                if (this.i >= this.slice.len) return null;
+                const result = this.slice[this.i];
+                this.i += 1;
+                return result;
+            }
+        };
+
         /// Returns an iterator over the sequence of simple selectors and
         /// combinators, in parse order (from left to right), starting from
         /// `offset`.

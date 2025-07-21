@@ -685,7 +685,7 @@ if(WIN32)
     ${CODEGEN_PATH}/windows-app-info.rc
     @ONLY
   )
-  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.rc)
+  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.rc ${CWD}/src/bun.exe.manifest)
 endif()
 
 # --- Executable ---

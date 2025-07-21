@@ -73,7 +73,9 @@ pub fn runTasks(
         const batch = installer.tasks.popBatch();
         var iter = batch.iterator();
         while (iter.next()) |task| {
-            defer installer.preallocated_tasks.put(task);
+            defer {
+                installer.preallocated_tasks.put(task);
+            }
             switch (task.result) {
                 .none => {
                     if (comptime Environment.ci_assert) {

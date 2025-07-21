@@ -183,6 +183,9 @@ export default {
       description:
         "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",
     }),
+    page("install/isolated", "Isolated installs", {
+      description: "Create strict dependency isolation, preventing phantom dependencies.",
+    }),
     page("install/workspaces", "Workspaces", {
       description: "Bun's package manager supports workspaces and monorepo development workflows.",
     }),

@@ -14,7 +14,6 @@ const File = bun.sys.File;
 
 const debug = Output.scoped(.CLI, true);
 
-const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
 const clap = bun.clap;
 const BunJS = @import("./bun_js.zig");
@@ -33,7 +32,6 @@ pub var Bun__Node__ProcessTitle: ?string = null;
 
 pub const Cli = struct {
     pub const CompileTarget = @import("./compile_target.zig");
-    var wait_group: sync.WaitGroup = undefined;
     pub var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
     pub fn start(allocator: std.mem.Allocator) void {

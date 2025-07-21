@@ -301,9 +301,15 @@ pub fn forTarball(
     }
 }
 
-// @sortImports
-
 const std = @import("std");
+
+const install = @import("./install.zig");
+const ExtractTarball = install.ExtractTarball;
+const NetworkTask = install.NetworkTask;
+const Npm = install.Npm;
+const PackageManager = install.PackageManager;
+const PatchTask = install.PatchTask;
+const Task = install.Task;
 
 const bun = @import("bun");
 const GlobalStringBuilder = bun.StringBuilder;
@@ -322,11 +328,3 @@ const FileSystem = Fs.FileSystem;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 const HeaderBuilder = HTTP.HeaderBuilder;
-
-const install = @import("install.zig");
-const ExtractTarball = install.ExtractTarball;
-const NetworkTask = install.NetworkTask;
-const Npm = install.Npm;
-const PackageManager = install.PackageManager;
-const PatchTask = install.PatchTask;
-const Task = install.Task;

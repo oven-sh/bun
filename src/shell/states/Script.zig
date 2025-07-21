@@ -113,20 +113,21 @@ pub fn deinitFromInterpreter(this: *Script) void {
     bun.default_allocator.destroy(this);
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");
+
+const ExitCode = bun.shell.ExitCode;
 const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
+const Expansion = bun.shell.Interpreter.Expansion;
+const IO = bun.shell.Interpreter.IO;
 const InterpreterChildPtr = Interpreter.InterpreterChildPtr;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-
-const Subshell = bun.shell.Interpreter.Subshell;
-const Expansion = bun.shell.Interpreter.Expansion;
 const Stmt = bun.shell.Interpreter.Stmt;
+const Subshell = bun.shell.Interpreter.Subshell;
+
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;

@@ -1,9 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Encoder = JSC.WebCore.encoding;
-const Environment = bun.Environment;
-
 pub const BufferVectorized = struct {
     pub fn fill(
         str: *JSC.ZigString,
@@ -87,3 +81,10 @@ pub const BufferVectorized = struct {
 comptime {
     @export(&BufferVectorized.fill, .{ .name = "Bun__Buffer_fill" });
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const Encoder = JSC.WebCore.encoding;

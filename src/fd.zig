@@ -672,27 +672,28 @@ const comptime_stderr: FD = if (os != .windows)
 else
     @compileError("no comptime stdio on windows");
 
-const fd_t = std.posix.fd_t;
-const HANDLE = bun.windows.HANDLE;
-const uv_file = bun.windows.libuv.uv_file;
-const assert = bun.assert;
-const E = std.posix.E;
-
-const bun = @import("bun");
-
-const Environment = bun.Environment;
-const is_posix = Environment.isPosix;
-const os = Environment.os;
-
-const std = @import("std");
-
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const libuv = bun.windows.libuv;
 const libuv_private = struct {
     extern fn uv_get_osfhandle(fd: c_int) fd_t;
     extern fn uv_open_osfhandle(os_fd: fd_t) c_int;
 };
-const allow_assert = Environment.allow_assert;
 
+const std = @import("std");
+
+const bun = @import("bun");
+const assert = bun.assert;
+const HANDLE = bun.windows.HANDLE;
 const log = bun.sys.syslog;
+
+const Environment = bun.Environment;
+const allow_assert = Environment.allow_assert;
+const is_posix = Environment.isPosix;
+const os = Environment.os;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;
+
+const libuv = bun.windows.libuv;
+const uv_file = bun.windows.libuv.uv_file;
+
+const E = std.posix.E;
+const fd_t = std.posix.fd_t;

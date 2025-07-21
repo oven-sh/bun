@@ -1,18 +1,3 @@
-const bun = @import("bun");
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const std = @import("std");
-const RunCommand = @import("run_command.zig").RunCommand;
-const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
-
-const CLI = bun.CLI;
-const Command = CLI.Command;
-
-const transpiler = bun.transpiler;
-
-const FilterArg = @import("filter_arg.zig");
-
 const ScriptConfig = struct {
     package_json_path: []u8,
     package_name: []const u8,
@@ -653,3 +638,17 @@ fn hasCycle(current: *ProcessHandle) bool {
     current.visiting = false;
     return false;
 }
+
+const FilterArg = @import("./filter_arg.zig");
+const std = @import("std");
+const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
+const RunCommand = @import("./run_command.zig").RunCommand;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const transpiler = bun.transpiler;
+
+const CLI = bun.CLI;
+const Command = CLI.Command;

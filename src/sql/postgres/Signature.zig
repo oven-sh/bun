@@ -1,3 +1,5 @@
+const Signature = @This();
+
 fields: []const int4,
 name: []const u8,
 query: []const u8,
@@ -99,9 +101,6 @@ pub fn generate(globalObject: *JSC.JSGlobalObject, query: []const u8, array_valu
     };
 }
 
-// @sortImports
-
-const Signature = @This();
 const bun = @import("bun");
 const std = @import("std");
 const QueryBindingIterator = @import("./QueryBindingIterator.zig").QueryBindingIterator;

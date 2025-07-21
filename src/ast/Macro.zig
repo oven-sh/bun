@@ -631,8 +631,6 @@ pub const Runner = struct {
     extern "c" fn Bun__startMacro(function: *const anyopaque, *anyopaque) void;
 };
 
-// @sortImports
-
 const DotEnv = @import("../env_loader.zig");
 const std = @import("std");
 

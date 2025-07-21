@@ -1,6 +1,7 @@
 //! Discovers routes from the filesystem, as instructed by the framework
 //! configuration. Agnotic to all different paradigms. Supports incrementally
 //! updating for DevServer, or serializing to a binary for use in production.
+
 const FrameworkRouter = @This();
 
 /// Metadata for route files is specified out of line, either in DevServer where
@@ -287,6 +288,11 @@ pub const EncodedPattern = struct {
                 },
                 .param => |name| {
                     const end = strings.indexOfCharPos(path, '/', i) orelse path.len;
+                    // Check if we're about to exceed the maximum number of parameters
+                    if (param_num >= MatchedParams.max_count) {
+                        // TODO: ideally we should throw a nice user message
+                        bun.Output.panic("Route pattern matched more than {d} parameters. Path: {s}", .{ MatchedParams.max_count, path });
+                    }
                     params.params.len = @intCast(param_num + 1);
                     params.params.buffer[param_num] = .{
                         .key = name,
@@ -295,8 +301,30 @@ pub const EncodedPattern = struct {
                     param_num += 1;
                     i = if (end == path.len) end else end + 1;
                 },
-                .catch_all_optional => return true,
-                .catch_all => break,
+                .catch_all_optional, .catch_all => |name| {
+                    // Capture remaining path segments as individual parameters
+                    if (i < path.len) {
+                        var segment_start = i;
+                        while (segment_start < path.len) {
+                            const segment_end = strings.indexOfCharPos(path, '/', segment_start) orelse path.len;
+                            if (segment_start < segment_end) {
+                                // Check if we're about to exceed the maximum number of parameters
+                                if (param_num >= MatchedParams.max_count) {
+                                    // TODO: ideally we should throw a nice user message
+                                    bun.Output.panic("Route pattern matched more than {d} parameters. Path: {s}", .{ MatchedParams.max_count, path });
+                                }
+                                params.params.len = @intCast(param_num + 1);
+                                params.params.buffer[param_num] = .{
+                                    .key = name,
+                                    .value = path[segment_start..segment_end],
+                                };
+                                param_num += 1;
+                            }
+                            segment_start = if (segment_end == path.len) segment_end else segment_end + 1;
+                        }
+                    }
+                    return true;
+                },
                 .group => continue,
             }
         }
@@ -1336,15 +1364,17 @@ pub const JSFrameworkRouter = struct {
 };
 
 const std = @import("std");
-const mem = std.mem;
-const Allocator = mem.Allocator;
 
 const bun = @import("bun");
 const strings = bun.strings;
-const Resolver = bun.resolver.Resolver;
-const DirInfo = bun.resolver.DirInfo;
 
 const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
 const CallFrame = JSC.CallFrame;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+
+const DirInfo = bun.resolver.DirInfo;
+const Resolver = bun.resolver.Resolver;
+
+const mem = std.mem;
+const Allocator = mem.Allocator;

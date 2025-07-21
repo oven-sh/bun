@@ -1,8 +1,3 @@
-const std = @import("std");
-const strings = @import("../string_immutable.zig");
-const bun = @import("bun");
-const Fs = @import("../fs.zig");
-
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
@@ -2061,4 +2056,9 @@ pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
     }
 }
 
+const Fs = @import("../fs.zig");
+const std = @import("std");
+const strings = @import("../string_immutable.zig");
+
+const bun = @import("bun");
 const assert = bun.assert;

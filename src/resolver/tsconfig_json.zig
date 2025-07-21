@@ -1,15 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Environment = bun.Environment;
-const strings = bun.strings;
-
-const std = @import("std");
-const options = @import("../options.zig");
-const logger = bun.logger;
-const cache = @import("../cache.zig");
-const js_ast = bun.JSAst;
-const js_lexer = bun.js_lexer;
-
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
 // Array iteration is faster and deterministically ordered in that case.
@@ -495,4 +483,15 @@ pub const TSConfigJSON = struct {
     }
 };
 
+const cache = @import("../cache.zig");
+const options = @import("../options.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
 const assert = bun.assert;
+const js_ast = bun.JSAst;
+const js_lexer = bun.js_lexer;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;

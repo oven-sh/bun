@@ -1,4 +1,8 @@
-pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_dev_server: bool) !if (is_dev_server) void else std.ArrayList(options.OutputFile) {
+pub fn generateChunksInParallel(
+    c: *LinkerContext,
+    chunks: []Chunk,
+    comptime is_dev_server: bool,
+) !if (is_dev_server) void else std.ArrayList(options.OutputFile) {
     const trace = bun.perf.trace("Bundler.generateChunksInParallel");
     defer trace.end();
 
@@ -300,11 +304,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
         }
     }
 
-    var output_files = std.ArrayList(options.OutputFile).initCapacity(
-        bun.default_allocator,
-        (if (c.options.source_maps.hasExternalFiles()) chunks.len * 2 else chunks.len) +
-            @as(usize, c.parse_graph.additional_output_files.items.len),
-    ) catch unreachable;
+    var output_files = try OutputFileListBuilder.init(bun.default_allocator, c, chunks, c.parse_graph.additional_output_files.items.len);
 
     const root_path = c.resolver.opts.output_dir;
     const more_than_one_output = c.parse_graph.additional_output_files.items.len > 0 or c.options.generate_bytecode_cache or (has_css_chunk and has_js_chunk) or (has_html_chunk and (has_js_chunk or has_css_chunk));
@@ -315,12 +315,14 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
     }
 
     const bundler = @as(*bun.bundle_v2.BundleV2, @fieldParentPtr("linker", c));
+    var static_route_visitor = StaticRouteVisitor{ .c = c, .visited = bun.bit_set.AutoBitSet.initEmpty(bun.default_allocator, c.graph.files.len) catch unreachable };
+    defer static_route_visitor.deinit();
 
     if (root_path.len > 0) {
         try c.writeOutputFilesToDisk(root_path, chunks, &output_files);
     } else {
         // In-memory build
-        for (chunks) |*chunk| {
+        for (chunks, 0..) |*chunk, chunk_index_in_chunks_list| {
             var display_size: usize = 0;
 
             const public_path = if (chunk.is_browser_chunk_from_server_build)
@@ -469,14 +471,12 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
             };
 
             const source_map_index: ?u32 = if (sourcemap_output_file != null)
-                @as(u32, @truncate(output_files.items.len + 1))
+                try output_files.insertForSourcemapOrBytecode(sourcemap_output_file.?)
             else
                 null;
 
-            const bytecode_index: ?u32 = if (bytecode_output_file != null and source_map_index != null)
-                @as(u32, @truncate(output_files.items.len + 2))
-            else if (bytecode_output_file != null)
-                @as(u32, @truncate(output_files.items.len + 1))
+            const bytecode_index: ?u32 = if (bytecode_output_file != null)
+                try output_files.insertForSourcemapOrBytecode(bytecode_output_file.?)
             else
                 null;
 
@@ -486,7 +486,14 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                 c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].outputKind()
             else
                 .chunk;
-            try output_files.append(options.OutputFile.init(.{
+
+            const side: bun.bake.Side = if (chunk.content == .css or chunk.is_browser_chunk_from_server_build)
+                .client
+            else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
+                .browser => .client,
+                else => .server,
+            };
+            const chunk_index = output_files.insertForChunk(options.OutputFile.init(.{
                 .data = .{
                     .buffer = .{
                         .data = code_result.buffer,
@@ -503,73 +510,77 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                 .is_executable = chunk.is_executable,
                 .source_map_index = source_map_index,
                 .bytecode_index = bytecode_index,
-                .side = if (chunk.content == .css or chunk.is_browser_chunk_from_server_build)
-                    .client
-                else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
-                    .browser => .client,
-                    else => .server,
-                },
+                .side = side,
                 .entry_point_index = if (output_kind == .@"entry-point")
                     chunk.entry_point.source_index - @as(u32, (if (c.framework) |fw| if (fw.server_components != null) 3 else 1 else 1))
                 else
                     null,
-                .referenced_css_files = switch (chunk.content) {
+                .referenced_css_chunks = switch (chunk.content) {
                     .javascript => |js| @ptrCast(try bun.default_allocator.dupe(u32, js.css_chunks)),
                     .css => &.{},
                     .html => &.{},
                 },
+                .bake_extra = brk: {
+                    if (c.framework == null or is_dev_server) break :brk .{};
+                    if (!c.framework.?.is_built_in_react) break :brk .{};
+
+                    var extra: OutputFile.BakeExtra = .{};
+                    extra.bake_is_runtime = chunk.files_with_parts_in_chunk.contains(Index.runtime.get());
+                    if (output_kind == .@"entry-point" and side == .server) {
+                        extra.is_route = true;
+                        extra.fully_static = !static_route_visitor.hasTransitiveUseClient(chunk.entry_point.source_index);
+                    }
+
+                    break :brk extra;
+                },
             }));
-            if (sourcemap_output_file) |sourcemap_file| {
-                try output_files.append(sourcemap_file);
-            }
-            if (bytecode_output_file) |bytecode_file| {
-                try output_files.append(bytecode_file);
-            }
+
+            // We want the chunk index to remain the same in `output_files` so the indices in `OutputFile.referenced_css_chunks` work
+            bun.assertf(chunk_index == chunk_index_in_chunks_list, "chunk_index ({d}) != chunk_index_in_chunks_list ({d})", .{ chunk_index, chunk_index_in_chunks_list });
         }
 
-        try output_files.appendSlice(c.parse_graph.additional_output_files.items);
+        output_files.insertAdditionalOutputFiles(c.parse_graph.additional_output_files.items);
     }
 
-    return output_files;
+    return output_files.take();
 }
-
-const bun = @import("bun");
-const strings = bun.strings;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Part = bun.bundle_v2.Part;
-const Loader = bun.Loader;
-const std = @import("std");
-const debug = LinkerContext.debug;
-
-const Environment = bun.Environment;
-const Logger = bun.logger;
-const options = bun.options;
 
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
-const Loc = Logger.Loc;
-const Chunk = bun.bundle_v2.Chunk;
-
-const GenerateChunkCtx = LinkerContext.GenerateChunkCtx;
-const CompileResult = LinkerContext.CompileResult;
-const PendingPartRange = LinkerContext.PendingPartRange;
-
-const Output = bun.Output;
 const debugPartRanges = Output.scoped(.PartRanges, true);
 
-const generateCompileResultForJSChunk = LinkerContext.generateCompileResultForJSChunk;
-const generateCompileResultForCssChunk = LinkerContext.generateCompileResultForCssChunk;
-const generateCompileResultForHtmlChunk = LinkerContext.generateCompileResultForHtmlChunk;
-const generateChunk = LinkerContext.generateChunk;
+const std = @import("std");
 
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const Loader = bun.Loader;
+const Output = bun.Output;
+const ThreadPoolLib = bun.ThreadPool;
+const base64 = bun.base64;
+const strings = bun.strings;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 
+const Chunk = bun.bundle_v2.Chunk;
 const ContentHasher = bun.bundle_v2.ContentHasher;
-
+const Index = bun.bundle_v2.Index;
+const Part = bun.bundle_v2.Part;
 const cheapPrefixNormalizer = bun.bundle_v2.cheapPrefixNormalizer;
 
-const base64 = bun.base64;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const CompileResult = LinkerContext.CompileResult;
+const GenerateChunkCtx = LinkerContext.GenerateChunkCtx;
+const OutputFileListBuilder = bun.bundle_v2.LinkerContext.OutputFileListBuilder;
+const PendingPartRange = LinkerContext.PendingPartRange;
+const StaticRouteVisitor = bun.bundle_v2.LinkerContext.StaticRouteVisitor;
+const debug = LinkerContext.debug;
+const generateChunk = LinkerContext.generateChunk;
+const generateCompileResultForCssChunk = LinkerContext.generateCompileResultForCssChunk;
+const generateCompileResultForHtmlChunk = LinkerContext.generateCompileResultForHtmlChunk;
+const generateCompileResultForJSChunk = LinkerContext.generateCompileResultForJSChunk;
 
-const JSC = bun.JSC;
+const Logger = bun.logger;
+const Loc = Logger.Loc;
 
-const ThreadPoolLib = bun.ThreadPool;
+const options = bun.options;
+const OutputFile = bun.options.OutputFile;

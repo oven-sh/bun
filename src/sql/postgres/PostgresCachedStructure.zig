@@ -28,7 +28,5 @@ pub fn deinit(this: *@This()) void {
     }
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const JSC = bun.JSC;

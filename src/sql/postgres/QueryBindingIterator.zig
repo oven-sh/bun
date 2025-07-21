@@ -57,8 +57,6 @@ pub const QueryBindingIterator = union(enum) {
     }
 };
 
-// @sortImports
-
 const ObjectIterator = @import("./ObjectIterator.zig");
 const bun = @import("bun");
 

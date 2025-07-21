@@ -1,22 +1,6 @@
-const default_allocator = bun.default_allocator;
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const Output = bun.Output;
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
 // const IPC = @import("../bun.js/ipc.zig");
-const uws = bun.uws;
-const sh = bun.shell;
-
-const util = @import("./util.zig");
 
 pub const Stdio = util.Stdio;
-const FileSink = JSC.WebCore.FileSink;
 // pub const ShellSubprocess = NewShellSubprocess(.js);
 // pub const ShellSubprocessMini = NewShellSubprocess(.mini);
 
@@ -37,8 +21,6 @@ pub const ShellIO = struct {
         if (this.stderr) |io| io.deref();
     }
 };
-
-const BufferedInput = struct {};
 
 /// TODO Set this to interpreter
 const ShellCmd = bun.shell.Interpreter.Cmd;
@@ -1395,4 +1377,22 @@ pub inline fn assertStdioResult(result: StdioResult) void {
     }
 }
 
+const std = @import("std");
+const util = @import("./util.zig");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
 const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
+const uws = bun.uws;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const FileSink = JSC.WebCore.FileSink;
+
+const sh = bun.shell;
+const Yield = bun.shell.Yield;

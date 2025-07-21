@@ -161,29 +161,31 @@ pub fn BundleThread(CompletionStruct: type) type {
     };
 }
 
-const Transpiler = bun.Transpiler;
-const bun = @import("bun");
-const Output = bun.Output;
-const Environment = bun.Environment;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_ast = @import("../js_ast.zig");
-const linker = @import("../linker.zig");
 pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-const allocators = @import("../allocators.zig");
-const Timer = @import("../system_timer.zig");
 
 pub const Index = @import("../ast/base.zig").Index;
-const JSC = bun.JSC;
-const Async = bun.Async;
-const bake = bun.bake;
-const bundler = bun.bundle_v2;
-const BundleV2 = bundler.BundleV2;
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const Logger = @import("../logger.zig");
+const Timer = @import("../system_timer.zig");
+const allocators = @import("../allocators.zig");
+const js_ast = @import("../js_ast.zig");
+const linker = @import("../linker.zig");
+const options = @import("../options.zig");
+const std = @import("std");
+const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const Output = bun.Output;
+const Transpiler = bun.Transpiler;
+const bake = bun.bake;
+const default_allocator = bun.default_allocator;
+
+const bundler = bun.bundle_v2;
+const BundleV2 = bundler.BundleV2;

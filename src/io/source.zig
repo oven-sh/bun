@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const uv = bun.windows.libuv;
-
 const log = bun.Output.scoped(.PipeSource, true);
 
 pub const Source = union(enum) {
@@ -233,3 +229,7 @@ export fn Source__setRawModeStdin(raw: bool) c_int {
     }
     return 0;
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const uv = bun.windows.libuv;

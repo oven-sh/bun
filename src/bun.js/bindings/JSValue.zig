@@ -1184,8 +1184,10 @@ pub const JSValue = enum(i64) {
 
     extern fn JSC__JSValue__toString(this: JSValue, globalThis: *JSGlobalObject) *JSString;
     /// On exception, this returns the empty string.
-    pub fn toString(this: JSValue, globalThis: *JSGlobalObject) *JSString {
-        return JSC__JSValue__toString(this, globalThis);
+    // TODO: make this use JSC__JSValue__toStringOrNull version so it doesnt have to do the (relatively) expensive global.hasException check
+    // TODO: add (null_on_throw) modifier to bun.cpp. generator
+    pub fn toString(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!*JSString {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__toString, .{ this, globalThis });
     }
 
     extern fn JSC__JSValue__jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *bun.String) void;

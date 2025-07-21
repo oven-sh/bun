@@ -721,10 +721,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             {
-                var js_string = message_value.toString(globalThis);
-                if (globalThis.hasException()) {
-                    return .zero;
-                }
+                var js_string = try message_value.toString(globalThis);
                 const view = js_string.view(globalThis);
                 const slice = view.toSlice(bun.default_allocator);
                 defer slice.deinit();

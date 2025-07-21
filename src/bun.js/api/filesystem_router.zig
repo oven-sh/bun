@@ -514,10 +514,10 @@ pub const MatchedRoute = struct {
 
     threadlocal var query_string_values_buf: [256]string = undefined;
     threadlocal var query_string_value_refs_buf: [256]ZigString = undefined;
-    pub fn createQueryObject(ctx: *JSC.JSGlobalObject, map: *QueryStringMap) JSValue {
+    pub fn createQueryObject(ctx: *JSC.JSGlobalObject, map: *QueryStringMap) bun.JSError!JSValue {
         const QueryObjectCreator = struct {
             query: *QueryStringMap,
-            pub fn create(this: *@This(), obj: *JSObject, global: *JSGlobalObject) void {
+            pub fn create(this: *@This(), obj: *JSObject, global: *JSGlobalObject) bun.JSError!void {
                 var iter = this.query.iter();
                 while (iter.next(&query_string_values_buf)) |entry| {
                     const entry_name = entry.name;
@@ -529,10 +529,10 @@ pub const MatchedRoute = struct {
                         for (entry.values, 0..) |value, i| {
                             values[i] = ZigString.init(value).withEncoding();
                         }
-                        obj.putRecord(global, &str, values);
+                        try obj.putRecord(global, &str, values);
                     } else {
                         query_string_value_refs_buf[0] = ZigString.init(entry.values[0]).withEncoding();
-                        obj.putRecord(global, &str, query_string_value_refs_buf[0..1]);
+                        try obj.putRecord(global, &str, query_string_value_refs_buf[0..1]);
                     }
                 }
             }
@@ -540,7 +540,7 @@ pub const MatchedRoute = struct {
 
         var creator = QueryObjectCreator{ .query = map };
 
-        const value = JSObject.createWithInitializer(QueryObjectCreator, &creator, ctx, map.getNameCount());
+        const value = try JSObject.createWithInitializer(QueryObjectCreator, &creator, ctx, map.getNameCount());
 
         return value;
     }

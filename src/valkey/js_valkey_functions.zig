@@ -832,7 +832,7 @@ fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) !?JSArgument {
 
     if (value.isNumber()) {
         // Allow numbers to be passed as strings.
-        const str = value.toString(globalObject);
+        const str = try value.toString(globalObject);
         if (globalObject.hasException()) {
             @branchHint(.unlikely);
             return error.JSError;

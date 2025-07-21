@@ -2238,9 +2238,13 @@ JSC::EncodedJSValue
 JSC__JSObject__create(JSC::JSGlobalObject* globalObject, size_t initialCapacity, void* arg2,
     void (*ArgFn3)(void* arg0, JSC::JSObject* arg1, JSC::JSGlobalObject* arg2))
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned>(initialCapacity), JSFinalObject::maxInlineCapacity));
 
     ArgFn3(arg2, object, globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSC::JSValue::encode(object);
 }
@@ -2351,8 +2355,9 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
 void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global, ZigString* key,
     ZigString* values, size_t valuesLen)
 {
-    auto scope = DECLARE_THROW_SCOPE(global->vm());
-    auto ident = Identifier::fromString(global->vm(), Zig::toStringCopy(*key));
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto ident = Identifier::fromString(vm, Zig::toStringCopy(*key));
     JSC::PropertyDescriptor descriptor;
 
     descriptor.setEnumerable(1);
@@ -2360,12 +2365,12 @@ void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global
     descriptor.setWritable(1);
 
     if (valuesLen == 1) {
-        descriptor.setValue(JSC::jsString(global->vm(), Zig::toStringCopy(values[0])));
+        descriptor.setValue(JSC::jsString(vm, Zig::toStringCopy(values[0])));
     } else {
 
         JSC::JSArray* array = nullptr;
         {
-            JSC::ObjectInitializationScope initializationScope(global->vm());
+            JSC::ObjectInitializationScope initializationScope(vm);
             if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
                      initializationScope, nullptr,
                      global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
@@ -2373,7 +2378,7 @@ void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global
 
                 for (size_t i = 0; i < valuesLen; ++i) {
                     array->initializeIndexWithoutBarrier(
-                        initializationScope, i, JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
+                        initializationScope, i, JSC::jsString(vm, Zig::toStringCopy(values[i])));
                 }
             }
         }
@@ -2387,8 +2392,8 @@ void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global
     }
 
     object->methodTable()->defineOwnProperty(object, global, ident, descriptor, true);
-    object->putDirect(global->vm(), ident, descriptor.value());
-    scope.release();
+    RETURN_IF_EXCEPTION(scope, );
+    object->putDirect(vm, ident, descriptor.value());
 }
 void JSC__JSValue__putRecord(JSC::EncodedJSValue objectValue, JSC::JSGlobalObject* global, ZigString* key,
     ZigString* values, size_t valuesLen)

@@ -150,7 +150,7 @@ pub const GetAddrInfo = struct {
 
             if (value.isString()) {
                 return try map.fromJS(globalObject, value) orelse {
-                    if (value.toString(globalObject).length() == 0) {
+                    if ((try value.toString(globalObject)).length() == 0) {
                         return .unspecified;
                     }
 
@@ -211,7 +211,7 @@ pub const GetAddrInfo = struct {
 
             if (value.isString()) {
                 return try map.fromJS(globalObject, value) orelse {
-                    if (value.toString(globalObject).length() == 0)
+                    if ((try value.toString(globalObject)).length() == 0)
                         return .unspecified;
 
                     return error.InvalidSocketType;
@@ -251,7 +251,7 @@ pub const GetAddrInfo = struct {
 
             if (value.isString()) {
                 return try map.fromJS(globalObject, value) orelse {
-                    const str = value.toString(globalObject);
+                    const str = try value.toString(globalObject);
                     if (str.length() == 0)
                         return .unspecified;
 
@@ -301,7 +301,7 @@ pub const GetAddrInfo = struct {
 
             if (value.isString()) {
                 return try label.fromJS(globalObject, value) orelse {
-                    if (value.toString(globalObject).length() == 0) {
+                    if ((try value.toString(globalObject)).length() == 0) {
                         return default;
                     }
 

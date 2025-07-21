@@ -2169,7 +2169,7 @@ pub const Expect = struct {
                 }
             } else if (value.isString()) {
                 // `.toThrow("") behaves the same as `.toThrow()`
-                const s = value.toString(globalThis);
+                const s = value.toString(globalThis) catch @panic("unreachable");
                 if (s.length() == 0) break :brk .zero;
             }
             break :brk value;

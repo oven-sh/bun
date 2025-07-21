@@ -114,7 +114,6 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     Structure* structure = zigGlobalObject->NodeVMScriptStructure();
     if (zigGlobalObject->NodeVMScript() != newTarget) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Script cannot be invoked without 'new'"_s);
             return {};

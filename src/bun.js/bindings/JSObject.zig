@@ -123,17 +123,17 @@ pub const JSObject = opaque {
 
     const InitializeCallback = *const fn (ctx: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void;
 
-    pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) void) type {
+    pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) bun.JSError!void) type {
         return struct {
             pub fn call(this: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void {
-                @call(bun.callmod_inline, func, .{ @as(*Ctx, @ptrCast(@alignCast(this))), obj, global });
+                @call(bun.callmod_inline, func, .{ @as(*Ctx, @ptrCast(@alignCast(this))), obj, global }) catch return;
             }
         };
     }
 
-    pub fn createWithInitializer(comptime Ctx: type, creator: *Ctx, global: *JSGlobalObject, length: usize) JSValue {
+    pub fn createWithInitializer(comptime Ctx: type, creator: *Ctx, global: *JSGlobalObject, length: usize) bun.JSError!JSValue {
         const Type = Initializer(Ctx, Ctx.create);
-        return JSC__JSObject__create(global, length, creator, Type.call);
+        return bun.jsc.fromJSHostCall(global, @src(), JSC__JSObject__create, .{ global, length, creator, Type.call });
     }
 
     pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSError!JSValue {
@@ -150,8 +150,8 @@ pub const JSObject = opaque {
         return value;
     }
 
-    pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: []ZigString) void {
-        return JSC__JSObject__putRecord(this, global, key, values.ptr, values.len);
+    pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: []ZigString) bun.JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSObject__putRecord, .{ this, global, key, values.ptr, values.len });
     }
 
     /// This will not call getters or be observable from JavaScript.

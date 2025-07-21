@@ -8,8 +8,6 @@ pub fn toJS(
     return JSValue.jsBoolean(value);
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 

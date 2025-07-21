@@ -1,15 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const JSC = bun.JSC;
-const ZigString = JSC.ZigString;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const Response = bun.webcore.Response;
-const LOLHTML = bun.LOLHTML;
-const host_fn = JSC.host_fn;
-const JSError = bun.JSError;
-
 const SelectorMap = std.ArrayListUnmanaged(*LOLHTML.HTMLSelector);
 pub const LOLHTMLContext = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
@@ -1920,3 +1908,17 @@ pub const Element = struct {
         return attr_iter.toJS(globalObject);
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+const LOLHTML = bun.LOLHTML;
+const string = bun.string;
+const Response = bun.webcore.Response;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
+const host_fn = JSC.host_fn;

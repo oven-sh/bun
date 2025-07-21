@@ -16,8 +16,6 @@ comptime {
     @export(&js_init, .{ .name = "PostgresSQLContext__init" });
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const JSC = bun.JSC;
 const uws = bun.uws;

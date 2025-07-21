@@ -1,8 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-
 pub const VM = opaque {
     pub const HeapType = enum(u8) {
         SmallHeap = 0,
@@ -202,3 +197,9 @@ pub const VM = opaque {
         JSC__VM__performOpportunisticallyScheduledTasks(vm, until);
     }
 };
+
+const bun = @import("bun");
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

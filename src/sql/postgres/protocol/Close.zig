@@ -30,8 +30,6 @@ pub const Close = struct {
     pub const write = WriteWrap(@This(), writeInternal);
 };
 
-// @sortImports
-
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 
 const PortalOrPreparedStatement = @import("./PortalOrPreparedStatement.zig").PortalOrPreparedStatement;

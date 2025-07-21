@@ -1,38 +1,11 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const default_allocator = bun.default_allocator;
-
-const Api = @import("../api/schema.zig").Api;
-const std = @import("std");
-const options = @import("../options.zig");
-const cache = @import("../cache.zig");
-const logger = bun.logger;
-const js_ast = bun.JSAst;
-
-const fs = @import("../fs.zig");
-const resolver = @import("./resolver.zig");
-const js_lexer = bun.js_lexer;
-const resolve_path = @import("./resolve_path.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
-const MainFieldMap = bun.StringMap;
 pub const BrowserMap = bun.StringMap;
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 
 const ScriptsMap = bun.StringArrayHashMap(string);
-const Semver = bun.Semver;
-const Dependency = @import("../install/dependency.zig");
-const String = Semver.String;
-const Version = Semver.Version;
-const Install = @import("../install/install.zig");
 
-const Architecture = @import("../install/npm.zig").Architecture;
-const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
 pub const DependencyMap = struct {
     map: HashMap = .{},
     source_buf: []const u8 = "",
@@ -2050,3 +2023,32 @@ fn findInvalidSegment(path_: string) ?string {
 
     return null;
 }
+
+const Dependency = @import("../install/dependency.zig");
+const Install = @import("../install/install.zig");
+const cache = @import("../cache.zig");
+const fs = @import("../fs.zig");
+const options = @import("../options.zig");
+const resolve_path = @import("./resolve_path.zig");
+const resolver = @import("./resolver.zig");
+const std = @import("std");
+const Api = @import("../api/schema.zig").Api;
+
+const Architecture = @import("../install/npm.zig").Architecture;
+const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const MainFieldMap = bun.StringMap;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.JSAst;
+const js_lexer = bun.js_lexer;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+
+const Semver = bun.Semver;
+const String = Semver.String;
+const Version = Semver.Version;

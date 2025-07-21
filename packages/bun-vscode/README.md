@@ -95,6 +95,9 @@ You can use the following configurations to debug JavaScript and TypeScript file
       // The URL of the WebSocket inspector to attach to.
       // This value can be retrieved by using `bun --inspect`.
       "url": "ws://localhost:6499/",
+      // Optional path mapping for remote debugging
+      "localRoot": "${workspaceFolder}",
+      "remoteRoot": "/app",
     },
   ],
 }

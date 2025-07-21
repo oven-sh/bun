@@ -62,6 +62,4 @@ pub const Data = union(enum) {
     }
 };
 
-// @sortImports
-
 const bun = @import("bun");

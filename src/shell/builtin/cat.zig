@@ -1,3 +1,5 @@
+const Cat = @This();
+
 opts: Opts = .{},
 state: union(enum) {
     idle,
@@ -330,21 +332,24 @@ const Opts = struct {
 };
 
 const debug = bun.Output.scoped(.ShellCat, true);
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
+
+const std = @import("std");
+
 const interpreter = @import("../interpreter.zig");
+const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
 const ParseError = interpreter.ParseError;
 const ParseFlagResult = interpreter.ParseFlagResult;
-const ExitCode = shell.ExitCode;
-const IOReader = shell.IOReader;
-const Cat = @This();
-const JSC = bun.JSC;
-const std = @import("std");
-const FlagParser = interpreter.FlagParser;
-
 const ShellSyscall = interpreter.ShellSyscall;
 const unsupportedFlag = interpreter.unsupportedFlag;
+
+const Builtin = Interpreter.Builtin;
+const Result = Interpreter.Builtin.Result;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const IOReader = shell.IOReader;
+const Yield = bun.shell.Yield;

@@ -116,8 +116,16 @@ pub const Flags = struct {
 };
 
 pub const ClauseItem = struct {
+    /// The local alias used for the imported/exported symbol in the current module.
+    /// For imports: `import { foo as bar }` - "bar" is the alias
+    /// For exports: `export { foo as bar }` - "bar" is the alias
+    /// For re-exports: `export { foo as bar } from 'path'` - "bar" is the alias
     alias: string,
     alias_loc: logger.Loc = logger.Loc.Empty,
+    /// Reference to the actual symbol being imported/exported.
+    /// For imports: `import { foo as bar }` - ref to the symbol representing "foo" from the source module
+    /// For exports: `export { foo as bar }` - ref to the local symbol "foo"
+    /// For re-exports: `export { foo as bar } from 'path'` - ref to an intermediate symbol
     name: LocRef,
 
     /// This is the original name of the symbol stored in "Name". It's needed for
@@ -550,6 +558,13 @@ pub const NamedImport = struct {
     // Parts within this file that use this import
     local_parts_with_uses: BabyList(u32) = BabyList(u32){},
 
+    // The original export name from the source module being imported.
+    // Examples:
+    // - `import { foo } from 'module'` → alias = "foo"
+    // - `import { foo as bar } from 'module'` → alias = "foo" (original export name)
+    // - `import * as ns from 'module'` → alias_is_star = true, alias = ""
+    // This field is used by the bundler to match imports with their corresponding
+    // exports and for error reporting when imports can't be resolved.
     alias: ?string,
     alias_loc: ?logger.Loc = null,
     namespace_ref: ?Ref,
@@ -635,45 +650,45 @@ pub fn NewBatcher(comptime Type: type) type {
     };
 }
 
-// @sortImports
-
-pub const ASTMemoryAllocator = @import("ast/ASTMemoryAllocator.zig");
-pub const Ast = @import("ast/Ast.zig");
-pub const Binding = @import("ast/Binding.zig");
+pub const ASTMemoryAllocator = @import("./ast/ASTMemoryAllocator.zig");
+pub const Ast = @import("./ast/Ast.zig");
+pub const Binding = @import("./ast/Binding.zig");
 pub const BindingNodeIndex = Binding;
-pub const BundledAst = @import("ast/BundledAst.zig");
-pub const E = @import("ast/E.zig");
-pub const Expr = @import("ast/Expr.zig");
+pub const BundledAst = @import("./ast/BundledAst.zig");
+pub const E = @import("./ast/E.zig");
+pub const Expr = @import("./ast/Expr.zig");
 pub const ExprNodeIndex = Expr;
-pub const G = @import("ast/G.zig");
-pub const Macro = @import("ast/Macro.zig");
-pub const Op = @import("ast/Op.zig");
-pub const S = @import("ast/S.zig");
-pub const Scope = @import("ast/Scope.zig");
-pub const ServerComponentBoundary = @import("ast/ServerComponentBoundary.zig");
-pub const Stmt = @import("ast/Stmt.zig");
+pub const G = @import("./ast/G.zig");
+pub const Macro = @import("./ast/Macro.zig");
+pub const Op = @import("./ast/Op.zig");
+pub const S = @import("./ast/S.zig");
+pub const Scope = @import("./ast/Scope.zig");
+pub const ServerComponentBoundary = @import("./ast/ServerComponentBoundary.zig");
+pub const Stmt = @import("./ast/Stmt.zig");
 pub const StmtNodeIndex = Stmt;
-pub const Symbol = @import("ast/Symbol.zig");
-const std = @import("std");
-pub const B = @import("ast/B.zig").B;
-pub const NewStore = @import("ast/NewStore.zig").NewStore;
-const TypeScript = @import("./js_parser.zig").TypeScript;
-pub const UseDirective = @import("ast/UseDirective.zig").UseDirective;
+pub const Symbol = @import("./ast/Symbol.zig");
+pub const B = @import("./ast/B.zig").B;
+pub const NewStore = @import("./ast/NewStore.zig").NewStore;
+pub const UseDirective = @import("./ast/UseDirective.zig").UseDirective;
 
-pub const CharFreq = @import("ast/CharFreq.zig");
+pub const CharFreq = @import("./ast/CharFreq.zig");
 const char_freq_count = CharFreq.char_freq_count;
 
-pub const TS = @import("ast/TS.zig");
+pub const TS = @import("./ast/TS.zig");
 pub const TSNamespaceMember = TS.TSNamespaceMember;
 pub const TSNamespaceMemberMap = TS.TSNamespaceMemberMap;
 pub const TSNamespaceScope = TS.TSNamespaceScope;
 
-pub const Index = @import("ast/base.zig").Index;
-pub const Ref = @import("ast/base.zig").Ref;
-pub const RefHashCtx = @import("ast/base.zig").RefHashCtx;
+pub const Index = @import("./ast/base.zig").Index;
+pub const Ref = @import("./ast/base.zig").Ref;
+pub const RefHashCtx = @import("./ast/base.zig").RefHashCtx;
+
+pub const BabyList = bun.BabyList;
+
+const std = @import("std");
+const TypeScript = @import("./js_parser.zig").TypeScript;
 
 const bun = @import("bun");
-pub const BabyList = bun.BabyList;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const logger = bun.logger;

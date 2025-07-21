@@ -1,17 +1,3 @@
-const js_ast = bun.JSAst;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-
-const std = @import("std");
-const Ref = @import("./ast/base.zig").Ref;
-const RefCtx = @import("./ast/base.zig").RefCtx;
-const logger = bun.logger;
-const JSLexer = @import("./js_lexer.zig");
-
 pub const NoOpRenamer = struct {
     symbols: js_ast.Symbol.Map,
     source: *const logger.Source,
@@ -962,3 +948,18 @@ pub fn computeReservedNamesForScope(
         }
     }
 }
+
+const JSLexer = @import("./js_lexer.zig");
+const std = @import("std");
+
+const Ref = @import("./ast/base.zig").Ref;
+const RefCtx = @import("./ast/base.zig").RefCtx;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const js_ast = bun.JSAst;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;

@@ -78,9 +78,11 @@ pub fn WorkTask(comptime Context: type) type {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
 const Async = bun.Async;
+
+const JSC = bun.JSC;
+const ConcurrentTask = JSC.ConcurrentTask;
 const WorkPool = JSC.WorkPool;
 const WorkPoolTask = JSC.WorkPoolTask;
-const ConcurrentTask = JSC.ConcurrentTask;

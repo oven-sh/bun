@@ -1,15 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Global = bun.Global;
-const Output = bun.Output;
-const strings = bun.strings;
-const string = bun.string;
-const Command = bun.CLI.Command;
-const PackageManager = bun.install.PackageManager;
-const Semver = bun.Semver;
-const PackageID = @import("../install/install.zig").PackageID;
-const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
-
 pub const WhyCommand = struct {
     const PREFIX_LAST = "  └─ ";
     const PREFIX_MIDDLE = "  ├─ ";
@@ -488,3 +476,16 @@ pub const WhyCommand = struct {
         }
     }
 };
+
+const std = @import("std");
+const PackageID = @import("../install/install.zig").PackageID;
+const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const Semver = bun.Semver;
+const string = bun.string;
+const strings = bun.strings;
+const Command = bun.CLI.Command;
+const PackageManager = bun.install.PackageManager;

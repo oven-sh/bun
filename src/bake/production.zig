@@ -38,9 +38,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     defer vm.deinit();
     // A special global object is used to allow registering virtual modules
     // that bypass Bun's normal module resolver and plugin system.
-    vm.global = BakeCreateProdGlobal(vm.console);
     vm.regular_event_loop.global = vm.global;
-    vm.jsc = vm.global.vm();
     vm.event_loop.ensureWaker();
     const b = &vm.transpiler;
     vm.preload = ctx.preloads;
@@ -82,7 +80,21 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
 
     const api_lock = vm.jsc.getAPILock();
     defer api_lock.release();
-    buildWithVm(ctx, cwd, vm) catch |err| switch (err) {
+
+    var pt: PerThread = .{
+        .input_files = &.{},
+        .bundled_outputs = &.{},
+        .output_indexes = &.{},
+        .module_keys = &.{},
+        .module_map = .{},
+        .source_maps = .{},
+
+        .vm = vm,
+        .loaded_files = bun.bit_set.AutoBitSet.initEmpty(vm.allocator, 0) catch unreachable,
+        .all_server_files = JSValue.null,
+    };
+
+    buildWithVm(ctx, cwd, vm, &pt) catch |err| switch (err) {
         error.JSError => |e| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
             const err_value = vm.global.takeException(e);
@@ -96,7 +108,34 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     };
 }
 
-pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMachine) !void {
+pub fn writeSourcemapToDisk(
+    allocator: std.mem.Allocator,
+    file: *const OutputFile,
+    bundled_outputs: []const OutputFile,
+    source_maps: *bun.StringArrayHashMapUnmanaged(OutputFile.Index),
+) !void {
+    // don't call this if the file does not have sourcemaps!
+    bun.assert(file.source_map_index != std.math.maxInt(u32));
+
+    // TODO: should we just write the sourcemaps to disk?
+    const source_map_index = file.source_map_index;
+    const source_map_file: *const OutputFile = &bundled_outputs[source_map_index];
+    bun.assert(source_map_file.output_kind == .sourcemap);
+
+    const without_prefix = if (bun.strings.hasPrefixComptime(file.dest_path, "./") or
+        (Environment.isWindows and bun.strings.hasPrefixComptime(file.dest_path, ".\\")))
+        file.dest_path[2..]
+    else
+        file.dest_path;
+
+    try source_maps.put(
+        allocator,
+        try std.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
+        OutputFile.Index.init(@intCast(source_map_index)),
+    );
+}
+
+pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMachine, pt: *PerThread) !void {
     // Load and evaluate the configuration module
     const global = vm.global;
     const b = &vm.transpiler;
@@ -174,10 +213,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     var client_transpiler: bun.transpiler.Transpiler = undefined;
     var server_transpiler: bun.transpiler.Transpiler = undefined;
     var ssr_transpiler: bun.transpiler.Transpiler = undefined;
-    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .server, &server_transpiler, &options.bundler_options.server, .@"inline");
-    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .client, &client_transpiler, &options.bundler_options.client, .@"inline");
+    try framework.initTranspilerWithOptions(allocator, vm.log, .production_static, .server, &server_transpiler, &options.bundler_options.server, bun.options.SourceMapOption.fromApi(options.bundler_options.server.source_map), options.bundler_options.server.minify_whitespace, options.bundler_options.server.minify_syntax, options.bundler_options.server.minify_identifiers);
+    try framework.initTranspilerWithOptions(allocator, vm.log, .production_static, .client, &client_transpiler, &options.bundler_options.client, bun.options.SourceMapOption.fromApi(options.bundler_options.client.source_map), options.bundler_options.client.minify_whitespace, options.bundler_options.client.minify_syntax, options.bundler_options.client.minify_identifiers);
     if (separate_ssr_graph) {
-        try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .ssr, &ssr_transpiler, &options.bundler_options.ssr, .@"inline");
+        try framework.initTranspilerWithOptions(allocator, vm.log, .production_static, .ssr, &ssr_transpiler, &options.bundler_options.ssr, bun.options.SourceMapOption.fromApi(options.bundler_options.ssr.source_map), options.bundler_options.ssr.minify_whitespace, options.bundler_options.ssr.minify_syntax, options.bundler_options.ssr.minify_identifiers);
     }
 
     if (ctx.bundler_options.bake_debug_disable_minify) {
@@ -261,12 +300,19 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         .{ .js = vm.event_loop },
     );
     const bundled_outputs = bundled_outputs_list.items;
+    if (bundled_outputs.len == 0) {
+        Output.prettyln("done", .{});
+        Output.flush();
+        return;
+    }
 
     Output.prettyErrorln("Rendering routes", .{});
     Output.flush();
 
     var root_dir = try std.fs.cwd().makeOpenPath("dist", .{});
     defer root_dir.close();
+
+    var maybe_runtime_file_index: ?u32 = null;
 
     var css_chunks_count: usize = 0;
     var css_chunks_first: usize = 0;
@@ -278,16 +324,22 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     const module_keys = try vm.allocator.alloc(bun.String, entry_points.files.count());
     const output_indexes = entry_points.files.values();
     var output_module_map: bun.StringArrayHashMapUnmanaged(OutputFile.Index) = .{};
+    var source_maps: bun.StringArrayHashMapUnmanaged(OutputFile.Index) = .{};
     @memset(module_keys, bun.String.dead);
     for (bundled_outputs, 0..) |file, i| {
-        log("{s} - {s} : {s} - {?d}\n", .{
+        log("src_index={any} side={s} src={s} dest={s} - {?d}\n", .{
+            file.source_index.unwrap(),
             if (file.side) |s| @tagName(s) else "null",
             file.src_path.text,
             file.dest_path,
             file.entry_point_index,
         });
         if (file.loader.isCSS()) {
-            if (css_chunks_count == 0) css_chunks_first = i;
+            if (css_chunks_count == 0) {
+                css_chunks_first = i;
+            } else {
+                css_chunks_first = @min(css_chunks_first, i);
+            }
             css_chunks_count += 1;
         }
 
@@ -297,6 +349,17 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             }
         }
 
+        // The output file which contains the runtime (Index.runtime, contains
+        // wrapper functions like `__esm`) is marked as server side, but it is
+        // also used by client
+        if (file.bake_extra.bake_is_runtime) {
+            if (comptime bun.Environment.allow_assert) {
+                bun.assertf(maybe_runtime_file_index == null, "Runtime file should only be in one chunk.", .{});
+            }
+            maybe_runtime_file_index = @intCast(i);
+        }
+
+        // TODO: Maybe not do all the disk-writing in 1 thread?
         switch (file.side orelse continue) {
             .client => {
                 // Client-side resources will be written to disk for usage in on the client side
@@ -306,12 +369,18 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 };
             },
             .server => {
-                // For Debugging
                 if (ctx.bundler_options.bake_debug_dump_server) {
                     _ = file.writeToDisk(root_dir, ".") catch |err| {
                         bun.handleErrorReturnTrace(err, @errorReturnTrace());
                         Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
                     };
+                }
+
+                // If the file has a sourcemap, store it so we can put it on
+                // `PerThread` so we can provide sourcemapped stacktraces for
+                // server components.
+                if (file.source_map_index != std.math.maxInt(u32)) {
+                    try writeSourcemapToDisk(allocator, &file, bundled_outputs, &source_maps);
                 }
 
                 switch (file.output_kind) {
@@ -330,6 +399,8 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                             }
                         }
 
+                        log("  adding module map entry: output_module_map(bake:/{s}) = {d}\n", .{ without_prefix, i });
+
                         try output_module_map.put(
                             allocator,
                             try std.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
@@ -342,6 +413,34 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 }
             },
         }
+
+        // TODO: should we just write the sourcemaps to disk?
+        if (file.source_map_index != std.math.maxInt(u32)) {
+            try writeSourcemapToDisk(allocator, &file, bundled_outputs, &source_maps);
+        }
+    }
+    // Write the runtime file to disk if there are any client chunks
+    {
+        const runtime_file_index = maybe_runtime_file_index orelse {
+            bun.Output.panic("Runtime file not found. This is an unexpected bug in Bun. Please file a bug report on GitHub.", .{});
+        };
+        const any_client_chunks = any_client_chunks: {
+            for (bundled_outputs) |file| {
+                if (file.side) |s| {
+                    if (s == .client and !bun.strings.eqlComptime(file.src_path.text, "bun-framework-react/client.tsx")) {
+                        break :any_client_chunks true;
+                    }
+                }
+            }
+            break :any_client_chunks false;
+        };
+        if (any_client_chunks) {
+            const runtime_file: *const OutputFile = &bundled_outputs[runtime_file_index];
+            _ = runtime_file.writeToDisk(root_dir, ".") catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(runtime_file.dest_path)});
+            };
+        }
     }
 
     const per_thread_options: PerThread.Options = .{
@@ -350,9 +449,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         .output_indexes = output_indexes,
         .module_keys = module_keys,
         .module_map = output_module_map,
+        .source_maps = source_maps,
     };
 
-    var pt = try PerThread.init(vm, per_thread_options);
+    pt.* = try PerThread.init(vm, per_thread_options);
     pt.attach();
 
     // Static site generator
@@ -417,15 +517,33 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     const css_chunk_js_strings = try allocator.alloc(JSValue, css_chunks_count);
     for (bundled_outputs[css_chunks_first..][0..css_chunks_count], css_chunk_js_strings) |output_file, *str| {
         bun.assert(output_file.dest_path[0] != '.');
+        // CSS chunks must be in contiguous order!!
         bun.assert(output_file.loader.isCSS());
         str.* = (try bun.String.createFormat("{s}{s}", .{ public_path, output_file.dest_path })).toJS(global);
     }
 
+    // Route URL patterns with parameter placeholders.
+    // Examples: "/", "/about", "/blog/:slug", "/products/:category/:id"
     const route_patterns = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+
+    // File indices for each route's components (page, layouts).
+    // Example: [2, 5, 0] = page at index 2, layout at 5, root layout at 0
     const route_nested_files = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+
+    // Router type index (lower 8 bits) and flags (upper 24 bits).
+    // Example: 0x00000001 = router type 1, no flags
     const route_type_and_flags = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+
+    // Source file paths relative to project root.
+    // Examples: "pages/index.tsx", "pages/blog/[slug].tsx"
     const route_source_files = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+
+    // Parameter names for dynamic routes (reversed order), null for static routes.
+    // Examples: ["slug"] for /blog/[slug], ["id", "category"] for /products/[category]/[id]
     const route_param_info = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+
+    // CSS chunk URLs for each route.
+    // Example: ["/assets/main.css", "/assets/blog.css"]
     const route_style_references = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
 
     var params_buf: std.ArrayListUnmanaged([]const u8) = .{};
@@ -444,15 +562,18 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             .param => {
                 params_buf.append(ctx.allocator, route.part.param) catch unreachable;
             },
-            .catch_all, .catch_all_optional => {
+            .catch_all => {
+                params_buf.append(ctx.allocator, route.part.catch_all) catch unreachable;
+            },
+            .catch_all_optional => {
                 return global.throw("catch-all routes are not supported in static site generation", .{});
             },
             else => {},
         }
         var file_count: u32 = 1;
-        var css_file_count: u32 = @intCast(main_file.referenced_css_files.len);
+        var css_file_count: u32 = @intCast(main_file.referenced_css_chunks.len);
         if (route.file_layout.unwrap()) |file| {
-            css_file_count += @intCast(pt.outputFile(file).referenced_css_files.len);
+            css_file_count += @intCast(pt.outputFile(file).referenced_css_chunks.len);
             file_count += 1;
         }
         var next: ?FrameworkRouter.Route.Index = route.parent.unwrap();
@@ -463,13 +584,16 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 .param => {
                     params_buf.append(ctx.allocator, parent.part.param) catch unreachable;
                 },
-                .catch_all, .catch_all_optional => {
+                .catch_all => {
+                    params_buf.append(ctx.allocator, parent.part.catch_all) catch unreachable;
+                },
+                .catch_all_optional => {
                     return global.throw("catch-all routes are not supported in static site generation", .{});
                 },
                 else => {},
             }
             if (parent.file_layout.unwrap()) |file| {
-                css_file_count += @intCast(pt.outputFile(file).referenced_css_files.len);
+                css_file_count += @intCast(pt.outputFile(file).referenced_css_chunks.len);
                 file_count += 1;
             }
             next = parent.parent.unwrap();
@@ -483,13 +607,13 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         file_count = 1;
         css_file_count = 0;
         try file_list.putIndex(global, 0, try pt.preloadBundledModule(main_file_route_index));
-        for (main_file.referenced_css_files) |ref| {
+        for (main_file.referenced_css_chunks) |ref| {
             try styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
             css_file_count += 1;
         }
         if (route.file_layout.unwrap()) |file| {
             try file_list.putIndex(global, file_count, try pt.preloadBundledModule(file));
-            for (pt.outputFile(file).referenced_css_files) |ref| {
+            for (pt.outputFile(file).referenced_css_chunks) |ref| {
                 try styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
                 css_file_count += 1;
             }
@@ -500,7 +624,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             const parent = router.routePtr(parent_index);
             if (parent.file_layout.unwrap()) |file| {
                 try file_list.putIndex(global, file_count, try pt.preloadBundledModule(file));
-                for (pt.outputFile(file).referenced_css_files) |ref| {
+                for (pt.outputFile(file).referenced_css_chunks) |ref| {
                     try styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
                     css_file_count += 1;
                 }
@@ -520,6 +644,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         try route_nested_files.putIndex(global, @intCast(nav_index), file_list);
         try route_type_and_flags.putIndex(global, @intCast(nav_index), JSValue.jsNumberFromInt32(@bitCast(TypeAndFlags{
             .type = route.type.get(),
+            .no_client = main_file.bake_extra.fully_static,
         })));
 
         if (params_buf.items.len > 0) {
@@ -570,6 +695,12 @@ fn loadModule(vm: *VirtualMachine, global: *JSC.JSGlobalObject, key: JSValue) !J
     const promise = BakeLoadModuleByKey(global, key).asAnyPromise().?.internal;
     promise.setHandled(vm.jsc);
     vm.waitForPromise(.{ .internal = promise });
+    // TODO: Specially draining microtasks here because `waitForPromise` has a
+    //       bug which forgets to do it, but I don't want to fix it right now as it
+    //       could affect a lot of the codebase. This should be removed.
+    vm.eventLoop().drainMicrotasks() catch {
+        bun.Global.crash();
+    };
     switch (promise.unwrap(vm.jsc, .mark_handled)) {
         .pending => unreachable,
         .fulfilled => |val| {
@@ -598,22 +729,32 @@ fn BakeGetOnModuleNamespace(global: *JSC.JSGlobalObject, module: JSValue, proper
     return result;
 }
 
+/// Renders all routes for static site generation by calling the JavaScript implementation.
 extern fn BakeRenderRoutesForProdStatic(
     *JSC.JSGlobalObject,
+    /// Output directory path (e.g., "./dist")
     out_base: bun.String,
+    /// Server module paths (e.g., ["bake://page.js", "bake://layout.js"])
     all_server_files: JSValue,
+    /// Framework prerender functions by router type
     render_static: JSValue,
+    /// Framework getParams functions by router type
     get_params: JSValue,
+    /// Client entry URLs by router type (e.g., ["/client.js", null])
     client_entry_urls: JSValue,
+    /// Route patterns (e.g., ["/", "/about", "/blog/:slug"])
     patterns: JSValue,
+    /// File indices per route (e.g., [[0], [1], [2, 0]])
     files: JSValue,
+    /// Packed router type and flags (e.g., [0x00000000, 0x00000001])
     type_and_flags: JSValue,
+    /// Source paths (e.g., ["pages/index.tsx", "pages/blog/[slug].tsx"])
     src_route_files: JSValue,
+    /// Dynamic route params (e.g., [null, null, ["slug"]])
     param_information: JSValue,
+    /// CSS URLs per route (e.g., [["/main.css"], ["/main.css", "/blog.css"]])
     styles: JSValue,
 ) *JSC.JSPromise;
-
-extern fn BakeCreateProdGlobal(console_ptr: *anyopaque) *JSC.JSGlobalObject;
 
 /// The result of this function is a JSValue that wont be garbage collected, as
 /// it will always have at least one reference by the module loader.
@@ -625,6 +766,21 @@ fn BakeRegisterProductionChunk(global: *JSC.JSGlobalObject, key: bun.String, sou
     if (result == .zero) return error.JSError;
     bun.assert(result.isString());
     return result;
+}
+
+pub export fn BakeToWindowsPath(input: bun.String) callconv(.C) bun.String {
+    if (comptime bun.Environment.isPosix) {
+        @panic("This code should not be called on POSIX systems.");
+    }
+    var sfa = std.heap.stackFallback(1024, bun.default_allocator);
+    const alloc = sfa.get();
+    const input_utf8 = input.toUTF8(alloc);
+    defer input_utf8.deinit();
+    const input_slice = input_utf8.slice();
+    const output = bun.w_path_buffer_pool.get();
+    defer bun.w_path_buffer_pool.put(output);
+    const output_slice = bun.strings.toWPathNormalizeAutoExtend(output.*[0..], input_slice);
+    return bun.String.cloneUTF16(output_slice);
 }
 
 pub export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
@@ -653,7 +809,7 @@ pub export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, sp
 
     return bun.String.createFormat("bake:{s}", .{bun.path.joinAbs(
         bun.Dirname.dirname(u8, referrer.slice()[5..]) orelse referrer.slice()[5..],
-        .auto,
+        .posix, // force posix paths in bake
         specifier.slice(),
     )}) catch return bun.String.dead;
 }
@@ -743,6 +899,7 @@ pub const PerThread = struct {
     module_keys: []const bun.String,
     /// Unordered
     module_map: bun.StringArrayHashMapUnmanaged(OutputFile.Index),
+    source_maps: bun.StringArrayHashMapUnmanaged(OutputFile.Index),
 
     // Thread-local
     vm: *JSC.VirtualMachine,
@@ -761,6 +918,7 @@ pub const PerThread = struct {
         module_keys: []const bun.String,
         /// Unordered
         module_map: bun.StringArrayHashMapUnmanaged(OutputFile.Index),
+        source_maps: bun.StringArrayHashMapUnmanaged(OutputFile.Index),
     };
 
     extern fn BakeGlobalObject__attachPerThreadData(global: *JSC.JSGlobalObject, pt: ?*PerThread) void;
@@ -782,6 +940,7 @@ pub const PerThread = struct {
             .vm = vm,
             .loaded_files = loaded_files,
             .all_server_files = all_server_files,
+            .source_maps = opts.source_maps,
         };
     }
 
@@ -807,7 +966,7 @@ pub const PerThread = struct {
     }
 
     // Must be run at the top of the event loop
-    pub fn loadBundledModule(pt: *PerThread, id: OpaqueFileId) bun.JSError!JSValue {
+    pub fn loadBundledModule(pt: *PerThread, id: OpaqueFileId) !JSValue {
         return try loadModule(
             pt.vm,
             pt.vm.global,
@@ -842,7 +1001,20 @@ pub export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
     const allocator = sfa.get();
     const utf8 = key.toUTF8(allocator);
     defer utf8.deinit();
+    log("BakeProdLoad: {s}\n", .{utf8.slice()});
     if (pt.module_map.get(utf8.slice())) |value| {
+        log("  found in module_map: {s}\n", .{utf8.slice()});
+        return pt.bundled_outputs[value.get()].value.toBunString();
+    }
+    return bun.String.dead;
+}
+
+pub export fn BakeProdSourceMap(pt: *PerThread, key: bun.String) bun.String {
+    var sfa = std.heap.stackFallback(4096, bun.default_allocator);
+    const allocator = sfa.get();
+    const utf8 = key.toUTF8(allocator);
+    defer utf8.deinit();
+    if (pt.source_maps.get(utf8.slice())) |value| {
         return pt.bundled_outputs[value.get()].value.toBunString();
     }
     return bun.String.dead;
@@ -850,25 +1022,30 @@ pub export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
 
 const TypeAndFlags = packed struct(i32) {
     type: u8,
-    unused: u24 = 0,
+    /// Don't inclue the runtime client code (e.g.
+    /// bun-framework-react/client.tsx). This is used if we know a server
+    /// component does not include any downstream usages of "use client" and so
+    /// we can omit the client code entirely.
+    no_client: bool = false,
+    unused: u23 = 0,
 };
+
+fn @"export"() void {
+    _ = BakeProdResolve;
+    _ = BakeProdLoad;
+}
 
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const OutputFile = bun.options.OutputFile;
-
 const bake = bun.bake;
-const FrameworkRouter = bake.FrameworkRouter;
-const OpaqueFileId = FrameworkRouter.OpaqueFileId;
+const OutputFile = bun.options.OutputFile;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
 
-fn @"export"() void {
-    _ = BakeProdResolve;
-    _ = BakeProdLoad;
-}
+const FrameworkRouter = bake.FrameworkRouter;
+const OpaqueFileId = FrameworkRouter.OpaqueFileId;

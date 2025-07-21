@@ -1,10 +1,4 @@
-const bun = @import("bun");
-const std = @import("std");
-const LineOffsetTable = bun.sourcemap.LineOffsetTable;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const LinesHits = @import("../baby_list.zig").BabyList(u32);
-const Output = bun.Output;
-const prettyFmt = Output.prettyFmt;
 
 /// Our code coverage currently only deals with lines of code, not statements or branches.
 /// JSC doesn't expose function names in their coverage data, so we don't include that either :(.
@@ -727,3 +721,12 @@ pub const Block = struct {
     start_line: u32 = 0,
     end_line: u32 = 0,
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const LineOffsetTable = bun.sourcemap.LineOffsetTable;
+
+const Output = bun.Output;
+const prettyFmt = Output.prettyFmt;

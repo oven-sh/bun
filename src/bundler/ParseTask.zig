@@ -1293,7 +1293,7 @@ pub fn runFromThreadPool(this: *ParseTask) void {
                 } };
             }
 
-            if (this.ctx.graph.pool.usesIOPool()) {
+            if (ThreadPool.usesIOPool()) {
                 this.ctx.graph.pool.scheduleInsideThreadPool(this);
                 return;
             }
@@ -1366,56 +1366,61 @@ pub fn onComplete(result: *Result) void {
     BundleV2.onParseTaskComplete(result, result.ctx);
 }
 
-const Transpiler = bun.Transpiler;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FeatureFlags = bun.FeatureFlags;
-
-const bundler = bun.bundle_v2;
-const BundleV2 = bundler.BundleV2;
-
-const ContentHasher = bundler.ContentHasher;
-const UseDirective = bundler.UseDirective;
-const targetFromHashbang = bundler.targetFromHashbang;
-
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const Part = js_ast.Part;
-const js_ast = @import("../js_ast.zig");
-const linker = @import("../linker.zig");
-const base64 = bun.base64;
 pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = @import("../thread_pool.zig");
-const BabyList = @import("../baby_list.zig").BabyList;
-const Fs = @import("../fs.zig");
-const _resolver = @import("../resolver/resolver.zig");
-const ImportRecord = bun.ImportRecord;
-const runtime = @import("../runtime.zig");
 
-const HTMLScanner = @import("../HTMLScanner.zig");
-const NodeFallbackModules = @import("../node_fallbacks.zig");
-const CacheEntry = @import("../cache.zig").Fs.Entry;
-const URL = @import("../url.zig").URL;
-const Resolver = _resolver.Resolver;
-const TOML = @import("../toml/toml_parser.zig").TOML;
-const JSAst = js_ast.BundledAst;
-const Loader = options.Loader;
 pub const Index = @import("../ast/base.zig").Index;
-const Symbol = js_ast.Symbol;
-const EventLoop = bun.JSC.AnyEventLoop;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const G = js_ast.G;
-const JSC = bun.JSC;
-const Loc = Logger.Loc;
-const bake = bun.bake;
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
+
+const Fs = @import("../fs.zig");
+const HTMLScanner = @import("../HTMLScanner.zig");
+const NodeFallbackModules = @import("../node_fallbacks.zig");
+const linker = @import("../linker.zig");
+const runtime = @import("../runtime.zig");
+const std = @import("std");
+const BabyList = @import("../baby_list.zig").BabyList;
+const TOML = @import("../toml/toml_parser.zig").TOML;
+const URL = @import("../url.zig").URL;
+const CacheEntry = @import("../cache.zig").Fs.Entry;
+
+const js_ast = @import("../js_ast.zig");
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const JSAst = js_ast.BundledAst;
+const Part = js_ast.Part;
+const Symbol = js_ast.Symbol;
+
+const Logger = @import("../logger.zig");
+const Loc = Logger.Loc;
+
+const options = @import("../options.zig");
+const Loader = options.Loader;
+
+const _resolver = @import("../resolver/resolver.zig");
+const Resolver = _resolver.Resolver;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const ImportRecord = bun.ImportRecord;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const ThreadPoolLib = bun.ThreadPool;
+const Transpiler = bun.Transpiler;
+const bake = bun.bake;
+const base64 = bun.base64;
+const default_allocator = bun.default_allocator;
+const js_parser = bun.js_parser;
+const string = bun.string;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const EventLoop = bun.JSC.AnyEventLoop;
+
+const bundler = bun.bundle_v2;
+const BundleV2 = bundler.BundleV2;
+const ContentHasher = bundler.ContentHasher;
+const UseDirective = bundler.UseDirective;
+const targetFromHashbang = bundler.targetFromHashbang;

@@ -67,5 +67,5 @@ pub fn get() CPUFeatures {
     return .{ .flags = flags };
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");

@@ -581,11 +581,13 @@ export class BunTestController implements vscode.Disposable {
       this.disconnectInspector();
     });
 
-    run.onDidDispose(() => {
-      run?.end?.();
-      this.closeAllActiveProcesses();
-      this.disconnectInspector();
-    });
+    if ('onDidDispose' in run) {
+      (run.onDidDispose as vscode.Event<void>)(() => {
+        run?.end?.();
+        this.closeAllActiveProcesses();
+        this.disconnectInspector();
+      });
+    }
 
     const queue: vscode.TestItem[] = [];
 
@@ -812,7 +814,7 @@ export class BunTestController implements vscode.Disposable {
         run.appendOutput(`\n\x1b[31m\x1b[1mError:\x1b[0m\x1b[31m ${errorMsg}\x1b[0m\n`);
 
         for (const test of tests) {
-          if (!this.testResultHistory.has(test.id) || this.testResultHistory.get(test.id)?._testRun !== run) {
+          if (!this.testResultHistory.has(test.id)) {
             const msg = new vscode.TestMessage(errorMsg + "\n\n----------\n" + stdout + "\n----------\n");
             msg.location = new vscode.Location(test.uri!, test.range || new vscode.Range(0, 0, 0, 0));
             run.errored(test, msg);

@@ -1,10 +1,4 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
 pub const css = @import("./css_parser.zig");
-
-const ArrayList = std.ArrayListUnmanaged;
 
 const MediaRule = css.css_rules.media.MediaRule;
 const MediaQuery = css.media_query.MediaQuery;
@@ -305,3 +299,9 @@ pub const PropertyHandlerContext = struct {
         }
     }
 };
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

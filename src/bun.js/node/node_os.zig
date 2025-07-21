@@ -1,14 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const JSC = bun.JSC;
-const Environment = bun.Environment;
-const libuv = bun.windows.libuv;
-const gen = bun.gen.node_os;
-const sys = bun.sys;
-const c = bun.c;
-
 pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     return (try JSC.JSObject.create(.{
         .cpus = gen.createCpusCallback(global),
@@ -1021,3 +1010,15 @@ fn netmaskToCIDRSuffix(mask: anytype) ?u8 {
     if (first_zero < @bitSizeOf(T) and first_zero < last_one) return null;
     return first_zero;
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const c = bun.c;
+const string = bun.string;
+const strings = bun.strings;
+const sys = bun.sys;
+const gen = bun.gen.node_os;
+const libuv = bun.windows.libuv;

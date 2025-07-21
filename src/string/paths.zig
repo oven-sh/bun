@@ -508,15 +508,18 @@ fn basenameWindows(comptime T: type, input: []const T) []const T {
     return input[start_index + 1 .. end_index];
 }
 
-const bun = @import("bun");
+const string = []const u8;
+
 const std = @import("std");
+
+const bun = @import("bun");
 const Environment = bun.Environment;
+const assert = bun.assert;
+
 const strings = bun.strings;
-const hasPrefixComptime = strings.hasPrefixComptime;
-const hasPrefixComptimeType = strings.hasPrefixComptimeType;
-const trimPrefixComptime = strings.trimPrefixComptime;
 const copyUTF16IntoUTF8 = strings.copyUTF16IntoUTF8;
 const eqlComptimeT = strings.eqlComptimeT;
-const string = []const u8;
-const assert = bun.assert;
+const hasPrefixComptime = strings.hasPrefixComptime;
+const hasPrefixComptimeType = strings.hasPrefixComptimeType;
 const hasPrefixComptimeUTF16 = strings.hasPrefixComptimeUTF16;
+const trimPrefixComptime = strings.trimPrefixComptime;

@@ -35,11 +35,6 @@
 //!   A variant of DynamicBitSet which does not store a pointer to its
 //!   allocator, in order to save space.
 
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const Environment = bun.Environment;
-
 /// Returns the optimal static bit set type for the specified number
 /// of elements.  The returned type will perform no allocations,
 /// can be copied by value, and does not require deinitialization.
@@ -1578,8 +1573,6 @@ pub const Range = struct {
 
 // ---------------- Tests -----------------
 
-const testing = std.testing;
-
 fn testEql(empty: anytype, full: anytype, len: usize) !void {
     try testing.expect(empty.eql(empty));
     try testing.expect(full.eql(full));
@@ -1934,3 +1927,10 @@ fn testStaticBitSet(comptime Set: type, comptime Container: @Type(.enum_literal)
 
     try testPureBitSet(Set);
 }
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+
+const std = @import("std");
+const testing = std.testing;
+const Allocator = std.mem.Allocator;

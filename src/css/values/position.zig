@@ -1,4 +1,3 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const Printer = css.Printer;
@@ -426,3 +425,5 @@ pub const VerticalPositionKeyword = enum {
 
 pub const HorizontalPosition = PositionComponent(HorizontalPositionKeyword);
 pub const VerticalPosition = PositionComponent(VerticalPositionKeyword);
+
+const std = @import("std");

@@ -1,3 +1,5 @@
+const Self = @This();
+
 // This file contains code derived from the following source:
 //   https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc#file-sync-zig
 //
@@ -7,12 +9,6 @@
 //   This file is part of [zig](https://ziglang.org/), which is MIT licensed.
 //   The MIT license requires this copyright notice to be included in all copies
 //   and substantial portions of the software.
-
-const bun = @import("bun");
-const Mutex = bun.threading.Mutex;
-const Condition = bun.threading.Condition;
-
-const Self = @This();
 
 mutex: Mutex = .{},
 cond: Condition = .{},
@@ -59,3 +55,8 @@ pub fn wait(self: *Self) void {
     while (self.active != 0)
         self.cond.wait(&self.mutex);
 }
+
+const bun = @import("bun");
+
+const Condition = bun.threading.Condition;
+const Mutex = bun.threading.Mutex;

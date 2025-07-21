@@ -1,3 +1,5 @@
+const Echo = @This();
+
 /// Should be allocated with the arena from Builtin
 output: std.ArrayList(u8),
 
@@ -67,14 +69,16 @@ pub inline fn bltn(this: *Echo) *Builtin {
 }
 
 const log = bun.Output.scoped(.echo, true);
-const bun = @import("bun");
-const ExitCode = bun.shell.ExitCode;
-const Yield = bun.shell.Yield;
+
 const interpreter = @import("../interpreter.zig");
-const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Echo = @This();
-const JSC = bun.JSC;
 const std = @import("std");
 
+const Interpreter = interpreter.Interpreter;
+const Builtin = Interpreter.Builtin;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
 const assert = bun.assert;
+
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;

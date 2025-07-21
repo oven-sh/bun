@@ -1,3 +1,5 @@
+const OutputFile = @This();
+
 // Instead of keeping files in-memory, we:
 // 1. Write directly to disk
 // 2. (Optional) move the file to the destination
@@ -514,16 +516,16 @@ pub fn toBlob(
     };
 }
 
-const OutputFile = @This();
 const string = []const u8;
-const FileDescriptorType = bun.FileDescriptor;
 
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Fs = bun.fs;
-const Loader = @import("./options.zig").Loader;
-const resolver = @import("./resolver/resolver.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
+const resolver = @import("./resolver/resolver.zig");
+const std = @import("std");
+const Loader = @import("./options.zig").Loader;
 const Output = @import("./Global.zig").Output;
+
+const bun = @import("bun");
 const Environment = bun.Environment;
+const FileDescriptorType = bun.FileDescriptor;
+const Fs = bun.fs;
+const JSC = bun.JSC;

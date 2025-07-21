@@ -1,25 +1,5 @@
-const std = @import("std");
-
-const Path = @import("../../resolver/resolve_path.zig");
-const Fs = @import("../../fs.zig");
-const Mutex = bun.Mutex;
-const FSEvents = @import("./fs_events.zig");
-
-const bun = @import("bun");
-const Output = bun.Output;
-const Environment = bun.Environment;
-const FD = bun.FD;
-const string = bun.string;
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-
 var default_manager_mutex: Mutex = .{};
 var default_manager: ?*PathWatcherManager = null;
-
-const FSWatcher = bun.api.node.fs.Watcher;
-const Event = FSWatcher.Event;
-
-const Watcher = bun.Watcher;
 
 pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
@@ -1012,3 +992,22 @@ pub fn watch(
 
     return .{ .result = watcher };
 }
+
+const FSEvents = @import("./fs_events.zig");
+const Fs = @import("../../fs.zig");
+const Path = @import("../../resolver/resolve_path.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const Mutex = bun.Mutex;
+const Output = bun.Output;
+const Watcher = bun.Watcher;
+const string = bun.string;
+
+const JSC = bun.JSC;
+const VirtualMachine = JSC.VirtualMachine;
+
+const FSWatcher = bun.api.node.fs.Watcher;
+const Event = FSWatcher.Event;

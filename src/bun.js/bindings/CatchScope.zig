@@ -203,6 +203,7 @@ extern fn CatchScope__assertNoException(ptr: *align(alignment) [size]u8) void;
 extern fn CatchScope__destruct(ptr: *align(alignment) [size]u8) void;
 
 const std = @import("std");
+
 const bun = @import("bun");
-const jsc = bun.jsc;
 const Environment = bun.Environment;
+const jsc = bun.jsc;

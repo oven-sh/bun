@@ -526,8 +526,6 @@ pub const Store = struct {
     };
 };
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

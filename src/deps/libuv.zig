@@ -1,28 +1,8 @@
-const bun = @import("bun");
-const Maybe = bun.JSC.Maybe;
-
 const WORD = c_ushort;
 const LARGE_INTEGER = i64;
-const std = @import("std");
-const windows = bun.windows;
-const HANDLE = windows.HANDLE;
-const DWORD = windows.DWORD;
-const OVERLAPPED = std.os.windows.OVERLAPPED;
-const ULONG_PTR = std.os.windows.ULONG_PTR;
-const HMODULE = HANDLE;
-const ULONG = windows.ULONG;
-const WCHAR = windows.WCHAR;
 const SOCKET = *anyopaque;
 const LPFN_ACCEPTEX = *const anyopaque;
-const WIN32_FIND_DATAW = std.os.windows.WIN32_FIND_DATAW;
 const LPFN_CONNECTEX = *const anyopaque;
-const FILE = std.c.FILE;
-const CRITICAL_SECTION = std.os.windows.CRITICAL_SECTION;
-const INPUT_RECORD = windows.INPUT_RECORD;
-const sockaddr = std.posix.sockaddr;
-const sockaddr_storage = std.os.linux.sockaddr_storage;
-const BOOL = windows.BOOL;
-const Env = bun.Environment;
 
 pub const log = bun.Output.scoped(.uv, true);
 
@@ -2051,8 +2031,6 @@ pub const struct_uv_cpu_info_s = extern struct {
 };
 pub const uv_cpu_info_t = struct_uv_cpu_info_s;
 
-const sockaddr_in = std.os.linux.sockaddr.in;
-const sockaddr_in6 = std.os.linux.sockaddr.in6;
 pub const addr_union = extern union {
     address4: std.os.linux.sockaddr.in,
     address6: std.os.linux.sockaddr.in6,
@@ -3103,3 +3081,29 @@ pub fn StreamWriterMixin(comptime Type: type, comptime pipe_field_name: std.meta
         }
     };
 }
+
+const std = @import("std");
+const FILE = std.c.FILE;
+const sockaddr = std.posix.sockaddr;
+const sockaddr_storage = std.os.linux.sockaddr_storage;
+
+const bun = @import("bun");
+const Env = bun.Environment;
+const Maybe = bun.JSC.Maybe;
+
+const windows = bun.windows;
+const BOOL = windows.BOOL;
+const DWORD = windows.DWORD;
+const HANDLE = windows.HANDLE;
+const HMODULE = HANDLE;
+const INPUT_RECORD = windows.INPUT_RECORD;
+const ULONG = windows.ULONG;
+const WCHAR = windows.WCHAR;
+
+const sockaddr_in = std.os.linux.sockaddr.in;
+const sockaddr_in6 = std.os.linux.sockaddr.in6;
+
+const CRITICAL_SECTION = std.os.windows.CRITICAL_SECTION;
+const OVERLAPPED = std.os.windows.OVERLAPPED;
+const ULONG_PTR = std.os.windows.ULONG_PTR;
+const WIN32_FIND_DATAW = std.os.windows.WIN32_FIND_DATAW;

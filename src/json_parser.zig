@@ -1,27 +1,4 @@
-const std = @import("std");
-const logger = bun.logger;
-const js_lexer = bun.js_lexer;
-const js_ast = bun.JSAst;
-const BabyList = @import("./baby_list.zig").BabyList;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const default_allocator = bun.default_allocator;
-
-const expect = std.testing.expect;
-
-const ExprNodeList = js_ast.ExprNodeList;
-const assert = bun.assert;
-
-const G = js_ast.G;
-const T = js_lexer.T;
-const E = js_ast.E;
-const Stmt = js_ast.Stmt;
 pub const Expr = js_ast.Expr;
-const Indentation = js_printer.Options.Indentation;
 
 const LEXER_DEBUGGER_WORKAROUND = false;
 
@@ -655,7 +632,6 @@ pub fn toAST(
 }
 
 const JSONParser = if (bun.fast_debug_build_mode) TSConfigParser else JSONLikeParser(js_lexer.JSONOptions{ .is_json = true });
-const RemoteJSONParser = if (bun.fast_debug_build_mode) TSConfigParser else JSONLikeParser(js_lexer.JSONOptions{ .is_json = true, .json_warn_duplicate_keys = false });
 const DotEnvJSONParser = JSONLikeParser(js_lexer.JSONOptions{
     .ignore_leading_escape_sequences = true,
     .ignore_trailing_escape_sequences = true,
@@ -985,10 +961,6 @@ pub fn parseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: 
     return parser.parseExpr(false, force_utf8);
 }
 
-const duplicateKeyJson = "{ \"name\": \"valid\", \"name\": \"invalid\" }";
-
-const js_printer = bun.js_printer;
-
 fn expectPrintedJSON(_contents: string, expected: string) !void {
     Expr.Data.Store.create(default_allocator);
     Stmt.Data.Store.create(default_allocator);
@@ -1031,3 +1003,28 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
 
     try std.testing.expectEqualStrings(expected, js);
 }
+
+const std = @import("std");
+const BabyList = @import("./baby_list.zig").BabyList;
+const expect = std.testing.expect;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+const Indentation = js_printer.Options.Indentation;
+
+const js_ast = bun.JSAst;
+const E = js_ast.E;
+const ExprNodeList = js_ast.ExprNodeList;
+const G = js_ast.G;
+const Stmt = js_ast.Stmt;
+
+const js_lexer = bun.js_lexer;
+const T = js_lexer.T;

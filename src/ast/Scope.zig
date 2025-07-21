@@ -205,8 +205,6 @@ pub inline fn kindStopsHoisting(s: *const Scope) bool {
     return @intFromEnum(s.kind) >= @intFromEnum(Kind.entry);
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

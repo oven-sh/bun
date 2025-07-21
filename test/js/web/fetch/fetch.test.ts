@@ -1130,8 +1130,8 @@ describe("Response", () => {
       expect(() => Response.json({ func: function () {} })).not.toThrow();
       expect(() => Response.json({ undef: undefined })).not.toThrow();
 
-      // BigInt should still throw with its own error message (not our new validation)
-      expect(() => Response.json(123n)).toThrow("JSON.stringify cannot serialize BigInt");
+      // BigInt should throw with Node.js compatible error message
+      expect(() => Response.json(123n)).toThrow("Do not know how to serialize a BigInt");
     });
   });
   describe("Response.redirect", () => {

@@ -26,7 +26,7 @@ test("Response.json() works correctly with valid values", () => {
   expect(() => Response.json({ undef: undefined })).not.toThrow();
 });
 
-test("Response.json() BigInt error is preserved", () => {
-  // BigInt should still throw with its own error message (not our new validation)
-  expect(() => Response.json(123n)).toThrow("JSON.stringify cannot serialize BigInt");
+test("Response.json() BigInt error matches Node.js", () => {
+  // BigInt should throw with Node.js compatible error message
+  expect(() => Response.json(123n)).toThrow("Do not know how to serialize a BigInt");
 });

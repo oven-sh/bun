@@ -107,8 +107,6 @@ pub fn NewReader(comptime Context: type) type {
     return NewReaderWrap(Context, Context.markMessageStart, Context.peek, Context.skip, Context.ensureLength, Context.read, Context.readZ);
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const Data = @import("../Data.zig").Data;

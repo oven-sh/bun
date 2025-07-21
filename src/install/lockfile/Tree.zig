@@ -1,3 +1,5 @@
+const Tree = @This();
+
 id: Id = invalid_id,
 
 // Should not be used for anything other than name
@@ -640,33 +642,36 @@ pub const FillItem = struct {
 
 pub const TreeFiller = std.fifo.LinearFifo(FillItem, .Dynamic);
 
-const Allocator = std.mem.Allocator;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Dependency = install.Dependency;
-const DependencyID = install.DependencyID;
-const DependencyIDList = Lockfile.DependencyIDList;
-const Environment = bun.Environment;
-const ExternalSlice = Lockfile.ExternalSlice;
-const Lockfile = install.Lockfile;
-const OOM = bun.OOM;
-const Output = bun.Output;
-const PackageID = install.PackageID;
-const PackageIDSlice = Lockfile.PackageIDSlice;
-const PackageManager = bun.install.PackageManager;
-const PackageNameHash = install.PackageNameHash;
-const Path = bun.path;
-const Resolution = install.Resolution;
-const String = bun.Semver.String;
-const Tree = @This();
-const WorkspaceFilter = install.PackageManager.WorkspaceFilter;
-const assert = bun.assert;
-const install = bun.install;
-const invalid_dependency_id = install.invalid_dependency_id;
-const invalid_package_id = install.invalid_package_id;
-const logger = bun.logger;
 const string = []const u8;
-const stringZ = bun.stringZ;
-const z_allocator = bun.z_allocator;
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
-const std = @import("std");
+const Environment = bun.Environment;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Path = bun.path;
+const assert = bun.assert;
+const logger = bun.logger;
+const stringZ = bun.stringZ;
+const z_allocator = bun.z_allocator;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const String = bun.Semver.String;
+
+const install = bun.install;
+const Dependency = install.Dependency;
+const DependencyID = install.DependencyID;
+const PackageID = install.PackageID;
+const PackageNameHash = install.PackageNameHash;
+const Resolution = install.Resolution;
+const invalid_dependency_id = install.invalid_dependency_id;
+const invalid_package_id = install.invalid_package_id;
+
+const Lockfile = install.Lockfile;
+const DependencyIDList = Lockfile.DependencyIDList;
+const ExternalSlice = Lockfile.ExternalSlice;
+const PackageIDSlice = Lockfile.PackageIDSlice;
+
+const PackageManager = bun.install.PackageManager;
+const WorkspaceFilter = install.PackageManager.WorkspaceFilter;

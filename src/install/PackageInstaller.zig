@@ -1,38 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const install = bun.install;
-const PackageManager = install.PackageManager;
-const Lockfile = install.Lockfile;
-const Progress = bun.Progress;
-const Environment = bun.Environment;
-const FD = bun.FD;
-const PackageInstall = install.PackageInstall;
-const String = bun.Semver.String;
-const PackageNameHash = install.PackageNameHash;
-const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
-const Bin = install.Bin;
-const Resolution = install.Resolution;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Command = bun.CLI.Command;
-const DependencyInstallContext = install.DependencyInstallContext;
-const Options = PackageManager.Options;
-const Output = bun.Output;
-const Global = bun.Global;
-const invalid_package_id = install.invalid_package_id;
-const strings = bun.strings;
-const string = bun.string;
-const FileSystem = bun.fs.FileSystem;
-const LifecycleScriptSubprocess = install.LifecycleScriptSubprocess;
-const PackageID = install.PackageID;
-const DependencyID = install.DependencyID;
-const ExtractData = install.ExtractData;
-const Task = install.Task;
-const TaskCallbackContext = install.TaskCallbackContext;
-const PatchTask = install.PatchTask;
-const Package = Lockfile.Package;
-const Path = bun.path;
-const Syscall = bun.sys;
-
 pub const PackageInstaller = struct {
     manager: *PackageManager,
     lockfile: *Lockfile,
@@ -1429,3 +1394,42 @@ pub const PackageInstaller = struct {
         );
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const Global = bun.Global;
+const Output = bun.Output;
+const Path = bun.path;
+const Progress = bun.Progress;
+const Syscall = bun.sys;
+const string = bun.string;
+const strings = bun.strings;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const Command = bun.CLI.Command;
+const FileSystem = bun.fs.FileSystem;
+const String = bun.Semver.String;
+
+const install = bun.install;
+const Bin = install.Bin;
+const DependencyID = install.DependencyID;
+const DependencyInstallContext = install.DependencyInstallContext;
+const ExtractData = install.ExtractData;
+const LifecycleScriptSubprocess = install.LifecycleScriptSubprocess;
+const PackageID = install.PackageID;
+const PackageInstall = install.PackageInstall;
+const PackageNameHash = install.PackageNameHash;
+const PatchTask = install.PatchTask;
+const Resolution = install.Resolution;
+const Task = install.Task;
+const TaskCallbackContext = install.TaskCallbackContext;
+const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
+const invalid_package_id = install.invalid_package_id;
+
+const Lockfile = install.Lockfile;
+const Package = Lockfile.Package;
+
+const PackageManager = install.PackageManager;
+const Options = PackageManager.Options;

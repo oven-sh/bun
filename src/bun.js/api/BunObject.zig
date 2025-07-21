@@ -1,3 +1,5 @@
+const Bun = @This();
+
 /// How to add a new function or property to the Bun global
 ///
 /// - Add a callback or property to the below struct
@@ -219,8 +221,6 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 
     return jsval;
 }
-
-const gen = bun.gen.BunObject;
 
 pub fn braces(global: *JSC.JSGlobalObject, brace_str: bun.String, opts: gen.BracesOptions) bun.JSError!JSC.JSValue {
     const brace_slice = brace_str.toUTF8(bun.default_allocator);
@@ -650,8 +650,6 @@ fn setMain(global_this: *JSC.JSGlobalObject, new_value: JSValue) callconv(JSC.co
 pub fn getArgv(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return node.process.getArgv(globalThis);
 }
-
-const Editor = @import("../../open.zig").Editor;
 
 pub fn openInEditor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     var edit = &VirtualMachine.get().rareData().editor_context;
@@ -2050,41 +2048,44 @@ comptime {
     BunObject.exportAll();
 }
 
-const assert = bun.assert;
-
-const Bun = @This();
-const default_allocator = bun.default_allocator;
-const bun = @import("bun");
-const Environment = bun.Environment;
-const strings = bun.strings;
-const string = bun.string;
-const Output = bun.Output;
-const MutableString = bun.MutableString;
-const std = @import("std");
-const options = @import("../../options.zig");
-const ZigString = bun.JSC.ZigString;
-const WebCore = bun.JSC.WebCore;
-const JSC = bun.JSC;
-const JSValue = bun.JSC.JSValue;
-
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const ConsoleObject = bun.JSC.ConsoleObject;
-const api = bun.api;
-const node = bun.api.node;
-const host_fn = bun.jsc.host_fn;
-const JSPromise = bun.JSC.JSPromise;
-const URL = @import("../../url.zig").URL;
-const Transpiler = bun.JSC.API.JSTranspiler;
-const JSBundler = bun.JSC.API.JSBundler;
-const VirtualMachine = JSC.VirtualMachine;
-const zlib = @import("../../zlib.zig");
-const Which = @import("../../which.zig");
-const ErrorableString = JSC.ErrorableString;
-const Async = bun.Async;
-const SemverObject = bun.Semver.SemverObject;
 const Braces = @import("../../shell/braces.zig");
+const Which = @import("../../which.zig");
+const options = @import("../../options.zig");
+const std = @import("std");
+const zlib = @import("../../zlib.zig");
+const Editor = @import("../../open.zig").Editor;
+const URL = @import("../../url.zig").URL;
+const conv = std.builtin.CallingConvention.Unspecified;
 
-const HashObject = bun.api.HashObject;
-const UnsafeObject = bun.api.UnsafeObject;
-const TOMLObject = bun.api.TOMLObject;
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+const SemverObject = bun.Semver.SemverObject;
+const gen = bun.gen.BunObject;
+const host_fn = bun.jsc.host_fn;
+
+const JSC = bun.JSC;
+const ConsoleObject = bun.JSC.ConsoleObject;
+const ErrorableString = JSC.ErrorableString;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const JSPromise = bun.JSC.JSPromise;
+const JSValue = bun.JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;
+const WebCore = bun.JSC.WebCore;
+const ZigString = bun.JSC.ZigString;
+
+const JSBundler = bun.JSC.API.JSBundler;
+const Transpiler = bun.JSC.API.JSTranspiler;
+
+const api = bun.api;
 const FFIObject = bun.api.FFIObject;
+const HashObject = bun.api.HashObject;
+const TOMLObject = bun.api.TOMLObject;
+const UnsafeObject = bun.api.UnsafeObject;
+const node = bun.api.node;

@@ -1,19 +1,3 @@
-const std = @import("std");
-const js_ast = bun.JSAst;
-const logger = bun.logger;
-const js_lexer = bun.js_lexer;
-const json_parser = bun.JSON;
-const fs = @import("fs.zig");
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-
-const Ref = @import("ast/base.zig").Ref;
-
-const global_no_side_effect_property_accesses = table.global_no_side_effect_property_accesses;
-const global_no_side_effect_function_calls_safe_for_to_string = table.global_no_side_effect_function_calls_safe_for_to_string;
-const table = @import("./defines-table.zig");
-
 const Globals = struct {
     pub const Undefined = js_ast.E.Undefined{};
     pub const UndefinedPtr = &Globals.Undefined;
@@ -259,7 +243,6 @@ pub const DotDefine = struct {
 
 // var nan_val = try allocator.create(js_ast.E.Number);
 const nan_val = js_ast.E.Number{ .value = std.math.nan(f64) };
-const inf_val = js_ast.E.Number{ .value = std.math.inf(f64) };
 
 pub const Define = struct {
     identifiers: bun.StringHashMap(IdentifierDefine),
@@ -414,3 +397,19 @@ pub const Define = struct {
         return define;
     }
 };
+
+const fs = @import("./fs.zig");
+const std = @import("std");
+const Ref = @import("./ast/base.zig").Ref;
+
+const table = @import("./defines-table.zig");
+const global_no_side_effect_function_calls_safe_for_to_string = table.global_no_side_effect_function_calls_safe_for_to_string;
+const global_no_side_effect_property_accesses = table.global_no_side_effect_property_accesses;
+
+const bun = @import("bun");
+const js_ast = bun.JSAst;
+const js_lexer = bun.js_lexer;
+const json_parser = bun.JSON;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;

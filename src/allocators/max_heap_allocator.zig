@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-
 /// Single allocation only.
 ///
 pub const MaxHeapAllocator = struct {
@@ -51,3 +48,6 @@ pub const MaxHeapAllocator = struct {
         };
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

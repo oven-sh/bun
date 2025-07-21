@@ -63,11 +63,14 @@ pub inline fn bltn(this: *@This()) *Builtin {
 }
 
 // --
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
+
 const interpreter = @import("../interpreter.zig");
+const std = @import("std");
+
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
+
+const bun = @import("bun");
 const JSC = bun.JSC;
 const Maybe = bun.sys.Maybe;
-const std = @import("std");
+const Yield = bun.shell.Yield;

@@ -1,10 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
-
-const ArrayList = std.ArrayListUnmanaged;
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -1058,3 +1052,9 @@ inline fn isFontProperty(property_id: css.PropertyId) bool {
         else => false,
     };
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

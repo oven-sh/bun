@@ -1,9 +1,4 @@
 const StringBuilder = @This();
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const Environment = bun.Environment;
-const assert = bun.assert;
 
 len: usize = 0,
 cap: usize = 0,
@@ -240,3 +235,10 @@ pub fn writable(this: *StringBuilder) []u8 {
     }
     return ptr[this.len..this.cap];
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const assert = bun.assert;

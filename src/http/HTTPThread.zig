@@ -1,5 +1,6 @@
-var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
 const HTTPThread = @This();
+
+var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
 
 loop: *JSC.MiniEventLoop,
 http_context: NewHTTPContext(false),
@@ -457,25 +458,27 @@ pub fn schedule(this: *@This(), batch: Batch) void {
         this.loop.loop.wakeup();
 }
 
-const std = @import("std");
-
-const bun = @import("bun");
-const Output = bun.Output;
-const Environment = bun.Environment;
-const Global = bun.Global;
-const uws = bun.uws;
-const strings = bun.strings;
-const stringZ = bun.stringZ;
-const JSC = bun.JSC;
-const NewHTTPContext = bun.http.NewHTTPContext;
-const UnboundedQueue = @import("../bun.js/unbounded_queue.zig").UnboundedQueue;
-const AsyncHTTP = bun.http.AsyncHTTP;
 pub const Queue = UnboundedQueue(AsyncHTTP, .next);
 
-const HTTPClient = bun.http;
+const log = Output.scoped(.HTTPThread, false);
+
 const ProxyTunnel = @import("./ProxyTunnel.zig");
-const InitError = HTTPClient.InitError;
-const Batch = bun.ThreadPool.Batch;
+const std = @import("std");
 const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const SSLConfig = @import("../bun.js/api/server.zig").ServerConfig.SSLConfig;
-const log = Output.scoped(.HTTPThread, false);
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSC = bun.JSC;
+const Output = bun.Output;
+const stringZ = bun.stringZ;
+const strings = bun.strings;
+const uws = bun.uws;
+const Batch = bun.ThreadPool.Batch;
+const UnboundedQueue = bun.threading.UnboundedQueue;
+
+const HTTPClient = bun.http;
+const AsyncHTTP = bun.http.AsyncHTTP;
+const InitError = HTTPClient.InitError;
+const NewHTTPContext = bun.http.NewHTTPContext;

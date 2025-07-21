@@ -1,32 +1,9 @@
 /// This file is mostly the API schema but with all the options normalized.
 /// Normalization is necessary because most fields in the API schema are optional
 const std = @import("std");
-const logger = bun.logger;
-const Fs = @import("fs.zig");
-
-const resolver = @import("./resolver/resolver.zig");
-const api = @import("./api/schema.zig");
-const Api = api.Api;
-const URL = @import("./url.zig").URL;
-const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-
-const JSC = bun.JSC;
-const Runtime = @import("./runtime.zig").Runtime;
-const Analytics = @import("./analytics/analytics_thread.zig");
-const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
-const DotEnv = @import("./env_loader.zig");
-const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
 pub const defines = @import("./defines.zig");
 pub const Define = defines.Define;
-
-const assert = bun.assert;
 
 pub const WriteDestination = enum {
     stdout,
@@ -1528,7 +1505,6 @@ const default_loader_ext_browser = [_]string{
     ".html",
 };
 
-const node_modules_default_loader_ext_bun = [_]string{".node"};
 const node_modules_default_loader_ext = [_]string{
     ".jsx",
     ".js",
@@ -2610,3 +2586,27 @@ pub const PathTemplate = struct {
         .placeholder = .{},
     };
 };
+
+const Analytics = @import("./analytics/analytics_thread.zig");
+const DotEnv = @import("./env_loader.zig");
+const Fs = @import("./fs.zig");
+const resolver = @import("./resolver/resolver.zig");
+const Runtime = @import("./runtime.zig").Runtime;
+const URL = @import("./url.zig").URL;
+
+const api = @import("./api/schema.zig");
+const Api = api.Api;
+
+const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
+const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSC = bun.JSC;
+const Output = bun.Output;
+const assert = bun.assert;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;

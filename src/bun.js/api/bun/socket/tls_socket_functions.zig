@@ -11,7 +11,7 @@ pub fn getServername(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.Cal
 }
 
 pub fn setServername(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-    if (this.handlers.is_server) {
+    if (this.isServer()) {
         return globalObject.throw("Cannot issue SNI from a TLS server-side socket", .{});
     }
 
@@ -120,7 +120,7 @@ pub fn getPeerCertificate(this: *This, globalObject: *JSC.JSGlobalObject, callfr
     const ssl_ptr = this.socket.ssl() orelse return .js_undefined;
 
     if (abbreviated) {
-        if (this.handlers.is_server) {
+        if (this.isServer()) {
             const cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
             if (cert) |x509| {
                 return X509.toJS(x509, globalObject);
@@ -132,7 +132,7 @@ pub fn getPeerCertificate(this: *This, globalObject: *JSC.JSGlobalObject, callfr
         return X509.toJS(cert, globalObject);
     }
     var cert: ?*BoringSSL.X509 = null;
-    if (this.handlers.is_server) {
+    if (this.isServer()) {
         cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
     }
 
@@ -382,7 +382,7 @@ pub fn exportKeyingMaterial(this: *This, globalObject: *JSC.JSGlobalObject, call
 pub fn getEphemeralKeyInfo(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
 
     // only available for clients
-    if (this.handlers.is_server) {
+    if (this.isServer()) {
         return JSValue.jsNull();
     }
     var result = JSValue.createEmptyObject(globalObject, 3);
@@ -555,7 +555,7 @@ pub fn setVerifyMode(this: *This, globalObject: *JSC.JSGlobalObject, callframe: 
     const request_cert = request_cert_js.toBoolean();
     const reject_unauthorized = request_cert_js.toBoolean();
     var verify_mode: c_int = BoringSSL.SSL_VERIFY_NONE;
-    if (this.handlers.is_server) {
+    if (this.isServer()) {
         if (request_cert) {
             verify_mode = BoringSSL.SSL_VERIFY_PEER;
             if (reject_unauthorized)

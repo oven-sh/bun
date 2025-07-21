@@ -4599,21 +4599,20 @@ pub const Expect = struct {
         const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
         if (!returns.jsType().isArray()) return globalThis.throw("Expected value must be a mock function: {}", .{value});
 
-        const return_count = @as(i32, @intCast(try returns.getLength(globalThis)));
+        const return_count = try returns.getLength(globalThis);
         var pass = false;
 
         // Check each return value to see if any match the expected value
-        for (0..@intCast(return_count)) |i| {
-            const index: u32 = @intCast(i);
-            const result = returns.getDirectIndex(globalThis, index);
-            
+        for (0..return_count) |i| {
+            const result = returns.getDirectIndex(globalThis, @truncate(i));
+
             // Mock results have the structure { type: "return" | "throw" | "incomplete", value: any }
             if (result.isObject()) {
                 const result_type = try result.get(globalThis, "type") orelse .js_undefined;
                 if (result_type.isString()) {
                     const type_str = try result_type.toBunString(globalThis);
                     defer type_str.deref();
-                    
+
                     // Only consider successful returns
                     if (type_str.eqlComptime("return")) {
                         const result_value = try result.get(globalThis, "value") orelse .js_undefined;
@@ -4633,7 +4632,7 @@ pub const Expect = struct {
         }
 
         const signature = comptime getSignature("toHaveReturnedWith", "<green>expected<r>", false);
-        
+
         if (pass == this.flags.not) {
             var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();

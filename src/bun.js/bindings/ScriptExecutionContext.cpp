@@ -69,8 +69,11 @@ static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allSc
 
 ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(ScriptExecutionContextIdentifier identifier)
 {
+    if (identifier == 0) {
+        return nullptr;
+    }
     Locker locker { allScriptExecutionContextsMapLock };
-    return allScriptExecutionContextsMap().get(identifier);
+    return allScriptExecutionContextsMap().getOptional(identifier).value_or(nullptr);
 }
 
 template<bool SSL, bool isServer>

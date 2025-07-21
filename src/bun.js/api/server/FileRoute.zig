@@ -284,19 +284,6 @@ fn onResponseComplete(this: *FileRoute, resp: AnyResponse) void {
     this.deref();
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const uws = bun.uws;
-const Headers = bun.http.Headers;
-const AnyServer = JSC.API.AnyServer;
-const Blob = JSC.WebCore.Blob;
-const writeStatus = @import("../server.zig").writeStatus;
-const AnyResponse = uws.AnyResponse;
-const Async = bun.Async;
-const FileType = bun.io.FileType;
-const Output = bun.Output;
-
 const StreamTransfer = struct {
     const StreamTransferRefCount = bun.ptr.RefCount(@This(), "ref_count", StreamTransfer.deinit, .{});
     pub const ref = StreamTransferRefCount.ref;
@@ -543,3 +530,18 @@ const StreamTransfer = struct {
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
+
+const std = @import("std");
+const writeStatus = @import("../server.zig").writeStatus;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const JSC = bun.JSC;
+const Output = bun.Output;
+const FileType = bun.io.FileType;
+const Headers = bun.http.Headers;
+const AnyServer = JSC.API.AnyServer;
+const Blob = JSC.WebCore.Blob;
+
+const uws = bun.uws;
+const AnyResponse = uws.AnyResponse;

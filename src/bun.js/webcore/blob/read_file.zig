@@ -1,19 +1,4 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const std = @import("std");
-const Blob = bun.webcore.Blob;
-const invalid_fd = bun.invalid_fd;
-
-const SystemError = JSC.SystemError;
-const SizeType = Blob.SizeType;
-const io = bun.io;
-const FileOpener = Blob.FileOpener;
-const FileCloser = Blob.FileCloser;
-const Environment = bun.Environment;
 const bloblog = bun.Output.scoped(.WriteFile, true);
-const JSPromise = JSC.JSPromise;
-const JSGlobalObject = JSC.JSGlobalObject;
-const libuv = bun.windows.libuv;
 
 const log = bun.Output.scoped(.ReadFile, true);
 
@@ -49,11 +34,6 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
         }
     };
 }
-
-const FileStore = Blob.Store.File;
-const ByteStore = Blob.Store.Bytes;
-const Store = Blob.Store;
-const ClosingState = Blob.ClosingState;
 
 pub const ReadFileOnReadFileCallback = *const fn (ctx: *anyopaque, bytes: ReadFileResultType) void;
 pub const ReadFileRead = struct { buf: []u8, is_temporary: bool = false, total_size: SizeType = 0 };
@@ -816,3 +796,26 @@ pub const ReadFileUV = struct {
         this.queueRead();
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const invalid_fd = bun.invalid_fd;
+const io = bun.io;
+const libuv = bun.windows.libuv;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSPromise = JSC.JSPromise;
+const SystemError = JSC.SystemError;
+
+const Blob = bun.webcore.Blob;
+const ClosingState = Blob.ClosingState;
+const FileCloser = Blob.FileCloser;
+const FileOpener = Blob.FileOpener;
+const SizeType = Blob.SizeType;
+
+const Store = Blob.Store;
+const ByteStore = Blob.Store.Bytes;
+const FileStore = Blob.Store.File;

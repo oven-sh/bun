@@ -66,10 +66,12 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
 const Async = bun.Async;
-const WorkPool = JSC.WorkPool;
-const VirtualMachine = JSC.VirtualMachine;
+
+const JSC = bun.JSC;
 const JSPromise = JSC.JSPromise;
+const VirtualMachine = JSC.VirtualMachine;
+const WorkPool = JSC.WorkPool;
 const WorkPoolTask = JSC.WorkPoolTask;

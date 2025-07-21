@@ -644,17 +644,18 @@ pub const String = extern struct {
     }
 };
 
-const assert = bun.assert;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const string = bun.string;
-const Environment = bun.Environment;
-const strings = bun.strings;
 
-const JSC = bun.JSC;
+const bun = @import("bun");
+const Environment = bun.Environment;
 const IdentityContext = bun.IdentityContext;
+const JSC = bun.JSC;
 const OOM = bun.OOM;
+const assert = bun.assert;
+const string = bun.string;
+const strings = bun.strings;
 const Lockfile = bun.install.Lockfile;
+
 const ExternalString = bun.Semver.ExternalString;
 const SlicedString = bun.Semver.SlicedString;

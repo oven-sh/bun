@@ -164,8 +164,6 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
     };
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

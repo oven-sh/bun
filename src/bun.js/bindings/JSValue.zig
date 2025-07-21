@@ -2366,38 +2366,38 @@ pub const JSValue = enum(i64) {
     pub const backing_int = @typeInfo(JSValue).@"enum".tag_type;
 };
 
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const C_API = bun.JSC.C;
-const JSC = bun.JSC;
-
-const MutableString = bun.MutableString;
-const String = bun.String;
-const JSError = bun.JSError;
-
-const ZigString = JSC.ZigString;
-const VM = JSC.VM;
-const FFI = @import("./FFI.zig");
-const JSPromise = JSC.JSPromise;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSString = JSC.JSString;
-const JSObject = JSC.JSObject;
-const JSArrayIterator = JSC.JSArrayIterator;
-const JSCell = JSC.JSCell;
-const fromJSHostCall = JSC.fromJSHostCall;
-const CatchScope = JSC.CatchScope;
-const ExceptionValidationScope = JSC.ExceptionValidationScope;
-
-const AnyPromise = JSC.AnyPromise;
-const DOMURL = JSC.DOMURL;
-const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
-const JSInternalPromise = JSC.JSInternalPromise;
-const ZigException = JSC.ZigException;
-const ArrayBuffer = JSC.ArrayBuffer;
-const toJSHostFunction = JSC.toJSHostFn;
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
 extern "c" fn Bun__JSValue__isAsyncContextFrame(value: JSValue) bool;
-const FetchHeaders = bun.webcore.FetchHeaders;
+
+const FFI = @import("./FFI.zig");
+const std = @import("std");
+const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
+
+const bun = @import("bun");
 const Environment = bun.Environment;
+const JSError = bun.JSError;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const String = bun.String;
+const string = bun.string;
+const FetchHeaders = bun.webcore.FetchHeaders;
+
+const JSC = bun.JSC;
+const AnyPromise = JSC.AnyPromise;
+const ArrayBuffer = JSC.ArrayBuffer;
+const C_API = bun.JSC.C;
+const CatchScope = JSC.CatchScope;
+const DOMURL = JSC.DOMURL;
+const ExceptionValidationScope = JSC.ExceptionValidationScope;
+const JSArrayIterator = JSC.JSArrayIterator;
+const JSCell = JSC.JSCell;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSInternalPromise = JSC.JSInternalPromise;
+const JSObject = JSC.JSObject;
+const JSPromise = JSC.JSPromise;
+const JSString = JSC.JSString;
+const VM = JSC.VM;
+const ZigException = JSC.ZigException;
+const ZigString = JSC.ZigString;
+const fromJSHostCall = JSC.fromJSHostCall;
+const toJSHostFunction = JSC.toJSHostFn;

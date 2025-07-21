@@ -1,5 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
 pub const ErrorCodeAndMessage = struct {
     code: []const u8,
     message: []const u8,
@@ -84,3 +82,6 @@ pub const S3Error = struct {
         return value;
     }
 };
+
+const bun = @import("bun");
+const JSC = bun.JSC;

@@ -16,8 +16,6 @@ pub fn read(data: []const u8) void {
     }
 }
 
-// @sortImports
-
 const DebugSocketMonitorReader = @import("./DebugSocketMonitorReader.zig");
 const DebugSocketMonitorWriter = @import("./DebugSocketMonitorWriter.zig");
 const bun = @import("bun");

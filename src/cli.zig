@@ -1,32 +1,6 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const logger = bun.logger;
-const options = @import("options.zig");
-const RegularExpression = bun.RegularExpression;
-const File = bun.sys.File;
-
 const debug = Output.scoped(.CLI, true);
 
-const Api = @import("api/schema.zig").Api;
-const clap = bun.clap;
-const BunJS = @import("./bun_js.zig");
-const Install = @import("./install/install.zig");
-const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
-const FilterRun = @import("./cli/filter_run.zig");
-
-const fs = @import("fs.zig");
-
-const MacroMap = @import("./resolver/package_json.zig").MacroMap;
-const TestCommand = @import("./cli/test_command.zig").TestCommand;
 pub var start_time: i128 = undefined;
-const Bunfig = @import("./bunfig.zig").Bunfig;
 
 pub var Bun__Node__ProcessTitle: ?string = null;
 
@@ -80,7 +54,6 @@ pub const debug_flags = if (Environment.show_crash_trace) struct {
     }
 } else @compileError("Do not access this namespace in a release build");
 
-const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
 pub fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
@@ -118,9 +91,6 @@ pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
-
-const PackageManager = Install.PackageManager;
-const PmViewCommand = @import("./cli/pm_view_command.zig");
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -300,8 +270,6 @@ pub const ReservedCommand = struct {
         std.process.exit(1);
     }
 };
-
-const AddCompletions = @import("./cli/add_completions.zig");
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
@@ -1707,3 +1675,32 @@ pub fn printRevisionAndExit() noreturn {
     Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
     Global.exit(0);
 }
+
+const AddCompletions = @import("./cli/add_completions.zig");
+const BunJS = @import("./bun_js.zig");
+const FilterRun = @import("./cli/filter_run.zig");
+const PmViewCommand = @import("./cli/pm_view_command.zig");
+const fs = @import("./fs.zig");
+const options = @import("./options.zig");
+const std = @import("std");
+const Api = @import("./api/schema.zig").Api;
+const Bunfig = @import("./bunfig.zig").Bunfig;
+const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
+const MacroMap = @import("./resolver/package_json.zig").MacroMap;
+const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
+const TestCommand = @import("./cli/test_command.zig").TestCommand;
+
+const Install = @import("./install/install.zig");
+const PackageManager = Install.PackageManager;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const RegularExpression = bun.RegularExpression;
+const clap = bun.clap;
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+const File = bun.sys.File;

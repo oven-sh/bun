@@ -1,16 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const E = bun.JSAst.E;
-const Expr = bun.JSAst.Expr;
-const Loc = bun.logger.Loc;
-const js_ast = bun.JSAst;
-const Rope = js_ast.E.Object.Rope;
-const Output = bun.Output;
-const Global = bun.Global;
-const Registry = bun.install.Npm.Registry;
-const OOM = bun.OOM;
-
 pub const Parser = struct {
     opts: Options = .{},
     source: bun.logger.Source,
@@ -1343,3 +1330,18 @@ fn @"handle _auth"(
     v.password = password;
     return;
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Loc = bun.logger.Loc;
+const Registry = bun.install.Npm.Registry;
+
+const js_ast = bun.JSAst;
+const E = bun.JSAst.E;
+const Expr = bun.JSAst.Expr;
+const Rope = js_ast.E.Object.Rope;

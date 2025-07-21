@@ -1,17 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const windows = bun.windows;
-const uv = windows.libuv;
-const string = bun.string;
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const Output = bun.Output;
-const Watcher = bun.Watcher;
-
-const FSWatcher = bun.JSC.Node.fs.Watcher;
-const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
-const Event = FSWatcher.Event;
-
 var default_manager: ?*PathWatcherManager = null;
 
 // TODO: make this a generic so we can reuse code with path_watcher
@@ -76,9 +62,6 @@ pub const PathWatcherManager = struct {
         bun.destroy(this);
     }
 };
-
-const onPathUpdateFn = JSC.Node.fs.Watcher.onPathUpdate;
-const onUpdateEndFn = JSC.Node.fs.Watcher.onUpdateEnd;
 
 pub const PathWatcher = struct {
     handle: uv.uv_fs_event_t,
@@ -305,3 +288,22 @@ pub fn watch(
     watcher.handlers.put(bun.default_allocator, ctx, .{}) catch bun.outOfMemory();
     return .{ .result = watcher };
 }
+
+const std = @import("std");
+const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
+
+const bun = @import("bun");
+const Output = bun.Output;
+const Watcher = bun.Watcher;
+const string = bun.string;
+
+const JSC = bun.JSC;
+const VirtualMachine = JSC.VirtualMachine;
+
+const FSWatcher = bun.JSC.Node.fs.Watcher;
+const Event = FSWatcher.Event;
+const onPathUpdateFn = JSC.Node.fs.Watcher.onPathUpdate;
+const onUpdateEndFn = JSC.Node.fs.Watcher.onUpdateEnd;
+
+const windows = bun.windows;
+const uv = windows.libuv;

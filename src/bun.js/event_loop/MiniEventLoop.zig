@@ -18,6 +18,7 @@
 //! - Shell command execution with proper I/O handling
 //! - Any Bun subsystem that needs event-driven architecture without JS overhead
 //!
+
 const MiniEventLoop = @This();
 
 tasks: Queue,
@@ -383,12 +384,14 @@ pub fn AbstractVM(inner: anytype) switch (@TypeOf(inner)) {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
 const Async = bun.Async;
-const VirtualMachine = JSC.VirtualMachine;
-const UnboundedQueue = bun.threading.UnboundedQueue;
-const AnyTaskWithExtraContext = JSC.AnyTaskWithExtraContext;
-const uws = bun.uws;
-const EventLoop = JSC.EventLoop;
 const Environment = bun.Environment;
+const uws = bun.uws;
+const UnboundedQueue = bun.threading.UnboundedQueue;
+
+const JSC = bun.JSC;
+const AnyTaskWithExtraContext = JSC.AnyTaskWithExtraContext;
+const EventLoop = JSC.EventLoop;
+const VirtualMachine = JSC.VirtualMachine;

@@ -1,7 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const validators = @import("./util/validators.zig");
-
 //
 //
 
@@ -105,3 +101,8 @@ pub fn doConnect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
     const maybe_tls = prev.as(bun.api.TLSSocket);
     return bun.api.Listener.connectInner(globalThis, maybe_tcp, maybe_tls, opts);
 }
+
+const validators = @import("./util/validators.zig");
+
+const bun = @import("bun");
+const JSC = bun.JSC;

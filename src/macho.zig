@@ -1,12 +1,5 @@
-const std = @import("std");
-const mem = std.mem;
-const macho = std.macho;
-const Allocator = mem.Allocator;
-const bun = @import("bun");
-
 pub const SEGNAME_BUN = "__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
 pub const SECTNAME = "__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
-const strings = bun.strings;
 
 pub const MachoFile = struct {
     header: macho.mach_header_64,
@@ -582,6 +575,15 @@ const CSSLOT_CODEDIRECTORY: u32 = 0;
 const SEC_CODE_SIGNATURE_HASH_SHA256: u8 = 2;
 const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 
-const SuperBlob = std.macho.SuperBlob;
-const CodeDirectory = std.macho.CodeDirectory;
+const std = @import("std");
+
+const bun = @import("bun");
+const strings = bun.strings;
+
+const macho = std.macho;
 const BlobIndex = std.macho.BlobIndex;
+const CodeDirectory = std.macho.CodeDirectory;
+const SuperBlob = std.macho.SuperBlob;
+
+const mem = std.mem;
+const Allocator = mem.Allocator;

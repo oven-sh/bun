@@ -144,7 +144,8 @@ fn indexForSourcemapOrBytecode(this: *@This()) ?u32 {
     return result;
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");
+
 const options = bun.options;
 const OutputFile = options.OutputFile;

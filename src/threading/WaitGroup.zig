@@ -57,6 +57,7 @@ pub fn wait(self: *Self) void {
 }
 
 const bun = @import("bun");
+const std = @import("std");
+
 const Condition = bun.threading.Condition;
 const Mutex = bun.threading.Mutex;
-const std = @import("std");

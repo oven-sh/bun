@@ -9,6 +9,7 @@
 #include "JavaScriptCore/JSSourceCode.h"
 
 extern "C" BunString BakeProdResolve(JSC::JSGlobalObject*, BunString a, BunString b);
+extern "C" BunString BakeToWindowsPath(BunString a);
 
 namespace Bake {
 using namespace JSC;
@@ -153,6 +154,15 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
             // we don't actually want to load it from the Bake production module
             // map and instead make it go through the normal codepath.
             auto bakePrefixRemoved = moduleKey.substringSharingImpl("bake:"_s.length());
+
+#ifdef _WIN32
+            // We normalize paths to contain forward slashes in bake so we don't
+            // have to worry about platform paths. Now we have to worry about
+            // it, because `moduleLoaderFetch(...)` may read the path from disk
+            // and so we need to give a Windows path to it.
+            auto temp = BakeToWindowsPath(Bun::toString(bakePrefixRemoved));
+            bakePrefixRemoved = temp.toWTFString();
+#endif
             JSString* bakePrefixRemovedString = jsNontrivialString(vm, bakePrefixRemoved);
             JSValue bakePrefixRemovedJsvalue = bakePrefixRemovedString;
             return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, parameters, script);

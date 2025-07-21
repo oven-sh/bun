@@ -190,14 +190,12 @@ export default function BlogPost(req, meta) {
 
     // Verify import.meta properties are inlined
     expect(json1.meta.file).toBe("[...slug].ts");
-    expect(json1.meta.dir).toContain("routes/blog");
+    expect(json1.meta.dir).toContain(platformPath("routes/blog"));
     expect(json1.meta.dirname).toBe(json1.meta.dir);
     expect(json1.meta.path).toContain(platformPath("routes/blog/[...slug].ts"));
     // url encoded!
     expect(json1.meta.url).toMatch(
-      process.platform === "win32"
-        ? /^file:\/\/.*routes\\blog\\%5B\\.\\.\\.slug%5D\\.ts$/
-        : /^file:\/\/.*routes\/blog\/%5B\.\.\.slug%5D\.ts$/,
+        /^file:\/\/.*routes\/blog\/%5B\.\.\.slug%5D\.ts$/,
     );
 
     // Test multiple segments

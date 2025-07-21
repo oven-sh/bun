@@ -768,6 +768,21 @@ fn BakeRegisterProductionChunk(global: *JSC.JSGlobalObject, key: bun.String, sou
     return result;
 }
 
+pub export fn BakeToWindowsPath(input: bun.String) callconv(.C) bun.String {
+    if (comptime bun.Environment.isPosix) {
+        @panic("This code should not be called on POSIX systems.");
+    }
+    var sfa = std.heap.stackFallback(1024, bun.default_allocator);
+    const alloc = sfa.get();
+    const input_utf8 = input.toUTF8(alloc);
+    defer input_utf8.deinit();
+    const input_slice = input_utf8.slice();
+    const output = bun.w_path_buffer_pool.get();
+    defer bun.w_path_buffer_pool.put(output);
+    const output_slice = bun.strings.toWPathNormalizeAutoExtend(output.*[0..], input_slice);
+    return bun.String.cloneUTF16(output_slice);
+}
+
 pub export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
     var sfa = std.heap.stackFallback(@sizeOf(bun.PathBuffer) * 2, bun.default_allocator);
     const alloc = sfa.get();
@@ -794,7 +809,7 @@ pub export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, sp
 
     return bun.String.createFormat("bake:{s}", .{bun.path.joinAbs(
         bun.Dirname.dirname(u8, referrer.slice()[5..]) orelse referrer.slice()[5..],
-        .auto,
+        .posix, // force posix paths in bake
         specifier.slice(),
     )}) catch return bun.String.dead;
 }

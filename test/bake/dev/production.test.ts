@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
+
+const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
+const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
 
 /**
  * Production build tests
@@ -240,8 +243,9 @@ export default function GettingStarted() {
     expect(buildProc.exitCode).toBe(0);
 
     // Check that the build output contains the generated files
-    const distFiles = await Bun.$`find dist -name "*.html" -type f | sort`.cwd(dir).text();
-    const htmlFiles = distFiles.trim().split("\n").filter(Boolean);
+    const htmlFiles = Array.from(new Bun.Glob("dist/**/*.html").scanSync(dir))
+      .sort()
+      .map(p => normalizePath(p));
 
     // Should have generated all the static paths
     // Note: React's routing may flatten the paths
@@ -267,9 +271,9 @@ export default function GettingStarted() {
     // Check that import.meta values are inlined in the HTML
     expect(blogPostHtml).toContain('data-file="[...slug].tsx"');
     expect(blogPostHtml).toContain("data-dir=");
-    expect(blogPostHtml).toContain('/pages/blog"'); // The full path will include the temp directory
+    expect(blogPostHtml).toContain(platformPath('/pages/blog"')); // The full path will include the temp directory
     expect(blogPostHtml).toContain("data-path=");
-    expect(blogPostHtml).toContain('/pages/blog/[...slug].tsx"');
+    expect(blogPostHtml).toContain(platformPath('/pages/blog/[...slug].tsx"'));
 
     // Check docs catch-all route
     const docsHtml = await Bun.file(
@@ -279,7 +283,7 @@ export default function GettingStarted() {
     expect(docsHtml).toContain("Reading docs at:");
     expect(docsHtml).toContain("guides/advanced/optimization");
     expect(docsHtml).toContain('data-file="[...path].tsx"');
-    expect(docsHtml).toContain('/pages/docs/[...path].tsx"');
+    expect(docsHtml).toContain(platformPath('/pages/docs/[...path].tsx"'));
 
     // Check that the static getting-started page uses its own file name, not the catch-all
     const staticHtml = await Bun.file(path.join(dir, "dist", "docs", "getting-started", "index.html")).text();
@@ -287,7 +291,7 @@ export default function GettingStarted() {
     expect(staticHtml).toContain("Getting Started");
     expect(staticHtml).toContain("This is a static page");
     expect(staticHtml).toContain('data-file="getting-started.tsx"');
-    expect(staticHtml).toContain('/pages/docs/getting-started.tsx"');
+    expect(staticHtml).toContain(platformPath('/pages/docs/getting-started.tsx"'));
     expect(staticHtml).not.toContain("[...path].tsx");
 
     // Verify that import.meta values are consistent across all catch-all instances
@@ -295,7 +299,7 @@ export default function GettingStarted() {
       path.join(dir, "dist", "blog", "tutorials", "getting-started", "index.html"),
     ).text();
     expect(blogIndex).toContain('data-file="[...slug].tsx"');
-    expect(blogIndex).toContain('/pages/blog/[...slug].tsx"');
+    expect(blogIndex).toContain(platformPath('/pages/blog/[...slug].tsx"'));
   });
 
   test("handles build with no pages directory without crashing", async () => {

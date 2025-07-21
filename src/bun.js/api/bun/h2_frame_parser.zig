@@ -1985,11 +1985,12 @@ pub const H2FrameParser = struct {
         // ignore padding
         if (data_needed > padding) {
             data_needed -= padding;
-            log("data received {} {}", .{ padding, payload.len });
             payload = payload[0..@min(@as(usize, @intCast(data_needed)), payload.len)];
+            // if padding is more than 0 so we need to consider the padding length in the window size
+            const padded_length = if (padding == 0) payload.len else padding + 1 + payload.len;
+            // its fine to truncate since u24 is the max frame size
+            this.ajustWindowSize(stream, @truncate(padded_length));
             const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
-            // its fine to truncate because is not possible to receive more data than  u32 here, usize is only because of slices in size
-            this.ajustWindowSize(stream, @truncate(payload.len));
             this.dispatchWithExtra(.onStreamData, stream.getIdentifier(), chunk);
             emitted = true;
         } else {

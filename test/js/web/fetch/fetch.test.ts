@@ -1113,9 +1113,9 @@ describe("Response", () => {
     it("throws TypeError for non-JSON serializable top-level values (Node.js compatibility)", () => {
       // Symbol, Function, and undefined should throw "Value is not JSON serializable"
       expect(() => Response.json(Symbol("test"))).toThrow("Value is not JSON serializable");
-      expect(() => Response.json(function() {})).toThrow("Value is not JSON serializable");
+      expect(() => Response.json(function () {})).toThrow("Value is not JSON serializable");
       expect(() => Response.json(undefined)).toThrow("Value is not JSON serializable");
-      
+
       // These should not throw (valid values)
       expect(() => Response.json(null)).not.toThrow();
       expect(() => Response.json({})).not.toThrow();
@@ -1123,13 +1123,13 @@ describe("Response", () => {
       expect(() => Response.json(123)).not.toThrow();
       expect(() => Response.json(true)).not.toThrow();
       expect(() => Response.json([1, 2, 3])).not.toThrow();
-      
+
       // Objects containing non-serializable values should not throw at top-level
       // (they get filtered out by JSON.stringify)
-      expect(() => Response.json({symbol: Symbol("test")})).not.toThrow();
-      expect(() => Response.json({func: function() {}})).not.toThrow();
-      expect(() => Response.json({undef: undefined})).not.toThrow();
-      
+      expect(() => Response.json({ symbol: Symbol("test") })).not.toThrow();
+      expect(() => Response.json({ func: function () {} })).not.toThrow();
+      expect(() => Response.json({ undef: undefined })).not.toThrow();
+
       // BigInt should still throw with its own error message (not our new validation)
       expect(() => Response.json(123n)).toThrow("JSON.stringify cannot serialize BigInt");
     });

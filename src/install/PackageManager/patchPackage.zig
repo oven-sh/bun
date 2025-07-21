@@ -190,29 +190,11 @@ pub fn doPatchCommit(
     const resolution_label = std.fmt.bufPrint(&resolution_buf, "{s}@{}", .{ name, pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix) }) catch unreachable;
 
     const patchfile_contents = brk: {
-        var new_folder_buf: bun.PathBuffer = undefined;
-        const new_folder = new_folder: {
-            // Resolve symbolic links in the changes directory path to handle isolated linker
-            var changes_dir_z: bun.PathBuffer = undefined;
-            const changes_dir_len = changes_dir.len;
-            @memcpy(changes_dir_z[0..changes_dir_len], changes_dir);
-            changes_dir_z[changes_dir_len] = 0;
-            const changes_dir_null_terminated = changes_dir_z[0..changes_dir_len :0];
-
-            const resolved_path = std.fs.cwd().realpathZ(changes_dir_null_terminated, &new_folder_buf) catch |err| switch (err) {
-                error.FileNotFound, error.NotDir => {
-                    // If realpath fails, fall back to the original path
-                    break :new_folder changes_dir;
-                },
-                else => {
-                    Output.err(error.InvalidPath, "failed to resolve path {s}: {s}", .{ changes_dir, @errorName(err) });
-                    Global.crash();
-                },
-            };
-            break :new_folder resolved_path;
-        };
         var buf2: bun.PathBuffer = undefined;
         var buf3: bun.PathBuffer = undefined;
+        const new_folder = try bun.sys.openA(changes_dir, bun.sys.O.RDONLY | bun.sys.O.DIRECTORY, 0).unwrap();
+        defer new_folder.close();
+
         const old_folder = old_folder: {
             const cache_dir_path = switch (bun.sys.getFdPath(.fromStdDir(cache_dir), &buf2)) {
                 .result => |s| s,
@@ -238,14 +220,8 @@ pub fn doPatchCommit(
         // There isn't an option to exclude it with `git diff --no-index`, so we
         // will `rename()` it out and back again.
         const has_nested_node_modules = has_nested_node_modules: {
-            var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
-                Output.err(e, "failed to open directory <b>{s}<r>", .{new_folder});
-                Global.crash();
-            };
-            defer new_folder_handle.close();
-
             if (bun.sys.renameatConcurrently(
-                .fromStdDir(new_folder_handle),
+                new_folder,
                 "node_modules",
                 .fromStdDir(root_node_modules),
                 random_tempdir,
@@ -273,14 +249,9 @@ pub fn doPatchCommit(
                 }
                 break :has_bun_patch_tag null;
             };
-            var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
-                Output.err(e, "failed to open directory <b>{s}<r>", .{new_folder});
-                Global.crash();
-            };
-            defer new_folder_handle.close();
 
             if (bun.sys.renameatConcurrently(
-                .fromStdDir(new_folder_handle),
+                new_folder,
                 patch_tag,
                 .fromStdDir(root_node_modules),
                 patch_tag_tmpname,
@@ -293,20 +264,11 @@ pub fn doPatchCommit(
         };
         defer {
             if (has_nested_node_modules or bun_patch_tag != null) {
-                var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
-                        .{ new_folder, @errorName(e) },
-                    );
-                    Global.crash();
-                };
-                defer new_folder_handle.close();
-
                 if (has_nested_node_modules) {
                     if (bun.sys.renameatConcurrently(
                         .fromStdDir(root_node_modules),
                         random_tempdir,
-                        .fromStdDir(new_folder_handle),
+                        new_folder,
                         "node_modules",
                         .{ .move_fallback = true },
                     ).asErr()) |e| {
@@ -318,7 +280,7 @@ pub fn doPatchCommit(
                     if (bun.sys.renameatConcurrently(
                         .fromStdDir(root_node_modules),
                         patch_tag_tmpname,
-                        .fromStdDir(new_folder_handle),
+                        new_folder,
                         patch_tag,
                         .{ .move_fallback = true },
                     ).asErr()) |e| {

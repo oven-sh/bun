@@ -194,9 +194,7 @@ export default function BlogPost(req, meta) {
     expect(json1.meta.dirname).toBe(json1.meta.dir);
     expect(json1.meta.path).toContain(platformPath("routes/blog/[...slug].ts"));
     // url encoded!
-    expect(json1.meta.url).toMatch(
-        /^file:\/\/.*routes\/blog\/%5B\.\.\.slug%5D\.ts$/,
-    );
+    expect(json1.meta.url).toMatch(/^file:\/\/.*routes\/blog\/%5B\.\.\.slug%5D\.ts$/);
 
     // Test multiple segments
     const post2 = await dev.fetch("/blog/2024/tech/bun-framework");

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync } from "fs";
+import { existsSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";

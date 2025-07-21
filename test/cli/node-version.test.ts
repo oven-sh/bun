@@ -65,7 +65,7 @@ describe("bun node", () => {
     expect(stderrOutput).toContain("Installing Node.js v20.11.0");
   });
 
-  test("handles BUN_INSTALL not set", () => {
+  test("falls back to ~/.bun when BUN_INSTALL not set", () => {
     const env = { ...bunEnv };
     delete env.BUN_INSTALL; // Ensure BUN_INSTALL is not set
     
@@ -74,10 +74,13 @@ describe("bun node", () => {
       env,
       stdout: "pipe",
       stderr: "pipe",
+      timeout: 30000, // 30 seconds timeout for download
     });
     
-    expect(exitCode).toBe(1);
-    expect(stderr.toString()).toContain("BUN_INSTALL environment variable not set");
+    // Should start installation process using ~/.bun fallback
+    const stderrOutput = stderr.toString();
+    expect(stderrOutput).toContain("Installing Node.js v20.11.0");
+    expect(stderrOutput).toContain("Downloading from https://nodejs.org/dist/v20.11.0/node-v20.11.0-linux-arm64.tar.gz");
   });
 
   describe("version validation", () => {

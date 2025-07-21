@@ -8,10 +8,10 @@ const Progress = bun.Progress;
 
 const Command = @import("../cli.zig").Command;
 
-const fs = @import("../fs.zig");
-const URL = @import("../url.zig").URL;
+const fs = bun.fs;
+const URL = bun.URL;
 const HTTP = bun.http;
-const DotEnv = @import("../env_loader.zig");
+const DotEnv = bun.DotEnv;
 
 const platform_label = switch (Environment.os) {
     .mac => "darwin",
@@ -29,6 +29,20 @@ fn getDownloadURL(version: []const u8, allocator: std.mem.Allocator) ![]const u8
         "https://nodejs.org/dist/v{s}/node-v{s}-{s}-{s}.{s}",
         .{ version, version, platform_label, arch_label, extension }
     );
+}
+
+fn getBunInstallDir(allocator: std.mem.Allocator) ![]const u8 {
+    if (bun.getenvZ("BUN_INSTALL")) |install_dir| {
+        return try allocator.dupe(u8, install_dir);
+    }
+    
+    // Fall back to ~/.bun like other Bun commands
+    const home_dir = bun.getenvZ("HOME") orelse bun.getenvZ("USERPROFILE") orelse {
+        Output.prettyErrorln("<r><red>error<r><d>:<r> Could not determine home directory. Please set BUN_INSTALL", .{});
+        Global.exit(1);
+    };
+    
+    return try std.fs.path.join(allocator, &.{ home_dir, ".bun" });
 }
 
 pub const NodeVersionCommand = struct {
@@ -77,11 +91,9 @@ pub const NodeVersionCommand = struct {
     fn installNodeVersion(ctx: Command.Context, version: []const u8) !void {
         Output.prettyErrorln("<r><b>Installing Node.js v{s}<r>", .{version});
         
-        // Get BUN_INSTALL directory
-        const bun_install_dir = bun.getenvZ("BUN_INSTALL") orelse {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> BUN_INSTALL environment variable not set", .{});
-            Global.exit(1);
-        };
+        // Get BUN_INSTALL directory with fallback to ~/.bun
+        const bun_install_dir = try getBunInstallDir(ctx.allocator);
+        defer ctx.allocator.free(bun_install_dir);
 
         // Create node installation directory
         const node_install_path = try std.fmt.allocPrint(
@@ -265,14 +277,48 @@ pub const NodeVersionCommand = struct {
     }
 
     fn extractTarGzArchive(ctx: Command.Context, archive_data: []const u8, extract_path: []const u8) !void {
-        _ = archive_data;
-        _ = extract_path;
-        _ = ctx;
-        
-        // For now, use system tar command to extract
-        // TODO: Implement libarchive extraction
-        Output.prettyErrorln("<r><red>error<r><d>:<r> tar.gz extraction not yet implemented", .{});
-        Global.exit(1);
+        // Write archive to temporary file and use system tar for extraction
+        var filesystem = try fs.FileSystem.init(null);
+        var temp_dir = filesystem.tmpdir() catch |err| {
+            Output.errGeneric("Failed to open temporary directory: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
+
+        const temp_file = try temp_dir.createFile("node.tar.gz", .{});
+        defer temp_file.close();
+        defer temp_dir.deleteFile("node.tar.gz") catch {};
+
+        try temp_file.writeAll(archive_data);
+
+        // Use system tar to extract
+        var buf: bun.PathBuffer = undefined;
+        const temp_path = try bun.FD.fromStdDir(temp_dir).getFdPath(&buf);
+
+        const tar_argv = [_][]const u8{
+            "tar",
+            "-xzf",
+            "node.tar.gz",
+            "--strip-components=1",
+            "-C",
+            extract_path,
+        };
+
+        _ = (bun.spawnSync(&.{
+            .argv = &tar_argv,
+            .envp = null,
+            .cwd = temp_path,
+            .stderr = .inherit,
+            .stdout = .inherit,
+            .stdin = .inherit,
+        }) catch |err| {
+            Output.prettyErrorln("<r><red>error<r><d>:<r> Failed to extract tar.gz: {s}", .{@errorName(err)});
+            Global.exit(1);
+        }).unwrap() catch |err| {
+            Output.prettyErrorln("<r><red>error<r><d>:<r> tar command failed: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
+
+        _ = ctx; // Silence unused parameter warning
     }
 
     fn updateNodeShim(ctx: Command.Context, version: []const u8, bun_install_dir: []const u8) !void {
@@ -303,30 +349,24 @@ pub const NodeVersionCommand = struct {
         );
         defer ctx.allocator.free(actual_node_path);
 
-        // For now, create a simple shell script that execs the actual node binary
+        // Remove existing shim if it exists
+        std.fs.deleteFileAbsolute(node_shim_path) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        };
+
         if (Environment.isWindows) {
-            const batch_content = try std.fmt.allocPrint(
-                ctx.allocator,
-                "@echo off\n\"{s}\" %*\n",
-                .{actual_node_path}
-            );
-            defer ctx.allocator.free(batch_content);
-
-            const batch_file = try std.fs.createFileAbsolute(node_shim_path, .{});
-            defer batch_file.close();
-            try batch_file.writeAll(batch_content);
+            // On Windows, copy the executable directly since symlinks require admin privileges
+            std.fs.copyFileAbsolute(actual_node_path, node_shim_path, .{}) catch |err| {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> Failed to copy node binary: {s}", .{@errorName(err)});
+                Global.exit(1);
+            };
         } else {
-            const script_content = try std.fmt.allocPrint(
-                ctx.allocator,
-                "#!/bin/sh\nexec \"{s}\" \"$@\"\n",
-                .{actual_node_path}
-            );
-            defer ctx.allocator.free(script_content);
-
-            const script_file = try std.fs.createFileAbsolute(node_shim_path, .{});
-            defer script_file.close();
-            try script_file.writeAll(script_content);
-            try script_file.chmod(0o755);
+            // On Unix systems, use symlinks (secure, no shell injection possible)
+            std.fs.symLinkAbsolute(actual_node_path, node_shim_path, .{}) catch |err| {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> Failed to create node symlink: {s}", .{@errorName(err)});
+                Global.exit(1);
+            };
         }
 
         Output.prettyErrorln("<r>Node.js shim updated: {s}<r>", .{node_shim_path});

@@ -1,6 +1,9 @@
 pub inline fn getCacheDirectory(this: *PackageManager) std.fs.Dir {
     return this.cache_directory_ orelse brk: {
         this.cache_directory_ = ensureCacheDirectory(this);
+
+        PackageManager.debug("cache directory: {s}", .{this.cache_directory_path});
+
         break :brk this.cache_directory_.?;
     };
 }
@@ -83,7 +86,7 @@ noinline fn ensureTemporaryDirectory(this: *PackageManager) std.fs.Dir {
                 };
 
                 if (PackageManager.verbose_install) {
-                    Output.prettyErrorln("<r><yellow>warn<r>: bun is unable to access tempdir: {s}, using fallback", .{@errorName(err2)});
+                    Output.prettyErrorln("<r><yellow>warn<r>: bun is unable to access tempdir: {s}, using fallback. This may make bun install slower.", .{@errorName(err2)});
                 }
 
                 continue :brk;
@@ -104,7 +107,7 @@ noinline fn ensureTemporaryDirectory(this: *PackageManager) std.fs.Dir {
                 };
 
                 if (PackageManager.verbose_install) {
-                    Output.prettyErrorln("<r><d>info<r>: cannot move files from tempdir: {s}, using fallback", .{@errorName(err)});
+                    Output.prettyErrorln("<r><d>info<r>: cannot move files from tempdir: {s}, using fallback. This may make bun install slower.", .{@errorName(err)});
                 }
 
                 continue :brk;
@@ -714,7 +717,7 @@ pub fn writeYarnLock(this: *PackageManager) !void {
     try tmpfile.promoteToCWD(tmpname, "yarn.lock");
 }
 
-const CacheVersion = struct {
+pub const CacheVersion = struct {
     pub const current = 1;
     pub const Formatter = struct {
         version_number: ?usize = null,
@@ -725,6 +728,20 @@ const CacheVersion = struct {
             }
         }
     };
+
+    pub fn unversionedName(name: string) ?string {
+        const cache_version_suffix = bun.strings.lastIndexOf(name, "@@@") orelse return null;
+        comptime {
+            if (current != 1) {
+                @compileError("Update this to the current cache version");
+            }
+        }
+
+        if (cache_version_suffix > 0 and name[cache_version_suffix + 3] != '1') {
+            return null;
+        }
+        return name[0..cache_version_suffix];
+    }
 };
 
 const PatchHashFmt = struct {

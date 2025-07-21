@@ -66,14 +66,14 @@ pub fn byNameHashAllowExpired(
         return null;
     }
 
-    if (pm.options.enable.manifest_cache) {
+    if (pm.options.enable.manifest_cache != .disabled) {
         if (Npm.PackageManifest.Serializer.loadByFileID(
             pm.allocator,
             scope,
             pm.getCacheDirectory(),
             name_hash,
         ) catch null) |manifest| {
-            if (pm.options.enable.manifest_cache_control and manifest.pkg.public_max_age > pm.timestamp_for_manifest_cache_control) {
+            if (manifest.pkg.public_max_age > pm.timestamp_for_manifest_cache_control or pm.options.enable.manifest_cache == .prefer_offline) {
                 entry.value_ptr.* = .{ .manifest = manifest };
                 return &entry.value_ptr.manifest;
             } else {

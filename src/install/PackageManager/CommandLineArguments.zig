@@ -48,6 +48,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
     clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
+    clap.parseParam("--prefer-offline                      Use local cache even if registry data has expired") catch unreachable,
     clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
 };
@@ -217,6 +218,7 @@ ca_file_name: string = "",
 save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
+prefer_offline: bool = false,
 
 node_linker: ?Options.NodeLinker = null,
 
@@ -730,6 +732,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.no_summary = args.flag("--no-summary");
     cli.ca = args.options("--ca");
     cli.lockfile_only = args.flag("--lockfile-only");
+    cli.prefer_offline = args.flag("--prefer-offline");
 
     if (args.option("--linker")) |linker| {
         cli.node_linker = .fromStr(linker);

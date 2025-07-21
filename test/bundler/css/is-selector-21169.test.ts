@@ -12,8 +12,8 @@ describe("css", () => {
     outdir: "/out",
     entryPoints: ["/index.css"],
     onAfterBundle(api) {
-      api.expectFile("/out/index.css").toEqualIgnoringWhitespace(`
-        /* index.css */
+      api.expectFile("/out/index.css").toMatchInlineSnapshot(`
+        "/* index.css */
         .foo:-webkit-any(input:checked) {
           color: red;
         }
@@ -25,6 +25,7 @@ describe("css", () => {
         .foo:is(input:checked) {
           color: red;
         }
+        "
       `);
     },
   });

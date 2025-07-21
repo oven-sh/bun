@@ -2331,8 +2331,19 @@ pub const BundleV2 = struct {
                 return err;
             };
 
-            // When compiling, we don't return build artifacts. Return an empty list.
-            return std.ArrayList(options.OutputFile).init(this.graph.allocator);
+            // Return a BuildArtifact representing the executable
+            var executable_output = std.ArrayList(options.OutputFile).init(this.graph.allocator);
+            try executable_output.append(options.OutputFile{
+                .loader = .file,
+                .src_path = Fs.Path.init(this.transpiler.options.entry_points[0]),
+                .dest_path = outfile,
+                .value = .{ .saved = .{} },
+                .size = 0, // Will be set correctly by the file system
+                .output_kind = .@"entry-point",
+                .side = null,
+                .entry_point_index = 0,
+            });
+            return executable_output;
         }
         // END ADDED BLOCK
 

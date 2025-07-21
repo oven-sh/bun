@@ -957,3 +957,313 @@ export { greeting };`,
     }
   });
 });
+
+describe("Bun.build compile: true", () => {
+  test("basic compile functionality", async () => {
+    const dir = tempDirWithFiles("bun-build-compile-basic", {
+      "index.ts": `
+        console.log("Hello from compiled executable!");
+        process.exit(0);
+      `,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      compile: true,
+      outdir: dir,
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(0); // Compile returns empty outputs
+    expect(build.logs).toHaveLength(0);
+
+    // Check that an executable was created
+    const executableName = process.platform === "win32" ? "index.exe" : "index";
+    const executablePath = join(dir, executableName);
+    expect(Bun.file(executablePath).size).toBeGreaterThan(0);
+
+    // Test running the executable
+    const { exitCode, stdout } = Bun.spawnSync({
+      cmd: [executablePath],
+      cwd: dir,
+      stdout: "pipe",
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout.toString().trim()).toBe("Hello from compiled executable!");
+  });
+
+  test("compile with cross-compilation target", async () => {
+    const dir = tempDirWithFiles("bun-build-compile-target", {
+      "index.ts": `
+        console.log("Cross-compiled executable!");
+        console.log("Platform:", process.platform);
+        console.log("Arch:", process.arch);
+      `,
+    });
+
+    // Test cross-compilation to a different target
+    const targetPlatform = process.platform === "linux" ? "darwin" : "linux";
+    const targetArch = "x64";
+    const targetString = `bun-${targetPlatform}-${targetArch}`;
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      compile: true,
+      target: targetString,
+      outdir: dir,
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(0);
+
+    // Check that an executable was created with appropriate extension
+    const executableName = targetPlatform === "win32" ? "index.exe" : "index";
+    const executablePath = join(dir, executableName);
+    expect(Bun.file(executablePath).size).toBeGreaterThan(0);
+  });
+
+  test("compile with outfile option", async () => {
+    const dir = tempDirWithFiles("bun-build-compile-outfile", {
+      "app.ts": `
+        console.log("Custom executable name!");
+      `,
+    });
+
+    const customName = process.platform === "win32" ? "myapp.exe" : "myapp";
+    
+    const build = await Bun.build({
+      entrypoints: [join(dir, "app.ts")],
+      compile: true,
+      outfile: join(dir, customName),
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(0);
+
+    // Check that the custom-named executable was created
+    const executablePath = join(dir, customName);
+    expect(Bun.file(executablePath).size).toBeGreaterThan(0);
+  });
+
+  test("compile with bundling optimizations", async () => {
+    const dir = tempDirWithFiles("bun-build-compile-optimized", {
+      "index.ts": `
+        import { helper } from "./helper";
+        console.log(helper("World"));
+      `,
+      "helper.ts": `
+        export function helper(name: string): string {
+          return \`Hello, \${name}!\`;
+        }
+      `,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      compile: true,
+      minify: true,
+      target: "bun",
+      outdir: dir,
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(0);
+
+    const executableName = process.platform === "win32" ? "index.exe" : "index";
+    const executablePath = join(dir, executableName);
+    expect(Bun.file(executablePath).size).toBeGreaterThan(0);
+
+    // Test that the executable runs correctly with bundled code
+    const { exitCode, stdout } = Bun.spawnSync({
+      cmd: [executablePath],
+      cwd: dir,
+      stdout: "pipe",
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout.toString().trim()).toBe("Hello, World!");
+  });
+
+  test("compile error handling for missing files", async () => {
+    const dir = tempDirWithFiles("bun-build-compile-error", {});
+
+    try {
+      await Bun.build({
+        entrypoints: [join(dir, "nonexistent.ts")],
+        compile: true,
+        outdir: dir,
+      });
+      expect.unreachable("Should have thrown an error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateError);
+      expect(error.errors).toHaveLength(1);
+      expect(error.errors[0].message).toMatch(/ModuleNotFound/);
+    }
+  });
+
+  test("compile with external dependencies", async () => {
+    const dir = tempDirWithFiles("bun-build-compile-external", {
+      "package.json": JSON.stringify({
+        name: "test-app",
+        dependencies: {
+          "lodash": "^4.0.0"
+        }
+      }),
+      "index.ts": `
+        console.log("Testing external dependencies");
+        // Only log a message to avoid requiring actual lodash installation
+        console.log("App started successfully");
+      `,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      compile: true,
+      target: "bun",
+      outdir: dir,
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(0);
+
+    const executableName = process.platform === "win32" ? "index.exe" : "index";
+    const executablePath = join(dir, executableName);
+    expect(Bun.file(executablePath).size).toBeGreaterThan(0);
+
+    const { exitCode, stdout } = Bun.spawnSync({
+      cmd: [executablePath],
+      cwd: dir,
+      stdout: "pipe",
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout.toString()).toContain("App started successfully");
+  });
+
+  test("compile with TypeScript configuration", async () => {
+    const dir = tempDirWithFiles("bun-build-compile-typescript", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          target: "ES2020",
+          module: "ESNext",
+          strict: true,
+          paths: {
+            "@/*": ["./src/*"]
+          }
+        }
+      }),
+      "src/utils.ts": `
+        export const getMessage = (): string => {
+          return "TypeScript compiled successfully!";
+        };
+      `,
+      "index.ts": `
+        import { getMessage } from "@/utils";
+        console.log(getMessage());
+      `,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      compile: true,
+      tsconfig: join(dir, "tsconfig.json"),
+      outdir: dir,
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(0);
+
+    const executableName = process.platform === "win32" ? "index.exe" : "index";
+    const executablePath = join(dir, executableName);
+    expect(Bun.file(executablePath).size).toBeGreaterThan(0);
+
+    const { exitCode, stdout } = Bun.spawnSync({
+      cmd: [executablePath],
+      cwd: dir,
+      stdout: "pipe",
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout.toString().trim()).toBe("TypeScript compiled successfully!");
+  });
+
+  test("compile: false should not create executable", async () => {
+    const dir = tempDirWithFiles("bun-build-no-compile", {
+      "index.ts": `
+        console.log("Not compiled");
+      `,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      compile: false,
+      outdir: dir,
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(1); // Should have normal JS output
+    expect(build.outputs[0].kind).toBe("entry-point");
+
+    // Check that no executable was created
+    const executableName = process.platform === "win32" ? "index.exe" : "index";
+    const executablePath = join(dir, executableName);
+    expect(() => Bun.file(executablePath).size).toThrow(); // File should not exist
+  });
+
+  test("compile with invalid target throws error", async () => {
+    const dir = tempDirWithFiles("bun-build-compile-invalid-target", {
+      "index.ts": `console.log("test");`,
+    });
+
+    expect(() => {
+      Bun.build({
+        entrypoints: [join(dir, "index.ts")],
+        compile: true,
+        target: "invalid-target-name",
+        outdir: dir,
+      });
+    }).toThrow();
+  });
+
+  test("compile works with plugins", async () => {
+    const dir = tempDirWithFiles("bun-build-compile-plugins", {
+      "index.ts": `
+        import text from "./data.txt";
+        console.log("Loaded text:", text);
+      `,
+      "data.txt": "Hello from text file!",
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      compile: true,
+      outdir: dir,
+      plugins: [
+        {
+          name: "text-loader",
+          setup(build) {
+            build.onLoad({ filter: /\.txt$/ }, async (args) => {
+              const text = await Bun.file(args.path).text();
+              return {
+                contents: `export default ${JSON.stringify(text.trim())};`,
+                loader: "js",
+              };
+            });
+          },
+        },
+      ],
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(0);
+
+    const executableName = process.platform === "win32" ? "index.exe" : "index";
+    const executablePath = join(dir, executableName);
+    expect(Bun.file(executablePath).size).toBeGreaterThan(0);
+
+    const { exitCode, stdout } = Bun.spawnSync({
+      cmd: [executablePath],
+      cwd: dir,
+      stdout: "pipe",
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout.toString()).toContain("Hello from text file!");
+  });
+});

@@ -31,6 +31,10 @@ const StandaloneError = error{
     GetSelfExePathFailed,
     MoveFailed,
     DisableConsoleFailed,
+    OutOfMemory,
+    InvalidSourceMap,
+    FileNotFound,
+    @"Corrupted module graph: entry point ID is greater than module list count",
 };
 
 pub const StandaloneModuleGraph = struct {
@@ -522,9 +526,9 @@ pub const StandaloneModuleGraph = struct {
         windows_hide_console: bool = false,
     };
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) StandaloneError!bun.FileDescriptor {
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) anyerror!bun.FileDescriptor {
         var buf: bun.PathBuffer = undefined;
-        var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch return StandaloneError.TempFileFailed);
+        var zname: [:0]const u8 = bun.span(try bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))));
 
         const cleanup = struct {
             pub fn toClean(name: [:0]const u8, fd: bun.FileDescriptor) void {
@@ -551,7 +555,7 @@ pub const StandaloneModuleGraph = struct {
                 out_buf[zname.len] = 0;
                 const out = out_buf[0..zname.len :0];
 
-                bun.copyFile(in, out).unwrap() catch return StandaloneError.CopyFailed;
+                try bun.copyFile(in, out).unwrap();
                 const file = bun.sys.openFileAtWindows(
                     bun.invalid_fd,
                     out,
@@ -560,7 +564,7 @@ pub const StandaloneModuleGraph = struct {
                         .disposition = w.FILE_OPEN,
                         .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
                     },
-                ).unwrap() catch return StandaloneError.OpenFailed;
+                ).unwrap() catch |err| return err;
 
                 break :brk file;
             }
@@ -612,7 +616,7 @@ pub const StandaloneModuleGraph = struct {
                                     else => break,
                                 }
 
-                                return StandaloneError.OpenFailed;
+                                return err.toZigErr();
                             }
                         },
                     }
@@ -633,7 +637,7 @@ pub const StandaloneModuleGraph = struct {
                             }
 
                             cleanup(zname, fd);
-                            return StandaloneError.OpenFailed;
+                            return err.toZigErr();
                         },
                     }
                 }
@@ -642,9 +646,9 @@ pub const StandaloneModuleGraph = struct {
 
             defer self_fd.close();
 
-            bun.copyFile(self_fd, fd).unwrap() catch {
+            bun.copyFile(self_fd, fd).unwrap() catch |err| {
                 cleanup(zname, fd);
-                return StandaloneError.CopyFailed;
+                return err;
             };
             break :brk fd;
         };
@@ -848,16 +852,16 @@ pub const StandaloneModuleGraph = struct {
         output_format: bun.options.Format,
         windows_hide_console: bool,
         windows_icon: ?[]const u8,
-    ) StandaloneError!void {
+    ) anyerror!void {
         const bytes = try toBytes(allocator, module_prefix, output_files, output_format);
         if (bytes.len == 0) return;
 
         const fd = try inject(
             bytes,
             if (target.isDefault())
-                try bun.selfExePath() catch return StandaloneError.GetSelfExePathFailed
+                try bun.selfExePath()
             else
-                try download(allocator, target, env) catch return StandaloneError.DownloadFailed,
+                try download(allocator, target, env),
             .{ .windows_hide_console = windows_hide_console },
             target,
         );
@@ -882,7 +886,7 @@ pub const StandaloneModuleGraph = struct {
 
                 _ = bun.windows.deleteOpenedFile(fd);
 
-                return StandaloneError.MoveFailed;
+                return err;
             };
             fd.close();
 
@@ -897,7 +901,7 @@ pub const StandaloneModuleGraph = struct {
         }
 
         var buf: bun.PathBuffer = undefined;
-        const temp_location = bun.getFdPath(fd, &buf) catch return StandaloneError.ReadFailed;
+        const temp_location = bun.getFdPath(fd, &buf) catch |err| return err;
 
         bun.sys.moveFileZWithHandle(
             fd,

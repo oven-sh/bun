@@ -5,11 +5,9 @@ import { makeTestController, makeWorkspaceFolder } from "./vscode.mock";
 
 const { BunTestController } = await import("../bun-test-controller");
 
-// Mock vscode components needed for tests
 const mockTestController: MockTestController = makeTestController();
 const mockWorkspaceFolder: MockWorkspaceFolder = makeWorkspaceFolder("/test/workspace");
 
-// Create a test instance with isTest flag to skip initialization
 const controller = new BunTestController(mockTestController, mockWorkspaceFolder, true);
 const internal = controller._internal;
 
@@ -26,7 +24,6 @@ describe("BunTestController (static file parser)", () => {
 
         const result = expandEachTests("test.each([", "$a + $b = $expected", content, 0, "test", 1);
 
-        // Bun doesn't expand $variable syntax during discovery
         expect(result).toHaveLength(1);
         expect(result[0].name).toBe("$a + $b = $expected");
       });
@@ -149,7 +146,6 @@ describe("BunTestController (static file parser)", () => {
 
         const result = expandEachTests("test.each([", "%o and %j", content, 0, "test", 1);
 
-        // would be cool to have varable substitution here, but its alot harder than just array expansion
         expect(result).toHaveLength(1);
         expect(result[0].name).toBe("%o and %j");
       });
@@ -191,7 +187,6 @@ describe("BunTestController (static file parser)", () => {
         ])('$module module', ({ module, method }) => {})`;
 
         const result = expandEachTests("describe.each([", "$module module", content, 0, "describe", 1);
-        // should be cool to have varable substitution here, but its alot harder than just array expansion
         expect(result).toHaveLength(1);
         expect(result[0].name).toBe("$module module");
         expect(result[0].type).toBe("describe");
@@ -312,7 +307,6 @@ describe("BunTestController (static file parser)", () => {
 
         const result = expandEachTests("test.each([", "test $a", content, 0, "test", 1);
 
-        // Should gracefully handle or fail without crashing
         expect(result.length).toBeGreaterThanOrEqual(1);
       });
 
@@ -341,7 +335,6 @@ describe("BunTestController (static file parser)", () => {
 
         const result = expandEachTests("test.each([", "Special char: $char", content, 0, "test", 1);
 
-        // Special characters might cause parsing issues with Function constructor
         expect(result.length).toBeGreaterThanOrEqual(1);
       });
 
@@ -364,7 +357,6 @@ describe("BunTestController (static file parser)", () => {
 
         const result = expandEachTests("test.each([", "Value: $value", content, 0, "test", 1);
 
-        // If parsing fails, we get a single unexpanded test
         if (result.length === 1) {
           expect(result[0].name).toBe("Value: $value");
         } else {
@@ -373,12 +365,11 @@ describe("BunTestController (static file parser)", () => {
           expect(result[1].name).toBe("Value: null");
           expect(result[2].name).toBe("Value: false");
           expect(result[3].name).toBe("Value: 0");
-          expect(result[4].name).toBe("Value: "); // Empty string is rendered without quotes
+          expect(result[4].name).toBe("Value: ");
         }
       });
 
       test("should handle circular references gracefully", () => {
-        // Note: Can't actually create circular refs in string, but test the robustness
         const content = `test.each([
           { a: { b: "[Circular]" } },
           { a: { b: { c: "[Circular]" } } }
@@ -424,7 +415,6 @@ describe("BunTestController (static file parser)", () => {
 
         const result = expandEachTests("test.each([", "test $a", content, 0, "test", 1);
 
-        // Should fallback to single test
         expect(result).toHaveLength(1);
         expect(result[0].name).toBe("test $a");
       });
@@ -488,7 +478,6 @@ describe("BunTestController (static file parser)", () => {
 
         const result = expandEachTests("test.each([", "Object with methods", content, 0, "test", 1);
 
-        // Should handle gracefully without crashing
         expect(result.length).toBeGreaterThanOrEqual(1);
       });
     });
@@ -657,11 +646,8 @@ describe("BunTestController (static file parser)", () => {
 
       const result = parseTestBlocks(content);
 
-      // The parseTestBlocks removes comments first, which might affect parsing
-      // This test verifies it handles test names that look like comments
       expect(result.length).toBeGreaterThanOrEqual(1);
 
-      // Find the tests we expect
       const hasCommentSyntax = result.some(r => r.name.includes("comment syntax"));
       const hasURL = result.some(r => r.name.includes("https://example.com"));
 
@@ -681,9 +667,7 @@ describe("BunTestController (static file parser)", () => {
 
       const result = parseTestBlocks(content);
 
-      // The regex-based parser might pick up tests in strings, that's a known limitation
       expect(result.length).toBeGreaterThanOrEqual(1);
-      // At least one should be the real test
       expect(result.some(r => r.name === "real test")).toBe(true);
     });
 
@@ -697,7 +681,6 @@ describe("BunTestController (static file parser)", () => {
 
       const result = parseTestBlocks(content);
 
-      // Should parse despite complex modifiers
       expect(result.length).toBeGreaterThan(0);
     });
 
@@ -748,7 +731,6 @@ describe("BunTestController (static file parser)", () => {
       expect(result[0].type).toBe("test");
       expect(result[1].name).toBe("when 4 + 5, result should be 9");
       expect(result[1].type).toBe("test");
-      // should be cool to have varable substitution here, but its alot harder than just array expansion
       expect(result[2].name).toBe("Database $db");
       expect(result[2].type).toBe("describe");
     });
@@ -823,7 +805,6 @@ describe("BunTestController (static file parser)", () => {
 
       const result = parseTestBlocks(content);
 
-      // Should at least parse the first test
       expect(result.length).toBeGreaterThanOrEqual(1);
       expect(result[0].name).toBe("generator test");
     });
@@ -869,84 +850,15 @@ describe("BunTestController (static file parser)", () => {
     });
 
     test("should handle edge cases", () => {
-      // Empty string
       expect(getBraceDepth("", 0, 0)).toBe(0);
 
-      // String with only braces
       expect(getBraceDepth("{{{}}}", 0, 6)).toBe(0);
 
-      // Unbalanced braces
       expect(getBraceDepth("{{{", 0, 3)).toBe(3);
       expect(getBraceDepth("}}}", 0, 3)).toBe(-3);
 
-      // Mixed with template literals containing braces
       const templateContent = "{ `${foo}` + `${bar}` }";
       expect(getBraceDepth(templateContent, 0, templateContent.length)).toBe(0);
     });
   });
-
-  // describe("removeCommentsPreservingStrings", () => {
-  //   test("should remove single line comments", () => {
-  //     const content = `
-  //       const x = 1; // This is a comment
-  //       const y = 2;
-  //     `;
-
-  //     const result = removeCommentsPreservingStrings(content);
-  //     expect(result).not.toContain("This is a comment");
-  //     expect(result).toContain("const x = 1");
-  //     expect(result).toContain("const y = 2");
-  //   });
-
-  //   test("should remove multi-line comments", () => {
-  //     const content = `
-  //       const x = 1;
-  //       /* This is a
-  //          multi-line comment */
-  //       const y = 2;
-  //     `;
-
-  //     const result = removeCommentsPreservingStrings(content);
-  //     expect(result).not.toContain("This is a");
-  //     expect(result).not.toContain("multi-line comment");
-  //     expect(result).toContain("const x = 1");
-  //     expect(result).toContain("const y = 2");
-  //   });
-
-  //   test("should preserve comments inside strings", () => {
-  //     const content = `
-  //       const str = "This // is not a comment";
-  //       const template = \`This /* is also */ not a comment\`;
-  //       // But this is a comment
-  //     `;
-
-  //     const result = removeCommentsPreservingStrings(content);
-  //     expect(result).toContain("This // is not a comment");
-  //     expect(result).toContain("This /* is also */ not a comment");
-  //     expect(result).not.toContain("But this is a comment");
-  //   });
-
-  //   test("should handle escaped quotes", () => {
-  //     const content = `
-  //       const str = "String with \\"escaped\\" quotes // not a comment";
-  //       // This is a comment
-  //     `;
-
-  //     const result = removeCommentsPreservingStrings(content);
-  //     expect(result).toContain('String with \\"escaped\\" quotes // not a comment');
-  //     expect(result).not.toContain("This is a comment");
-  //   });
-
-  //   test("should preserve line positions", () => {
-  //     const content = `line1
-  //       line2 // comment
-  //       line3`;
-
-  //     const result = removeCommentsPreservingStrings(content);
-  //     const lines = result.split("\n");
-  //     expect(lines).toHaveLength(3);
-  //     expect(lines[0]).toBe("line1");
-  //     expect(lines[2]).toContain("line3");
-  //   });
-  // });
 });

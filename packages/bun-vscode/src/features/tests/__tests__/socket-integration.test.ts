@@ -258,9 +258,8 @@ describe("Socket Integration - Event Handling", () => {
     // needing to simulate the full debug adapter protocol.
     const testSequence = createTestEventSequence();
     for (const { event, data } of testSequence) {
-      // This simulates what happens inside the adapter after it parses a message from Bun
       adapter.emit(event as any, data);
-      await setTimeoutPromise(1); // Small delay to ensure timestamp ordering
+      await setTimeoutPromise(1);
     }
 
     // Verify event count and sequence

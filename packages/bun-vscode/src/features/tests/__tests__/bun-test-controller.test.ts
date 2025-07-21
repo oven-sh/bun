@@ -5,22 +5,18 @@ import { makeTestController, makeWorkspaceFolder } from "./vscode.mock";
 
 const { BunTestController } = await import("../bun-test-controller");
 
-// Mock vscode components needed for tests
 const mockTestController: MockTestController = makeTestController();
 const mockWorkspaceFolder: MockWorkspaceFolder = makeWorkspaceFolder("/test/workspace");
 
-// Create a test instance with isTest flag to skip initialization
 const controller = new BunTestController(mockTestController, mockWorkspaceFolder, true);
 const internal = controller._internal;
 
 describe("BunTestController", () => {
   beforeEach(() => {
-    // Reset state between tests
     mockTestController.items.replace([]);
   });
 
   afterEach(() => {
-    // Cleanup after each test
     mockTestController.items.replace([]);
   });
 
@@ -76,10 +72,9 @@ describe("BunTestController", () => {
 
       const pattern = internal.buildTestNamePattern(mockTests);
 
-      // The pattern escapes % formatters but preserves them
       expect(pattern).toContain("Parent Child test with .*? and");
       expect(pattern).toContain("Another Deeply Nested test");
-      // Check that it's a valid regex pattern
+
       if (pattern) {
         expect(() => new RegExp(pattern)).not.toThrow();
       }
@@ -107,7 +102,6 @@ describe("BunTestController", () => {
       expect(pattern).toContain("+plus+");
       expect(pattern).toContain("^caret^");
 
-      // Verify it's a valid regex
       expect(() => new RegExp(pattern)).not.toThrow();
     });
 
@@ -176,16 +170,12 @@ describe("BunTestController", () => {
     });
 
     test("should handle edge cases", () => {
-      // Partial ANSI codes are still removed if they match the pattern
       expect(internal.stripAnsi("\u001b[incomplete")).toBe("ncomplete");
 
-      // Mixed content
       expect(internal.stripAnsi("normal \u001b[31mred\u001b[0m normal again")).toBe("normal red normal again");
 
-      // Only ANSI codes
       expect(internal.stripAnsi("\u001b[31m\u001b[0m")).toBe("");
 
-      // Nested ANSI codes
       expect(internal.stripAnsi("\u001b[1m\u001b[31mbold red\u001b[39mnormal bold\u001b[0m")).toBe(
         "bold rednormal bold",
       );
@@ -497,7 +487,7 @@ describe("BunTestController - Test Discovery and Management", () => {
       ] as any;
 
       const result = internal.shouldUseTestNamePattern(mockTests);
-      // Since it has no parent with multiple children, it should return false
+
       expect(result).toBe(false);
     });
   });
@@ -608,21 +598,17 @@ describe("BunTestController - Test Discovery and Management", () => {
 describe("BunTestController - Test Item Management", () => {
   describe("findTestByPath", () => {
     test("should find test by path when no parent ID", () => {
-      // This test verifies the method is callable and returns appropriately
-      // Full integration testing would require complete VSCode mock setup
       const result = internal.findTestByPath.call(controller, "testName", "/test/file.ts");
       expect(result).toBeUndefined(); // Expected since we don't have full VSCode mock
     });
 
     test("should handle missing test items", () => {
-      // Clear any existing items
       mockTestController.items.replace([]);
       const result = internal.findTestByPath.call(controller, "nonexistent", "/test/nonexistent.ts");
       expect(result).toBeUndefined();
     });
 
     test("should find test with parent ID", () => {
-      // This test verifies the method is callable with parentId parameter
       const result = internal.findTestByPath.call(controller, "testName", "/test/file.ts", 123);
       expect(result).toBeUndefined(); // Expected since we don't have full VSCode mock
     });
@@ -713,9 +699,8 @@ describe("BunTestController - Test Item Management", () => {
 
   describe("createTestItem", () => {
     test("should create test item with basic properties", () => {
-      // Test that the method is callable and returns appropriately
       const result = internal.createTestItem.call(controller, "test name", "/test/file.ts", "test", undefined, 10);
-      // Method successfully creates a test item
+
       expect(result).toBeDefined();
       expect(result?.label).toBe("test name");
       expect(result?.uri?.fsPath).toBe("/test/file.ts");
@@ -778,7 +763,7 @@ describe("BunTestController - Test Item Management", () => {
       lineNumbers.forEach(line => {
         const result = internal.createTestItem.call(controller, "test", "/test/file.ts", "test", undefined, line);
         expect(result).toBeDefined();
-        // The method creates a test item - actual range assignment happens in the VSCode mock
+
         expect(result?.label).toBe("test");
       });
     });
@@ -922,7 +907,6 @@ Difference:
         children: new Map([["child", mockChild]]),
       };
 
-      // This should not throw
       expect(() => {
         internal.cleanupTestItem.call(controller, mockParent as any);
       }).not.toThrow();
@@ -996,10 +980,8 @@ Difference:
         children: new Map([["item1", item1]]),
       };
 
-      // Create potential circular reference
       item1.children.set("item2", item2);
 
-      // Should still handle cleanup without infinite recursion
       expect(() => {
         internal.cleanupTestItem.call(controller, item1);
       }).not.toThrow();
@@ -1010,32 +992,26 @@ Difference:
 describe("BunTestController - Integration and Coverage", () => {
   describe("_internal getter", () => {
     test("should expose all expected internal methods", () => {
-      // Parser utilities
       expect(internal).toHaveProperty("expandEachTests");
       expect(internal).toHaveProperty("parseTestBlocks");
       expect(internal).toHaveProperty("getBraceDepth");
 
-      // VSCode integration utilities
       expect(internal).toHaveProperty("buildTestNamePattern");
       expect(internal).toHaveProperty("stripAnsi");
       expect(internal).toHaveProperty("processErrorData");
       expect(internal).toHaveProperty("escapeTestName");
       expect(internal).toHaveProperty("shouldUseTestNamePattern");
 
-      // File and test management
       expect(internal).toHaveProperty("isTestFile");
       expect(internal).toHaveProperty("customFilePattern");
       expect(internal).toHaveProperty("getBunExecutionConfig");
 
-      // Test item utilities
       expect(internal).toHaveProperty("findTestByPath");
       expect(internal).toHaveProperty("findTestByName");
       expect(internal).toHaveProperty("createTestItem");
 
-      // Error handling utilities
       expect(internal).toHaveProperty("createErrorMessage");
 
-      // Cleanup utilities
       expect(internal).toHaveProperty("cleanupTestItem");
     });
 
@@ -1059,7 +1035,6 @@ describe("BunTestController - Integration and Coverage", () => {
     });
 
     test("should provide consistent API", () => {
-      // All methods should be available as functions
       const methodNames = Object.keys(internal);
       const functionCount = methodNames.filter(name => typeof internal[name] === "function").length;
 
@@ -1070,20 +1045,14 @@ describe("BunTestController - Integration and Coverage", () => {
 
   describe("comprehensive controller functionality", () => {
     test("VSCode extension supports comprehensive test.each scenarios", () => {
-      // This is a summary test to ensure our VSCode extension properly integrates
-      // with the extracted parser utilities and handles all the test.each patterns
-
-      // Test the integration with the parser utilities
       expect(typeof internal.parseTestBlocks).toBe("function");
       expect(typeof internal.expandEachTests).toBe("function");
       expect(typeof internal.getBraceDepth).toBe("function");
 
-      // Test VSCode-specific functionality
       expect(typeof internal.buildTestNamePattern).toBe("function");
       expect(typeof internal.stripAnsi).toBe("function");
       expect(typeof internal.processErrorData).toBe("function");
 
-      // Test all newly exposed functions
       expect(typeof internal.escapeTestName).toBe("function");
       expect(typeof internal.shouldUseTestNamePattern).toBe("function");
       expect(typeof internal.isTestFile).toBe("function");
@@ -1095,11 +1064,9 @@ describe("BunTestController - Integration and Coverage", () => {
       expect(typeof internal.createErrorMessage).toBe("function");
       expect(typeof internal.cleanupTestItem).toBe("function");
 
-      // Verify the test controller is properly initialized
       expect(controller).toBeDefined();
       expect(controller._internal).toBeDefined();
 
-      // Test that we have comprehensive coverage
       const internalMethods = Object.keys(internal);
       expect(internalMethods.length).toBeGreaterThanOrEqual(16);
     });
@@ -1154,10 +1121,8 @@ describe("BunTestController - Integration and Coverage", () => {
 
   describe("edge cases and error handling", () => {
     test("should handle malformed data gracefully", () => {
-      // buildTestNamePattern expects an array, so provide empty array instead of null
       expect(() => internal.buildTestNamePattern([])).not.toThrow();
 
-      // stripAnsi and escapeTestName expect strings
       expect(() => internal.stripAnsi("")).not.toThrow();
       expect(() => internal.escapeTestName("")).not.toThrow();
     });
@@ -1169,11 +1134,9 @@ describe("BunTestController - Integration and Coverage", () => {
     });
 
     test("should handle invalid test items", () => {
-      // findTestByName expects a valid TestItem with children property
       const mockItem = { children: new Map() } as any;
       expect(() => internal.findTestByName(mockItem, "test")).not.toThrow();
 
-      // Test with empty children
       const emptyItem = { children: new Map() } as any;
       expect(() => internal.findTestByName(emptyItem, "test")).not.toThrow();
     });

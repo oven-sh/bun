@@ -510,7 +510,6 @@ export class BunTestController implements vscode.Disposable {
         : this.escapeTestName(node.name);
       const testId = `${filePath}#${nodePath}`;
 
-      // Check if test already exists to avoid duplicates
       let testItem = parent.children.get(testId);
       if (!testItem) {
         testItem = this.testController.createTestItem(testId, this.stripAnsi(node.name), vscode.Uri.file(filePath));
@@ -853,7 +852,6 @@ export class BunTestController implements vscode.Disposable {
 
   private applyPreviousResultsToItem(item: vscode.TestItem, run: vscode.TestRun, requestedTestIds: Set<string>): void {
     if (!requestedTestIds.has(item.id)) {
-      // return;
       const previousResult = this.testResultHistory.get(item.id);
       if (previousResult) {
         switch (previousResult.status) {
@@ -862,7 +860,6 @@ export class BunTestController implements vscode.Disposable {
             break;
           case "failed":
             run.failed(item, [], previousResult.duration);
-            run;
             break;
           case "skipped":
             run.skipped(item);

@@ -4616,11 +4616,6 @@ pub const Expect = struct {
                     // Only consider successful returns
                     if (type_str.eqlComptime("return")) {
                         const result_value = try result.get(globalThis, "value") orelse .js_undefined;
-                        const is_same = try result_value.isSameValue(expected, globalThis);
-                        if (is_same) {
-                            pass = true;
-                            break;
-                        }
                         const is_deep_equal = try result_value.deepEquals(expected, globalThis);
                         if (is_deep_equal) {
                             pass = true;
@@ -4639,10 +4634,10 @@ pub const Expect = struct {
 
             if (this.flags.not) {
                 const not_signature = comptime getSignature("toHaveReturnedWith", "<green>expected<r>", true);
-                return this.throw(globalThis, not_signature, "\n\n" ++ "Expected mock function not to have returned: <green>{any}<r>\n", .{expected});
+                return this.throw(globalThis, not_signature, "\n\n" ++ "Expected mock function not to have returned: <red>{}<r>\n", .{expected.toFmt(&formatter)});
             } else {
-                const received_fmt = "\n\n" ++ "Expected mock function to have returned: <green>{any}<r>\n" ++ "But it did not.\n";
-                return this.throw(globalThis, signature, received_fmt, .{expected});
+                const received_fmt = "\n\n" ++ "Expected mock function to have returned: <green>{}<r>\n" ++ "Instead received return values: <red>{}<r>.\n";
+                return this.throw(globalThis, signature, received_fmt, .{ expected.toFmt(&formatter), returns.toFmt(&formatter) });
             }
         }
 

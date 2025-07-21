@@ -309,7 +309,13 @@ pub fn doPatchCommit(
             );
             Global.crash();
         };
-        const paths = bun.patch.gitDiffPreprocessPaths(bun.default_allocator, old_folder, new_folder, false);
+
+        const paths = paths: {
+            const new_folder_path_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(new_folder_path_buf);
+            break :paths bun.patch.gitDiffPreprocessPaths(bun.default_allocator, old_folder, try bun.getFdPathZ(new_folder, new_folder_path_buf), false);
+        };
+
         const opts = bun.patch.spawnOpts(paths[0], paths[1], cwd, git, &manager.event_loop);
 
         var spawn_result = switch (bun.spawnSync(&opts) catch |e| {

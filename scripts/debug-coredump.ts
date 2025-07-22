@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { parseArgs } from "node:util";
 
 // usage: bun debug-coredump.ts

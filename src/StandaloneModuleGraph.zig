@@ -718,6 +718,10 @@ pub const StandaloneModuleGraph = struct {
                     cleanup(zname, cloned_executable_fd);
                     Global.exit(1);
                 };
+                // Set executable permissions when running on POSIX hosts, even for Windows targets
+                if (comptime !Environment.isWindows) {
+                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
+                }
                 return cloned_executable_fd;
             },
             else => {

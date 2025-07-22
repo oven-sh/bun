@@ -827,7 +827,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
     }
 }
 
-fn isRemoteFilesystem(stat_fs: *const bun.StatFS) bool {
+pub fn isRemoteFilesystem(stat_fs: *const bun.StatFS) bool {
 
     //    The following filesystem types may appear in f_type:
 

@@ -513,3 +513,103 @@ export function lazyAsyncIterator(this) {
   $readableStreamDefineLazyIterators(prototype);
   return prototype[globalThis.Symbol.asyncIterator].$call(this);
 }
+
+$linkTimeConstant;
+export function from(asyncIterable) {
+  if (asyncIterable == null) {
+    throw new TypeError("ReadableStream.from() takes a non-null value");
+  }
+
+  // Check if it's already a ReadableStream
+  if ($isReadableStream(asyncIterable)) {
+    return asyncIterable;
+  }
+
+  // Handle arrays with Array.fromAsync
+  if ($isArray(asyncIterable)) {
+    return new ReadableStream({
+      async start(controller) {
+        try {
+          for (let i = 0; i < asyncIterable.length; i++) {
+            controller.enqueue(asyncIterable[i]);
+          }
+          controller.close();
+        } catch (error) {
+          controller.error(error);
+        }
+      }
+    });
+  }
+
+  // Handle iterables (sync and async)
+  let asyncIteratorMethod = asyncIterable[globalThis.Symbol.asyncIterator];
+  let iteratorMethod = asyncIterable[globalThis.Symbol.iterator];
+
+  if (asyncIteratorMethod != null) {
+    // Async iterable
+    if (typeof asyncIteratorMethod !== "function") {
+      throw new TypeError("ReadableStream.from() argument's @@asyncIterator method must be a function");
+    }
+
+    return new ReadableStream({
+      async start(controller) {
+        try {
+          const iterator = asyncIteratorMethod.$call(asyncIterable);
+          if (!$isObject(iterator)) {
+            throw new TypeError("ReadableStream.from() argument's @@asyncIterator method must return an object");
+          }
+
+          while (true) {
+            const result = await iterator.next();
+            if (!$isObject(result)) {
+              throw new TypeError("Iterator result must be an object");
+            }
+
+            if (result.done) {
+              controller.close();
+              break;
+            }
+
+            controller.enqueue(result.value);
+          }
+        } catch (error) {
+          controller.error(error);
+        }
+      }
+    });
+  } else if (iteratorMethod != null) {
+    // Sync iterable
+    if (typeof iteratorMethod !== "function") {
+      throw new TypeError("ReadableStream.from() argument's @@iterator method must be a function");
+    }
+
+    return new ReadableStream({
+      start(controller) {
+        try {
+          const iterator = iteratorMethod.$call(asyncIterable);
+          if (!$isObject(iterator)) {
+            throw new TypeError("ReadableStream.from() argument's @@iterator method must return an object");
+          }
+
+          while (true) {
+            const result = iterator.next();
+            if (!$isObject(result)) {
+              throw new TypeError("Iterator result must be an object");
+            }
+
+            if (result.done) {
+              controller.close();
+              break;
+            }
+
+            controller.enqueue(result.value);
+          }
+        } catch (error) {
+          controller.error(error);
+        }
+      }
+    });
+  } else {
+    throw new TypeError("ReadableStream.from() argument must be an iterable or async iterable");
+  }
+}

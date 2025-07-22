@@ -153,6 +153,7 @@ template<> void JSReadableStreamDOMConstructor::initializeProperties(VM& vm, JSD
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSReadableStream::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    putDirectBuiltinFunction(vm, &globalObject, Identifier::fromString(vm, "from"_s), readableStreamFromCodeGenerator(vm), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 }
 
 template<> FunctionExecutable* JSReadableStreamDOMConstructor::initializeExecutable(VM& vm)
@@ -278,6 +279,7 @@ void JSReadableStream::destroy(JSC::JSCell* cell)
     JSReadableStream* thisObject = static_cast<JSReadableStream*>(cell);
     thisObject->JSReadableStream::~JSReadableStream();
 }
+
 
 JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {

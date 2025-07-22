@@ -868,10 +868,12 @@ if(NOT WIN32)
       target_link_libraries(${bun} PUBLIC
         -fsanitize=address
       )
-      # Suppress ASAN-related linker warnings
-      target_link_options(${bun} PUBLIC
-        -Wl,--no-warn-rwx-segments
-      )
+      # Suppress ASAN-related linker warnings on Linux
+      if(LINUX)
+        target_link_options(${bun} PUBLIC
+          -Wl,--no-warn-rwx-segments
+        )
+      endif()
     endif()
 
     target_compile_options(${bun} PUBLIC
@@ -916,10 +918,12 @@ if(NOT WIN32)
       target_link_libraries(${bun} PUBLIC
         -fsanitize=address
       )
-      # Suppress ASAN-related linker warnings
-      target_link_options(${bun} PUBLIC
-        -Wl,--no-warn-rwx-segments
-      )
+      # Suppress ASAN-related linker warnings on Linux
+      if(LINUX)
+        target_link_options(${bun} PUBLIC
+          -Wl,--no-warn-rwx-segments
+        )
+      endif()
     endif()
   endif()
 else()

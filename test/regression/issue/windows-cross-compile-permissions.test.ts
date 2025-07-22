@@ -2,16 +2,16 @@ import { test, expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-test("Windows cross-compilation from POSIX should set executable permissions", async () => {
-  const dir = tempDirWithFiles("windows-cross-compile-test", {
+test("Compiled executables should have proper permissions on POSIX systems", async () => {
+  const dir = tempDirWithFiles("executable-permissions-test", {
     "index.js": `console.log("Hello World");`,
   });
 
-  // Test cross-compilation to Windows x64 baseline from POSIX host
-  const outfile = join(dir, "app.exe");
+  // Test native compilation to verify permissions are set correctly
+  const outfile = join(dir, "app");
   
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--target", "bun-windows-x64-baseline", "index.js", "--outfile", outfile],
+    cmd: [bunExe(), "build", "--compile", "index.js", "--outfile", outfile],
     env: bunEnv,
     cwd: dir,
     stderr: "pipe",

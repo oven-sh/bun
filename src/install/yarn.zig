@@ -862,9 +862,16 @@ pub fn migrateYarnLockfile(
                         break :blk Resolution{};
                     }
 
+                    // Only leave URL empty for default registries
+                    const url = if (strings.hasPrefixComptime(resolved, "https://registry.yarnpkg.com/") or 
+                                   strings.hasPrefixComptime(resolved, "https://registry.npmjs.org/"))
+                        String{}
+                    else
+                        try string_buf.append(resolved);
+                    
                     break :blk Resolution.init(.{
                         .npm = .{
-                            .url = String{}, // Leave URL empty for proper registry handling
+                            .url = url,
                             .version = result.version.min(),
                         },
                     });

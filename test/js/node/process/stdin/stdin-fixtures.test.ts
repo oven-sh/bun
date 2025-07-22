@@ -42,6 +42,7 @@ async function run(cmd: string, test: Test): Promise<RunResult> {
     child.stderr.setEncoding("utf8");
 
     child.stdout.on("data", chunk => {
+      chunk = chunk.replaceAll("\r", "");
       stdout += chunk;
       // Count occurrences of "%READY%" to know when to send stdin
       const currentReadyCount = (stdout.match(/%READY%/g) || []).length;
@@ -72,6 +73,7 @@ async function run(cmd: string, test: Test): Promise<RunResult> {
     });
 
     child.stderr.on("data", chunk => {
+      chunk = chunk.replaceAll("\r", "");
       stderr += chunk;
     });
 

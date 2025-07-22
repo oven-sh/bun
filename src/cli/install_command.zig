@@ -18,7 +18,7 @@ fn deleteOldNodeModules(fd: bun.FileDescriptor) void {
     var iter = dir.iterate();
 
     while (iter.next() catch null) |entry| {
-        if (entry.kind == .directory and std.mem.startsWith(u8, entry.name, ".node_modules_old_")) {
+        if (entry.kind == .directory and bun.strings.hasPrefixComptime(entry.name, ".node_modules_old_")) {
             fd.deleteTree(entry.name) catch {};
         }
     }

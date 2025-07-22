@@ -731,7 +731,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
         if (options) {
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
-          encoding && (assertEncodingForWindows ?? $newZigFunction("types.zig", "jsAssertEncodingValid", 1))(encoding);
+          encoding && (assertEncodingForWindows ?? $newZigFunction("bun.js/node/types.zig", "jsAssertEncodingValid", 1))(encoding);
         }
         // This function is ported 1:1 from node.js, to emulate how it is unable to
         // resolve subst drives to their underlying location. The native call is
@@ -849,7 +849,7 @@ const realpath: typeof import("node:fs").realpath =
         if (options) {
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
-          encoding && (assertEncodingForWindows ?? $newZigFunction("types.zig", "jsAssertEncodingValid", 1))(encoding);
+          encoding && (assertEncodingForWindows ?? $newZigFunction("bun.js/node/types.zig", "jsAssertEncodingValid", 1))(encoding);
         }
         if (p instanceof URL) {
           if (p.pathname.indexOf("%00") != -1) {

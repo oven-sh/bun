@@ -783,11 +783,11 @@ pub const Libc = enum(u8) {
     }
 
     pub fn isMatch(this: Libc) bool {
-        return (@intFromEnum(this) & @intFromEnum(current)) != 0;
+        return (@intFromEnum(this) & @intFromEnum(current)) != 0 or this == .none;
     }
 
     pub fn isMatchWithTarget(this: Libc, target: Libc) bool {
-        return (@intFromEnum(this) & @intFromEnum(target)) != 0;
+        return (@intFromEnum(this) & @intFromEnum(target)) != 0 or this == .none;
     }
 
     pub fn negatable(this: Libc) Negatable(Libc) {

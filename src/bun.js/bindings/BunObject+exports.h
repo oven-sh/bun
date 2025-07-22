@@ -72,6 +72,7 @@
     macro(spawnSync) \
     macro(stringWidth) \
     macro(udpSocket) \
+    macro(unzipSync) \
     macro(which) \
     macro(write) \
     macro(zstdCompressSync) \

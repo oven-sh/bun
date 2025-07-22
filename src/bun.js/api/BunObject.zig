@@ -36,6 +36,7 @@ pub const BunObject = struct {
     pub const spawn = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawn", false));
     pub const spawnSync = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawnSync", false));
     pub const udpSocket = toJSCallback(host_fn.wrapStaticMethod(api.UDPSocket, "udpSocket", false));
+    pub const unzipSync = toJSCallback(JSZip.unzipSync);
     pub const which = toJSCallback(Bun.which);
     pub const write = toJSCallback(JSC.WebCore.Blob.writeFile);
     pub const zstdCompressSync = toJSCallback(JSZstd.compressSync);
@@ -170,6 +171,7 @@ pub const BunObject = struct {
         @export(&BunObject.spawn, .{ .name = callbackName("spawn") });
         @export(&BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
         @export(&BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
+        @export(&BunObject.unzipSync, .{ .name = callbackName("unzipSync") });
         @export(&BunObject.which, .{ .name = callbackName("which") });
         @export(&BunObject.write, .{ .name = callbackName("write") });
         @export(&BunObject.zstdCompressSync, .{ .name = callbackName("zstdCompressSync") });
@@ -1992,6 +1994,148 @@ pub const JSZstd = struct {
         const vm = globalThis.bunVM();
         var job = ZstdJob.create(vm, globalThis, buffer, false, 0); // level is ignored for decompression
         return job.promise.value();
+    }
+};
+
+pub const JSZip = struct {
+    export fn zipDeallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
+        comptime assert(bun.use_mimalloc);
+        bun.Mimalloc.mi_free(ctx);
+    }
+
+    inline fn getOptions(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!struct { JSC.Node.StringOrBuffer, ?JSValue } {
+        const arguments = callframe.arguments();
+        const buffer_value: JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
+        const options_val: ?JSValue =
+            if (arguments.len > 1 and arguments[1].isObject())
+                arguments[1]
+            else if (arguments.len > 1 and !arguments[1].isUndefined()) {
+                return globalThis.throwInvalidArguments("Expected options to be an object", .{});
+            } else null;
+
+        if (try JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer_value)) |buffer| {
+            return .{ buffer, options_val };
+        }
+
+        return globalThis.throwInvalidArguments("Expected buffer to be a string or buffer", .{});
+    }
+
+    pub fn unzipSync(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const buffer, _ = try getOptions(globalThis, callframe);
+        defer buffer.deinit();
+
+        const allocator = bun.default_allocator;
+        const input = buffer.slice();
+
+        if (input.len == 0) {
+            return globalThis.throwInvalidArguments("Expected non-empty buffer", .{});
+        }
+
+        // Create a fixed buffer stream from the input data
+        var fbs = std.io.fixedBufferStream(input);
+        const seekable_stream = fbs.seekableStream();
+
+        // Initialize the zip iterator
+        var iter = std.zip.Iterator(@TypeOf(seekable_stream)).init(seekable_stream) catch |err| switch (err) {
+            error.ZipNoEndRecord => return globalThis.ERR(.ZSTD, "Invalid ZIP file: No end record found", .{}).throw(),
+            error.ZipTruncated => return globalThis.ERR(.ZSTD, "Invalid ZIP file: Truncated", .{}).throw(),
+            error.ZipMultiDiskUnsupported => return globalThis.ERR(.ZSTD, "Multi-disk ZIP files are not supported", .{}).throw(),
+            error.ZipUnsupportedVersion => return globalThis.ERR(.ZSTD, "Unsupported ZIP file version", .{}).throw(),
+            else => return globalThis.ERR(.ZSTD, "Failed to read ZIP file: {s}", .{@errorName(err)}).throw(),
+        };
+
+        // For now, just return the first file we find as a Uint8Array
+        var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
+
+        // Iterate through all entries in the ZIP file
+        while (iter.next() catch |err| switch (err) {
+            error.ZipBadCdOffset => return globalThis.ERR(.ZSTD, "Invalid ZIP file: Bad central directory offset", .{}).throw(),
+            error.ZipEncryptionUnsupported => return globalThis.ERR(.ZSTD, "Encrypted ZIP files are not supported", .{}).throw(),
+            error.ZipBadExtraFieldSize => return globalThis.ERR(.ZSTD, "Invalid ZIP file: Bad extra field size", .{}).throw(),
+            else => return globalThis.ERR(.ZSTD, "Failed to read ZIP entry: {s}", .{@errorName(err)}).throw(),
+        }) |entry| {
+            // Skip if filename is too long
+            if (entry.filename_len > filename_buf.len) {
+                continue;
+            }
+
+            // Read the filename
+            const filename = filename_buf[0..entry.filename_len];
+            fbs.seekTo(entry.header_zip_offset + @sizeOf(std.zip.CentralDirectoryFileHeader)) catch continue;
+            const len = fbs.reader().readAll(filename) catch continue;
+            if (len != filename.len) continue;
+
+            // Skip directories (entries ending with '/')
+            if (filename.len > 0 and filename[filename.len - 1] == '/') {
+                continue;
+            }
+
+            // Validate filename for security
+            if (std.mem.indexOf(u8, filename, "..") != null or
+                (filename.len > 0 and filename[0] == '/'))
+            {
+                continue; // Skip potentially dangerous filenames
+            }
+
+            // Extract the file content
+            const file_data = blk: {
+                // Seek to the local file header
+                fbs.seekTo(entry.file_offset) catch continue;
+                const local_header = fbs.reader().readStructEndian(std.zip.LocalFileHeader, .little) catch continue;
+
+                if (!std.mem.eql(u8, &local_header.signature, &std.zip.local_file_header_sig)) {
+                    continue;
+                }
+
+                // Calculate the data offset
+                const data_offset = entry.file_offset + @sizeOf(std.zip.LocalFileHeader) + 
+                                  local_header.filename_len + local_header.extra_len;
+
+                fbs.seekTo(data_offset) catch continue;
+
+                // Allocate buffer for decompressed data
+                const output_data = allocator.alloc(u8, entry.uncompressed_size) catch |err| switch (err) {
+                    error.OutOfMemory => return globalThis.throwOutOfMemory(),
+                };
+
+                var output_stream = std.io.fixedBufferStream(output_data);
+                var limited_reader = std.io.limitedReader(fbs.reader(), entry.compressed_size);
+
+                // Decompress the data
+                const actual_crc = std.zip.decompress(
+                    entry.compression_method,
+                    entry.uncompressed_size,
+                    limited_reader.reader(),
+                    output_stream.writer(),
+                ) catch |err| {
+                    allocator.free(output_data);
+                    switch (err) {
+                        error.UnsupportedCompressionMethod => continue, // Skip unsupported files
+                        error.ZipUncompressSizeMismatch,
+                        error.ZipUncompressSizeTooSmall,
+                        error.ZipDeflateTruncated => continue, // Skip corrupted files
+                        else => continue,
+                    }
+                };
+
+                // Verify CRC32
+                if (actual_crc != entry.crc32) {
+                    allocator.free(output_data);
+                    continue; // Skip files with CRC mismatch
+                }
+
+                break :blk output_data;
+            };
+
+            // Create a Uint8Array from the file data and return it
+            var array_buffer = JSC.ArrayBuffer.fromBytes(file_data, .Uint8Array);
+            return array_buffer.toJSWithContext(globalThis, file_data.ptr, zipDeallocator);
+        }
+
+        // If no files found, return empty Uint8Array
+        const empty_data = allocator.alloc(u8, 0) catch return globalThis.throwOutOfMemory();
+        var array_buffer = JSC.ArrayBuffer.fromBytes(empty_data, .Uint8Array);
+        return array_buffer.toJSWithContext(globalThis, empty_data.ptr, zipDeallocator);
     }
 };
 

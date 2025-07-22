@@ -256,31 +256,8 @@ fn printModifiedSegment(
     writer: anytype,
     enable_colors: bool,
 ) !void {
-    const char_diff = try DMP.default.diff(arena, segment.removed, segment.inserted, true);
-
-    // Heuristic: if the common text is less than half the length of the longer
-    // string, we consider them "different enough" to not do an inline diff.
-    var common_len: usize = 0;
-    for (char_diff.items) |item| {
-        if (item.operation == .equal) {
-            common_len += std.mem.trim(u8, item.text, " \t\n").len;
-        }
-    }
-
-    const threshold_len = @max(segment.removed.len, segment.inserted.len) / 2;
-
-    if (common_len < threshold_len) {
-        // Not similar enough; print without inline highlights
-        try printLinePrefix(writer, enable_colors, styles.inserted);
-        try printSegment(segment.inserted, writer, enable_colors, styles.inserted);
-        try writer.writeAll("\n");
-
-        try printLinePrefix(writer, enable_colors, styles.removed);
-        try printSegment(segment.removed, writer, enable_colors, styles.removed);
-        try writer.writeAll("\n");
-
-        return;
-    }
+    var char_diff = try DMP.default.diff(arena, segment.removed, segment.inserted, true);
+    try DMP.diffCleanupSemantic(arena, &char_diff);
 
     try printLinePrefix(writer, enable_colors, styles.inserted);
     for (char_diff.items) |item| {

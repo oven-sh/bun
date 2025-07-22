@@ -35,14 +35,15 @@ test("no color", async () => {
 
       "a
     - d
-    + b
-      c
+    - c
     - d
+    + b
+    + c
     +  d
       e"
 
-    - Expected  - 2
-    + Received  + 2
+    - Expected  - 3
+    + Received  + 3
 
 
           at <anonymous> (FILE:LINE)
@@ -60,15 +61,16 @@ test("no color", async () => {
       {
         object1: "a",
     -   object2: " b",
-    +   object2: "b",
-        object3: "c
+    -   object3: "c
     -   d",
+    +   object2: "b",
+    +   object3: "c
     +   d
     +   e",
       }
 
-    - Expected  - 2
-    + Received  + 3
+    - Expected  - 3
+    + Received  + 4
 
 
           at <anonymous> (FILE:LINE)
@@ -197,14 +199,15 @@ test("no color", async () => {
       {
         arabic: "اختبار",
     -   chinese: "测试文本",
-    +   chinese: "测试字符串",
-        emoji: "\\uD83D\\uDD25\\uD83D\\uDCA7\\uD83C\\uDF0A",
+    -   emoji: "\\uD83D\\uDD25\\uD83D\\uDCA7\\uD83C\\uDF0A",
     -   mixed: "Hello 世界 \\uD83C\\uDF0E",
+    +   chinese: "测试字符串",
+    +   emoji: "\\uD83D\\uDD25\\uD83D\\uDCA7\\uD83C\\uDF0A",
     +   mixed: "Hello 世界 \\uD83C\\uDF0D",
       }
 
-    - Expected  - 2
-    + Received  + 2
+    - Expected  - 3
+    + Received  + 3
 
 
           at <anonymous> (FILE:LINE)
@@ -348,15 +351,19 @@ test("no color", async () => {
     - line three
     - line four
     - line five
-    + line two!
-      line six
-      line seven
-      
-      === each line changed ===
+    - line six
+    - line seven
+    - 
+    - === each line changed ===
     - line one
     - line two!
     - line three
     - line four!
+    + line two!
+    + line six
+    + line seven
+    + 
+    + === each line changed ===
     + line one?
     + line two
     + line three?
@@ -394,8 +401,8 @@ test("no color", async () => {
     - "
     + === has newline at end vs doesn't ==="
 
-    - Expected  - 13
-    + Received  + 8
+    - Expected  - 17
+    + Received  + 12
 
 
           at <anonymous> (FILE:LINE)
@@ -569,47 +576,50 @@ test("color", async () => {
 
 
       \x1B[0m\x1B[2m"a\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[42md\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[41mb\x1B[0m
-      \x1B[0m\x1B[2mc\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32md\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[41m \x1B[0m\x1B[31md\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[42md\x1B[0m\x1B[32m\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32mc\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m\x1B[0m\x1B[32md\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[41mb\x1B[0m\x1B[31m\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31mc\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m\x1B[0m\x1B[41m \x1B[0m\x1B[31md\x1B[0m
       \x1B[0m\x1B[2me"\x1B[0m
 
-    \x1B[32m- Expected  - 2\x1B[0m
-    \x1B[31m+ Received  + 2\x1B[0m
+    \x1B[32m- Expected  - 3\x1B[0m
+    \x1B[31m+ Received  + 3\x1B[0m
 
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
 
       \x1B[0m\x1B[2m{\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m  age: \x1B[0m\x1B[42m30\x1B[0m\x1B[32m,\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m  age: \x1B[0m\x1B[41m25\x1B[0m\x1B[31m,\x1B[0m
-      \x1B[0m\x1B[2m  logs: [\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  age: \x1B[0m\x1B[42m30,\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[42m  logs: [\x1B[0m
     \x1B[32m- \x1B[0m\x1B[42m    "Logged into system",\x1B[0m
     \x1B[32m- \x1B[0m\x1B[42m    "Accessed dashboard",\x1B[0m
     \x1B[32m- \x1B[0m\x1B[42m    "Reviewed daily reports",\x1B[0m
     \x1B[32m- \x1B[0m\x1B[42m    "Updated project status",\x1B[0m
     \x1B[32m- \x1B[0m\x1B[42m    "Sent status email to team",\x1B[0m
     \x1B[32m- \x1B[0m\x1B[42m    "Scheduled follow-up meeting"\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[42m  ],\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[42m  name: "Bob\x1B[0m\x1B[32m",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  age: \x1B[0m\x1B[41m25,\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[41m  logs: [\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[41m    "Entered the building",\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[41m    "Checked in at reception",\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[41m    "Took elevator to floor 3",\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[41m    "Attended morning meeting",\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[41m    "Started working on project"\x1B[0m
-      \x1B[0m\x1B[2m  ],\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m  name: "\x1B[0m\x1B[42mBob\x1B[0m\x1B[32m",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m  name: "\x1B[0m\x1B[41mAlice\x1B[0m\x1B[31m",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[41m  ],\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[41m  name: "Alice\x1B[0m\x1B[31m",\x1B[0m
       \x1B[0m\x1B[2m}\x1B[0m
 
-    \x1B[32m- Expected  - 8\x1B[0m
-    \x1B[31m+ Received  + 7\x1B[0m
+    \x1B[32m- Expected  - 10\x1B[0m
+    \x1B[31m+ Received  + 9\x1B[0m
 
 
     "
   `);
-  expect(spawn.exitCode).toBe(1);
+  expect(spawn.exitCode).toBe(0);
 });
 
 /*

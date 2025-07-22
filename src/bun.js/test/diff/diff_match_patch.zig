@@ -162,6 +162,39 @@ pub fn DMP(comptime Unit: type) type {
             var diffs = try dmp.diffCompute(allocator, trimmed_before, trimmed_after, check_lines, deadline);
             errdefer deinitDiffList(allocator, &diffs);
 
+            // If the diff is composed of small scattered pieces, then it is likely
+            // that the two texts are completely different.
+            var common_chars: usize = 0;
+            for (diffs.items) |d| {
+                if (d.operation == .equal) {
+                    common_chars += d.text.len;
+                }
+            }
+            // If the number of common characters is less than 25% of the total
+            // length of the texts, then simplify the diff to a single delete
+            // and a single insert.
+            if (common_chars * 4 < (trimmed_before.len + trimmed_after.len)) {
+                // Nuke the messy diff.
+                deinitDiffList(allocator, &diffs);
+                diffs = .empty;
+
+                // Create a new one with a single delete and a single insert.
+                if (trimmed_before.len > 0) {
+                    try diffs.ensureUnusedCapacity(allocator, 1);
+                    diffs.appendAssumeCapacity(.{
+                        .operation = .delete,
+                        .text = try allocator.dupe(Unit, trimmed_before),
+                    });
+                }
+                if (trimmed_after.len > 0) {
+                    try diffs.ensureUnusedCapacity(allocator, 1);
+                    diffs.appendAssumeCapacity(.{
+                        .operation = .insert,
+                        .text = try allocator.dupe(Unit, trimmed_after),
+                    });
+                }
+            }
+
             // Restore the prefix and suffix.
 
             if (common_prefix.len != 0) {

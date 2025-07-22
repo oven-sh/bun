@@ -144,13 +144,11 @@ pub const Diff = struct {
     operation: Operation,
     text: []const u8,
 };
-
 const colors = struct {
     const red = "\x1b[31m";
     const green = "\x1b[32m";
     const cyan = "\x1b[36m";
-    const red_background = "\x1b[41m";
-    const green_background = "\x1b[42m";
+    const invert = "\x1b[7m";
     const underline = "\x1b[4m";
     const dim = "\x1b[2m";
     const reset = "\x1b[0m";
@@ -160,12 +158,12 @@ const styles = struct {
     const removed = Style{
         .prefix = "+ ",
         .prefix_color = colors.red,
-        .text_color = colors.red_background,
+        .text_color = colors.red ++ colors.invert,
     };
     const inserted = Style{
         .prefix = "- ",
         .prefix_color = colors.green,
-        .text_color = colors.green_background,
+        .text_color = colors.green ++ colors.invert,
     };
     const equal = Style{
         .prefix = "  ",

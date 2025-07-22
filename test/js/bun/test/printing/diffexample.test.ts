@@ -569,11 +569,11 @@ test("color", async () => {
 
 
       \x1B[0m\x1B[2m"a\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[42md\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[41mb\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m\x1B[7md\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7mb\x1B[0m
       \x1B[0m\x1B[2mc\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32md\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[41m \x1B[0m\x1B[31md\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m \x1B[0m\x1B[31md\x1B[0m
       \x1B[0m\x1B[2me"\x1B[0m
 
     \x1B[32m- Expected  - 2\x1B[0m
@@ -584,23 +584,23 @@ test("color", async () => {
 
 
       \x1B[0m\x1B[2m{\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m  age: \x1B[0m\x1B[42m30\x1B[0m\x1B[32m,\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m  age: \x1B[0m\x1B[41m25\x1B[0m\x1B[31m,\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  age: \x1B[0m\x1B[32m\x1B[7m30\x1B[0m\x1B[32m,\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  age: \x1B[0m\x1B[31m\x1B[7m25\x1B[0m\x1B[31m,\x1B[0m
       \x1B[0m\x1B[2m  logs: [\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m    "\x1B[0m\x1B[42mLogged into system",\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[42m    "Accessed dashboard",\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[42m    "Reviewed daily reports",\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[42m    "Updated project status",\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[42m    "Sent status email to team",\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[42m    "Scheduled follow-up meeting\x1B[0m\x1B[32m"\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m    "\x1B[0m\x1B[41mEntered the building",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[41m    "Checked in at reception",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[41m    "Took elevator to floor 3",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[41m    "Attended morning meeting",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[41m    "Started working on project\x1B[0m\x1B[31m"\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m    "\x1B[0m\x1B[32m\x1B[7mLogged into system",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Accessed dashboard",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Reviewed daily reports",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Updated project status",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Sent status email to team",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Scheduled follow-up meeting\x1B[0m\x1B[32m"\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m    "\x1B[0m\x1B[31m\x1B[7mEntered the building",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m    "Checked in at reception",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m    "Took elevator to floor 3",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m    "Attended morning meeting",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m    "Started working on project\x1B[0m\x1B[31m"\x1B[0m
       \x1B[0m\x1B[2m  ],\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m  name: "\x1B[0m\x1B[42mBob\x1B[0m\x1B[32m",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m  name: "\x1B[0m\x1B[41mAlice\x1B[0m\x1B[31m",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  name: "\x1B[0m\x1B[32m\x1B[7mBob\x1B[0m\x1B[32m",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  name: "\x1B[0m\x1B[31m\x1B[7mAlice\x1B[0m\x1B[31m",\x1B[0m
       \x1B[0m\x1B[2m}\x1B[0m
 
     \x1B[32m- Expected  - 8\x1B[0m

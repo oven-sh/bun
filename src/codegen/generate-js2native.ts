@@ -46,7 +46,7 @@ function resolveNativeFileId(call_type: NativeCallType, filename: string) {
     throw new Error(`Expected filename for $${call_type} to have ${ext} extension, got ${JSON.stringify(filename)}`);
   }
 
-  filename = filename.replace("/", sep);
+  filename = filename.replaceAll("/", sep);
   const resolved = sourceFiles.find(file => file.endsWith(sep + filename));
   if (!resolved) {
     const fnName = call_type === "bind" ? "bindgenFn" : call_type;

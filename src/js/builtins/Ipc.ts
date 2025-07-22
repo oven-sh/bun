@@ -145,13 +145,14 @@
  * @param {{ keepOpen?: boolean } | undefined} options
  * @returns {[unknown, Serialized] | null}
  */
-export function serialize(_message, _handle, _options) {
-  // sending file descriptors is not supported yet
-  return null; // send the message without the file descriptor
+export function serialize(message, handle, options) {
+  if (!handle) {
+    return null;
+  }
 
-  /*
   const net = require("node:net");
   const dgram = require("node:dgram");
+  
   if (handle instanceof net.Server) {
     // this one doesn't need a close function, but the fd needs to be kept alive until it is sent
     const server = handle as unknown as (typeof net)["Server"] & { _handle: Bun.TCPSocketListener<unknown> };
@@ -163,36 +164,35 @@ export function serialize(_message, _handle, _options) {
       type: "net.Socket",
     };
     const socket = handle as unknown as (typeof net)["Socket"] & {
-      _handle: Bun.Socket;
+      _handle: any;
       server: (typeof net)["Server"] | null;
       setTimeout(timeout: number): void;
     };
-    if (!socket._handle) return null; // failed
+    if (!socket._handle) {
+      return null; // failed
+    }
 
     // If the socket was created by net.Server
     if (socket.server) {
       // The worker should keep track of the socket
       new_message.key = socket.server._connectionKey;
 
-      const firstTime = !this[kChannelHandle].sockets.send[message.key];
-      const socketList = getSocketList("send", this, message.key);
-
-      // The server should no longer expose a .connection property
-      // and when asked to close it should query the socket status from
-      // the workers
-      if (firstTime) socket.server._setupWorker(socketList);
-
       // Act like socket is detached
       if (!options?.keepOpen) socket.server._connections--;
     }
 
-    const internal_handle = socket._handle;
+    // Try to find the actual socket implementation
+    const symbols = Object.getOwnPropertySymbols(socket._handle);
+    const kServerSocket = symbols.find(s => s.toString().includes('kServerSocket'));
+    let internal_handle = socket._handle;
+    
+    if (kServerSocket) {
+      internal_handle = socket._handle[kServerSocket];
+    }
 
     // Remove handle from socket object, it will be closed when the socket
-    // will be sent
+    // will be sent - but only if keepOpen is false
     if (!options?.keepOpen) {
-      // we can use a $newZigFunction to have it unset the callback
-      internal_handle.onread = nop;
       socket._handle = null;
       socket.setTimeout(0);
     }
@@ -203,7 +203,6 @@ export function serialize(_message, _handle, _options) {
   } else {
     throw $ERR_INVALID_HANDLE_TYPE();
   }
-  */
 }
 /**
  * @param {Serialized} serialized
@@ -224,7 +223,9 @@ export function parseHandle(target, serialized, fd) {
       return;
     }
     case "net.Socket": {
-      throw new Error("TODO case net.Socket");
+      const socket = new net.Socket({ fd });
+      emit(target, serialized.message, socket);
+      return;
     }
     case "dgram.Socket": {
       throw new Error("TODO case dgram.Socket");

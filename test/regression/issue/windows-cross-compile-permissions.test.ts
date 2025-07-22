@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -9,7 +9,7 @@ test("Compiled executables should have proper permissions on POSIX systems", asy
 
   // Test native compilation to verify permissions are set correctly
   const outfile = join(dir, "app");
-  
+
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "index.js", "--outfile", outfile],
     env: bunEnv,
@@ -28,12 +28,12 @@ test("Compiled executables should have proper permissions on POSIX systems", asy
     console.log("stdout:", stdout);
     console.log("stderr:", stderr);
   }
-  
+
   expect(exitCode).toBe(0);
-  
+
   // Check that the executable file was created
   expect(Bun.file(outfile).size).toBeGreaterThan(0);
-  
+
   // On POSIX systems, check that the file has executable permissions
   if (process.platform !== "win32") {
     const stat = await Bun.file(outfile).stat();

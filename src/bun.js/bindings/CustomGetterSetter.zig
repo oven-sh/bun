@@ -9,3 +9,5 @@ pub const CustomGetterSetter = opaque {
     extern fn JSC__CustomGetterSetter__isGetterNull(this: *CustomGetterSetter) bool;
     extern fn JSC__CustomGetterSetter__isSetterNull(this: *CustomGetterSetter) bool;
 };
+
+const bun = @import("bun");

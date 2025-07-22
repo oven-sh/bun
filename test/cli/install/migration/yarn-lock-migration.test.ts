@@ -5,6 +5,12 @@ import path, { join } from "path";
 
 const YARN_TEST_DIRS = ["yarn-lock-mkdirp", "yarn-lock-mkdirp-no-resolved", "yarn-lock-mkdirp-file-dep", "yarn-stuff"];
 
+// only download and uninstall if yarn is not already installed
+if (!Bun.which("yarn")) {
+  beforeAll(() => Bun.$`bun i -g yarn`.quiet());
+  afterAll(() => Bun.$`bun rm -g yarn`.quiet());
+}
+
 describe("yarn.lock migration", () => {
   // Helper function to parse yarn.lock file and extract versions
   function parseYarnLock(yarnLockContent: string): Record<string, string> {
@@ -63,136 +69,104 @@ describe("yarn.lock migration", () => {
     return versions;
   }
 
-  for (const testDir of YARN_TEST_DIRS) {
-    test(`${testDir}: yarn.lock to bun.lock migration preserves versions`, async () => {
-      const originalDir = join(import.meta.dir, "yarn", testDir);
-      const packageJsonPath = join(originalDir, "package.json");
+  test.each(YARN_TEST_DIRS)("%s: yarn.lock to bun.lock migration preserves versions", async testDir => {
+    const originalDir = join(import.meta.dir, "yarn", testDir);
+    const packageJsonPath = join(originalDir, "package.json");
 
-      // Skip if package.json doesn't exist
-      if (!fs.existsSync(packageJsonPath)) {
-        console.log(`Skipping ${testDir}: no package.json found`);
-        return;
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+
+    // Create temporary directory with the package.json and any local dependencies
+    let tempFiles: Record<string, string> = {
+      "package.json": JSON.stringify(packageJson, null, 2),
+    };
+
+    // Copy local files for file dependencies
+    if (testDir === "yarn-lock-mkdirp-file-dep") {
+      const mkdirpPackageJson = fs.readFileSync(join(originalDir, "mkdirp", "package.json"), "utf8");
+      tempFiles["mkdirp/package.json"] = mkdirpPackageJson;
+
+      // Copy the yarn.lock we created
+      if (fs.existsSync(join(originalDir, "yarn.lock"))) {
+        tempFiles["yarn.lock"] = fs.readFileSync(join(originalDir, "yarn.lock"), "utf8");
+      }
+    } else if (testDir === "yarn-stuff") {
+      const abbrevPackageJson = fs.readFileSync(join(originalDir, "abbrev-link-target", "package.json"), "utf8");
+      tempFiles["abbrev-link-target/package.json"] = abbrevPackageJson;
+
+      // Copy the yarn.lock we created
+      if (fs.existsSync(join(originalDir, "yarn.lock"))) {
+        tempFiles["yarn.lock"] = fs.readFileSync(join(originalDir, "yarn.lock"), "utf8");
       }
 
-      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+      // We'll copy the tarball file after creating the temp directory
+    }
 
-      // Create temporary directory with the package.json and any local dependencies
-      let tempFiles: Record<string, string> = {
-        "package.json": JSON.stringify(packageJson, null, 2),
-      };
+    const tempDir = tempDirWithFiles(`yarn-migration-${testDir}`, tempFiles);
 
-      // Copy local files for file dependencies
-      if (testDir === "yarn-lock-mkdirp-file-dep") {
-        const mkdirpPackageJson = fs.readFileSync(join(originalDir, "mkdirp", "package.json"), "utf8");
-        tempFiles["mkdirp/package.json"] = mkdirpPackageJson;
-
-        // Copy the yarn.lock we created
-        if (fs.existsSync(join(originalDir, "yarn.lock"))) {
-          tempFiles["yarn.lock"] = fs.readFileSync(join(originalDir, "yarn.lock"), "utf8");
-        }
-      } else if (testDir === "yarn-stuff") {
-        const abbrevPackageJson = fs.readFileSync(join(originalDir, "abbrev-link-target", "package.json"), "utf8");
-        tempFiles["abbrev-link-target/package.json"] = abbrevPackageJson;
-
-        // Copy the yarn.lock we created
-        if (fs.existsSync(join(originalDir, "yarn.lock"))) {
-          tempFiles["yarn.lock"] = fs.readFileSync(join(originalDir, "yarn.lock"), "utf8");
-        }
-
-        // We'll copy the tarball file after creating the temp directory
+    // Copy binary files (like tarballs) after temp directory creation
+    if (testDir === "yarn-stuff") {
+      const tarballPath = join(originalDir, "abbrev-1.1.1.tgz");
+      if (fs.existsSync(tarballPath)) {
+        fs.copyFileSync(tarballPath, join(tempDir, "abbrev-1.1.1.tgz"));
       }
+    }
 
-      const tempDir = tempDirWithFiles(`yarn-migration-${testDir}`, tempFiles);
+    const yarnLockPath = join(tempDir, "yarn.lock");
+    let yarnVersions: Record<string, string>;
 
-      // Copy binary files (like tarballs) after temp directory creation
-      if (testDir === "yarn-stuff") {
-        const tarballPath = join(originalDir, "abbrev-1.1.1.tgz");
-        if (fs.existsSync(tarballPath)) {
-          fs.copyFileSync(tarballPath, join(tempDir, "abbrev-1.1.1.tgz"));
-        }
-      }
-
-      console.log(`Testing ${testDir} in ${tempDir}`);
-
-      const yarnLockPath = join(tempDir, "yarn.lock");
-      let yarnVersions: Record<string, string>;
-
-      // Step 1: Generate or use existing yarn.lock
-      if (fs.existsSync(yarnLockPath)) {
-        // yarn.lock was provided manually
-        const yarnLockContent = fs.readFileSync(yarnLockPath, "utf8");
-        yarnVersions = parseYarnLock(yarnLockContent);
-        console.log(`Using provided yarn.lock with versions:`, yarnVersions);
-      } else {
-        // Run yarn install to generate yarn.lock
-        const yarnResult = await Bun.spawn({
-          cmd: ["yarn", "install"],
-          cwd: tempDir,
-          env: { ...bunEnv, PATH: process.env.PATH },
-        });
-
-        await yarnResult.exited;
-        expect(yarnResult.exitCode).toBe(0);
-
-        expect(fs.existsSync(yarnLockPath)).toBe(true);
-
-        // Parse yarn.lock to get installed versions
-        const yarnLockContent = fs.readFileSync(yarnLockPath, "utf8");
-        yarnVersions = parseYarnLock(yarnLockContent);
-      }
-
-      console.log(`Yarn installed versions:`, yarnVersions);
-
-      // Step 2: Remove node_modules but keep yarn.lock for bun to read
-      fs.rmSync(join(tempDir, "node_modules"), { recursive: true, force: true });
-
-      // Step 3: Run bun install (should read yarn.lock and create bun.lockb)
-      const bunResult = await Bun.spawn({
-        cmd: [bunExe(), "install"],
+    // Step 1: Generate or use existing yarn.lock
+    if (fs.existsSync(yarnLockPath)) {
+      // yarn.lock was provided manually
+      const yarnLockContent = fs.readFileSync(yarnLockPath, "utf8");
+      yarnVersions = parseYarnLock(yarnLockContent);
+    } else {
+      // Run yarn install to generate yarn.lock
+      const yarnResult = await Bun.spawn({
+        cmd: ["yarn", "install", "--lockfile-only"],
         cwd: tempDir,
-        env: bunEnv,
+        env: { ...bunEnv, PATH: process.env.PATH },
       });
 
-      const [bunStdout, bunStderr] = await Promise.all([
-        new Response(bunResult.stdout).text(),
-        new Response(bunResult.stderr).text(),
-      ]);
+      await yarnResult.exited;
+      expect(yarnResult.exitCode).toBe(0);
 
-      await bunResult.exited;
+      expect(fs.existsSync(yarnLockPath)).toBe(true);
 
-      if (bunResult.exitCode !== 0) {
-        console.error(`Bun install failed for ${testDir}:`);
-        console.error("STDOUT:", bunStdout);
-        console.error("STDERR:", bunStderr);
-      }
+      // Parse yarn.lock to get installed versions
+      const yarnLockContent = fs.readFileSync(yarnLockPath, "utf8");
+      yarnVersions = parseYarnLock(yarnLockContent);
+    }
 
-      expect(bunResult.exitCode).toBe(0);
+    // Step 2: Remove node_modules but keep yarn.lock for bun to read
+    fs.rmSync(join(tempDir, "node_modules"), { recursive: true, force: true });
 
-      // Check that bun.lock was created (Bun creates .lock in text format, not .lockb)
-      const bunLockPath = join(tempDir, "bun.lock");
-      expect(fs.existsSync(bunLockPath)).toBe(true);
+    // Step 3: Run bun install (should read yarn.lock and create bun.lockb)
+    const bunResult = await Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: tempDir,
+      env: bunEnv,
+    });
 
-      // Step 4: Compare versions by checking installed packages
-      const bunVersions = parseBunLock(bunLockPath);
+    const [bunStdout, bunStderr] = await Promise.all([
+      new Response(bunResult.stdout).text(),
+      new Response(bunResult.stderr).text(),
+    ]);
 
-      console.log(`Bun installed versions:`, bunVersions);
+    await bunResult.exited;
 
-      // Step 5: Verify that versions match
-      for (const [packageName, yarnVersion] of Object.entries(yarnVersions)) {
-        expect(bunVersions[packageName]).toBeDefined();
-        expect(bunVersions[packageName]).toBe(yarnVersion);
-      }
+    expect(bunResult.exitCode).toBe(0);
 
-      // For file dependencies, Bun may install additional transitive dependencies
-      // This is expected behavior and not an error
-      if (testDir !== "yarn-lock-mkdirp-file-dep" && testDir !== "yarn-stuff") {
-        // Also verify that bun didn't install extra packages (for non-file dependency tests)
-        for (const [packageName, bunVersion] of Object.entries(bunVersions)) {
-          if (!yarnVersions[packageName]) {
-            console.warn(`Bun installed extra package: ${packageName}@${bunVersion}`);
-          }
-        }
-      }
-    }, 60000); // 60 second timeout for each test
-  }
+    // Check that bun.lock was created (Bun creates .lock in text format, not .lockb)
+    const bunLockPath = join(tempDir, "bun.lock");
+    expect(fs.existsSync(bunLockPath)).toBe(true);
+
+    // Step 4: Compare versions by checking installed packages
+    const bunVersions = parseBunLock(bunLockPath);
+
+    // Step 5: Verify that versions match
+    for (const [packageName, yarnVersion] of Object.entries(yarnVersions)) {
+      expect(bunVersions[packageName]).toBeDefined();
+      expect(bunVersions[packageName]).toBe(yarnVersion);
+    }
+  }, 100000);
 });

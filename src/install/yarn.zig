@@ -42,6 +42,14 @@ pub const YarnLock = struct {
             else
                 spec;
 
+            if (unquoted[0] == '@') {
+                if (strings.indexOf(unquoted[1..], "@")) |second_at| {
+                    const end_idx = second_at + 1;
+                    return unquoted[0..end_idx];
+                }
+                return unquoted;
+            }
+
             if (strings.indexOf(unquoted, "@npm:")) |npm_idx| {
                 return unquoted[0..npm_idx];
             } else if (strings.indexOf(unquoted, "@https://")) |url_idx| {
@@ -53,11 +61,6 @@ pub const YarnLock = struct {
             } else if (strings.indexOf(unquoted, "@file:")) |file_idx| {
                 return unquoted[0..file_idx];
             } else if (strings.indexOf(unquoted, "@")) |idx| {
-                if (idx == 0) {
-                    if (strings.indexOf(unquoted[1..], "@")) |second_idx| {
-                        return unquoted[0 .. second_idx + 1];
-                    }
-                }
                 return unquoted[0..idx];
             }
             return unquoted;
@@ -69,73 +72,92 @@ pub const YarnLock = struct {
             else
                 spec;
 
-            if (strings.indexOf(unquoted, "@npm:")) |npm_idx| {
-                return unquoted[npm_idx + 1 ..];
-            }
+            if (unquoted[0] == '@') {
+                if (strings.indexOfChar(unquoted[1..], '@')) |second_at_pos| {
+                    const version_start = second_at_pos + "@".len + 1;
+                    const version_part = unquoted[version_start..];
 
-            if (strings.indexOf(unquoted, "@https://")) |url_idx| {
-                return unquoted[url_idx + 1 ..];
-            }
-
-            if (strings.indexOf(unquoted, "@git+")) |git_idx| {
-                return unquoted[git_idx + 1 ..];
-            }
-
-            if (strings.indexOf(unquoted, "@github:")) |gh_idx| {
-                return unquoted[gh_idx + 1 ..];
-            }
-
-            if (strings.indexOf(unquoted, "@file:")) |file_idx| {
-                return unquoted[file_idx + 1 ..];
-            }
-
-            if (strings.indexOf(unquoted, "@")) |idx| {
-                if (idx == 0) {
-                    if (strings.indexOf(unquoted[1..], "@")) |second_idx| {
-                        return unquoted[0 .. second_idx + 1];
+                    if (strings.hasPrefixComptime(version_part, "npm:") and version_part.len > 4) {
+                        return version_part["npm:".len..];
                     }
-                    return unquoted;
+                    return version_part;
                 }
-                return unquoted[0..idx];
+                return null;
+            } else if (strings.indexOf(unquoted, "@npm:")) |npm_idx| {
+                const after_npm = npm_idx + "npm:".len + 1;
+                if (after_npm < unquoted.len) {
+                    return unquoted[after_npm..];
+                }
+                return null;
+            } else if (strings.indexOf(unquoted, "@https://")) |url_idx| {
+                const after_at = url_idx + '@'.len;
+                if (after_at < unquoted.len) {
+                    return unquoted[after_at..];
+                }
+                return null;
+            } else if (strings.indexOf(unquoted, "@git+")) |git_idx| {
+                const after_at = git_idx + '@'.len;
+                if (after_at < unquoted.len) {
+                    return unquoted[after_at..];
+                }
+                return null;
+            } else if (strings.indexOf(unquoted, "@github:")) |gh_idx| {
+                const after_at = gh_idx + '@'.len;
+                if (after_at < unquoted.len) {
+                    return unquoted[after_at..];
+                }
+                return null;
+            } else if (strings.indexOf(unquoted, "@file:")) |file_idx| {
+                const after_at = file_idx + '@'.len;
+                if (after_at < unquoted.len) {
+                    return unquoted[after_at..];
+                }
+                return null;
+            } else if (strings.indexOf(unquoted, "@")) |idx| {
+                const after_at = idx + '@'.len;
+                if (after_at < unquoted.len) {
+                    return unquoted[after_at..];
+                }
+                return null;
             }
-            return unquoted;
+            return null;
         }
 
         pub fn isGitDependency(version: []const u8) bool {
-            return strings.startsWith(version, "git+") or
-                strings.startsWith(version, "git://") or
-                strings.startsWith(version, "github:") or
-                strings.startsWith(version, "https://github.com/");
+            return strings.hasPrefixComptime(version, "git+") or
+                strings.hasPrefixComptime(version, "git://") or
+                strings.hasPrefixComptime(version, "github:") or
+                strings.hasPrefixComptime(version, "https://github.com/");
         }
 
         pub fn isNpmAlias(version: []const u8) bool {
-            return strings.startsWith(version, "npm:");
+            return strings.hasPrefixComptime(version, "npm:");
         }
 
         pub fn isRemoteTarball(version: []const u8) bool {
-            return strings.startsWith(version, "https://") and strings.endsWith(version, ".tgz");
+            return strings.hasPrefixComptime(version, "https://") and strings.endsWithComptime(version, ".tgz");
         }
 
         pub fn isWorkspaceDependency(version: []const u8) bool {
-            return strings.startsWith(version, "workspace:") or
-                strings.eql(version, "*");
+            return strings.hasPrefixComptime(version, "workspace:") or
+                strings.eqlComptime(version, "*");
         }
 
         pub fn isFileDependency(version: []const u8) bool {
-            return strings.startsWith(version, "file:") or
-                strings.startsWith(version, "./") or
-                strings.startsWith(version, "../");
+            return strings.hasPrefixComptime(version, "file:") or
+                strings.hasPrefixComptime(version, "./") or
+                strings.hasPrefixComptime(version, "../");
         }
 
         pub fn parseGitUrl(self: *const YarnLock, version: []const u8) !struct { url: []const u8, commit: ?[]const u8 } {
             var url = version;
             var commit: ?[]const u8 = null;
 
-            if (strings.startsWith(url, "git+")) {
+            if (strings.hasPrefixComptime(url, "git+")) {
                 url = url[4..];
             }
 
-            if (strings.startsWith(url, "github:")) {
+            if (strings.hasPrefixComptime(url, "github:")) {
                 url = try std.fmt.allocPrint(
                     self.allocator,
                     "https://github.com/{s}",
@@ -152,11 +174,15 @@ pub const YarnLock = struct {
         }
 
         pub fn parseNpmAlias(version: []const u8) struct { package: []const u8, version: []const u8 } {
+            if (version.len <= 4) {
+                return .{ .package = "", .version = "*" };
+            }
+
             const npm_part = version[4..];
             if (strings.indexOf(npm_part, "@")) |at_idx| {
                 return .{
                     .package = npm_part[0..at_idx],
-                    .version = npm_part[at_idx + 1 ..],
+                    .version = if (at_idx + 1 < npm_part.len) npm_part[at_idx + 1 ..] else "*",
                 };
             }
             return .{ .package = npm_part, .version = "*" };
@@ -321,7 +347,7 @@ pub const YarnLock = struct {
                         if (Entry.isWorkspaceDependency(value)) {
                             current_entry.?.workspace = true;
                         } else if (Entry.isFileDependency(value)) {
-                            current_entry.?.file = if (strings.startsWith(value, "file:")) value[5..] else value;
+                            current_entry.?.file = if (strings.hasPrefixComptime(value, "file:") and value.len > "file:".len) value["file:".len..] else value;
                         } else if (Entry.isGitDependency(value)) {
                             const git_info = try Entry.parseGitUrl(self, value);
                             current_entry.?.resolved = git_info.url;
@@ -803,7 +829,7 @@ pub fn migrateYarnLockfile(
                     }
                     break :blk Resolution{};
                 } else if (entry.resolved) |resolved| {
-                    if (YarnLock.Entry.isRemoteTarball(resolved) or strings.endsWith(resolved, ".tgz")) {
+                    if (YarnLock.Entry.isRemoteTarball(resolved) or strings.endsWithComptime(resolved, ".tgz")) {
                         break :blk Resolution.init(.{
                             .remote_tarball = try string_buf.append(resolved),
                         });
@@ -1137,7 +1163,8 @@ pub fn migrateYarnLockfile(
     var usage_count = bun.StringHashMap(u32).init(allocator);
     defer usage_count.deinit();
     for (yarn_lock.entries.items, 0..) |_, entry_idx| {
-        const package_id: PackageID = @intCast(entry_idx + 1);
+        const package_id = yarn_entry_to_package_id[entry_idx];
+        if (package_id == Install.invalid_package_id) continue;
         const base_name = package_names[package_id];
 
         for (yarn_lock.entries.items) |dep_entry| {
@@ -1154,7 +1181,8 @@ pub fn migrateYarnLockfile(
     }
 
     for (yarn_lock.entries.items, 0..) |_, entry_idx| {
-        const package_id: PackageID = @intCast(entry_idx + 1);
+        const package_id = yarn_entry_to_package_id[entry_idx];
+        if (package_id == Install.invalid_package_id) continue;
         const base_name = package_names[package_id];
 
         if (root_packages.get(base_name) == null) {
@@ -1168,7 +1196,8 @@ pub fn migrateYarnLockfile(
     defer scoped_names.deinit();
     var scoped_count: u32 = 0;
     for (yarn_lock.entries.items, 0..) |_, entry_idx| {
-        const package_id: PackageID = @intCast(entry_idx + 1);
+        const package_id = yarn_entry_to_package_id[entry_idx];
+        if (package_id == Install.invalid_package_id) continue;
         const base_name = package_names[package_id];
 
         if (root_packages.get(base_name)) |root_pkg_id| {
@@ -1181,7 +1210,8 @@ pub fn migrateYarnLockfile(
 
         var scoped_name: ?[]const u8 = null;
         for (yarn_lock.entries.items, 0..) |dep_entry, dep_entry_idx| {
-            const dep_package_id: PackageID = @intCast(dep_entry_idx + 1);
+            const dep_package_id = yarn_entry_to_package_id[dep_entry_idx];
+            if (dep_package_id == Install.invalid_package_id) continue;
 
             if (dep_entry.dependencies) |deps| {
                 var deps_iter = deps.iterator();
@@ -1266,8 +1296,10 @@ pub fn migrateYarnLockfile(
         }
     }
 
+    const root_deps_off = @as(u32, @intCast(this.buffers.dependencies.items.len));
+    const root_resolutions_off = @as(u32, @intCast(this.buffers.resolutions.items.len));
+
     if (root_dependencies.items.len > 0) {
-        const root_deps_off = @as(u32, @intCast(this.buffers.dependencies.items.len));
         for (root_dependencies.items) |root_dep| {
             _ = @as(DependencyID, @intCast(this.buffers.dependencies.items.len));
 
@@ -1312,12 +1344,16 @@ pub fn migrateYarnLockfile(
                 try this.buffers.resolutions.append(allocator, Install.invalid_package_id);
             }
         }
-
-        packages_slice.items(.dependencies)[0] = .{
-            .off = root_deps_off,
-            .len = @as(u32, @intCast(root_dependencies.items.len)),
-        };
     }
+
+    packages_slice.items(.dependencies)[0] = .{
+        .off = root_deps_off,
+        .len = @as(u32, @intCast(root_dependencies.items.len)),
+    };
+    packages_slice.items(.resolutions)[0] = .{
+        .off = root_resolutions_off,
+        .len = @as(u32, @intCast(root_dependencies.items.len)),
+    };
 
     for (yarn_lock.entries.items, 0..) |entry, yarn_idx| {
         const package_id = yarn_entry_to_package_id[yarn_idx];
@@ -1325,6 +1361,7 @@ pub fn migrateYarnLockfile(
 
         var dep_count: u32 = 0;
         const deps_off = @as(u32, @intCast(this.buffers.dependencies.items.len));
+        const resolutions_off = @as(u32, @intCast(this.buffers.resolutions.items.len));
 
         if (entry.dependencies) |deps| {
             var dep_iter = deps.iterator();
@@ -1413,13 +1450,101 @@ pub fn migrateYarnLockfile(
             }
         }
 
+        if (entry.peerDependencies) |peer_deps| {
+            var peer_dep_iter = peer_deps.iterator();
+            while (peer_dep_iter.next()) |dep_entry| {
+                const dep_name = dep_entry.key_ptr.*;
+                const dep_version_literal = dep_entry.value_ptr.*;
+
+                const name_hash = stringHash(dep_name);
+                const dep_name_string = try string_buf.appendWithHash(dep_name, name_hash);
+
+                const dep_version_string = try string_buf.append(dep_version_literal);
+                const sliced_string = Semver.SlicedString.init(dep_version_string.slice(this.buffers.string_bytes.items), dep_version_string.slice(this.buffers.string_bytes.items));
+
+                var parsed_version = Dependency.parse(
+                    allocator,
+                    dep_name_string,
+                    name_hash,
+                    dep_version_string.slice(this.buffers.string_bytes.items),
+                    &sliced_string,
+                    log,
+                    manager,
+                ) orelse Dependency.Version{};
+
+                parsed_version.literal = dep_version_string;
+
+                try this.buffers.dependencies.append(allocator, Dependency{
+                    .name = dep_name_string,
+                    .name_hash = name_hash,
+                    .version = parsed_version,
+                    .behavior = .{ .peer = true },
+                });
+
+                const dep_spec = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ dep_name, dep_version_literal });
+                defer allocator.free(dep_spec);
+
+                if (spec_to_package_id.get(dep_spec)) |res_pkg_id| {
+                    try this.buffers.resolutions.append(allocator, res_pkg_id);
+                } else {
+                    try this.buffers.resolutions.append(allocator, Install.invalid_package_id);
+                }
+
+                dep_count += 1;
+            }
+        }
+
+        if (entry.devDependencies) |dev_deps| {
+            var dev_dep_iter = dev_deps.iterator();
+            while (dev_dep_iter.next()) |dep_entry| {
+                const dep_name = dep_entry.key_ptr.*;
+                const dep_version_literal = dep_entry.value_ptr.*;
+
+                const name_hash = stringHash(dep_name);
+                const dep_name_string = try string_buf.appendWithHash(dep_name, name_hash);
+
+                const dep_version_string = try string_buf.append(dep_version_literal);
+                const sliced_string = Semver.SlicedString.init(dep_version_string.slice(this.buffers.string_bytes.items), dep_version_string.slice(this.buffers.string_bytes.items));
+
+                var parsed_version = Dependency.parse(
+                    allocator,
+                    dep_name_string,
+                    name_hash,
+                    dep_version_string.slice(this.buffers.string_bytes.items),
+                    &sliced_string,
+                    log,
+                    manager,
+                ) orelse Dependency.Version{};
+
+                parsed_version.literal = dep_version_string;
+
+                try this.buffers.dependencies.append(allocator, Dependency{
+                    .name = dep_name_string,
+                    .name_hash = name_hash,
+                    .version = parsed_version,
+                    .behavior = .{ .dev = true },
+                });
+
+                const dep_spec = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ dep_name, dep_version_literal });
+                defer allocator.free(dep_spec);
+
+                if (spec_to_package_id.get(dep_spec)) |res_pkg_id| {
+                    try this.buffers.resolutions.append(allocator, res_pkg_id);
+                } else {
+                    try this.buffers.resolutions.append(allocator, Install.invalid_package_id);
+                }
+
+                dep_count += 1;
+            }
+        }
+
         packages_slice.items(.dependencies)[package_id] = .{
             .off = deps_off,
             .len = dep_count,
         };
 
         packages_slice.items(.resolutions)[package_id] = .{
-            .off = deps_off,
+            .off = resolutions_off,
             .len = dep_count,
         };
     }

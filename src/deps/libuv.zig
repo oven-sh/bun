@@ -1199,7 +1199,10 @@ pub const Timer = extern struct {
     u: union_unnamed_411,
     endgame_next: [*c]uv_handle_t,
     flags: c_uint,
-    heap_node: [3]?*anyopaque,
+    node: extern union {
+        heap: [3]?*anyopaque,
+        queue: struct_uv__queue,
+    },
     unused: c_int,
     timeout: u64,
     repeat: u64,

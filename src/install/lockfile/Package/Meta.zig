@@ -9,7 +9,7 @@ pub const Meta = extern struct {
 
     arch: Npm.Architecture = .all,
     os: Npm.OperatingSystem = .all,
-    libc: Npm.Libc = .all,
+    libc: Npm.Libc = .none,
     _padding_after_platform: u8 = 0,
 
     id: PackageID = invalid_package_id,

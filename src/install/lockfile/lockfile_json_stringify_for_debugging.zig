@@ -313,7 +313,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 }
             }
 
-            if (@as(u16, @intFromEnum(pkg.meta.libc)) != Npm.Libc.all_value) {
+            if (pkg.meta.libc != .none) {
                 try w.objectField("libc");
                 try w.beginArray();
                 defer w.endArray() catch {};

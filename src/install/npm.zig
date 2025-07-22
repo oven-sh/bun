@@ -783,15 +783,15 @@ pub const Libc = enum(u8) {
     }
 
     pub fn isMatch(this: Libc) bool {
-        return (@intFromEnum(this) & @intFromEnum(current)) != 0 or this == .none;
+        return (@intFromEnum(this) & @intFromEnum(current)) != 0;
     }
 
     pub fn isMatchWithTarget(this: Libc, target: Libc) bool {
-        return (@intFromEnum(this) & @intFromEnum(target)) != 0 or this == .none;
+        return (@intFromEnum(this) & @intFromEnum(target)) != 0;
     }
 
     pub fn negatable(this: Libc) Negatable(Libc) {
-        return .{ .added = this, .removed = .none };
+        return .{ .added = .none, .removed = this };
     }
 
     pub const current: Libc = switch (Environment.os) {

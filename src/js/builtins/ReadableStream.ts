@@ -530,29 +530,93 @@ export function from(asyncIterable) {
   let iteratorMethod = asyncIterable[globalThis.Symbol.iterator];
 
   // Step 1: Prefer async iterator if available and not null
-  if (asyncIteratorMethod != null) {
+  if (asyncIteratorMethod != null && asyncIteratorMethod !== null) {
     if (typeof asyncIteratorMethod !== "function") {
       throw new TypeError("ReadableStream.from() argument's @@asyncIterator method must be a function");
     }
 
+    // Check if asyncIterator method returns the same object (self-iterator pattern)
+    let testIterator;
+    try {
+      testIterator = asyncIteratorMethod.$call(asyncIterable);
+      if (!$isObject(testIterator)) {
+        throw new TypeError("ReadableStream.from() argument's @@asyncIterator method must return an object");
+      }
+    } catch (error) {
+      // Re-throw validation errors immediately
+      throw error;
+    }
+    
+    let returnsSelf = testIterator === asyncIterable;
+    
+    if (returnsSelf) {
+      // For self-iterator pattern, defer everything to first pull to avoid timing issues
+      let iterator;
+      let iteratorCreated = false;
+
+      return new ReadableStream({
+        async pull(controller) {
+          if (!iteratorCreated) {
+            try {
+              iterator = asyncIteratorMethod.$call(asyncIterable);
+              if (!$isObject(iterator)) {
+                throw new TypeError("ReadableStream.from() argument's @@asyncIterator method must return an object");
+              }
+              iteratorCreated = true;
+            } catch (error) {
+              controller.error(error);
+              return;
+            }
+          }
+
+          try {
+            const result = await iterator.next();
+            if (!$isObject(result)) {
+              throw new TypeError("Iterator result must be an object");
+            }
+
+            if (result.done) {
+              controller.close();
+            } else {
+              controller.enqueue(result.value);
+            }
+          } catch (error) {
+            controller.error(error);
+          }
+        },
+        
+        async cancel(reason) {
+          if (iteratorCreated && iterator && iterator.return) {
+            if (typeof iterator.return !== "function") {
+              throw new TypeError("Iterator return() method must be a function");
+            }
+            try {
+              const result = await iterator.return(reason);
+              if (!$isObject(result)) {
+                throw new TypeError("Iterator return() method must return an object");
+              }
+            } catch (error) {
+              throw error;
+            }
+          }
+        }
+      });
+    }
+
+    // Normal validation during construction for non-self-iterator cases
     let iterator;
-    let iteratorInitialized = false;
+    try {
+      iterator = asyncIteratorMethod.$call(asyncIterable);
+      if (!$isObject(iterator)) {
+        throw new TypeError("ReadableStream.from() argument's @@asyncIterator method must return an object");
+      }
+    } catch (error) {
+      // All errors from calling iterator method should be re-thrown synchronously
+      throw error;
+    }
 
     return new ReadableStream({
       async pull(controller) {
-        if (!iteratorInitialized) {
-          try {
-            iterator = asyncIteratorMethod.$call(asyncIterable);
-            if (!$isObject(iterator)) {
-              throw new TypeError("ReadableStream.from() argument's @@asyncIterator method must return an object");
-            }
-            iteratorInitialized = true;
-          } catch (error) {
-            controller.error(error);
-            return;
-          }
-        }
-
         try {
           const result = await iterator.next();
           if (!$isObject(result)) {
@@ -570,7 +634,10 @@ export function from(asyncIterable) {
       },
       
       async cancel(reason) {
-        if (iteratorInitialized && iterator && iterator.return && typeof iterator.return === "function") {
+        if (iterator && iterator.return) {
+          if (typeof iterator.return !== "function") {
+            throw new TypeError("Iterator return() method must be a function");
+          }
           try {
             const result = await iterator.return(reason);
             if (!$isObject(result)) {
@@ -588,26 +655,31 @@ export function from(asyncIterable) {
       throw new TypeError("ReadableStream.from() argument's @@iterator method must be a function");
     }
 
+    // Validate iterator method returns an object during construction
+    // ALL errors from iterator method should be re-thrown synchronously
     let iterator;
-    let iteratorInitialized = false;
+    try {
+      iterator = iteratorMethod.$call(asyncIterable);
+      if (!$isObject(iterator)) {
+        throw new TypeError("ReadableStream.from() argument's @@iterator method must return an object");
+      }
+    } catch (error) {
+      // All errors from calling iterator method should be re-thrown synchronously
+      throw error;
+    }
+
+    // Store the iterator we created during validation for reuse
+    let iteratorCreated = true;
 
     return new ReadableStream({
+      start(controller) {
+        // Store iterator for use in pull
+        this.iterator = iterator;
+      },
+      
       async pull(controller) {
-        if (!iteratorInitialized) {
-          try {
-            iterator = iteratorMethod.$call(asyncIterable);
-            if (!$isObject(iterator)) {
-              throw new TypeError("ReadableStream.from() argument's @@iterator method must return an object");
-            }
-            iteratorInitialized = true;
-          } catch (error) {
-            controller.error(error);
-            return;
-          }
-        }
-
         try {
-          const result = iterator.next();
+          const result = this.iterator.next();
           if (!$isObject(result)) {
             throw new TypeError("Iterator result must be an object");
           }
@@ -627,12 +699,13 @@ export function from(asyncIterable) {
       },
 
       async cancel(reason) {
-        if (iteratorInitialized && iterator && iterator.return) {
-          if (typeof iterator.return !== "function") {
+        // Use the iterator stored in start
+        if (this.iterator && this.iterator.return) {
+          if (typeof this.iterator.return !== "function") {
             throw new TypeError("Iterator return() method must be a function");
           }
           try {
-            const result = iterator.return(reason);
+            const result = this.iterator.return(reason);
             // Handle both sync and async return methods
             const actualResult = result && typeof result.then === "function" ? await result : result;
             if (!$isObject(actualResult)) {

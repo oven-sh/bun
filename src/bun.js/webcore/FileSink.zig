@@ -17,6 +17,8 @@ must_be_kept_alive_until_eof: bool = false,
 pollable: bool = false,
 nonblocking: bool = false,
 force_sync: bool = false,
+/// When true, treat EPIPE as an error instead of completion (for stdout/stderr compatibility)
+treat_epipe_as_error: bool = false,
 
 is_socket: bool = false,
 fd: bun.FileDescriptor = bun.invalid_fd,
@@ -63,6 +65,7 @@ pub fn memoryCost(this: *const FileSink) usize {
 fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(_: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
     var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(jsvalue) orelse return));
     this.force_sync = true;
+    this.treat_epipe_as_error = true; // stdout/stderr should emit error events for EPIPE
     if (comptime !Environment.isWindows) {
         this.writer.force_sync = true;
         if (this.fd != bun.invalid_fd) {
@@ -477,7 +480,22 @@ pub fn write(this: *@This(), data: streams.Result) streams.Result.Writable {
         return .{ .done = {} };
     }
 
-    return this.toResult(this.writer.write(data.slice()));
+    const write_result = this.writer.write(data.slice());
+    
+    // For stdout/stderr with treat_epipe_as_error flag, check for broken pipe conditions
+    if (this.treat_epipe_as_error) {
+        switch (write_result) {
+            .done => |bytes_written| {
+                // If we got "done" but with 0 bytes written, this might be EPIPE
+                if (bytes_written == 0 and data.slice().len > 0) {
+                    return .{ .err = bun.sys.Error.fromCode(.PIPE, .write) };
+                }
+            },
+            else => {},
+        }
+    }
+
+    return this.toResult(write_result);
 }
 pub const writeBytes = write;
 pub fn writeLatin1(this: *@This(), data: streams.Result) streams.Result.Writable {

@@ -559,18 +559,23 @@ function _write(data, encoding, cb) {
   const fileSink = this[kWriteStreamFastPath];
 
   if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(data);
-    if ($isPromise(maybePromise)) {
-      maybePromise
-        .then(() => {
-          this.emit("drain"); // Emit drain event
-          cb(null);
-        })
-        .catch(cb);
-      return false; // Indicate backpressure
-    } else {
-      cb(null);
-      return true; // No backpressure
+    try {
+      const maybePromise = fileSink.write(data);
+      if ($isPromise(maybePromise)) {
+        maybePromise
+          .then(() => {
+            this.emit("drain"); // Emit drain event
+            cb(null);
+          })
+          .catch(cb);
+        return false; // Indicate backpressure
+      } else {
+        cb(null);
+        return true; // No backpressure
+      }
+    } catch (err) {
+      cb(err);
+      return false;
     }
   } else {
     writeAll.$call(this, data, data.length, this.pos, er => {
@@ -634,18 +639,23 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
 
   const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(data);
-    if ($isPromise(maybePromise)) {
-      maybePromise
-        .then(() => {
-          this.emit("drain"); // Emit drain event
-          cb(null);
-        })
-        .catch(cb);
-      return false; // Indicate backpressure
-    } else {
-      cb(null);
-      return true; // No backpressure
+    try {
+      const maybePromise = fileSink.write(data);
+      if ($isPromise(maybePromise)) {
+        maybePromise
+          .then(() => {
+            this.emit("drain"); // Emit drain event
+            cb(null);
+          })
+          .catch(cb);
+        return false; // Indicate backpressure
+      } else {
+        cb(null);
+        return true; // No backpressure
+      }
+    } catch (err) {
+      cb(err);
+      return false;
     }
   } else {
     const result: any = this._write(data, encoding, cb);
@@ -671,18 +681,23 @@ writeStreamPrototype._writev = function (data, cb) {
 
   const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(Buffer.concat(chunks));
-    if ($isPromise(maybePromise)) {
-      maybePromise
-        .then(() => {
-          this.emit("drain");
-          cb(null);
-        })
-        .catch(cb);
+    try {
+      const maybePromise = fileSink.write(Buffer.concat(chunks));
+      if ($isPromise(maybePromise)) {
+        maybePromise
+          .then(() => {
+            this.emit("drain");
+            cb(null);
+          })
+          .catch(cb);
+        return false;
+      } else {
+        cb(null);
+        return true;
+      }
+    } catch (err) {
+      cb(err);
       return false;
-    } else {
-      cb(null);
-      return true;
     }
   } else {
     writevAll.$call(this, chunks, size, this.pos, er => {

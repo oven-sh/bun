@@ -62,6 +62,10 @@ fn installWithCLI(ctx: Command.Context, cli: CommandLineArguments) !void {
     // and cleanup install/add subcommand usage
     var manager, const original_cwd = try PackageManager.init(ctx, cli, .install);
 
+    if (cli.is_ci_command and subcommand == .install) {
+        manager.root_dir.fd.deleteTree("node_modules") catch {};
+    }
+
     // switch to `bun add <package>`
     if (subcommand == .add) {
         manager.subcommand = .add;

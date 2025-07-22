@@ -6257,6 +6257,84 @@ it("should handle bun ci alias (to --frozen-lockfile)", async () => {
   expect(await exited2).toBe(1);
 });
 
+it("should delete node_modules before install on bun ci", async () => {
+  let urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": { as: "0.0.3" } }));
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+  );
+
+  expect(
+    await spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "ignore",
+      env,
+    }).exited,
+  ).toBe(0);
+
+  await writeFile(join(package_dir, "node_modules", "test-file.txt"), "should be deleted");
+  expect(exists(join(package_dir, "node_modules", "test-file.txt"))).resolves.toBe(true);
+
+  expect(
+    spawn({
+      cmd: [bunExe(), "ci"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "ignore",
+      env,
+    }).exited,
+  ).resolves.toBe(0);
+
+  expect(exists(join(package_dir, "node_modules", "test-file.txt"))).resolves.toBe(false);
+  expect(exists(join(package_dir, "node_modules", "baz"))).resolves.toBe(true);
+});
+
+it("should delete node_modules when bun ci is run from subdirectory", async () => {
+  let urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": { as: "0.0.3" } }));
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+  );
+
+  await mkdir(join(package_dir, "src"));
+
+  expect(
+    await spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "ignore",
+      env,
+    }).exited,
+  ).toBe(0);
+
+  await writeFile(join(package_dir, "node_modules", "test-file.txt"), "should be deleted");
+  expect(exists(join(package_dir, "node_modules", "test-file.txt"))).resolves.toBe(true);
+
+  expect(
+    spawn({
+      cmd: [bunExe(), "ci"],
+      cwd: join(package_dir, "src"),
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "ignore",
+      env,
+    }).exited,
+  ).resolves.toBe(0);
+
+  expect(exists(join(package_dir, "node_modules", "test-file.txt"))).resolves.toBe(false);
+  expect(exists(join(package_dir, "node_modules", "baz"))).resolves.toBe(true);
+});
+
 it("should handle frozenLockfile in config file", async () => {
   let urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }));

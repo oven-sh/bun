@@ -4,9 +4,9 @@ This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed
 
 ### Build Commands
 
-- **Build debug version**: `bun bd` or `bun run build:debug`
+- **Build debug version**: `bun bd`
   - Creates a debug build at `./build/debug/bun-debug`
-  - Compilation takes ~2.5 minutes
+  - Compilation takes ~5 minutes. Don't timeout, be patient.
 - **Run tests with your debug build**: `bun bd test <test-file>`
   - **CRITICAL**: Never use `bun test` directly - it won't include your changes
 - **Run any command with debug build**: `bun bd <command>`

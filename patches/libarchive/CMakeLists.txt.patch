@@ -2,8 +2,8 @@
 +++ CMakeLists.txt
 @@ -1,5 +1,5 @@
  #
--CMAKE_MINIMUM_REQUIRED(VERSION 2.8.12 FATAL_ERROR)
-+CMAKE_MINIMUM_REQUIRED(VERSION 2.8.12...3.5 FATAL_ERROR)
- if(POLICY CMP0065)
-   cmake_policy(SET CMP0065 NEW) #3.4 don't use `-rdynamic` with executables
- endif()
+-cmake_minimum_required(VERSION 3.17 FATAL_ERROR)
++cmake_minimum_required(VERSION 3.17...3.30 FATAL_ERROR)
+ 
+ PROJECT(libarchive C)
+ #

@@ -50,8 +50,5 @@ include(BuildBun)
 # --- Analysis ---
 
 if(ENABLE_ANALYSIS)
-  include(RunClangFormat)
   include(RunClangTidy)
-  include(RunZigFormat)
-  include(RunPrettier)
 endif()

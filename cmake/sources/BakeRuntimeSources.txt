@@ -15,7 +15,6 @@ src/bake/client/websocket.ts
 src/bake/debug.ts
 src/bake/DevServer.bind.ts
 src/bake/enums.ts
-src/bake/generated.ts
 src/bake/hmr-module.ts
 src/bake/hmr-runtime-client.ts
 src/bake/hmr-runtime-error.ts

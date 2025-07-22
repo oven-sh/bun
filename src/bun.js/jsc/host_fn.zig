@@ -831,12 +831,15 @@ pub fn wrapStaticMethod(
     }.method;
 }
 
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-const CallFrame = jsc.CallFrame;
-const ZigString = jsc.ZigString;
-const std = @import("std");
 const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
 const Environment = bun.Environment;
+
+const jsc = bun.jsc;
+const CallFrame = jsc.CallFrame;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

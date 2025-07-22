@@ -116,7 +116,9 @@ comptime {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
+const Environment = bun.Environment;
+
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
-const Environment = bun.Environment;

@@ -1,9 +1,3 @@
-const std = @import("std");
-const builtin = @import("builtin");
-const bun = @import("bun");
-const Output = bun.Output;
-const Environment = bun.Environment;
-
 pub const panic = bun.crash_handler.panic;
 pub const std_options = std.Options{
     .enable_segfault_handler = false,
@@ -88,3 +82,10 @@ pub fn eqlBytes(src: []const u8, dest: []const u8) bool {
     return bun.c.memcmp(src.ptr, dest.ptr, src.len) == 0;
 }
 // -- End Zig Standard Library Additions --
+
+const builtin = @import("builtin");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;

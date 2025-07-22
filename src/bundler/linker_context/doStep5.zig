@@ -468,30 +468,32 @@ pub fn createExportsForFile(
     }
 }
 
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
-const Part = bun.bundle_v2.Part;
-const std = @import("std");
-
-const js_ast = bun.bundle_v2.js_ast;
-const Ref = bun.bundle_v2.js_ast.Ref;
-const Environment = bun.Environment;
-const ResolvedExports = bun.bundle_v2.ResolvedExports;
-const Logger = bun.logger;
-const RefImportData = bun.bundle_v2.RefImportData;
-const ImportData = bun.bundle_v2.ImportData;
-const Dependency = js_ast.Dependency;
-const options = bun.options;
-
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const options = bun.options;
+const string = bun.string;
+const strings = bun.strings;
+
+const ImportData = bun.bundle_v2.ImportData;
+const Index = bun.bundle_v2.Index;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const Part = bun.bundle_v2.Part;
+const RefImportData = bun.bundle_v2.RefImportData;
+const ResolvedExports = bun.bundle_v2.ResolvedExports;
+
+const js_ast = bun.bundle_v2.js_ast;
 const B = js_ast.B;
+const Dependency = js_ast.Dependency;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const Ref = bun.bundle_v2.js_ast.Ref;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;
+
+const Logger = bun.logger;
 const Loc = Logger.Loc;

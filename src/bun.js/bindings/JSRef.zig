@@ -77,6 +77,7 @@ pub const JSRef = union(enum) {
     }
 };
 
+const bun = @import("bun");
+
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
-const bun = @import("bun");

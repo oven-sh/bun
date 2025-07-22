@@ -196,7 +196,7 @@ pub fn main() anyerror!void {
         response_body: MutableString = undefined,
         context: HTTP.HTTPChannelContext = undefined,
     };
-    const Batch = @import("../src/thread_pool.zig").Batch;
+    const Batch = bun.ThreadPool.Batch;
     var groups = try default_allocator.alloc(Group, args.count);
     var repeat_i: usize = 0;
     while (repeat_i < args.repeat + 1) : (repeat_i += 1) {

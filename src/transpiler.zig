@@ -1,48 +1,8 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const default_allocator = bun.default_allocator;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FeatureFlags = bun.FeatureFlags;
-
-const std = @import("std");
-const logger = bun.logger;
-pub const options = @import("options.zig");
-const js_parser = bun.js_parser;
-const JSON = bun.JSON;
-const js_printer = bun.js_printer;
-const js_ast = bun.JSAst;
-const linker = @import("linker.zig");
-const Ref = @import("ast/base.zig").Ref;
-
-const Fs = @import("fs.zig");
-const schema = @import("api/schema.zig");
-const Api = schema.Api;
-const _resolver = @import("./resolver/resolver.zig");
-const MimeType = @import("./http/MimeType.zig");
-const runtime = @import("./runtime.zig");
-const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
-const DebugLogs = _resolver.DebugLogs;
-const Router = @import("./router.zig");
-const DotEnv = @import("./env_loader.zig");
-const NodeFallbackModules = @import("./node_fallbacks.zig");
-const URL = @import("./url.zig").URL;
-const Linker = linker.Linker;
-const Resolver = _resolver.Resolver;
-const TOML = @import("./toml/toml_parser.zig").TOML;
-const JSC = bun.JSC;
-const PackageManager = @import("./install/install.zig").PackageManager;
-const DataURL = @import("./resolver/data_url.zig").DataURL;
+pub const options = @import("./options.zig");
 
 pub const MacroJSValueType = JSC.JSValue;
-const default_macro_js_value = JSC.JSValue.zero;
 
 pub const EntryPoints = @import("./bundler/entry_points.zig");
-const SystemTimer = @import("./system_timer.zig").Timer;
 
 pub const ParseResult = struct {
     source: logger.Source,
@@ -1591,3 +1551,46 @@ pub const ResolveQueue = std.fifo.LinearFifo(
     _resolver.Result,
     std.fifo.LinearFifoBufferType.Dynamic,
 );
+
+const DotEnv = @import("./env_loader.zig");
+const Fs = @import("./fs.zig");
+const MimeType = @import("./http/MimeType.zig");
+const NodeFallbackModules = @import("./node_fallbacks.zig");
+const Router = @import("./router.zig");
+const runtime = @import("./runtime.zig");
+const std = @import("std");
+const DataURL = @import("./resolver/data_url.zig").DataURL;
+const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
+const PackageManager = @import("./install/install.zig").PackageManager;
+const Ref = @import("./ast/base.zig").Ref;
+const SystemTimer = @import("./system_timer.zig").Timer;
+const TOML = @import("./toml/toml_parser.zig").TOML;
+const URL = @import("./url.zig").URL;
+
+const schema = @import("./api/schema.zig");
+const Api = schema.Api;
+
+const linker = @import("./linker.zig");
+const Linker = linker.Linker;
+
+const _resolver = @import("./resolver/resolver.zig");
+const DebugLogs = _resolver.DebugLogs;
+const Resolver = _resolver.Resolver;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Global = bun.Global;
+const JSC = bun.JSC;
+const JSON = bun.JSON;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.JSAst;
+const js_parser = bun.js_parser;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+const default_macro_js_value = JSC.JSValue.zero;

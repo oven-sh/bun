@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const strings = bun.strings;
-const JSON = bun.JSON;
-const Glob = @import("../glob.zig");
-
 const SKIP_LIST = .{
     // skip hidden directories
     ".",
@@ -281,3 +272,13 @@ pub const PackageFilterIterator = struct {
         }
     }
 };
+
+const Glob = @import("../glob.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Global = bun.Global;
+const JSON = bun.JSON;
+const Output = bun.Output;
+const string = bun.string;
+const strings = bun.strings;

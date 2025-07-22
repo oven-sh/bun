@@ -29,5 +29,6 @@ pub const CommonStrings = struct {
 };
 
 const bun = @import("bun");
+
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

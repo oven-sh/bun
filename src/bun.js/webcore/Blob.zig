@@ -3,13 +3,15 @@
 //! objects that reference the filesystem (Blob.Store.File). This is how
 //! operations like writing `Store.File` to another `Store.File` knows to use a
 //! basic file copy instead of a naive read write loop.
+
 const Blob = @This();
+
 const debug = Output.scoped(.Blob, false);
 
-pub const Store = @import("blob/Store.zig");
-pub const read_file = @import("blob/read_file.zig");
-pub const write_file = @import("blob/write_file.zig");
-pub const copy_file = @import("blob/copy_file.zig");
+pub const Store = @import("./blob/Store.zig");
+pub const read_file = @import("./blob/read_file.zig");
+pub const write_file = @import("./blob/write_file.zig");
+pub const copy_file = @import("./blob/copy_file.zig");
 
 pub const new = bun.TrivialNew(@This());
 pub const js = JSC.Codegen.JSBlob;
@@ -4699,38 +4701,38 @@ pub fn FileCloser(comptime This: type) type {
     };
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const MimeType = http.MimeType;
-const http = bun.http;
-const JSC = bun.JSC;
-const io = bun.io;
-const Output = bun.Output;
-const strings = bun.strings;
-const string = bun.string;
-const default_allocator = bun.default_allocator;
-const JSError = bun.JSError;
-const assert = bun.assert;
-const streams = bun.webcore.streams;
-
-const Environment = @import("../../env.zig");
-const ZigString = JSC.ZigString;
-const JSPromise = JSC.JSPromise;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-
-const VirtualMachine = JSC.VirtualMachine;
-const StringJoiner = bun.StringJoiner;
-
-const invalid_fd = bun.invalid_fd;
-const Response = JSC.WebCore.Response;
-const Request = JSC.WebCore.Request;
-
-const libuv = bun.windows.libuv;
-
-const S3 = bun.S3;
-const S3File = @import("S3File.zig");
-const PathOrBlob = JSC.Node.PathOrBlob;
 const WriteFilePromise = write_file.WriteFilePromise;
 const WriteFileWaitFromLockedValueTask = write_file.WriteFileWaitFromLockedValueTask;
 const NewReadFileHandler = read_file.NewReadFileHandler;
+
+const Environment = @import("../../env.zig");
+const S3File = @import("./S3File.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+const Output = bun.Output;
+const S3 = bun.S3;
+const StringJoiner = bun.StringJoiner;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const invalid_fd = bun.invalid_fd;
+const io = bun.io;
+const string = bun.string;
+const strings = bun.strings;
+const libuv = bun.windows.libuv;
+const streams = bun.webcore.streams;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSPromise = JSC.JSPromise;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;
+const ZigString = JSC.ZigString;
+const PathOrBlob = JSC.Node.PathOrBlob;
+
+const Request = JSC.WebCore.Request;
+const Response = JSC.WebCore.Response;
+
+const http = bun.http;
+const MimeType = http.MimeType;

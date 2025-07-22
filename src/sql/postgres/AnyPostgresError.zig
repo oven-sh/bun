@@ -81,8 +81,6 @@ pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8
     return error_code.fmt(globalObject, "Failed to bind query: {s}", .{@errorName(err)});
 }
 
-// @sortImports
-
 const bun = @import("bun");
 
 const JSC = bun.JSC;

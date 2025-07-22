@@ -1,9 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const VirtualMachine = jsc.VirtualMachine;
-const EventLoopTimer = bun.api.Timer.EventLoopTimer;
-
 /// This is WTF::RunLoop::TimerBase from WebKit
 const RunLoopTimer = opaque {
     pub fn fire(this: *RunLoopTimer) void {
@@ -136,3 +130,11 @@ export fn WTFTimer__secondsUntilTimer(this: *WTFTimer) f64 {
 }
 
 extern fn WTFTimer__fire(this: *RunLoopTimer) void;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const EventLoopTimer = bun.api.Timer.EventLoopTimer;
+
+const jsc = bun.jsc;
+const VirtualMachine = jsc.VirtualMachine;

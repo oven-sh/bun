@@ -1149,17 +1149,18 @@ pub const CopyFilePromiseTask = JSC.ConcurrentPromiseTask(CopyFile);
 pub const CopyFilePromiseTaskEventLoopTask = CopyFilePromiseTask.EventLoopTask;
 
 const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const assert = bun.assert;
+const webcore = bun.webcore;
 const libuv = bun.windows.libuv;
 
-const webcore = bun.webcore;
-const Blob = webcore.Blob;
-const Store = Blob.Store;
-const SizeType = Blob.SizeType;
-
 const JSC = bun.jsc;
-const SystemError = JSC.SystemError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
+const SystemError = JSC.SystemError;
+
+const Blob = webcore.Blob;
+const SizeType = Blob.SizeType;
+const Store = Blob.Store;

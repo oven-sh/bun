@@ -1,49 +1,9 @@
-const std = @import("std");
-const logger = bun.logger;
-const js_lexer = bun.js_lexer;
-const importRecord = @import("import_record.zig");
-const js_ast = bun.JSAst;
-const options = @import("options.zig");
-const rename = @import("renamer.zig");
-const runtime = @import("runtime.zig");
-const Api = @import("./api/schema.zig").Api;
-const fs = @import("fs.zig");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const default_allocator = bun.default_allocator;
-
-const Ref = @import("ast/base.zig").Ref;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FeatureFlags = bun.FeatureFlags;
-const FileDescriptorType = bun.FileDescriptor;
-
-const S = js_ast.S;
-const B = js_ast.B;
-const G = js_ast.G;
-const E = js_ast.E;
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const Binding = js_ast.Binding;
-const Symbol = js_ast.Symbol;
-const Level = js_ast.Op.Level;
-const Op = js_ast.Op;
-const Ast = js_ast.Ast;
-
 const hex_chars = "0123456789ABCDEF";
 const first_ascii = 0x20;
 const last_ascii = 0x7E;
 const first_high_surrogate = 0xD800;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
-const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
-const assert = bun.assert;
-
-const ImportRecord = bun.ImportRecord;
-const SourceMap = @import("./sourcemap/sourcemap.zig");
 
 /// For support JavaScriptCore
 const ascii_only_always_on_unless_minifying = true;
@@ -6110,3 +6070,43 @@ pub fn printCommonJS(
 
     return @as(usize, @intCast(@max(printer.writer.written, 0)));
 }
+
+const SourceMap = @import("./sourcemap/sourcemap.zig");
+const fs = @import("./fs.zig");
+const importRecord = @import("./import_record.zig");
+const options = @import("./options.zig");
+const rename = @import("./renamer.zig");
+const runtime = @import("./runtime.zig");
+const std = @import("std");
+const Api = @import("./api/schema.zig").Api;
+const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
+const Ref = @import("./ast/base.zig").Ref;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const FileDescriptorType = bun.FileDescriptor;
+const ImportRecord = bun.ImportRecord;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const js_lexer = bun.js_lexer;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+
+const js_ast = bun.JSAst;
+const Ast = js_ast.Ast;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;
+const Symbol = js_ast.Symbol;
+
+const Op = js_ast.Op;
+const Level = js_ast.Op.Level;

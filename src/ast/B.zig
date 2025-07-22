@@ -87,7 +87,7 @@ pub const B = union(Binding.Tag) {
     }
 };
 
-// @sortImports
+pub const Class = G.Class;
 
 const std = @import("std");
 
@@ -100,7 +100,5 @@ const Binding = js_ast.Binding;
 const Expr = js_ast.Expr;
 const ExprNodeIndex = js_ast.ExprNodeIndex;
 const Flags = js_ast.Flags;
-const Ref = js_ast.Ref;
-
 const G = js_ast.G;
-pub const Class = G.Class;
+const Ref = js_ast.Ref;

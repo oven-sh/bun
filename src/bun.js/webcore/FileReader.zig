@@ -1,4 +1,5 @@
 const FileReader = @This();
+
 const log = Output.scoped(.FileReader, false);
 
 reader: IOReader = IOReader.init(FileReader),
@@ -668,11 +669,13 @@ pub const Source = ReadableStream.NewSource(
 );
 
 const std = @import("std");
+
 const bun = @import("bun");
-const Output = bun.Output;
 const Environment = bun.Environment;
 const JSC = bun.jsc;
+const Output = bun.Output;
+
 const webcore = bun.webcore;
-const streams = webcore.streams;
 const Blob = webcore.Blob;
 const ReadableStream = webcore.ReadableStream;
+const streams = webcore.streams;

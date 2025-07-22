@@ -1,11 +1,3 @@
-const bun = @import("bun");
-const Environment = bun.Environment;
-
-const std = @import("std");
-
-const Analytics = @import("./analytics_schema.zig").analytics;
-const Semver = bun.Semver;
-
 /// Enables analytics. This is used by:
 /// - crash_handler.zig's `report` function to anonymously report crashes
 ///
@@ -375,3 +367,10 @@ pub const GenerateHeader = struct {
         }
     };
 };
+
+const std = @import("std");
+const Analytics = @import("./analytics_schema.zig").analytics;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Semver = bun.Semver;

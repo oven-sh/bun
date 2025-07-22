@@ -365,26 +365,32 @@ pub const Scripts = extern struct {
     }
 };
 
-const Allocator = std.mem.Allocator;
-const Environment = bun.Environment;
-const Expr = bun.JSAst.Expr;
-const JSAst = bun.JSAst;
-const JSON = bun.JSON;
-const Lockfile = install.Lockfile;
-const Output = bun.Output;
-const Resolution = bun.install.Resolution;
-const Semver = bun.Semver;
-const String = Semver.String;
-const StringBuilder = Lockfile.StringBuilder;
-const assert = bun.assert;
-const bun = @import("bun");
-const initializeStore = install.initializeStore;
-const install = bun.install;
-const logger = bun.logger;
-const std = @import("std");
 const string = []const u8;
 const stringZ = [:0]const u8;
-const strings = bun.strings;
-const Package = Lockfile.Package;
 const debug = Output.scoped(.Lockfile, true);
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
 const FD = bun.FD;
+const JSON = bun.JSON;
+const Output = bun.Output;
+const assert = bun.assert;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const JSAst = bun.JSAst;
+const Expr = bun.JSAst.Expr;
+
+const Semver = bun.Semver;
+const String = Semver.String;
+
+const install = bun.install;
+const Resolution = bun.install.Resolution;
+const initializeStore = install.initializeStore;
+
+const Lockfile = install.Lockfile;
+const Package = Lockfile.Package;
+const StringBuilder = Lockfile.StringBuilder;

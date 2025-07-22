@@ -1,13 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const color = @import("./color.zig");
-const RGBA = color.RGBA;
-const LAB = color.LAB;
-const SRGB = color.SRGB;
-const HSL = color.HSL;
-const JSC = bun.JSC;
-const css = bun.css;
-
 const OutputColorFormat = enum {
     ansi,
     ansi_16,
@@ -438,3 +428,15 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
         },
     }
 }
+
+const std = @import("std");
+
+const color = @import("./color.zig");
+const HSL = color.HSL;
+const LAB = color.LAB;
+const RGBA = color.RGBA;
+const SRGB = color.SRGB;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const css = bun.css;

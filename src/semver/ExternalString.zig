@@ -45,7 +45,7 @@ pub const ExternalString = extern struct {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
 const string = bun.string;
-
 const String = bun.Semver.String;

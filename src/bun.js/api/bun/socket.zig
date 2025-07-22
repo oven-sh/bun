@@ -1,19 +1,3 @@
-const default_allocator = bun.default_allocator;
-const bun = @import("bun");
-const Environment = bun.Environment;
-
-const string = bun.string;
-const Output = bun.Output;
-const std = @import("std");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const uws = bun.uws;
-const ZigString = JSC.ZigString;
-const BoringSSL = bun.BoringSSL.c;
-const Async = bun.Async;
-const H2FrameParser = @import("./h2_frame_parser.zig").H2FrameParser;
-
 pub const SocketAddress = @import("./socket/SocketAddress.zig");
 
 const WrappedType = enum {
@@ -48,11 +32,11 @@ fn selectALPNCallback(_: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u8,
     }
 }
 
-pub const Handlers = @import("socket/Handlers.zig");
+pub const Handlers = @import("./socket/Handlers.zig");
 pub const SocketConfig = Handlers.SocketConfig;
 
-pub const Listener = @import("socket/Listener.zig");
-pub const WindowsNamedPipeContext = if (Environment.isWindows) @import("socket/WindowsNamedPipeContext.zig") else void;
+pub const Listener = @import("./socket/Listener.zig");
+pub const WindowsNamedPipeContext = if (Environment.isWindows) @import("./socket/WindowsNamedPipeContext.zig") else void;
 
 pub fn NewSocket(comptime ssl: bool) type {
     return struct {
@@ -2122,4 +2106,20 @@ pub fn jsSetSocketOptions(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
     return .js_undefined;
 }
 
-const tls_socket_functions = @import("socket/tls_socket_functions.zig");
+const std = @import("std");
+const tls_socket_functions = @import("./socket/tls_socket_functions.zig");
+const H2FrameParser = @import("./h2_frame_parser.zig").H2FrameParser;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const uws = bun.uws;
+const BoringSSL = bun.BoringSSL.c;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;

@@ -469,19 +469,22 @@ pub fn deinit(this: *TimerObjectInternals) void {
     }
 }
 
-const bun = @import("bun");
-const std = @import("std");
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const TimeoutObject = @import("../Timer.zig").TimeoutObject;
-const ImmediateObject = @import("../Timer.zig").ImmediateObject;
 const Debugger = @import("../../Debugger.zig");
-const timespec = bun.timespec;
-const Environment = bun.Environment;
-const ID = @import("../Timer.zig").ID;
-const TimeoutMap = @import("../Timer.zig").TimeoutMap;
-const Kind = @import("../Timer.zig").Kind;
+const std = @import("std");
+
 const EventLoopTimer = @import("../Timer.zig").EventLoopTimer;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
+const ID = @import("../Timer.zig").ID;
+const ImmediateObject = @import("../Timer.zig").ImmediateObject;
+const Kind = @import("../Timer.zig").Kind;
+const TimeoutMap = @import("../Timer.zig").TimeoutMap;
+const TimeoutObject = @import("../Timer.zig").TimeoutObject;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
 const assert = bun.assert;
+const timespec = bun.timespec;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;

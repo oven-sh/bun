@@ -1,4 +1,5 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Body
+
 const Body = @This();
 
 value: Value, // = Value.empty,
@@ -1648,31 +1649,30 @@ pub const ValueBufferer = struct {
     }
 };
 
-const assert = bun.assert;
-
 const std = @import("std");
+
 const bun = @import("bun");
-const MimeType = bun.http.MimeType;
-const JSC = bun.JSC;
-
-const FetchHeaders = bun.webcore.FetchHeaders;
-const SystemError = JSC.SystemError;
-const Output = bun.Output;
 const MutableString = bun.MutableString;
-const strings = bun.strings;
-const string = bun.string;
+const Output = bun.Output;
+const assert = bun.assert;
 const default_allocator = bun.default_allocator;
-const ArrayBuffer = JSC.ArrayBuffer;
+const string = bun.string;
+const strings = bun.strings;
+const FetchHeaders = bun.webcore.FetchHeaders;
+const MimeType = bun.http.MimeType;
 
-const ZigString = JSC.ZigString;
+const JSC = bun.JSC;
+const ArrayBuffer = JSC.ArrayBuffer;
+const JSGlobalObject = JSC.JSGlobalObject;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-
+const SystemError = JSC.SystemError;
 const VirtualMachine = JSC.VirtualMachine;
+const ZigString = JSC.ZigString;
+
+const Response = JSC.WebCore.Response;
+const streams = JSC.WebCore.streams;
 
 const Blob = JSC.WebCore.Blob;
 const AnyBlob = Blob.Any;
 const InternalBlob = Blob.Internal;
-const Response = JSC.WebCore.Response;
-const streams = JSC.WebCore.streams;

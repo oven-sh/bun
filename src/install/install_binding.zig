@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const logger = bun.logger;
-const Path = bun.path;
-const string = bun.string;
-const Lockfile = bun.install.Lockfile;
-
 pub const bun_install_js_bindings = struct {
     const JSValue = JSC.JSValue;
     const ZigString = JSC.ZigString;
@@ -82,3 +74,12 @@ pub const bun_install_js_bindings = struct {
         return str.toJSByParseJSON(globalObject);
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const Path = bun.path;
+const logger = bun.logger;
+const string = bun.string;
+const Lockfile = bun.install.Lockfile;

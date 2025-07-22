@@ -468,7 +468,10 @@ pub inline fn isHoisted(self: *const Symbol) bool {
     return Symbol.isKindHoisted(self.kind);
 }
 
-// @sortImports
+pub const isKindFunction = Symbol.Kind.isFunction;
+pub const isKindHoisted = Symbol.Kind.isHoisted;
+pub const isKindHoistedOrFunction = Symbol.Kind.isHoistedOrFunction;
+pub const isKindPrivate = Symbol.Kind.isPrivate;
 
 const std = @import("std");
 
@@ -482,8 +485,3 @@ const G = js_ast.G;
 const ImportItemStatus = js_ast.ImportItemStatus;
 const Ref = js_ast.Ref;
 const Symbol = js_ast.Symbol;
-
-pub const isKindFunction = Symbol.Kind.isFunction;
-pub const isKindHoisted = Symbol.Kind.isHoisted;
-pub const isKindHoistedOrFunction = Symbol.Kind.isHoistedOrFunction;
-pub const isKindPrivate = Symbol.Kind.isPrivate;

@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 extern const jsc_llint_begin: u8;
 extern const jsc_llint_end: u8;
 /// allocated using bun.default_allocator. when called from lldb, it is never freed.
@@ -261,3 +258,6 @@ fn printUnwindError(debug_info: *std.debug.SelfInfo, out_stream: anytype, addres
     }
     try tty_config.setColor(out_stream, .reset);
 }
+
+const bun = @import("bun");
+const std = @import("std");

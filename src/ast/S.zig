@@ -212,8 +212,6 @@ pub const Continue = struct {
     label: ?LocRef = null,
 };
 
-// @sortImports
-
 const bun = @import("bun");
 const logger = bun.logger;
 const string = bun.string;

@@ -1,3 +1,5 @@
+const ErrorResponse = @This();
+
 messages: std.ArrayListUnmanaged(FieldMessage) = .{},
 
 pub fn format(formatter: ErrorResponse, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -144,9 +146,6 @@ pub fn toJS(this: ErrorResponse, globalObject: *JSC.JSGlobalObject) JSValue {
     return err;
 }
 
-// @sortImports
-
-const ErrorResponse = @This();
 const std = @import("std");
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
 const FieldMessage = @import("./FieldMessage.zig").FieldMessage;

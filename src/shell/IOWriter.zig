@@ -11,6 +11,7 @@
 //!
 //! We also make `*IOWriter` reference counted, this simplifies management of
 //! the file descriptor.
+
 const IOWriter = @This();
 
 pub const RefCount = bun.ptr.RefCount(@This(), "ref_count", asyncDeinit, .{});
@@ -834,13 +835,17 @@ pub const AsyncDeinitWriter = struct {
     }
 };
 
+const log = bun.Output.scoped(.IOWriter, true);
+
+const std = @import("std");
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
+const assert = bun.assert;
+
+const JSC = bun.JSC;
+const Maybe = JSC.Maybe;
+
 const shell = bun.shell;
 const Interpreter = shell.Interpreter;
-const JSC = bun.JSC;
-const std = @import("std");
-const assert = bun.assert;
-const log = bun.Output.scoped(.IOWriter, true);
 const SmolList = shell.SmolList;
-const Maybe = JSC.Maybe;
+const Yield = bun.shell.Yield;

@@ -611,10 +611,12 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
-const uws = bun.uws;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const VirtualMachine = JSC.VirtualMachine;
 const strings = bun.strings;
+const uws = bun.uws;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;

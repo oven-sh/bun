@@ -1,10 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const String = bun.String;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-
 pub const SystemError = extern struct {
     errno: c_int = 0,
     /// label for errno
@@ -113,3 +106,12 @@ pub const SystemError = extern struct {
         }
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const String = bun.String;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

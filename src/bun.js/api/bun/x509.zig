@@ -1,9 +1,3 @@
-const BoringSSL = bun.BoringSSL.c;
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-
 pub inline fn isSafeAltName(name: []const u8, utf8: bool) bool {
     for (name) |c| {
         switch (c) {
@@ -54,3 +48,10 @@ pub fn toJSObject(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) bun.JSEr
 
 extern fn Bun__X509__toJSLegacyEncoding(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue;
 extern fn Bun__X509__toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue;
+
+const bun = @import("bun");
+const BoringSSL = bun.BoringSSL.c;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

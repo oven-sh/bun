@@ -1,17 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const Environment = @import("./env.zig");
-const string = bun.string;
-const root = @import("root");
-const strings = bun.strings;
-const StringTypes = bun.StringTypes;
-const Global = bun.Global;
-const ComptimeStringMap = bun.ComptimeStringMap;
-const use_mimalloc = bun.use_mimalloc;
-const c = bun.c;
-
-const SystemTimer = @import("./system_timer.zig").Timer;
-
 // These are threadlocal so we don't have stdout/stderr writing on top of each other
 threadlocal var source: Source = undefined;
 threadlocal var source_set: bool = false;
@@ -20,12 +6,11 @@ threadlocal var source_set: bool = false;
 var stderr_stream: Source.StreamType = undefined;
 var stdout_stream: Source.StreamType = undefined;
 var stdout_stream_set = false;
-const File = bun.sys.File;
 pub var terminal_size: std.posix.winsize = .{
-    .ws_row = 0,
-    .ws_col = 0,
-    .ws_xpixel = 0,
-    .ws_ypixel = 0,
+    .row = 0,
+    .col = 0,
+    .xpixel = 0,
+    .ypixel = 0,
 };
 
 pub const Source = struct {
@@ -187,7 +172,7 @@ pub const Source = struct {
             const stdout = std.os.windows.GetStdHandle(std.os.windows.STD_OUTPUT_HANDLE) catch w.INVALID_HANDLE_VALUE;
             const stderr = std.os.windows.GetStdHandle(std.os.windows.STD_ERROR_HANDLE) catch w.INVALID_HANDLE_VALUE;
 
-            const fd_internals = @import("fd.zig");
+            const fd_internals = @import("./fd.zig");
             const INVALID_HANDLE_VALUE = std.os.windows.INVALID_HANDLE_VALUE;
             fd_internals.windows_cached_stderr = if (stderr != INVALID_HANDLE_VALUE) .fromSystem(stderr) else .invalid;
             fd_internals.windows_cached_stdout = if (stdout != INVALID_HANDLE_VALUE) .fromSystem(stdout) else .invalid;
@@ -468,7 +453,7 @@ pub fn isAIAgent() bool {
     const get_is_agent = struct {
         var value = false;
         fn evaluate() bool {
-            if (bun.getenvZ("IS_CODE_AGENT")) |env| {
+            if (bun.getenvZ("AGENT")) |env| {
                 return strings.eqlComptime(env, "1");
             }
 
@@ -1298,3 +1283,18 @@ pub inline fn errFmt(formatter: anytype) void {
 pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
     .unbuffered_reader = .{ .context = .{ .handle = if (Environment.isWindows) undefined else .stdin() } },
 };
+
+const Environment = @import("./env.zig");
+const root = @import("root");
+const std = @import("std");
+const SystemTimer = @import("./system_timer.zig").Timer;
+
+const bun = @import("bun");
+const ComptimeStringMap = bun.ComptimeStringMap;
+const Global = bun.Global;
+const StringTypes = bun.StringTypes;
+const c = bun.c;
+const string = bun.string;
+const strings = bun.strings;
+const use_mimalloc = bun.use_mimalloc;
+const File = bun.sys.File;

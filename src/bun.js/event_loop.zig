@@ -188,8 +188,6 @@ pub fn runCallbackWithResult(this: *EventLoop, callback: JSC.JSValue, globalObje
     return result;
 }
 
-const tickQueueWithCount = @import("./event_loop/Task.zig").tickQueueWithCount;
-
 fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
     return this.tickQueueWithCount(virtual_machine);
 }
@@ -648,12 +646,16 @@ pub const EventLoopTaskPtr = @import("./event_loop/EventLoopHandle.zig").EventLo
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 
-const Timer = bun.api.Timer;
 const std = @import("std");
-const JSC = bun.JSC;
-const VirtualMachine = bun.JSC.VirtualMachine;
+const tickQueueWithCount = @import("./event_loop/Task.zig").tickQueueWithCount;
+
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Waker = bun.Async.Waker;
 const uws = bun.uws;
+const Timer = bun.api.Timer;
+
 const Async = bun.Async;
+const Waker = bun.Async.Waker;
+
+const JSC = bun.JSC;
+const VirtualMachine = bun.JSC.VirtualMachine;

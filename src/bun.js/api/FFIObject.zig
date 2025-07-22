@@ -1,3 +1,5 @@
+const FFIObject = @This();
+
 pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, lengthValue: ?JSValue) bun.JSError!JSC.JSValue {
     switch (FFIObject.getPtrSlice(globalThis, value, byteOffset, lengthValue)) {
         .err => |err| {
@@ -620,17 +622,18 @@ const fields = .{
 };
 const max_addressable_memory = std.math.maxInt(u56);
 
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const assert = bun.assert;
+
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;
 const JSValue = JSC.JSValue;
-const JSC = bun.JSC;
-const DOMCall = JSC.host_fn.DOMCall;
-const DOMEffect = JSC.host_fn.DOMEffect;
-const bun = @import("bun");
-const FFIObject = @This();
+const ZigString = JSC.ZigString;
 const Bun = JSC.API.Bun;
 
-const Environment = bun.Environment;
-const std = @import("std");
-const assert = bun.assert;
-const ZigString = JSC.ZigString;
+const DOMCall = JSC.host_fn.DOMCall;
+const DOMEffect = JSC.host_fn.DOMEffect;

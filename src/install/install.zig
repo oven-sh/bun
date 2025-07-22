@@ -237,16 +237,13 @@ pub const PackageManifestError = error{
     PackageManifestHTTP5xx,
 };
 
-// @sortImports
-
 pub const ExtractTarball = @import("./extract_tarball.zig");
-pub const NetworkTask = @import("NetworkTask.zig");
+pub const NetworkTask = @import("./NetworkTask.zig");
 pub const Npm = @import("./npm.zig");
-pub const PackageManager = @import("PackageManager.zig");
-pub const PackageManifestMap = @import("PackageManifestMap.zig");
-pub const Task = @import("PackageManagerTask.zig");
+pub const PackageManager = @import("./PackageManager.zig");
+pub const PackageManifestMap = @import("./PackageManifestMap.zig");
+pub const Task = @import("./PackageManagerTask.zig");
 pub const TextLockfile = @import("./lockfile/bun.lock.zig");
-const std = @import("std");
 pub const Bin = @import("./bin.zig").Bin;
 pub const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
 pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.zig").LifecycleScriptSubprocess;
@@ -273,6 +270,8 @@ pub const PatchedDep = Lockfile.PatchedDep;
 
 pub const patch = @import("./patch_install.zig");
 pub const PatchTask = patch.PatchTask;
+
+const std = @import("std");
 
 const bun = @import("bun");
 const JSAst = bun.JSAst;

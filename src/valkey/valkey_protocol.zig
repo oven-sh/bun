@@ -1,9 +1,3 @@
-const std = @import("std");
-
-const bun = @import("bun");
-const JSC = bun.JSC;
-const String = bun.String;
-
 pub const RedisError = error{
     AuthenticationFailed,
     ConnectionClosed,
@@ -662,3 +656,9 @@ pub const Attribute = struct {
         allocator.destroy(self.value);
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const String = bun.String;

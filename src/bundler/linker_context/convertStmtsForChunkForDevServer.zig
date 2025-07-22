@@ -152,24 +152,25 @@ pub fn convertStmtsForChunkForDevServer(
     }
 }
 
-const bun = @import("bun");
-const Logger = bun.logger;
-const Loc = Logger.Loc;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-
-const std = @import("std");
-const js_ast = bun.js_ast;
-
-const JSAst = js_ast.BundledAst;
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
-const B = js_ast.B;
-const Binding = js_ast.Binding;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const bun = @import("bun");
+const std = @import("std");
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const StmtList = LinkerContext.StmtList;
+
+const js_ast = bun.js_ast;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const JSAst = js_ast.BundledAst;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;
+
+const Logger = bun.logger;
+const Loc = Logger.Loc;

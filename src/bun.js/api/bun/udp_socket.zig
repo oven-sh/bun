@@ -1,16 +1,3 @@
-const std = @import("std");
-const uws = @import("../../../deps/uws.zig");
-const bun = @import("bun");
-
-const default_allocator = bun.default_allocator;
-const Output = bun.Output;
-const Async = bun.Async;
-const JSC = bun.JSC;
-const CallFrame = JSC.CallFrame;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const SocketAddress = JSC.API.SocketAddress;
-
 const log = Output.scoped(.UdpSocket, false);
 
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
@@ -966,3 +953,17 @@ pub const UDPSocket = struct {
         return .js_undefined;
     }
 };
+
+const std = @import("std");
+const uws = @import("../../../deps/uws.zig");
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+
+const JSC = bun.JSC;
+const CallFrame = JSC.CallFrame;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const SocketAddress = JSC.API.SocketAddress;

@@ -14,10 +14,6 @@
 /// Version 15: Updated global defines table list.
 const expected_version = 15;
 
-const bun = @import("bun");
-const std = @import("std");
-const Output = bun.Output;
-
 const debug = Output.scoped(.cache, false);
 const MINIMUM_CACHE_SIZE = 50 * 1024;
 
@@ -645,3 +641,8 @@ pub const RuntimeTranspilerCache = struct {
             debug("put() = {d} bytes", .{output_code.latin1().len});
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Output = bun.Output;

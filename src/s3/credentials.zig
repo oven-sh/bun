@@ -1,14 +1,3 @@
-const bun = @import("bun");
-const picohttp = bun.picohttp;
-const std = @import("std");
-
-const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
-const ACL = @import("./acl.zig").ACL;
-const StorageClass = @import("./storage_class.zig").StorageClass;
-
-const JSC = bun.JSC;
-const strings = bun.strings;
-
 pub const S3Credentials = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
@@ -1139,3 +1128,13 @@ pub const S3CredentialsWithOptions = struct {
         if (this._sessionTokenSlice) |slice| slice.deinit();
     }
 };
+
+const std = @import("std");
+const ACL = @import("./acl.zig").ACL;
+const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
+const StorageClass = @import("./storage_class.zig").StorageClass;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const picohttp = bun.picohttp;
+const strings = bun.strings;

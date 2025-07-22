@@ -156,24 +156,25 @@ pub fn runFromMainThreadMini(this: *Async, _: *void) void {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
+const JSC = bun.JSC;
+
 const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
+const Binary = bun.shell.Interpreter.Binary;
+const Cmd = bun.shell.Interpreter.Cmd;
+const CondExpr = bun.shell.Interpreter.CondExpr;
+const IO = bun.shell.Interpreter.IO;
+const If = bun.shell.Interpreter.If;
+const Pipeline = bun.shell.Interpreter.Pipeline;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-
-const Cmd = bun.shell.Interpreter.Cmd;
-const If = bun.shell.Interpreter.If;
-const CondExpr = bun.shell.Interpreter.CondExpr;
-const Binary = bun.shell.Interpreter.Binary;
 const Stmt = bun.shell.Interpreter.Stmt;
-const Pipeline = bun.shell.Interpreter.Pipeline;
 
-const JSC = bun.JSC;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;

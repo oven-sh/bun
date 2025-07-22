@@ -1,17 +1,3 @@
-const uws = bun.uws;
-const bun = @import("bun");
-const Environment = bun.Environment;
-const strings = bun.strings;
-const string = bun.string;
-const Output = bun.Output;
-const std = @import("std");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const uv = bun.windows.libuv;
-
-const node_cluster_binding = @import("./node/node_cluster_binding.zig");
-
 pub const log = Output.scoped(.IPC, false);
 
 const IsInternal = enum { internal, external };
@@ -1372,14 +1358,25 @@ pub const IPCHandlers = struct {
     };
 };
 
-extern "C" fn IPCSerialize(globalObject: *JSC.JSGlobalObject, message: JSC.JSValue, handle: JSC.JSValue) JSC.JSValue;
-
 pub fn ipcSerialize(globalObject: *JSC.JSGlobalObject, message: JSC.JSValue, handle: JSC.JSValue) bun.JSError!JSC.JSValue {
-    return bun.jsc.fromJSHostCall(globalObject, @src(), IPCSerialize, .{ globalObject, message, handle });
+    return bun.cpp.IPCSerialize(globalObject, message, handle);
 }
-
-extern "C" fn IPCParse(globalObject: *JSC.JSGlobalObject, target: JSC.JSValue, serialized: JSC.JSValue, fd: JSC.JSValue) JSC.JSValue;
 
 pub fn ipcParse(globalObject: *JSC.JSGlobalObject, target: JSC.JSValue, serialized: JSC.JSValue, fd: JSC.JSValue) bun.JSError!JSC.JSValue {
-    return bun.jsc.fromJSHostCall(globalObject, @src(), IPCParse, .{ globalObject, target, serialized, fd });
+    return bun.cpp.IPCParse(globalObject, target, serialized, fd);
 }
+
+const node_cluster_binding = @import("./node/node_cluster_binding.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const string = bun.string;
+const strings = bun.strings;
+const uws = bun.uws;
+const uv = bun.windows.libuv;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

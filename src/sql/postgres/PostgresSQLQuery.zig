@@ -1,3 +1,5 @@
+const PostgresSQLQuery = @This();
+
 statement: ?*PostgresSQLStatement = null,
 query: bun.String = bun.String.empty,
 cursor_name: bun.String = bun.String.empty,
@@ -478,11 +480,13 @@ comptime {
 
 const debug = bun.Output.scoped(.Postgres, false);
 
-// @sortImports
+pub const js = JSC.Codegen.JSPostgresSQLQuery;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;
 
 const PostgresRequest = @import("./PostgresRequest.zig");
 const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
-const PostgresSQLQuery = @This();
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
 const Signature = @import("./Signature.zig");
 const bun = @import("bun");
@@ -498,8 +502,3 @@ const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSRef = JSC.JSRef;
 const JSValue = JSC.JSValue;
-
-pub const js = JSC.Codegen.JSPostgresSQLQuery;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
-pub const toJS = js.toJS;

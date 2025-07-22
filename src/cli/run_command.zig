@@ -1,30 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const JSC = bun.JSC;
-const OOM = bun.OOM;
-
-const clap = bun.clap;
-const CLI = bun.CLI;
-const Arguments = CLI.Arguments;
-const Command = CLI.Command;
-
-const options = @import("../options.zig");
-
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
-const transpiler = bun.transpiler;
-
-const DotEnv = @import("../env_loader.zig");
-const which = @import("../which.zig").which;
-const Run = @import("../bun_js.zig").Run;
 var path_buf: bun.PathBuffer = undefined;
 var path_buf2: bun.PathBuffer = undefined;
 const NpmArgs = struct {
@@ -32,12 +5,6 @@ const NpmArgs = struct {
     pub const package_name: string = "npm_package_name";
     pub const package_version: string = "npm_package_version";
 };
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
-
-const ShellCompletions = @import("./shell_completions.zig");
-
-const windows = std.os.windows;
 
 pub const RunCommand = struct {
     const shells_to_search = &[_]string{
@@ -1743,3 +1710,32 @@ pub const BunXFastPath = struct {
         };
     }
 };
+
+const DotEnv = @import("../env_loader.zig");
+const ShellCompletions = @import("./shell_completions.zig");
+const options = @import("../options.zig");
+const resolve_path = @import("../resolver/resolve_path.zig");
+const std = @import("std");
+const Api = @import("../api/schema.zig").Api;
+const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+const Run = @import("../bun_js.zig").Run;
+const which = @import("../which.zig").which;
+const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
+const windows = std.os.windows;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSC = bun.JSC;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const clap = bun.clap;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const strings = bun.strings;
+const transpiler = bun.transpiler;
+
+const CLI = bun.CLI;
+const Arguments = CLI.Arguments;
+const Command = CLI.Command;

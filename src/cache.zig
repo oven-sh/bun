@@ -1,22 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const FeatureFlags = bun.FeatureFlags;
-const default_allocator = bun.default_allocator;
-
-const js_ast = bun.JSAst;
-const logger = bun.logger;
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const Define = @import("./defines.zig").Define;
-const std = @import("std");
-const fs = @import("./fs.zig");
-
 pub const Set = struct {
     js: JavaScript,
     fs: Fs,
@@ -331,3 +312,22 @@ pub const Json = struct {
         return try parse(cache, log, source, allocator, json_parser.parseTSConfig, true);
     }
 };
+
+const fs = @import("./fs.zig");
+const std = @import("std");
+const Define = @import("./defines.zig").Define;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Global = bun.Global;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.JSAst;
+const js_parser = bun.js_parser;
+const json_parser = bun.JSON;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;

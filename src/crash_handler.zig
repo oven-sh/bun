@@ -17,17 +17,6 @@
 //!
 //! A lot of this handler is based on the Zig Standard Library implementation
 //! for std.debug.panicImpl and their code for gathering backtraces.
-const std = @import("std");
-const bun = @import("bun");
-const builtin = @import("builtin");
-const mimalloc = @import("allocators/mimalloc.zig");
-const SourceMap = @import("./sourcemap/sourcemap.zig");
-const VLQ = SourceMap.VLQ;
-const windows = std.os.windows;
-const Output = bun.Output;
-const Global = bun.Global;
-const Features = bun.Analytics.Features;
-const debug = std.debug;
 
 /// Set this to false if you want to disable all uses of this panic handler.
 /// This is useful for testing as a crash in here will not 'panicked during a panic'.
@@ -67,8 +56,6 @@ pub threadlocal var current_action: ?Action = null;
 var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const OnBeforeCrash }) = .{};
 
 var before_crash_handlers_mutex: bun.Mutex = .{};
-
-const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig");
 
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
@@ -1886,7 +1873,6 @@ pub fn isPanicking() bool {
     return panicking.load(.monotonic) > 0;
 }
 
-const SourceLocation = debug.SourceLocation;
 pub const SourceAtAddress = struct {
     source_location: ?SourceLocation,
     symbol_name: []const u8,
@@ -2206,3 +2192,20 @@ comptime {
         std.mem.doNotOptimizeAway(&CrashHandler__unsupportedUVFunction);
     }
 }
+
+const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig");
+const builtin = @import("builtin");
+const mimalloc = @import("./allocators/mimalloc.zig");
+const std = @import("std");
+const windows = std.os.windows;
+
+const SourceMap = @import("./sourcemap/sourcemap.zig");
+const VLQ = SourceMap.VLQ;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const Features = bun.Analytics.Features;
+
+const debug = std.debug;
+const SourceLocation = debug.SourceLocation;

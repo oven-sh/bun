@@ -716,8 +716,6 @@ pub fn updatePackageJSONAndInstall(
     return updatePackageJSONAndInstallAndCLI(ctx, subcommand, cli);
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

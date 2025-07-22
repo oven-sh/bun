@@ -1,11 +1,3 @@
-const std = @import("std");
-const builtin = @import("builtin");
-const bun = @import("bun");
-const assert = bun.assert;
-const meta = std.meta;
-const mem = std.mem;
-const Allocator = mem.Allocator;
-
 /// A MultiArrayList stores a list of a struct or tagged union type.
 /// Instead of storing a single list of items, MultiArrayList
 /// stores separate lists for each field of the struct or
@@ -612,3 +604,14 @@ pub fn MultiArrayList(comptime T: type) type {
         }
     };
 }
+
+const builtin = @import("builtin");
+
+const bun = @import("bun");
+const assert = bun.assert;
+
+const std = @import("std");
+const meta = std.meta;
+
+const mem = std.mem;
+const Allocator = mem.Allocator;

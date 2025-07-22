@@ -682,8 +682,6 @@ const PosixBufferedReader = struct {
     }
 };
 
-const JSC = bun.JSC;
-
 const WindowsBufferedReaderVTable = struct {
     onReaderDone: *const fn (*anyopaque) void,
     onReaderError: *const fn (*anyopaque, bun.sys.Error) void,
@@ -1165,15 +1163,15 @@ else if (bun.Environment.isWindows)
 else
     @compileError("Unsupported platform");
 
-const bun = @import("bun");
+const MaxBuf = @import("./MaxBuf.zig");
 const std = @import("std");
-const uv = bun.windows.libuv;
 const Source = @import("./source.zig").Source;
 
-const ReadState = @import("./pipes.zig").ReadState;
 const FileType = @import("./pipes.zig").FileType;
-const MaxBuf = @import("./MaxBuf.zig");
-
 const PollOrFd = @import("./pipes.zig").PollOrFd;
+const ReadState = @import("./pipes.zig").ReadState;
 
+const bun = @import("bun");
 const Async = bun.Async;
+const JSC = bun.JSC;
+const uv = bun.windows.libuv;

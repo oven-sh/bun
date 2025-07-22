@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 const mixed_decoder = brk: {
     var decoder = zig_base64.standard.decoderWithIgnore("\xff \t\r\n" ++ [_]u8{
         std.ascii.control_code.vt,
@@ -556,3 +553,6 @@ const zig_base64 = struct {
         } else |err| if (err != error.NoSpaceLeft) return err;
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

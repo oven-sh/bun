@@ -1,6 +1,3 @@
-const JSC = bun.JSC;
-const bun = @import("bun");
-
 pub const CallbackGetterFn = fn (JSC.JSValue) callconv(.C) JSC.JSValue;
 pub const CallbackSetterFn = fn (JSC.JSValue, JSC.JSValue) callconv(.C) void;
 
@@ -31,3 +28,6 @@ pub fn CallbackWrapper(comptime Getter: *const CallbackGetterFn, comptime Setter
         }
     };
 }
+
+const bun = @import("bun");
+const JSC = bun.JSC;

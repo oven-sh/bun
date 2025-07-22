@@ -1,5 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
 pub const Options = extern struct {
     sizeof_options: usize = @sizeOf(Options),
     malloc_func: ?*const fn (usize) callconv(.C) ?*anyopaque = @import("std").mem.zeroes(?*const fn (usize) callconv(.C) ?*anyopaque),
@@ -147,3 +145,6 @@ pub extern fn libdeflate_set_memory_allocator(malloc_func: ?*const fn (usize) ca
 pub const libdeflate_compressor = Compressor;
 pub const libdeflate_options = Options;
 pub const libdeflate_decompressor = Decompressor;
+
+const bun = @import("bun");
+const std = @import("std");

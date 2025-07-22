@@ -3,18 +3,20 @@
 //! Windows uses a mix of `libuv`, `kernel32` and `ntdll`. macOS uses `libc`.
 //!
 //! Sometimes this namespace is referred to as "Syscall", prefer "bun.sys"/"sys"
+
+const This = @This();
+
 //
 // TODO: Split and organize this file. It is likely worth moving many functions
 // into methods on `bun.FD`, and keeping this namespace to just overall stuff
 // like `Error`, `Maybe`, `Tag`, and so on.
-const sys = @This(); // to avoid ambiguous references.
 const platform_defs = switch (Environment.os) {
-    .windows => @import("errno/windows_errno.zig"),
-    .linux => @import("errno/linux_errno.zig"),
-    .mac => @import("errno/darwin_errno.zig"),
+    .windows => @import("./errno/windows_errno.zig"),
+    .linux => @import("./errno/linux_errno.zig"),
+    .mac => @import("./errno/darwin_errno.zig"),
     .wasm => {},
 };
-pub const workaround_symbols = @import("workaround_missing_symbols.zig").current;
+pub const workaround_symbols = @import("./workaround_missing_symbols.zig").current;
 /// Enum of `errno` values
 pub const E = platform_defs.E;
 /// Namespace of (potentially polyfilled) libuv `errno` values.
@@ -35,30 +37,6 @@ comptime {
     _ = &workaround_symbols; // execute comptime logic to export any needed symbols
 }
 
-const std = @import("std");
-const builtin = @import("builtin");
-
-const bun = @import("bun");
-const c = bun.c; // translated c headers
-const posix = std.posix;
-
-const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
-const default_allocator = bun.default_allocator;
-const kernel32 = bun.windows.kernel32;
-const ntdll = bun.windows.ntdll;
-const mem = std.mem;
-const page_size_min = std.heap.page_size_min;
-const mode_t = posix.mode_t;
-const libc = std.posix.system;
-
-const windows = bun.windows;
-
-const Environment = bun.Environment;
-const JSC = bun.JSC;
-const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const SystemError = JSC.SystemError;
-const FD = bun.FD;
-
 const linux = syscall;
 
 pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else sys;
@@ -77,8 +55,6 @@ pub const syscall = switch (Environment.os) {
     .mac => std.c,
     else => @compileError("not implemented"),
 };
-
-const darwin_nocancel = bun.darwin.nocancel;
 
 fn toPackedO(number: anytype) std.posix.O {
     return @bitCast(number);
@@ -1052,8 +1028,6 @@ pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: anytype) Maybe(fnctl_int) {
 
     unreachable;
 }
-
-const w = std.os.windows;
 
 /// Normalizes for ntdll.dll APIs. Replaces long-path prefixes with nt object
 /// prefixes, which may not function properly in kernel32 APIs.
@@ -2821,6 +2795,7 @@ pub fn unlinkW(from: [:0]const u16) Maybe(void) {
         return err;
     }
 
+    log("DeleteFileW({s}) = 0", .{bun.fmt.fmtPath(u16, from, .{})});
     return Maybe(void).success;
 }
 
@@ -2841,6 +2816,10 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
         log("unlink({s}) = 0", .{from});
         return Maybe(void).success;
     }
+}
+
+pub fn rmdir(to: anytype) Maybe(void) {
+    return rmdirat(FD.cwd(), to);
 }
 
 pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
@@ -3782,16 +3761,9 @@ pub fn link(comptime T: type, src: [:0]const T, dest: [:0]const T) Maybe(void) {
             return sys_uv.link(src, dest);
         }
 
-        const ret = bun.windows.CreateHardLinkW(dest, src, null);
-        if (Maybe(void).errnoSys(ret, .link)) |err| {
-            log("CreateHardLinkW({s}, {s}) = {s}", .{
-                bun.fmt.fmtPath(T, dest, .{}),
-                bun.fmt.fmtPath(T, src, .{}),
-                @tagName(err.getErrno()),
-            });
-            return err;
+        if (bun.windows.CreateHardLinkW(dest, src, null) == 0) {
+            return Maybe(void).errno(bun.windows.getLastErrno(), .link);
         }
-
         log("CreateHardLinkW({s}, {s}) = 0", .{
             bun.fmt.fmtPath(T, dest, .{}),
             bun.fmt.fmtPath(T, src, .{}),
@@ -3804,7 +3776,7 @@ pub fn link(comptime T: type, src: [:0]const T, dest: [:0]const T) Maybe(void) {
     }
 
     const ret = std.c.link(src, dest);
-    if (Maybe(void).errnoSysP(ret, .link, src)) |err| {
+    if (Maybe(void).errnoSysPD(ret, .link, src, dest)) |err| {
         log("link({s}, {s}) = {s}", .{ src, dest, @tagName(err.getErrno()) });
         return err;
     }
@@ -4034,8 +4006,6 @@ pub fn isPollable(mode: mode_t) bool {
     if (comptime bun.Environment.isWindows) return false;
     return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode);
 }
-
-const This = @This();
 
 /// TODO: make these all methods on `bun.FD`, and define them as methods `bun.FD`
 pub const File = struct {
@@ -4854,8 +4824,6 @@ export fn Bun__unlink(ptr: [*:0]const u8, len: usize) void {
 }
 
 // TODO: this is wrong on Windows
-const libc_stat = bun.Stat;
-const Stat = std.fs.File.Stat;
 
 pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {
@@ -5261,3 +5229,33 @@ pub const umask = switch (Environment.os) {
     // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
     .windows => @extern(*const fn (mode: u16) callconv(.c) u16, .{ .name = "_umask" }),
 };
+
+const builtin = @import("builtin");
+const sys = @This(); // to avoid ambiguous references.
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
+const c = bun.c; // translated c headers
+const default_allocator = bun.default_allocator;
+const libc_stat = bun.Stat;
+const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
+const darwin_nocancel = bun.darwin.nocancel;
+
+const JSC = bun.JSC;
+const SystemError = JSC.SystemError;
+
+const windows = bun.windows;
+const kernel32 = bun.windows.kernel32;
+const ntdll = bun.windows.ntdll;
+
+const std = @import("std");
+const mem = std.mem;
+const page_size_min = std.heap.page_size_min;
+const w = std.os.windows;
+const Stat = std.fs.File.Stat;
+
+const posix = std.posix;
+const libc = std.posix.system;
+const mode_t = posix.mode_t;

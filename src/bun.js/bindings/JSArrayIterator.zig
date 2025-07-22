@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = @import("./JSObject.zig").JSObject;
-
 pub const JSArrayIterator = struct {
     i: u32 = 0,
     len: u32 = 0,
@@ -27,3 +21,10 @@ pub const JSArrayIterator = struct {
         return try JSObject.getIndex(this.array, this.global, i);
     }
 };
+
+const bun = @import("bun");
+const JSObject = @import("./JSObject.zig").JSObject;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

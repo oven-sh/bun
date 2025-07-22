@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
-
 fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
     const prefix_len = segment.len + 1; // includes trailing path separator
     const len = prefix_len + bin.len;
@@ -176,3 +172,7 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
 
     return null;
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;

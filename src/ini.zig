@@ -1,16 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const E = bun.JSAst.E;
-const Expr = bun.JSAst.Expr;
-const Loc = bun.logger.Loc;
-const js_ast = bun.JSAst;
-const Rope = js_ast.E.Object.Rope;
-const Output = bun.Output;
-const Global = bun.Global;
-const Registry = bun.install.Npm.Registry;
-const OOM = bun.OOM;
-
 pub const Parser = struct {
     opts: Options = .{},
     source: bun.logger.Source,
@@ -801,6 +788,16 @@ pub const ConfigIterator = struct {
     }
 };
 
+const NodeLinkerMap = bun.ComptimeStringMap(bun.install.PackageManager.Options.NodeLinker, .{
+    // yarn
+    .{ "pnpm", .isolated },
+    .{ "node-modules", .hoisted },
+
+    // pnpm
+    .{ "isolated", .isolated },
+    .{ "hoisted", .hoisted },
+});
+
 pub const ScopeIterator = struct {
     allocator: Allocator,
     config: *E.Object,
@@ -1063,17 +1060,12 @@ pub fn loadNpmrc(
         }
     }
 
+    // yarn & pnpm option
     if (out.get("node-linker")) |node_linker_expr| {
         if (node_linker_expr.asString(allocator)) |node_linker_str| {
-            install.node_linker = bun.install.PackageManager.Options.NodeLinker.fromStr(node_linker_str) orelse
-                if (bun.strings.eqlComptime(node_linker_str, "pnpm"))
-                    // yarn
-                    .isolated
-                else if (bun.strings.eqlComptime(node_linker_str, "node-modules"))
-                    // yarn
-                    .hoisted
-                else
-                    null;
+            if (NodeLinkerMap.get(node_linker_str)) |node_linker| {
+                install.node_linker = node_linker;
+            }
         }
     }
 
@@ -1338,3 +1330,18 @@ fn @"handle _auth"(
     v.password = password;
     return;
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Loc = bun.logger.Loc;
+const Registry = bun.install.Npm.Registry;
+
+const js_ast = bun.JSAst;
+const E = bun.JSAst.E;
+const Expr = bun.JSAst.Expr;
+const Rope = js_ast.E.Object.Rope;

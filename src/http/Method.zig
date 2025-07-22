@@ -1,7 +1,3 @@
-const bun = @import("bun");
-
-const std = @import("std");
-
 pub const Method = enum(u8) {
     ACL = 0,
     BIND = 1,
@@ -192,3 +188,6 @@ export fn Bun__HTTPMethod__from(str: [*]const u8, len: usize) i16 {
 comptime {
     _ = Bun__HTTPMethod__from;
 }
+
+const bun = @import("bun");
+const std = @import("std");

@@ -12,8 +12,6 @@ pub fn toJS(
     return JSValue.createBuffer(globalObject, value.slice(), null);
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const Data = @import("../Data.zig").Data;

@@ -44,7 +44,8 @@ comptime {
 }
 
 const bun = @import("bun");
+
 const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const Task = JSC.Task;
 const ConcurrentTask = JSC.ConcurrentTask;
+const Task = JSC.Task;
+const VirtualMachine = JSC.VirtualMachine;

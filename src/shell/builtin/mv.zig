@@ -1,3 +1,5 @@
+const Mv = @This();
+
 opts: Opts = .{},
 args: struct {
     sources: []const [*:0]const u8 = &[_][*:0]const u8{},
@@ -484,23 +486,26 @@ pub inline fn bltn(this: *Mv) *Builtin {
 
 // --
 const debug = bun.Output.scoped(.ShellCat, true);
-const Mv = @This();
 
-const Syscall = bun.sys;
-const ShellTask = interpreter.ShellTask;
-const assert = bun.assert;
 const std = @import("std");
-const bun = @import("bun");
-const shell = bun.shell;
-const Yield = shell.Yield;
-const ExitCode = shell.ExitCode;
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
 const ParseError = interpreter.ParseError;
 const ShellSyscall = interpreter.ShellSyscall;
+const ShellTask = interpreter.ShellTask;
+
+const Builtin = Interpreter.Builtin;
+const Result = Interpreter.Builtin.Result;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
 const ResolvePath = bun.path;
+const assert = bun.assert;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = shell.Yield;
+
+const Syscall = bun.sys;
+const Maybe = bun.sys.Maybe;

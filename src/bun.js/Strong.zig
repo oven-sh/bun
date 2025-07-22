@@ -1,6 +1,7 @@
 //! Holds a strong reference to a JS value, protecting it from garbage
 //! collection. This type implies there is always a valid value held.
 //! For a strong that may be empty (to reuse allocation), use `Strong.Optional`.
+
 const Strong = @This();
 
 impl: *Impl,

@@ -1,8 +1,3 @@
-const std = @import("std");
-const strings = @import("../string_immutable.zig");
-const Crypto = @import("../sha.zig").Hashers;
-const bun = @import("bun");
-
 pub const Integrity = extern struct {
     const empty_digest_buf: [Integrity.digest_buf_len]u8 = [_]u8{0} ** Integrity.digest_buf_len;
 
@@ -74,14 +69,14 @@ pub const Integrity = extern struct {
         }
 
         var out: [digest_buf_len]u8 = empty_digest_buf;
-        const tag = Tag.parse(buf);
+        const tag, const offset = Tag.parse(buf);
         if (tag == Tag.unknown) {
             return Integrity{
                 .tag = Tag.unknown,
             };
         }
 
-        Base64.Decoder.decode(&out, std.mem.trimRight(u8, buf["sha256-".len..], "=")) catch {
+        Base64.Decoder.decode(&out, std.mem.trimRight(u8, buf[offset..], "=")) catch {
             return Integrity{
                 .tag = Tag.unknown,
             };
@@ -107,17 +102,21 @@ pub const Integrity = extern struct {
             return @intFromEnum(this) >= @intFromEnum(Tag.sha1) and @intFromEnum(this) <= @intFromEnum(Tag.sha512);
         }
 
-        pub fn parse(buf: []const u8) Tag {
+        pub fn parse(buf: []const u8) struct { Tag, usize } {
             const Matcher = strings.ExactSizeMatcher(8);
 
-            const i = strings.indexOfChar(buf[0..@min(buf.len, 7)], '-') orelse return Tag.unknown;
+            const i = strings.indexOfChar(buf[0..@min(buf.len, 7)], '-') orelse return .{ Tag.unknown, 0 };
+
+            if (buf.len <= i + 1) {
+                return .{ Tag.unknown, 0 };
+            }
 
             return switch (Matcher.match(buf[0..i])) {
-                Matcher.case("sha1") => Tag.sha1,
-                Matcher.case("sha256") => Tag.sha256,
-                Matcher.case("sha384") => Tag.sha384,
-                Matcher.case("sha512") => Tag.sha512,
-                else => .unknown,
+                Matcher.case("sha1") => .{ Tag.sha1, i + 1 },
+                Matcher.case("sha256") => .{ Tag.sha256, i + 1 },
+                Matcher.case("sha384") => .{ Tag.sha384, i + 1 },
+                Matcher.case("sha512") => .{ Tag.sha512, i + 1 },
+                else => .{ Tag.unknown, 0 },
             };
         }
 
@@ -206,3 +205,8 @@ pub const Integrity = extern struct {
         }
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const strings = @import("../string_immutable.zig");
+const Crypto = @import("../sha.zig").Hashers;

@@ -124,9 +124,11 @@ pub const URL = opaque {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
+const JSError = bun.JSError;
+const String = bun.String;
+
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const JSError = bun.JSError;
-const String = bun.String;

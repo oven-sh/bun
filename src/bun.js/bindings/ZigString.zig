@@ -1,17 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const JSC = bun.JSC;
-const String = bun.String;
-const NullableAllocator = bun.NullableAllocator;
-const OOM = bun.OOM;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const C_API = bun.JSC.C;
-const Environment = bun.Environment;
-const Mimalloc = bun.Mimalloc;
-
 /// Prefer using bun.String instead of ZigString in new code.
 pub const ZigString = extern struct {
     /// This can be a UTF-16, Latin1, or UTF-8 string.
@@ -904,3 +890,19 @@ export fn ZigString__freeGlobal(ptr: [*]const u8, len: usize) void {
     // we must untag the string pointer
     Mimalloc.mi_free(untagged);
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Mimalloc = bun.Mimalloc;
+const NullableAllocator = bun.NullableAllocator;
+const OOM = bun.OOM;
+const String = bun.String;
+const string = bun.string;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const C_API = bun.JSC.C;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

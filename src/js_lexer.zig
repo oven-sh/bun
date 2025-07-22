@@ -1,23 +1,5 @@
-const std = @import("std");
-const logger = bun.logger;
-const tables = @import("js_lexer_tables.zig");
-const js_ast = bun.JSAst;
-
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const CodePoint = bun.CodePoint;
-const MutableString = bun.MutableString;
-
-const FeatureFlags = @import("feature_flags.zig");
 const JavascriptString = []const u16;
-const Indentation = bun.js_printer.Options.Indentation;
 
-const unicode = std.unicode;
-
-const Source = logger.Source;
 pub const T = tables.T;
 pub const Keywords = tables.Keywords;
 pub const tokenToString = tables.tokenToString;
@@ -3034,7 +3016,6 @@ fn NewLexer_(
 
 pub const Lexer = NewLexer(.{});
 
-const JSIdentifier = @import("./js_lexer/identifier.zig");
 pub inline fn isIdentifierStart(codepoint: i32) bool {
     return JSIdentifier.isIdentifierStart(codepoint);
 }
@@ -3382,3 +3363,23 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
 fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
     return bun.highway.indexOfInterestingCharacterInStringLiteral(text_, quote);
 }
+
+const FeatureFlags = @import("./feature_flags.zig");
+const JSIdentifier = @import("./js_lexer/identifier.zig");
+const tables = @import("./js_lexer_tables.zig");
+
+const bun = @import("bun");
+const CodePoint = bun.CodePoint;
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const js_ast = bun.JSAst;
+const string = bun.string;
+const strings = bun.strings;
+const Indentation = bun.js_printer.Options.Indentation;
+
+const logger = bun.logger;
+const Source = logger.Source;
+
+const std = @import("std");
+const unicode = std.unicode;

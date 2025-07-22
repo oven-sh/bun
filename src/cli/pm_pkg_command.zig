@@ -1,16 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const Global = bun.Global;
-const Output = bun.Output;
-const Command = bun.CLI.Command;
-const PackageManager = bun.install.PackageManager;
-const logger = bun.logger;
-const js_ast = bun.js_ast;
-const JSPrinter = bun.js_printer;
-const JSON = bun.JSON;
-
 pub const PmPkgCommand = struct {
     const SubCommand = enum {
         get,
@@ -779,3 +766,17 @@ pub const PmPkgCommand = struct {
         };
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Global = bun.Global;
+const JSON = bun.JSON;
+const JSPrinter = bun.js_printer;
+const Output = bun.Output;
+const js_ast = bun.js_ast;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+const Command = bun.CLI.Command;
+const PackageManager = bun.install.PackageManager;

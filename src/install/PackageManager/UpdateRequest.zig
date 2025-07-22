@@ -235,7 +235,11 @@ fn parseWithError(
     return update_requests.items;
 }
 
-// @sortImports
+pub const CommandLineArguments = PackageManager.CommandLineArguments;
+pub const Options = PackageManager.Options;
+pub const PackageInstaller = PackageManager.PackageInstaller;
+pub const PackageJSONEditor = PackageManager.PackageJSONEditor;
+pub const Subcommand = PackageManager.Subcommand;
 
 const std = @import("std");
 
@@ -260,9 +264,4 @@ const PackageNameHash = bun.install.PackageNameHash;
 const invalid_package_id = bun.install.invalid_package_id;
 
 const PackageManager = bun.install.PackageManager;
-pub const CommandLineArguments = PackageManager.CommandLineArguments;
-pub const Options = PackageManager.Options;
-pub const PackageInstaller = PackageManager.PackageInstaller;
-pub const PackageJSONEditor = PackageManager.PackageJSONEditor;
-pub const Subcommand = PackageManager.Subcommand;
 const UpdateRequest = PackageManager.UpdateRequest;

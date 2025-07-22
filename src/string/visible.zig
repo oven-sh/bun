@@ -821,11 +821,12 @@ extern fn icu_hasBinaryProperty(c: u32, which: c_uint) bool;
 
 const bun = @import("bun");
 const std = @import("std");
-const u3_fast = strings.u3_fast;
-const decodeWTF8RuneTMultibyte = strings.decodeWTF8RuneTMultibyte;
-const grapheme = strings.grapheme;
+
 const strings = bun.strings;
-const unicode_replacement = strings.unicode_replacement;
-const firstNonASCII16 = strings.firstNonASCII16;
+const decodeWTF8RuneTMultibyte = strings.decodeWTF8RuneTMultibyte;
 const firstNonASCII = strings.firstNonASCII;
+const firstNonASCII16 = strings.firstNonASCII16;
+const grapheme = strings.grapheme;
+const u3_fast = strings.u3_fast;
+const unicode_replacement = strings.unicode_replacement;
 const utf16CodepointWithFFFD = strings.utf16CodepointWithFFFD;

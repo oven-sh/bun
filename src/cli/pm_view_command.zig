@@ -1,18 +1,3 @@
-const URL = @import("../url.zig").URL;
-const bun = @import("bun");
-const std = @import("std");
-const MutableString = bun.MutableString;
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
-const PackageManager = @import("../install/install.zig").PackageManager;
-const logger = bun.logger;
-const Output = bun.Output;
-const Global = bun.Global;
-const JSON = bun.JSON;
-const http = bun.http;
-const Semver = bun.Semver;
-const PackageManifest = @import("../install/npm.zig").PackageManifest;
-
 pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: string, property_path: ?string, json_output: bool) !void {
     const name, var version = bun.install.Dependency.splitNameAndVersionOrLatest(brk: {
         // Extremely best effort.
@@ -405,3 +390,19 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
         }
     }
 }
+
+const std = @import("std");
+const strings = @import("../string_immutable.zig");
+const PackageManager = @import("../install/install.zig").PackageManager;
+const PackageManifest = @import("../install/npm.zig").PackageManifest;
+const URL = @import("../url.zig").URL;
+const string = @import("../string_types.zig").string;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const JSON = bun.JSON;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Semver = bun.Semver;
+const http = bun.http;
+const logger = bun.logger;

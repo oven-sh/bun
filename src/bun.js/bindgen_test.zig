@@ -1,5 +1,4 @@
 //! This namespace is used to test binding generator
-const gen = bun.gen.bindgen_test;
 
 pub fn getBindgenTestFunctions(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     return (try JSC.JSObject.create(.{
@@ -32,5 +31,7 @@ pub fn requiredAndOptionalArg(a: bool, b: ?usize, c: i32, d: ?u8) i32 {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
 const JSC = bun.JSC;
+const gen = bun.gen.bindgen_test;

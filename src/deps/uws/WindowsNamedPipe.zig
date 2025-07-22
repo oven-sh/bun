@@ -573,15 +573,18 @@ pub fn deinit(this: *WindowsNamedPipe) void {
 
 pub const CertError = UpgradedDuplex.CertError;
 const WrapperType = SSLWrapper(*WindowsNamedPipe);
-const uv = bun.windows.libuv;
-const bun = @import("bun");
-const JSC = bun.JSC;
-const uws = bun.uws;
-const BoringSSL = bun.BoringSSL.c;
-const EventLoopTimer = bun.api.Timer.EventLoopTimer;
-const us_bun_verify_error_t = uws.us_bun_verify_error_t;
 const log = bun.Output.scoped(.WindowsNamedPipe, false);
-const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
-const Environment = bun.Environment;
+
 const std = @import("std");
+const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const BoringSSL = bun.BoringSSL.c;
+const uv = bun.windows.libuv;
+const EventLoopTimer = bun.api.Timer.EventLoopTimer;
+
+const uws = bun.uws;
 const UpgradedDuplex = uws.UpgradedDuplex;
+const us_bun_verify_error_t = uws.us_bun_verify_error_t;

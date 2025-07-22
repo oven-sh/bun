@@ -1,11 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const strings = bun.strings;
-
-const std = @import("std");
-
 pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type {
     return struct {
         pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
@@ -59,3 +51,11 @@ pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type {
         }
     };
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const string = bun.string;
+const strings = bun.strings;

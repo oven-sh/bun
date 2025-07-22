@@ -1,12 +1,4 @@
-const std = @import("std");
-const Environment = @import("./env.zig");
-
-const Output = @import("output.zig");
-const use_mimalloc = bun.use_mimalloc;
-const Mimalloc = bun.Mimalloc;
-const bun = @import("bun");
-
-const version_string = Environment.version_string;
+const Global = @This();
 
 /// Does not have the canary tag, because it is exposed in `Bun.version`
 /// "1.0.0" or "1.0.0-debug"
@@ -191,9 +183,6 @@ pub fn crash() noreturn {
     Global.exit(1);
 }
 
-const Global = @This();
-const string = bun.string;
-
 pub const BunInfo = struct {
     bun_version: string,
     platform: Analytics.GenerateHeader.GeneratePlatform.Platform,
@@ -231,3 +220,14 @@ pub export fn Bun__onExit() void {
 comptime {
     _ = Bun__onExit;
 }
+
+const Output = @import("./output.zig");
+const std = @import("std");
+
+const Environment = @import("./env.zig");
+const version_string = Environment.version_string;
+
+const bun = @import("bun");
+const Mimalloc = bun.Mimalloc;
+const string = bun.string;
+const use_mimalloc = bun.use_mimalloc;

@@ -1,17 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const logger = bun.logger;
-const jest = @import("./jest.zig");
-const Jest = jest.Jest;
-const TestRunner = jest.TestRunner;
-const js_parser = bun.js_parser;
-const js_ast = bun.JSAst;
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const Expect = @import("./expect.zig").Expect;
-
 pub const Snapshots = struct {
     const file_header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
     const snapshots_dir_name = "__snapshots__" ++ [_]u8{std.fs.path.sep};
@@ -546,3 +532,20 @@ pub const Snapshots = struct {
         return JSC.Maybe(void).success;
     }
 };
+
+const std = @import("std");
+const Expect = @import("./expect.zig").Expect;
+
+const jest = @import("./jest.zig");
+const Jest = jest.Jest;
+const TestRunner = jest.TestRunner;
+
+const bun = @import("bun");
+const js_ast = bun.JSAst;
+const js_parser = bun.js_parser;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const VirtualMachine = JSC.VirtualMachine;

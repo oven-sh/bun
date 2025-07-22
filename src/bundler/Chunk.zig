@@ -620,41 +620,45 @@ pub const Chunk = struct {
     };
 };
 
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
-
-const std = @import("std");
-const options = @import("../options.zig");
-const js_ast = @import("../js_ast.zig");
-const sourcemap = bun.sourcemap;
-const StringJoiner = bun.StringJoiner;
 pub const Ref = @import("../ast/base.zig").Ref;
-const BabyList = @import("../baby_list.zig").BabyList;
-const ImportRecord = bun.ImportRecord;
-const ImportKind = bun.ImportKind;
 
-const Loader = options.Loader;
 pub const Index = @import("../ast/base.zig").Index;
-const Stmt = js_ast.Stmt;
-const AutoBitSet = bun.bit_set.AutoBitSet;
-const renamer = bun.renamer;
-const bundler = bun.bundle_v2;
-const BundleV2 = bundler.BundleV2;
-const Graph = bundler.Graph;
-const LinkerGraph = bundler.LinkerGraph;
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
-const PathTemplate = bundler.PathTemplate;
-const PartRange = bundler.PartRange;
-const EntryPoint = bundler.EntryPoint;
-const CrossChunkImport = bundler.CrossChunkImport;
-const CompileResult = bundler.CompileResult;
-const cheapPrefixNormalizer = bundler.cheapPrefixNormalizer;
-const LinkerContext = bundler.LinkerContext;
+
 const HTMLImportManifest = @import("./HTMLImportManifest.zig");
+const std = @import("std");
+const BabyList = @import("../baby_list.zig").BabyList;
+
+const js_ast = @import("../js_ast.zig");
+const Stmt = js_ast.Stmt;
+
+const options = @import("../options.zig");
+const Loader = options.Loader;
+
+const bun = @import("bun");
+const FeatureFlags = bun.FeatureFlags;
+const ImportKind = bun.ImportKind;
+const ImportRecord = bun.ImportRecord;
+const Output = bun.Output;
+const StringJoiner = bun.StringJoiner;
+const default_allocator = bun.default_allocator;
+const renamer = bun.renamer;
+const sourcemap = bun.sourcemap;
+const string = bun.string;
+const strings = bun.strings;
+const AutoBitSet = bun.bit_set.AutoBitSet;
+
+const bundler = bun.bundle_v2;
+const BundleV2 = bundler.BundleV2;
+const CompileResult = bundler.CompileResult;
+const CrossChunkImport = bundler.CrossChunkImport;
+const EntryPoint = bundler.EntryPoint;
+const Graph = bundler.Graph;
+const LinkerContext = bundler.LinkerContext;
+const LinkerGraph = bundler.LinkerGraph;
+const PartRange = bundler.PartRange;
+const PathTemplate = bundler.PathTemplate;
+const cheapPrefixNormalizer = bundler.cheapPrefixNormalizer;

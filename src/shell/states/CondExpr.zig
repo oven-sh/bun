@@ -268,27 +268,29 @@ pub fn onIOWriterChunk(this: *CondExpr, _: usize, err: ?JSC.SystemError) Yield {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
-
-const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellExecEnv = Interpreter.ShellExecEnv;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-const ShellSyscall = bun.shell.interpret.ShellSyscall;
-
-const Async = bun.shell.Interpreter.Async;
-const Binary = bun.shell.Interpreter.Binary;
-const Expansion = bun.shell.Interpreter.Expansion;
-const Stmt = bun.shell.Interpreter.Stmt;
-const Pipeline = bun.shell.Interpreter.Pipeline;
+const assert = bun.assert;
 
 const JSC = bun.JSC;
 const Maybe = JSC.Maybe;
-const assert = bun.assert;
+
+const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
+
+const Interpreter = bun.shell.Interpreter;
+const Async = bun.shell.Interpreter.Async;
+const Binary = bun.shell.Interpreter.Binary;
+const Expansion = bun.shell.Interpreter.Expansion;
+const IO = bun.shell.Interpreter.IO;
+const Pipeline = bun.shell.Interpreter.Pipeline;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Stmt = bun.shell.Interpreter.Stmt;
+
+const ShellSyscall = bun.shell.interpret.ShellSyscall;
 const ShellTask = bun.shell.interpret.ShellTask;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;

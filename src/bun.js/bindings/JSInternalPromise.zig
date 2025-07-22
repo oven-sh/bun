@@ -1,10 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const VM = JSC.VM;
-const JSPromise = @import("JSPromise.zig").JSPromise;
-
 pub const JSInternalPromise = opaque {
     extern fn JSC__JSInternalPromise__create(arg0: *JSGlobalObject) *JSInternalPromise;
     extern fn JSC__JSInternalPromise__isHandled(arg0: *const JSInternalPromise, arg1: *VM) bool;
@@ -67,3 +60,11 @@ pub const JSInternalPromise = opaque {
         return JSValue.fromCell(this);
     }
 };
+
+const bun = @import("bun");
+const JSPromise = @import("./JSPromise.zig").JSPromise;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VM = JSC.VM;

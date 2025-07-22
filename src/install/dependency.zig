@@ -1,19 +1,4 @@
-const bun = @import("bun");
-const logger = bun.logger;
-const Environment = @import("../env.zig");
-const Install = @import("./install.zig");
-const PackageManager = Install.PackageManager;
-const Features = Install.Features;
-const PackageNameHash = Install.PackageNameHash;
-const Repository = @import("./repository.zig").Repository;
-const Semver = bun.Semver;
-const SlicedString = Semver.SlicedString;
-const String = Semver.String;
-const std = @import("std");
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
 const Dependency = @This();
-const JSC = bun.JSC;
 
 const URI = union(Tag) {
     local: String,
@@ -1454,3 +1439,22 @@ pub const Behavior = packed struct(u8) {
         bun.assert(@as(u8, @bitCast(Behavior{ .workspace = true })) == (1 << 5));
     }
 };
+
+const Environment = @import("../env.zig");
+const std = @import("std");
+const strings = @import("../string_immutable.zig");
+const Repository = @import("./repository.zig").Repository;
+const string = @import("../string_types.zig").string;
+
+const Install = @import("./install.zig");
+const Features = Install.Features;
+const PackageManager = Install.PackageManager;
+const PackageNameHash = Install.PackageNameHash;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const logger = bun.logger;
+
+const Semver = bun.Semver;
+const SlicedString = Semver.SlicedString;
+const String = Semver.String;

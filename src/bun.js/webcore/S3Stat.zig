@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-
 pub const S3Stat = struct {
     const log = bun.Output.scoped(.S3Stat, false);
     pub const js = JSC.Codegen.JSS3Stat;
@@ -60,3 +57,6 @@ pub const S3Stat = struct {
         bun.destroy(this);
     }
 };
+
+const bun = @import("bun");
+const JSC = bun.JSC;

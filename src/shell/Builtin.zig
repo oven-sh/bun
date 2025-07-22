@@ -768,24 +768,27 @@ pub const Mv = @import("./builtin/mv.zig");
 // --- End Shell Builtin Commands ---
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
+const JSC = bun.JSC;
 
 const shell = bun.shell;
-const Interpreter = shell.interpret.Interpreter;
-const Builtin = Interpreter.Builtin;
-
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
-const ExitCode = shell.interpret.ExitCode;
-const EnvMap = shell.interpret.EnvMap;
-const log = shell.interpret.log;
-const Syscall = bun.sys;
-const IOWriter = Interpreter.IOWriter;
-const IOReader = Interpreter.IOReader;
-const OutputNeedsIOSafeGuard = shell.interpret.OutputNeedsIOSafeGuard;
-const Cmd = Interpreter.Cmd;
-const ShellSyscall = shell.interpret.ShellSyscall;
-const Allocator = std.mem.Allocator;
+const Yield = bun.shell.Yield;
 const ast = shell.AST;
 const IO = shell.Interpreter.IO;
+
+const EnvMap = shell.interpret.EnvMap;
+const ExitCode = shell.interpret.ExitCode;
+const OutputNeedsIOSafeGuard = shell.interpret.OutputNeedsIOSafeGuard;
+const ShellSyscall = shell.interpret.ShellSyscall;
+const log = shell.interpret.log;
+
+const Interpreter = shell.interpret.Interpreter;
+const Builtin = Interpreter.Builtin;
+const Cmd = Interpreter.Cmd;
+const IOReader = Interpreter.IOReader;
+const IOWriter = Interpreter.IOWriter;
+
+const Syscall = bun.sys;
+const Maybe = bun.sys.Maybe;

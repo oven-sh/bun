@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-
 pub const SIMDUTFResult = extern struct {
     status: Status,
     count: usize = 0,
@@ -410,3 +407,6 @@ pub const base64 = struct {
         return simdutf__base64_decode_from_binary16(input.ptr, input.len, output.ptr, output.len, @intFromBool(is_urlsafe));
     }
 };
+
+const bun = @import("bun");
+const JSC = bun.JSC;

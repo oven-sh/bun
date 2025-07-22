@@ -1,38 +1,5 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-
-const FileSystem = @import("../fs.zig").FileSystem;
-const options = @import("../options.zig");
-const js_ast = bun.JSAst;
-
-const resolve_path = @import("../resolver/resolve_path.zig");
-const Command = @import("../cli.zig").Command;
-
-const DotEnv = @import("../env_loader.zig");
-const which = @import("../which.zig").which;
 var path_buf: bun.PathBuffer = undefined;
 var path_buf2: bun.PathBuffer = undefined;
-const PathString = bun.PathString;
-const HTTPThread = bun.http.HTTPThread;
-
-const JSC = bun.JSC;
-const jest = JSC.Jest;
-const TestRunner = JSC.Jest.TestRunner;
-const Snapshots = JSC.Snapshot.Snapshots;
-const Test = TestRunner.Test;
-const coverage = bun.sourcemap.coverage;
-const CodeCoverageReport = coverage.Report;
-const uws = bun.uws;
-
-const Scanner = @import("test/Scanner.zig");
 
 fn escapeXml(str: string, writer: anytype) !void {
     var last: usize = 0;
@@ -1976,3 +1943,35 @@ fn handleTopLevelTestErrorBeforeJavaScriptStart(err: anyerror) noreturn {
 pub fn @"export"() void {
     _ = &Scanner.BunTest__shouldGenerateCodeCoverage;
 }
+
+const DotEnv = @import("../env_loader.zig");
+const Scanner = @import("./test/Scanner.zig");
+const options = @import("../options.zig");
+const resolve_path = @import("../resolver/resolve_path.zig");
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+const FileSystem = @import("../fs.zig").FileSystem;
+const which = @import("../which.zig").which;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const PathString = bun.PathString;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.JSAst;
+const string = bun.string;
+const strings = bun.strings;
+const uws = bun.uws;
+const HTTPThread = bun.http.HTTPThread;
+
+const JSC = bun.JSC;
+const jest = JSC.Jest;
+const Snapshots = JSC.Snapshot.Snapshots;
+
+const TestRunner = JSC.Jest.TestRunner;
+const Test = TestRunner.Test;
+
+const coverage = bun.sourcemap.coverage;
+const CodeCoverageReport = coverage.Report;

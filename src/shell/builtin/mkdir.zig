@@ -1,3 +1,5 @@
+const Mkdir = @This();
+
 opts: Opts = .{},
 state: union(enum) {
     idle,
@@ -371,24 +373,29 @@ pub inline fn bltn(this: *Mkdir) *Builtin {
 
 // --
 const debug = bun.Output.scoped(.ShellMkdir, true);
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
+
+const log = debug;
+
 const interpreter = @import("../interpreter.zig");
+const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
+const OutputSrc = interpreter.OutputSrc;
+const OutputTask = interpreter.OutputTask;
 const ParseError = interpreter.ParseError;
 const ParseFlagResult = interpreter.ParseFlagResult;
-const ExitCode = shell.ExitCode;
-const JSC = bun.JSC;
-const std = @import("std");
-const FlagParser = interpreter.FlagParser;
 
-const Mkdir = @This();
-const log = debug;
-const OutputTask = interpreter.OutputTask;
-const OutputSrc = interpreter.OutputSrc;
-const WorkPool = bun.JSC.WorkPool;
+const Builtin = Interpreter.Builtin;
+const Result = Interpreter.Builtin.Result;
+
+const bun = @import("bun");
 const ResolvePath = bun.path;
+
+const JSC = bun.JSC;
+const WorkPool = bun.JSC.WorkPool;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = bun.shell.Yield;
+
+const std = @import("std");
 const ArrayList = std.ArrayList;

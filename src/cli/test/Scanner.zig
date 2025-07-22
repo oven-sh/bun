@@ -1,17 +1,5 @@
 const Scanner = @This();
 
-const std = @import("std");
-const bun = @import("bun");
-const BundleOptions = @import("../../options.zig").BundleOptions;
-
-const Allocator = std.mem.Allocator;
-const FileSystem = bun.fs.FileSystem;
-const Transpiler = bun.Transpiler;
-const strings = bun.strings;
-const StringOrTinyString = strings.StringOrTinyString;
-const JSC = bun.JSC;
-const jest = JSC.Jest;
-
 /// Memory is borrowed.
 exclusion_names: []const []const u8 = &.{},
 /// When this list is empty, no filters are applied.
@@ -221,3 +209,17 @@ pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescript
 inline fn allocator(self: *const Scanner) Allocator {
     return self.dirs_to_scan.allocator;
 }
+
+const std = @import("std");
+const BundleOptions = @import("../../options.zig").BundleOptions;
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Transpiler = bun.Transpiler;
+const FileSystem = bun.fs.FileSystem;
+
+const JSC = bun.JSC;
+const jest = JSC.Jest;
+
+const strings = bun.strings;
+const StringOrTinyString = strings.StringOrTinyString;

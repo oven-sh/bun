@@ -1,25 +1,7 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const URL = @import("./url.zig").URL;
-
-const options = @import("./options.zig");
-const logger = bun.logger;
-const js_ast = bun.JSAst;
-const Api = @import("./api/schema.zig").Api;
-const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
-const resolver = @import("./resolver/resolver.zig");
-const TestCommand = @import("./cli/test_command.zig").TestCommand;
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 pub const BundlePackageOverride = bun.StringArrayHashMapUnmanaged(options.BundleOverride);
 const LoaderMap = bun.StringArrayHashMapUnmanaged(options.Loader);
-const JSONParser = bun.JSON;
-const Command = @import("cli.zig").Command;
-const TOML = @import("./toml/toml_parser.zig").TOML;
-const PackageManager = bun.install.PackageManager;
 
 // TODO: replace Api.TransformOptions with Bunfig
 pub const Bunfig = struct {
@@ -1064,3 +1046,22 @@ pub const Bunfig = struct {
         try parser.parse(cmd);
     }
 };
+
+const options = @import("./options.zig");
+const resolver = @import("./resolver/resolver.zig");
+const std = @import("std");
+const Api = @import("./api/schema.zig").Api;
+const Command = @import("./cli.zig").Command;
+const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+const TOML = @import("./toml/toml_parser.zig").TOML;
+const TestCommand = @import("./cli/test_command.zig").TestCommand;
+const URL = @import("./url.zig").URL;
+
+const bun = @import("bun");
+const JSONParser = bun.JSON;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.JSAst;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+const PackageManager = bun.install.PackageManager;

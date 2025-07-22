@@ -1,9 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Environment = bun.Environment;
-const JSC = bun.JSC;
-
 const ConstantType = enum { ERRNO, ERRNO_WIN, SIG, DLOPEN, OTHER };
 
 fn getErrnoConstant(comptime name: []const u8) ?comptime_int {
@@ -293,3 +287,10 @@ fn createDlopen(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
 
     return object;
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const string = bun.string;

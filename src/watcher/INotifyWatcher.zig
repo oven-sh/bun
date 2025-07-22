@@ -1,6 +1,8 @@
 //! Bun's filesystem watcher implementation for linux using inotify
 //! https://man7.org/linux/man-pages/man7/inotify.7.html
+
 const INotifyWatcher = @This();
+
 const log = Output.scoped(.watcher, false);
 
 // inotify events are variable-sized, so a byte buffer is used (also needed
@@ -10,7 +12,6 @@ const log = Output.scoped(.watcher, false);
 // but an arbitrary but reasonable size. when reading, the strategy is to read
 // as much as possible, then process the buffer in `max_count` chunks, since
 // `bun.Watcher` has the same hardcoded `max_count`.
-const max_count = bun.Watcher.max_count;
 const eventlist_bytes_size = (Event.largest_size / 2) * max_count;
 const EventListBytes = [eventlist_bytes_size]u8;
 fd: bun.FileDescriptor = bun.invalid_fd,
@@ -316,12 +317,14 @@ pub fn watchEventFromInotifyEvent(event: *align(1) const INotifyWatcher.Event, i
 }
 
 const std = @import("std");
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Output = bun.Output;
-const Futex = bun.Futex;
 const system = std.posix.system;
 const IN = std.os.linux.IN;
 
-const WatchItemIndex = bun.Watcher.WatchItemIndex;
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Futex = bun.Futex;
+const Output = bun.Output;
+
 const WatchEvent = bun.Watcher.Event;
+const WatchItemIndex = bun.Watcher.WatchItemIndex;
+const max_count = bun.Watcher.max_count;

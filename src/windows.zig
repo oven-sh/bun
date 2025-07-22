@@ -2,16 +2,7 @@
 //!
 //! If an API can be implemented on multiple platforms,
 //! it does not belong in this namespace.
-const bun = @import("bun");
-const builtin = @import("builtin");
-const Output = bun.Output;
-const windows = std.os.windows;
-const w = std.os.windows;
-const win32 = windows;
-const log = bun.sys.syslog;
-const Maybe = bun.sys.Maybe;
 
-const c = bun.c;
 pub const ntdll = windows.ntdll;
 pub const kernel32 = windows.kernel32;
 pub const GetLastError = kernel32.GetLastError;
@@ -89,9 +80,6 @@ pub const nt_object_prefix_u8 = [4]u8{ '\\', '?', '?', '\\' };
 pub const nt_unc_object_prefix_u8 = [8]u8{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
 pub const long_path_prefix_u8 = [4]u8{ '\\', '\\', '?', '\\' };
 
-const std = @import("std");
-const Environment = bun.Environment;
-
 pub const PathBuffer = if (Environment.isWindows) bun.PathBuffer else void;
 pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
 
@@ -162,8 +150,6 @@ pub extern "kernel32" fn SetCurrentDirectoryW(
 ) callconv(windows.WINAPI) win32.BOOL;
 pub const SetCurrentDirectory = SetCurrentDirectoryW;
 pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(windows.WINAPI) Win32Error;
-
-const SystemErrno = bun.sys.SystemErrno;
 
 // This was originally copied from Zig's standard library
 /// Codes are from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
@@ -4057,3 +4043,19 @@ pub fn renameAtW(
 
     return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
 }
+
+const builtin = @import("builtin");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const c = bun.c;
+
+const Maybe = bun.sys.Maybe;
+const SystemErrno = bun.sys.SystemErrno;
+const log = bun.sys.syslog;
+
+const w = std.os.windows;
+const win32 = windows;
+const windows = std.os.windows;

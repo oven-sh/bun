@@ -1,20 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const string = bun.string;
-const Crypto = JSC.API.Bun.Crypto;
-const BoringSSL = bun.BoringSSL.c;
-const EVP = Crypto.EVP;
-const PBKDF2 = EVP.PBKDF2;
-const JSValue = JSC.JSValue;
-const validators = @import("./util/validators.zig");
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSError = bun.JSError;
-const String = bun.String;
-const UUID = bun.UUID;
-const Async = bun.Async;
-const Node = JSC.Node;
-
 fn ExternCryptoJob(comptime name: []const u8) type {
     return struct {
         vm: *JSC.VirtualMachine,
@@ -779,3 +762,23 @@ pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
 
     return crypto;
 }
+
+const std = @import("std");
+const validators = @import("./util/validators.zig");
+
+const bun = @import("bun");
+const Async = bun.Async;
+const JSError = bun.JSError;
+const String = bun.String;
+const UUID = bun.UUID;
+const string = bun.string;
+const BoringSSL = bun.BoringSSL.c;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const Node = JSC.Node;
+const Crypto = JSC.API.Bun.Crypto;
+
+const EVP = Crypto.EVP;
+const PBKDF2 = EVP.PBKDF2;

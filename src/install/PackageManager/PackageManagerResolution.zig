@@ -216,8 +216,6 @@ pub fn verifyResolutions(this: *PackageManager, log_level: PackageManager.Option
     if (any_failed) this.crash();
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

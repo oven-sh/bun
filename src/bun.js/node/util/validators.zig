@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ZigString = JSC.ZigString;
-const JSError = bun.JSError;
-
 pub fn getTypeName(globalObject: *JSGlobalObject, value: JSValue) ZigString {
     var js_type = value.jsType();
     if (js_type.isArray()) {
@@ -296,3 +287,14 @@ pub fn validateStringEnum(comptime T: type, globalThis: *JSGlobalObject, value: 
     };
     return throwErrInvalidArgTypeWithMessage(globalThis, name_fmt ++ " must be one of: {s}", name_args ++ .{values_info});
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+const string = bun.string;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;

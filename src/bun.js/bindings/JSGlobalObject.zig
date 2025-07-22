@@ -878,21 +878,20 @@ pub const JSGlobalObject = opaque {
     }
 };
 
-const CommonStrings = JSC.CommonStrings;
-
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const JSC = bun.JSC;
-
-const MutableString = bun.MutableString;
-const String = bun.String;
-const strings = bun.strings;
-const ErrorableString = JSC.ErrorableString;
-const JSError = bun.JSError;
 const napi = @import("../../napi/napi.zig");
+const std = @import("std");
 
-const ZigString = JSC.ZigString;
+const bun = @import("bun");
+const JSError = bun.JSError;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const String = bun.String;
+const string = bun.string;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const CommonStrings = JSC.CommonStrings;
+const ErrorableString = JSC.ErrorableString;
 const JSValue = JSC.JSValue;
 const VM = JSC.VM;
+const ZigString = JSC.ZigString;

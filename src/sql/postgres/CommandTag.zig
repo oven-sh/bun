@@ -98,8 +98,6 @@ pub const CommandTag = union(enum) {
 
 const debug = bun.Output.scoped(.Postgres, false);
 
-// @sortImports
-
 const bun = @import("bun");
 const std = @import("std");
 

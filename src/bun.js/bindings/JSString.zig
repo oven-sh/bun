@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = @import("JSObject.zig").JSObject;
-const ZigString = @import("ZigString.zig").ZigString;
-const JSError = bun.JSError;
-
 pub const JSString = opaque {
     extern fn JSC__JSString__toObject(this: *JSString, global: *JSGlobalObject) ?*JSObject;
     extern fn JSC__JSString__toZigString(this: *JSString, global: *JSGlobalObject, zig_str: *JSC.ZigString) void;
@@ -99,3 +90,14 @@ pub const JSString = opaque {
         write16: ?JStringIteratorWrite16Callback,
     };
 };
+
+const std = @import("std");
+const JSObject = @import("./JSObject.zig").JSObject;
+const ZigString = @import("./ZigString.zig").ZigString;
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

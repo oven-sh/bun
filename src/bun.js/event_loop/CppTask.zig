@@ -60,5 +60,6 @@ comptime {
 }
 
 const bun = @import("bun");
+
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;

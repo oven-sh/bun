@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 pub fn OptionalChild(comptime T: type) type {
     const tyinfo = @typeInfo(T);
     if (tyinfo != .pointer) @compileError("OptionalChild(T) requires that T be a pointer to an optional type.");
@@ -338,3 +335,6 @@ pub fn SliceChild(comptime T: type) type {
     }
     return T;
 }
+
+const bun = @import("bun");
+const std = @import("std");

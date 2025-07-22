@@ -17,14 +17,13 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSValue {
     return binding;
 }
 
-// @sortImports
-
 pub const PostgresSQLConnection = @import("./postgres/PostgresSQLConnection.zig");
 pub const PostgresSQLContext = @import("./postgres/PostgresSQLContext.zig");
 pub const PostgresSQLQuery = @import("./postgres/PostgresSQLQuery.zig");
-const bun = @import("bun");
 pub const protocol = @import("./postgres/PostgresProtocol.zig");
 pub const types = @import("./postgres/PostgresTypes.zig");
+
+const bun = @import("bun");
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

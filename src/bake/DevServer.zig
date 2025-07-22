@@ -7,7 +7,9 @@
 //!
 //! All work is held in-memory, using manually managed data-oriented design.
 //! For questions about DevServer, please consult the delusional @paperclover
+
 const DevServer = @This();
+
 pub const debug = bun.Output.Scoped(.DevServer, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 pub const mapLog = bun.Output.scoped(.SourceMapStore, false);
@@ -8521,58 +8523,53 @@ pub fn getDeinitCountForTesting() usize {
     return dev_server_deinit_count_for_testing;
 }
 
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const Mutex = bun.Mutex;
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
-const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
+const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 
 const bun = @import("bun");
+const AllocationScope = bun.AllocationScope;
 const Environment = bun.Environment;
+const Mutex = bun.Mutex;
+const Output = bun.Output;
+const StringJoiner = bun.StringJoiner;
+const Watcher = bun.Watcher;
 const assert = bun.assert;
 const assert_eql = bun.assert_eql;
-const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
-
 const bake = bun.bake;
-const FrameworkRouter = bake.FrameworkRouter;
-const Route = FrameworkRouter.Route;
-const OpaqueFileId = FrameworkRouter.OpaqueFileId;
-
+const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 const Log = bun.logger.Log;
-const Output = bun.Output;
-
-const Transpiler = bun.transpiler.Transpiler;
-const BundleV2 = bun.bundle_v2.BundleV2;
-const Chunk = bun.bundle_v2.Chunk;
-const ContentHasher = bun.bundle_v2.ContentHasher;
-
-const uws = bun.uws;
-const AnyWebSocket = uws.AnyWebSocket;
-const Request = uws.Request;
-const AnyResponse = bun.uws.AnyResponse;
-
 const MimeType = bun.http.MimeType;
+const RefPtr = bun.ptr.RefPtr;
+const StaticRoute = bun.server.StaticRoute;
+const Transpiler = bun.transpiler.Transpiler;
+const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
 const HTMLBundle = JSC.API.HTMLBundle;
-const Plugin = JSC.API.JSBundler.Plugin;
-const EventLoopTimer = bun.api.Timer.EventLoopTimer;
-
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-
-const Watcher = bun.Watcher;
-const StaticRoute = bun.server.StaticRoute;
-
 const AnyBlob = JSC.WebCore.Blob.Any;
+const Plugin = JSC.API.JSBundler.Plugin;
+
+const BunFrontendDevServerAgent = JSC.Debugger.BunFrontendDevServerAgent;
+const DebuggerId = JSC.Debugger.DebuggerId;
+
+const FrameworkRouter = bake.FrameworkRouter;
+const OpaqueFileId = FrameworkRouter.OpaqueFileId;
+const Route = FrameworkRouter.Route;
+
+const BundleV2 = bun.bundle_v2.BundleV2;
+const Chunk = bun.bundle_v2.Chunk;
+const ContentHasher = bun.bundle_v2.ContentHasher;
 
 const SourceMap = bun.sourcemap;
 const VLQ = SourceMap.VLQ;
 
-const StringJoiner = bun.StringJoiner;
-const AllocationScope = bun.AllocationScope;
-const BunFrontendDevServerAgent = JSC.Debugger.BunFrontendDevServerAgent;
-const DebuggerId = JSC.Debugger.DebuggerId;
+const uws = bun.uws;
+const AnyResponse = bun.uws.AnyResponse;
+const AnyWebSocket = uws.AnyWebSocket;
+const Request = uws.Request;
 
-const RefPtr = bun.ptr.RefPtr;
+const std = @import("std");
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
+const Allocator = std.mem.Allocator;

@@ -1,7 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const O = bun.O;
-
 // O_TMPFILE doesn't seem to work very well.
 const allow_tmpfile = false;
 
@@ -86,3 +82,8 @@ pub const Tmpfile = struct {
         try bun.sys.moveFileZWithHandle(this.fd, this.destination_dir, this.tmpfilename, this.destination_dir, destname);
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const O = bun.O;

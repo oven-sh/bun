@@ -523,30 +523,32 @@ pub fn convertStmtsForChunk(
     }
 }
 
-const bun = @import("bun");
-const BabyList = bun.BabyList;
-const Logger = bun.logger;
-const Loc = Logger.Loc;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-
-const FeatureFlags = bun.FeatureFlags;
-
-const std = @import("std");
-const js_ast = bun.js_ast;
-
-const JSAst = js_ast.BundledAst;
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
-const B = js_ast.B;
-const Binding = js_ast.Binding;
-const bundler = bun.bundle_v2;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const FeatureFlags = bun.FeatureFlags;
+
+const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
 const WrapKind = bundler.WrapKind;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const StmtList = LinkerContext.StmtList;
+
+const js_ast = bun.js_ast;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const JSAst = js_ast.BundledAst;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;
+
+const Logger = bun.logger;
+const Loc = Logger.Loc;

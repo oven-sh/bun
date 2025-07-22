@@ -986,15 +986,15 @@ pub const Version = extern struct {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
 const Environment = bun.Environment;
+const Output = bun.Output;
+const assert = bun.assert;
+const string = bun.string;
 const strings = bun.strings;
 
 const ExternalString = bun.Semver.ExternalString;
+const Query = bun.Semver.Query;
 const SlicedString = bun.Semver.SlicedString;
 const String = bun.Semver.String;
-
-const Query = bun.Semver.Query;
-const assert = bun.assert;

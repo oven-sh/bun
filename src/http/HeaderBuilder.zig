@@ -1,11 +1,4 @@
 const HeaderBuilder = @This();
-const StringBuilder = bun.StringBuilder;
-const Headers = bun.http.Headers;
-const string = bun.string;
-const HTTPClient = @import("../http.zig");
-const Api = @import("../api/schema.zig").Api;
-const std = @import("std");
-const bun = @import("bun");
 
 content: StringBuilder = .{},
 header_count: u64 = 0,
@@ -59,3 +52,12 @@ pub fn apply(this: *HeaderBuilder, client: *HTTPClient) void {
     client.header_entries = this.entries;
     client.header_buf = this.content.ptr.?[0..this.content.len];
 }
+
+const HTTPClient = @import("../http.zig");
+const std = @import("std");
+const Api = @import("../api/schema.zig").Api;
+
+const bun = @import("bun");
+const StringBuilder = bun.StringBuilder;
+const string = bun.string;
+const Headers = bun.http.Headers;

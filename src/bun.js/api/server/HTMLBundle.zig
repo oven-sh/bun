@@ -504,17 +504,21 @@ pub const Route = struct {
     };
 };
 
-const bun = @import("bun");
-const std = @import("std");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSBundler = JSC.API.JSBundler;
-const HTTPResponse = bun.uws.AnyResponse;
-const uws = bun.uws;
-const AnyServer = JSC.API.AnyServer;
+const debug = bun.Output.scoped(.HTMLBundle, true);
+
 const StaticRoute = @import("./StaticRoute.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const strings = bun.strings;
 const RefPtr = bun.ptr.RefPtr;
 
-const debug = bun.Output.scoped(.HTMLBundle, true);
-const strings = bun.strings;
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+
+const AnyServer = JSC.API.AnyServer;
+const JSBundler = JSC.API.JSBundler;
+
+const uws = bun.uws;
+const HTTPResponse = bun.uws.AnyResponse;

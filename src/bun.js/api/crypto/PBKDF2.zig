@@ -1,3 +1,5 @@
+const PBKDF2 = @This();
+
 password: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.empty,
 salt: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.empty,
 iteration_count: u32 = 1,
@@ -239,19 +241,21 @@ pub fn pbkdf2(
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const string = bun.string;
-const default_allocator = bun.default_allocator;
-const JSC = bun.JSC;
 const Async = bun.Async;
-const ZigString = JSC.ZigString;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const CallFrame = JSC.CallFrame;
 const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const BoringSSL = bun.BoringSSL.c;
+
+const JSC = bun.JSC;
+const CallFrame = JSC.CallFrame;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;
+const ZigString = JSC.ZigString;
+const createCryptoError = JSC.API.Bun.Crypto.createCryptoError;
+
 const EVP = JSC.API.Bun.Crypto.EVP;
 const Algorithm = EVP.Algorithm;
-const BoringSSL = bun.BoringSSL.c;
-const createCryptoError = JSC.API.Bun.Crypto.createCryptoError;
-const VirtualMachine = JSC.VirtualMachine;
-const PBKDF2 = @This();

@@ -1,21 +1,7 @@
-const bun = @import("bun");
-const JSParser = bun.js_parser;
-const JSPrinter = bun.js_printer;
-const JSAst = bun.JSAst;
-const Api = @import("./api/schema.zig").Api;
-const Logger = bun.logger;
-const global = @import("bun");
-const default_allocator = global.default_allocator;
-const std = @import("std");
-const Define = @import("./defines.zig");
-const Options = @import("./options.zig");
-const ApiWriter = @import("./api/schema.zig").Writer;
-const ApiReader = @import("./api/schema.zig").Reader;
-const Output = global.Output;
+const Main = @This();
 
 export var code_buffer_ptr: ?[*]const u8 = null;
 pub const bindgen = true;
-const Main = @This();
 pub const os = struct {
     pub const c = Main.system;
     pub const system = Main.system;
@@ -204,7 +190,6 @@ export fn init(heapsize: u32) void {
         buffer_writer = writer.ctx;
     }
 }
-const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 
 var log: Logger.Log = undefined;
 
@@ -664,3 +649,21 @@ comptime {
     _ = bun_malloc;
     _ = getTests;
 }
+
+const Define = @import("./defines.zig");
+const Options = @import("./options.zig");
+const std = @import("std");
+const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
+
+const Api = @import("./api/schema.zig").Api;
+const ApiReader = @import("./api/schema.zig").Reader;
+const ApiWriter = @import("./api/schema.zig").Writer;
+
+const bun = @import("bun");
+const global = @import("bun");
+const JSAst = bun.JSAst;
+const JSParser = bun.js_parser;
+const JSPrinter = bun.js_printer;
+const Logger = bun.logger;
+const Output = global.Output;
+const default_allocator = global.default_allocator;

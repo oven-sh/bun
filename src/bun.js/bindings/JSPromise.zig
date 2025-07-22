@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const VM = JSC.VM;
-const String = bun.String;
-const JSError = bun.JSError;
-
 pub const JSPromise = opaque {
     pub const Status = enum(u32) {
         pending = 0, // Making this as 0, so that, we can change the status from Pending to others without masking.
@@ -15,19 +6,12 @@ pub const JSPromise = opaque {
     };
 
     extern fn JSC__JSPromise__create(arg0: *JSGlobalObject) *JSPromise;
-    extern fn JSC__JSPromise__isHandled(arg0: *const JSPromise, arg1: *VM) bool;
-    extern fn JSC__JSPromise__reject(arg0: *JSPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
-    extern fn JSC__JSPromise__rejectAsHandled(arg0: *JSPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
     extern fn JSC__JSPromise__rejectedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSPromise;
     /// **DEPRECATED** This function does not notify the VM about the rejection,
     /// meaning it will not trigger unhandled rejection handling. Use JSC__JSPromise__rejectedPromise instead.
     extern fn JSC__JSPromise__rejectedPromiseValue(arg0: *JSGlobalObject, JSValue1: JSValue) JSValue;
-    extern fn JSC__JSPromise__resolve(arg0: *JSPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
     extern fn JSC__JSPromise__resolvedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSPromise;
     extern fn JSC__JSPromise__resolvedPromiseValue(arg0: *JSGlobalObject, JSValue1: JSValue) JSValue;
-    extern fn JSC__JSPromise__result(arg0: *JSPromise, arg1: *VM) JSValue;
-    extern fn JSC__JSPromise__setHandled(arg0: *JSPromise, arg1: *VM) void;
-    extern fn JSC__JSPromise__status(arg0: *const JSPromise, arg1: *VM) JSPromise.Status;
     extern fn JSC__JSPromise__wrap(*JSC.JSGlobalObject, *anyopaque, *const fn (*anyopaque, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue) JSC.JSValue;
 
     pub fn Weak(comptime T: type) type {
@@ -221,19 +205,19 @@ pub const JSPromise = opaque {
     }
 
     pub fn status(this: *const JSPromise, vm: *VM) Status {
-        return JSC__JSPromise__status(this, vm);
+        return @enumFromInt(bun.cpp.JSC__JSPromise__status(this, vm));
     }
 
     pub fn result(this: *JSPromise, vm: *VM) JSValue {
-        return JSC__JSPromise__result(this, vm);
+        return bun.cpp.JSC__JSPromise__result(this, vm);
     }
 
     pub fn isHandled(this: *const JSPromise, vm: *VM) bool {
-        return JSC__JSPromise__isHandled(this, vm);
+        return bun.cpp.JSC__JSPromise__isHandled(this, vm);
     }
 
     pub fn setHandled(this: *JSPromise, vm: *VM) void {
-        JSC__JSPromise__setHandled(this, vm);
+        bun.cpp.JSC__JSPromise__setHandled(this, vm);
     }
 
     pub fn resolvedPromise(globalThis: *JSGlobalObject, value: JSValue) *JSPromise {
@@ -270,7 +254,7 @@ pub const JSPromise = opaque {
             }
         }
 
-        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSPromise__resolve, .{ this, globalThis, value }) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
+        bun.cpp.JSC__JSPromise__resolve(this, globalThis, value) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
     pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) void {
@@ -284,11 +268,11 @@ pub const JSPromise = opaque {
 
         const err = value catch |err| globalThis.takeException(err);
 
-        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSPromise__reject, .{ this, globalThis, err }) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
+        bun.cpp.JSC__JSPromise__reject(this, globalThis, err) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
     pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
-        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSPromise__rejectAsHandled, .{ this, globalThis, value }) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
+        bun.cpp.JSC__JSPromise__rejectAsHandled(this, globalThis, value) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
     pub fn create(globalThis: *JSGlobalObject) *JSPromise {
@@ -320,3 +304,14 @@ pub const JSPromise = opaque {
         };
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+const String = bun.String;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VM = JSC.VM;

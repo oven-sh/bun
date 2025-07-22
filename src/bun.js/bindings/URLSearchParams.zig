@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const ZigString = @import("./ZigString.zig").ZigString;
-
 pub const URLSearchParams = opaque {
     extern fn URLSearchParams__create(globalObject: *JSGlobalObject, *const ZigString) JSValue;
     pub fn create(globalObject: *JSGlobalObject, init: ZigString) JSValue {
@@ -43,3 +37,10 @@ pub const URLSearchParams = opaque {
         URLSearchParams__toString(self, ctx, Wrap.cb);
     }
 };
+
+const bun = @import("bun");
+const ZigString = @import("./ZigString.zig").ZigString;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

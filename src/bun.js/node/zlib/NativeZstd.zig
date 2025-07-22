@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const CompressionStream = @import("./../node_zlib_binding.zig").CompressionStream;
-const CountedKeepAlive = @import("./../node_zlib_binding.zig").CountedKeepAlive;
-const Error = @import("./../node_zlib_binding.zig").Error;
-const validators = @import("./../util/validators.zig");
-
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
@@ -260,3 +252,13 @@ const Context = struct {
         this.state = null;
     }
 };
+
+const std = @import("std");
+const validators = @import("../util/validators.zig");
+
+const CompressionStream = @import("../node_zlib_binding.zig").CompressionStream;
+const CountedKeepAlive = @import("../node_zlib_binding.zig").CountedKeepAlive;
+const Error = @import("../node_zlib_binding.zig").Error;
+
+const bun = @import("bun");
+const JSC = bun.JSC;

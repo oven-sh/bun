@@ -1,19 +1,8 @@
-const c = @import("std").c;
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const strings = bun.strings;
-const iovec = @import("std").os.iovec;
-const struct_in_addr = std.posix.sockaddr.in;
-const struct_sockaddr = std.posix.sockaddr;
 pub const socklen_t = c.socklen_t;
-const ares_socklen_t = c.socklen_t;
 pub const ares_ssize_t = isize;
 pub const ares_socket_t = if (bun.Environment.isWindows) std.os.windows.ws2_32.SOCKET else c_int;
 pub const ares_sock_state_cb = ?*const fn (?*anyopaque, ares_socket_t, c_int, c_int) callconv(.C) void;
 pub const struct_apattern = opaque {};
-const fd_set = c.fd_set;
-const libuv = bun.windows.libuv;
 
 pub const AF = std.posix.AF;
 
@@ -2089,4 +2078,18 @@ pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.posix.sockaddr) c_int {
     return -1;
 }
 
+const std = @import("std");
+const iovec = @import("std").os.iovec;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const strings = bun.strings;
 const GetAddrInfo = bun.dns.GetAddrInfo;
+const libuv = bun.windows.libuv;
+
+const c = @import("std").c;
+const ares_socklen_t = c.socklen_t;
+const fd_set = c.fd_set;
+
+const struct_sockaddr = std.posix.sockaddr;
+const struct_in_addr = std.posix.sockaddr.in;

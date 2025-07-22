@@ -1,3 +1,5 @@
+const Export = @This();
+
 printing: bool = false,
 
 const Entry = struct {
@@ -122,17 +124,21 @@ pub inline fn bltn(this: *Export) *Builtin {
 
 // --
 const debug = bun.Output.scoped(.ShellExport, true);
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
-const interpreter = @import("../interpreter.zig");
-const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const ExitCode = shell.ExitCode;
-const Export = @This();
-const JSC = bun.JSC;
-const std = @import("std");
 const log = debug;
+
+const std = @import("std");
+
+const interpreter = @import("../interpreter.zig");
 const EnvStr = interpreter.EnvStr;
+const Interpreter = interpreter.Interpreter;
+
+const Builtin = Interpreter.Builtin;
 const BuiltinIO = Interpreter.Builtin.BuiltinIO;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
 const assert = bun.assert;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = bun.shell.Yield;

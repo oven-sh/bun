@@ -56,12 +56,14 @@ pub fn parse(
     return out.toJSByParseJSON(globalThis);
 }
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ZigString = JSC.ZigString;
-const logger = bun.logger;
-const bun = @import("bun");
-const js_printer = bun.js_printer;
-const default_allocator = bun.default_allocator;
 const TOMLParser = @import("../../toml/toml_parser.zig").TOML;
+
+const bun = @import("bun");
+const default_allocator = bun.default_allocator;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;

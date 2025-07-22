@@ -1,3 +1,5 @@
+const CatalogMap = @This();
+
 const Map = std.ArrayHashMapUnmanaged(String, Dependency, String.ArrayHashContext, true);
 
 default: Map = .{},
@@ -370,15 +372,17 @@ pub fn clone(this: *CatalogMap, pm: *PackageManager, old: *Lockfile, new: *Lockf
     return new_catalog;
 }
 
-const CatalogMap = @This();
+const string = []const u8;
+
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const bun = @import("bun");
+const OOM = bun.OOM;
+const logger = bun.logger;
+const Expr = bun.JSAst.Expr;
+const String = bun.Semver.String;
+
 const Dependency = bun.install.Dependency;
 const Lockfile = bun.install.Lockfile;
 const PackageManager = bun.install.PackageManager;
-const String = bun.Semver.String;
-const Expr = bun.JSAst.Expr;
-const logger = bun.logger;
-const Allocator = std.mem.Allocator;
-const string = []const u8;
-const OOM = bun.OOM;

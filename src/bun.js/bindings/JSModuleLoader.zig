@@ -1,10 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSInternalPromise = @import("JSInternalPromise.zig").JSInternalPromise;
-const String = bun.String;
-
 pub const JSModuleLoader = opaque {
     extern fn JSC__JSModuleLoader__evaluate(
         globalObject: *JSGlobalObject,
@@ -51,3 +44,12 @@ pub const JSModuleLoader = opaque {
         return JSModuleLoader__import(globalObject, module_name) orelse error.JSError;
     }
 };
+
+const JSInternalPromise = @import("./JSInternalPromise.zig").JSInternalPromise;
+
+const bun = @import("bun");
+const String = bun.String;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

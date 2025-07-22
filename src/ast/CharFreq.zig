@@ -124,7 +124,7 @@ pub fn compile(this: *const CharFreq, allocator: std.mem.Allocator) NameMinifier
     return minifier;
 }
 
-// @sortImports
+pub const Class = G.Class;
 
 const std = @import("std");
 
@@ -133,7 +133,5 @@ const string = bun.string;
 
 const js_ast = bun.js_ast;
 const CharFreq = js_ast.CharFreq;
-const NameMinifier = js_ast.NameMinifier;
-
 const G = js_ast.G;
-pub const Class = G.Class;
+const NameMinifier = js_ast.NameMinifier;

@@ -188,24 +188,25 @@ pub fn writeFailingError(this: *Subshell, comptime fmt: []const u8, args: anytyp
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
-
-const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellExecEnv = Interpreter.ShellExecEnv;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-
-const Script = bun.shell.Interpreter.Script;
-const Binary = bun.shell.Interpreter.Binary;
-const Expansion = bun.shell.Interpreter.Expansion;
-const Stmt = bun.shell.Interpreter.Stmt;
-const Pipeline = bun.shell.Interpreter.Pipeline;
-
 const JSC = bun.JSC;
 const assert = bun.assert;
+
+const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
+
+const Interpreter = bun.shell.Interpreter;
+const Binary = bun.shell.Interpreter.Binary;
+const Expansion = bun.shell.Interpreter.Expansion;
+const IO = bun.shell.Interpreter.IO;
+const Pipeline = bun.shell.Interpreter.Pipeline;
+const Script = bun.shell.Interpreter.Script;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Stmt = bun.shell.Interpreter.Stmt;
+
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;

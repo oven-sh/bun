@@ -112,8 +112,6 @@ pub const List = struct {
     };
 };
 
-// @sortImports
-
 const bun = @import("bun");
 const std = @import("std");
 

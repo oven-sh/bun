@@ -1,8 +1,3 @@
-const bun = @import("bun");
-
-const BoringSSL = bun.BoringSSL.c;
-const JSC = bun.JSC;
-const uws = bun.uws;
 const log = bun.Output.scoped(.SSLWrapper, true);
 
 /// Mimics the behavior of openssl.c in uSockets, wrapping data that can be received from any where (network, DuplexStream, etc)
@@ -501,3 +496,8 @@ pub fn SSLWrapper(comptime T: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const uws = bun.uws;
+const BoringSSL = bun.BoringSSL.c;

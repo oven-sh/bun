@@ -1,3 +1,5 @@
+const OverrideMap = @This();
+
 const debug = Output.scoped(.OverrideMap, false);
 
 map: std.ArrayHashMapUnmanaged(PackageNameHash, Dependency, ArrayIdentityContext.U64, false) = .{},
@@ -337,20 +339,22 @@ pub fn parseOverrideValue(
     };
 }
 
-const OverrideMap = @This();
+const string = []const u8;
+
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const bun = @import("bun");
+const ArrayIdentityContext = bun.ArrayIdentityContext;
+const Environment = bun.Environment;
+const Output = bun.Output;
+const assert = bun.assert;
+const logger = bun.logger;
+const strings = bun.strings;
+const Expr = bun.JSAst.Expr;
+const String = bun.Semver.String;
+
 const Dependency = bun.install.Dependency;
 const Lockfile = bun.install.Lockfile;
 const PackageManager = bun.install.PackageManager;
-const String = bun.Semver.String;
-const Expr = bun.JSAst.Expr;
-const logger = bun.logger;
-const strings = bun.strings;
-const Output = bun.Output;
-const Environment = bun.Environment;
 const PackageNameHash = bun.install.PackageNameHash;
-const ArrayIdentityContext = bun.ArrayIdentityContext;
-const Allocator = std.mem.Allocator;
-const string = []const u8;
-const assert = bun.assert;

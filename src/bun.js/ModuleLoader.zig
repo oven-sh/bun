@@ -3059,47 +3059,52 @@ export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
     return HardcodedModule.Alias.bun_aliases.get(str) != null;
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
+const debug = Output.scoped(.ModuleLoader, true);
 
-const Fs = @import("../fs.zig");
-const ast = @import("../import_record.zig");
-const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
-const ParseResult = bun.transpiler.ParseResult;
-const logger = bun.logger;
-const Api = @import("../api/schema.zig").Api;
-const options = @import("../options.zig");
-const Transpiler = bun.Transpiler;
-const PluginRunner = bun.transpiler.PluginRunner;
-const js_printer = bun.js_printer;
-const js_ast = bun.JSAst;
 const Analytics = @import("../analytics/analytics_thread.zig");
-const ZigString = bun.JSC.ZigString;
-const Runtime = @import("../runtime.zig");
-const ImportRecord = ast.ImportRecord;
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const JSC = bun.JSC;
-const JSValue = bun.JSC.JSValue;
-const node_module_module = @import("./bindings/NodeModuleModule.zig");
-
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const ResolvedSource = bun.JSC.ResolvedSource;
-const Bun = JSC.API.Bun;
-const PackageManager = @import("../install/install.zig").PackageManager;
-const Install = @import("../install/install.zig");
-const VirtualMachine = bun.JSC.VirtualMachine;
 const Dependency = @import("../install/dependency.zig");
-const Async = bun.Async;
-const String = bun.String;
+const Fs = @import("../fs.zig");
+const Runtime = @import("../runtime.zig");
+const node_module_module = @import("./bindings/NodeModuleModule.zig");
+const std = @import("std");
+const Api = @import("../api/schema.zig").Api;
+const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
+const panic = std.debug.panic;
+
+const ast = @import("../import_record.zig");
+const ImportRecord = ast.ImportRecord;
+
+const Install = @import("../install/install.zig");
+const PackageManager = @import("../install/install.zig").PackageManager;
+
+const options = @import("../options.zig");
 const ModuleType = options.ModuleType;
 
-const debug = Output.scoped(.ModuleLoader, true);
-const panic = std.debug.panic;
+const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
+const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const String = bun.String;
+const Transpiler = bun.Transpiler;
+const js_ast = bun.JSAst;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const JSValue = bun.JSC.JSValue;
+const ResolvedSource = bun.JSC.ResolvedSource;
+const VirtualMachine = bun.JSC.VirtualMachine;
+const ZigString = bun.JSC.ZigString;
+const Bun = JSC.API.Bun;
+
+const ParseResult = bun.transpiler.ParseResult;
+const PluginRunner = bun.transpiler.PluginRunner;
+const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;

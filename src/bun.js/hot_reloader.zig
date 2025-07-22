@@ -461,16 +461,19 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
     };
 }
 
-const std = @import("std");
-const bun = @import("bun");
 const string = []const u8;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const options = bun.options;
-const JSC = bun.JSC;
-const MarkedArrayBuffer = bun.jsc.MarkedArrayBuffer;
-const VirtualMachine = JSC.VirtualMachine;
-const Watcher = bun.Watcher;
 pub const Buffer = MarkedArrayBuffer;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
 const Fs = bun.fs;
+const Output = bun.Output;
+const Watcher = bun.Watcher;
+const options = bun.options;
+const strings = bun.strings;
+const MarkedArrayBuffer = bun.jsc.MarkedArrayBuffer;
+
+const JSC = bun.JSC;
+const VirtualMachine = JSC.VirtualMachine;

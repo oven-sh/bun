@@ -1,49 +1,7 @@
 const Bun = @This();
-const default_allocator = bun.default_allocator;
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Global = bun.Global;
-const strings = bun.strings;
-const string = bun.string;
-const Output = bun.Output;
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const Sys = @import("../../sys.zig");
 
-const logger = bun.logger;
-const options = @import("../../options.zig");
-const Transpiler = bun.Transpiler;
-const js_printer = bun.js_printer;
-const Analytics = @import("../../analytics/analytics_thread.zig");
-const ZigString = bun.JSC.ZigString;
-const Runtime = @import("../../runtime.zig");
-const WebCore = bun.JSC.WebCore;
-const Request = WebCore.Request;
-const Response = WebCore.Response;
-const Headers = WebCore.Headers;
-const Fetch = WebCore.Fetch;
-const HTTP = bun.http;
-const JSC = bun.JSC;
-const JSValue = bun.JSC.JSValue;
-const host_fn = JSC.host_fn;
-
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const Node = bun.JSC.Node;
-const JSPromise = bun.JSC.JSPromise;
-const VM = bun.JSC.VM;
-const URL = @import("../../url.zig").URL;
-const VirtualMachine = JSC.VirtualMachine;
-const uws = bun.uws;
-const Fallback = Runtime.Fallback;
-const MimeType = HTTP.MimeType;
-const Blob = JSC.WebCore.Blob;
-const BoringSSL = bun.BoringSSL.c;
-const Arena = @import("../../allocators/mimalloc_arena.zig").Arena;
-
-const Async = bun.Async;
 const httplog = Output.scoped(.Server, false);
 const ctxLog = Output.scoped(.RequestContext, false);
-const SocketAddress = @import("bun/socket.zig").SocketAddress;
 
 pub const WebSocketServerContext = @import("./server/WebSocketServerContext.zig");
 pub const HTTPStatusText = @import("./server/HTTPStatusText.zig");
@@ -62,8 +20,6 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub const StaticRoute = @import("./server/StaticRoute.zig");
 pub const FileRoute = @import("./server/FileRoute.zig");
-
-const HTMLBundle = JSC.API.HTMLBundle;
 
 pub const AnyRoute = union(enum) {
     /// Serve a static file
@@ -3247,8 +3203,6 @@ pub const AnyServer = struct {
 
 extern fn Bun__addInspector(bool, *anyopaque, *JSC.JSGlobalObject) void;
 
-const assert = bun.assert;
-
 pub export fn Server__setIdleTimeout(server: JSC.JSValue, seconds: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
     Server__setIdleTimeout_(server, seconds, globalThis) catch |err| switch (err) {
         error.JSError => {},
@@ -3418,3 +3372,51 @@ fn throwSSLErrorIfNecessary(globalThis: *JSC.JSGlobalObject) bool {
 
     return false;
 }
+
+const Analytics = @import("../../analytics/analytics_thread.zig");
+const Sys = @import("../../sys.zig");
+const options = @import("../../options.zig");
+const std = @import("std");
+const Arena = @import("../../allocators/mimalloc_arena.zig").Arena;
+const SocketAddress = @import("./bun/socket.zig").SocketAddress;
+const URL = @import("../../url.zig").URL;
+const Allocator = std.mem.Allocator;
+
+const Runtime = @import("../../runtime.zig");
+const Fallback = Runtime.Fallback;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const Transpiler = bun.Transpiler;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+const uws = bun.uws;
+const BoringSSL = bun.BoringSSL.c;
+
+const JSC = bun.JSC;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const JSPromise = bun.JSC.JSPromise;
+const JSValue = bun.JSC.JSValue;
+const Node = bun.JSC.Node;
+const VM = bun.JSC.VM;
+const VirtualMachine = JSC.VirtualMachine;
+const ZigString = bun.JSC.ZigString;
+const host_fn = JSC.host_fn;
+const HTMLBundle = JSC.API.HTMLBundle;
+
+const WebCore = bun.JSC.WebCore;
+const Blob = JSC.WebCore.Blob;
+const Fetch = WebCore.Fetch;
+const Headers = WebCore.Headers;
+const Request = WebCore.Request;
+const Response = WebCore.Response;
+
+const HTTP = bun.http;
+const MimeType = HTTP.MimeType;

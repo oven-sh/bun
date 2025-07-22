@@ -1,10 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const VM = JSC.VM;
-const ZigString = JSC.ZigString;
-
 pub const DOMFormData = opaque {
     extern fn WebCore__DOMFormData__cast_(JSValue0: JSValue, arg1: *VM) ?*DOMFormData;
     extern fn WebCore__DOMFormData__create(arg0: *JSGlobalObject) JSValue;
@@ -127,3 +120,11 @@ pub const DOMFormData = opaque {
         DOMFormData__forEach(this, ctx, Wrap.forEachWrapper);
     }
 };
+
+const bun = @import("bun");
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VM = JSC.VM;
+const ZigString = JSC.ZigString;

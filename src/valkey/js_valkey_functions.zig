@@ -825,18 +825,6 @@ const compile = struct {
     }
 };
 
-const JSValkeyClient = @import("./js_valkey.zig").JSValkeyClient;
-const bun = @import("bun");
-const JSC = bun.JSC;
-const valkey = bun.valkey;
-const protocol = valkey.protocol;
-const JSValue = JSC.JSValue;
-const Command = valkey.Command;
-const std = @import("std");
-const Slice = JSC.ZigString.Slice;
-
-const JSArgument = JSC.Node.BlobOrStringOrBuffer;
-
 fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) !?JSArgument {
     if (value.isUndefinedOrNull()) {
         return null;
@@ -855,3 +843,16 @@ fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) !?JSArgument {
 
     return try JSArgument.fromJSMaybeFile(globalObject, bun.default_allocator, value, false);
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const JSValkeyClient = @import("./js_valkey.zig").JSValkeyClient;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;
+const JSArgument = JSC.Node.BlobOrStringOrBuffer;
+const Slice = JSC.ZigString.Slice;
+
+const valkey = bun.valkey;
+const Command = valkey.Command;
+const protocol = valkey.protocol;

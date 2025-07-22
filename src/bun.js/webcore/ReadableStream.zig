@@ -835,10 +835,12 @@ pub fn NewSource(
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.jsc;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
 const Syscall = bun.sys;
+
+const JSC = bun.jsc;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+
 const webcore = bun.webcore;
-const streams = webcore.streams;
 const Blob = webcore.Blob;
+const streams = webcore.streams;

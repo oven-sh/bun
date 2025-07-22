@@ -1,19 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const windows = bun.windows;
-const path_handler = bun.path;
-const strings = bun.strings;
-const string = bun.string;
-
-const Environment = bun.Environment;
-const JSC = bun.JSC;
-const Mode = bun.Mode;
-const URL = @import("../../url.zig").URL;
-const JSError = bun.JSError;
-const node = bun.api.node;
-const Buffer = node.Buffer;
-const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
-
 pub const BlobOrStringOrBuffer = union(enum) {
     blob: JSC.WebCore.Blob,
     string_or_buffer: StringOrBuffer,
@@ -1182,3 +1166,20 @@ pub const PathOrBlob = union(enum) {
         return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
     }
 };
+
+const std = @import("std");
+const URL = @import("../../url.zig").URL;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const JSError = bun.JSError;
+const Mode = bun.Mode;
+const path_handler = bun.path;
+const string = bun.string;
+const strings = bun.strings;
+const windows = bun.windows;
+const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
+
+const node = bun.api.node;
+const Buffer = node.Buffer;

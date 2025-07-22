@@ -1,3 +1,5 @@
+const Rm = @This();
+
 opts: Opts,
 state: union(enum) {
     idle,
@@ -1195,22 +1197,26 @@ pub fn writeFailingError(this: *Rm, buf: []const u8, exit_code: ExitCode) Yield 
 }
 
 const log = bun.Output.scoped(.Rm, true);
-const bun = @import("bun");
-const shell = bun.shell;
-const Yield = shell.Yield;
+
+const builtin = @import("builtin");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const interpreter = @import("../interpreter.zig");
+const ShellSyscall = interpreter.ShellSyscall;
+
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const ExitCode = shell.ExitCode;
-const Rm = @This();
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
-const std = @import("std");
 
-const ShellSyscall = interpreter.ShellSyscall;
-const Syscall = bun.sys;
-const assert = bun.assert;
-const ResolvePath = bun.path;
-const Allocator = std.mem.Allocator;
+const bun = @import("bun");
 const DirIterator = bun.DirIterator;
-const builtin = @import("builtin");
+const JSC = bun.JSC;
+const ResolvePath = bun.path;
+const assert = bun.assert;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = shell.Yield;
+
+const Syscall = bun.sys;
+const Maybe = bun.sys.Maybe;

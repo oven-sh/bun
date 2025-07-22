@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSError = bun.JSError;
-
 pub const AI_V4MAPPED: c_int = if (bun.Environment.isWindows) 2048 else bun.c.AI_V4MAPPED;
 pub const AI_ADDRCONFIG: c_int = if (bun.Environment.isWindows) 1024 else bun.c.AI_ADDRCONFIG;
 pub const AI_ALL: c_int = if (bun.Environment.isWindows) 256 else bun.c.AI_ALL;
@@ -395,8 +389,6 @@ pub const GetAddrInfo = struct {
         }
     };
 };
-const String = bun.String;
-const default_allocator = bun.default_allocator;
 pub fn addressToString(address: *const std.net.Address) bun.OOM!bun.String {
     switch (address.any.family) {
         std.posix.AF.INET => {
@@ -470,3 +462,13 @@ pub fn addrInfoToJSArray(addr_info: *std.c.addrinfo, globalThis: *JSC.JSGlobalOb
 }
 
 pub const internal = bun.api.DNS.InternalDNS;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+const String = bun.String;
+const default_allocator = bun.default_allocator;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;

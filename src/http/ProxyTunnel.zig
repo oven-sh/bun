@@ -1,4 +1,5 @@
 const ProxyTunnel = @This();
+
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", ProxyTunnel.deinit, .{});
 pub const ref = ProxyTunnel.RefCount.ref;
 pub const deref = ProxyTunnel.RefCount.deref;
@@ -333,13 +334,16 @@ fn deinit(this: *ProxyTunnel) void {
     bun.destroy(this);
 }
 
+const log = bun.Output.scoped(.http_proxy_tunnel, false);
+
+const HTTPCertError = @import("./HTTPCertError.zig");
+const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+
 const bun = @import("bun");
+const JSC = bun.JSC;
 const strings = bun.strings;
 const uws = bun.uws;
 const BoringSSL = bun.BoringSSL.c;
-const NewHTTPContext = bun.http.NewHTTPContext;
+
 const HTTPClient = bun.http;
-const JSC = bun.JSC;
-const HTTPCertError = @import("./HTTPCertError.zig");
-const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
-const log = bun.Output.scoped(.http_proxy_tunnel, false);
+const NewHTTPContext = bun.http.NewHTTPContext;

@@ -1,9 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-
 pub const WTFStringImpl = *WTFStringImplStruct;
-const ZigString = bun.JSC.ZigString;
 
 pub const WTFStringImplStruct = extern struct {
     m_refCount: u32 = 0,
@@ -50,9 +45,8 @@ pub const WTFStringImplStruct = extern struct {
         return if (this.is8Bit()) this.m_length else this.m_length * 2;
     }
 
-    extern fn WTFStringImpl__isThreadSafe(WTFStringImpl) bool;
     pub fn isThreadSafe(this: WTFStringImpl) bool {
-        return WTFStringImpl__isThreadSafe(this);
+        return bun.cpp.WTFStringImpl__isThreadSafe(this);
     }
 
     pub fn byteSlice(this: WTFStringImpl) []const u8 {
@@ -96,7 +90,7 @@ pub const WTFStringImplStruct = extern struct {
         JSC.markBinding(@src());
         const current_count = self.refCount();
         bun.assert(self.hasAtLeastOneRef()); // do not use current_count, it breaks for static strings
-        Bun__WTFStringImpl__deref(self);
+        bun.cpp.Bun__WTFStringImpl__deref(self);
         if (comptime bun.Environment.allow_assert) {
             if (current_count > 1) {
                 bun.assert(self.refCount() < current_count or self.isStatic());
@@ -108,7 +102,7 @@ pub const WTFStringImplStruct = extern struct {
         JSC.markBinding(@src());
         const current_count = self.refCount();
         bun.assert(self.hasAtLeastOneRef()); // do not use current_count, it breaks for static strings
-        Bun__WTFStringImpl__ref(self);
+        bun.cpp.Bun__WTFStringImpl__ref(self);
         bun.assert(self.refCount() > current_count or self.isStatic());
     }
 
@@ -122,11 +116,10 @@ pub const WTFStringImplStruct = extern struct {
         return ZigString.Slice.init(this.refCountAllocator(), this.latin1Slice());
     }
 
-    extern fn Bun__WTFStringImpl__ensureHash(this: WTFStringImpl) void;
     /// Compute the hash() if necessary
     pub fn ensureHash(this: WTFStringImpl) void {
         JSC.markBinding(@src());
-        Bun__WTFStringImpl__ensureHash(this);
+        bun.cpp.Bun__WTFStringImpl__ensureHash(this);
     }
 
     pub fn toUTF8(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
@@ -222,12 +215,8 @@ pub const WTFStringImplStruct = extern struct {
     }
 
     pub fn hasPrefix(self: WTFStringImpl, text: []const u8) bool {
-        return Bun__WTFStringImpl__hasPrefix(self, text.ptr, text.len);
+        return bun.cpp.Bun__WTFStringImpl__hasPrefix(self, text.ptr, text.len);
     }
-
-    extern fn Bun__WTFStringImpl__deref(self: WTFStringImpl) void;
-    extern fn Bun__WTFStringImpl__ref(self: WTFStringImpl) void;
-    extern fn Bun__WTFStringImpl__hasPrefix(self: *const WTFStringImplStruct, offset: [*]const u8, length: usize) bool;
 };
 
 pub const StringImplAllocator = struct {
@@ -267,3 +256,9 @@ pub const StringImplAllocator = struct {
 
     pub const VTablePtr = &VTable;
 };
+
+const bun = @import("bun");
+const std = @import("std");
+
+const JSC = bun.JSC;
+const ZigString = bun.JSC.ZigString;

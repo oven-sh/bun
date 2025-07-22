@@ -1,6 +1,6 @@
 const uws = @This();
 
-pub const us_socket_t = @import("uws/us_socket_t.zig").us_socket_t;
+pub const us_socket_t = @import("./uws/us_socket_t.zig").us_socket_t;
 pub const SocketTLS = @import("./uws/socket.zig").SocketTLS;
 pub const SocketTCP = @import("./uws/socket.zig").SocketTCP;
 pub const InternalSocket = @import("./uws/socket.zig").InternalSocket;

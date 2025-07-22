@@ -1,5 +1,3 @@
-const std = @import("std");
-
 pub const linux = struct {
 
     // On linux, bun overrides the libc symbols for various functions.
@@ -124,3 +122,4 @@ pub const current = switch (bun.Environment.os) {
 };
 
 const bun = @import("bun");
+const std = @import("std");

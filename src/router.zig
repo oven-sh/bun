@@ -492,8 +492,8 @@ pub const TinyPtr = packed struct(u32) {
     pub inline fn str(this: TinyPtr, slice: string) string {
         return if (this.len > 0) slice[this.offset .. this.offset + this.len] else "";
     }
-    pub inline fn toStringPointer(this: TinyPtr) Api.StringPointer {
-        return Api.StringPointer{ .offset = this.offset, .length = this.len };
+    pub inline fn toStringPointer(this: TinyPtr) api.StringPointer {
+        return api.StringPointer{ .offset = this.offset, .length = this.len };
     }
 
     pub inline fn eql(a: TinyPtr, b: TinyPtr) bool {
@@ -942,7 +942,7 @@ pub const Test = struct {
     pub fn makeRoutes(comptime testName: string, data: anytype) !Routes {
         Output.initTest();
         try makeTest(testName, data);
-        const JSAst = bun.JSAst;
+        const JSAst = bun.ast;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
         const fs = try FileSystem.init(null);
@@ -973,7 +973,7 @@ pub const Test = struct {
             .routes = router.config,
             .entry_points = &.{},
             .out_extensions = bun.StringHashMap(string).init(default_allocator),
-            .transform_options = std.mem.zeroes(Api.TransformOptions),
+            .transform_options = std.mem.zeroes(api.TransformOptions),
             .external = Options.ExternalModules.init(
                 default_allocator,
                 &FileSystem.instance.fs,
@@ -997,7 +997,7 @@ pub const Test = struct {
 
     pub fn make(comptime testName: string, data: anytype) !Router {
         try makeTest(testName, data);
-        const JSAst = bun.JSAst;
+        const JSAst = bun.ast;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
         const fs = try FileSystem.initWithForce(null, true);
@@ -1028,7 +1028,7 @@ pub const Test = struct {
             .routes = router.config,
             .entry_points = &.{},
             .out_extensions = bun.StringHashMap(string).init(default_allocator),
-            .transform_options = std.mem.zeroes(Api.TransformOptions),
+            .transform_options = std.mem.zeroes(api.TransformOptions),
             .external = Options.ExternalModules.init(
                 default_allocator,
                 &FileSystem.instance.fs,
@@ -1891,8 +1891,6 @@ const DirInfo = @import("./resolver/dir_info.zig");
 const Options = @import("./options.zig");
 const URLPath = @import("./http/URLPath.zig");
 const std = @import("std");
-const Api = @import("./api/schema.zig").Api;
-const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const PathnameScanner = @import("./url.zig").PathnameScanner;
 
 const Fs = @import("./fs.zig");
@@ -1906,8 +1904,11 @@ const Output = bun.Output;
 const PathString = bun.PathString;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
+const string = bun.Str;
+const api = bun.schema.api;
+
 const strings = bun.strings;
+const CodepointIterator = bun.strings.CodepointIterator;
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;

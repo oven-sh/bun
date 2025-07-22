@@ -429,7 +429,13 @@ const Environment = bun.Environment;
 const ImportRecord = bun.ImportRecord;
 const default_allocator = bun.default_allocator;
 const renamer = bun.renamer;
-const string = bun.string;
+const string = bun.Str;
+
+const js_ast = bun.ast;
+const Part = js_ast.Part;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;
+const Symbol = js_ast.Symbol;
 
 const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
@@ -444,12 +450,6 @@ const StableRef = bundler.StableRef;
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const ChunkMeta = LinkerContext.ChunkMeta;
 const debug = LinkerContext.debug;
-
-const js_ast = bun.js_ast;
-const Part = js_ast.Part;
-const S = js_ast.S;
-const Stmt = js_ast.Stmt;
-const Symbol = js_ast.Symbol;
 
 const Logger = bun.logger;
 const Loc = Logger.Loc;

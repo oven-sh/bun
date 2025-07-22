@@ -374,7 +374,7 @@ const Path = bun.path;
 const Semver = bun.Semver;
 const ThreadPool = bun.ThreadPool;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const File = bun.sys.File;
 

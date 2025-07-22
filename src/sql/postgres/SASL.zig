@@ -65,7 +65,7 @@ pub fn clientKey(this: *const SASL) [32]u8 {
 
 pub fn clientKeySignature(_: *const SASL, client_key: []const u8, auth_string: []const u8) [32]u8 {
     var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
-    bun.sha.SHA256.hash(client_key, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
+    bun.sha.SHA256.hash(client_key, &sha_digest, jsc.VirtualMachine.get().rareData().boringEngine());
     return hmac(&sha_digest, auth_string).?;
 }
 
@@ -89,6 +89,6 @@ const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-const JSC = bun.JSC;
 const assert = bun.assert;
-const Crypto = JSC.API.Bun.Crypto;
+const jsc = bun.jsc;
+const Crypto = jsc.API.Bun.Crypto;

@@ -25,7 +25,7 @@ pub const BunxCommand = struct {
         /// - `--revision` or `--version` flags are passed without a target
         ///   command also being provided. This is not a failure.
         /// - Incorrect arguments are passed. Prints usage and exits with a failure code.
-        fn parse(ctx: bun.CLI.Command.Context, argv: [][:0]const u8) Allocator.Error!Options {
+        fn parse(ctx: bun.cli.Command.Context, argv: [][:0]const u8) Allocator.Error!Options {
             var found_subcommand_name = false;
             var maybe_package_name: ?string = null;
             var has_version = false; //  --version
@@ -140,16 +140,16 @@ pub const BunxCommand = struct {
 
         // TODO: make this better
         if (package_json_read.err) |err| {
-            try (bun.JSC.Maybe(void){ .err = err }).unwrap();
+            try (bun.jsc.Maybe(void){ .err = err }).unwrap();
         }
 
         const package_json_contents = package_json_read.bytes.items;
         const source = &bun.logger.Source.initPathString(bun.span(subpath_z), package_json_contents);
 
-        bun.JSAst.Expr.Data.Store.create();
-        bun.JSAst.Stmt.Data.Store.create();
+        bun.ast.Expr.Data.Store.create();
+        bun.ast.Stmt.Data.Store.create();
 
-        const expr = try bun.JSON.parsePackageJSONUTF8(source, transpiler.log, transpiler.allocator);
+        const expr = try bun.json.parsePackageJSONUTF8(source, transpiler.log, transpiler.allocator);
 
         // choose the first package that fits
         if (expr.get("bin")) |bin_expr| {
@@ -279,7 +279,7 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 
-    pub fn exec(ctx: bun.CLI.Command.Context, argv: [][:0]const u8) !void {
+    pub fn exec(ctx: bun.cli.Command.Context, argv: [][:0]const u8) !void {
         // Don't log stuff
         ctx.debug.silent = true;
 
@@ -695,7 +695,7 @@ pub const BunxCommand = struct {
             .stdin = .inherit,
 
             .windows = if (Environment.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(this_transpiler.env)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env)),
             },
         }) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error <b>{s}<r>", .{ install_param, @errorName(err) });
@@ -798,6 +798,6 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const UpdateRequest = bun.PackageManager.UpdateRequest;

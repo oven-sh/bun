@@ -15,13 +15,13 @@ pub const Fallback = struct {
     pub const HTMLBackendTemplate = @embedFile("./fallback-backend.html");
 
     const Base64FallbackMessage = struct {
-        msg: *const Api.FallbackMessageContainer,
+        msg: *const api.FallbackMessageContainer,
         allocator: std.mem.Allocator,
         pub fn format(this: Base64FallbackMessage, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             var bb = std.ArrayList(u8).init(this.allocator);
             defer bb.deinit();
             const bb_writer = bb.writer();
-            const Encoder = Schema.Writer(@TypeOf(bb_writer));
+            const Encoder = schema.Writer(@TypeOf(bb_writer));
             var encoder = Encoder.init(bb_writer);
             this.msg.encode(&encoder) catch {};
 
@@ -85,7 +85,7 @@ pub const Fallback = struct {
 
     pub fn render(
         allocator: std.mem.Allocator,
-        msg: *const Api.FallbackMessageContainer,
+        msg: *const api.FallbackMessageContainer,
         preload: string,
         entry_point: string,
         comptime WriterType: type,
@@ -107,7 +107,7 @@ pub const Fallback = struct {
 
     pub fn renderBackend(
         allocator: std.mem.Allocator,
-        msg: *const Api.FallbackMessageContainer,
+        msg: *const api.FallbackMessageContainer,
         comptime WriterType: type,
         writer: WriterType,
     ) !void {
@@ -203,7 +203,7 @@ pub const Runtime = struct {
         /// This is used for `--print` entry points so we can get the result.
         remove_cjs_module_wrapper: bool = false,
 
-        runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+        runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache = null,
 
         // TODO: make this a bitset of all unsupported features
         lower_using: bool = true,
@@ -445,14 +445,15 @@ pub const Runtime = struct {
 };
 
 const std = @import("std");
-const Ref = @import("./ast/base.zig").Ref;
-
-const Schema = @import("./api/schema.zig");
-const Api = Schema.Api;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSAst = bun.JSAst;
 const Output = bun.Output;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
+
+const JSAst = bun.ast;
+const Ref = bun.ast.Ref;
+
+const schema = bun.schema;
+const api = schema.api;

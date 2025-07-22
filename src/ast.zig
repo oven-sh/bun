@@ -681,6 +681,7 @@ pub const TSNamespaceScope = TS.TSNamespaceScope;
 
 pub const Index = @import("./ast/base.zig").Index;
 pub const Ref = @import("./ast/base.zig").Ref;
+pub const RefCtx = @import("./ast/base.zig").RefCtx;
 pub const RefHashCtx = @import("./ast/base.zig").RefHashCtx;
 
 pub const BabyList = bun.BabyList;
@@ -692,5 +693,5 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;

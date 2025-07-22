@@ -14,7 +14,7 @@ pub const KeepAlive = struct {
     /// Make calling ref() on this poll into a no-op.
     pub fn disable(this: *KeepAlive) void {
         if (this.status == .active) {
-            this.unref(JSC.VirtualMachine.get());
+            this.unref(jsc.VirtualMachine.get());
         }
 
         this.status = .done;
@@ -47,16 +47,16 @@ pub const KeepAlive = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
+        if (comptime @TypeOf(event_loop_ctx_) == jsc.EventLoopHandle) {
             event_loop_ctx_.loop().subActive(1);
             return;
         }
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        const event_loop_ctx = jsc.AbstractVM(event_loop_ctx_);
         event_loop_ctx.platformEventLoop().subActive(1);
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
-    pub fn unrefConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+    pub fn unrefConcurrently(this: *KeepAlive, vm: *jsc.VirtualMachine) void {
         // _ = vm;
         if (this.status != .active)
             return;
@@ -65,7 +65,7 @@ pub const KeepAlive = struct {
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
-    pub fn unrefOnNextTick(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+    pub fn unrefOnNextTick(this: *KeepAlive, vm: *jsc.VirtualMachine) void {
         if (this.status != .active)
             return;
         this.status = .inactive;
@@ -73,7 +73,7 @@ pub const KeepAlive = struct {
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
-    pub fn unrefOnNextTickConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+    pub fn unrefOnNextTickConcurrently(this: *KeepAlive, vm: *jsc.VirtualMachine) void {
         if (this.status != .active)
             return;
         this.status = .inactive;
@@ -87,27 +87,27 @@ pub const KeepAlive = struct {
             return;
         this.status = .active;
         const EventLoopContext = @TypeOf(event_loop_ctx_);
-        if (comptime EventLoopContext == JSC.EventLoopHandle) {
+        if (comptime EventLoopContext == jsc.EventLoopHandle) {
             event_loop_ctx_.ref();
             return;
         }
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        const event_loop_ctx = jsc.AbstractVM(event_loop_ctx_);
         event_loop_ctx.platformEventLoop().ref();
     }
 
     /// Allow a poll to keep the process alive.
-    pub fn refConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+    pub fn refConcurrently(this: *KeepAlive, vm: *jsc.VirtualMachine) void {
         if (this.status != .inactive)
             return;
         this.status = .active;
         vm.event_loop.refConcurrently();
     }
 
-    pub fn refConcurrentlyFromEventLoop(this: *KeepAlive, loop: *JSC.EventLoop) void {
+    pub fn refConcurrentlyFromEventLoop(this: *KeepAlive, loop: *jsc.EventLoop) void {
         this.refConcurrently(loop.virtual_machine);
     }
 
-    pub fn unrefConcurrentlyFromEventLoop(this: *KeepAlive, loop: *JSC.EventLoop) void {
+    pub fn unrefConcurrentlyFromEventLoop(this: *KeepAlive, loop: *jsc.EventLoop) void {
         this.unrefConcurrently(loop.virtual_machine);
     }
 };
@@ -140,9 +140,9 @@ pub const FilePoll = struct {
     }
 
     /// Make calling ref() on this poll into a no-op.
-    // pub fn disableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+    // pub fn disableKeepingProcessAlive(this: *FilePoll, vm: *jsc.VirtualMachine) void {
     pub fn disableKeepingProcessAlive(this: *FilePoll, abstract_vm: anytype) void {
-        const vm = JSC.AbstractVM(abstract_vm);
+        const vm = jsc.AbstractVM(abstract_vm);
         if (this.flags.contains(.closed))
             return;
         this.flags.insert(.closed);
@@ -151,11 +151,11 @@ pub const FilePoll = struct {
         // vm.event_loop_handle.?.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
 
-    pub fn init(vm: *JSC.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
+    pub fn init(vm: *jsc.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
         return initWithOwner(vm, fd, flags, Owner.init(owner));
     }
 
-    pub fn initWithOwner(vm: *JSC.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
+    pub fn initWithOwner(vm: *jsc.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
         var poll = vm.rareData().filePolls(vm).get();
         poll.fd = fd;
         poll.flags = Flags.Set.init(flags);
@@ -166,7 +166,7 @@ pub const FilePoll = struct {
     }
 
     pub fn deinit(this: *FilePoll) void {
-        const vm = JSC.VirtualMachine.get();
+        const vm = jsc.VirtualMachine.get();
         this.deinitWithVM(vm);
     }
 
@@ -185,7 +185,7 @@ pub const FilePoll = struct {
         return true;
     }
 
-    fn deinitPossiblyDefer(this: *FilePoll, vm: *JSC.VirtualMachine, loop: *Loop, polls: *FilePoll.Store) void {
+    fn deinitPossiblyDefer(this: *FilePoll, vm: *jsc.VirtualMachine, loop: *Loop, polls: *FilePoll.Store) void {
         if (this.isRegistered()) {
             _ = this.unregister(loop);
         }
@@ -224,13 +224,13 @@ pub const FilePoll = struct {
         return readable;
     }
 
-    pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+    pub fn deinitWithVM(this: *FilePoll, vm: *jsc.VirtualMachine) void {
         const loop = vm.event_loop_handle.?;
         this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm));
     }
 
     pub fn enableKeepingProcessAlive(this: *FilePoll, abstract_vm: anytype) void {
-        const vm = JSC.AbstractVM(abstract_vm);
+        const vm = jsc.AbstractVM(abstract_vm);
         if (!this.flags.contains(.closed))
             return;
         this.flags.remove(.closed);
@@ -270,7 +270,7 @@ pub const FilePoll = struct {
     }
 
     pub fn onEnded(this: *FilePoll, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        const event_loop_ctx = jsc.AbstractVM(event_loop_ctx_);
         this.flags.remove(.keeps_event_loop_alive);
         this.flags.insert(.closed);
         // this.deactivate(vm.event_loop_handle.?);
@@ -279,7 +279,7 @@ pub const FilePoll = struct {
 
     /// Prevent a poll from keeping the process alive.
     pub fn unref(this: *FilePoll, abstract_vm: anytype) void {
-        const vm = JSC.AbstractVM(abstract_vm);
+        const vm = jsc.AbstractVM(abstract_vm);
         if (!this.canUnref())
             return;
         log("unref", .{});
@@ -288,13 +288,13 @@ pub const FilePoll = struct {
     }
 
     /// Allow a poll to keep the process alive.
-    // pub fn ref(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+    // pub fn ref(this: *FilePoll, vm: *jsc.VirtualMachine) void {
     pub fn ref(this: *FilePoll, event_loop_ctx_: anytype) void {
         if (this.canRef())
             return;
         log("ref", .{});
         // this.activate(vm.event_loop_handle.?);
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        const event_loop_ctx = jsc.AbstractVM(event_loop_ctx_);
         this.activate(event_loop_ctx.platformEventLoop());
     }
 
@@ -328,7 +328,7 @@ pub const FilePoll = struct {
             this.pending_free_tail = null;
         }
 
-        pub fn put(this: *Store, poll: *FilePoll, vm: *JSC.VirtualMachine, ever_registered: bool) void {
+        pub fn put(this: *Store, poll: *FilePoll, vm: *jsc.VirtualMachine, ever_registered: bool) void {
             if (!ever_registered) {
                 this.hive.put(poll);
                 return;
@@ -350,8 +350,8 @@ pub const FilePoll = struct {
             poll.flags.insert(.ignore_updates);
             this.pending_free_tail = poll;
 
-            const callback = JSC.OpaqueWrap(Store, processDeferredFrees);
-            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, callback));
+            const callback = jsc.OpaqueWrap(Store, processDeferredFrees);
+            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?jsc.OpaqueCallback, callback));
             vm.after_event_loop_callback = callback;
             vm.after_event_loop_callback_ctx = this;
         }
@@ -416,7 +416,7 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
 const Output = bun.Output;
+const jsc = bun.jsc;
 const uws = bun.uws;
 const uv = bun.windows.libuv;

@@ -79,7 +79,7 @@ pub fn clearData(this: *AsyncHTTP) void {
     this.request = null;
     this.response = null;
     this.client.unix_socket_path.deinit();
-    this.client.unix_socket_path = JSC.ZigString.Slice.empty;
+    this.client.unix_socket_path = jsc.ZigString.Slice.empty;
 }
 
 pub const State = enum(u32) {
@@ -95,7 +95,7 @@ pub const Options = struct {
     http_proxy: ?URL = null,
     hostname: ?[]u8 = null,
     signals: ?Signals = null,
-    unix_socket_path: ?JSC.ZigString.Slice = null,
+    unix_socket_path: ?jsc.ZigString.Slice = null,
     disable_timeout: ?bool = null,
     verbose: ?HTTPVerboseLevel = null,
     disable_keepalive: ?bool = null,
@@ -497,7 +497,6 @@ const HTTPThread = @import("./HTTPThread.zig");
 const Headers = @import("./Headers.zig");
 const std = @import("std");
 const Encoding = @import("./Encoding.zig").Encoding;
-const SSLConfig = @import("../bun.js/api/server.zig").ServerConfig.SSLConfig;
 
 const PercentEncoding = @import("../url.zig").PercentEncoding;
 const URL = @import("../url.zig").URL;
@@ -505,12 +504,13 @@ const URL = @import("../url.zig").URL;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
-const JSC = bun.JSC;
 const MutableString = bun.MutableString;
 const assert = bun.assert;
+const jsc = bun.jsc;
 const picohttp = bun.picohttp;
-const string = bun.string;
+const string = bun.Str;
 const Channel = bun.threading.Channel;
+const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const ThreadPool = bun.ThreadPool;
 const Batch = bun.ThreadPool.Batch;

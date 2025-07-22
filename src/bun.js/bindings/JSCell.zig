@@ -1,8 +1,8 @@
 pub const JSCell = opaque {
     /// Statically cast a cell to a JSObject. Returns null for non-objects.
     /// Use `toObject` to mutate non-objects into objects.
-    pub fn getObject(this: *JSCell) ?*JSC.JSObject {
-        JSC.markMemberBinding(JSCell, @src());
+    pub fn getObject(this: *JSCell) ?*jsc.JSObject {
+        jsc.markMemberBinding(JSCell, @src());
         return JSC__JSCell__getObject(this);
     }
 
@@ -13,18 +13,18 @@ pub const JSCell = opaque {
     ///
     /// ## References
     /// - [ECMA-262 §7.1.18 ToObject](https://tc39.es/ecma262/#sec-toobject)
-    pub fn toObject(this: *JSCell, global: *JSC.JSGlobalObject) *JSC.JSObject {
-        JSC.markMemberBinding(JSCell, @src());
+    pub fn toObject(this: *JSCell, global: *jsc.JSGlobalObject) *jsc.JSObject {
+        jsc.markMemberBinding(JSCell, @src());
         return JSC__JSCell__toObject(this, global);
     }
 
     pub fn getType(this: *const JSCell) u8 {
-        JSC.markMemberBinding(JSCell, @src());
+        jsc.markMemberBinding(JSCell, @src());
         return @enumFromInt(JSC__JSCell__getType(this));
     }
 
-    pub fn toJS(this: *JSCell) JSC.JSValue {
-        return JSC.JSValue.fromCell(this);
+    pub fn toJS(this: *JSCell) jsc.JSValue {
+        return jsc.JSValue.fromCell(this);
     }
 
     pub fn getGetterSetter(this: *JSCell) *GetterSetter {
@@ -45,8 +45,8 @@ pub const JSCell = opaque {
         std.mem.doNotOptimizeAway(this);
     }
 
-    extern fn JSC__JSCell__getObject(this: *JSCell) *JSC.JSObject;
-    extern fn JSC__JSCell__toObject(this: *JSCell, *JSGlobalObject) *JSC.JSObject;
+    extern fn JSC__JSCell__getObject(this: *JSCell) *jsc.JSObject;
+    extern fn JSC__JSCell__toObject(this: *JSCell, *JSGlobalObject) *jsc.JSObject;
     // NOTE: this function always returns a JSType, but by using `u8` then
     // casting it via `@enumFromInt` we can ensure our `JSType` enum matches
     // WebKit's. This protects us from possible future breaking changes made
@@ -59,6 +59,6 @@ const std = @import("std");
 const CustomGetterSetter = @import("./CustomGetterSetter.zig").CustomGetterSetter;
 const GetterSetter = @import("./GetterSetter.zig").GetterSetter;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

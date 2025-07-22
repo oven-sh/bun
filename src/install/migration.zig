@@ -95,7 +95,7 @@ pub fn migrateNPMLockfile(
     Install.initializeStore();
 
     const json_src = logger.Source.initPathString(abs_path, data);
-    const json = bun.JSON.parseUTF8(&json_src, log, allocator) catch return error.InvalidNPMLockfile;
+    const json = bun.json.parseUTF8(&json_src, log, allocator) catch return error.InvalidNPMLockfile;
 
     if (json.data != .e_object) {
         return error.InvalidNPMLockfile;
@@ -111,7 +111,7 @@ pub fn migrateNPMLockfile(
         return error.InvalidNPMLockfile;
     }
 
-    bun.Analytics.Features.lockfile_migration_from_package_lock += 1;
+    bun.analytics.Features.lockfile_migration_from_package_lock += 1;
 
     // Count pass
 
@@ -1036,13 +1036,13 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const File = bun.sys.File;
-
-const JSAst = bun.JSAst;
-const E = JSAst.E;
 
 const Semver = bun.Semver;
 const String = Semver.String;
 const stringHash = String.Builder.stringHash;
+
+const JSAst = bun.ast;
+const E = JSAst.E;

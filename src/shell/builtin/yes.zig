@@ -68,7 +68,7 @@ pub fn start(this: *@This()) Yield {
         const evtloop = this.bltn().eventLoop();
         this.task = .{
             .evtloop = evtloop,
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
         };
         this.state = .waiting_io;
         return this.bltn().stdout.enqueue(this, this.buffer[0..this.buffer_used], safeguard);
@@ -76,7 +76,7 @@ pub fn start(this: *@This()) Yield {
 
     this.task = .{
         .evtloop = this.bltn().eventLoop(),
-        .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.task.evtloop),
+        .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.task.evtloop),
     };
     return this.writeNoIO();
 }
@@ -114,7 +114,7 @@ pub fn writeFailingError(this: *Yes, buf: []const u8, exit_code: shell.ExitCode)
     return this.bltn().done(exit_code);
 }
 
-pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?jsc.SystemError) Yield {
     if (maybe_e) |e| {
         defer e.deref();
         this.state = .err;
@@ -141,8 +141,8 @@ pub fn deinit(this: *@This()) void {
 /// require IO. After writing a bit, we suspend execution to this task so we
 /// don't just block the main thread forever.
 pub const YesTask = struct {
-    evtloop: JSC.EventLoopHandle,
-    concurrent_task: JSC.EventLoopTask,
+    evtloop: jsc.EventLoopHandle,
+    concurrent_task: jsc.EventLoopTask,
 
     pub fn enqueue(this: *@This()) void {
         if (this.evtloop == .js) {
@@ -173,7 +173,7 @@ const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
 const IO = shell.IO;

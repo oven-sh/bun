@@ -214,9 +214,9 @@ pub const Continue = struct {
 
 const bun = @import("bun");
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const Case = js_ast.Case;
 const Catch = js_ast.Catch;
 const ClauseItem = js_ast.ClauseItem;

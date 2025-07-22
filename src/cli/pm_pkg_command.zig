@@ -771,12 +771,12 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Global = bun.Global;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const JSPrinter = bun.js_printer;
 const Output = bun.Output;
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const PackageManager = bun.install.PackageManager;

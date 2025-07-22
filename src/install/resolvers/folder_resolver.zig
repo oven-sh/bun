@@ -341,10 +341,10 @@ const PackageID = @import("../install.zig").PackageID;
 const PackageManager = @import("../install.zig").PackageManager;
 
 const bun = @import("bun");
-const JSAst = bun.JSAst;
+const JSAst = bun.ast;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
+const string = bun.Str;
+const stringZ = bun.StrZ;
 const strings = bun.strings;
 
 const Semver = bun.Semver;

@@ -42,9 +42,9 @@ broadcast_console_log_from_browser_to_server_for_bake: bool = false,
 /// If HMR is not enabled, then this field is ignored.
 enable_chrome_devtools_automatic_workspace_folders: bool = true,
 
-onError: JSC.JSValue = JSC.JSValue.zero,
-onRequest: JSC.JSValue = JSC.JSValue.zero,
-onNodeHTTPRequest: JSC.JSValue = JSC.JSValue.zero,
+onError: jsc.JSValue = jsc.JSValue.zero,
+onRequest: jsc.JSValue = jsc.JSValue.zero,
+onNodeHTTPRequest: jsc.JSValue = jsc.JSValue.zero,
 
 websocket: ?WebSocketServerContext = null,
 
@@ -325,7 +325,7 @@ pub fn getUsocketsOptions(this: *const ServerConfig) i32 {
     return out;
 }
 
-fn validateRouteName(global: *JSC.JSGlobalObject, path: []const u8) !void {
+fn validateRouteName(global: *jsc.JSGlobalObject, path: []const u8) !void {
     // Already validated by the caller
     bun.debugAssert(path.len > 0 and path[0] == '/');
 
@@ -361,7 +361,7 @@ fn validateRouteName(global: *JSC.JSGlobalObject, path: []const u8) !void {
 
 pub const SSLConfig = @import("./SSLConfig.zig");
 
-fn getRoutesObject(global: *JSC.JSGlobalObject, arg: JSC.JSValue) bun.JSError!?JSC.JSValue {
+fn getRoutesObject(global: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSError!?jsc.JSValue {
     inline for (.{ "routes", "static" }) |key| {
         if (try arg.get(global, key)) |routes| {
             // https://github.com/oven-sh/bun/issues/17568
@@ -381,9 +381,9 @@ pub const FromJSOptions = struct {
 };
 
 pub fn fromJS(
-    global: *JSC.JSGlobalObject,
+    global: *jsc.JSGlobalObject,
     args: *ServerConfig,
-    arguments: *JSC.CallFrame.ArgumentsSlice,
+    arguments: *jsc.CallFrame.ArgumentsSlice,
     opts: FromJSOptions,
 ) bun.JSError!void {
     const vm = arguments.vm;
@@ -500,7 +500,7 @@ pub fn fromJS(
             };
             args.had_routes_object = true;
 
-            var iter = try JSC.JSPropertyIterator(.{
+            var iter = try jsc.JSPropertyIterator(.{
                 .skip_empty_name = true,
                 .include_value = true,
             }).init(global, static_obj);
@@ -536,7 +536,7 @@ pub fn fromJS(
                 const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch bun.outOfMemory();
                 errdefer bun.default_allocator.free(path);
 
-                const value: JSC.JSValue = iter.value;
+                const value: jsc.JSValue = iter.value;
 
                 if (value.isUndefined()) {
                     continue;
@@ -1072,7 +1072,7 @@ pub fn fromJS(
 
 const UserRouteBuilder = struct {
     route: ServerConfig.RouteDeclaration,
-    callback: JSC.Strong.Optional = .empty,
+    callback: jsc.Strong.Optional = .empty,
 
     pub fn deinit(this: *UserRouteBuilder) void {
         this.route.deinit();
@@ -1084,14 +1084,14 @@ const string = []const u8;
 
 const WebSocketServerContext = @import("./WebSocketServerContext.zig");
 const std = @import("std");
-const AnyRoute = @import("../server.zig").AnyRoute;
 
 const bun = @import("bun");
 const HTTP = bun.http;
-const JSC = bun.JSC;
 const JSError = bun.JSError;
 const URL = bun.URL;
 const assert = bun.assert;
+const jsc = bun.jsc;
 const strings = bun.strings;
 const uws = bun.uws;
-const AnyServer = JSC.API.AnyServer;
+const AnyRoute = bun.api.server.AnyRoute;
+const AnyServer = jsc.API.AnyServer;

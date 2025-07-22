@@ -2199,10 +2199,10 @@ const Integrity = @import("../integrity.zig").Integrity;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const OOM = bun.OOM;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const Expr = bun.js_parser.Expr;
 

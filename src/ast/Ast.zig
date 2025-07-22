@@ -121,9 +121,9 @@ const bun = @import("bun");
 const BabyList = bun.BabyList;
 const ImportRecord = bun.ImportRecord;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const Ast = js_ast.Ast;
 const CharFreq = js_ast.CharFreq;
 const ExportsKind = js_ast.ExportsKind;

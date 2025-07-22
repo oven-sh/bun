@@ -1669,20 +1669,20 @@ pub const matchImpl = match;
 
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
-const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
-const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const match = @import("./match.zig").match;
-
-const Cursor = CodepointIterator.Cursor;
-const Codepoint = CodepointIterator.Cursor.CodePointType;
 
 const bun = @import("bun");
 const BunString = bun.String;
 const Syscall = bun.sys;
+const CodepointIterator = bun.strings.UnsignedCodepointIterator;
+const isAllAscii = bun.strings.isAllASCII;
 
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
-const ZigString = bun.JSC.ZigString;
+const jsc = bun.jsc;
+const Maybe = jsc.Maybe;
+const ZigString = bun.jsc.ZigString;
+
+const Cursor = CodepointIterator.Cursor;
+const Codepoint = CodepointIterator.Cursor.CodePointType;
 
 const std = @import("std");
 const ArrayList = std.ArrayListUnmanaged;

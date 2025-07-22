@@ -429,14 +429,14 @@ pub const Resolution = extern struct {
 };
 
 const std = @import("std");
-const strings = @import("../string_immutable.zig");
 const Repository = @import("./repository.zig").Repository;
 const VersionedURL = @import("./versioned_url.zig").VersionedURL;
-const string = @import("../string_types.zig").string;
 
 const bun = @import("bun");
 const OOM = bun.OOM;
+const strings = bun.strings;
 const Dependency = bun.install.Dependency;
+const string = bun.string_types.Str;
 
 const Semver = bun.Semver;
 const String = Semver.String;

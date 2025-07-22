@@ -87,5 +87,5 @@ const std = @import("std");
 const bun = @import("bun");
 const AbsPath = bun.AbsPath;
 const OOM = bun.OOM;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;

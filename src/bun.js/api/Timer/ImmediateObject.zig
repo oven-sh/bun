@@ -1,10 +1,10 @@
-const ImmediateObject = @This();
+const Self = @This();
 
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
-pub const js = JSC.Codegen.JSImmediate;
+pub const js = jsc.Codegen.JSImmediate;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -23,7 +23,7 @@ pub fn init(
     arguments: JSValue,
 ) JSValue {
     // internals are initialized by init()
-    const immediate = bun.new(ImmediateObject, .{ .ref_count = .init(), .internals = undefined });
+    const immediate = bun.new(Self, .{ .ref_count = .init(), .internals = undefined });
     const js_value = immediate.toJS(globalThis);
     defer js_value.ensureStillAlive();
     immediate.internals.init(
@@ -48,59 +48,59 @@ pub fn init(
     return js_value;
 }
 
-fn deinit(this: *ImmediateObject) void {
-    this.internals.deinit();
-    bun.destroy(this);
+fn deinit(self: *Self) void {
+    self.internals.deinit();
+    bun.destroy(self);
 }
 
-pub fn constructor(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !*ImmediateObject {
+pub fn constructor(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) !*Self {
     _ = callFrame;
     return globalObject.throw("Immediate is not constructible", .{});
 }
 
 /// returns true if an exception was thrown
-pub fn runImmediateTask(this: *ImmediateObject, vm: *VirtualMachine) bool {
-    return this.internals.runImmediateTask(vm);
+pub fn runImmediateTask(self: *Self, vm: *VirtualMachine) bool {
+    return self.internals.runImmediateTask(vm);
 }
 
-pub fn toPrimitive(this: *ImmediateObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-    return this.internals.toPrimitive();
+pub fn toPrimitive(self: *Self, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    return self.internals.toPrimitive();
 }
 
-pub fn doRef(this: *ImmediateObject, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
-    return this.internals.doRef(globalThis, callFrame.this());
+pub fn doRef(self: *Self, globalThis: *JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
+    return self.internals.doRef(globalThis, callFrame.this());
 }
 
-pub fn doUnref(this: *ImmediateObject, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
-    return this.internals.doUnref(globalThis, callFrame.this());
+pub fn doUnref(self: *Self, globalThis: *JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
+    return self.internals.doUnref(globalThis, callFrame.this());
 }
 
-pub fn hasRef(this: *ImmediateObject, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-    return this.internals.hasRef();
+pub fn hasRef(self: *Self, _: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    return self.internals.hasRef();
 }
 
-pub fn finalize(this: *ImmediateObject) void {
-    this.internals.finalize();
+pub fn finalize(self: *Self) void {
+    self.internals.finalize();
 }
 
-pub fn getDestroyed(this: *ImmediateObject, globalThis: *JSGlobalObject) JSValue {
+pub fn getDestroyed(self: *Self, globalThis: *JSGlobalObject) JSValue {
     _ = globalThis;
-    return .jsBoolean(this.internals.getDestroyed());
+    return .jsBoolean(self.internals.getDestroyed());
 }
 
-pub fn dispose(this: *ImmediateObject, globalThis: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-    this.internals.cancel(globalThis.bunVM());
+pub fn dispose(self: *Self, globalThis: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    self.internals.cancel(globalThis.bunVM());
     return .js_undefined;
 }
 
 const Debugger = @import("../../Debugger.zig");
 const bun = @import("bun");
 
-const EventLoopTimer = @import("../Timer.zig").EventLoopTimer;
-const ID = @import("../Timer.zig").ID;
-const TimerObjectInternals = @import("../Timer.zig").TimerObjectInternals;
+const EventLoopTimer = bun.api.Timer.EventLoopTimer;
+const ID = bun.api.Timer.ID;
+const TimerObjectInternals = bun.api.Timer.TimerObjectInternals;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;

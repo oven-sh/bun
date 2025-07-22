@@ -246,7 +246,7 @@ pub const RunCommand = struct {
         }
 
         if (!use_system_shell) {
-            const mini = bun.JSC.MiniEventLoop.initGlobal(env);
+            const mini = bun.jsc.MiniEventLoop.initGlobal(env);
             const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, copy_script.items, cwd) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
@@ -294,7 +294,7 @@ pub const RunCommand = struct {
             .ipc = ipc_fd,
 
             .windows = if (Environment.isWindows) .{
-                .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
+                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env)),
             },
         }) catch |err| {
             if (!silent) {
@@ -458,7 +458,7 @@ pub const RunCommand = struct {
             .use_execve_on_macos = silent,
 
             .windows = if (Environment.isWindows) .{
-                .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
+                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env)),
             },
         }) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -574,7 +574,7 @@ pub const RunCommand = struct {
         const args = ctx.args;
 
         var this_transpiler = try transpiler.Transpiler.init(ctx.allocator, ctx.log, args, null);
-        this_transpiler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_transpiler.options.env.behavior = api.DotEnvBehavior.load_all;
         this_transpiler.options.env.prefix = "";
 
         this_transpiler.resolver.care_about_bin_folder = true;
@@ -757,7 +757,7 @@ pub const RunCommand = struct {
     ) !*DirInfo {
         const args = ctx.args;
         this_transpiler.* = try transpiler.Transpiler.init(ctx.allocator, ctx.log, args, env);
-        this_transpiler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_transpiler.options.env.behavior = api.DotEnvBehavior.load_all;
         this_transpiler.env.quiet = true;
         this_transpiler.options.env.prefix = "";
 
@@ -957,7 +957,7 @@ pub const RunCommand = struct {
         const args = ctx.args;
 
         var this_transpiler = transpiler.Transpiler.init(ctx.allocator, ctx.log, args, null) catch return shell_out;
-        this_transpiler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_transpiler.options.env.behavior = api.DotEnvBehavior.load_all;
         this_transpiler.options.env.prefix = "";
         this_transpiler.env.quiet = true;
 
@@ -1291,7 +1291,7 @@ pub const RunCommand = struct {
         }
 
         if (!ctx.debug.loaded_bunfig) {
-            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+            bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
         }
 
         _ = _bootAndHandleError(ctx, absolute_script_path.?, null);
@@ -1351,7 +1351,7 @@ pub const RunCommand = struct {
         this_transpiler.env.map.put("npm_command", "run-script") catch unreachable;
 
         if (!ctx.debug.loaded_bunfig) {
-            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+            bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
         }
 
         // check for empty command
@@ -1716,9 +1716,7 @@ const ShellCompletions = @import("./shell_completions.zig");
 const options = @import("../options.zig");
 const resolve_path = @import("../resolver/resolve_path.zig");
 const std = @import("std");
-const Api = @import("../api/schema.zig").Api;
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const Run = @import("../bun_js.zig").Run;
 const which = @import("../which.zig").which;
 const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 const windows = std.os.windows;
@@ -1726,16 +1724,18 @@ const windows = std.os.windows;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSC = bun.JSC;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const clap = bun.clap;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
-const stringZ = bun.stringZ;
+const jsc = bun.jsc;
+const string = bun.Str;
+const stringZ = bun.StrZ;
 const strings = bun.strings;
 const transpiler = bun.transpiler;
+const Run = bun.bun_js.Run;
+const api = bun.schema.api;
 
-const CLI = bun.CLI;
+const CLI = bun.cli;
 const Arguments = CLI.Arguments;
 const Command = CLI.Command;

@@ -11,7 +11,7 @@ pub fn fromBinary(bytes: []const u8) f64 {
     return (double_microseconds / std.time.us_per_ms) + POSTGRES_EPOCH_DATE;
 }
 
-pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) bun.JSError!i64 {
+pub fn fromJS(globalObject: *jsc.JSGlobalObject, value: JSValue) bun.JSError!i64 {
     const double_value = if (value.isDate())
         value.getUnixTimestamp()
     else if (value.isNumber())
@@ -27,7 +27,7 @@ pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) bun.JSError!i64
 }
 
 pub fn toJS(
-    globalObject: *JSC.JSGlobalObject,
+    globalObject: *jsc.JSGlobalObject,
     value: anytype,
 ) JSValue {
     switch (@TypeOf(value)) {
@@ -51,5 +51,5 @@ const Data = @import("../Data.zig").Data;
 const int_types = @import("./int_types.zig");
 const short = int_types.short;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

@@ -6,7 +6,7 @@ pub const DOMURL = opaque {
     }
 
     pub fn cast(value: JSValue) ?*DOMURL {
-        return cast_(value, JSC.VirtualMachine.get().global.vm());
+        return cast_(value, jsc.VirtualMachine.get().global.vm());
     }
 
     pub fn href_(this: *DOMURL, out: *ZigString) void {
@@ -52,7 +52,7 @@ pub const DOMURL = opaque {
 const bun = @import("bun");
 const String = bun.String;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const VM = JSC.VM;
-const ZigString = JSC.ZigString;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const VM = jsc.VM;
+const ZigString = jsc.ZigString;

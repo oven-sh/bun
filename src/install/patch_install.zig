@@ -590,8 +590,8 @@ const Output = bun.Output;
 const PackageManager = bun.PackageManager;
 const Progress = bun.Progress;
 const ThreadPool = bun.ThreadPool;
-const string = bun.string;
-const stringZ = bun.stringZ;
+const string = bun.Str;
+const stringZ = bun.StrZ;
 const String = bun.Semver.String;
 const Task = bun.install.Task;
 

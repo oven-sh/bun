@@ -483,7 +483,7 @@ pub fn updatePackageJSONAndInstallCatchError(
             error.InstallFailed,
             error.InvalidPackageJSON,
             => {
-                const log = &bun.CLI.Cli.log_;
+                const log = &bun.cli.Cli.log_;
                 log.print(bun.Output.errorWriter()) catch {};
                 bun.Global.exit(1);
                 return;
@@ -589,7 +589,7 @@ fn updatePackageJSONAndInstallAndCLI(
 
                 if (needs_to_print) {
                     const MoreInstructions = struct {
-                        shell: bun.CLI.ShellCompletions.Shell = .unknown,
+                        shell: bun.cli.ShellCompletions.Shell = .unknown,
                         folder: []const u8,
 
                         // Convert "/Users/Jarred Sumner" => "/Users/Jarred\ Sumner"
@@ -654,7 +654,7 @@ fn updatePackageJSONAndInstallAndCLI(
                     ,
                         .{
                             bun.fmt.quote(manager.track_installed_bin.basename),
-                            MoreInstructions{ .shell = bun.CLI.ShellCompletions.Shell.fromEnv([]const u8, bun.getenvZ("SHELL") orelse ""), .folder = manager.options.bin_path },
+                            MoreInstructions{ .shell = bun.cli.ShellCompletions.Shell.fromEnv([]const u8, bun.getenvZ("SHELL") orelse ""), .folder = manager.options.bin_path },
                         },
                     );
                     Output.flush();
@@ -709,7 +709,7 @@ pub fn updatePackageJSONAndInstall(
         };
 
         // This runs the bundler.
-        try bun.CLI.BuildCommand.exec(bun.CLI.Command.get(), &fetcher);
+        try bun.cli.BuildCommand.exec(bun.cli.Command.get(), &fetcher);
         return;
     }
 
@@ -721,14 +721,14 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const JSPrinter = bun.js_printer;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const File = bun.sys.File;
 const PackageNameHash = bun.install.PackageNameHash;
 

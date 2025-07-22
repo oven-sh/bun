@@ -17,7 +17,7 @@ var title_mutex = bun.Mutex{};
 pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
     title_mutex.lock();
     defer title_mutex.unlock();
-    const str = bun.CLI.Bun__Node__ProcessTitle;
+    const str = bun.cli.Bun__Node__ProcessTitle;
     title.* = ZigString.init(str orelse "bun");
 }
 
@@ -25,25 +25,25 @@ pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
 pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *ZigString) callconv(.C) JSValue {
     title_mutex.lock();
     defer title_mutex.unlock();
-    if (bun.CLI.Bun__Node__ProcessTitle) |_| bun.default_allocator.free(bun.CLI.Bun__Node__ProcessTitle.?);
-    bun.CLI.Bun__Node__ProcessTitle = newvalue.dupe(bun.default_allocator) catch bun.outOfMemory();
+    if (bun.cli.Bun__Node__ProcessTitle) |_| bun.default_allocator.free(bun.cli.Bun__Node__ProcessTitle.?);
+    bun.cli.Bun__Node__ProcessTitle = newvalue.dupe(bun.default_allocator) catch bun.outOfMemory();
     return newvalue.toJS(globalObject);
 }
 
-pub fn createArgv0(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-    return JSC.ZigString.fromUTF8(bun.argv[0]).toJS(globalObject);
+pub fn createArgv0(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+    return jsc.ZigString.fromUTF8(bun.argv[0]).toJS(globalObject);
 }
 
-pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn getExecPath(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
     const out = bun.selfExePath() catch {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return createArgv0(globalObject);
     };
 
-    return JSC.ZigString.fromUTF8(out).toJS(globalObject);
+    return jsc.ZigString.fromUTF8(out).toJS(globalObject);
 }
 
-fn createExecArgv(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     var sfb = std.heap.stackFallback(4096, globalObject.allocator());
     const temp_alloc = sfb.get();
     const vm = globalObject.bunVM();
@@ -51,7 +51,7 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     if (vm.worker) |worker| {
         // was explicitly overridden for the worker?
         if (worker.execArgv) |execArgv| {
-            const array = try JSC.JSValue.createEmptyArray(globalObject, execArgv.len);
+            const array = try jsc.JSValue.createEmptyArray(globalObject, execArgv.len);
             for (0..execArgv.len) |i| {
                 try array.putIndex(globalObject, @intCast(i), bun.String.init(execArgv[i]).toJS(globalObject));
             }
@@ -84,7 +84,7 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         // A set of execArgv args consume an extra argument, so we do not want to
         // confuse these with script names.
         const map = bun.ComptimeStringMap(void, comptime brk: {
-            const auto_params = bun.CLI.Arguments.auto_params;
+            const auto_params = bun.cli.Arguments.auto_params;
             const KV = struct { []const u8, void };
             var entries: [auto_params.len]KV = undefined;
             var i = 0;
@@ -118,12 +118,12 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     return bun.String.toJSArray(globalObject, args.items);
 }
 
-fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+fn createArgv(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
     const vm = globalObject.bunVM();
 
     // Allocate up to 32 strings in stack
     var stack_fallback_allocator = std.heap.stackFallback(
-        32 * @sizeOf(JSC.ZigString) + (bun.MAX_PATH_BYTES + 1) + 32,
+        32 * @sizeOf(jsc.ZigString) + (bun.MAX_PATH_BYTES + 1) + 32,
         bun.default_allocator,
     );
     const allocator = stack_fallback_allocator.get();
@@ -194,27 +194,27 @@ pub fn getExecArgv(global: *JSGlobalObject) callconv(.c) JSValue {
     return Bun__Process__getExecArgv(global);
 }
 
-pub fn getEval(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn getEval(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
     const vm = globalObject.bunVM();
     if (vm.module_loader.eval_source) |source| {
-        return JSC.ZigString.init(source.contents).toJS(globalObject);
+        return jsc.ZigString.init(source.contents).toJS(globalObject);
     }
     return .js_undefined;
 }
 
-pub const getCwd = JSC.host_fn.wrap1(getCwd_);
-fn getCwd_(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+pub const getCwd = jsc.host_fn.wrap1(getCwd_);
+fn getCwd_(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     var buf: bun.PathBuffer = undefined;
     switch (bun.api.node.path.getCwd(&buf)) {
-        .result => |r| return JSC.ZigString.init(r).withEncoding().toJS(globalObject),
+        .result => |r| return jsc.ZigString.init(r).withEncoding().toJS(globalObject),
         .err => |e| {
             return globalObject.throwValue(e.toJS(globalObject));
         },
     }
 }
 
-pub const setCwd = JSC.host_fn.wrap2(setCwd_);
-fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JSC.JSValue {
+pub const setCwd = jsc.host_fn.wrap2(setCwd_);
+fn setCwd_(globalObject: *jsc.JSGlobalObject, to: *jsc.ZigString) bun.JSError!jsc.JSValue {
     if (to.len == 0) {
         return globalObject.throwInvalidArguments("Expected path to be a non-empty string", .{});
     }
@@ -258,7 +258,7 @@ fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JS
 }
 
 // TODO(@190n) this may need to be noreturn
-pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.c) void {
+pub fn exit(globalObject: *jsc.JSGlobalObject, code: u8) callconv(.c) void {
     var vm = globalObject.bunVM();
     vm.exit_handler.exit_code = code;
     if (vm.worker) |worker| {
@@ -342,7 +342,7 @@ const Environment = bun.Environment;
 const Syscall = bun.sys;
 const strings = bun.strings;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const ZigString = JSC.ZigString;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

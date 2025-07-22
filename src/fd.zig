@@ -323,7 +323,7 @@ pub const FD = packed struct(backing_int) {
     }
     // If a non-number is given, returns null.
     // If the given number is not an fd (negative), an error is thrown and error.JSException is returned.
-    pub fn fromJSValidated(value: JSValue, global: *JSC.JSGlobalObject) bun.JSError!?FD {
+    pub fn fromJSValidated(value: JSValue, global: *jsc.JSGlobalObject) bun.JSError!?FD {
         if (!value.isNumber())
             return null;
         const float = value.asNumber();
@@ -344,10 +344,10 @@ pub const FD = packed struct(backing_int) {
     }
     /// After calling, the input file descriptor is no longer valid and must not be used.
     /// If an error is thrown, the file descriptor is cleaned up for you.
-    pub fn toJS(any_fd: FD, global: *JSC.JSGlobalObject) JSValue {
+    pub fn toJS(any_fd: FD, global: *jsc.JSGlobalObject) JSValue {
         const uv_owned_fd = any_fd.makeLibUVOwned() catch {
             any_fd.close();
-            return global.throwValue((JSC.SystemError{
+            return global.throwValue((jsc.SystemError{
                 .message = bun.String.static("EMFILE, too many open files"),
                 .code = bun.String.static("EMFILE"),
             }).toErrorInstance(global)) catch .zero;
@@ -689,8 +689,8 @@ const allow_assert = Environment.allow_assert;
 const is_posix = Environment.isPosix;
 const os = Environment.os;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
 
 const libuv = bun.windows.libuv;
 const uv_file = bun.windows.libuv.uv_file;

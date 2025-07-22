@@ -7,6 +7,6 @@ pub const PmWhyCommand = struct {
 const WhyCommand = @import("./why_command.zig").WhyCommand;
 
 const bun = @import("bun");
-const string = bun.string;
-const Command = bun.CLI.Command;
+const string = bun.Str;
+const Command = bun.cli.Command;
 const PackageManager = bun.install.PackageManager;

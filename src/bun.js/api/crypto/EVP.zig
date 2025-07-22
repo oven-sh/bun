@@ -190,7 +190,7 @@ pub fn byNameAndEngine(engine: *BoringSSL.ENGINE, name: []const u8) ?EVP {
     return null;
 }
 
-pub fn byName(name: ZigString, global: *JSC.JSGlobalObject) ?EVP {
+pub fn byName(name: ZigString, global: *jsc.JSGlobalObject) ?EVP {
     var name_str = name.toSlice(global.allocator());
     defer name_str.deinit();
     return byNameAndEngine(global.bunVM().rareData().boringEngine(), name_str.slice());
@@ -211,6 +211,6 @@ const bun = @import("bun");
 const strings = bun.strings;
 const BoringSSL = bun.BoringSSL.c;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ZigString = JSC.ZigString;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const ZigString = jsc.ZigString;

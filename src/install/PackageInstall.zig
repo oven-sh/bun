@@ -496,7 +496,7 @@ pub const PackageInstall = struct {
         }
     };
 
-    threadlocal var node_fs_for_package_installer: bun.JSC.Node.fs.NodeFS = .{};
+    threadlocal var node_fs_for_package_installer: bun.jsc.Node.fs.NodeFS = .{};
 
     fn initInstallDir(this: *@This(), state: *InstallDirState, destination_dir: std.fs.Dir, method: Method) Result {
         const destbase = destination_dir;
@@ -740,7 +740,7 @@ pub const PackageInstall = struct {
         src: [:0]bun.OSPathChar,
         dest: [:0]bun.OSPathChar,
         basename: u16,
-        task: bun.JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
+        task: bun.jsc.WorkPoolTask = .{ .callback = &runFromThreadPool },
         err: ?anyerror = null,
 
         pub const Queue = NewTaskQueue(@This());
@@ -776,7 +776,7 @@ pub const PackageInstall = struct {
             });
         }
 
-        pub fn runFromThreadPool(task: *bun.JSC.WorkPoolTask) void {
+        pub fn runFromThreadPool(task: *bun.jsc.WorkPoolTask) void {
             var iter: *@This() = @fieldParentPtr("task", task);
             defer queue.completeOne();
             if (iter.run()) |err| {
@@ -1137,9 +1137,9 @@ pub const PackageInstall = struct {
                     pub const new = bun.TrivialNew(@This());
 
                     absolute_path: []const u8,
-                    task: JSC.WorkPoolTask = .{ .callback = &run },
+                    task: jsc.WorkPoolTask = .{ .callback = &run },
 
-                    pub fn run(task: *JSC.WorkPoolTask) void {
+                    pub fn run(task: *jsc.WorkPoolTask) void {
                         var unintall_task: *@This() = @fieldParentPtr("task", task);
                         var debug_timer = bun.Output.DebugTimer.start();
                         defer {
@@ -1471,17 +1471,17 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSC = bun.JSC;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
 const Syscall = bun.sys;
 const ThreadPool = bun.ThreadPool;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
+const string = bun.Str;
+const stringZ = bun.StrZ;
 const strings = bun.strings;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const FileSystem = bun.fs.FileSystem;

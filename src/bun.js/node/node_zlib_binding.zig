@@ -1,10 +1,10 @@
 const debug = bun.Output.scoped(.zlib, true);
 
-pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn crc32(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments_old(2).ptr;
 
     const data: ZigString.Slice = blk: {
-        const data: JSC.JSValue = arguments[0];
+        const data: jsc.JSValue = arguments[0];
 
         if (data == .zero) {
             return globalThis.throwInvalidArgumentTypeValue("data", "string or an instance of Buffer, TypedArray, or DataView", .js_undefined);
@@ -22,7 +22,7 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     defer data.deinit();
 
     const value: u32 = blk: {
-        const value: JSC.JSValue = arguments[1];
+        const value: jsc.JSValue = arguments[1];
         if (value == .zero) {
             break :blk 0;
         }
@@ -44,12 +44,12 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 
     // crc32 returns a u64 but the data will always be within a u32 range so the outer @intCast is always safe.
     const slice_u8 = data.slice();
-    return JSC.JSValue.jsNumber(@as(u32, @intCast(bun.zlib.crc32(value, slice_u8.ptr, @intCast(slice_u8.len)))));
+    return jsc.JSValue.jsNumber(@as(u32, @intCast(bun.zlib.crc32(value, slice_u8.ptr, @intCast(slice_u8.len)))));
 }
 
 pub fn CompressionStream(comptime T: type) type {
     return struct {
-        pub fn write(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn write(this: *T, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             const arguments = callframe.argumentsUndef(7).slice();
 
             if (arguments.len != 7) {
@@ -104,29 +104,29 @@ pub fn CompressionStream(comptime T: type) type {
             const vm = globalThis.bunVM();
             this.task = .{ .callback = &AsyncJob.runTask };
             this.poll_ref.ref(vm);
-            JSC.WorkPool.schedule(&this.task);
+            jsc.WorkPool.schedule(&this.task);
 
             return .js_undefined;
         }
 
         const AsyncJob = struct {
-            pub fn runTask(task: *JSC.WorkPoolTask) void {
+            pub fn runTask(task: *jsc.WorkPoolTask) void {
                 const this: *T = @fieldParentPtr("task", task);
                 AsyncJob.run(this);
             }
 
             pub fn run(this: *T) void {
-                const globalThis: *JSC.JSGlobalObject = this.globalThis;
+                const globalThis: *jsc.JSGlobalObject = this.globalThis;
                 const vm = globalThis.bunVMConcurrently();
 
                 this.stream.doWork();
 
-                vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
+                vm.enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.Task.init(this)));
             }
         };
 
         pub fn runFromJSThread(this: *T) void {
-            const global: *JSC.JSGlobalObject = this.globalThis;
+            const global: *jsc.JSGlobalObject = this.globalThis;
             const vm = global.bunVM();
             this.poll_ref.unref(vm);
             defer this.deref();
@@ -148,14 +148,14 @@ pub fn CompressionStream(comptime T: type) type {
             this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
             this_value.ensureStillAlive();
 
-            const write_callback: JSC.JSValue = T.js.writeCallbackGetCached(this_value).?;
+            const write_callback: jsc.JSValue = T.js.writeCallbackGetCached(this_value).?;
 
             vm.eventLoop().runCallback(write_callback, global, this_value, &.{});
 
             if (this.pending_close) _ = closeInternal(this);
         }
 
-        pub fn writeSync(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn writeSync(this: *T, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             const arguments = callframe.argumentsUndef(7).slice();
 
             if (arguments.len != 7) {
@@ -212,7 +212,7 @@ pub fn CompressionStream(comptime T: type) type {
             return .js_undefined;
         }
 
-        pub fn reset(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn reset(this: *T, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             const err = this.stream.reset();
             if (err.isError()) {
                 try emitError(this, globalThis, callframe.this(), err);
@@ -220,7 +220,7 @@ pub fn CompressionStream(comptime T: type) type {
             return .js_undefined;
         }
 
-        pub fn close(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn close(this: *T, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             _ = globalThis;
             _ = callframe;
             closeInternal(this);
@@ -238,32 +238,32 @@ pub fn CompressionStream(comptime T: type) type {
             this.stream.close();
         }
 
-        pub fn setOnError(_: *T, this_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        pub fn setOnError(_: *T, this_value: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
             if (value.isFunction()) {
                 T.js.errorCallbackSetCached(this_value, globalObject, value.withAsyncContextIfNeeded(globalObject));
             }
         }
 
-        pub fn getOnError(_: *T, this_value: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn getOnError(_: *T, this_value: jsc.JSValue, _: *jsc.JSGlobalObject) jsc.JSValue {
             return T.js.errorCallbackGetCached(this_value) orelse .js_undefined;
         }
 
         /// returns true if no error was detected/emitted
-        fn checkError(this: *T, globalThis: *JSC.JSGlobalObject, this_value: JSC.JSValue) !bool {
+        fn checkError(this: *T, globalThis: *jsc.JSGlobalObject, this_value: jsc.JSValue) !bool {
             const err = this.stream.getErrorInfo();
             if (!err.isError()) return true;
             try emitError(this, globalThis, this_value, err);
             return false;
         }
 
-        pub fn emitError(this: *T, globalThis: *JSC.JSGlobalObject, this_value: JSC.JSValue, err_: Error) !void {
+        pub fn emitError(this: *T, globalThis: *jsc.JSGlobalObject, this_value: jsc.JSValue, err_: Error) !void {
             var msg_str = bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.msg, 0) orelse ""}) catch bun.outOfMemory();
             const msg_value = msg_str.transferToJS(globalThis);
-            const err_value = JSC.jsNumber(err_.err);
+            const err_value = jsc.jsNumber(err_.err);
             var code_str = bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.code, 0) orelse ""}) catch bun.outOfMemory();
             const code_value = code_str.transferToJS(globalThis);
 
-            const callback: JSC.JSValue = T.js.errorCallbackGetCached(this_value) orelse
+            const callback: jsc.JSValue = T.js.errorCallbackGetCached(this_value) orelse
                 Output.panic("Assertion failure: cachedErrorCallback is null in node:zlib binding", .{});
             _ = try callback.call(globalThis, this_value, &.{ msg_value, err_value, code_value });
 
@@ -277,24 +277,24 @@ pub fn CompressionStream(comptime T: type) type {
     };
 }
 
-pub const NativeZlib = JSC.Codegen.JSNativeZlib.getConstructor;
+pub const NativeZlib = jsc.Codegen.JSNativeZlib.getConstructor;
 
-pub const NativeBrotli = JSC.Codegen.JSNativeBrotli.getConstructor;
+pub const NativeBrotli = jsc.Codegen.JSNativeBrotli.getConstructor;
 
-pub const NativeZstd = JSC.Codegen.JSNativeZstd.getConstructor;
+pub const NativeZstd = jsc.Codegen.JSNativeZstd.getConstructor;
 
 pub const CountedKeepAlive = struct {
     keep_alive: bun.Async.KeepAlive = .{},
     ref_count: u32 = 0,
 
-    pub fn ref(this: *@This(), vm: *JSC.VirtualMachine) void {
+    pub fn ref(this: *@This(), vm: *jsc.VirtualMachine) void {
         if (this.ref_count == 0) {
             this.keep_alive.ref(vm);
         }
         this.ref_count += 1;
     }
 
-    pub fn unref(this: *@This(), vm: *JSC.VirtualMachine) void {
+    pub fn unref(this: *@This(), vm: *jsc.VirtualMachine) void {
         this.ref_count -= 1;
         if (this.ref_count == 0) {
             this.keep_alive.unref(vm);
@@ -330,8 +330,8 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Output = bun.Output;
-const string = bun.string;
+const string = bun.Str;
 const Buffer = bun.api.node.Buffer;
 
-const JSC = bun.JSC;
-const ZigString = JSC.ZigString;
+const jsc = bun.jsc;
+const ZigString = jsc.ZigString;

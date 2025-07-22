@@ -302,5 +302,5 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;

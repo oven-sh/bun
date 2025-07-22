@@ -1405,10 +1405,10 @@ const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
 const Syscall = bun.sys;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const FileSystem = bun.fs.FileSystem;
 const String = bun.Semver.String;
 

@@ -259,7 +259,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
 
     // We store based on the option value rather than option type,
     // preserving the users intent for author to deal with.
-    const new_value = if (value.isUndefined()) JSC.jsBoolean(!negative) else value;
+    const new_value = if (value.isUndefined()) jsc.jsBoolean(!negative) else value;
 
     const is_multiple = if (option_idx) |idx| options[idx].multiple else false;
     if (is_multiple) {
@@ -282,7 +282,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
 fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.ArrayList(OptionDefinition)) bun.JSError!void {
     try validators.validateObject(globalThis, options_obj, "options", .{}, .{});
 
-    var iter = try JSC.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(
+    var iter = try jsc.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(
         globalThis,
         // SAFETY: validateObject ensures it's an object
         options_obj.getObject().?,
@@ -633,12 +633,12 @@ const ParseArgsState = struct {
 };
 
 comptime {
-    const parseArgsFn = JSC.toJSHostFn(parseArgs);
+    const parseArgsFn = jsc.toJSHostFn(parseArgs);
     @export(&parseArgsFn, .{ .name = "Bun__NodeUtil__jsParseArgs" });
 }
 
-pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-    JSC.markBinding(@src());
+pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    jsc.markBinding(@src());
     const config_value = callframe.argumentsAsArray(1)[0];
     //
     // Phase 0: parse the config object
@@ -660,7 +660,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     // Phase 0.B: Parse and validate config
 
     const config_strict: JSValue = (if (config) |c| try c.getOwn(globalThis, "strict") else null) orelse JSValue.jsBoolean(true);
-    var config_allow_positionals: JSValue = if (config) |c| try c.getOwn(globalThis, "allowPositionals") orelse JSC.jsBoolean(!config_strict.toBoolean()) else JSC.jsBoolean(!config_strict.toBoolean());
+    var config_allow_positionals: JSValue = if (config) |c| try c.getOwn(globalThis, "allowPositionals") orelse jsc.jsBoolean(!config_strict.toBoolean()) else jsc.jsBoolean(!config_strict.toBoolean());
     const config_return_tokens: JSValue = (if (config) |c| try c.getOwn(globalThis, "tokens") else null) orelse JSValue.jsBoolean(false);
     const config_allow_negative: JSValue = if (config) |c| try c.getOwn(globalThis, "allowNegative") orelse .false else .false;
     const config_options: JSValue = if (config) |c| try c.getOwn(globalThis, "options") orelse .js_undefined else .js_undefined;
@@ -668,7 +668,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     const strict = try validators.validateBoolean(globalThis, config_strict, "strict", .{});
 
     if (config_allow_positionals.isUndefinedOrNull()) {
-        config_allow_positionals = JSC.jsBoolean(!strict);
+        config_allow_positionals = jsc.jsBoolean(!strict);
     }
 
     const allow_positionals = try validators.validateBoolean(globalThis, config_allow_positionals, "allowPositionals", .{});
@@ -695,8 +695,8 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 
     // note that "values" needs to have a null prototype instead of Object, to avoid issues such as "values.toString"` being defined
     const values = JSValue.createEmptyObjectWithNullPrototype(globalThis);
-    const positionals = try JSC.JSValue.createEmptyArray(globalThis, 0);
-    const tokens: JSValue = if (return_tokens) try JSC.JSValue.createEmptyArray(globalThis, 0) else .js_undefined;
+    const positionals = try jsc.JSValue.createEmptyArray(globalThis, 0);
+    const tokens: JSValue = if (return_tokens) try jsc.JSValue.createEmptyArray(globalThis, 0) else .js_undefined;
 
     var state = ParseArgsState{
         .globalThis = globalThis,
@@ -755,9 +755,9 @@ const isOptionLikeValue = utils.isOptionLikeValue;
 
 const bun = @import("bun");
 const String = bun.String;
-const string = bun.string;
+const string = bun.Str;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const ZigString = JSC.ZigString;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

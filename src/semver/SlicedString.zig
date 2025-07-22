@@ -40,7 +40,7 @@ pub inline fn sub(this: SlicedString, input: string) SlicedString {
 const bun = @import("bun");
 const Environment = bun.Environment;
 const assert = bun.assert;
-const string = bun.string;
+const string = bun.Str;
 
 const ExternalString = bun.Semver.ExternalString;
 const String = bun.Semver.String;

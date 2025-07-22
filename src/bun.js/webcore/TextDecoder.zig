@@ -18,7 +18,7 @@ ignore_bom: bool = false,
 fatal: bool = false,
 encoding: EncodingLabel = EncodingLabel.@"UTF-8",
 
-pub const js = JSC.Codegen.JSTextDecoder;
+pub const js = jsc.Codegen.JSTextDecoder;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -31,22 +31,22 @@ pub fn finalize(this: *TextDecoder) void {
 
 pub fn getIgnoreBOM(
     this: *TextDecoder,
-    _: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    return JSC.JSValue.jsBoolean(this.ignore_bom);
+    _: *jsc.JSGlobalObject,
+) jsc.JSValue {
+    return jsc.JSValue.jsBoolean(this.ignore_bom);
 }
 
 pub fn getFatal(
     this: *TextDecoder,
-    _: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    return JSC.JSValue.jsBoolean(this.fatal);
+    _: *jsc.JSGlobalObject,
+) jsc.JSValue {
+    return jsc.JSValue.jsBoolean(this.fatal);
 }
 
 pub fn getEncoding(
     this: *TextDecoder,
-    globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
+    globalThis: *jsc.JSGlobalObject,
+) jsc.JSValue {
     return ZigString.init(EncodingLabel.getLabel(this.encoding)).toJS(globalThis);
 }
 const Vector16 = std.meta.Vector(16, u16);
@@ -155,7 +155,7 @@ pub fn decodeUTF16(
     return .{ output, saw_error };
 }
 
-pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn decode(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(2).slice();
 
     const input_slice = input_slice: {
@@ -185,11 +185,11 @@ pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *J
     };
 }
 
-pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) bun.JSError!JSValue {
+pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, uint8array: *jsc.JSUint8Array) bun.JSError!JSValue {
     return this.decodeSlice(globalThis, uint8array.slice(), false);
 }
 
-fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {
+fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {
     switch (this.encoding) {
         EncodingLabel.latin1 => {
             if (strings.isAllASCII(buffer_slice)) {
@@ -277,7 +277,7 @@ fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice
     }
 }
 
-pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*TextDecoder {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*TextDecoder {
     const encoding_value, const options_value = callframe.argumentsAsArray(2);
 
     var decoder = TextDecoder{};
@@ -324,10 +324,10 @@ const std = @import("std");
 const bun = @import("bun");
 const strings = bun.strings;
 
-const JSC = bun.JSC;
-const ArrayBuffer = JSC.ArrayBuffer;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSUint8Array = JSC.JSUint8Array;
-const JSValue = JSC.JSValue;
-const ZigString = JSC.ZigString;
-const EncodingLabel = JSC.WebCore.EncodingLabel;
+const jsc = bun.jsc;
+const ArrayBuffer = jsc.ArrayBuffer;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSUint8Array = jsc.JSUint8Array;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;
+const EncodingLabel = jsc.WebCore.EncodingLabel;

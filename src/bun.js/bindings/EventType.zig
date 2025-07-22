@@ -28,4 +28,4 @@ pub const EventType = enum(u8) {
 };
 
 const bun = @import("bun");
-const string = bun.string;
+const string = bun.Str;

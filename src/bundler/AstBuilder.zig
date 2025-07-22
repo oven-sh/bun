@@ -339,9 +339,9 @@ pub const AstBuilder = struct {
     }
 };
 
-pub const Ref = @import("../ast/base.zig").Ref;
+pub const Ref = bun.ast.Ref;
 
-pub const Index = @import("../ast/base.zig").Index;
+pub const Index = bun.ast.Index;
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
@@ -349,17 +349,6 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 
 const options = @import("../options.zig");
 const std = @import("std");
-const BabyList = @import("../baby_list.zig").BabyList;
-
-const js_ast = @import("../js_ast.zig");
-const Binding = js_ast.Binding;
-const E = js_ast.E;
-const Expr = js_ast.Expr;
-const Part = js_ast.Part;
-const S = js_ast.S;
-const Scope = js_ast.Scope;
-const Stmt = js_ast.Stmt;
-const Symbol = js_ast.Symbol;
 
 const Logger = @import("../logger.zig");
 const Loc = Logger.Loc;
@@ -370,5 +359,16 @@ const ImportRecord = bun.ImportRecord;
 const Output = bun.Output;
 const js_parser = bun.js_parser;
 const renamer = bun.renamer;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
+const BabyList = bun.collections.BabyList;
+
+const js_ast = bun.ast;
+const Binding = js_ast.Binding;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const Part = js_ast.Part;
+const S = js_ast.S;
+const Scope = js_ast.Scope;
+const Stmt = js_ast.Stmt;
+const Symbol = js_ast.Symbol;

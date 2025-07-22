@@ -922,5 +922,5 @@ const defines = @import("./defines.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-const js_ast = bun.JSAst;
-const string = bun.string;
+const js_ast = bun.ast;
+const string = bun.Str;

@@ -3218,7 +3218,7 @@ pub const INPUT_RECORD = extern struct {
 };
 
 fn Bun__UVSignalHandle__init(
-    global: *bun.JSC.JSGlobalObject,
+    global: *bun.jsc.JSGlobalObject,
     signal_num: i32,
     callback: *const fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.C) void,
 ) callconv(.C) ?*libuv.uv_signal_t {
@@ -3492,7 +3492,7 @@ const FILE_DISPOSITION_ON_CLOSE: ULONG = 0x00000008;
 const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
 
 // Copy-paste of the standard library function except without unreachable.
-pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JSC.Maybe(void) {
+pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.jsc.Maybe(void) {
     const create_options_flags: ULONG = if (options.remove_dir)
         FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT
     else
@@ -3535,7 +3535,7 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
         0,
     );
     bun.sys.syslog("NtCreateFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
-    if (bun.JSC.Maybe(void).errnoSys(rc, .open)) |err| {
+    if (bun.jsc.Maybe(void).errnoSys(rc, .open)) |err| {
         return err;
     }
     defer _ = bun.windows.CloseHandle(tmp_handle);
@@ -3584,7 +3584,7 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
         );
         bun.sys.syslog("NtSetInformationFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
     }
-    if (bun.JSC.Maybe(void).errnoSys(rc, .NtSetInformationFile)) |err| {
+    if (bun.jsc.Maybe(void).errnoSys(rc, .NtSetInformationFile)) |err| {
         return err;
     }
 

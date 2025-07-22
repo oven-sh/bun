@@ -1,12 +1,12 @@
 //! MiniEventLoop: A lightweight event loop for non-JavaScript contexts
 //!
-//! This is a simplified version of JSC.EventLoop that provides event loop functionality
+//! This is a simplified version of jsc.EventLoop that provides event loop functionality
 //! without requiring a JavaScript runtime. It enables code reuse between JavaScript-enabled
 //! contexts (like `bun run`) and JavaScript-free contexts (like `bun build`, `bun install`,
 //! and the Bun Shell).
 //!
 //! Key characteristics:
-//! - Wraps the uSockets event loop, same as JSC.EventLoop
+//! - Wraps the uSockets event loop, same as jsc.EventLoop
 //! - Supports concurrent task execution via thread pools
 //! - Provides file polling capabilities for watching filesystem changes
 //! - Manages stdout/stderr streams without JavaScript bindings
@@ -29,7 +29,7 @@ file_polls_: ?*Async.FilePoll.Store = null,
 env: ?*bun.DotEnv.Loader = null,
 top_level_dir: []const u8 = "",
 after_event_loop_callback_ctx: ?*anyopaque = null,
-after_event_loop_callback: ?JSC.OpaqueCallback = null,
+after_event_loop_callback: ?jsc.OpaqueCallback = null,
 pipe_read_buffer: ?*PipeReadBuffer = null,
 stdout_store: ?*bun.webcore.Blob.Store = null,
 stderr_store: ?*bun.webcore.Blob.Store = null,
@@ -45,7 +45,7 @@ pub fn initGlobal(env: ?*bun.DotEnv.Loader) *MiniEventLoop {
     const loop = MiniEventLoop.init(bun.default_allocator);
     global = bun.default_allocator.create(MiniEventLoop) catch bun.outOfMemory();
     global.* = loop;
-    global.loop.internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(global));
+    global.loop.internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(global));
     global.env = env orelse bun.DotEnv.instance orelse env_loader: {
         const map = bun.default_allocator.create(bun.DotEnv.Map) catch bun.outOfMemory();
         map.* = bun.DotEnv.Map.init(bun.default_allocator);
@@ -212,7 +212,7 @@ pub fn enqueueTaskConcurrentWithExtraCtx(
     comptime Callback: fn (*Context, *ParentContext) void,
     comptime field: std.meta.FieldEnum(Context),
 ) void {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     const TaskType = MiniEventLoop.Task.New(Context, ParentContext, Callback);
     @field(ctx, @tagName(field)) = TaskType.init(ctx);
 
@@ -221,7 +221,7 @@ pub fn enqueueTaskConcurrentWithExtraCtx(
     this.loop.wakeup();
 }
 
-pub fn stderr(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
+pub fn stderr(this: *MiniEventLoop) *jsc.WebCore.Blob.Store {
     return this.stderr_store orelse brk: {
         var mode: bun.Mode = 0;
         const fd = bun.FD.fromUV(2);
@@ -233,7 +233,7 @@ pub fn stderr(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
             .err => {},
         }
 
-        const store = JSC.WebCore.Blob.Store.new(.{
+        const store = jsc.WebCore.Blob.Store.new(.{
             .ref_count = std.atomic.Value(u32).init(2),
             .allocator = bun.default_allocator,
             .data = .{
@@ -252,7 +252,7 @@ pub fn stderr(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
     };
 }
 
-pub fn stdout(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
+pub fn stdout(this: *MiniEventLoop) *jsc.WebCore.Blob.Store {
     return this.stdout_store orelse brk: {
         var mode: bun.Mode = 0;
         const fd = bun.FD.stdout();
@@ -264,7 +264,7 @@ pub fn stdout(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
             .err => {},
         }
 
-        const store = JSC.WebCore.Blob.Store.new(.{
+        const store = jsc.WebCore.Blob.Store.new(.{
             .ref_count = std.atomic.Value(u32).init(2),
             .allocator = bun.default_allocator,
             .data = .{
@@ -292,7 +292,7 @@ pub const JsVM = struct {
         };
     }
 
-    pub inline fn loop(this: @This()) *JSC.EventLoop {
+    pub inline fn loop(this: @This()) *jsc.EventLoop {
         return this.vm.event_loop;
     }
 
@@ -300,7 +300,7 @@ pub const JsVM = struct {
         return this.vm.rareData().filePolls(this.vm).get();
     }
 
-    pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
+    pub inline fn platformEventLoop(this: @This()) *jsc.PlatformEventLoop {
         return this.vm.event_loop_handle.?;
     }
 
@@ -314,15 +314,15 @@ pub const JsVM = struct {
 };
 
 pub const MiniVM = struct {
-    mini: *JSC.MiniEventLoop,
+    mini: *jsc.MiniEventLoop,
 
-    pub fn init(inner: *JSC.MiniEventLoop) MiniVM {
+    pub fn init(inner: *jsc.MiniEventLoop) MiniVM {
         return .{
             .mini = inner,
         };
     }
 
-    pub inline fn loop(this: @This()) *JSC.MiniEventLoop {
+    pub inline fn loop(this: @This()) *jsc.MiniEventLoop {
         return this.mini;
     }
 
@@ -330,7 +330,7 @@ pub const MiniVM = struct {
         return this.mini.filePolls().get();
     }
 
-    pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
+    pub inline fn platformEventLoop(this: @This()) *jsc.PlatformEventLoop {
         if (comptime Environment.isWindows) {
             return this.mini.loop.uv_loop;
         }
@@ -361,25 +361,25 @@ pub const EventLoopKind = enum {
     pub fn refType(comptime this: EventLoopKind) type {
         return switch (this) {
             .js => *VirtualMachine,
-            .mini => *JSC.MiniEventLoop,
+            .mini => *jsc.MiniEventLoop,
         };
     }
 
     pub fn getVm(comptime this: EventLoopKind) EventLoopKind.refType(this) {
         return switch (this) {
             .js => VirtualMachine.get(),
-            .mini => JSC.MiniEventLoop.global,
+            .mini => jsc.MiniEventLoop.global,
         };
     }
 };
 
 pub fn AbstractVM(inner: anytype) switch (@TypeOf(inner)) {
     *VirtualMachine => JsVM,
-    *JSC.MiniEventLoop => MiniVM,
+    *jsc.MiniEventLoop => MiniVM,
     else => @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner))),
 } {
     if (comptime @TypeOf(inner) == *VirtualMachine) return JsVM.init(inner);
-    if (comptime @TypeOf(inner) == *JSC.MiniEventLoop) return MiniVM.init(inner);
+    if (comptime @TypeOf(inner) == *jsc.MiniEventLoop) return MiniVM.init(inner);
     @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner)));
 }
 
@@ -391,7 +391,7 @@ const Environment = bun.Environment;
 const uws = bun.uws;
 const UnboundedQueue = bun.threading.UnboundedQueue;
 
-const JSC = bun.JSC;
-const AnyTaskWithExtraContext = JSC.AnyTaskWithExtraContext;
-const EventLoop = JSC.EventLoop;
-const VirtualMachine = JSC.VirtualMachine;
+const jsc = bun.jsc;
+const AnyTaskWithExtraContext = jsc.AnyTaskWithExtraContext;
+const EventLoop = jsc.EventLoop;
+const VirtualMachine = jsc.VirtualMachine;

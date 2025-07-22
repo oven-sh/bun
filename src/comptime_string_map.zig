@@ -191,7 +191,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         }
 
         /// Caller must ensure that the input is a string.
-        pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) bun.JSError!?V {
+        pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?V {
             if (comptime bun.Environment.allow_assert) {
                 if (!input.isString()) {
                     @panic("ComptimeStringMap.fromJS: input is not a string");
@@ -205,7 +205,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         }
 
         /// Caller must ensure that the input is a string.
-        pub fn fromJSCaseInsensitive(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) bun.JSError!?V {
+        pub fn fromJSCaseInsensitive(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?V {
             if (comptime bun.Environment.allow_assert) {
                 if (!input.isString()) {
                     @panic("ComptimeStringMap.fromJS: input is not a string");
@@ -552,10 +552,9 @@ const TestEnum2 = enum {
     });
 };
 
-const strings = @import("./string_immutable.zig");
-
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
+const strings = bun.strings;
 
 const std = @import("std");
 const mem = std.mem;

@@ -5,7 +5,7 @@ pub fn installHoistedPackages(
     install_root_dependencies: bool,
     log_level: PackageManager.Options.LogLevel,
 ) !PackageInstall.Summary {
-    bun.Analytics.Features.hoisted_bun_install += 1;
+    bun.analytics.Features.hoisted_bun_install += 1;
 
     const original_trees = this.lockfile.buffers.trees;
     const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
@@ -365,7 +365,7 @@ const Output = bun.Output;
 const Progress = bun.Progress;
 const strings = bun.strings;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const FileSystem = bun.fs.FileSystem;
 
 const install = bun.install;

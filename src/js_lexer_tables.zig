@@ -800,8 +800,8 @@ pub const jsxEntity = ComptimeStringMap(CodePoint, .{
 
 const std = @import("std");
 
-const CodePoint = @import("./string_types.zig").CodePoint;
-const string = @import("./string_types.zig").string;
-
 const bun = @import("bun");
 const ComptimeStringMap = bun.ComptimeStringMap;
+
+const CodePoint = bun.string_types.CodePoint;
+const string = bun.string_types.Str;

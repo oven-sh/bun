@@ -155,6 +155,9 @@ const ThreadPoolLib = bun.ThreadPool;
 const js_printer = bun.js_printer;
 const options = bun.options;
 
+const js_ast = bun.ast;
+const Symbol = js_ast.Symbol;
+
 const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
 const CompileResult = bundler.CompileResult;
@@ -162,6 +165,3 @@ const Index = bun.bundle_v2.Index;
 
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const PendingPartRange = LinkerContext.PendingPartRange;
-
-const js_ast = bun.js_ast;
-const Symbol = js_ast.Symbol;

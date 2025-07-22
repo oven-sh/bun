@@ -1771,7 +1771,7 @@ const Output = bun.Output;
 const Path = bun.path;
 const ThreadPool = bun.ThreadPool;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 
 const Semver = bun.Semver;

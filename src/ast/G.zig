@@ -213,10 +213,10 @@ const std = @import("std");
 const bun = @import("bun");
 const BabyList = bun.BabyList;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const TypeScript = bun.js_parser.TypeScript;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const BindingNodeIndex = js_ast.BindingNodeIndex;
 const Expr = js_ast.Expr;
 const ExprNodeIndex = js_ast.ExprNodeIndex;

@@ -166,10 +166,10 @@ pub const versions = @import("./generated_versions_list.zig");
 // 2. if I want to configure allocator later
 pub inline fn configureAllocator(_: AllocatorConfiguration) void {
     // if (comptime !use_mimalloc) return;
-    // const Mimalloc = @import("./allocators/mimalloc.zig");
-    // Mimalloc.mi_option_set_enabled(Mimalloc.mi_option_verbose, config.verbose);
-    // Mimalloc.mi_option_set_enabled(Mimalloc.mi_option_large_os_pages, config.long_running);
-    // if (!config.long_running) Mimalloc.mi_option_set(Mimalloc.mi_option_reset_delay, 0);
+    // const mimalloc = bun.mimalloc;
+    // mimalloc.mi_option_set_enabled(mimalloc.mi_option_verbose, config.verbose);
+    // mimalloc.mi_option_set_enabled(mimalloc.mi_option_large_os_pages, config.long_running);
+    // if (!config.long_running) mimalloc.mi_option_set(mimalloc.mi_option_reset_delay, 0);
 }
 
 pub fn notimpl() noreturn {
@@ -185,15 +185,15 @@ pub fn crash() noreturn {
 
 pub const BunInfo = struct {
     bun_version: string,
-    platform: Analytics.GenerateHeader.GeneratePlatform.Platform,
+    platform: analytics.GenerateHeader.GeneratePlatform.Platform,
 
-    const Analytics = @import("./analytics/analytics_thread.zig");
-    const JSON = bun.JSON;
-    const JSAst = bun.JSAst;
+    const analytics = bun.analytics;
+    const JSON = bun.json;
+    const JSAst = bun.ast;
     pub fn generate(comptime Bundler: type, _: Bundler, allocator: std.mem.Allocator) !JSAst.Expr {
         const info = BunInfo{
             .bun_version = Global.package_json_version,
-            .platform = Analytics.GenerateHeader.GeneratePlatform.forOS(),
+            .platform = analytics.GenerateHeader.GeneratePlatform.forOS(),
         };
 
         return try JSON.toAST(allocator, BunInfo, info);
@@ -208,7 +208,7 @@ comptime {
 }
 
 pub export fn Bun__onExit() void {
-    bun.JSC.Node.FSEvents.closeAndWait();
+    bun.jsc.Node.FSEvents.closeAndWait();
 
     runExitCallbacks();
     Output.flush();
@@ -228,6 +228,6 @@ const Environment = @import("./env.zig");
 const version_string = Environment.version_string;
 
 const bun = @import("bun");
-const Mimalloc = bun.Mimalloc;
-const string = bun.string;
+const Mimalloc = bun.mimalloc;
+const string = bun.Str;
 const use_mimalloc = bun.use_mimalloc;

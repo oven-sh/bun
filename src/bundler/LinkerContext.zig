@@ -1830,7 +1830,7 @@ pub const LinkerContext = struct {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
 
-                        if (c.resolver.opts.target == .browser and JSC.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
+                        if (c.resolver.opts.target == .browser and jsc.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
                             c.log.addRangeWarningFmtWithNote(
                                 source,
                                 r,
@@ -2463,11 +2463,11 @@ pub const LinkerContext = struct {
     }
 };
 
-pub const Ref = @import("../ast/base.zig").Ref;
+pub const Ref = bun.ast.Ref;
 pub const ThreadPoolLib = bun.ThreadPool;
 pub const Fs = @import("../fs.zig");
 
-pub const Index = @import("../ast/base.zig").Index;
+pub const Index = bun.ast.Index;
 const debugTreeShake = Output.scoped(.TreeShake, true);
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
@@ -2480,20 +2480,6 @@ const lex = @import("../js_lexer.zig");
 const linker = @import("../linker.zig");
 const runtime = @import("../runtime.zig");
 const std = @import("std");
-const BabyList = @import("../baby_list.zig").BabyList;
-
-const js_ast = @import("../js_ast.zig");
-const B = js_ast.B;
-const Binding = js_ast.Binding;
-const Dependency = js_ast.Dependency;
-const E = js_ast.E;
-const Expr = js_ast.Expr;
-const G = js_ast.G;
-const JSAst = js_ast.BundledAst;
-const Part = js_ast.Part;
-const S = js_ast.S;
-const Stmt = js_ast.Stmt;
-const Symbol = js_ast.Symbol;
 
 const Logger = @import("../logger.zig");
 const Loc = Logger.Loc;
@@ -2516,13 +2502,24 @@ const bake = bun.bake;
 const base64 = bun.base64;
 const renamer = bun.renamer;
 const sourcemap = bun.sourcemap;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const sync = bun.threading;
 const AutoBitSet = bun.bit_set.AutoBitSet;
+const BabyList = bun.collections.BabyList;
 
-const JSC = bun.JSC;
-const EventLoop = bun.JSC.AnyEventLoop;
+const js_ast = bun.ast;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const Dependency = js_ast.Dependency;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const JSAst = js_ast.BundledAst;
+const Part = js_ast.Part;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;
+const Symbol = js_ast.Symbol;
 
 const bundler = bun.bundle_v2;
 const AdditionalFile = bundler.AdditionalFile;
@@ -2544,3 +2541,6 @@ const StableRef = bundler.StableRef;
 const WrapKind = bundler.WrapKind;
 const genericPathWithPrettyInitialized = bundler.genericPathWithPrettyInitialized;
 const logPartDependencyTree = bundler.logPartDependencyTree;
+
+const jsc = bun.jsc;
+const EventLoop = bun.jsc.AnyEventLoop;

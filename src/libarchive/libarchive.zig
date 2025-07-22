@@ -621,5 +621,5 @@ const MutableString = bun.MutableString;
 const Output = bun.Output;
 const c = bun.c;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;

@@ -1950,8 +1950,8 @@ pub const Path = struct {
 // pub fn customRealpath(allocator: std.mem.Allocator, path: string) !string {
 //     var opened = try std.posix.open(path, if (Environment.isLinux) bun.O.PATH else bun.O.RDONLY, 0);
 //     defer std.posix.close(opened);
-
 // }
+
 pub const StatHash = @import("./fs/stat_hash.zig");
 
 const path_handler = @import("./resolver/resolve_path.zig");
@@ -1973,6 +1973,6 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const WPathBuffer = bun.WPathBuffer;
 const allocators = bun.allocators;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
-const stringZ = bun.stringZ;
+const string = bun.Str;
+const stringZ = bun.StrZ;
 const strings = bun.strings;

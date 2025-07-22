@@ -109,16 +109,16 @@ pub fn parseJSON(
 
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store
-    bun.JSAst.Expr.Data.Store.reset();
-    bun.JSAst.Stmt.Data.Store.reset();
+    bun.ast.Expr.Data.Store.reset();
+    bun.ast.Stmt.Data.Store.reset();
     defer {
         // the allocator given to the JS parser is not respected for all parts
         // of the parse, so we need to remember to reset the ast store
-        bun.JSAst.Expr.Data.Store.reset();
-        bun.JSAst.Stmt.Data.Store.reset();
+        bun.ast.Expr.Data.Store.reset();
+        bun.ast.Stmt.Data.Store.reset();
     }
     debug("parse (JSON, {d} bytes)", .{source.len});
-    var json = bun.JSON.parse(&json_src, &log, arena, false) catch {
+    var json = bun.json.parse(&json_src, &log, arena, false) catch {
         return error.InvalidJSON;
     };
 
@@ -495,7 +495,7 @@ pub const Mapping = struct {
         ///
         /// This data is freed after printed on the assumption that printing
         /// errors to the console are rare (this isnt used for error.stack)
-        pub fn getSourceCode(lookup: Lookup, base_filename: []const u8) ?bun.JSC.ZigString.Slice {
+        pub fn getSourceCode(lookup: Lookup, base_filename: []const u8) ?bun.jsc.ZigString.Slice {
             const bytes = bytes: {
                 if (lookup.prefetched_source_code) |code| {
                     break :bytes code;
@@ -518,7 +518,7 @@ pub const Mapping = struct {
 
                     const code = serialized.sourceFileContents(@intCast(index));
 
-                    return bun.JSC.ZigString.Slice.fromUTF8NeverFree(code orelse return null);
+                    return bun.jsc.ZigString.Slice.fromUTF8NeverFree(code orelse return null);
                 }
 
                 if (provider.getSourceMap(
@@ -551,7 +551,7 @@ pub const Mapping = struct {
                 }
             };
 
-            return bun.JSC.ZigString.Slice.init(bun.default_allocator, bytes);
+            return bun.jsc.ZigString.Slice.init(bun.default_allocator, bytes);
         }
     };
 
@@ -1020,14 +1020,14 @@ pub const SourceMapLoadHint = enum(u2) {
     is_external_map,
 };
 
-fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.JSC.ZigString.Slice {
+fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.jsc.ZigString.Slice {
     const needle = comptime bun.strings.literal(T, "\n//# sourceMappingURL=");
     const found = bun.strings.indexOfT(T, source, needle) orelse return null;
     const end = std.mem.indexOfScalarPos(T, source, found + needle.len, '\n') orelse source.len;
     const url = std.mem.trimRight(T, source[found + needle.len .. end], &.{ ' ', '\r' });
     return switch (T) {
-        u8 => bun.JSC.ZigString.Slice.fromUTF8NeverFree(url),
-        u16 => bun.JSC.ZigString.Slice.init(
+        u8 => bun.jsc.ZigString.Slice.fromUTF8NeverFree(url),
+        u16 => bun.jsc.ZigString.Slice.init(
             alloc,
             bun.strings.toUTF8Alloc(alloc, url) catch bun.outOfMemory(),
         ),
@@ -1089,7 +1089,7 @@ pub fn getSourceMapImpl(
         // try to load a .map file
         if (load_hint != .is_inline_map) try_external: {
             if (comptime SourceProviderKind == BakeSourceProvider) fallback_to_normal: {
-                const global = bun.JSC.VirtualMachine.get().global;
+                const global = bun.jsc.VirtualMachine.get().global;
                 // If we're using bake's production build the global object will
                 // be Bake::GlobalObject and we can fetch the sourcemap from it,
                 // if not fallback to the normal way
@@ -1117,7 +1117,7 @@ pub fn getSourceMapImpl(
                             source_filename,
                             @errorName(err),
                         }); // Disable the "try using --sourcemap=external" hint
-                        bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                        bun.jsc.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
                         return null;
                     },
                 };
@@ -1151,7 +1151,7 @@ pub fn getSourceMapImpl(
                         source_filename,
                         @errorName(err),
                     }); // Disable the "try using --sourcemap=external" hint
-                    bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                    bun.jsc.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
                     return null;
                 },
             };
@@ -1163,7 +1163,7 @@ pub fn getSourceMapImpl(
                 @errorName(err),
             });
             // Disable the "try using --sourcemap=external" hint
-            bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+            bun.jsc.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
             return null;
         }
 
@@ -1204,9 +1204,9 @@ pub const SourceProviderMap = opaque {
     }
 };
 
-extern "c" fn BakeGlobalObject__isBakeGlobalObject(global: *bun.JSC.JSGlobalObject) bool;
+extern "c" fn BakeGlobalObject__isBakeGlobalObject(global: *bun.jsc.JSGlobalObject) bool;
 
-extern "c" fn BakeGlobalObject__getPerThreadData(global: *bun.JSC.JSGlobalObject) *bun.bake.production.PerThread;
+extern "c" fn BakeGlobalObject__getPerThreadData(global: *bun.jsc.JSGlobalObject) *bun.bake.production.PerThread;
 
 pub const BakeSourceProvider = opaque {
     extern fn BakeSourceProvider__getSourceSlice(*BakeSourceProvider) bun.String;
@@ -1215,7 +1215,7 @@ pub const BakeSourceProvider = opaque {
         return ParsedSourceMap.SourceContentPtr.fromBakeProvider(this);
     }
 
-    pub fn getExternal(_: *BakeSourceProvider, global: *bun.JSC.JSGlobalObject, source_filename: []const u8) []const u8 {
+    pub fn getExternal(_: *BakeSourceProvider, global: *bun.jsc.JSGlobalObject, source_filename: []const u8) []const u8 {
         bun.assert(BakeGlobalObject__isBakeGlobalObject(global));
         const pt = BakeGlobalObject__getPerThreadData(global);
         if (pt.source_maps.get(source_filename)) |value| {
@@ -1473,7 +1473,7 @@ pub const SourceMapPieces = struct {
 // After all chunks are computed, they are joined together in a second pass.
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
-pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: bun.string) !void {
+pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: bun.Str) !void {
     var prev_end_state = prev_end_state_;
     var start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one
@@ -1976,13 +1976,12 @@ const decodeVLQ = VLQ.decode;
 const std = @import("std");
 
 const bun = @import("bun");
-const JSAst = bun.JSAst;
 const JSPrinter = bun.js_printer;
 const Logger = bun.logger;
 const MutableString = bun.MutableString;
 const StringJoiner = bun.StringJoiner;
 const URL = bun.URL;
 const assert = bun.assert;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const FileSystem = bun.fs.FileSystem;

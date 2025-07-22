@@ -194,9 +194,9 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const Path = bun.path;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const File = bun.sys.File;
 
 const Fs = bun.fs;

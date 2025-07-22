@@ -485,7 +485,7 @@ pub const Repository = extern struct {
         url: string,
         attempt: u8,
     ) !std.fs.Dir {
-        bun.Analytics.Features.git_dependencies += 1;
+        bun.analytics.Features.git_dependencies += 1;
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         });
@@ -582,7 +582,7 @@ pub const Repository = extern struct {
         url: string,
         resolved: string,
     ) !ExtractData {
-        bun.Analytics.Features.git_dependencies += 1;
+        bun.analytics.Features.git_dependencies += 1;
         const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null);
 
         var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
@@ -685,9 +685,7 @@ const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
 const Environment = @import("../env.zig");
 const std = @import("std");
-const strings = @import("../string_immutable.zig");
 const FileSystem = @import("../fs.zig").FileSystem;
-const string = @import("../string_types.zig").string;
 
 const Install = @import("./install.zig");
 const ExtractData = Install.ExtractData;
@@ -697,7 +695,9 @@ const bun = @import("bun");
 const OOM = bun.OOM;
 const Path = bun.path;
 const logger = bun.logger;
+const strings = bun.strings;
 const File = bun.sys.File;
+const string = bun.string_types.Str;
 
 const Semver = bun.Semver;
 const GitSHA = String;

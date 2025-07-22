@@ -998,9 +998,9 @@ const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const Semver = bun.Semver;
 const String = Semver.String;

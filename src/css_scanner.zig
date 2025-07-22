@@ -1286,5 +1286,5 @@ const FeatureFlags = bun.FeatureFlags;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;

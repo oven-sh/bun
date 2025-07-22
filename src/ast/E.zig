@@ -66,9 +66,9 @@ pub const Array = struct {
         return ExprNodeList.init(out[0 .. out.len - remain.len]);
     }
 
-    pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
+    pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
         const items = this.items.slice();
-        var array = try JSC.JSValue.createEmptyArray(globalObject, items.len);
+        var array = try jsc.JSValue.createEmptyArray(globalObject, items.len);
         array.protect();
         defer array.unprotect();
         for (items, 0..) |expr, j| {
@@ -108,8 +108,8 @@ pub const Binary = struct {
 
 pub const Boolean = struct {
     value: bool,
-    pub fn toJS(this: @This(), ctx: *JSC.JSGlobalObject) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.value);
+    pub fn toJS(this: @This(), ctx: *jsc.JSGlobalObject) jsc.C.JSValueRef {
+        return jsc.C.JSValueMakeBoolean(ctx, this.value);
     }
 };
 pub const Super = struct {};
@@ -466,8 +466,8 @@ pub const Number = struct {
         return try writer.write(self.value);
     }
 
-    pub fn toJS(this: @This()) JSC.JSValue {
-        return JSC.JSValue.jsNumber(this.value);
+    pub fn toJS(this: @This()) jsc.JSValue {
+        return jsc.JSValue.jsNumber(this.value);
     }
 };
 
@@ -480,9 +480,9 @@ pub const BigInt = struct {
         return try writer.write(self.value);
     }
 
-    pub fn toJS(_: @This()) JSC.JSValue {
+    pub fn toJS(_: @This()) jsc.JSValue {
         // TODO:
-        return JSC.JSValue.jsNumber(0);
+        return jsc.JSValue.jsNumber(0);
     }
 };
 
@@ -515,8 +515,8 @@ pub const Object = struct {
         return if (asProperty(self, key)) |query| query.expr else @as(?Expr, null);
     }
 
-    pub fn toJS(this: *Object, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
-        var obj = JSC.JSValue.createEmptyObject(globalObject, this.properties.len);
+    pub fn toJS(this: *Object, allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
+        var obj = jsc.JSValue.createEmptyObject(globalObject, this.properties.len);
         obj.protect();
         defer obj.unprotect();
         const props: []const G.Property = this.properties.slice();
@@ -955,7 +955,7 @@ pub const String = struct {
         };
     }
 
-    pub fn cloneSliceIfNecessary(str: *const String, allocator: std.mem.Allocator) !bun.string {
+    pub fn cloneSliceIfNecessary(str: *const String, allocator: std.mem.Allocator) !bun.Str {
         if (str.isUTF8()) {
             return allocator.dupe(u8, str.string(allocator) catch unreachable);
         }
@@ -1005,7 +1005,7 @@ pub const String = struct {
                         return strings.utf16EqlString(other.slice16(), s.data);
                     }
                 },
-                bun.string => {
+                bun.Str => {
                     return strings.eqlLong(s.data, other, true);
                 },
                 []u16, []const u16 => {
@@ -1024,7 +1024,7 @@ pub const String = struct {
                         return std.mem.eql(u16, other.slice16(), s.slice16());
                     }
                 },
-                bun.string => {
+                bun.Str => {
                     return strings.utf16EqlString(s.slice16(), other);
                 },
                 []u16, []const u16 => {
@@ -1055,7 +1055,7 @@ pub const String = struct {
             strings.eqlComptimeUTF16(s.slice16()[0..value.len], value);
     }
 
-    pub fn string(s: *const String, allocator: std.mem.Allocator) OOM!bun.string {
+    pub fn string(s: *const String, allocator: std.mem.Allocator) OOM!bun.Str {
         if (s.isUTF8()) {
             return s.data;
         } else {
@@ -1063,7 +1063,7 @@ pub const String = struct {
         }
     }
 
-    pub fn stringZ(s: *const String, allocator: std.mem.Allocator) OOM!bun.stringZ {
+    pub fn stringZ(s: *const String, allocator: std.mem.Allocator) OOM!bun.StrZ {
         if (s.isUTF8()) {
             return allocator.dupeZ(u8, s.data);
         } else {
@@ -1071,7 +1071,7 @@ pub const String = struct {
         }
     }
 
-    pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) OOM!bun.string {
+    pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) OOM!bun.Str {
         if (s.isUTF8()) {
             return allocator.dupe(u8, s.data);
         } else {
@@ -1091,7 +1091,7 @@ pub const String = struct {
         }
     }
 
-    pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) !JSC.JSValue {
+    pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) !jsc.JSValue {
         s.resolveRopeIfNeeded(allocator);
         if (!s.isPresent()) {
             var emp = bun.String.empty;
@@ -1115,11 +1115,11 @@ pub const String = struct {
         }
     }
 
-    pub fn toZigString(s: *String, allocator: std.mem.Allocator) JSC.ZigString {
+    pub fn toZigString(s: *String, allocator: std.mem.Allocator) jsc.ZigString {
         if (s.isUTF8()) {
-            return JSC.ZigString.fromUTF8(s.slice(allocator));
+            return jsc.ZigString.fromUTF8(s.slice(allocator));
         } else {
-            return JSC.ZigString.initUTF16(s.slice16());
+            return jsc.ZigString.initUTF16(s.slice16());
         }
     }
 
@@ -1424,15 +1424,15 @@ const bun = @import("bun");
 const ComptimeStringMap = bun.ComptimeStringMap;
 const Environment = bun.Environment;
 const ImportRecord = bun.ImportRecord;
-const JSC = bun.JSC;
 const OOM = bun.OOM;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
+const string = bun.Str;
+const stringZ = bun.StrZ;
 const strings = bun.strings;
 const Loader = bun.options.Loader;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const E = js_ast.E;
 const Expr = js_ast.Expr;
 const ExprNodeIndex = js_ast.ExprNodeIndex;

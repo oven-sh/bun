@@ -253,7 +253,7 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const assert = bun.assert;
-const string = bun.string;
+const string = bun.Str;
 
 const Query = bun.Semver.Query;
 const Version = bun.Semver.Version;

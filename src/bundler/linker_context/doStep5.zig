@@ -475,7 +475,7 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const options = bun.options;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 
 const ImportData = bun.bundle_v2.ImportData;

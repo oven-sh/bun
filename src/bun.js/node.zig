@@ -18,7 +18,7 @@ pub const process = @import("./node/node_process.zig");
 pub const validators = @import("./node/util/validators.zig");
 pub const ErrorCode = @import("./node/nodejs_error_code.zig").Code;
 
-pub const Buffer = JSC.MarkedArrayBuffer;
+pub const Buffer = jsc.MarkedArrayBuffer;
 
 pub const PathOrBlob = types.PathOrBlob;
 pub const Dirent = types.Dirent;
@@ -190,23 +190,23 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+        pub fn toJS(this: @This(), globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             return switch (this) {
                 .result => |r| switch (ReturnType) {
-                    JSC.JSValue => r,
+                    jsc.JSValue => r,
 
                     void => .js_undefined,
-                    bool => JSC.JSValue.jsBoolean(r),
+                    bool => jsc.JSValue.jsBoolean(r),
 
-                    JSC.ArrayBuffer => r.toJS(globalObject),
-                    []u8 => JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject),
+                    jsc.ArrayBuffer => r.toJS(globalObject),
+                    []u8 => jsc.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject),
 
                     else => switch (@typeInfo(ReturnType)) {
-                        .int, .float, .comptime_int, .comptime_float => JSC.JSValue.jsNumber(r),
+                        .int, .float, .comptime_int, .comptime_float => jsc.JSValue.jsNumber(r),
                         .@"struct", .@"enum", .@"opaque", .@"union" => r.toJS(globalObject),
                         .pointer => {
                             if (bun.trait.isZigString(ReturnType))
-                                JSC.ZigString.init(bun.asByteSlice(r)).withEncoding().toJS(globalObject);
+                                jsc.ZigString.init(bun.asByteSlice(r)).withEncoding().toJS(globalObject);
 
                             return r.toJS(globalObject);
                         },
@@ -216,9 +216,9 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub fn toArrayBuffer(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toArrayBuffer(this: @This(), globalObject: *jsc.JSGlobalObject) jsc.JSValue {
             return switch (this) {
-                .result => |r| JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject, null),
+                .result => |r| jsc.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject, null),
                 .err => |e| e.toJS(globalObject),
             };
         }
@@ -357,7 +357,7 @@ const types = @import("./node/types.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const meta = bun.meta;
 const sys = bun.sys;
 const windows = bun.windows;

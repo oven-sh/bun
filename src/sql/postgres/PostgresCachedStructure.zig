@@ -1,16 +1,16 @@
-structure: JSC.Strong.Optional = .empty,
-// only populated if more than JSC.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
-fields: ?[]JSC.JSObject.ExternColumnIdentifier = null,
+structure: jsc.Strong.Optional = .empty,
+// only populated if more than jsc.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
+fields: ?[]jsc.JSObject.ExternColumnIdentifier = null,
 
 pub fn has(this: *@This()) bool {
     return this.structure.has() or this.fields != null;
 }
 
-pub fn jsValue(this: *const @This()) ?JSC.JSValue {
+pub fn jsValue(this: *const @This()) ?jsc.JSValue {
     return this.structure.get();
 }
 
-pub fn set(this: *@This(), globalObject: *JSC.JSGlobalObject, value: ?JSC.JSValue, fields: ?[]JSC.JSObject.ExternColumnIdentifier) void {
+pub fn set(this: *@This(), globalObject: *jsc.JSGlobalObject, value: ?jsc.JSValue, fields: ?[]jsc.JSObject.ExternColumnIdentifier) void {
     if (value) |v| {
         this.structure.set(globalObject, v);
     }
@@ -29,4 +29,4 @@ pub fn deinit(this: *@This()) void {
 }
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;

@@ -69,21 +69,21 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname:
 pub const AsyncModule = struct {
     // This is all the state used by the printer to print the module
     parse_result: ParseResult,
-    promise: JSC.Strong.Optional = .empty,
+    promise: jsc.Strong.Optional = .empty,
     path: Fs.Path,
     specifier: string = "",
     referrer: string = "",
     string_buf: []u8 = &[_]u8{},
     fd: ?StoredFileDescriptorType = null,
     package_json: ?*PackageJSON = null,
-    loader: Api.Loader,
+    loader: api.Loader,
     hash: u32 = std.math.maxInt(u32),
     globalThis: *JSGlobalObject = undefined,
     arena: *bun.ArenaAllocator,
 
     // This is the specific state for making it async
     poll_ref: Async.KeepAlive = .{},
-    any_task: JSC.AnyTask = undefined,
+    any_task: jsc.AnyTask = undefined,
 
     pub const Id = u32;
 
@@ -155,7 +155,7 @@ pub const AsyncModule = struct {
         pub fn onWakeHandler(ctx: *anyopaque, _: *PackageManager) void {
             debug("onWake", .{});
             var this = bun.cast(*Queue, ctx);
-            this.vm().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
+            this.vm().enqueueTaskConcurrent(jsc.ConcurrentTask.createFrom(this));
         }
 
         pub fn onPoll(this: *Queue) void {
@@ -376,7 +376,7 @@ pub const AsyncModule = struct {
         // var stmt_blocks = js_ast.Stmt.Data.toOwnedSlice();
         // var expr_blocks = js_ast.Expr.Data.toOwnedSlice();
         const this_promise = JSValue.createInternalPromise(globalObject);
-        const promise = JSC.Strong.Optional.create(this_promise, globalObject);
+        const promise = jsc.Strong.Optional.create(this_promise, globalObject);
 
         var buf = bun.StringBuilder{};
         buf.count(opts.referrer);
@@ -410,12 +410,12 @@ pub const AsyncModule = struct {
         var clone = jsc_vm.allocator.create(AsyncModule) catch unreachable;
         clone.* = this.*;
         jsc_vm.modules.scheduled += 1;
-        clone.any_task = JSC.AnyTask.New(AsyncModule, onDone).init(clone);
-        jsc_vm.enqueueTask(JSC.Task.init(&clone.any_task));
+        clone.any_task = jsc.AnyTask.New(AsyncModule, onDone).init(clone);
+        jsc_vm.enqueueTask(jsc.Task.init(&clone.any_task));
     }
 
     pub fn onDone(this: *AsyncModule) void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         var jsc_vm = this.globalThis.bunVM();
         jsc_vm.modules.scheduled -= 1;
         if (jsc_vm.modules.scheduled == 0) {
@@ -423,10 +423,10 @@ pub const AsyncModule = struct {
         }
         var log = logger.Log.init(jsc_vm.allocator);
         defer log.deinit();
-        var errorable: JSC.ErrorableResolvedSource = undefined;
+        var errorable: jsc.ErrorableResolvedSource = undefined;
         this.poll_ref.unref(jsc_vm);
         outer: {
-            errorable = JSC.ErrorableResolvedSource.ok(this.resumeLoadingModule(&log) catch |err| {
+            errorable = jsc.ErrorableResolvedSource.ok(this.resumeLoadingModule(&log) catch |err| {
                 switch (err) {
                     error.JSError => {
                         errorable = .err(error.JSError, this.globalThis.takeError(error.JSError));
@@ -469,10 +469,10 @@ pub const AsyncModule = struct {
         referrer_: bun.String,
         log: *logger.Log,
     ) bun.JSError!void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         var specifier = specifier_;
         var referrer = referrer_;
-        var scope: JSC.CatchScope = undefined;
+        var scope: jsc.CatchScope = undefined;
         scope.init(globalThis, @src());
         defer {
             specifier.deref();
@@ -480,7 +480,7 @@ pub const AsyncModule = struct {
             scope.deinit();
         }
 
-        var errorable: JSC.ErrorableResolvedSource = undefined;
+        var errorable: jsc.ErrorableResolvedSource = undefined;
         if (err) |e| {
             defer {
                 if (resolved_source.source_code_needs_deref) {
@@ -490,7 +490,7 @@ pub const AsyncModule = struct {
             }
 
             if (e == error.JSError) {
-                errorable = JSC.ErrorableResolvedSource.err(error.JSError, globalThis.takeError(error.JSError));
+                errorable = jsc.ErrorableResolvedSource.err(error.JSError, globalThis.takeError(error.JSError));
             } else {
                 VirtualMachine.processFetchLog(
                     globalThis,
@@ -502,7 +502,7 @@ pub const AsyncModule = struct {
                 );
             }
         } else {
-            errorable = JSC.ErrorableResolvedSource.ok(resolved_source.*);
+            errorable = jsc.ErrorableResolvedSource.ok(resolved_source.*);
         }
         log.deinit();
 
@@ -799,19 +799,19 @@ pub const AsyncModule = struct {
     extern "c" fn Bun__onFulfillAsyncModule(
         globalObject: *JSGlobalObject,
         promiseValue: JSValue,
-        res: *JSC.ErrorableResolvedSource,
+        res: *jsc.ErrorableResolvedSource,
         specifier: *bun.String,
         referrer: *bun.String,
     ) void;
 };
 
-pub export fn Bun__getDefaultLoader(global: *JSGlobalObject, str: *const bun.String) Api.Loader {
+pub export fn Bun__getDefaultLoader(global: *JSGlobalObject, str: *const bun.String) api.Loader {
     var jsc_vm = global.bunVM();
     const filename = str.toUTF8(jsc_vm.allocator);
     defer filename.deinit();
     const loader = jsc_vm.transpiler.options.loader(Fs.PathName.init(filename.slice()).ext).toAPI();
     if (loader == .file) {
-        return Api.Loader.js;
+        return api.Loader.js;
     }
 
     return loader;
@@ -827,7 +827,7 @@ pub fn transpileSourceCode(
     module_type: options.ModuleType,
     log: *logger.Log,
     virtual_source: ?*const logger.Source,
-    promise_ptr: ?*?*JSC.JSInternalPromise,
+    promise_ptr: ?*?*jsc.JSInternalPromise,
     source_code_printer: *js_printer.BufferPrinter,
     globalObject: ?*JSGlobalObject,
     comptime flags: FetchFlags,
@@ -910,7 +910,7 @@ pub fn transpileSourceCode(
                 package_json = jsc_vm.bun_watcher.watchlist().items(.package_json)[index];
             }
 
-            var cache = JSC.RuntimeTranspilerCache{
+            var cache = jsc.RuntimeTranspilerCache{
                 .output_code_allocator = allocator,
                 .sourcemap_allocator = bun.default_allocator,
             };
@@ -978,7 +978,7 @@ pub fn transpileSourceCode(
                     jsc_vm.debugger != null and
                     jsc_vm.debugger.?.set_breakpoint_on_first_line and
                     setBreakPointOnFirstLine(),
-                .runtime_transpiler_cache = if (!disable_transpilying and !JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
+                .runtime_transpiler_cache = if (!disable_transpilying and !jsc.RuntimeTranspilerCache.is_disabled) &cache else null,
                 .remove_cjs_module_wrapper = is_main and jsc_vm.module_loader.eval_source != null,
             };
             defer {
@@ -1350,14 +1350,14 @@ pub fn transpileSourceCode(
                 if (virtual_source) |source| {
                     if (globalObject) |globalThis| {
                         // attempt to avoid reading the WASM file twice.
-                        const encoded = JSC.EncodedJSValue{
+                        const encoded = jsc.EncodedJSValue{
                             .asPtr = globalThis,
                         };
                         const globalValue = @as(JSValue, @enumFromInt(encoded.asInt64));
                         globalValue.put(
                             globalThis,
                             ZigString.static("wasmSourceBytes"),
-                            try JSC.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
+                            try jsc.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
                         );
                     }
                 }
@@ -1444,7 +1444,7 @@ pub fn transpileSourceCode(
                 return error.NotSupported;
             }
 
-            const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text);
+            const html_bundle = try jsc.API.HTMLBundle.init(globalObject.?, path.text);
             return ResolvedSource{
                 .allocator = &jsc_vm.allocator,
                 .jsvalue_for_export = html_bundle.toJS(globalObject.?),
@@ -1520,7 +1520,7 @@ pub fn transpileSourceCode(
                     var buf = MutableString.init2048(jsc_vm.allocator) catch bun.outOfMemory();
                     defer buf.deinit();
                     var writer = buf.writer();
-                    JSC.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
+                    jsc.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
                     break :brk try bun.String.createUTF8ForJS(globalObject.?, buf.slice());
                 }
 
@@ -1541,9 +1541,9 @@ pub fn transpileSourceCode(
 pub export fn Bun__resolveAndFetchBuiltinModule(
     jsc_vm: *VirtualMachine,
     specifier: *bun.String,
-    ret: *JSC.ErrorableResolvedSource,
+    ret: *jsc.ErrorableResolvedSource,
 ) bool {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     var log = logger.Log.init(jsc_vm.transpiler.allocator);
     defer log.deinit();
 
@@ -1565,9 +1565,9 @@ pub export fn Bun__fetchBuiltinModule(
     globalObject: *JSGlobalObject,
     specifier: *bun.String,
     referrer: *bun.String,
-    ret: *JSC.ErrorableResolvedSource,
+    ret: *jsc.ErrorableResolvedSource,
 ) bool {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     var log = logger.Log.init(jsc_vm.transpiler.allocator);
     defer log.deinit();
 
@@ -1582,7 +1582,7 @@ pub export fn Bun__fetchBuiltinModule(
         VirtualMachine.processFetchLog(globalObject, specifier.*, referrer.*, &log, ret, err);
         return true;
     }) |builtin| {
-        ret.* = JSC.ErrorableResolvedSource.ok(builtin);
+        ret.* = jsc.ErrorableResolvedSource.ok(builtin);
         return true;
     } else {
         return false;
@@ -1597,12 +1597,12 @@ pub export fn Bun__transpileFile(
     specifier_ptr: *bun.String,
     referrer: *bun.String,
     type_attribute: ?*const bun.String,
-    ret: *JSC.ErrorableResolvedSource,
+    ret: *jsc.ErrorableResolvedSource,
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader_type: bun.options.Loader.Optional,
 ) ?*anyopaque {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     var log = logger.Log.init(jsc_vm.transpiler.allocator);
     defer log.deinit();
 
@@ -1617,9 +1617,9 @@ pub export fn Bun__transpileFile(
     };
 
     var virtual_source_to_use: ?logger.Source = null;
-    var blob_to_deinit: ?JSC.WebCore.Blob = null;
+    var blob_to_deinit: ?jsc.WebCore.Blob = null;
     var lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, type_attribute_str) catch {
-        ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.ERR(.MODULE_NOT_FOUND, "Blob not found", .{}).toJS());
+        ret.* = jsc.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.ERR(.MODULE_NOT_FOUND, "Blob not found", .{}).toJS());
         return null;
     };
     defer if (blob_to_deinit) |*blob| blob.deinit();
@@ -1636,7 +1636,7 @@ pub export fn Bun__transpileFile(
                     lr.loader = loader;
                 },
                 .custom => |strong| {
-                    ret.* = JSC.ErrorableResolvedSource.ok(ResolvedSource{
+                    ret.* = jsc.ErrorableResolvedSource.ok(ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.empty,
                         .specifier = .empty,
@@ -1761,7 +1761,7 @@ pub export fn Bun__transpileFile(
                         switch (entry) {
                             .loader => |loader| break :loader loader,
                             .custom => |strong| {
-                                ret.* = JSC.ErrorableResolvedSource.ok(ResolvedSource{
+                                ret.* = jsc.ErrorableResolvedSource.ok(ResolvedSource{
                                     .allocator = null,
                                     .source_code = bun.String.empty,
                                     .specifier = .empty,
@@ -1794,8 +1794,8 @@ pub export fn Bun__transpileFile(
 
     defer jsc_vm.module_loader.resetArena(jsc_vm);
 
-    var promise: ?*JSC.JSInternalPromise = null;
-    ret.* = JSC.ErrorableResolvedSource.ok(
+    var promise: ?*jsc.JSInternalPromise = null;
+    ret.* = jsc.ErrorableResolvedSource.ok(
         ModuleLoader.transpileSourceCode(
             jsc_vm,
             lr.specifier,
@@ -1818,7 +1818,7 @@ pub export fn Bun__transpileFile(
                 },
                 error.PluginError => return null,
                 error.JSError => {
-                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
+                    ret.* = jsc.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
                     return null;
                 },
                 else => {
@@ -1832,7 +1832,7 @@ pub export fn Bun__transpileFile(
 }
 
 export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *const bun.String) JSValue {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     if (globalObject.bunVM().plugin_runner == null) return JSValue.zero;
 
     const specifier_slice = specifier_ptr.toUTF8(bun.default_allocator);
@@ -1855,7 +1855,7 @@ export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *c
 }
 
 fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded: HardcodedModule) ?ResolvedSource {
-    Analytics.Features.builtin_modules.insert(hardcoded);
+    analytics.Features.builtin_modules.insert(hardcoded);
     return switch (hardcoded) {
         .@"bun:main" => .{
             .allocator = null,
@@ -1942,10 +1942,10 @@ export fn Bun__transpileVirtualModule(
     specifier_ptr: *const bun.String,
     referrer_ptr: *const bun.String,
     source_code: *ZigString,
-    loader_: Api.Loader,
-    ret: *JSC.ErrorableResolvedSource,
+    loader_: api.Loader,
+    ret: *jsc.ErrorableResolvedSource,
 ) bool {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     const jsc_vm = globalObject.bunVM();
     bun.assert(jsc_vm.plugin_runner != null);
 
@@ -1975,7 +1975,7 @@ export fn Bun__transpileVirtualModule(
     defer log.deinit();
     defer jsc_vm.module_loader.resetArena(jsc_vm);
 
-    ret.* = JSC.ErrorableResolvedSource.ok(
+    ret.* = jsc.ErrorableResolvedSource.ok(
         ModuleLoader.transpileSourceCode(
             jsc_vm,
             specifier_slice.slice(),
@@ -1994,7 +1994,7 @@ export fn Bun__transpileVirtualModule(
             switch (err) {
                 error.PluginError => return true,
                 error.JSError => {
-                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
+                    ret.* = jsc.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
                     return true;
                 },
                 else => {
@@ -2004,7 +2004,7 @@ export fn Bun__transpileVirtualModule(
             }
         },
     );
-    Analytics.Features.virtual_modules += 1;
+    analytics.Features.virtual_modules += 1;
     return true;
 }
 
@@ -2142,9 +2142,9 @@ pub const RuntimeTranspilerStore = struct {
         };
     }
 
-    pub fn runFromJSThread(this: *RuntimeTranspilerStore, event_loop: *JSC.EventLoop, global: *JSC.JSGlobalObject, vm: *JSC.VirtualMachine) void {
+    pub fn runFromJSThread(this: *RuntimeTranspilerStore, event_loop: *jsc.EventLoop, global: *jsc.JSGlobalObject, vm: *jsc.VirtualMachine) void {
         var batch = this.queue.popBatch();
-        const jsc_vm = vm.jsc;
+        const jsc_vm = vm.jsc_vm;
         var iter = batch.iterator();
         if (iter.next()) |job| {
             // we run just one job first to see if there are more
@@ -2173,7 +2173,7 @@ pub const RuntimeTranspilerStore = struct {
     ) *anyopaque {
         var job: *TranspilerJob = this.store.get();
         const owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
-        const promise = JSC.JSInternalPromise.create(globalObject);
+        const promise = jsc.JSInternalPromise.create(globalObject);
 
         // NOTE: DirInfo should already be cached since module loading happens
         // after module resolution, so this should be cheap
@@ -2215,7 +2215,7 @@ pub const RuntimeTranspilerStore = struct {
         non_threadsafe_input_specifier: String,
         non_threadsafe_referrer: String,
         loader: options.Loader,
-        promise: JSC.Strong.Optional = .empty,
+        promise: jsc.Strong.Optional = .empty,
         vm: *VirtualMachine,
         globalThis: *JSGlobalObject,
         fetcher: Fetcher,
@@ -2224,7 +2224,7 @@ pub const RuntimeTranspilerStore = struct {
         log: logger.Log,
         parse_error: ?anyerror = null,
         resolved_source: ResolvedSource = ResolvedSource{},
-        work_task: JSC.WorkPoolTask = .{ .callback = runFromWorkerThread },
+        work_task: jsc.WorkPoolTask = .{ .callback = runFromWorkerThread },
         next: ?*TranspilerJob = null,
 
         pub const Store = bun.HiveArray(TranspilerJob, if (bun.heap_breakdown.enabled) 0 else 64).Fallback;
@@ -2259,7 +2259,7 @@ pub const RuntimeTranspilerStore = struct {
 
         pub fn dispatchToMainThread(this: *TranspilerJob) void {
             this.vm.transpiler_store.queue.push(this);
-            this.vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&this.vm.transpiler_store));
+            this.vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.createFrom(&this.vm.transpiler_store));
         }
 
         pub fn runFromJSThread(this: *TranspilerJob) bun.JSError!void {
@@ -2300,10 +2300,10 @@ pub const RuntimeTranspilerStore = struct {
 
         pub fn schedule(this: *TranspilerJob) void {
             this.poll_ref.ref(this.vm);
-            JSC.WorkPool.schedule(&this.work_task);
+            jsc.WorkPool.schedule(&this.work_task);
         }
 
-        pub fn runFromWorkerThread(work_task: *JSC.WorkPoolTask) void {
+        pub fn runFromWorkerThread(work_task: *jsc.WorkPoolTask) void {
             @as(*TranspilerJob, @fieldParentPtr("work_task", work_task)).run();
         }
 
@@ -2333,7 +2333,7 @@ pub const RuntimeTranspilerStore = struct {
             const specifier = this.path.text;
             const loader = this.loader;
 
-            var cache = JSC.RuntimeTranspilerCache{
+            var cache = jsc.RuntimeTranspilerCache{
                 .output_code_allocator = allocator,
                 .sourcemap_allocator = bun.default_allocator,
             };
@@ -2414,7 +2414,7 @@ pub const RuntimeTranspilerStore = struct {
                     vm.debugger.?.set_breakpoint_on_first_line and
                     is_main and
                     setBreakPointOnFirstLine(),
-                .runtime_transpiler_cache = if (!JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
+                .runtime_transpiler_cache = if (!jsc.RuntimeTranspilerCache.is_disabled) &cache else null,
                 .remove_cjs_module_wrapper = is_main and vm.module_loader.eval_source != null,
                 .module_type = module_type,
                 .allow_bytecode_cache = true,
@@ -2528,7 +2528,7 @@ pub const RuntimeTranspilerStore = struct {
             for (parse_result.ast.import_records.slice()) |*import_record_| {
                 var import_record: *bun.ImportRecord = import_record_;
 
-                if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, transpiler.options.target)) |replacement| {
+                if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, transpiler.options.target)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.is_external_without_side_effects = true;
@@ -3061,14 +3061,11 @@ export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
 
 const debug = Output.scoped(.ModuleLoader, true);
 
-const Analytics = @import("../analytics/analytics_thread.zig");
 const Dependency = @import("../install/dependency.zig");
 const Fs = @import("../fs.zig");
 const Runtime = @import("../runtime.zig");
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
 const std = @import("std");
-const Api = @import("../api/schema.zig").Api;
-const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const panic = std.debug.panic;
 
 const ast = @import("../import_record.zig");
@@ -3091,19 +3088,22 @@ const Output = bun.Output;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const String = bun.String;
 const Transpiler = bun.Transpiler;
-const js_ast = bun.JSAst;
+const analytics = bun.analytics;
+const js_ast = bun.ast;
 const js_printer = bun.js_printer;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
+const Arena = bun.allocators.MimallocArena;
+const api = bun.schema.api;
 
-const JSC = bun.JSC;
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const JSValue = bun.JSC.JSValue;
-const ResolvedSource = bun.JSC.ResolvedSource;
-const VirtualMachine = bun.JSC.VirtualMachine;
-const ZigString = bun.JSC.ZigString;
-const Bun = JSC.API.Bun;
+const jsc = bun.jsc;
+const JSGlobalObject = bun.jsc.JSGlobalObject;
+const JSValue = bun.jsc.JSValue;
+const ResolvedSource = bun.jsc.ResolvedSource;
+const VirtualMachine = bun.jsc.VirtualMachine;
+const ZigString = bun.jsc.ZigString;
+const Bun = jsc.API.Bun;
 
 const ParseResult = bun.transpiler.ParseResult;
 const PluginRunner = bun.transpiler.PluginRunner;

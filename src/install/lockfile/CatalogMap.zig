@@ -380,7 +380,7 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const OOM = bun.OOM;
 const logger = bun.logger;
-const Expr = bun.JSAst.Expr;
+const Expr = bun.ast.Expr;
 const String = bun.Semver.String;
 
 const Dependency = bun.install.Dependency;

@@ -1,4 +1,4 @@
-pub fn createCryptoError(globalThis: *JSC.JSGlobalObject, err_code: u32) JSValue {
+pub fn createCryptoError(globalThis: *jsc.JSGlobalObject, err_code: u32) JSValue {
     return bun.BoringSSL.ERR_toJS(globalThis, err_code);
 }
 
@@ -23,6 +23,6 @@ comptime {
 
 const bun = @import("bun");
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

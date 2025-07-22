@@ -4,7 +4,7 @@ pub const InstallCommand = struct {
             error.InstallFailed,
             error.InvalidPackageJSON,
             => {
-                const log = &bun.CLI.Cli.log_;
+                const log = &bun.cli.Cli.log_;
                 log.print(bun.Output.errorWriter()) catch {};
                 bun.Global.exit(1);
             },
@@ -48,7 +48,7 @@ fn install(ctx: Command.Context) !void {
             .onFetch = @ptrCast(&Analyzer.onAnalyze),
         };
 
-        try bun.CLI.BuildCommand.exec(bun.CLI.Command.get(), &fetcher);
+        try bun.cli.BuildCommand.exec(bun.cli.Command.get(), &fetcher);
         return;
     }
 
@@ -98,8 +98,8 @@ const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
-const Command = bun.CLI.Command;
+const string = bun.Str;
+const Command = bun.cli.Command;
 
 const PackageManager = bun.install.PackageManager;
 const CommandLineArguments = PackageManager.CommandLineArguments;

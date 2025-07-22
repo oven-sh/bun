@@ -29,7 +29,7 @@ pub const CommandTag = union(enum) {
 
     other: []const u8,
 
-    pub fn toJSTag(this: CommandTag, globalObject: *JSC.JSGlobalObject) JSValue {
+    pub fn toJSTag(this: CommandTag, globalObject: *jsc.JSGlobalObject) JSValue {
         return switch (this) {
             .INSERT => JSValue.jsNumber(1),
             .DELETE => JSValue.jsNumber(2),
@@ -39,7 +39,7 @@ pub const CommandTag = union(enum) {
             .MOVE => JSValue.jsNumber(6),
             .FETCH => JSValue.jsNumber(7),
             .COPY => JSValue.jsNumber(8),
-            .other => |tag| JSC.ZigString.init(tag).toJS(globalObject),
+            .other => |tag| jsc.ZigString.init(tag).toJS(globalObject),
         };
     }
 
@@ -101,5 +101,5 @@ const debug = bun.Output.scoped(.Postgres, false);
 const bun = @import("bun");
 const std = @import("std");
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

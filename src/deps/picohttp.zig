@@ -372,7 +372,7 @@ const Environment = bun.Environment;
 const Output = bun.Output;
 const StringBuilder = bun.StringBuilder;
 const assert = bun.assert;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 
 const std = @import("std");

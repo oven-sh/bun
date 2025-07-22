@@ -15,7 +15,7 @@ const BufferedReaderVTable = struct {
         onReaderDone: *const fn (*anyopaque) void,
         onReaderError: *const fn (*anyopaque, bun.sys.Error) void,
         loop: *const fn (*anyopaque) *Async.Loop,
-        eventLoop: *const fn (*anyopaque) JSC.EventLoopHandle,
+        eventLoop: *const fn (*anyopaque) jsc.EventLoopHandle,
 
         pub fn init(comptime Type: type) *const BufferedReaderVTable.Fn {
             const fns = struct {
@@ -28,8 +28,8 @@ const BufferedReaderVTable = struct {
                 fn onReaderError(this: *anyopaque, err: bun.sys.Error) void {
                     return Type.onReaderError(@as(*Type, @alignCast(@ptrCast(this))), err);
                 }
-                fn eventLoop(this: *anyopaque) JSC.EventLoopHandle {
-                    return JSC.EventLoopHandle.init(Type.eventLoop(@as(*Type, @alignCast(@ptrCast(this)))));
+                fn eventLoop(this: *anyopaque) jsc.EventLoopHandle {
+                    return jsc.EventLoopHandle.init(Type.eventLoop(@as(*Type, @alignCast(@ptrCast(this)))));
                 }
                 fn loop(this: *anyopaque) *Async.Loop {
                     return Type.loop(@as(*Type, @alignCast(@ptrCast(this))));
@@ -45,7 +45,7 @@ const BufferedReaderVTable = struct {
         }
     };
 
-    pub fn eventLoop(this: @This()) JSC.EventLoopHandle {
+    pub fn eventLoop(this: @This()) jsc.EventLoopHandle {
         return this.fns.eventLoop(this.parent);
     }
 
@@ -281,7 +281,7 @@ const PosixBufferedReader = struct {
         }
     }
 
-    pub fn start(this: *PosixBufferedReader, fd: bun.FileDescriptor, is_pollable: bool) bun.JSC.Maybe(void) {
+    pub fn start(this: *PosixBufferedReader, fd: bun.FileDescriptor, is_pollable: bool) bun.jsc.Maybe(void) {
         if (!is_pollable) {
             this.buffer().clearRetainingCapacity();
             this.flags.is_done = false;
@@ -300,7 +300,7 @@ const PosixBufferedReader = struct {
         };
     }
 
-    pub fn startFileOffset(this: *PosixBufferedReader, fd: bun.FileDescriptor, poll: bool, offset: usize) bun.JSC.Maybe(void) {
+    pub fn startFileOffset(this: *PosixBufferedReader, fd: bun.FileDescriptor, poll: bool, offset: usize) bun.jsc.Maybe(void) {
         this._offset = offset;
         this.flags.use_pread = true;
         return this.start(fd, poll);
@@ -329,7 +329,7 @@ const PosixBufferedReader = struct {
         return this.vtable.loop();
     }
 
-    pub fn eventLoop(this: *const PosixBufferedReader) JSC.EventLoopHandle {
+    pub fn eventLoop(this: *const PosixBufferedReader) jsc.EventLoopHandle {
         return this.vtable.eventLoop();
     }
 
@@ -397,9 +397,9 @@ const PosixBufferedReader = struct {
         return false;
     }
 
-    fn wrapReadFn(comptime func: *const fn (bun.FileDescriptor, []u8) JSC.Maybe(usize)) *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize) {
+    fn wrapReadFn(comptime func: *const fn (bun.FileDescriptor, []u8) jsc.Maybe(usize)) *const fn (bun.FileDescriptor, []u8, usize) jsc.Maybe(usize) {
         return struct {
-            pub fn call(fd: bun.FileDescriptor, buf: []u8, offset: usize) JSC.Maybe(usize) {
+            pub fn call(fd: bun.FileDescriptor, buf: []u8, offset: usize) jsc.Maybe(usize) {
                 _ = offset;
                 return func(fd, buf);
             }
@@ -408,7 +408,7 @@ const PosixBufferedReader = struct {
 
     fn readFile(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
         const preadFn = struct {
-            pub fn call(fd1: bun.FileDescriptor, buf: []u8, offset: usize) JSC.Maybe(usize) {
+            pub fn call(fd1: bun.FileDescriptor, buf: []u8, offset: usize) jsc.Maybe(usize) {
                 return bun.sys.pread(fd1, buf, @intCast(offset));
             }
         }.call;
@@ -505,7 +505,7 @@ const PosixBufferedReader = struct {
         }
     }
 
-    fn readWithFn(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize)) void {
+    fn readWithFn(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) jsc.Maybe(usize)) void {
         _ = size_hint; // autofix
         const streaming = parent.vtable.isStreamingEnabled();
 
@@ -859,7 +859,7 @@ pub const WindowsBufferedReader = struct {
         return res;
     }
 
-    pub fn startWithCurrentPipe(this: *WindowsBufferedReader) bun.JSC.Maybe(void) {
+    pub fn startWithCurrentPipe(this: *WindowsBufferedReader) bun.jsc.Maybe(void) {
         bun.assert(!this.source.?.isClosed());
         this.source.?.setData(this);
         this.buffer().clearRetainingCapacity();
@@ -867,12 +867,12 @@ pub const WindowsBufferedReader = struct {
         return this.startReading();
     }
 
-    pub fn startWithPipe(this: *WindowsBufferedReader, pipe: *uv.Pipe) bun.JSC.Maybe(void) {
+    pub fn startWithPipe(this: *WindowsBufferedReader, pipe: *uv.Pipe) bun.jsc.Maybe(void) {
         this.source = .{ .pipe = pipe };
         return this.startWithCurrentPipe();
     }
 
-    pub fn start(this: *WindowsBufferedReader, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
+    pub fn start(this: *WindowsBufferedReader, fd: bun.FileDescriptor, _: bool) bun.jsc.Maybe(void) {
         bun.assert(this.source == null);
         const source = switch (Source.open(uv.Loop.get(), fd)) {
             .err => |err| return .{ .err = err },
@@ -883,7 +883,7 @@ pub const WindowsBufferedReader = struct {
         return this.startWithCurrentPipe();
     }
 
-    pub fn startFileOffset(this: *WindowsBufferedReader, fd: bun.FileDescriptor, poll: bool, offset: usize) bun.JSC.Maybe(void) {
+    pub fn startFileOffset(this: *WindowsBufferedReader, fd: bun.FileDescriptor, poll: bool, offset: usize) bun.jsc.Maybe(void) {
         this._offset = offset;
         this.flags.use_pread = true;
         return this.start(fd, poll);
@@ -900,7 +900,7 @@ pub const WindowsBufferedReader = struct {
         }
     }
 
-    pub fn setRawMode(this: *WindowsBufferedReader, value: bool) bun.JSC.Maybe(void) {
+    pub fn setRawMode(this: *WindowsBufferedReader, value: bool) bun.jsc.Maybe(void) {
         const source = this.source orelse return .{
             .err = .{
                 .errno = @intFromEnum(bun.sys.E.BADF),
@@ -1011,7 +1011,7 @@ pub const WindowsBufferedReader = struct {
         }
     }
 
-    pub fn startReading(this: *WindowsBufferedReader) bun.JSC.Maybe(void) {
+    pub fn startReading(this: *WindowsBufferedReader) bun.jsc.Maybe(void) {
         if (this.flags.is_done or !this.flags.is_paused) return .{ .result = {} };
         this.flags.is_paused = false;
         const source: Source = this.source orelse return .{ .err = bun.sys.Error.fromCode(bun.sys.E.BADF, .read) };
@@ -1038,7 +1038,7 @@ pub const WindowsBufferedReader = struct {
         return .{ .result = {} };
     }
 
-    pub fn stopReading(this: *WindowsBufferedReader) bun.JSC.Maybe(void) {
+    pub fn stopReading(this: *WindowsBufferedReader) bun.jsc.Maybe(void) {
         if (this.flags.is_done or this.flags.is_paused) return .{ .result = {} };
         this.flags.is_paused = true;
         const source = this.source orelse return .{ .result = {} };
@@ -1108,7 +1108,7 @@ pub const WindowsBufferedReader = struct {
         bun.default_allocator.destroy(this);
     }
 
-    pub fn onRead(this: *WindowsBufferedReader, amount: bun.JSC.Maybe(usize), slice: []u8, hasMore: ReadState) void {
+    pub fn onRead(this: *WindowsBufferedReader, amount: bun.jsc.Maybe(usize), slice: []u8, hasMore: ReadState) void {
         if (amount == .err) {
             this.onError(amount.err);
             return;
@@ -1173,5 +1173,5 @@ const ReadState = @import("./pipes.zig").ReadState;
 
 const bun = @import("bun");
 const Async = bun.Async;
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const uv = bun.windows.libuv;

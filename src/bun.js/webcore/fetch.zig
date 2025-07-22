@@ -59,7 +59,7 @@ pub const fetch_type_error_strings: JSTypeErrorEnum = brk: {
 };
 
 pub const FetchTasklet = struct {
-    pub const ResumableSink = JSC.WebCore.ResumableFetchSink;
+    pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
     const log = Output.scoped(.FetchTasklet, false);
     sink: ?*ResumableSink = null,
@@ -76,15 +76,15 @@ pub const FetchTasklet = struct {
     /// buffer used to stream response to JS
     scheduled_response_buffer: MutableString = undefined,
     /// response weak ref we need this to track the response JS lifetime
-    response: JSC.Weak(FetchTasklet) = .{},
+    response: jsc.Weak(FetchTasklet) = .{},
     /// native response ref if we still need it when JS is discarted
     native_response: ?*Response = null,
     ignore_data: bool = false,
     /// stream strong ref if any is available
-    readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
+    readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
     request_headers: Headers = Headers{ .allocator = undefined },
-    promise: JSC.JSPromise.Strong,
-    concurrent_task: JSC.ConcurrentTask = .{},
+    promise: jsc.JSPromise.Strong,
+    concurrent_task: jsc.ConcurrentTask = .{},
     poll_ref: Async.KeepAlive = .{},
     memory_reporter: *bun.MemoryReportingAllocator,
     /// For Http Client requests
@@ -97,16 +97,16 @@ pub const FetchTasklet = struct {
     /// We always clone url and proxy (if informed)
     url_proxy_buffer: []const u8 = "",
 
-    signal: ?*JSC.WebCore.AbortSignal = null,
+    signal: ?*jsc.WebCore.AbortSignal = null,
     signals: http.Signals = .{},
     signal_store: http.Signals.Store = .{},
     has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     // must be stored because AbortSignal stores reason weakly
-    abort_reason: JSC.Strong.Optional = .empty,
+    abort_reason: jsc.Strong.Optional = .empty,
 
     // custom checkServerIdentity
-    check_server_identity: JSC.Strong.Optional = .empty,
+    check_server_identity: jsc.Strong.Optional = .empty,
     reject_unauthorized: bool = true,
     // Custom Hostname
     hostname: ?[]u8 = null,
@@ -115,7 +115,7 @@ pub const FetchTasklet = struct {
     is_waiting_request_stream_start: bool = false,
     mutex: Mutex,
 
-    tracker: JSC.Debugger.AsyncTaskTracker,
+    tracker: jsc.Debugger.AsyncTaskTracker,
 
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
@@ -141,14 +141,14 @@ pub const FetchTasklet = struct {
             // this is really unlikely to happen, but can happen
             // lets make sure that we always call deinit from main thread
 
-            this.javascript_vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
+            this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
         }
     }
 
     pub const HTTPRequestBody = union(enum) {
         AnyBlob: AnyBlob,
         Sendfile: http.SendFile,
-        ReadableStream: JSC.WebCore.ReadableStream.Strong,
+        ReadableStream: jsc.WebCore.ReadableStream.Strong,
 
         pub const Empty: HTTPRequestBody = .{ .AnyBlob = .{ .Blob = .{} } };
 
@@ -510,7 +510,7 @@ pub const FetchTasklet = struct {
     }
 
     pub fn onProgressUpdate(this: *FetchTasklet) void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         log("onProgressUpdate", .{});
         this.mutex.lock();
         this.has_schedule_callback.store(false, .monotonic);
@@ -598,9 +598,9 @@ pub const FetchTasklet = struct {
         }
         const success = this.result.isSuccess();
         const result = switch (success) {
-            true => JSC.Strong.Optional.create(this.onResolve(), globalThis),
+            true => jsc.Strong.Optional.create(this.onResolve(), globalThis),
             false => brk: {
-                // in this case we wanna a JSC.Strong.Optional so we just convert it
+                // in this case we wanna a jsc.Strong.Optional so we just convert it
                 var value = this.onReject();
                 const err = value.toJS(globalThis);
                 if (this.sink) |sink| {
@@ -612,10 +612,10 @@ pub const FetchTasklet = struct {
 
         promise_value.ensureStillAlive();
         const Holder = struct {
-            held: JSC.Strong.Optional,
-            promise: JSC.Strong.Optional,
-            globalObject: *JSC.JSGlobalObject,
-            task: JSC.AnyTask,
+            held: jsc.Strong.Optional,
+            promise: jsc.Strong.Optional,
+            globalObject: *jsc.JSGlobalObject,
+            task: jsc.AnyTask,
 
             pub fn resolve(self: *@This()) void {
                 // cleanup
@@ -652,11 +652,11 @@ pub const FetchTasklet = struct {
         };
         this.promise.strong = .empty;
         holder.task = switch (success) {
-            true => JSC.AnyTask.New(Holder, Holder.resolve).init(holder),
-            false => JSC.AnyTask.New(Holder, Holder.reject).init(holder),
+            true => jsc.AnyTask.New(Holder, Holder.resolve).init(holder),
+            false => jsc.AnyTask.New(Holder, Holder.reject).init(holder),
         };
 
-        vm.enqueueTask(JSC.Task.init(&holder.task));
+        vm.enqueueTask(jsc.Task.init(&holder.task));
     }
 
     pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.CertificateInfo) bool {
@@ -767,7 +767,7 @@ pub const FetchTasklet = struct {
         else
             bun.String.empty;
 
-        const fetch_error = JSC.SystemError{
+        const fetch_error = jsc.SystemError{
             .code = bun.String.static(switch (this.result.fail.?) {
                 error.ConnectionClosed => "ECONNRESET",
                 else => |e| @errorName(e),
@@ -857,18 +857,18 @@ pub const FetchTasklet = struct {
         return .{ .SystemError = fetch_error };
     }
 
-    pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *JSC.JSGlobalObject, readable: JSC.WebCore.ReadableStream) void {
+    pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void {
         const this = bun.cast(*FetchTasklet, ctx);
-        this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis);
+        this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
     }
 
-    pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
+    pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) jsc.WebCore.DrainResult {
         const this = bun.cast(*FetchTasklet, ctx);
         if (this.http) |http_| {
             http_.enableBodyStreaming();
         }
         if (this.signal_store.aborted.load(.monotonic)) {
-            return JSC.WebCore.DrainResult{
+            return jsc.WebCore.DrainResult{
                 .aborted = {},
             };
         }
@@ -1024,18 +1024,18 @@ pub const FetchTasklet = struct {
     pub fn onResolve(this: *FetchTasklet) JSValue {
         log("onResolve", .{});
         const response = bun.new(Response, this.toResponse());
-        const response_js = Response.makeMaybePooled(@as(*JSC.JSGlobalObject, this.global_this), response);
+        const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, this.global_this), response);
         response_js.ensureStillAlive();
-        this.response = JSC.Weak(FetchTasklet).create(response_js, this.global_this, .FetchResponse, this);
+        this.response = jsc.Weak(FetchTasklet).create(response_js, this.global_this, .FetchResponse, this);
         this.native_response = response.ref();
         return response_js;
     }
 
     pub fn get(
         allocator: std.mem.Allocator,
-        globalThis: *JSC.JSGlobalObject,
+        globalThis: *jsc.JSGlobalObject,
         fetch_options: FetchOptions,
-        promise: JSC.JSPromise.Strong,
+        promise: jsc.JSPromise.Strong,
     ) !*FetchTasklet {
         var jsc_vm = globalThis.bunVM();
         var fetch_tasklet = try allocator.create(FetchTasklet);
@@ -1065,7 +1065,7 @@ pub const FetchTasklet = struct {
             .url_proxy_buffer = fetch_options.url_proxy_buffer,
             .signal = fetch_options.signal,
             .hostname = fetch_options.hostname,
-            .tracker = JSC.Debugger.AsyncTaskTracker.init(jsc_vm),
+            .tracker = jsc.Debugger.AsyncTaskTracker.init(jsc_vm),
             .memory_reporter = fetch_options.memory_reporter,
             .check_server_identity = fetch_options.check_server_identity,
             .reject_unauthorized = fetch_options.reject_unauthorized,
@@ -1174,7 +1174,7 @@ pub const FetchTasklet = struct {
     pub fn onWriteRequestDataDrain(this: *FetchTasklet) void {
         // ref until the main thread callback is called
         this.ref();
-        this.javascript_vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, FetchTasklet.resumeRequestDataStream));
+        this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.resumeRequestDataStream));
     }
 
     /// This is ALWAYS called from the main thread
@@ -1215,7 +1215,7 @@ pub const FetchTasklet = struct {
         return false;
     }
 
-    pub fn writeEndRequest(this: *FetchTasklet, err: ?JSC.JSValue) void {
+    pub fn writeEndRequest(this: *FetchTasklet, err: ?jsc.JSValue) void {
         log("writeEndRequest hasError? {}", .{err != null});
         this.clearSink();
         defer this.deref();
@@ -1257,12 +1257,12 @@ pub const FetchTasklet = struct {
         redirect_type: FetchRedirect = FetchRedirect.follow,
         proxy: ?ZigURL = null,
         url_proxy_buffer: []const u8 = "",
-        signal: ?*JSC.WebCore.AbortSignal = null,
+        signal: ?*jsc.WebCore.AbortSignal = null,
         globalThis: ?*JSGlobalObject,
         // Custom Hostname
         hostname: ?[]u8 = null,
         memory_reporter: *bun.MemoryReportingAllocator,
-        check_server_identity: JSC.Strong.Optional = .empty,
+        check_server_identity: jsc.Strong.Optional = .empty,
         unix_socket_path: ZigString.Slice,
         ssl_config: ?*SSLConfig = null,
     };
@@ -1271,7 +1271,7 @@ pub const FetchTasklet = struct {
         allocator: std.mem.Allocator,
         global: *JSGlobalObject,
         fetch_options: FetchOptions,
-        promise: JSC.JSPromise.Strong,
+        promise: jsc.JSPromise.Strong,
     ) !*FetchTasklet {
         http.HTTPThread.init(&.{});
         var node = try get(
@@ -1409,20 +1409,20 @@ fn dataURLResponse(
 }
 
 comptime {
-    const Bun__fetchPreconnect = JSC.toJSHostFn(Bun__fetchPreconnect_);
+    const Bun__fetchPreconnect = jsc.toJSHostFn(Bun__fetchPreconnect_);
     @export(&Bun__fetchPreconnect, .{ .name = "Bun__fetchPreconnect" });
 }
 pub fn Bun__fetchPreconnect_(
-    globalObject: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments_old(1).slice();
 
     if (arguments.len < 1) {
         return globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);
     }
 
-    var url_str = try JSC.URL.hrefFromJS(arguments[0], globalObject);
+    var url_str = try jsc.URL.hrefFromJS(arguments[0], globalObject);
     defer url_str.deref();
 
     if (globalObject.hasException()) {
@@ -1458,32 +1458,32 @@ pub fn Bun__fetchPreconnect_(
 }
 
 const StringOrURL = struct {
-    pub fn fromJS(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!?bun.String {
+    pub fn fromJS(value: jsc.JSValue, globalThis: *jsc.JSGlobalObject) bun.JSError!?bun.String {
         if (value.isString()) {
             return try bun.String.fromJS(value, globalThis);
         }
 
-        const out = try JSC.URL.hrefFromJS(value, globalThis);
+        const out = try jsc.URL.hrefFromJS(value, globalThis);
         if (out.tag == .Dead) return null;
         return out;
     }
 };
 
 comptime {
-    const Bun__fetch = JSC.toJSHostFn(Bun__fetch_);
+    const Bun__fetch = jsc.toJSHostFn(Bun__fetch_);
     @export(&Bun__fetch, .{ .name = "Bun__fetch" });
 }
 
 /// Implementation of `Bun.fetch`
 pub fn Bun__fetch_(
-    ctx: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
-    JSC.markBinding(@src());
+    ctx: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
+    jsc.markBinding(@src());
     const globalThis = ctx;
     const arguments = callframe.arguments_old(2);
-    bun.Analytics.Features.fetch += 1;
-    const vm = JSC.VirtualMachine.get();
+    bun.analytics.Features.fetch += 1;
+    const vm = jsc.VirtualMachine.get();
 
     var memory_reporter = bun.default_allocator.create(bun.MemoryReportingAllocator) catch bun.outOfMemory();
     // used to clean up dynamically allocated memory on error (a poor man's errdefer)
@@ -1504,7 +1504,7 @@ pub fn Bun__fetch_(
     var headers: ?Headers = null;
     var method = Method.GET;
 
-    var args = JSC.CallFrame.ArgumentsSlice.init(vm, arguments.slice());
+    var args = jsc.CallFrame.ArgumentsSlice.init(vm, arguments.slice());
 
     var url = ZigURL{};
     var first_arg = args.nextEat().?;
@@ -1528,7 +1528,7 @@ pub fn Bun__fetch_(
 
     var proxy: ?ZigURL = null;
     var redirect_type: FetchRedirect = FetchRedirect.follow;
-    var signal: ?*JSC.WebCore.AbortSignal = null;
+    var signal: ?*jsc.WebCore.AbortSignal = null;
     // Custom Hostname
     var hostname: ?[]u8 = null;
     var range: ?[]u8 = null;
@@ -1955,7 +1955,7 @@ pub fn Bun__fetch_(
 
     // proxy: string | undefined;
     url_proxy_buffer = extract_proxy: {
-        const objects_to_try = [_]JSC.JSValue{
+        const objects_to_try = [_]jsc.JSValue{
             options_object orelse .zero,
             request_init_object orelse .zero,
         };
@@ -1963,7 +1963,7 @@ pub fn Bun__fetch_(
             if (objects_to_try[i] != .zero) {
                 if (try objects_to_try[i].get(globalThis, "proxy")) |proxy_arg| {
                     if (proxy_arg.isString() and try proxy_arg.getLength(ctx) > 0) {
-                        var href = try JSC.URL.hrefFromJS(proxy_arg, globalThis);
+                        var href = try jsc.URL.hrefFromJS(proxy_arg, globalThis);
                         if (href.tag == .Dead) {
                             const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{});
                             is_error = true;
@@ -2004,7 +2004,7 @@ pub fn Bun__fetch_(
         if (options_object) |options| {
             if (try options.get(globalThis, "signal")) |signal_| {
                 if (!signal_.isUndefined()) {
-                    if (signal_.as(JSC.WebCore.AbortSignal)) |signal__| {
+                    if (signal_.as(jsc.WebCore.AbortSignal)) |signal__| {
                         break :extract_signal signal__.ref();
                     }
                 }
@@ -2029,7 +2029,7 @@ pub fn Bun__fetch_(
                     break :extract_signal null;
                 }
 
-                if (signal_.as(JSC.WebCore.AbortSignal)) |signal__| {
+                if (signal_.as(jsc.WebCore.AbortSignal)) |signal__| {
                     break :extract_signal signal__.ref();
                 }
             }
@@ -2069,11 +2069,11 @@ pub fn Bun__fetch_(
 
             if (req.body.value == .Locked) {
                 if (req.body.value.Locked.readable.has()) {
-                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
+                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
                 }
                 const readable = try req.body.value.toReadableStream(globalThis);
                 if (!readable.isEmptyOrUndefinedOrNull() and req.body.value == .Locked and req.body.value.Locked.readable.has()) {
-                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
+                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
                 }
             }
 
@@ -2241,7 +2241,7 @@ pub fn Bun__fetch_(
 
             // Support blob: urls
             if (url_type == URLType.blob) {
-                if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(url_path_decoded)) |blob| {
+                if (jsc.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(url_path_decoded)) |blob| {
                     url_string = bun.String.createFormat("blob:{s}", .{url_path_decoded}) catch bun.outOfMemory();
                     break :blob blob;
                 } else {
@@ -2291,9 +2291,9 @@ pub fn Bun__fetch_(
                 break :brk fullpath;
             };
 
-            url_string = JSC.URL.fileURLFromString(bun.String.borrowUTF8(temp_file_path));
+            url_string = jsc.URL.fileURLFromString(bun.String.borrowUTF8(temp_file_path));
 
-            var pathlike: JSC.Node.PathOrFileDescriptor = .{
+            var pathlike: jsc.Node.PathOrFileDescriptor = .{
                 .path = .{
                     .encoded_slice = ZigString.Slice.init(bun.default_allocator, try bun.default_allocator.dupe(u8, temp_file_path)),
                 },
@@ -2346,10 +2346,10 @@ pub fn Bun__fetch_(
         prepare_body: {
             // is a S3 file we can use chunked here
 
-            if (try JSC.WebCore.ReadableStream.fromJS(try JSC.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
+            if (try jsc.WebCore.ReadableStream.fromJS(try jsc.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
                 var old = body;
                 defer old.detach();
-                body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };
+                body = .{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis) };
                 break :prepare_body;
             }
             const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Failed to start s3 stream", .{}));
@@ -2360,7 +2360,7 @@ pub fn Bun__fetch_(
     }
     if (body.needsToReadFile()) {
         prepare_body: {
-            const opened_fd_res: JSC.Maybe(bun.FileDescriptor) = switch (body.store().?.data.file.pathlike) {
+            const opened_fd_res: jsc.Maybe(bun.FileDescriptor) = switch (body.store().?.data.file.pathlike) {
                 .fd => |fd| bun.sys.dup(fd),
                 .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) bun.O.RDONLY else bun.O.RDONLY | bun.O.NOCTTY, 0),
             };
@@ -2421,7 +2421,7 @@ pub fn Bun__fetch_(
             }
 
             // TODO: make this async + lazy
-            const res = JSC.Node.fs.NodeFS.readFile(
+            const res = jsc.Node.fs.NodeFS.readFile(
                 globalThis.bunVM().nodeFS(),
                 .{
                     .encoding = .buffer,
@@ -2478,10 +2478,10 @@ pub fn Bun__fetch_(
             // we cannot direct stream to s3 we need to use multi part upload
             defer body.ReadableStream.deinit();
             const Wrapper = struct {
-                promise: JSC.JSPromise.Strong,
+                promise: jsc.JSPromise.Strong,
                 url: ZigURL,
                 url_proxy_buffer: []const u8,
-                global: *JSC.JSGlobalObject,
+                global: *jsc.JSGlobalObject,
 
                 pub const new = bun.TrivialNew(@This());
 
@@ -2495,7 +2495,7 @@ pub fn Bun__fetch_(
                                 .init = .{ .method = .PUT, .status_code = 200 },
                                 .url = bun.String.createAtomIfPossible(self.url.href),
                             });
-                            const response_js = Response.makeMaybePooled(@as(*JSC.JSGlobalObject, global), response);
+                            const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, global), response);
                             response_js.ensureStillAlive();
                             self.promise.resolve(global, response_js);
                         },
@@ -2517,7 +2517,7 @@ pub fn Bun__fetch_(
                                 },
                                 .url = bun.String.createAtomIfPossible(self.url.href),
                             });
-                            const response_js = Response.makeMaybePooled(@as(*JSC.JSGlobalObject, global), response);
+                            const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, global), response);
                             response_js.ensureStillAlive();
                             self.promise.resolve(global, response_js);
                         },
@@ -2527,9 +2527,9 @@ pub fn Bun__fetch_(
                 }
             };
             if (method != .PUT and method != .POST) {
-                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Only POST and PUT do support body when using S3", .{}));
+                return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Only POST and PUT do support body when using S3", .{}));
             }
-            const promise = JSC.JSPromise.Strong.init(globalThis);
+            const promise = jsc.JSPromise.Strong.init(globalThis);
 
             const s3_stream = Wrapper.new(.{
                 .url = url,
@@ -2695,7 +2695,6 @@ const std = @import("std");
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
 const Method = @import("../../http/Method.zig").Method;
 const ZigURL = @import("../../url.zig").URL;
-const SSLConfig = @import("../api/server.zig").ServerConfig.SSLConfig;
 
 const bun = @import("bun");
 const Async = bun.Async;
@@ -2705,26 +2704,27 @@ const Mutex = bun.Mutex;
 const Output = bun.Output;
 const picohttp = bun.picohttp;
 const s3 = bun.S3;
-const string = bun.string;
+const string = bun.Str;
 const BoringSSL = bun.BoringSSL.c;
 const FetchHeaders = bun.webcore.FetchHeaders;
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
-
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSPromise = JSC.JSPromise;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
-const ZigString = JSC.ZigString;
-const JSType = JSC.C.JSType;
-
-const Body = JSC.WebCore.Body;
-const Request = JSC.WebCore.Request;
-const Response = JSC.WebCore.Response;
-
-const Blob = JSC.WebCore.Blob;
-const AnyBlob = JSC.WebCore.Blob.Any;
+const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const http = bun.http;
 const FetchRedirect = http.FetchRedirect;
 const Headers = bun.http.Headers;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSPromise = jsc.JSPromise;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const ZigString = jsc.ZigString;
+const JSType = jsc.C.JSType;
+
+const Body = jsc.WebCore.Body;
+const Request = jsc.WebCore.Request;
+const Response = jsc.WebCore.Response;
+
+const Blob = jsc.WebCore.Blob;
+const AnyBlob = jsc.WebCore.Blob.Any;

@@ -627,6 +627,6 @@ const EventType = PathWatcher.EventType;
 
 const bun = @import("bun");
 const Mutex = bun.Mutex;
-const string = bun.string;
+const string = bun.Str;
 const UnboundedQueue = bun.threading.UnboundedQueue;
-const Event = bun.JSC.Node.fs.Watcher.Event;
+const Event = bun.jsc.Node.fs.Watcher.Event;

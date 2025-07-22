@@ -109,7 +109,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
         .stdin = .inherit,
 
         .windows = if (Environment.isWindows) .{
-            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
         },
     }) catch return;
 }
@@ -1483,7 +1483,7 @@ pub const CreateCommand = struct {
                 .stdin = .inherit,
 
                 .windows = if (Environment.isWindows) .{
-                    .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                    .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
                 },
             });
             _ = try process.unwrap();
@@ -1663,7 +1663,7 @@ pub const CreateCommand = struct {
             .entry_points = &[_]string{analyzer.entry_point},
             .onFetch = @ptrCast(&Analyzer.onAnalyze),
         };
-        try bun.CLI.BuildCommand.exec(bun.CLI.Command.get(), &fetcher);
+        try bun.cli.BuildCommand.exec(bun.cli.Command.get(), &fetcher);
     }
     pub fn extractInfo(ctx: Command.Context) !struct { example_tag: Example.Tag, template: []const u8 } {
         var example_tag = Example.Tag.unknown;
@@ -1672,7 +1672,7 @@ pub const CreateCommand = struct {
         const create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
         if (positionals.len == 0) {
-            bun.CLI.Command.Tag.printHelp(.CreateCommand, false);
+            bun.cli.Command.Tag.printHelp(.CreateCommand, false);
             Global.crash();
         }
 
@@ -2438,16 +2438,16 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Futex = bun.Futex;
 const Global = bun.Global;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const JSPrinter = bun.js_printer;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const Progress = bun.Progress;
 const clap = bun.clap;
 const default_allocator = bun.default_allocator;
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const Archiver = bun.libarchive.Archiver;
 

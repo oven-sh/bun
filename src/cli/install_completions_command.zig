@@ -540,5 +540,5 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;

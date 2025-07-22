@@ -7,7 +7,7 @@
 
 const SocketAddress = @This();
 
-pub const js = JSC.Codegen.JSSocketAddress;
+pub const js = jsc.Codegen.JSSocketAddress;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -39,7 +39,7 @@ pub const Options = struct {
     flowlabel: ?u32 = null,
 
     /// NOTE: assumes options object has been normalized and validated by JS code.
-    pub fn fromJS(global: *JSC.JSGlobalObject, obj: JSValue) bun.JSError!Options {
+    pub fn fromJS(global: *jsc.JSGlobalObject, obj: JSValue) bun.JSError!Options {
         if (!obj.isObject()) return global.throwInvalidArgumentTypeValue("options", "object", obj);
 
         const address_str: ?bun.String = if (try obj.get(global, "address")) |a| addr: {
@@ -80,7 +80,7 @@ pub const Options = struct {
         };
     }
 
-    inline fn throwBadPort(global: *JSC.JSGlobalObject, port_: JSC.JSValue) bun.JSError {
+    inline fn throwBadPort(global: *jsc.JSGlobalObject, port_: jsc.JSValue) bun.JSError {
         const ty = global.determineSpecificType(port_) catch {
             return global.ERR(.SOCKET_BAD_PORT, "The \"options.port\" argument must be a valid IP port number.", .{}).throw();
         };
@@ -95,7 +95,7 @@ pub const Options = struct {
 /// ### `SocketAddress.parse(input: string): SocketAddress | undefined`
 /// Parse an address string (with an optional `:port`) into a `SocketAddress`.
 /// Returns `undefined` if the input is invalid.
-pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn parse(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const input = blk: {
         const input_arg = callframe.argument(0);
         if (!input_arg.isString()) return global.throwInvalidArgumentTypeValue("input", "string", input_arg);
@@ -116,7 +116,7 @@ pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError
     };
     defer url_str.deref();
 
-    const url = JSC.URL.fromString(url_str) orelse return .js_undefined;
+    const url = jsc.URL.fromString(url_str) orelse return .js_undefined;
     defer url.deinit();
     const host = url.host();
     const port_: u16 = blk: {
@@ -144,7 +144,7 @@ pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError
 /// ### `SocketAddress.isSocketAddress(value: unknown): value is SocketAddress`
 /// Returns `true` if `value` is a `SocketAddress`. Subclasses and similarly-shaped
 /// objects are not considered `SocketAddress`s.
-pub fn isSocketAddress(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn isSocketAddress(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const value = callframe.argument(0);
     return JSValue.jsBoolean(value.isCell() and SocketAddress.fromJSDirect(value) != null);
 }
@@ -161,7 +161,7 @@ pub fn isSocketAddress(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 ///
 /// ## References
 /// - [Node docs](https://nodejs.org/api/net.html#new-netsocketaddressoptions)
-pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
+pub fn constructor(global: *jsc.JSGlobalObject, frame: *jsc.CallFrame) bun.JSError!*SocketAddress {
     const options_obj = frame.argument(0);
     if (options_obj.isUndefined()) return SocketAddress.new(.{
         ._addr = sockaddr.@"127.0.0.1",
@@ -185,7 +185,7 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
     return SocketAddress.create(global, options);
 }
 
-pub fn initFromAddrFamily(global: *JSC.JSGlobalObject, address_js: JSValue, family_js: JSValue) bun.JSError!SocketAddress {
+pub fn initFromAddrFamily(global: *jsc.JSGlobalObject, address_js: JSValue, family_js: JSValue) bun.JSError!SocketAddress {
     if (!address_js.isString()) return global.throwInvalidArgumentTypeValue("options.address", "string", address_js);
     const address_: bun.String = try .fromJS(address_js, global);
     const family_: AF = try .fromJS(global, family_js);
@@ -201,11 +201,11 @@ pub fn initFromAddrFamily(global: *JSC.JSGlobalObject, address_js: JSValue, fami
 /// ## Safety
 /// - `options.address` gets moved, much like `adoptRef`. Do not `deref` it
 ///   after passing it in.
-pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*SocketAddress {
+pub fn create(global: *jsc.JSGlobalObject, options: Options) bun.JSError!*SocketAddress {
     return .new(try .initJS(global, options));
 }
 
-pub fn initJS(global: *JSC.JSGlobalObject, options: Options) bun.JSError!SocketAddress {
+pub fn initJS(global: *jsc.JSGlobalObject, options: Options) bun.JSError!SocketAddress {
     var presentation: bun.String = .empty;
 
     // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
@@ -308,7 +308,7 @@ fn deinit(this: *SocketAddress) void {
 }
 
 pub fn finalize(this: *SocketAddress) void {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     this.deinit();
 }
 
@@ -326,7 +326,7 @@ pub fn finalize(this: *SocketAddress) void {
 /// This method is slightly faster if you are creating a lot of socket addresses
 /// that will not be around for very long. `createDTO` is even faster, but
 /// requires callers to already have a presentation-formatted address.
-pub fn intoDTO(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn intoDTO(this: *SocketAddress, global: *jsc.JSGlobalObject) jsc.JSValue {
     var addr_str = this.address();
     defer this._presentation = .dead;
     return JSSocketAddressDTO__create(global, addr_str.transferToJS(global), this.port(), this.family() == AF.INET6);
@@ -338,7 +338,7 @@ pub fn intoDTO(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
 ///
 /// - The address string is assumed to be ASCII and a valid IP address (either v4 or v6).
 /// - Port is a valid `in_port_t` (between 0 and 2^16) in host byte order.
-pub fn createDTO(globalObject: *JSC.JSGlobalObject, addr_: []const u8, port_: u16, is_ipv6: bool) bun.JSError!JSC.JSValue {
+pub fn createDTO(globalObject: *jsc.JSGlobalObject, addr_: []const u8, port_: u16, is_ipv6: bool) bun.JSError!jsc.JSValue {
     if (comptime bun.Environment.isDebug) {
         bun.assertWithLocation(addr_.len > 0, @src());
     }
@@ -346,11 +346,11 @@ pub fn createDTO(globalObject: *JSC.JSGlobalObject, addr_: []const u8, port_: u1
     return JSSocketAddressDTO__create(globalObject, try bun.String.createUTF8ForJS(globalObject, addr_), port_, is_ipv6);
 }
 
-extern "c" fn JSSocketAddressDTO__create(globalObject: *JSC.JSGlobalObject, address_: JSC.JSValue, port_: u16, is_ipv6: bool) JSC.JSValue;
+extern "c" fn JSSocketAddressDTO__create(globalObject: *jsc.JSGlobalObject, address_: jsc.JSValue, port_: u16, is_ipv6: bool) jsc.JSValue;
 
 // =============================================================================
 
-pub fn getAddress(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn getAddress(this: *SocketAddress, global: *jsc.JSGlobalObject) jsc.JSValue {
     // toJS increments ref count
     const addr_ = this.address();
     return switch (addr_.tag) {
@@ -375,7 +375,7 @@ pub fn address(this: *SocketAddress) bun.String {
     if (this._presentation.tag != .Dead) return this._presentation;
     var buf: [inet.INET6_ADDRSTRLEN]u8 = undefined;
     const formatted = this._addr.fmt(&buf);
-    const presentation = JSC.WebCore.encoding.toBunStringComptime(formatted, .latin1);
+    const presentation = jsc.WebCore.encoding.toBunStringComptime(formatted, .latin1);
     bun.debugAssert(presentation.tag != .Dead);
     this._presentation = presentation;
     return presentation;
@@ -388,7 +388,7 @@ pub fn address(this: *SocketAddress) bun.String {
 ///
 /// NOTE: node's `net.SocketAddress` wants `"ipv4"` and `"ipv6"` while Bun's APIs
 /// use `"IPv4"` and `"IPv6"`. This is annoying.
-pub fn getFamily(this: *SocketAddress, global: *JSC.JSGlobalObject) JSValue {
+pub fn getFamily(this: *SocketAddress, global: *jsc.JSGlobalObject) JSValue {
     // NOTE: cannot use global.commonStrings().IPv[4,6]() b/c this needs to be
     // lower case.
     return switch (this.family()) {
@@ -398,7 +398,7 @@ pub fn getFamily(this: *SocketAddress, global: *JSC.JSGlobalObject) JSValue {
 }
 
 /// `sockaddr.addrfamily`
-pub fn getAddrFamily(this: *SocketAddress, _: *JSC.JSGlobalObject) JSValue {
+pub fn getAddrFamily(this: *SocketAddress, _: *jsc.JSGlobalObject) JSValue {
     return JSValue.jsNumber(this.family().int());
 }
 
@@ -409,7 +409,7 @@ pub fn family(this: *const SocketAddress) AF {
     return @enumFromInt(this._addr.sin.family);
 }
 
-pub fn getPort(this: *SocketAddress, _: *JSC.JSGlobalObject) JSValue {
+pub fn getPort(this: *SocketAddress, _: *jsc.JSGlobalObject) JSValue {
     return JSValue.jsNumber(this.port());
 }
 
@@ -421,7 +421,7 @@ pub fn port(this: *const SocketAddress) u16 {
     return std.mem.bigToNative(u16, this._addr.sin.port);
 }
 
-pub fn getFlowLabel(this: *SocketAddress, _: *JSC.JSGlobalObject) JSValue {
+pub fn getFlowLabel(this: *SocketAddress, _: *jsc.JSGlobalObject) JSValue {
     return JSValue.jsNumber(this.flowLabel() orelse 0);
 }
 
@@ -449,8 +449,8 @@ pub fn estimatedSize(this: *SocketAddress) usize {
     return @sizeOf(SocketAddress) + this._presentation.estimatedSize();
 }
 
-pub fn toJSON(this: *SocketAddress, global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    return (try JSC.JSObject.create(.{
+pub fn toJSON(this: *SocketAddress, global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    return (try jsc.JSObject.create(.{
         .address = this.getAddress(global),
         .family = this.getFamily(global),
         .port = this.port(),
@@ -458,7 +458,7 @@ pub fn toJSON(this: *SocketAddress, global: *JSC.JSGlobalObject, _: *JSC.CallFra
     }, global)).toJS();
 }
 
-fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: [:0]const u8, dst: *anyopaque) bun.JSError!void {
+fn pton(global: *jsc.JSGlobalObject, comptime af: c_int, addr: [:0]const u8, dst: *anyopaque) bun.JSError!void {
     return switch (ares.ares_inet_pton(af, addr.ptr, dst)) {
         0 => global.throwSysError(.{ .code = .ERR_INVALID_IP_ADDRESS }, "Invalid socket address", .{}),
 
@@ -502,7 +502,7 @@ pub const AF = enum(inet.sa_family_t) {
         return @intFromEnum(this);
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSValue) !AF {
+    pub fn fromJS(global: *jsc.JSGlobalObject, value: JSValue) !AF {
         if (value.isString()) {
             const fam_str = try bun.String.fromJS(value, global);
             defer fam_str.deref();
@@ -679,15 +679,15 @@ win: {
 
 const bun = @import("bun");
 const ares = bun.c_ares;
-const string = bun.string;
+const string = bun.Str;
 const StaticStringImpl = bun.WTF.StringImpl;
 
 const Environment = bun.Environment;
 const isDebug = bun.Environment.isDebug;
 
-const JSC = bun.JSC;
-const CallFrame = JSC.CallFrame;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const CallFrame = jsc.CallFrame;
+const JSValue = jsc.JSValue;
 
 const std = @import("std");
 const net = std.net;

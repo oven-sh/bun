@@ -211,7 +211,7 @@ const bun = @import("bun");
 const BabyList = bun.BabyList;
 const logger = bun.logger;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const Ref = js_ast.Ref;
 const Scope = js_ast.Scope;
 const StrictModeKind = js_ast.StrictModeKind;

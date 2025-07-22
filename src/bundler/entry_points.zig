@@ -342,7 +342,7 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Transpiler = bun.Transpiler;
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;

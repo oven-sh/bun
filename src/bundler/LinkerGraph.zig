@@ -444,16 +444,16 @@ pub const File = struct {
 
 const std = @import("std");
 
-const js_ast = @import("../js_ast.zig");
-const Symbol = @import("../js_ast.zig").Symbol;
-
 const bun = @import("bun");
 const BabyList = bun.BabyList;
 const Environment = bun.Environment;
 const ImportRecord = bun.ImportRecord;
 const MultiArrayList = bun.MultiArrayList;
 const Output = bun.Output;
-const string = bun.string;
+const string = bun.Str;
+
+const js_ast = bun.ast;
+const Symbol = js_ast.Symbol;
 
 const AutoBitSet = bun.bit_set.AutoBitSet;
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;

@@ -6,7 +6,7 @@ pub const std = @import("std");
 pub const logger = bun.logger;
 pub const js_lexer = bun.js_lexer;
 pub const importRecord = @import("./import_record.zig");
-pub const js_ast = bun.JSAst;
+pub const js_ast = bun.ast;
 pub const options = @import("./options.zig");
 pub const js_printer = bun.js_printer;
 pub const renamer = @import("./renamer.zig");
@@ -3286,7 +3286,7 @@ pub const Parser = struct {
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
-            const runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            const runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
             if (runtime_transpiler_cache) |cache| {
                 if (cache.get(p.source, &p.options, p.options.jsx.parse and (!p.source.path.isNodeModule() or p.source.path.isJSXFile()))) {
                     return js_ast.Result{
@@ -4276,7 +4276,7 @@ pub const Parser = struct {
         // p.popScope();
 
         if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
-            const runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            const runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
             if (runtime_transpiler_cache) |cache| {
                 if (p.macro_call_count != 0) {
                     // disable this for:
@@ -7466,7 +7466,7 @@ fn NewParser_(
                     .bin_pow => {
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                return p.newExpr(E.Number{ .value = JSC.math.pow(vals[0], vals[1]) }, v.loc);
+                                return p.newExpr(E.Number{ .value = jsc.math.pow(vals[0], vals[1]) }, v.loc);
                             }
                         }
                     },
@@ -18823,7 +18823,7 @@ fn NewParser_(
                             // Inline import.meta.url as file:// URL
                             const bunstr = bun.String.fromBytes(p.source.path.text);
                             defer bunstr.deref();
-                            const url = std.fmt.allocPrint(p.allocator, "{s}", .{JSC.URL.fileURLFromString(bunstr)}) catch unreachable;
+                            const url = std.fmt.allocPrint(p.allocator, "{s}", .{jsc.URL.fileURLFromString(bunstr)}) catch unreachable;
                             return p.newExpr(E.String.init(url), name_loc);
                         }
                     }
@@ -24906,18 +24906,18 @@ const FeatureFlags = @import("./feature_flags.zig");
 const _runtime = @import("./runtime.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
 
-const Index = @import("./ast/base.zig").Index;
-const Ref = @import("./ast/base.zig").Ref;
-const RefCtx = @import("./ast/base.zig").RefCtx;
-
 const Define = @import("./defines.zig").Define;
 const DefineData = @import("./defines.zig").DefineData;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
 const Output = bun.Output;
 const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
+const jsc = bun.jsc;
+const string = bun.Str;
 const strings = bun.strings;
+
+const Index = bun.ast.Index;
+const Ref = bun.ast.Ref;
+const RefCtx = bun.ast.RefCtx;

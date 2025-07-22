@@ -12,7 +12,7 @@ pub const MacroContext = struct {
     env: *DotEnv.Loader,
     macros: MacroMap,
     remap: MacroRemap,
-    javascript_object: JSC.JSValue = JSC.JSValue.zero,
+    javascript_object: jsc.JSValue = jsc.JSValue.zero,
 
     pub fn getRemap(this: MacroContext, path: string) ?MacroRemapEntry {
         if (this.remap.entries.len == 0) return null;
@@ -51,7 +51,7 @@ pub const MacroContext = struct {
         bun.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
         const input_specifier = brk: {
-            if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record_path, .bun)) |replacement| {
+            if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record_path, .bun)) |replacement| {
                 break :brk replacement.path;
             }
 
@@ -176,7 +176,7 @@ pub fn init(
         defer resolver.opts.transform_options = old_transform_options;
 
         // JSC needs to be initialized if building from CLI
-        JSC.initialize(false);
+        jsc.initialize(false);
 
         var _vm = try JavaScript.VirtualMachine.init(.{
             .allocator = default_allocator,
@@ -198,7 +198,7 @@ pub fn init(
 
     const loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
 
-    switch (loaded_result.unwrap(vm.jsc, .leave_unhandled)) {
+    switch (loaded_result.unwrap(vm.jsc_vm, .leave_unhandled)) {
         .rejected => |result| {
             vm.unhandledRejection(vm.global, result, loaded_result.asValue());
             vm.disableMacroMode();
@@ -214,17 +214,17 @@ pub fn init(
 }
 
 pub const Runner = struct {
-    const VisitMap = std.AutoHashMapUnmanaged(JSC.JSValue, Expr);
+    const VisitMap = std.AutoHashMapUnmanaged(jsc.JSValue, Expr);
 
     threadlocal var args_buf: [3]js.JSObjectRef = undefined;
-    threadlocal var exception_holder: JSC.ZigException.Holder = undefined;
+    threadlocal var exception_holder: jsc.ZigException.Holder = undefined;
     pub const MacroError = error{ MacroFailed, OutOfMemory } || ToJSError || bun.JSError;
 
     pub const Run = struct {
         caller: Expr,
         function_name: string,
         macro: *const Macro,
-        global: *JSC.JSGlobalObject,
+        global: *jsc.JSGlobalObject,
         allocator: std.mem.Allocator,
         id: i32,
         log: *logger.Log,
@@ -238,7 +238,7 @@ pub const Runner = struct {
             allocator: std.mem.Allocator,
             function_name: string,
             caller: Expr,
-            args: []JSC.JSValue,
+            args: []jsc.JSValue,
             source: *const logger.Source,
             id: i32,
         ) MacroError!Expr {
@@ -273,9 +273,9 @@ pub const Runner = struct {
 
         pub fn run(
             this: *Run,
-            value: JSC.JSValue,
+            value: jsc.JSValue,
         ) MacroError!Expr {
-            return switch ((try JSC.ConsoleObject.Formatter.Tag.get(value, this.global)).tag) {
+            return switch ((try jsc.ConsoleObject.Formatter.Tag.get(value, this.global)).tag) {
                 .Error => this.coerce(value, .Error),
                 .Undefined => this.coerce(value, .Undefined),
                 .Null => this.coerce(value, .Null),
@@ -305,8 +305,8 @@ pub const Runner = struct {
 
         pub fn coerce(
             this: *Run,
-            value: JSC.JSValue,
-            comptime tag: JSC.ConsoleObject.Formatter.Tag,
+            value: jsc.JSValue,
+            comptime tag: jsc.ConsoleObject.Formatter.Tag,
         ) MacroError!Expr {
             switch (comptime tag) {
                 .Error => {
@@ -325,15 +325,15 @@ pub const Runner = struct {
                         return _entry.value_ptr.*;
                     }
 
-                    var blob_: ?JSC.WebCore.Blob = null;
+                    var blob_: ?jsc.WebCore.Blob = null;
                     const mime_type: ?MimeType = null;
 
                     if (value.jsType() == .DOMWrapper) {
-                        if (value.as(JSC.WebCore.Response)) |resp| {
+                        if (value.as(jsc.WebCore.Response)) |resp| {
                             return this.run(try resp.getBlobWithoutCallFrame(this.global));
-                        } else if (value.as(JSC.WebCore.Request)) |resp| {
+                        } else if (value.as(jsc.WebCore.Request)) |resp| {
                             return this.run(try resp.getBlobWithoutCallFrame(this.global));
-                        } else if (value.as(JSC.WebCore.Blob)) |resp| {
+                        } else if (value.as(jsc.WebCore.Blob)) |resp| {
                             blob_ = resp.*;
                             blob_.?.allocator = null;
                         } else if (value.as(bun.api.ResolveMessage) != null or value.as(bun.api.BuildMessage) != null) {
@@ -366,7 +366,7 @@ pub const Runner = struct {
                 .Boolean => {
                     return Expr{ .data = .{ .e_boolean = .{ .value = value.toBoolean() } }, .loc = this.caller.loc };
                 },
-                JSC.ConsoleObject.Formatter.Tag.Array => {
+                jsc.ConsoleObject.Formatter.Tag.Array => {
                     this.is_top_level = false;
 
                     const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
@@ -381,7 +381,7 @@ pub const Runner = struct {
                         return _entry.value_ptr.*;
                     }
 
-                    var iter = try JSC.JSArrayIterator.init(value, this.global);
+                    var iter = try jsc.JSArrayIterator.init(value, this.global);
                     if (iter.len == 0) {
                         const result = Expr.init(
                             E.Array,
@@ -418,7 +418,7 @@ pub const Runner = struct {
                     return out;
                 },
                 // TODO: optimize this
-                JSC.ConsoleObject.Formatter.Tag.Object => {
+                jsc.ConsoleObject.Formatter.Tag.Object => {
                     this.is_top_level = false;
                     const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                     if (_entry.found_existing) {
@@ -433,7 +433,7 @@ pub const Runner = struct {
                     }
                     // SAFETY: tag ensures `value` is an object.
                     const obj = value.getObject() orelse unreachable;
-                    var object_iter = try JSC.JSPropertyIterator(.{
+                    var object_iter = try jsc.JSPropertyIterator(.{
                         .skip_empty_name = false,
                         .include_value = true,
                     }).init(this.global, obj);
@@ -466,7 +466,7 @@ pub const Runner = struct {
                     // if (console_tag.cell == .JSDate) {
                     //     // in the code for printing dates, it never exceeds this amount
                     //     var iso_string_buf = this.allocator.alloc(u8, 36) catch unreachable;
-                    //     var str = JSC.ZigString.init("");
+                    //     var str = jsc.ZigString.init("");
                     //     value.jsonStringify(this.global, 0, &str);
                     //     var out_buf: []const u8 = std.fmt.bufPrint(iso_string_buf, "{}", .{str}) catch "";
                     //     if (out_buf.len > 2) {
@@ -502,8 +502,8 @@ pub const Runner = struct {
 
                     this.macro.vm.waitForPromise(promise);
 
-                    const promise_result = promise.result(this.macro.vm.jsc);
-                    const rejected = promise.status(this.macro.vm.jsc) == .rejected;
+                    const promise_result = promise.result(this.macro.vm.jsc_vm);
+                    const rejected = promise.status(this.macro.vm.jsc_vm) == .rejected;
 
                     if (promise_result.isUndefined() and this.is_top_level) {
                         this.is_top_level = false;
@@ -542,12 +542,12 @@ pub const Runner = struct {
         caller: Expr,
         source: *const logger.Source,
         id: i32,
-        javascript_object: JSC.JSValue,
+        javascript_object: jsc.JSValue,
     ) MacroError!Expr {
         if (comptime Environment.isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
 
-        exception_holder = JSC.ZigException.Holder.init();
-        var js_args: []JSC.JSValue = &.{};
+        exception_holder = jsc.ZigException.Holder.init();
+        var js_args: []jsc.JSValue = &.{};
         var js_processed_args_len: usize = 0;
         defer {
             for (js_args[0..js_processed_args_len -| @as(usize, @intFromBool(javascript_object != .zero))]) |arg| {
@@ -557,12 +557,12 @@ pub const Runner = struct {
             allocator.free(js_args);
         }
 
-        const globalObject = JSC.VirtualMachine.get().global;
+        const globalObject = jsc.VirtualMachine.get().global;
 
         switch (caller.data) {
             .e_call => |call| {
                 const call_args: []Expr = call.args.slice();
-                js_args = try allocator.alloc(JSC.JSValue, call_args.len + @as(usize, @intFromBool(javascript_object != .zero)));
+                js_args = try allocator.alloc(jsc.JSValue, call_args.len + @as(usize, @intFromBool(javascript_object != .zero)));
                 js_processed_args_len = js_args.len;
 
                 for (0.., call_args, js_args[0..call_args.len]) |i, in, *out| {
@@ -589,7 +589,7 @@ pub const Runner = struct {
 
         if (javascript_object != .zero) {
             if (js_args.len == 0) {
-                js_args = try allocator.alloc(JSC.JSValue, 1);
+                js_args = try allocator.alloc(jsc.JSValue, 1);
             }
 
             js_args[js_args.len - 1] = javascript_object;
@@ -601,9 +601,9 @@ pub const Runner = struct {
             threadlocal var call_args: CallArgs = undefined;
             threadlocal var result: MacroError!Expr = undefined;
             pub fn callWrapper(args: CallArgs) MacroError!Expr {
-                JSC.markBinding(@src());
+                jsc.markBinding(@src());
                 call_args = args;
-                Bun__startMacro(&call, JSC.VirtualMachine.get().global);
+                Bun__startMacro(&call, jsc.VirtualMachine.get().global);
                 return result;
             }
 
@@ -648,17 +648,13 @@ const Output = bun.Output;
 const Transpiler = bun.Transpiler;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const Loader = bun.options.Loader;
 const MimeType = bun.http.MimeType;
 const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
 
-const JSC = bun.JSC;
-const JavaScript = bun.JSC;
-const js = bun.JSC.C;
-
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const E = js_ast.E;
 const Expr = js_ast.Expr;
 const ExprNodeList = js_ast.ExprNodeList;
@@ -667,3 +663,7 @@ const Macro = js_ast.Macro;
 const S = js_ast.S;
 const Stmt = js_ast.Stmt;
 const ToJSError = js_ast.ToJSError;
+
+const JavaScript = bun.jsc;
+const jsc = bun.jsc;
+const js = bun.jsc.C;

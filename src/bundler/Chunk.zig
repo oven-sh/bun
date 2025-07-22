@@ -620,9 +620,9 @@ pub const Chunk = struct {
     };
 };
 
-pub const Ref = @import("../ast/base.zig").Ref;
+pub const Ref = bun.ast.Ref;
 
-pub const Index = @import("../ast/base.zig").Index;
+pub const Index = bun.ast.Index;
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
@@ -630,10 +630,6 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 
 const HTMLImportManifest = @import("./HTMLImportManifest.zig");
 const std = @import("std");
-const BabyList = @import("../baby_list.zig").BabyList;
-
-const js_ast = @import("../js_ast.zig");
-const Stmt = js_ast.Stmt;
 
 const options = @import("../options.zig");
 const Loader = options.Loader;
@@ -647,9 +643,13 @@ const StringJoiner = bun.StringJoiner;
 const default_allocator = bun.default_allocator;
 const renamer = bun.renamer;
 const sourcemap = bun.sourcemap;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const AutoBitSet = bun.bit_set.AutoBitSet;
+const BabyList = bun.collections.BabyList;
+
+const js_ast = bun.ast;
+const Stmt = js_ast.Stmt;
 
 const bundler = bun.bundle_v2;
 const BundleV2 = bundler.BundleV2;

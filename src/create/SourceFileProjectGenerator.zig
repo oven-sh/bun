@@ -79,7 +79,7 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
 }
 
 // Create a file with given contents, returns if file was newly created
-fn createFile(filename: []const u8, contents: []const u8) bun.JSC.Maybe(bool) {
+fn createFile(filename: []const u8, contents: []const u8) bun.jsc.Maybe(bool) {
     // Check if file exists and has same contents
     if (bun.sys.File.readFrom(bun.FD.cwd(), filename, default_allocator).asValue()) |source_contents| {
         defer default_allocator.free(source_contents);
@@ -248,7 +248,7 @@ pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependen
             .stdin = .inherit,
 
             .windows = if (Environment.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
             },
         }) catch |err| {
             Output.err(err, "failed to install dependencies", .{});
@@ -361,7 +361,7 @@ pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependen
         .stdin = .inherit,
 
         .windows = if (Environment.isWindows) .{
-            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
         },
     }) catch |err| {
         Output.err(err, "failed to start app", .{});
@@ -859,9 +859,9 @@ const Global = bun.Global;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const BundleV2 = bun.bundle_v2.BundleV2;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;

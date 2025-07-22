@@ -46,7 +46,7 @@ pub fn getResolvedName(this: *const UpdateRequest, lockfile: *const Lockfile) st
         this.version.literal.slice(this.version_buf);
 }
 
-pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) bun.JSError!JSC.JSValue {
+pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack = std.heap.stackFallback(1024, arena.allocator());
@@ -94,7 +94,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) bun.JSError!J
         return globalThis.throw("Failed to parse dependencies", .{});
     }
 
-    var object = JSC.JSValue.createEmptyObject(globalThis, 2);
+    var object = jsc.JSValue.createEmptyObject(globalThis, 2);
     var name_str = bun.String.init(update_requests[0].name);
     object.put(globalThis, "name", name_str.transferToJS(globalThis));
     object.put(globalThis, "version", try update_requests[0].version.toJS(update_requests[0].version_buf, globalThis));
@@ -245,12 +245,12 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Global = bun.Global;
-const JSAst = bun.JSAst;
-const JSC = bun.JSC;
+const JSAst = bun.ast;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 
 const Semver = bun.Semver;

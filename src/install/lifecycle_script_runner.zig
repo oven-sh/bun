@@ -51,7 +51,7 @@ pub const LifecycleScriptSubprocess = struct {
         return this.manager.event_loop.loop();
     }
 
-    pub fn eventLoop(this: *const LifecycleScriptSubprocess) *JSC.AnyEventLoop {
+    pub fn eventLoop(this: *const LifecycleScriptSubprocess) *jsc.AnyEventLoop {
         return &this.manager.event_loop;
     }
 
@@ -113,7 +113,7 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: u8) !void {
-        bun.Analytics.Features.lifecycle_scripts += 1;
+        bun.analytics.Features.lifecycle_scripts += 1;
 
         if (!this.has_incremented_alive_count) {
             this.has_incremented_alive_count = true;
@@ -142,7 +142,7 @@ pub const LifecycleScriptSubprocess = struct {
 
         var copy_script = try std.ArrayList(u8).initCapacity(manager.allocator, original_script.len + 1);
         defer copy_script.deinit();
-        try bun.CLI.RunCommand.replacePackageManagerRun(&copy_script, original_script);
+        try bun.cli.RunCommand.replacePackageManagerRun(&copy_script, original_script);
         try copy_script.append(0);
 
         const combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
@@ -208,7 +208,7 @@ pub const LifecycleScriptSubprocess = struct {
             .cwd = cwd,
 
             .windows = if (Environment.isWindows) .{
-                .loop = JSC.EventLoopHandle.init(&manager.event_loop),
+                .loop = jsc.EventLoopHandle.init(&manager.event_loop),
             },
 
             .stream = false,
@@ -571,8 +571,8 @@ const Timer = std.time.Timer;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSC = bun.JSC;
 const Output = bun.Output;
-const string = bun.string;
+const jsc = bun.jsc;
+const string = bun.Str;
 const Process = bun.spawn.Process;
 const Store = bun.install.Store;

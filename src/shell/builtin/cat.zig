@@ -117,7 +117,7 @@ pub fn next(this: *Cat) Yield {
     }
 }
 
-pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?jsc.SystemError) Yield {
     debug("onIOWriterChunk(0x{x}, {s}, had_err={any})", .{ @intFromPtr(this), @tagName(this.state), err != null });
     const errno: ExitCode = if (err) |e| brk: {
         defer e.deref();
@@ -201,7 +201,7 @@ pub fn onIOReaderChunk(this: *Cat, chunk: []const u8, remove: *bool) Yield {
     return .done;
 }
 
-pub fn onIOReaderDone(this: *Cat, err: ?JSC.SystemError) Yield {
+pub fn onIOReaderDone(this: *Cat, err: ?jsc.SystemError) Yield {
     const errno: ExitCode = if (err) |e| brk: {
         defer e.deref();
         break :brk @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
@@ -347,7 +347,7 @@ const Builtin = Interpreter.Builtin;
 const Result = Interpreter.Builtin.Result;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
 const ExitCode = shell.ExitCode;

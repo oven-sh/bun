@@ -296,7 +296,7 @@ pub const Tag = enum(u8) {
         return @intFromEnum(this) > @intFromEnum(Tag.WriteFile);
     }
 
-    pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
+    pub var strings = std.EnumMap(Tag, jsc.C.JSStringRef).initFull(null);
 };
 
 pub const Error = struct {
@@ -621,7 +621,7 @@ pub const Error = struct {
         return Error{ .errno = todo_errno, .syscall = .TODO };
     }
 
-    pub fn toJS(this: Error, ptr: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) jsc.JSValue {
         return this.toSystemError().toErrorInstance(ptr);
     }
 };
@@ -659,7 +659,7 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
 
 const syscall_or_c = if (Environment.isLinux) syscall else bun.c;
 
-pub fn fchown(fd: bun.FileDescriptor, uid: JSC.Node.uid_t, gid: JSC.Node.gid_t) Maybe(void) {
+pub fn fchown(fd: bun.FileDescriptor, uid: jsc.Node.uid_t, gid: jsc.Node.gid_t) Maybe(void) {
     if (comptime Environment.isWindows) {
         return sys_uv.fchown(fd, uid, gid);
     }
@@ -729,7 +729,7 @@ pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
     unreachable;
 }
 
-pub fn chdirOSPath(path: bun.stringZ, destination: if (Environment.isPosix) bun.stringZ else bun.string) Maybe(void) {
+pub fn chdirOSPath(path: bun.StrZ, destination: if (Environment.isPosix) bun.StrZ else bun.Str) Maybe(void) {
     if (comptime Environment.isPosix) {
         const rc = syscall.chdir(destination);
         return Maybe(void).errnoSysPD(rc, .chdir, path, destination) orelse Maybe(void).success;
@@ -875,7 +875,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
     if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| return err;
     return Maybe(bun.Stat){ .result = stat_ };
 }
-pub fn lutimes(path: [:0]const u8, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike) Maybe(void) {
+pub fn lutimes(path: [:0]const u8, atime: jsc.Node.TimeLike, mtime: jsc.Node.TimeLike) Maybe(void) {
     if (comptime Environment.isWindows) {
         return sys_uv.lutimes(path, atime, mtime);
     }
@@ -1774,7 +1774,7 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: i32, pe
     }
 }
 
-pub fn openatFileWithLibuvFlags(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.JSC.Node.FileSystemFlags, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatFileWithLibuvFlags(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.jsc.Node.FileSystemFlags, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         const f = flags.toWindows() catch return .{ .err = .{
             .errno = @intFromEnum(E.INVAL),
@@ -3350,11 +3350,11 @@ pub fn existsZ(path: [:0]const u8) bool {
     }
 }
 
-pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) JSC.Maybe(bool) {
+pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) jsc.Maybe(bool) {
     const has_sentinel = std.meta.sentinel(@TypeOf(subpath)) != null;
 
     if (comptime !has_sentinel) {
-        const path = std.os.toPosixPath(subpath) catch return JSC.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
+        const path = std.os.toPosixPath(subpath) catch return jsc.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
         return faccessat(dir_fd, path);
     }
 
@@ -3363,23 +3363,23 @@ pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) JSC.Maybe(bool) {
         const rc = linux.faccessat(dir_fd.cast(), subpath, linux.F_OK, 0);
         syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
         if (rc == 0) {
-            return JSC.Maybe(bool){ .result = true };
+            return jsc.Maybe(bool){ .result = true };
         }
 
-        return JSC.Maybe(bool){ .result = false };
+        return jsc.Maybe(bool){ .result = false };
     }
 
     // on other platforms use faccessat from libc
     const rc = std.c.faccessat(dir_fd.cast(), subpath, std.posix.F_OK, 0);
     syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
     if (rc == 0) {
-        return JSC.Maybe(bool){ .result = true };
+        return jsc.Maybe(bool){ .result = true };
     }
 
-    return JSC.Maybe(bool){ .result = false };
+    return jsc.Maybe(bool){ .result = false };
 }
 
-pub fn directoryExistsAt(dir: bun.FileDescriptor, subpath: anytype) JSC.Maybe(bool) {
+pub fn directoryExistsAt(dir: bun.FileDescriptor, subpath: anytype) jsc.Maybe(bool) {
     return switch (existsAtType(dir, subpath)) {
         //
         .err => |err| if (err.getErrno() == .NOENT)
@@ -3390,7 +3390,7 @@ pub fn directoryExistsAt(dir: bun.FileDescriptor, subpath: anytype) JSC.Maybe(bo
     };
 }
 
-pub fn futimens(fd: bun.FileDescriptor, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike) Maybe(void) {
+pub fn futimens(fd: bun.FileDescriptor, atime: jsc.Node.TimeLike, mtime: jsc.Node.TimeLike) Maybe(void) {
     if (comptime Environment.isWindows) @compileError("TODO: futimes");
 
     while (true) {
@@ -3414,7 +3414,7 @@ pub fn futimens(fd: bun.FileDescriptor, atime: JSC.Node.TimeLike, mtime: JSC.Nod
     unreachable;
 }
 
-fn utimensWithFlags(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike, flags: u32) Maybe(void) {
+fn utimensWithFlags(path: bun.OSPathSliceZ, atime: jsc.Node.TimeLike, mtime: jsc.Node.TimeLike, flags: u32) Maybe(void) {
     if (comptime Environment.isWindows) @compileError("TODO: utimens");
 
     while (true) {
@@ -3456,7 +3456,7 @@ pub fn getFcntlFlags(fd: bun.FileDescriptor) Maybe(fnctl_int) {
     };
 }
 
-pub fn utimens(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike) Maybe(void) {
+pub fn utimens(path: bun.OSPathSliceZ, atime: jsc.Node.TimeLike, mtime: jsc.Node.TimeLike) Maybe(void) {
     return utimensWithFlags(path, atime, mtime, 0);
 }
 
@@ -3522,7 +3522,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
         };
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
         const rc = ntdll.NtQueryAttributesFile(&attr, &basic_info);
-        if (JSC.Maybe(bool).errnoSys(rc, .access)) |err| {
+        if (jsc.Maybe(bool).errnoSys(rc, .access)) |err| {
             syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {}", .{ bun.fmt.fmtOSPath(path, .{}), err });
             return .{ .err = err.err };
         }
@@ -4248,7 +4248,7 @@ pub const File = struct {
 
         pub fn unwrap(self: *const ReadToEndResult) ![]u8 {
             if (self.err) |err| {
-                try (JSC.Maybe(void){ .err = err }).unwrap();
+                try (jsc.Maybe(void){ .err = err }).unwrap();
             }
             return self.bytes.items;
         }
@@ -5243,8 +5243,8 @@ const libc_stat = bun.Stat;
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const darwin_nocancel = bun.darwin.nocancel;
 
-const JSC = bun.JSC;
-const SystemError = JSC.SystemError;
+const jsc = bun.jsc;
+const SystemError = jsc.SystemError;
 
 const windows = bun.windows;
 const kernel32 = bun.windows.kernel32;

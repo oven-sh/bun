@@ -23,7 +23,7 @@ pub const InitFromBytesOptions = struct {
     server: ?AnyServer,
     mime_type: ?*const bun.http.MimeType = null,
     status_code: u16 = 200,
-    headers: ?*JSC.WebCore.FetchHeaders = null,
+    headers: ?*jsc.WebCore.FetchHeaders = null,
 };
 
 /// Ownership of `blob` is transferred to this function.
@@ -59,7 +59,7 @@ fn deinit(this: *StaticRoute) void {
     bun.destroy(this);
 }
 
-pub fn clone(this: *StaticRoute, globalThis: *JSC.JSGlobalObject) !*StaticRoute {
+pub fn clone(this: *StaticRoute, globalThis: *jsc.JSGlobalObject) !*StaticRoute {
     var blob = this.blob.toBlob(globalThis);
     this.blob = .{ .Blob = blob };
 
@@ -78,8 +78,8 @@ pub fn memoryCost(this: *const StaticRoute) usize {
     return @sizeOf(StaticRoute) + this.blob.memoryCost() + this.headers.memoryCost();
 }
 
-pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSError!?*StaticRoute {
-    if (argument.as(JSC.WebCore.Response)) |response| {
+pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSError!?*StaticRoute {
+    if (argument.as(jsc.WebCore.Response)) |response| {
 
         // The user may want to pass in the same Response object multiple endpoints
         // Let's let them do that.
@@ -267,8 +267,8 @@ fn doWriteHeaders(this: *StaticRoute, resp: AnyResponse) void {
     switch (resp) {
         inline .SSL, .TCP => |s| {
             const entries = this.headers.entries.slice();
-            const names: []const Api.StringPointer = entries.items(.name);
-            const values: []const Api.StringPointer = entries.items(.value);
+            const names: []const api.StringPointer = entries.items(.name);
+            const values: []const api.StringPointer = entries.items(.value);
             const buf = this.headers.buf.items;
 
             for (names, values) |name, value| {
@@ -307,14 +307,14 @@ pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyRespon
 }
 
 const std = @import("std");
-const Api = @import("../../../api/schema.zig").Api;
-const writeStatus = @import("../server.zig").writeStatus;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const Headers = bun.http.Headers;
-const AnyServer = JSC.API.AnyServer;
-const AnyBlob = JSC.WebCore.Blob.Any;
+const api = bun.schema.api;
+const AnyServer = jsc.API.AnyServer;
+const writeStatus = bun.api.server.writeStatus;
+const AnyBlob = jsc.WebCore.Blob.Any;
 
 const uws = bun.uws;
 const AnyResponse = uws.AnyResponse;

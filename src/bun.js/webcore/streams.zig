@@ -29,22 +29,22 @@ pub const Start = union(Tag) {
         done,
     };
 
-    pub fn toJS(this: Start, globalThis: *JSGlobalObject) bun.JSError!JSC.JSValue {
+    pub fn toJS(this: Start, globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
         switch (this) {
             .empty, .ready => {
                 return .js_undefined;
             },
             .chunk_size => |chunk| {
-                return JSC.JSValue.jsNumber(@as(Blob.SizeType, @intCast(chunk)));
+                return jsc.JSValue.jsNumber(@as(Blob.SizeType, @intCast(chunk)));
             },
             .err => |err| {
                 return globalThis.throwValue(err.toJS(globalThis));
             },
             .owned_and_done => |list| {
-                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
+                return jsc.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
             },
             .done => |list| {
-                return JSC.ArrayBuffer.create(globalThis, list.slice(), .Uint8Array);
+                return jsc.ArrayBuffer.create(globalThis, list.slice(), .Uint8Array);
             },
             else => {
                 return .js_undefined;
@@ -220,18 +220,18 @@ pub const Result = union(Tag) {
 
     pub const StreamError = union(enum) {
         Error: Syscall.Error,
-        AbortReason: JSC.CommonAbortReason,
+        AbortReason: jsc.CommonAbortReason,
 
-        // TODO: use an explicit JSC.Strong.Optional here.
-        JSValue: JSC.JSValue,
-        WeakJSValue: JSC.JSValue,
+        // TODO: use an explicit jsc.Strong.Optional here.
+        JSValue: jsc.JSValue,
+        WeakJSValue: jsc.JSValue,
 
         const WasStrong = enum {
             Strong,
             Weak,
         };
 
-        pub fn toJSWeak(this: *const @This(), globalObject: *JSC.JSGlobalObject) struct { JSC.JSValue, WasStrong } {
+        pub fn toJSWeak(this: *const @This(), globalObject: *jsc.JSGlobalObject) struct { jsc.JSValue, WasStrong } {
             return switch (this.*) {
                 .Error => |err| {
                     return .{ err.toJS(globalObject), WasStrong.Weak };
@@ -299,8 +299,8 @@ pub const Result = union(Tag) {
             pub const Future = union(enum) {
                 none: void,
                 promise: struct {
-                    strong: JSC.JSPromise.Strong,
-                    global: *JSC.JSGlobalObject,
+                    strong: jsc.JSPromise.Strong,
+                    global: *jsc.JSGlobalObject,
                 },
                 handler: Handler,
 
@@ -312,7 +312,7 @@ pub const Result = union(Tag) {
                 }
             };
 
-            pub fn promise(this: *Writable.Pending, globalThis: *JSC.JSGlobalObject) *JSPromise {
+            pub fn promise(this: *Writable.Pending, globalThis: *jsc.JSGlobalObject) *JSPromise {
                 this.state = .pending;
 
                 switch (this.future) {
@@ -322,7 +322,7 @@ pub const Result = union(Tag) {
                     else => {
                         this.future = .{
                             .promise = .{
-                                .strong = JSC.JSPromise.Strong.init(globalThis),
+                                .strong = jsc.JSPromise.Strong.init(globalThis),
                                 .global = globalThis,
                             },
                         };
@@ -394,18 +394,18 @@ pub const Result = union(Tag) {
 
         pub fn toJS(this: Writable, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
-                .err => |err| JSC.JSPromise.rejectedPromise(globalThis, err.toJS(globalThis)).toJS(),
+                .err => |err| jsc.JSPromise.rejectedPromise(globalThis, err.toJS(globalThis)).toJS(),
 
-                .owned => |len| JSC.JSValue.jsNumber(len),
-                .owned_and_done => |len| JSC.JSValue.jsNumber(len),
-                .temporary_and_done => |len| JSC.JSValue.jsNumber(len),
-                .temporary => |len| JSC.JSValue.jsNumber(len),
-                .into_array => |len| JSC.JSValue.jsNumber(len),
-                .into_array_and_done => |len| JSC.JSValue.jsNumber(len),
+                .owned => |len| jsc.JSValue.jsNumber(len),
+                .owned_and_done => |len| jsc.JSValue.jsNumber(len),
+                .temporary_and_done => |len| jsc.JSValue.jsNumber(len),
+                .temporary => |len| jsc.JSValue.jsNumber(len),
+                .into_array => |len| jsc.JSValue.jsNumber(len),
+                .into_array_and_done => |len| jsc.JSValue.jsNumber(len),
 
                 // false == controller.close()
                 // undefined == noop, but we probably won't send it
-                .done => JSC.JSValue.jsBoolean(true),
+                .done => jsc.JSValue.jsBoolean(true),
 
                 .pending => |pending| pending.promise(globalThis).toJS(),
             };
@@ -427,8 +427,8 @@ pub const Result = union(Tag) {
             this.state = .pending;
         }
 
-        pub fn promise(this: *Pending, globalObject: *JSC.JSGlobalObject) *JSC.JSPromise {
-            const prom = JSC.JSPromise.create(globalObject);
+        pub fn promise(this: *Pending, globalObject: *jsc.JSGlobalObject) *jsc.JSPromise {
+            const prom = jsc.JSPromise.create(globalObject);
             this.future = .{
                 .promise = .{
                     .promise = prom,
@@ -441,7 +441,7 @@ pub const Result = union(Tag) {
 
         pub fn runOnNextTick(this: *Pending) void {
             if (this.state != .pending) return;
-            const vm = JSC.VirtualMachine.get();
+            const vm = jsc.VirtualMachine.get();
             if (vm.isShuttingDown()) {
                 return;
             }
@@ -449,7 +449,7 @@ pub const Result = union(Tag) {
             const clone = bun.create(bun.default_allocator, Pending, this.*);
             this.state = .none;
             this.result = .{ .done = {} };
-            vm.eventLoop().enqueueTask(JSC.Task.init(clone));
+            vm.eventLoop().enqueueTask(jsc.Task.init(clone));
         }
 
         pub fn runFromJSThread(this: *Pending) void {
@@ -461,7 +461,7 @@ pub const Result = union(Tag) {
         pub const Future = union(enum) {
             promise: struct {
                 promise: *JSPromise,
-                globalThis: *JSC.JSGlobalObject,
+                globalThis: *jsc.JSGlobalObject,
             },
             handler: Handler,
 
@@ -517,7 +517,7 @@ pub const Result = union(Tag) {
         };
     }
 
-    pub fn fulfillPromise(result: *Result, promise: *JSC.JSPromise, globalThis: *JSC.JSGlobalObject) void {
+    pub fn fulfillPromise(result: *Result, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) void {
         const vm = globalThis.bunVM();
         const loop = vm.eventLoop();
         const promise_value = promise.toJS();
@@ -557,7 +557,7 @@ pub const Result = union(Tag) {
     }
 
     pub fn toJS(this: *const Result, globalThis: *JSGlobalObject) bun.JSError!JSValue {
-        if (JSC.VirtualMachine.get().isShuttingDown()) {
+        if (jsc.VirtualMachine.get().isShuttingDown()) {
             var that = this.*;
             that.deinit();
             return .zero;
@@ -565,30 +565,30 @@ pub const Result = union(Tag) {
 
         switch (this.*) {
             .owned => |list| {
-                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
+                return jsc.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
             },
             .owned_and_done => |list| {
-                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
+                return jsc.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
             },
             .temporary => |temp| {
-                var array = try JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
+                var array = try jsc.JSValue.createUninitializedUint8Array(globalThis, temp.len);
                 var slice_ = array.asArrayBuffer(globalThis).?.slice();
                 const temp_slice = temp.slice();
                 @memcpy(slice_[0..temp_slice.len], temp_slice);
                 return array;
             },
             .temporary_and_done => |temp| {
-                var array = try JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
+                var array = try jsc.JSValue.createUninitializedUint8Array(globalThis, temp.len);
                 var slice_ = array.asArrayBuffer(globalThis).?.slice();
                 const temp_slice = temp.slice();
                 @memcpy(slice_[0..temp_slice.len], temp_slice);
                 return array;
             },
             .into_array => |array| {
-                return JSC.JSValue.jsNumberFromInt64(array.len);
+                return jsc.JSValue.jsNumberFromInt64(array.len);
             },
             .into_array_and_done => |array| {
-                return JSC.JSValue.jsNumberFromInt64(array.len);
+                return jsc.JSValue.jsNumberFromInt64(array.len);
             },
             .pending => |pending| {
                 const promise = pending.promise(globalThis).toJS();
@@ -602,13 +602,13 @@ pub const Result = union(Tag) {
                     js_err.unprotect();
                 }
                 js_err.ensureStillAlive();
-                return JSC.JSPromise.rejectedPromise(globalThis, js_err).toJS();
+                return jsc.JSPromise.rejectedPromise(globalThis, js_err).toJS();
             },
 
             // false == controller.close()
             // undefined == noop, but we probably won't send it
             .done => {
-                return JSC.JSValue.jsBoolean(false);
+                return jsc.JSValue.jsBoolean(false);
             },
         }
     }
@@ -713,7 +713,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         allocator: std.mem.Allocator,
         done: bool = false,
         signal: Signal = .{},
-        pending_flush: ?*JSC.JSPromise = null,
+        pending_flush: ?*jsc.JSPromise = null,
         wrote_at_start_of_flush: Blob.SizeType = 0,
         globalThis: *JSGlobalObject = undefined,
         highWaterMark: Blob.SizeType = 2048,
@@ -874,7 +874,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return true;
         }
 
-        pub fn start(this: *@This(), stream_start: Start) JSC.Maybe(void) {
+        pub fn start(this: *@This(), stream_start: Start) jsc.Maybe(void) {
             if (this.aborted or this.res.hasResponded()) {
                 this.markDone();
                 this.signal.close(null);
@@ -920,7 +920,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return .{ .result = {} };
         }
 
-        fn flushFromJSNoWait(this: *@This()) JSC.Maybe(JSValue) {
+        fn flushFromJSNoWait(this: *@This()) jsc.Maybe(JSValue) {
             log("flushFromJSNoWait", .{});
 
             return .{ .result = JSValue.jsNumber(this.flushNoWait()) };
@@ -944,7 +944,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return 0;
         }
 
-        pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) JSC.Maybe(JSValue) {
+        pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) jsc.Maybe(JSValue) {
             log("flushFromJS({any})", .{wait});
             this.unregisterAutoFlusher();
 
@@ -957,7 +957,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             if (this.buffer.len == 0 or this.done) {
-                return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumberFromInt32(0)) };
+                return .{ .result = jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumberFromInt32(0)) };
             }
 
             if (!this.hasBackpressureAndIsTryEnd()) {
@@ -965,11 +965,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 assert(slice.len > 0);
                 const success = this.send(slice);
                 if (success) {
-                    return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(slice.len)) };
+                    return .{ .result = jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(slice.len)) };
                 }
             }
             this.wrote_at_start_of_flush = this.wrote;
-            this.pending_flush = JSC.JSPromise.create(globalThis);
+            this.pending_flush = jsc.JSPromise.create(globalThis);
             this.globalThis = globalThis;
             var promise_value = this.pending_flush.?.toJS();
             promise_value.protect();
@@ -977,7 +977,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return .{ .result = promise_value };
         }
 
-        pub fn flush(this: *@This()) JSC.Maybe(void) {
+        pub fn flush(this: *@This()) jsc.Maybe(void) {
             log("flush()", .{});
             this.unregisterAutoFlusher();
 
@@ -1131,7 +1131,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         // In this case, it's always an error
-        pub fn end(this: *@This(), err: ?Syscall.Error) JSC.Maybe(void) {
+        pub fn end(this: *@This(), err: ?Syscall.Error) jsc.Maybe(void) {
             log("end({any})", .{err});
 
             if (this.requested_end) {
@@ -1160,11 +1160,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return .{ .result = {} };
         }
 
-        pub fn endFromJS(this: *@This(), globalThis: *JSGlobalObject) JSC.Maybe(JSValue) {
+        pub fn endFromJS(this: *@This(), globalThis: *JSGlobalObject) jsc.Maybe(JSValue) {
             log("endFromJS()", .{});
 
             if (this.requested_end) {
-                return .{ .result = JSC.JSValue.jsNumber(0) };
+                return .{ .result = jsc.JSValue.jsNumber(0) };
             }
 
             if (this.done or this.res.hasResponded()) {
@@ -1172,7 +1172,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.signal.close(null);
                 this.markDone();
                 this.finalize();
-                return .{ .result = JSC.JSValue.jsNumber(0) };
+                return .{ .result = jsc.JSValue.jsNumber(0) };
             }
 
             this.requested_end = true;
@@ -1181,7 +1181,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             if (readable.len > 0) {
                 if (!this.send(readable)) {
-                    this.pending_flush = JSC.JSPromise.create(globalThis);
+                    this.pending_flush = jsc.JSPromise.create(globalThis);
                     this.globalThis = globalThis;
                     const value = this.pending_flush.?.toJS();
                     value.protect();
@@ -1196,7 +1196,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             this.signal.close(null);
             this.finalize();
 
-            return .{ .result = JSC.JSValue.jsNumber(this.wrote) };
+            return .{ .result = jsc.JSValue.jsNumber(this.wrote) };
         }
 
         pub fn sink(this: *@This()) Sink {
@@ -1312,7 +1312,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.pending_flush = null;
                 const globalThis = this.globalThis;
                 prom.toJS().unprotect();
-                prom.resolve(globalThis, JSC.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush));
+                prom.resolve(globalThis, jsc.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush));
                 this.wrote_at_start_of_flush = this.wrote;
             }
         }
@@ -1331,8 +1331,8 @@ pub const NetworkSink = struct {
     signal: Signal = .{},
     globalThis: *JSGlobalObject = undefined,
     highWaterMark: Blob.SizeType = 2048,
-    flushPromise: JSC.JSPromise.Strong = .{},
-    endPromise: JSC.JSPromise.Strong = .{},
+    flushPromise: jsc.JSPromise.Strong = .{},
+    endPromise: jsc.JSPromise.Strong = .{},
     ended: bool = false,
     done: bool = false,
     cancel: bool = false,
@@ -1353,7 +1353,7 @@ pub const NetworkSink = struct {
         return null;
     }
 
-    pub fn start(this: *@This(), stream_start: Start) JSC.Maybe(void) {
+    pub fn start(this: *@This(), stream_start: Start) jsc.Maybe(void) {
         if (this.ended) {
             return .{ .result = {} };
         }
@@ -1394,15 +1394,15 @@ pub const NetworkSink = struct {
     pub fn onWritable(task: *bun.S3.MultiPartUpload, this: *@This(), flushed: u64) void {
         log("onWritable flushed: {d} state: {s}", .{ flushed, @tagName(task.state) });
         if (this.flushPromise.hasValue()) {
-            this.flushPromise.resolve(this.globalThis, JSC.JSValue.jsNumber(flushed));
+            this.flushPromise.resolve(this.globalThis, jsc.JSValue.jsNumber(flushed));
         }
     }
 
-    pub fn flush(_: *@This()) JSC.Maybe(void) {
+    pub fn flush(_: *@This()) jsc.Maybe(void) {
         return .{ .result = {} };
     }
 
-    pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, _: bool) JSC.Maybe(JSValue) {
+    pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, _: bool) jsc.Maybe(JSValue) {
         // still waiting for more data tobe flushed
         if (this.flushPromise.hasValue()) {
             return .{ .result = this.flushPromise.value() };
@@ -1410,18 +1410,18 @@ pub const NetworkSink = struct {
 
         // nothing todo here
         if (this.done) {
-            return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(0)) };
+            return .{ .result = jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(0)) };
         }
         // flush more
         if (this.task) |task| {
             if (!task.isQueueEmpty()) {
                 // we have something queued, we need to wait for the next flush
-                this.flushPromise = JSC.JSPromise.Strong.init(globalThis);
+                this.flushPromise = jsc.JSPromise.Strong.init(globalThis);
                 return .{ .result = this.flushPromise.value() };
             }
         }
         // we are done flushing no backpressure
-        return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(0)) };
+        return .{ .result = jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(0)) };
     }
     pub fn finalizeAndDestroy(this: *@This()) void {
         this.finalize();
@@ -1483,7 +1483,7 @@ pub const NetworkSink = struct {
         return .{ .owned = @as(Blob.SizeType, @intCast(bytes.len)) };
     }
 
-    pub fn end(this: *@This(), err: ?Syscall.Error) JSC.Maybe(void) {
+    pub fn end(this: *@This(), err: ?Syscall.Error) jsc.Maybe(void) {
         if (this.ended) {
             return .{ .result = {} };
         }
@@ -1498,7 +1498,7 @@ pub const NetworkSink = struct {
         this.signal.close(err);
         return .{ .result = {} };
     }
-    pub fn endFromJS(this: *@This(), _: *JSGlobalObject) JSC.Maybe(JSValue) {
+    pub fn endFromJS(this: *@This(), _: *JSGlobalObject) jsc.Maybe(JSValue) {
         _ = this.end(null);
         if (this.endPromise.hasValue()) {
             // we are already waiting for the end
@@ -1506,7 +1506,7 @@ pub const NetworkSink = struct {
         }
         if (this.task) |task| {
             // we need to wait for the task to end
-            this.endPromise = JSC.JSPromise.Strong.init(this.globalThis);
+            this.endPromise = jsc.JSPromise.Strong.init(this.globalThis);
             const value = this.endPromise.value();
             if (!this.ended) {
                 this.ended = true;
@@ -1517,7 +1517,7 @@ pub const NetworkSink = struct {
             return .{ .result = value };
         }
         // task already detached
-        return .{ .result = JSC.JSValue.jsNumber(0) };
+        return .{ .result = jsc.JSValue.jsNumber(0) };
     }
     pub fn toJS(this: *@This(), globalThis: *JSGlobalObject) JSValue {
         return JSSink.createObject(globalThis, this, 0);
@@ -1537,39 +1537,39 @@ pub const NetworkSink = struct {
 };
 
 pub const BufferAction = union(enum) {
-    text: JSC.JSPromise.Strong,
-    arrayBuffer: JSC.JSPromise.Strong,
-    blob: JSC.JSPromise.Strong,
-    bytes: JSC.JSPromise.Strong,
-    json: JSC.JSPromise.Strong,
+    text: jsc.JSPromise.Strong,
+    arrayBuffer: jsc.JSPromise.Strong,
+    blob: jsc.JSPromise.Strong,
+    bytes: jsc.JSPromise.Strong,
+    json: jsc.JSPromise.Strong,
 
     pub const Tag = @typeInfo(BufferAction).@"union".tag_type.?;
 
-    pub fn fulfill(this: *BufferAction, global: *JSC.JSGlobalObject, blob: *AnyBlob) void {
+    pub fn fulfill(this: *BufferAction, global: *jsc.JSGlobalObject, blob: *AnyBlob) void {
         blob.wrap(.{ .normal = this.swap() }, global, this.*);
     }
 
-    pub fn reject(this: *BufferAction, global: *JSC.JSGlobalObject, err: Result.StreamError) void {
+    pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: Result.StreamError) void {
         this.swap().reject(global, err.toJSWeak(global)[0]);
     }
 
-    pub fn resolve(this: *BufferAction, global: *JSC.JSGlobalObject, result: JSC.JSValue) void {
+    pub fn resolve(this: *BufferAction, global: *jsc.JSGlobalObject, result: jsc.JSValue) void {
         this.swap().resolve(global, result);
     }
 
-    pub fn value(this: *BufferAction) JSC.JSValue {
+    pub fn value(this: *BufferAction) jsc.JSValue {
         return switch (this.*) {
             inline else => |promise| promise.value(),
         };
     }
 
-    pub fn get(this: *BufferAction) *JSC.JSPromise {
+    pub fn get(this: *BufferAction) *jsc.JSPromise {
         return switch (this.*) {
             inline else => |promise| promise.get(),
         };
     }
 
-    pub fn swap(this: *BufferAction) *JSC.JSPromise {
+    pub fn swap(this: *BufferAction) *jsc.JSPromise {
         return switch (this.*) {
             inline else => |*promise| promise.swap(),
         };
@@ -1648,21 +1648,21 @@ const Output = bun.Output;
 const Syscall = bun.sys;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const uws = bun.uws;
 
-const JSC = bun.JSC;
-const ArrayBuffer = JSC.ArrayBuffer;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSPromise = JSC.JSPromise;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
+const jsc = bun.jsc;
+const ArrayBuffer = jsc.ArrayBuffer;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSPromise = jsc.JSPromise;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
 
-const WebCore = JSC.WebCore;
+const WebCore = jsc.WebCore;
 const AutoFlusher = WebCore.AutoFlusher;
 const FileSink = WebCore.FileSink;
-const Response = JSC.WebCore.Response;
+const Response = jsc.WebCore.Response;
 const Sink = WebCore.Sink;
 
 const Blob = bun.webcore.Blob;

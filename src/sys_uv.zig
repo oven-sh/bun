@@ -404,5 +404,5 @@ const FileDescriptor = bun.FileDescriptor;
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const uv = bun.windows.libuv;
 
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
+const jsc = bun.jsc;
+const Maybe = jsc.Maybe;

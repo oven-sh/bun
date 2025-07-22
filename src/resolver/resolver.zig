@@ -637,7 +637,7 @@ pub const Resolver = struct {
             bun.crash_handler.current_action = prev_action;
         };
 
-        if (Environment.show_crash_trace and bun.CLI.debug_flags.hasResolveBreakpoint(import_path)) {
+        if (Environment.show_crash_trace and bun.cli.debug_flags.hasResolveBreakpoint(import_path)) {
             bun.Output.debug("Resolving <green>{s}<r> from <blue>{s}<r>", .{
                 import_path,
                 source_dir,
@@ -1203,7 +1203,7 @@ pub const Resolver = struct {
 
                 if (had_node_prefix) {
                     // Module resolution fails automatically for unknown node builtins
-                    if (!bun.JSC.ModuleLoader.HardcodedModule.Alias.has(import_path_without_node_prefix, .node)) {
+                    if (!bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path_without_node_prefix, .node)) {
                         return .{ .not_found = {} };
                     }
 
@@ -3122,7 +3122,7 @@ pub const Resolver = struct {
             //     }
             //
             if (r.opts.mark_builtins_as_external or r.opts.target.isBun()) {
-                if (JSC.ModuleLoader.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target)) |alias| {
+                if (jsc.ModuleLoader.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target)) |alias| {
                     return .{
                         .success = .{
                             .path_pair = .{ .primary = bun.fs.Path.init(alias.path) },
@@ -3383,9 +3383,9 @@ pub const Resolver = struct {
         };
     }
 
-    pub fn nodeModulePathsForJS(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) bun.JSError!JSC.JSValue {
-        bun.JSC.markBinding(@src());
-        const argument: bun.JSC.JSValue = callframe.argument(0);
+    pub fn nodeModulePathsForJS(globalThis: *bun.jsc.JSGlobalObject, callframe: *bun.jsc.CallFrame) bun.JSError!jsc.JSValue {
+        bun.jsc.markBinding(@src());
+        const argument: bun.jsc.JSValue = callframe.argument(0);
 
         if (argument == .zero or !argument.isString()) {
             return globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
@@ -3396,14 +3396,14 @@ pub const Resolver = struct {
         return nodeModulePathsJSValue(in_str, globalThis, false);
     }
 
-    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        bun.JSC.markBinding(@src());
+    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+        bun.jsc.markBinding(@src());
 
         const in_str = bun.String.init(".");
         return nodeModulePathsJSValue(in_str, globalThis, false);
     }
 
-    pub fn nodeModulePathsJSValue(in_str: bun.String, globalObject: *bun.JSC.JSGlobalObject, use_dirname: bool) callconv(.C) bun.JSC.JSValue {
+    pub fn nodeModulePathsJSValue(in_str: bun.String, globalObject: *bun.jsc.JSGlobalObject, use_dirname: bool) callconv(.C) bun.jsc.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
@@ -4312,7 +4312,7 @@ pub const GlobalCache = enum {
 
 comptime {
     _ = Resolver.Resolver__propForRequireMainPaths;
-    @export(&JSC.toJSHostFn(Resolver.nodeModulePathsForJS), .{ .name = "Resolver__nodeModulePathsForJS" });
+    @export(&jsc.toJSHostFn(Resolver.nodeModulePathsForJS), .{ .name = "Resolver__nodeModulePathsForJS" });
     @export(&Resolver.nodeModulePathsJSValue, .{ .name = "Resolver__nodeModulePathsJSValue" });
 }
 
@@ -4320,7 +4320,6 @@ const Dependency = @import("../install/dependency.zig");
 const DotEnv = @import("../env_loader.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ResolvePath = @import("./resolve_path.zig");
-const allocators = @import("../allocators.zig");
 const ast = @import("../import_record.zig");
 const options = @import("../options.zig");
 const std = @import("std");
@@ -4347,15 +4346,16 @@ const Environment = bun.Environment;
 const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
 const FileDescriptorType = bun.FileDescriptor;
-const JSC = bun.JSC;
 const MutableString = bun.MutableString;
 const Mutex = bun.Mutex;
 const Output = bun.Output;
 const PathString = bun.PathString;
 const Semver = bun.Semver;
+const allocators = bun.allocators;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
+const jsc = bun.jsc;
+const string = bun.Str;
 const strings = bun.strings;
 
 const logger = bun.logger;

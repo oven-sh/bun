@@ -136,9 +136,9 @@ const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const Path = bun.path;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const Bin = bun.install.Bin;
 const Features = bun.install.Features;

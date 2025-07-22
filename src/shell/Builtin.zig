@@ -252,7 +252,7 @@ pub const BuiltinIO = struct {
     };
 
     const ArrayBuf = struct {
-        buf: JSC.ArrayBuffer.Strong,
+        buf: jsc.ArrayBuffer.Strong,
         i: u32 = 0,
     };
 
@@ -493,7 +493,7 @@ fn initRedirections(
             .jsbuf => |val| {
                 const globalObject = interpreter.event_loop.js.global;
                 if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(globalObject)) |buf| {
-                    const arraybuf: BuiltinIO.ArrayBuf = .{ .buf = JSC.ArrayBuffer.Strong{
+                    const arraybuf: BuiltinIO.ArrayBuf = .{ .buf = jsc.ArrayBuffer.Strong{
                         .array_buffer = buf,
                         .held = .create(buf.value, globalObject),
                     }, .i = 0 };
@@ -512,7 +512,7 @@ fn initRedirections(
                         cmd.exec.bltn.stderr.deref();
                         cmd.exec.bltn.stderr = .{ .arraybuf = arraybuf };
                     }
-                } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Body.Value)) |body| {
+                } else if (interpreter.jsobjs[file.jsbuf.idx].as(jsc.WebCore.Body.Value)) |body| {
                     if ((node.redirect.stdout or node.redirect.stderr) and !(body.* == .Blob and !body.Blob.needsToReadFile())) {
                         // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
                         cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{}) catch {};
@@ -541,7 +541,7 @@ fn initRedirections(
                         cmd.exec.bltn.stderr.deref();
                         cmd.exec.bltn.stderr = .{ .blob = blob };
                     }
-                } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
+                } else if (interpreter.jsobjs[file.jsbuf.idx].as(jsc.WebCore.Blob)) |blob| {
                     if ((node.redirect.stdout or node.redirect.stderr) and !blob.needsToReadFile()) {
                         // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
                         cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{}) catch {};
@@ -585,7 +585,7 @@ fn initRedirections(
     return null;
 }
 
-pub inline fn eventLoop(this: *const Builtin) JSC.EventLoopHandle {
+pub inline fn eventLoop(this: *const Builtin) jsc.EventLoopHandle {
     return this.parentCmd().base.eventLoop();
 }
 
@@ -725,7 +725,7 @@ pub fn taskErrorToString(this: *Builtin, comptime kind: Kind, err: anytype) []co
             }
             return this.fmtErrorArena(kind, "unknown error {d}\n", .{err.errno});
         },
-        JSC.SystemError => {
+        jsc.SystemError => {
             if (err.path.length() == 0) return this.fmtErrorArena(kind, "{s}\n", .{err.message.byteSlice()});
             return this.fmtErrorArena(kind, "{s}: {s}\n", .{ err.message.byteSlice(), err.path });
         },
@@ -771,7 +771,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
 const Yield = bun.shell.Yield;

@@ -1,5 +1,5 @@
 //! This is AnyTask except it gives you two pointers instead of one.
-//! Generally, prefer JSC.Task instead of this.
+//! Generally, prefer jsc.Task instead of this.
 
 const AnyTaskWithExtraContext = @This();
 
@@ -68,5 +68,5 @@ pub fn New(comptime Type: type, comptime ContextType: type, comptime Callback: a
 const bun = @import("bun");
 const std = @import("std");
 
-const JSC = bun.JSC;
-const Task = JSC.Task;
+const jsc = bun.jsc;
+const Task = jsc.Task;

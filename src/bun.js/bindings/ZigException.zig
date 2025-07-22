@@ -86,7 +86,7 @@ pub const ZigException = extern struct {
             return Holder.Zero;
         }
 
-        pub fn deinit(this: *Holder, vm: *JSC.VirtualMachine) void {
+        pub fn deinit(this: *Holder, vm: *jsc.VirtualMachine) void {
             if (this.loaded) {
                 this.zig_exception.deinit();
             }
@@ -124,7 +124,7 @@ pub const ZigException = extern struct {
 
     pub fn addToErrorList(
         this: *ZigException,
-        error_list: *std.ArrayList(Api.JsException),
+        error_list: *std.ArrayList(api.JsException),
         root_path: string,
         origin: ?*const ZigURL,
     ) !void {
@@ -137,7 +137,7 @@ pub const ZigException = extern struct {
         defer message_slice.deinit();
 
         var is_empty = true;
-        var api_exception = Api.JsException{
+        var api_exception = api.JsException{
             .runtime_type = @intFromEnum(this.runtime_type),
             .code = @intFromEnum(this.type),
         };
@@ -164,18 +164,18 @@ pub const ZigException = extern struct {
 };
 
 const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
 const ZigURL = @import("../../url.zig").URL;
 
 const bun = @import("bun");
 const String = bun.String;
-const string = bun.string;
+const string = bun.Str;
+const api = bun.schema.api;
 
-const JSC = bun.JSC;
-const Exception = JSC.Exception;
-const JSErrorCode = JSC.JSErrorCode;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSRuntimeType = JSC.JSRuntimeType;
-const JSValue = JSC.JSValue;
-const ZigStackFrame = JSC.ZigStackFrame;
-const ZigStackTrace = JSC.ZigStackTrace;
+const jsc = bun.jsc;
+const Exception = jsc.Exception;
+const JSErrorCode = jsc.JSErrorCode;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSRuntimeType = jsc.JSRuntimeType;
+const JSValue = jsc.JSValue;
+const ZigStackFrame = jsc.ZigStackFrame;
+const ZigStackTrace = jsc.ZigStackTrace;

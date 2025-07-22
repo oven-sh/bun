@@ -461,7 +461,7 @@ pub const PmVersionCommand = struct {
             .cwd = cwd,
             .envp = null,
             .windows = if (Environment.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
             },
         }) catch |err| {
             Output.errGeneric("Failed to spawn git process: {s}", .{@errorName(err)});
@@ -494,7 +494,7 @@ pub const PmVersionCommand = struct {
             .cwd = cwd,
             .envp = null,
             .windows = if (Environment.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
             },
         }) catch |err| {
             Output.err(err, "Failed to spawn git process", .{});
@@ -541,7 +541,7 @@ pub const PmVersionCommand = struct {
             .stdin = .ignore,
             .envp = null,
             .windows = if (Environment.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
             },
         }) catch |err| {
             Output.errGeneric("Git add failed: {s}", .{@errorName(err)});
@@ -575,7 +575,7 @@ pub const PmVersionCommand = struct {
             .stdin = .ignore,
             .envp = null,
             .windows = if (Environment.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
             },
         }) catch |err| {
             Output.errGeneric("Git commit failed: {s}", .{@errorName(err)});
@@ -606,7 +606,7 @@ pub const PmVersionCommand = struct {
             .stdin = .ignore,
             .envp = null,
             .windows = if (Environment.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
             },
         }) catch |err| {
             Output.errGeneric("Git tag failed: {s}", .{@errorName(err)});
@@ -633,13 +633,13 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const JSPrinter = bun.js_printer;
 const Output = bun.Output;
 const RunCommand = bun.RunCommand;
 const Semver = bun.Semver;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const PackageManager = bun.install.PackageManager;

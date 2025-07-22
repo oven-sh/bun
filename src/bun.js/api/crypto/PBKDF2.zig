@@ -1,7 +1,7 @@
 const PBKDF2 = @This();
 
-password: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.empty,
-salt: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.empty,
+password: jsc.Node.StringOrBuffer = jsc.Node.StringOrBuffer.empty,
+salt: jsc.Node.StringOrBuffer = jsc.Node.StringOrBuffer.empty,
 iteration_count: u32 = 1,
 length: i32 = 0,
 algorithm: EVP.Algorithm,
@@ -37,18 +37,18 @@ pub fn run(this: *PBKDF2, output: []u8) bool {
 pub const Job = struct {
     pbkdf2: PBKDF2,
     output: []u8 = &[_]u8{},
-    task: JSC.WorkPoolTask = .{ .callback = &runTask },
-    promise: JSC.JSPromise.Strong = .{},
-    vm: *JSC.VirtualMachine,
+    task: jsc.WorkPoolTask = .{ .callback = &runTask },
+    promise: jsc.JSPromise.Strong = .{},
+    vm: *jsc.VirtualMachine,
     err: ?u32 = null,
-    any_task: JSC.AnyTask = undefined,
+    any_task: jsc.AnyTask = undefined,
     poll: Async.KeepAlive = .{},
 
     pub const new = bun.TrivialNew(@This());
 
-    pub fn runTask(task: *JSC.WorkPoolTask) void {
+    pub fn runTask(task: *jsc.WorkPoolTask) void {
         const job: *PBKDF2.Job = @fieldParentPtr("task", task);
-        defer job.vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task.task()));
+        defer job.vm.enqueueTaskConcurrent(jsc.ConcurrentTask.create(job.any_task.task()));
         job.output = bun.default_allocator.alloc(u8, @as(usize, @intCast(job.pbkdf2.length))) catch {
             job.err = BoringSSL.EVP_R_MEMORY_LIMIT_EXCEEDED;
             return;
@@ -77,7 +77,7 @@ pub const Job = struct {
 
         const output_slice = this.output;
         assert(output_slice.len == @as(usize, @intCast(this.pbkdf2.length)));
-        const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
+        const buffer_value = jsc.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
         this.output = &[_]u8{};
         promise.resolve(globalThis, buffer_value);
     }
@@ -90,17 +90,17 @@ pub const Job = struct {
         bun.destroy(this);
     }
 
-    pub fn create(vm: *JSC.VirtualMachine, globalThis: *JSC.JSGlobalObject, data: *const PBKDF2) *Job {
+    pub fn create(vm: *jsc.VirtualMachine, globalThis: *jsc.JSGlobalObject, data: *const PBKDF2) *Job {
         var job = Job.new(.{
             .pbkdf2 = data.*,
             .vm = vm,
             .any_task = undefined,
         });
 
-        job.promise = JSC.JSPromise.Strong.init(globalThis);
-        job.any_task = JSC.AnyTask.New(@This(), &runFromJS).init(job);
+        job.promise = jsc.JSPromise.Strong.init(globalThis);
+        job.any_task = jsc.AnyTask.New(@This(), &runFromJS).init(job);
         job.poll.ref(vm);
-        JSC.WorkPool.schedule(&job.task);
+        jsc.WorkPool.schedule(&job.task);
 
         return job;
     }
@@ -116,7 +116,7 @@ pub fn deinit(this: *PBKDF2) void {
     this.salt.deinit();
 }
 
-pub fn fromJS(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, is_async: bool) bun.JSError!PBKDF2 {
+pub fn fromJS(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, is_async: bool) bun.JSError!PBKDF2 {
     const arg0, const arg1, const arg2, const arg3, const arg4, const arg5 = callFrame.argumentsAsArray(6);
 
     if (!arg3.isNumber()) {
@@ -192,7 +192,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, is_asy
     }
 
     const allow_string_object = true;
-    out.salt = try JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arg1, is_async, allow_string_object) orelse {
+    out.salt = try jsc.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arg1, is_async, allow_string_object) orelse {
         return globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arg1);
     };
 
@@ -200,7 +200,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, is_asy
         return globalThis.throwInvalidArguments("salt is too long", .{});
     }
 
-    out.password = try JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arg0, is_async, allow_string_object) orelse {
+    out.password = try jsc.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arg0, is_async, allow_string_object) orelse {
         return globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arg0);
     };
 
@@ -227,8 +227,8 @@ pub fn pbkdf2(
 ) ?[]const u8 {
     var pbk = PBKDF2{
         .algorithm = algorithm,
-        .password = JSC.Node.StringOrBuffer{ .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(password) },
-        .salt = JSC.Node.StringOrBuffer{ .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(salt) },
+        .password = jsc.Node.StringOrBuffer{ .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(password) },
+        .salt = jsc.Node.StringOrBuffer{ .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(salt) },
         .iteration_count = iteration_count,
         .length = @intCast(output.len),
     };
@@ -246,16 +246,16 @@ const bun = @import("bun");
 const Async = bun.Async;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
+const string = bun.Str;
 const BoringSSL = bun.BoringSSL.c;
 
-const JSC = bun.JSC;
-const CallFrame = JSC.CallFrame;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
-const ZigString = JSC.ZigString;
-const createCryptoError = JSC.API.Bun.Crypto.createCryptoError;
+const jsc = bun.jsc;
+const CallFrame = jsc.CallFrame;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const ZigString = jsc.ZigString;
+const createCryptoError = jsc.API.Bun.Crypto.createCryptoError;
 
-const EVP = JSC.API.Bun.Crypto.EVP;
+const EVP = jsc.API.Bun.Crypto.EVP;
 const Algorithm = EVP.Algorithm;

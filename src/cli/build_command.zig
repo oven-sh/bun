@@ -307,7 +307,7 @@ pub const BuildCommand = struct {
             break :brk (BundleV2.generateFromCLI(
                 &this_transpiler,
                 allocator,
-                bun.JSC.AnyEventLoop.init(ctx.allocator),
+                bun.jsc.AnyEventLoop.init(ctx.allocator),
                 ctx.debug.hot_reload == .watch,
                 &reachable_file_count,
                 &minify_duration,
@@ -468,13 +468,13 @@ pub const BuildCommand = struct {
             if (log.errors == 0) {
                 if (this_transpiler.options.transform_only) {
                     Output.prettyln("<green>Transpiled file in {d}ms<r>", .{
-                        @divFloor(std.time.nanoTimestamp() - bun.CLI.start_time, std.time.ns_per_ms),
+                        @divFloor(std.time.nanoTimestamp() - bun.cli.start_time, std.time.ns_per_ms),
                     });
                 } else {
                     Output.prettyln("<green>Bundled {d} module{s} in {d}ms<r>", .{
                         reachable_file_count,
                         if (reachable_file_count == 1) "" else "s",
-                        @divFloor(std.time.nanoTimestamp() - bun.CLI.start_time, std.time.ns_per_ms),
+                        @divFloor(std.time.nanoTimestamp() - bun.cli.start_time, std.time.ns_per_ms),
                     });
                 }
                 Output.prettyln("\n", .{});
@@ -561,7 +561,7 @@ fn exitOrWatch(code: u8, watch: bool) noreturn {
 fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_code_length: usize, reachable_file_count: usize, output_files: []const options.OutputFile) void {
     const padding_buf = [_]u8{' '} ** 16;
 
-    const bundle_until_now = @divTrunc(@as(i64, @truncate(bundled_end - bun.CLI.start_time)), @as(i64, std.time.ns_per_ms));
+    const bundle_until_now = @divTrunc(@as(i64, @truncate(bundled_end - bun.cli.start_time)), @as(i64, std.time.ns_per_ms));
 
     const bundle_elapsed = if (minified)
         bundle_until_now - @as(i64, @intCast(@as(u63, @truncate(minify_duration))))
@@ -639,6 +639,6 @@ const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const transpiler = bun.transpiler;

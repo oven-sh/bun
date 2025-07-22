@@ -537,11 +537,9 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
 const Npm = @import("./npm.zig");
 const std = @import("std");
-const strings = @import("../string_immutable.zig");
 const FileSystem = @import("../fs.zig").FileSystem;
 const Integrity = @import("./integrity.zig").Integrity;
 const Resolution = @import("./resolution.zig").Resolution;
-const string = @import("../string_types.zig").string;
 
 const Install = @import("./install.zig");
 const DependencyID = Install.DependencyID;
@@ -554,3 +552,5 @@ const Output = bun.Output;
 const Semver = bun.Semver;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
+const strings = bun.strings;
+const string = bun.string_types.Str;

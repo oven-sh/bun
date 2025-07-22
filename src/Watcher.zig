@@ -289,7 +289,7 @@ pub fn flushEvictions(this: *Watcher) void {
     }
 }
 
-fn watchLoop(this: *Watcher) bun.JSC.Maybe(void) {
+fn watchLoop(this: *Watcher) bun.jsc.Maybe(void) {
     while (this.running) {
         // individual platform implementation will call onFileUpdate
         switch (Platform.watchLoopCycle(this)) {
@@ -309,7 +309,7 @@ fn appendFileAssumeCapacity(
     parent_hash: HashType,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(void) {
+) bun.jsc.Maybe(void) {
     if (comptime Environment.isWindows) {
         // on windows we can only watch items that are in the directory tree of the top level dir
         const rel = bun.path.isParentOrEqual(this.fs.top_level_dir, file_path);
@@ -390,7 +390,7 @@ fn appendDirectoryAssumeCapacity(
     file_path: string,
     hash: HashType,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(WatchItemIndex) {
+) bun.jsc.Maybe(WatchItemIndex) {
     if (comptime Environment.isWindows) {
         // on windows we can only watch items that are in the directory tree of the top level dir
         const rel = bun.path.isParentOrEqual(this.fs.top_level_dir, file_path);
@@ -501,7 +501,7 @@ pub fn appendFileMaybeLock(
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
     comptime lock: bool,
-) bun.JSC.Maybe(void) {
+) bun.jsc.Maybe(void) {
     if (comptime lock) this.mutex.lock();
     defer if (comptime lock) this.mutex.unlock();
     bun.assert(file_path.len > 1);
@@ -577,7 +577,7 @@ pub fn appendFile(
     dir_fd: bun.FileDescriptor,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(void) {
+) bun.jsc.Maybe(void) {
     return appendFileMaybeLock(this, fd, file_path, hash, loader, dir_fd, package_json, clone_file_path, true);
 }
 
@@ -587,7 +587,7 @@ pub fn addDirectory(
     file_path: string,
     hash: HashType,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(WatchItemIndex) {
+) bun.jsc.Maybe(WatchItemIndex) {
     this.mutex.lock();
     defer this.mutex.unlock();
 
@@ -609,7 +609,7 @@ pub fn addFile(
     dir_fd: bun.FileDescriptor,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(void) {
+) bun.jsc.Maybe(void) {
     // This must lock due to concurrent transpiler
     this.mutex.lock();
     defer this.mutex.unlock();
@@ -684,5 +684,5 @@ const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
 const Mutex = bun.Mutex;
 const Output = bun.Output;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;

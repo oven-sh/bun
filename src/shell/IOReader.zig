@@ -14,9 +14,9 @@ buf: std.ArrayListUnmanaged(u8) = .{},
 readers: Readers = .{ .inlined = .{} },
 read: usize = 0,
 ref_count: RefCount,
-err: ?JSC.SystemError = null,
-evtloop: JSC.EventLoopHandle,
-concurrent_task: JSC.EventLoopTask,
+err: ?jsc.SystemError = null,
+evtloop: jsc.EventLoopHandle,
+concurrent_task: jsc.EventLoopTask,
 async_deinit: AsyncDeinitReader,
 is_reading: if (bun.Environment.isWindows) bool else u0 = if (bun.Environment.isWindows) false else 0,
 
@@ -35,7 +35,7 @@ pub fn refSelf(this: *IOReader) *IOReader {
     return this;
 }
 
-pub fn eventLoop(this: *IOReader) JSC.EventLoopHandle {
+pub fn eventLoop(this: *IOReader) jsc.EventLoopHandle {
     return this.evtloop;
 }
 
@@ -43,13 +43,13 @@ pub fn loop(this: *IOReader) *bun.uws.Loop {
     return this.evtloop.loop();
 }
 
-pub fn init(fd: bun.FileDescriptor, evtloop: JSC.EventLoopHandle) *IOReader {
+pub fn init(fd: bun.FileDescriptor, evtloop: jsc.EventLoopHandle) *IOReader {
     const this = bun.new(IOReader, .{
         .ref_count = .init(),
         .fd = fd,
         .reader = ReaderImpl.init(@This()),
         .evtloop = evtloop,
-        .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
+        .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
         .async_deinit = .{},
     });
     log("IOReader(0x{x}, fd={}) create", .{ @intFromPtr(this), fd });
@@ -228,7 +228,7 @@ pub const IOReaderChildPtr = struct {
         return this.ptr.call("onIOReaderChunk", .{ chunk, remove }, Yield);
     }
 
-    pub fn onReaderDone(this: IOReaderChildPtr, err: ?JSC.SystemError) Yield {
+    pub fn onReaderDone(this: IOReaderChildPtr, err: ?jsc.SystemError) Yield {
         return this.ptr.call("onIOReaderDone", .{err}, Yield);
     }
 };
@@ -265,7 +265,7 @@ pub const AsyncDeinitReader = struct {
 const std = @import("std");
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
 const Interpreter = bun.shell.Interpreter;

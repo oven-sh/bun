@@ -751,9 +751,9 @@ const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
-const stringZ = bun.stringZ;
-const Command = bun.CLI.Command;
+const string = bun.Str;
+const stringZ = bun.StrZ;
+const Command = bun.cli.Command;
 const File = bun.sys.File;
 
 const Semver = bun.Semver;

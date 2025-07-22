@@ -3373,8 +3373,8 @@ const CodePoint = bun.CodePoint;
 const Environment = bun.Environment;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const js_ast = bun.JSAst;
-const string = bun.string;
+const js_ast = bun.ast;
+const string = bun.Str;
 const strings = bun.strings;
 const Indentation = bun.js_printer.Options.Indentation;
 

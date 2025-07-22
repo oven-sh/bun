@@ -4,16 +4,16 @@ pub const Stdio = union(enum) {
     ignore,
     fd: bun.FileDescriptor,
     dup2: struct {
-        out: bun.JSC.Subprocess.StdioKind,
-        to: bun.JSC.Subprocess.StdioKind,
+        out: bun.jsc.Subprocess.StdioKind,
+        to: bun.jsc.Subprocess.StdioKind,
     },
-    path: JSC.Node.PathLike,
-    blob: JSC.WebCore.Blob.Any,
-    array_buffer: JSC.ArrayBuffer.Strong,
+    path: jsc.Node.PathLike,
+    blob: jsc.WebCore.Blob.Any,
+    array_buffer: jsc.ArrayBuffer.Strong,
     memfd: bun.FileDescriptor,
     pipe,
     ipc,
-    readable_stream: JSC.WebCore.ReadableStream,
+    readable_stream: jsc.WebCore.ReadableStream,
 
     const log = bun.sys.syslog;
 
@@ -44,7 +44,7 @@ pub const Stdio = union(enum) {
             };
         }
 
-        pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) bun.JSError {
+        pub fn throwJS(this: *const @This(), globalThis: *jsc.JSGlobalObject) bun.JSError {
             return globalThis.throw("{s}", .{this.toStr()});
         }
     };
@@ -277,7 +277,7 @@ pub const Stdio = union(enum) {
         };
     }
 
-    fn extractBodyValue(out_stdio: *Stdio, globalThis: *JSC.JSGlobalObject, i: i32, body: *JSC.WebCore.Body.Value, is_sync: bool) bun.JSError!void {
+    fn extractBodyValue(out_stdio: *Stdio, globalThis: *jsc.JSGlobalObject, i: i32, body: *jsc.WebCore.Body.Value, is_sync: bool) bun.JSError!void {
         body.toBlobIfPossible();
 
         if (body.tryUseAsAnyBlob()) |blob| {
@@ -315,7 +315,7 @@ pub const Stdio = union(enum) {
 
                 const stream_value = try body.toReadableStream(globalThis);
 
-                const stream = (try JSC.WebCore.ReadableStream.fromJS(stream_value, globalThis)) orelse return globalThis.throwInvalidArguments("Failed to create ReadableStream", .{});
+                const stream = (try jsc.WebCore.ReadableStream.fromJS(stream_value, globalThis)) orelse return globalThis.throwInvalidArguments("Failed to create ReadableStream", .{});
 
                 if (stream.isDisturbed(globalThis)) {
                     return globalThis.ERR(.BODY_ALREADY_USED, "ReadableStream has already been used", .{}).throw();
@@ -328,7 +328,7 @@ pub const Stdio = union(enum) {
         return;
     }
 
-    pub fn extract(out_stdio: *Stdio, globalThis: *JSC.JSGlobalObject, i: i32, value: JSValue, is_sync: bool) bun.JSError!void {
+    pub fn extract(out_stdio: *Stdio, globalThis: *jsc.JSGlobalObject, i: i32, value: JSValue, is_sync: bool) bun.JSError!void {
         if (value == .zero) return;
         if (value.isUndefined()) return;
         if (value.isNull()) {
@@ -358,7 +358,7 @@ pub const Stdio = union(enum) {
             }
 
             if (file_fd >= std.math.maxInt(i32)) {
-                var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+                var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
                 defer formatter.deinit();
                 return globalThis.throwInvalidArguments("file descriptor must be a valid integer, received: {}", .{value.toFmt(&formatter)});
             }
@@ -388,15 +388,15 @@ pub const Stdio = union(enum) {
 
             out_stdio.* = Stdio{ .fd = fd };
             return;
-        } else if (value.as(JSC.WebCore.Blob)) |blob| {
+        } else if (value.as(jsc.WebCore.Blob)) |blob| {
             return out_stdio.extractBlob(globalThis, .{ .Blob = blob.dupe() }, i);
-        } else if (value.as(JSC.WebCore.Request)) |req| {
+        } else if (value.as(jsc.WebCore.Request)) |req| {
             return extractBodyValue(out_stdio, globalThis, i, req.getBodyValue(), is_sync);
-        } else if (value.as(JSC.WebCore.Response)) |res| {
+        } else if (value.as(jsc.WebCore.Response)) |res| {
             return extractBodyValue(out_stdio, globalThis, i, res.getBodyValue(), is_sync);
         }
 
-        if (try JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |stream_| {
+        if (try jsc.WebCore.ReadableStream.fromJS(value, globalThis)) |stream_| {
             var stream = stream_;
             if (stream.toAnyBlob(globalThis)) |blob| {
                 return out_stdio.extractBlob(globalThis, blob, i);
@@ -428,7 +428,7 @@ pub const Stdio = union(enum) {
             }
 
             out_stdio.* = .{
-                .array_buffer = JSC.ArrayBuffer.Strong{
+                .array_buffer = jsc.ArrayBuffer.Strong{
                     .array_buffer = array_buffer,
                     .held = .create(array_buffer.value, globalThis),
                 },
@@ -439,7 +439,7 @@ pub const Stdio = union(enum) {
         return globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'ignore', or null", .{});
     }
 
-    pub fn extractBlob(stdio: *Stdio, globalThis: *JSC.JSGlobalObject, blob: JSC.WebCore.Blob.Any, i: i32) bun.JSError!void {
+    pub fn extractBlob(stdio: *Stdio, globalThis: *jsc.JSGlobalObject, blob: jsc.WebCore.Blob.Any, i: i32) bun.JSError!void {
         const fd = bun.FD.Stdio.fromInt(i).?.fd();
 
         if (blob.needsToReadFile()) {
@@ -495,6 +495,6 @@ const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const uv = bun.windows.libuv;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

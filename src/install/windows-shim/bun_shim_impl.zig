@@ -877,7 +877,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 }
 
 pub const FromBunRunContext = struct {
-    const CommandContext = bun.CLI.Command.Context;
+    const CommandContext = bun.cli.Command.Context;
 
     /// Path like 'C:\Users\chloe\project\node_modules\.bin\foo.bunx'
     base_path: []u16,

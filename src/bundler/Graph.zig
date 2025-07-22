@@ -1,7 +1,7 @@
 const Graph = @This();
 
 pool: *ThreadPool,
-heap: ThreadlocalArena = .{},
+heap: ThreadLocalArena = .{},
 /// This allocator is thread-local to the Bundler thread
 /// .allocator == .heap.allocator()
 allocator: std.mem.Allocator = undefined,
@@ -98,20 +98,13 @@ pub fn drainDeferredTasks(this: *Graph, transpiler: *BundleV2) bool {
     return false;
 }
 
-pub const Ref = @import("../ast/base.zig").Ref;
+pub const Ref = bun.ast.Ref;
 
-pub const Index = @import("../ast/base.zig").Index;
+pub const Index = bun.ast.Index;
 
 const Logger = @import("../logger.zig");
 const _resolver = @import("../resolver/resolver.zig");
-const allocators = @import("../allocators.zig");
 const std = @import("std");
-const BabyList = @import("../baby_list.zig").BabyList;
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-
-const js_ast = @import("../js_ast.zig");
-const JSAst = js_ast.BundledAst;
-const ServerComponentBoundary = js_ast.ServerComponentBoundary;
 
 const options = @import("../options.zig");
 const Loader = options.Loader;
@@ -119,7 +112,15 @@ const Loader = options.Loader;
 const bun = @import("bun");
 const MultiArrayList = bun.MultiArrayList;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
+const string = bun.Str;
+const BabyList = bun.collections.BabyList;
+
+const allocators = bun.allocators;
+const ThreadLocalArena = bun.allocators.MimallocArena;
+
+const js_ast = bun.ast;
+const JSAst = js_ast.BundledAst;
+const ServerComponentBoundary = js_ast.ServerComponentBoundary;
 
 const AdditionalFile = bun.bundle_v2.AdditionalFile;
 const BundleV2 = bun.bundle_v2.BundleV2;

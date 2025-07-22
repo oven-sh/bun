@@ -531,7 +531,7 @@ const std = @import("std");
 const bun = @import("bun");
 const OOM = bun.OOM;
 const Output = bun.Output;
-const string = bun.string;
+const string = bun.Str;
 
 const Semver = bun.Semver;
 const String = Semver.String;

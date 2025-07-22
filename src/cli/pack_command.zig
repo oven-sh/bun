@@ -2482,14 +2482,14 @@ pub const PackCommand = struct {
 };
 
 pub const bindings = struct {
-    const JSC = bun.JSC;
-    const JSValue = JSC.JSValue;
-    const JSGlobalObject = JSC.JSGlobalObject;
-    const CallFrame = JSC.CallFrame;
-    const ZigString = JSC.ZigString;
+    const jsc = bun.jsc;
+    const JSValue = jsc.JSValue;
+    const JSGlobalObject = jsc.JSGlobalObject;
+    const CallFrame = jsc.CallFrame;
+    const ZigString = jsc.ZigString;
     const String = bun.String;
-    const JSArray = JSC.JSArray;
-    const JSObject = JSC.JSObject;
+    const JSArray = jsc.JSArray;
+    const JSObject = jsc.JSObject;
 
     pub fn jsReadTarball(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         const args = callFrame.arguments_old(1).slice();
@@ -2675,7 +2675,7 @@ const Environment = bun.Environment;
 const FD = bun.FD;
 const FileDescriptor = bun.FileDescriptor;
 const Global = bun.Global;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const PathBuffer = bun.PathBuffer;
@@ -2685,14 +2685,14 @@ const Semver = bun.Semver;
 const glob = bun.glob;
 const js_printer = bun.js_printer;
 const sha = bun.sha;
-const string = bun.string;
-const stringZ = bun.stringZ;
+const string = bun.Str;
+const stringZ = bun.StrZ;
 const strings = bun.strings;
 const CowString = bun.ptr.CowString;
 const File = bun.sys.File;
 
-const Command = bun.CLI.Command;
-const Publish = bun.CLI.PublishCommand;
+const Command = bun.cli.Command;
+const Publish = bun.cli.PublishCommand;
 
 const Install = bun.install;
 const Dependency = Install.Dependency;

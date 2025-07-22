@@ -8,4 +8,4 @@ pub const NPMClient = struct {
 };
 
 const bun = @import("bun");
-const string = bun.string;
+const string = bun.Str;

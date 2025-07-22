@@ -991,7 +991,7 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const assert = bun.assert;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 
 const ExternalString = bun.Semver.ExternalString;

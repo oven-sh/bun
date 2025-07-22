@@ -47,7 +47,7 @@ pub const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
 pub const MangledProps = std.AutoArrayHashMapUnmanaged(Ref, []const u8);
 pub const PathToSourceIndexMap = std.HashMapUnmanaged(u64, Index.Int, IdentityContext(u64), 80);
 
-pub const Watcher = bun.JSC.hot_reloader.NewHotReloader(BundleV2, EventLoop, true);
+pub const Watcher = bun.jsc.hot_reloader.NewHotReloader(BundleV2, EventLoop, true);
 
 /// This assigns a concise, predictable, and unique `.pretty` attribute to a Path.
 /// DevServer relies on pretty paths for identifying modules, so they must be unique.
@@ -114,7 +114,7 @@ pub const BundleV2 = struct {
     graph: Graph,
     linker: LinkerContext,
     bun_watcher: ?*bun.Watcher,
-    plugins: ?*JSC.API.JSBundler.Plugin,
+    plugins: ?*jsc.API.JSBundler.Plugin,
     completion: ?*JSBundleCompletionTask,
     source_code_length: usize,
 
@@ -146,7 +146,7 @@ pub const BundleV2 = struct {
         framework: bake.Framework,
         client_transpiler: *Transpiler,
         ssr_transpiler: *Transpiler,
-        plugins: ?*JSC.API.JSBundler.Plugin,
+        plugins: ?*jsc.API.JSBundler.Plugin,
     };
 
     const debug = Output.scoped(.Bundle, false);
@@ -155,8 +155,8 @@ pub const BundleV2 = struct {
         return &this.linker.loop;
     }
 
-    /// Returns the JSC.EventLoop where plugin callbacks can be queued up on
-    pub fn jsLoopForPlugins(this: *BundleV2) *JSC.EventLoop {
+    /// Returns the jsc.EventLoop where plugin callbacks can be queued up on
+    pub fn jsLoopForPlugins(this: *BundleV2) *jsc.EventLoop {
         bun.assert(this.plugins != null);
         if (this.completion) |completion|
             // From Bun.build
@@ -165,7 +165,7 @@ pub const BundleV2 = struct {
             // From bake where the loop running the bundle is also the loop
             // running the plugins.
             .js => |jsc_event_loop| return jsc_event_loop,
-            // The CLI currently has no JSC event loop; for now, no plugin support
+            // The CLI currently has no jsc event loop; for now, no plugin support
             .mini => @panic("No JavaScript event loop for transpiler plugins to run on"),
         }
     }
@@ -467,7 +467,7 @@ pub const BundleV2 = struct {
     /// This runs on the Bundle Thread.
     pub fn runResolver(
         this: *BundleV2,
-        import_record: bun.JSC.API.JSBundler.Resolve.MiniImportRecord,
+        import_record: bun.jsc.API.JSBundler.Resolve.MiniImportRecord,
         target: options.Target,
     ) void {
         const transpiler = this.transpilerForTarget(target);
@@ -782,7 +782,7 @@ pub const BundleV2 = struct {
         event_loop: EventLoop,
         cli_watch_flag: bool,
         thread_pool: ?*ThreadPoolLib,
-        heap: ThreadlocalArena,
+        heap: ThreadLocalArena,
     ) !*BundleV2 {
         transpiler.env.loadTracy();
 
@@ -1343,7 +1343,7 @@ pub const BundleV2 = struct {
                     if (path.len > 0 and
                         // Check for either node or bun builtins
                         // We don't use the list from .bun because that includes third-party packages in some cases.
-                        !JSC.ModuleLoader.HardcodedModule.Alias.has(path, .node) and
+                        !jsc.ModuleLoader.HardcodedModule.Alias.has(path, .node) and
                         !strings.hasPrefixComptime(path, "bun:") and
                         !strings.eqlComptime(path, "bun"))
                     {
@@ -1379,7 +1379,7 @@ pub const BundleV2 = struct {
             event_loop,
             enable_reloading,
             null,
-            try ThreadlocalArena.init(),
+            try ThreadLocalArena.init(),
         );
         this.unique_key = generateUniqueKey();
 
@@ -1395,7 +1395,7 @@ pub const BundleV2 = struct {
 
         this.waitForParse();
 
-        minify_duration.* = @as(u64, @intCast(@divTrunc(@as(i64, @truncate(std.time.nanoTimestamp())) - @as(i64, @truncate(bun.CLI.start_time)), @as(i64, std.time.ns_per_ms))));
+        minify_duration.* = @as(u64, @intCast(@divTrunc(@as(i64, @truncate(std.time.nanoTimestamp())) - @as(i64, @truncate(bun.cli.start_time)), @as(i64, std.time.ns_per_ms))));
         source_code_size.* = this.source_code_length;
 
         if (this.transpiler.log.hasErrors()) {
@@ -1443,7 +1443,7 @@ pub const BundleV2 = struct {
             event_loop,
             false,
             null,
-            try ThreadlocalArena.init(),
+            try ThreadLocalArena.init(),
         );
         this.unique_key = generateUniqueKey();
 
@@ -1588,10 +1588,10 @@ pub const BundleV2 = struct {
     pub const JSBundleThread = BundleThread(JSBundleCompletionTask);
 
     pub fn createAndScheduleCompletionTask(
-        config: bun.JSC.API.JSBundler.Config,
-        plugins: ?*bun.JSC.API.JSBundler.Plugin,
-        globalThis: *JSC.JSGlobalObject,
-        event_loop: *bun.JSC.EventLoop,
+        config: bun.jsc.API.JSBundler.Config,
+        plugins: ?*bun.jsc.API.JSBundler.Plugin,
+        globalThis: *jsc.JSGlobalObject,
+        event_loop: *bun.jsc.EventLoop,
         _: std.mem.Allocator,
     ) OOM!*JSBundleCompletionTask {
         const completion = bun.new(JSBundleCompletionTask, .{
@@ -1613,7 +1613,7 @@ pub const BundleV2 = struct {
 
         // Ensure this exists before we spawn the thread to prevent any race
         // conditions from creating two
-        _ = JSC.WorkPool.get();
+        _ = jsc.WorkPool.get();
 
         JSBundleThread.singleton.enqueue(completion);
 
@@ -1623,14 +1623,14 @@ pub const BundleV2 = struct {
     }
 
     pub fn generateFromJavaScript(
-        config: bun.JSC.API.JSBundler.Config,
-        plugins: ?*bun.JSC.API.JSBundler.Plugin,
-        globalThis: *JSC.JSGlobalObject,
-        event_loop: *bun.JSC.EventLoop,
+        config: bun.jsc.API.JSBundler.Config,
+        plugins: ?*bun.jsc.API.JSBundler.Plugin,
+        globalThis: *jsc.JSGlobalObject,
+        event_loop: *bun.jsc.EventLoop,
         allocator: std.mem.Allocator,
-    ) OOM!bun.JSC.JSValue {
+    ) OOM!bun.jsc.JSValue {
         const completion = try createAndScheduleCompletionTask(config, plugins, globalThis, event_loop, allocator);
-        completion.promise = JSC.JSPromise.Strong.init(globalThis);
+        completion.promise = jsc.JSPromise.Strong.init(globalThis);
         return completion.promise.value();
     }
 
@@ -1667,23 +1667,23 @@ pub const BundleV2 = struct {
         pub const deref = RefCount.deref;
 
         ref_count: RefCount,
-        config: bun.JSC.API.JSBundler.Config,
-        jsc_event_loop: *bun.JSC.EventLoop,
-        task: bun.JSC.AnyTask,
-        globalThis: *JSC.JSGlobalObject,
-        promise: JSC.JSPromise.Strong = .{},
+        config: bun.jsc.API.JSBundler.Config,
+        jsc_event_loop: *bun.jsc.EventLoop,
+        task: bun.jsc.AnyTask,
+        globalThis: *jsc.JSGlobalObject,
+        promise: jsc.JSPromise.Strong = .{},
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         env: *bun.DotEnv.Loader,
         log: Logger.Log,
         cancelled: bool = false,
 
-        html_build_task: ?*JSC.API.HTMLBundle.HTMLBundleRoute = null,
+        html_build_task: ?*jsc.API.HTMLBundle.HTMLBundleRoute = null,
 
         result: Result = .{ .pending = {} },
 
         next: ?*JSBundleCompletionTask = null,
         transpiler: *BundleV2 = undefined,
-        plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
+        plugins: ?*bun.jsc.API.JSBundler.Plugin = null,
         started_at_ns: u64 = 0,
 
         pub fn configureBundler(
@@ -1696,7 +1696,7 @@ pub const BundleV2 = struct {
             transpiler.* = try bun.Transpiler.init(
                 allocator,
                 &completion.log,
-                Api.TransformOptions{
+                api.TransformOptions{
                     .define = if (config.define.count() > 0) config.define.toAPI() else null,
                     .entry_points = config.entry_points.keys(),
                     .target = config.target.toAPI(),
@@ -1760,10 +1760,10 @@ pub const BundleV2 = struct {
         }
 
         pub fn completeOnBundleThread(completion: *JSBundleCompletionTask) void {
-            completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(completion.task.task()));
+            completion.jsc_event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.create(completion.task.task()));
         }
 
-        pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
+        pub const TaskCompletion = bun.jsc.AnyTask.New(JSBundleCompletionTask, onComplete);
 
         fn deinit(this: *JSBundleCompletionTask) void {
             this.result.deinit();
@@ -1802,16 +1802,16 @@ pub const BundleV2 = struct {
                         break :brk;
                     }
 
-                    const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
+                    const root_obj = jsc.JSValue.createEmptyObject(globalThis, 3);
+                    root_obj.put(globalThis, jsc.ZigString.static("outputs"), jsc.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
                     root_obj.put(
                         globalThis,
-                        JSC.ZigString.static("success"),
-                        JSC.JSValue.jsBoolean(false),
+                        jsc.ZigString.static("success"),
+                        jsc.JSValue.jsBoolean(false),
                     );
                     root_obj.put(
                         globalThis,
-                        JSC.ZigString.static("logs"),
+                        jsc.ZigString.static("logs"),
                         this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
                             return promise.reject(globalThis, err);
                         },
@@ -1819,14 +1819,14 @@ pub const BundleV2 = struct {
                     promise.resolve(globalThis, root_obj);
                 },
                 .value => |*build| {
-                    const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
+                    const root_obj = jsc.JSValue.createEmptyObject(globalThis, 3);
                     const output_files: []options.OutputFile = build.output_files.items;
-                    const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError);
+                    const output_files_js = jsc.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError);
                     if (output_files_js == .zero) {
                         @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
                     }
 
-                    var to_assign_on_sourcemap: JSC.JSValue = .zero;
+                    var to_assign_on_sourcemap: jsc.JSValue = .zero;
                     for (output_files, 0..) |*output_file, i| {
                         const result = output_file.toJS(
                             if (!this.config.outdir.isEmpty())
@@ -1856,8 +1856,8 @@ pub const BundleV2 = struct {
                             globalThis,
                         );
                         if (to_assign_on_sourcemap != .zero) {
-                            JSC.Codegen.JSBuildArtifact.sourcemapSetCached(to_assign_on_sourcemap, globalThis, result);
-                            if (to_assign_on_sourcemap.as(JSC.API.BuildArtifact)) |to_assign_on_sourcemap_artifact| {
+                            jsc.Codegen.JSBuildArtifact.sourcemapSetCached(to_assign_on_sourcemap, globalThis, result);
+                            if (to_assign_on_sourcemap.as(jsc.API.BuildArtifact)) |to_assign_on_sourcemap_artifact| {
                                 to_assign_on_sourcemap_artifact.sourcemap.set(globalThis, result);
                             }
                             to_assign_on_sourcemap = .zero;
@@ -1870,15 +1870,15 @@ pub const BundleV2 = struct {
                         output_files_js.putIndex(globalThis, @as(u32, @intCast(i)), result) catch return; // TODO: properly propagate exception upwards
                     }
 
-                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), output_files_js);
+                    root_obj.put(globalThis, jsc.ZigString.static("outputs"), output_files_js);
                     root_obj.put(
                         globalThis,
-                        JSC.ZigString.static("success"),
-                        JSC.JSValue.jsBoolean(true),
+                        jsc.ZigString.static("success"),
+                        jsc.JSValue.jsBoolean(true),
                     );
                     root_obj.put(
                         globalThis,
-                        JSC.ZigString.static("logs"),
+                        jsc.ZigString.static("logs"),
                         this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
                             return promise.reject(globalThis, err);
                         },
@@ -1893,14 +1893,14 @@ pub const BundleV2 = struct {
         }
     };
 
-    pub fn onLoadAsync(this: *BundleV2, load: *bun.JSC.API.JSBundler.Load) void {
+    pub fn onLoadAsync(this: *BundleV2, load: *bun.jsc.API.JSBundler.Load) void {
         switch (this.loop().*) {
             .js => |jsc_event_loop| {
-                jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(load, onLoadFromJsLoop));
+                jsc_event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(load, onLoadFromJsLoop));
             },
             .mini => |*mini| {
                 mini.enqueueTaskConcurrentWithExtraCtx(
-                    bun.JSC.API.JSBundler.Load,
+                    bun.jsc.API.JSBundler.Load,
                     BundleV2,
                     load,
                     BundleV2.onLoad,
@@ -1910,14 +1910,14 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub fn onResolveAsync(this: *BundleV2, resolve: *bun.JSC.API.JSBundler.Resolve) void {
+    pub fn onResolveAsync(this: *BundleV2, resolve: *bun.jsc.API.JSBundler.Resolve) void {
         switch (this.loop().*) {
             .js => |jsc_event_loop| {
-                jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(resolve, onResolveFromJsLoop));
+                jsc_event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(resolve, onResolveFromJsLoop));
             },
             .mini => |*mini| {
                 mini.enqueueTaskConcurrentWithExtraCtx(
-                    bun.JSC.API.JSBundler.Resolve,
+                    bun.jsc.API.JSBundler.Resolve,
                     BundleV2,
                     resolve,
                     BundleV2.onResolve,
@@ -1927,11 +1927,11 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub fn onLoadFromJsLoop(load: *bun.JSC.API.JSBundler.Load) void {
+    pub fn onLoadFromJsLoop(load: *bun.jsc.API.JSBundler.Load) void {
         onLoad(load, load.bv2);
     }
 
-    pub fn onLoad(load: *bun.JSC.API.JSBundler.Load, this: *BundleV2) void {
+    pub fn onLoad(load: *bun.jsc.API.JSBundler.Load, this: *BundleV2) void {
         debug("onLoad: ({d}, {s})", .{ load.source_index.get(), @tagName(load.value) });
         defer load.deinit();
         defer {
@@ -2044,11 +2044,11 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub fn onResolveFromJsLoop(resolve: *bun.JSC.API.JSBundler.Resolve) void {
+    pub fn onResolveFromJsLoop(resolve: *bun.jsc.API.JSBundler.Resolve) void {
         onResolve(resolve, resolve.bv2);
     }
 
-    pub fn onResolve(resolve: *bun.JSC.API.JSBundler.Resolve, this: *BundleV2) void {
+    pub fn onResolve(resolve: *bun.jsc.API.JSBundler.Resolve, this: *BundleV2) void {
         defer resolve.deinit();
         defer this.decrementScanCounter();
         debug("onResolve: ({s}:{s}, {s})", .{ resolve.import_record.namespace, resolve.import_record.specifier, @tagName(resolve.value) });
@@ -2569,14 +2569,14 @@ pub const BundleV2 = struct {
         if (this.plugins) |plugins| {
             if (plugins.hasAnyMatches(&import_record.path, false)) {
                 // This is where onResolve plugins are enqueued
-                var resolve: *JSC.API.JSBundler.Resolve = bun.default_allocator.create(JSC.API.JSBundler.Resolve) catch unreachable;
+                var resolve: *jsc.API.JSBundler.Resolve = bun.default_allocator.create(jsc.API.JSBundler.Resolve) catch unreachable;
                 debug("enqueue onResolve: {s}:{s}", .{
                     import_record.path.namespace,
                     import_record.path.text,
                 });
                 this.incrementScanCounter();
 
-                resolve.* = JSC.API.JSBundler.Resolve.init(this, .{
+                resolve.* = jsc.API.JSBundler.Resolve.init(this, .{
                     .kind = import_record.kind,
                     .source_file = source_file,
                     .namespace = import_record.path.namespace,
@@ -2626,8 +2626,8 @@ pub const BundleV2 = struct {
                     parse.path.namespace,
                     parse.path.text,
                 });
-                const load = bun.default_allocator.create(JSC.API.JSBundler.Load) catch bun.outOfMemory();
-                load.* = JSC.API.JSBundler.Load.init(this, parse);
+                const load = bun.default_allocator.create(jsc.API.JSBundler.Load) catch bun.outOfMemory();
+                load.* = jsc.API.JSBundler.Load.init(this, parse);
                 load.dispatch();
                 return true;
             }
@@ -2747,7 +2747,7 @@ pub const BundleV2 = struct {
             }
 
             if (ast.target.isBun()) {
-                if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, .bun)) |replacement| {
+                if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, .bun)) |replacement| {
                     // When bundling node builtins, remove the "node:" prefix.
                     // This supports special use cases where the bundle is put
                     // into a non-node module resolver that doesn't support
@@ -3191,7 +3191,7 @@ pub const BundleV2 = struct {
         this.decrementScanCounter();
     }
 
-    pub fn onNotifyDeferMini(_: *bun.JSC.API.JSBundler.Load, this: *BundleV2) void {
+    pub fn onNotifyDeferMini(_: *bun.jsc.API.JSBundler.Load, this: *BundleV2) void {
         this.onNotifyDefer();
     }
 
@@ -3726,7 +3726,7 @@ pub const EntryPoint = struct {
         dynamic_import,
         html,
 
-        pub fn outputKind(this: Kind) JSC.API.BuildArtifact.OutputKind {
+        pub fn outputKind(this: Kind) jsc.API.BuildArtifact.OutputKind {
             return switch (this) {
                 .user_specified => .@"entry-point",
                 else => .chunk,
@@ -4113,21 +4113,20 @@ pub const lex = @import("../js_lexer.zig");
 pub const Logger = @import("../logger.zig");
 pub const Part = js_ast.Part;
 pub const js_printer = @import("../js_printer.zig");
-pub const js_ast = @import("../js_ast.zig");
+pub const js_ast = bun.ast;
 pub const linker = @import("../linker.zig");
 pub const sourcemap = bun.sourcemap;
 pub const StringJoiner = bun.StringJoiner;
 pub const base64 = bun.base64;
-pub const Ref = @import("../ast/base.zig").Ref;
-pub const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-pub const BabyList = @import("../baby_list.zig").BabyList;
+pub const Ref = bun.ast.Ref;
+pub const ThreadLocalArena = bun.allocators.MimallocArena;
+pub const BabyList = bun.collections.BabyList;
 pub const Fs = @import("../fs.zig");
-pub const schema = @import("../api/schema.zig");
-pub const Api = schema.Api;
+pub const api = bun.schema.api;
 pub const _resolver = @import("../resolver/resolver.zig");
 pub const ImportRecord = bun.ImportRecord;
 pub const ImportKind = bun.ImportKind;
-pub const allocators = @import("../allocators.zig");
+pub const allocators = bun.allocators;
 pub const resolve_path = @import("../resolver/resolve_path.zig");
 pub const runtime = @import("../runtime.zig");
 pub const Timer = @import("../system_timer.zig");
@@ -4139,13 +4138,13 @@ pub const NodeFallbackModules = @import("../node_fallbacks.zig");
 pub const CacheEntry = @import("../cache.zig").Fs.Entry;
 pub const URL = @import("../url.zig").URL;
 pub const Resolver = _resolver.Resolver;
-pub const TOML = @import("../toml/toml_parser.zig").TOML;
+pub const TOML = bun.interchange.toml.TOML;
 pub const Dependency = js_ast.Dependency;
 pub const JSAst = js_ast.BundledAst;
 pub const Loader = options.Loader;
-pub const Index = @import("../ast/base.zig").Index;
+pub const Index = bun.ast.Index;
 pub const Symbol = js_ast.Symbol;
-pub const EventLoop = bun.JSC.AnyEventLoop;
+pub const EventLoop = bun.jsc.AnyEventLoop;
 pub const MultiArrayList = bun.MultiArrayList;
 pub const Stmt = js_ast.Stmt;
 pub const Expr = js_ast.Expr;
@@ -4159,7 +4158,7 @@ pub const renamer = bun.renamer;
 pub const StableSymbolCount = renamer.StableSymbolCount;
 pub const MinifyRenamer = renamer.MinifyRenamer;
 pub const Scope = js_ast.Scope;
-pub const JSC = bun.JSC;
+pub const jsc = bun.jsc;
 pub const debugTreeShake = Output.scoped(.TreeShake, true);
 pub const debugPartRanges = Output.scoped(.PartRanges, true);
 pub const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
@@ -4186,5 +4185,5 @@ const Output = bun.Output;
 const ThreadPoolLib = bun.ThreadPool;
 const Transpiler = bun.Transpiler;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;

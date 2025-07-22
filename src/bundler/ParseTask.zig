@@ -948,7 +948,7 @@ const OnBeforeParsePlugin = struct {
         return 0;
     }
 
-    pub fn run(this: *OnBeforeParsePlugin, plugin: *JSC.API.JSBundler.Plugin, from_plugin: *bool) !CacheEntry {
+    pub fn run(this: *OnBeforeParsePlugin, plugin: *jsc.API.JSBundler.Plugin, from_plugin: *bool) !CacheEntry {
         var args = OnBeforeParseArguments{
             .context = this,
             .path_ptr = this.file_path.text.ptr,
@@ -1348,7 +1348,7 @@ pub fn runFromThreadPool(this: *ParseTask) void {
 
     switch (worker.ctx.loop().*) {
         .js => |jsc_event_loop| {
-            jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(result, onComplete));
+            jsc_event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(result, onComplete));
         },
         .mini => |*mini| {
             mini.enqueueTaskConcurrentWithExtraCtx(
@@ -1366,9 +1366,9 @@ pub fn onComplete(result: *Result) void {
     BundleV2.onParseTaskComplete(result, result.ctx);
 }
 
-pub const Ref = @import("../ast/base.zig").Ref;
+pub const Ref = bun.ast.Ref;
 
-pub const Index = @import("../ast/base.zig").Index;
+pub const Index = bun.ast.Index;
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
@@ -1379,18 +1379,8 @@ const NodeFallbackModules = @import("../node_fallbacks.zig");
 const linker = @import("../linker.zig");
 const runtime = @import("../runtime.zig");
 const std = @import("std");
-const BabyList = @import("../baby_list.zig").BabyList;
-const TOML = @import("../toml/toml_parser.zig").TOML;
 const URL = @import("../url.zig").URL;
 const CacheEntry = @import("../cache.zig").Fs.Entry;
-
-const js_ast = @import("../js_ast.zig");
-const E = js_ast.E;
-const Expr = js_ast.Expr;
-const G = js_ast.G;
-const JSAst = js_ast.BundledAst;
-const Part = js_ast.Part;
-const Symbol = js_ast.Symbol;
 
 const Logger = @import("../logger.zig");
 const Loc = Logger.Loc;
@@ -1413,14 +1403,24 @@ const bake = bun.bake;
 const base64 = bun.base64;
 const default_allocator = bun.default_allocator;
 const js_parser = bun.js_parser;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
+const BabyList = bun.collections.BabyList;
+const TOML = bun.interchange.toml.TOML;
 
-const JSC = bun.JSC;
-const EventLoop = bun.JSC.AnyEventLoop;
+const js_ast = bun.ast;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const JSAst = js_ast.BundledAst;
+const Part = js_ast.Part;
+const Symbol = js_ast.Symbol;
 
 const bundler = bun.bundle_v2;
 const BundleV2 = bundler.BundleV2;
 const ContentHasher = bundler.ContentHasher;
 const UseDirective = bundler.UseDirective;
 const targetFromHashbang = bundler.targetFromHashbang;
+
+const jsc = bun.jsc;
+const EventLoop = bun.jsc.AnyEventLoop;

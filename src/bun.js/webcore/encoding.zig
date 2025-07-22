@@ -50,7 +50,7 @@ export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, inpu
         .base64 => constructFromU8(input, len, bun.default_allocator, .base64),
         else => unreachable,
     };
-    return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
+    return jsc.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
 }
 
 export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize, encoding: u8) JSValue {
@@ -65,15 +65,15 @@ export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input
         .latin1 => constructFromU16(input, len, bun.default_allocator, .latin1),
         else => unreachable,
     };
-    return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
+    return jsc.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
 }
 
 // for SQL statement
-export fn Bun__encoding__toStringUTF8(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {
+export fn Bun__encoding__toStringUTF8(input: [*]const u8, len: usize, globalObject: *jsc.JSGlobalObject) JSValue {
     return toStringComptime(input[0..len], globalObject, .utf8);
 }
 
-export fn Bun__encoding__toString(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject, encoding: u8) JSValue {
+export fn Bun__encoding__toString(input: [*]const u8, len: usize, globalObject: *jsc.JSGlobalObject, encoding: u8) JSValue {
     return toString(input[0..len], globalObject, @enumFromInt(encoding));
 }
 
@@ -511,10 +511,10 @@ comptime {
 const std = @import("std");
 
 const bun = @import("bun");
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const Encoding = JSC.Node.Encoding;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const Encoding = jsc.Node.Encoding;

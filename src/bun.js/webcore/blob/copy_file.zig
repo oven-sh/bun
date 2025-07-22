@@ -61,7 +61,7 @@ pub const CopyFile = struct {
         bun.destroy(this);
     }
 
-    pub fn reject(this: *CopyFile, promise: *JSC.JSPromise) void {
+    pub fn reject(this: *CopyFile, promise: *jsc.JSPromise) void {
         const globalThis = this.globalThis;
         var system_error: SystemError = this.system_error orelse SystemError{ .message = .empty };
         if (this.source_file_store.pathlike == .path and system_error.path.isEmpty()) {
@@ -79,7 +79,7 @@ pub const CopyFile = struct {
         promise.reject(globalThis, instance);
     }
 
-    pub fn then(this: *CopyFile, promise: *JSC.JSPromise) void {
+    pub fn then(this: *CopyFile, promise: *jsc.JSPromise) void {
         this.source_store.?.deref();
 
         if (this.system_error != null) {
@@ -87,7 +87,7 @@ pub const CopyFile = struct {
             return;
         }
 
-        promise.resolve(this.globalThis, JSC.JSValue.jsNumberFromUint64(this.read_len));
+        promise.resolve(this.globalThis, jsc.JSValue.jsNumberFromUint64(this.read_len));
     }
 
     pub fn run(this: *CopyFile) void {
@@ -158,7 +158,7 @@ pub const CopyFile = struct {
                 this.destination_fd = switch (bun.sys.open(
                     dest,
                     open_destination_flags,
-                    JSC.Node.fs.default_permission,
+                    jsc.Node.fs.default_permission,
                 )) {
                     .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                         .result => |result_fd| result_fd,
@@ -234,7 +234,7 @@ pub const CopyFile = struct {
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()
         if (!bun.canUseCopyFileRangeSyscall()) {
-            switch (JSC.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
+            switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                 .err => |err| {
                     this.system_error = err.toSystemError();
                     return bun.errnoToZigErr(err.errno);
@@ -259,7 +259,7 @@ pub const CopyFile = struct {
 
                 .NOSYS, .XDEV => {
                     // TODO: this should use non-blocking I/O.
-                    switch (JSC.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
+                    switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                         .err => |err| {
                             this.system_error = err.toSystemError();
                             return bun.errnoToZigErr(err.errno);
@@ -292,7 +292,7 @@ pub const CopyFile = struct {
                     // to a read/write loop
                     if (total_written == 0) {
                         // TODO: this should use non-blocking I/O.
-                        switch (JSC.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
+                        switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                             .err => |err| {
                                 this.system_error = err.toSystemError();
                                 return bun.errnoToZigErr(err.errno);
@@ -339,7 +339,7 @@ pub const CopyFile = struct {
                         var total_written: u64 = 0;
 
                         // TODO: this should use non-blocking I/O.
-                        switch (JSC.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", this.source_fd, this.destination_fd, 0, &total_written)) {
+                        switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", this.source_fd, this.destination_fd, 0, &total_written)) {
                             .err => |err| {
                                 this.system_error = err.toSystemError();
                                 return bun.errnoToZigErr(err.errno);
@@ -571,9 +571,9 @@ pub const CopyFileWindows = struct {
     source_file_store: *Store,
 
     io_request: libuv.fs_t = std.mem.zeroes(libuv.fs_t),
-    promise: JSC.JSPromise.Strong = .{},
+    promise: jsc.JSPromise.Strong = .{},
     mkdirp_if_not_exists: bool = false,
-    event_loop: *JSC.EventLoop,
+    event_loop: *jsc.EventLoop,
 
     size: Blob.SizeType = Blob.max_size,
 
@@ -592,13 +592,13 @@ pub const CopyFileWindows = struct {
         read_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
         uv_buf: libuv.uv_buf_t = .{ .base = undefined, .len = 0 },
 
-        pub fn start(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) JSC.Maybe(void) {
+        pub fn start(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) jsc.Maybe(void) {
             read_write_loop.read_buf.ensureTotalCapacityPrecise(64 * 1024) catch bun.outOfMemory();
 
             return read(read_write_loop, this);
         }
 
-        pub fn read(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) JSC.Maybe(void) {
+        pub fn read(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) jsc.Maybe(void) {
             read_write_loop.read_buf.items.len = 0;
             read_write_loop.uv_buf = libuv.uv_buf_t.init(read_write_loop.read_buf.allocatedSlice());
             const loop = this.event_loop.virtual_machine.event_loop_handle.?;
@@ -783,16 +783,16 @@ pub const CopyFileWindows = struct {
     pub fn init(
         destination_file_store: *Store,
         source_file_store: *Store,
-        event_loop: *JSC.EventLoop,
+        event_loop: *jsc.EventLoop,
         mkdirp_if_not_exists: bool,
         size_: Blob.SizeType,
-    ) JSC.JSValue {
+    ) jsc.JSValue {
         destination_file_store.ref();
         source_file_store.ref();
         const result = CopyFileWindows.new(.{
             .destination_file_store = destination_file_store,
             .source_file_store = source_file_store,
-            .promise = JSC.JSPromise.Strong.init(event_loop.global),
+            .promise = jsc.JSPromise.Strong.init(event_loop.global),
             .io_request = std.mem.zeroes(libuv.fs_t),
             .event_loop = event_loop,
             .mkdirp_if_not_exists = mkdirp_if_not_exists,
@@ -807,7 +807,7 @@ pub const CopyFileWindows = struct {
         return promise;
     }
 
-    fn preparePathlike(pathlike: *JSC.Node.PathOrFileDescriptor, must_close: *bool, is_reading: bool) JSC.Maybe(bun.FileDescriptor) {
+    fn preparePathlike(pathlike: *jsc.Node.PathOrFileDescriptor, must_close: *bool, is_reading: bool) jsc.Maybe(bun.FileDescriptor) {
         if (pathlike.* == .path) {
             const fd = switch (bun.sys.openatWindowsT(
                 u8,
@@ -1057,14 +1057,14 @@ pub const CopyFileWindows = struct {
         defer event_loop.exit();
 
         this.deinit();
-        promise.resolve(globalThis, JSC.JSValue.jsNumberFromUint64(written));
+        promise.resolve(globalThis, jsc.JSValue.jsNumberFromUint64(written));
     }
 
     fn truncate(this: *CopyFileWindows) void {
         // TODO: optimize this
         @branchHint(.cold);
 
-        var node_fs: JSC.Node.fs.NodeFS = .{};
+        var node_fs: jsc.Node.fs.NodeFS = .{};
         _ = node_fs.truncate(
             .{
                 .path = this.destination_file_store.data.file.pathlike,
@@ -1098,7 +1098,7 @@ pub const CopyFileWindows = struct {
         }
 
         this.event_loop.refConcurrently();
-        JSC.Node.fs.Async.AsyncMkdirp.new(.{
+        jsc.Node.fs.Async.AsyncMkdirp.new(.{
             .completion = @ptrCast(&onMkdirpCompleteConcurrent),
             .completion_ctx = this,
             .path = bun.Dirname.dirname(u8, destination.pathlike.path.slice())
@@ -1120,11 +1120,11 @@ pub const CopyFileWindows = struct {
         this.copyfile();
     }
 
-    fn onMkdirpCompleteConcurrent(this: *CopyFileWindows, err_: JSC.Maybe(void)) void {
+    fn onMkdirpCompleteConcurrent(this: *CopyFileWindows, err_: jsc.Maybe(void)) void {
         bun.sys.syslog("mkdirp complete", .{});
         assert(this.err == null);
         this.err = if (err_ == .err) err_.err else null;
-        this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.ManagedTask.New(CopyFileWindows, onMkdirpComplete).init(this)));
+        this.event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.ManagedTask.New(CopyFileWindows, onMkdirpComplete).init(this)));
     }
 };
 
@@ -1145,7 +1145,7 @@ const unsupported_non_regular_file_error = SystemError{
     .syscall = bun.String.static("fstat"),
 };
 
-pub const CopyFilePromiseTask = JSC.ConcurrentPromiseTask(CopyFile);
+pub const CopyFilePromiseTask = jsc.ConcurrentPromiseTask(CopyFile);
 pub const CopyFilePromiseTaskEventLoopTask = CopyFilePromiseTask.EventLoopTask;
 
 const std = @import("std");
@@ -1156,10 +1156,10 @@ const assert = bun.assert;
 const webcore = bun.webcore;
 const libuv = bun.windows.libuv;
 
-const JSC = bun.jsc;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const SystemError = JSC.SystemError;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const SystemError = jsc.SystemError;
 
 const Blob = webcore.Blob;
 const SizeType = Blob.SizeType;

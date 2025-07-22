@@ -25,6 +25,6 @@ pub const JSArrayIterator = struct {
 const bun = @import("bun");
 const JSObject = @import("./JSObject.zig").JSObject;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

@@ -1742,7 +1742,7 @@ pub const js_bindings = struct {
     const gen = bun.gen.fmt;
 
     /// Internal function for testing in highlighter.test.ts
-    pub fn fmtString(global: *bun.JSC.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
+    pub fn fmtString(global: *bun.jsc.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
         var buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
@@ -1883,7 +1883,7 @@ const Environment = bun.Environment;
 const Output = bun.Output;
 const js_lexer = bun.js_lexer;
 const sha = bun.sha;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 
 const std = @import("std");

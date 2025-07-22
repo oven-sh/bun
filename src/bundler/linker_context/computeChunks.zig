@@ -419,7 +419,7 @@ const bun = @import("bun");
 const BabyList = bun.BabyList;
 const options = bun.options;
 const sourcemap = bun.sourcemap;
-const string = bun.string;
+const string = bun.Str;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 
 const bundler = bun.bundle_v2;

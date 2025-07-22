@@ -1629,5 +1629,5 @@ const Loader = @import("../options.zig").Loader;
 
 const bun = @import("bun");
 const ComptimeStringMap = bun.ComptimeStringMap;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;

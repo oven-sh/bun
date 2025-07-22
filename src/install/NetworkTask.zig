@@ -92,7 +92,7 @@ pub fn forManifest(
             encoded_name = try std.mem.replaceOwned(u8, stack_fallback_allocator.get(), name, "/", "%2f");
         }
 
-        const tmp = bun.JSC.URL.join(
+        const tmp = bun.jsc.URL.join(
             bun.String.borrowUTF8(scope.url.href),
             bun.String.borrowUTF8(encoded_name),
         );
@@ -319,7 +319,7 @@ const OOM = bun.OOM;
 const ThreadPool = bun.ThreadPool;
 const URL = bun.URL;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 
 const Fs = bun.fs;

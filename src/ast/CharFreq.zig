@@ -129,9 +129,9 @@ pub const Class = G.Class;
 const std = @import("std");
 
 const bun = @import("bun");
-const string = bun.string;
+const string = bun.Str;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const CharFreq = js_ast.CharFreq;
 const G = js_ast.G;
 const NameMinifier = js_ast.NameMinifier;

@@ -8,7 +8,7 @@ pub const JSObject = opaque {
     extern fn JSC__JSObject__getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue;
     extern fn JSC__JSObject__putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, len: usize) void;
     extern fn Bun__JSObject__getCodePropertyVMInquiry(global: *JSGlobalObject, obj: *JSObject) JSValue;
-    extern fn JSC__createStructure(global: *JSC.JSGlobalObject, owner: *JSC.JSCell, length: u32, names: [*]ExternColumnIdentifier) JSC.JSValue;
+    extern fn JSC__createStructure(global: *jsc.JSGlobalObject, owner: *jsc.JSCell, length: u32, names: [*]ExternColumnIdentifier) jsc.JSValue;
     extern fn JSC__JSObject__create(global_object: *JSGlobalObject, length: usize, ctx: *anyopaque, initializer: InitializeCallback) JSValue;
 
     pub fn toJS(obj: *JSObject) JSValue {
@@ -17,7 +17,7 @@ pub const JSObject = opaque {
 
     /// Marshall a struct instance into a JSObject, copying its properties.
     ///
-    /// Each field will be encoded with `JSC.toJS`. Fields whose types have a
+    /// Each field will be encoded with `jsc.toJS`. Fields whose types have a
     /// `toJS` method will have it called to encode.
     ///
     /// This method is equivalent to `Object.create(...)` + setting properties,
@@ -28,7 +28,7 @@ pub const JSObject = opaque {
     /// Marshall a struct into a JSObject, copying its properties. It's
     /// `__proto__` will be `null`.
     ///
-    /// Each field will be encoded with `JSC.toJS`. Fields whose types have a
+    /// Each field will be encoded with `jsc.toJS`. Fields whose types have a
     /// `toJS` method will have it called to encode.
     ///
     /// This is roughly equivalent to creating an object with
@@ -39,7 +39,7 @@ pub const JSObject = opaque {
 
     /// Marshall a struct instance into a JSObject. `pojo` is borrowed.
     ///
-    /// Each field will be encoded with `JSC.toJS`. Fields whose types have a
+    /// Each field will be encoded with `jsc.toJS`. Fields whose types have a
     /// `toJS` method will have it called to encode.
     ///
     /// This method is equivalent to `Object.create(...)` + setting properties,
@@ -68,7 +68,7 @@ pub const JSObject = opaque {
             cell.put(
                 global,
                 field.name,
-                try JSC.toJS(global, @TypeOf(property), property),
+                try jsc.toJS(global, @TypeOf(property), property),
             );
         }
 
@@ -116,8 +116,8 @@ pub const JSObject = opaque {
         }
     };
 
-    pub fn createStructure(global: *JSGlobalObject, owner: JSC.JSValue, length: u32, names: [*]ExternColumnIdentifier) JSValue {
-        JSC.markBinding(@src());
+    pub fn createStructure(global: *JSGlobalObject, owner: jsc.JSValue, length: u32, names: [*]ExternColumnIdentifier) JSValue {
+        jsc.markBinding(@src());
         return JSC__createStructure(global, owner.asCell(), length, names);
     }
 
@@ -141,7 +141,7 @@ pub const JSObject = opaque {
         // then the JSValue is zero. the function this ends up calling can return undefined
         // with an exception:
         // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/JSObjectInlines.h#L112
-        var scope: JSC.CatchScope = undefined;
+        var scope: jsc.CatchScope = undefined;
         scope.init(globalThis, @src());
         defer scope.deinit();
         const value = JSC__JSObject__getIndex(this, globalThis, i);
@@ -167,7 +167,7 @@ const std = @import("std");
 const bun = @import("bun");
 const JSError = bun.JSError;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const ZigString = JSC.ZigString;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

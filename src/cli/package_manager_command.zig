@@ -587,6 +587,6 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const log = bun.log;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const File = bun.sys.File;

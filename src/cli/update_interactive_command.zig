@@ -1112,15 +1112,15 @@ const Output = bun.Output;
 const PathBuffer = bun.PathBuffer;
 const glob = bun.glob;
 const path = bun.path;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const FileSystem = bun.fs.FileSystem;
 
-const Command = bun.CLI.Command;
-const OutdatedCommand = bun.CLI.OutdatedCommand;
-
 const Semver = bun.Semver;
 const SlicedString = Semver.SlicedString;
+
+const Command = bun.cli.Command;
+const OutdatedCommand = bun.cli.OutdatedCommand;
 
 const Install = bun.install;
 const DependencyID = Install.DependencyID;

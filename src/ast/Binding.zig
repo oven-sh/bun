@@ -151,9 +151,9 @@ const std = @import("std");
 
 const bun = @import("bun");
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const B = js_ast.B;
 const Binding = js_ast.Binding;
 const E = js_ast.E;

@@ -11,42 +11,42 @@ const TestCategory = enum {
     parser_options,
 };
 
-pub fn minifyErrorTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn minifyErrorTestWithOptions(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return testingImpl(globalThis, callframe, .minify, .parser_options);
 }
 
-pub fn minifyTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn minifyTestWithOptions(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return testingImpl(globalThis, callframe, .minify, .parser_options);
 }
 
-pub fn prefixTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn prefixTestWithOptions(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return testingImpl(globalThis, callframe, .prefix, .parser_options);
 }
 
-pub fn testWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn testWithOptions(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return testingImpl(globalThis, callframe, .normal, .parser_options);
 }
 
-pub fn minifyTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn minifyTest(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return testingImpl(globalThis, callframe, .minify, .normal);
 }
 
-pub fn prefixTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn prefixTest(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return testingImpl(globalThis, callframe, .prefix, .normal);
 }
 
-pub fn _test(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn _test(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return testingImpl(globalThis, callframe, .normal, .normal);
 }
 
-pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, comptime test_kind: TestKind, comptime test_category: TestCategory) bun.JSError!JSC.JSValue {
+pub fn testingImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, comptime test_kind: TestKind, comptime test_category: TestCategory) bun.JSError!jsc.JSValue {
     var arena = bun.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
 
     const arguments_ = callframe.arguments_old(3);
-    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-    const source_arg: JSC.JSValue = arguments.nextEat() orelse {
+    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    const source_arg: jsc.JSValue = arguments.nextEat() orelse {
         return globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 0", .{});
     };
     if (!source_arg.isString()) {
@@ -112,7 +112,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
             minify_options.targets.browsers = browsers;
             _ = stylesheet.minify(alloc, minify_options, &extra).assert();
 
-            const symbols = bun.JSAst.Symbol.Map{};
+            const symbols = bun.ast.Symbol.Map{};
             var local_names = bun.css.LocalsResultsMap{};
             const result = switch (stylesheet.toCss(
                 alloc,
@@ -147,7 +147,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     }
 }
 
-fn parserOptionsFromJS(globalThis: *JSC.JSGlobalObject, allocator: Allocator, opts: *bun.css.ParserOptions, jsobj: JSValue) bun.JSError!void {
+fn parserOptionsFromJS(globalThis: *jsc.JSGlobalObject, allocator: Allocator, opts: *bun.css.ParserOptions, jsobj: JSValue) bun.JSError!void {
     _ = allocator; // autofix
     if (try jsobj.getTruthy(globalThis, "flags")) |val| {
         if (val.isArray()) {
@@ -180,7 +180,7 @@ fn parserOptionsFromJS(globalThis: *JSC.JSGlobalObject, allocator: Allocator, op
     // }
 }
 
-fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.JSError!bun.css.targets.Browsers {
+fn targetsFromJS(globalThis: *jsc.JSGlobalObject, jsobj: JSValue) bun.JSError!bun.css.targets.Browsers {
     var targets = bun.css.targets.Browsers{};
 
     if (try jsobj.getTruthy(globalThis, "android")) |val| {
@@ -250,14 +250,14 @@ fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.JSError!bu
     return targets;
 }
 
-pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn attrTest(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var arena = bun.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
 
     const arguments_ = callframe.arguments_old(4);
-    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-    const source_arg: JSC.JSValue = arguments.nextEat() orelse {
+    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    const source_arg: jsc.JSValue = arguments.nextEat() orelse {
         return globalThis.throw("attrTest: expected 3 arguments, got 0", .{});
     };
     if (!source_arg.isString()) {
@@ -279,7 +279,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     const expected = expected_bunstr.toUTF8(bun.default_allocator);
     defer expected.deinit();
 
-    const minify_arg: JSC.JSValue = arguments.nextEat() orelse {
+    const minify_arg: jsc.JSValue = arguments.nextEat() orelse {
         return globalThis.throw("attrTest: expected 3 arguments, got 2", .{});
     };
     const minify = minify_arg.isBoolean() and minify_arg.toBoolean();
@@ -331,6 +331,6 @@ const bun = @import("bun");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const JSC = bun.JSC;
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const JSValue = bun.JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = bun.jsc.JSGlobalObject;
+const JSValue = bun.jsc.JSValue;

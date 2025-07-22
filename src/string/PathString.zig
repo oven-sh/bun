@@ -14,7 +14,7 @@ pub const PathString = packed struct(PathStringBackingIntType) {
     ptr: PointerIntType = 0,
     len: PathInt = 0,
 
-    const JSC = bun.JSC;
+    const jsc = bun.jsc;
 
     pub fn estimatedSize(this: *const PathString) usize {
         return @as(usize, this.len);

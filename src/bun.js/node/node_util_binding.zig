@@ -1,4 +1,4 @@
-pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn internalErrorName(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments_old(1).slice();
     if (arguments.len < 1) {
         return globalThis.throwNotEnoughArguments("internalErrorName", 1, arguments.len);
@@ -98,12 +98,12 @@ pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     return fmtstring.transferToJS(globalThis);
 }
 
-pub fn etimedoutErrorCode(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    return JSC.JSValue.jsNumberFromInt32(-bun.sys.UV_E.TIMEDOUT);
+pub fn etimedoutErrorCode(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    return jsc.JSValue.jsNumberFromInt32(-bun.sys.UV_E.TIMEDOUT);
 }
 
-pub fn enobufsErrorCode(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    return JSC.JSValue.jsNumberFromInt32(-bun.sys.UV_E.NOBUFS);
+pub fn enobufsErrorCode(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    return jsc.JSValue.jsNumberFromInt32(-bun.sys.UV_E.NOBUFS);
 }
 
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
@@ -114,7 +114,7 @@ pub fn enobufsErrorCode(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!J
 /// const extractedNewLineRe = new RegExp("(?<=\\n)");
 /// extractedSplitNewLines = value => RegExpPrototypeSymbolSplit(extractedNewLineRe, value);
 /// ```
-pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     bun.assert(callframe.argumentsCount() == 1);
     const value = callframe.argument(0);
     bun.assert(value.isString());
@@ -133,10 +133,10 @@ pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject
 
 fn split(
     comptime encoding: bun.strings.EncodingNonAscii,
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
     allocator: Allocator,
     str: *const bun.String,
-) bun.JSError!JSC.JSValue {
+) bun.JSError!jsc.JSValue {
     var fallback = std.heap.stackFallback(1024, allocator);
     const alloc = fallback.get();
     const Char = switch (encoding) {
@@ -194,17 +194,17 @@ pub fn SplitNewlineIterator(comptime T: type) type {
     };
 }
 
-pub fn normalizeEncoding(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn normalizeEncoding(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const input = callframe.argument(0);
     const str = try bun.String.fromJS(input, globalThis);
     bun.assert(str.tag != .Dead);
     defer str.deref();
-    if (str.length() == 0) return JSC.Node.Encoding.utf8.toJS(globalThis);
-    if (str.inMapCaseInsensitive(JSC.Node.Encoding.map)) |enc| return enc.toJS(globalThis);
+    if (str.length() == 0) return jsc.Node.Encoding.utf8.toJS(globalThis);
+    if (str.inMapCaseInsensitive(jsc.Node.Encoding.map)) |enc| return enc.toJS(globalThis);
     return .js_undefined;
 }
 
-pub fn parseEnv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn parseEnv(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const content = callframe.argument(0);
     try validators.validateString(globalThis, content, "content", .{});
 
@@ -218,9 +218,9 @@ pub fn parseEnv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     var p = envloader.Loader.init(&map, allocator);
     p.loadFromString(str.slice(), true, false);
 
-    var obj = JSC.JSValue.createEmptyObject(globalThis, map.map.count());
+    var obj = jsc.JSValue.createEmptyObject(globalThis, map.map.count());
     for (map.map.keys(), map.map.values()) |k, v| {
-        obj.put(globalThis, JSC.ZigString.initUTF8(k), try bun.String.createUTF8ForJS(globalThis, v.value));
+        obj.put(globalThis, jsc.ZigString.initUTF8(k), try bun.String.createUTF8ForJS(globalThis, v.value));
     }
     return obj;
 }
@@ -231,7 +231,7 @@ const validators = @import("./util/validators.zig");
 const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
-const string = bun.string;
+const string = bun.Str;
 
-const JSC = bun.JSC;
-const ZigString = JSC.ZigString;
+const jsc = bun.jsc;
+const ZigString = jsc.ZigString;

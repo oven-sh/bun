@@ -327,8 +327,8 @@ pub const Loader = struct {
         to_json: *JSONStore,
         comptime StringStore: type,
         to_string: *StringStore,
-        framework_defaults: Api.StringMap,
-        behavior: Api.DotEnvBehavior,
+        framework_defaults: api.StringMap,
+        behavior: api.DotEnvBehavior,
         prefix: string,
         allocator: std.mem.Allocator,
     ) !void {
@@ -380,7 +380,7 @@ pub const Loader = struct {
             if (key_buf_len > 0) {
                 iter.reset();
                 key_buf = try allocator.alloc(u8, key_buf_len + key_count * "process.env.".len);
-                const js_ast = bun.JSAst;
+                const js_ast = bun.ast;
 
                 var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate * 2);
                 errdefer allocator.free(e_strings);
@@ -551,7 +551,7 @@ pub const Loader = struct {
                 while (iter.next()) |file_path| {
                     if (file_path.len > 0) {
                         try this.loadEnvFileDynamic(file_path, false);
-                        Analytics.Features.dotenv += 1;
+                        analytics.Features.dotenv += 1;
                     }
                 }
             }
@@ -573,19 +573,19 @@ pub const Loader = struct {
             .development => {
                 if (dir.hasComptimeQuery(".env.development.local")) {
                     try this.loadEnvFile(dir_handle, ".env.development.local", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production.local")) {
                     try this.loadEnvFile(dir_handle, ".env.production.local", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test.local")) {
                     try this.loadEnvFile(dir_handle, ".env.test.local", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
         }
@@ -593,7 +593,7 @@ pub const Loader = struct {
         if (comptime suffix != .@"test") {
             if (dir.hasComptimeQuery(".env.local")) {
                 try this.loadEnvFile(dir_handle, ".env.local", false);
-                Analytics.Features.dotenv += 1;
+                analytics.Features.dotenv += 1;
             }
         }
 
@@ -601,26 +601,26 @@ pub const Loader = struct {
             .development => {
                 if (dir.hasComptimeQuery(".env.development")) {
                     try this.loadEnvFile(dir_handle, ".env.development", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production")) {
                     try this.loadEnvFile(dir_handle, ".env.production", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test")) {
                     try this.loadEnvFile(dir_handle, ".env.test", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
         }
 
         if (dir.hasComptimeQuery(".env")) {
             try this.loadEnvFile(dir_handle, ".env", false);
-            Analytics.Features.dotenv += 1;
+            analytics.Features.dotenv += 1;
         }
     }
 
@@ -1329,17 +1329,17 @@ pub var instance: ?*Loader = null;
 
 pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";
 
-const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
 const std = @import("std");
-const Api = @import("./api/schema.zig").Api;
 const URL = @import("./url.zig").URL;
 const which = @import("./which.zig").which;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
+const analytics = bun.analytics;
 const logger = bun.logger;
 const s3 = bun.S3;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
+const api = bun.schema.api;

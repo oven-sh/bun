@@ -2,7 +2,7 @@ const HTTPThread = @This();
 
 var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
 
-loop: *JSC.MiniEventLoop,
+loop: *jsc.MiniEventLoop,
 http_context: NewHTTPContext(false),
 https_context: NewHTTPContext(true),
 
@@ -198,7 +198,7 @@ pub fn onStart(opts: InitOpts) void {
     bun.http.default_arena = Arena.init() catch unreachable;
     bun.http.default_allocator = bun.http.default_arena.allocator();
 
-    const loop = bun.JSC.MiniEventLoop.initGlobal(null);
+    const loop = bun.jsc.MiniEventLoop.initGlobal(null);
 
     if (Environment.isWindows) {
         _ = std.process.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
@@ -464,19 +464,19 @@ const log = Output.scoped(.HTTPThread, false);
 
 const ProxyTunnel = @import("./ProxyTunnel.zig");
 const std = @import("std");
-const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
-const SSLConfig = @import("../bun.js/api/server.zig").ServerConfig.SSLConfig;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSC = bun.JSC;
 const Output = bun.Output;
-const stringZ = bun.stringZ;
+const jsc = bun.jsc;
+const stringZ = bun.StrZ;
 const strings = bun.strings;
 const uws = bun.uws;
+const Arena = bun.allocators.MimallocArena;
 const Batch = bun.ThreadPool.Batch;
 const UnboundedQueue = bun.threading.UnboundedQueue;
+const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const HTTPClient = bun.http;
 const AsyncHTTP = bun.http.AsyncHTTP;

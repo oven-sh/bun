@@ -35,11 +35,11 @@ inline fn toLowerT(comptime T: type, a_c: T) T {
 }
 
 fn MaybeBuf(comptime T: type) type {
-    return JSC.Node.Maybe([]T, Syscall.Error);
+    return jsc.Node.Maybe([]T, Syscall.Error);
 }
 
 fn MaybeSlice(comptime T: type) type {
-    return JSC.Node.Maybe([:0]const T, Syscall.Error);
+    return jsc.Node.Maybe([:0]const T, Syscall.Error);
 }
 
 fn validatePathT(comptime T: type, comptime methodName: []const u8) void {
@@ -70,13 +70,13 @@ fn PathParsed(comptime T: type) type {
         ext: []const T = "",
         name: []const T = "",
 
-        pub fn toJSObject(this: @This(), globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-            var jsObject = JSC.JSValue.createEmptyObject(globalObject, 5);
-            jsObject.put(globalObject, JSC.ZigString.static("root"), try bun.String.createUTF8ForJS(globalObject, this.root));
-            jsObject.put(globalObject, JSC.ZigString.static("dir"), try bun.String.createUTF8ForJS(globalObject, this.dir));
-            jsObject.put(globalObject, JSC.ZigString.static("base"), try bun.String.createUTF8ForJS(globalObject, this.base));
-            jsObject.put(globalObject, JSC.ZigString.static("ext"), try bun.String.createUTF8ForJS(globalObject, this.ext));
-            jsObject.put(globalObject, JSC.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, this.name));
+        pub fn toJSObject(this: @This(), globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+            var jsObject = jsc.JSValue.createEmptyObject(globalObject, 5);
+            jsObject.put(globalObject, jsc.ZigString.static("root"), try bun.String.createUTF8ForJS(globalObject, this.root));
+            jsObject.put(globalObject, jsc.ZigString.static("dir"), try bun.String.createUTF8ForJS(globalObject, this.dir));
+            jsObject.put(globalObject, jsc.ZigString.static("base"), try bun.String.createUTF8ForJS(globalObject, this.base));
+            jsObject.put(globalObject, jsc.ZigString.static("ext"), try bun.String.createUTF8ForJS(globalObject, this.ext));
+            jsObject.put(globalObject, jsc.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, this.name));
             return jsObject;
         }
     };
@@ -404,30 +404,30 @@ pub fn basenameWindowsT(comptime T: type, path: []const T, suffix: ?[]const T) [
         &.{};
 }
 
-pub fn basenamePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, suffix: ?[]const T) bun.JSError!JSC.JSValue {
+pub fn basenamePosixJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, path: []const T, suffix: ?[]const T) bun.JSError!jsc.JSValue {
     return bun.String.createUTF8ForJS(globalObject, basenamePosixT(T, path, suffix));
 }
 
-pub fn basenameWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, suffix: ?[]const T) bun.JSError!JSC.JSValue {
+pub fn basenameWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, path: []const T, suffix: ?[]const T) bun.JSError!jsc.JSValue {
     return bun.String.createUTF8ForJS(globalObject, basenameWindowsT(T, path, suffix));
 }
 
-pub fn basenameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, isWindows: bool, path: []const T, suffix: ?[]const T) bun.JSError!JSC.JSValue {
+pub fn basenameJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, isWindows: bool, path: []const T, suffix: ?[]const T) bun.JSError!jsc.JSValue {
     return if (isWindows)
         basenameWindowsJS_T(T, globalObject, path, suffix)
     else
         basenamePosixJS_T(T, globalObject, path, suffix);
 }
 
-pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) bun.JSError!JSC.JSValue {
-    const suffix_ptr: ?JSC.JSValue = if (args_len > 1 and !args_ptr[1].isUndefined()) args_ptr[1] else null;
+pub fn basename(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
+    const suffix_ptr: ?jsc.JSValue = if (args_len > 1 and !args_ptr[1].isUndefined()) args_ptr[1] else null;
 
     if (suffix_ptr) |_suffix_ptr| {
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
         try validateString(globalObject, _suffix_ptr, "ext", .{});
     }
 
-    const path_ptr: JSC.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
+    const path_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
@@ -440,7 +440,7 @@ pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
     const pathZSlice = pathZStr.toSlice(allocator);
     defer pathZSlice.deinit();
 
-    var suffixZSlice: ?JSC.ZigString.Slice = null;
+    var suffixZSlice: ?jsc.ZigString.Slice = null;
     if (suffix_ptr) |_suffix_ptr| {
         const suffixZStr = try _suffix_ptr.getZigString(globalObject);
         if (suffixZStr.len > 0 and suffixZStr.len <= pathZStr.len) {
@@ -600,23 +600,23 @@ pub fn dirnameWindowsT(comptime T: type, path: []const T) []const T {
         comptime L(T, CHAR_STR_DOT);
 }
 
-pub fn dirnamePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) bun.JSError!JSC.JSValue {
+pub fn dirnamePosixJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, path: []const T) bun.JSError!jsc.JSValue {
     return bun.String.createUTF8ForJS(globalObject, dirnamePosixT(T, path));
 }
 
-pub fn dirnameWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) bun.JSError!JSC.JSValue {
+pub fn dirnameWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, path: []const T) bun.JSError!jsc.JSValue {
     return bun.String.createUTF8ForJS(globalObject, dirnameWindowsT(T, path));
 }
 
-pub fn dirnameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, isWindows: bool, path: []const T) bun.JSError!JSC.JSValue {
+pub fn dirnameJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, isWindows: bool, path: []const T) bun.JSError!jsc.JSValue {
     return if (isWindows)
         dirnameWindowsJS_T(T, globalObject, path)
     else
         dirnamePosixJS_T(T, globalObject, path);
 }
 
-pub fn dirname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) bun.JSError!JSC.JSValue {
-    const path_ptr: JSC.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
+pub fn dirname(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
+    const path_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
@@ -796,23 +796,23 @@ pub fn extnameWindowsT(comptime T: type, path: []const T) []const T {
     return path[_startDot.._end];
 }
 
-pub fn extnamePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) bun.JSError!JSC.JSValue {
+pub fn extnamePosixJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, path: []const T) bun.JSError!jsc.JSValue {
     return bun.String.createUTF8ForJS(globalObject, extnamePosixT(T, path));
 }
 
-pub fn extnameWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) bun.JSError!JSC.JSValue {
+pub fn extnameWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, path: []const T) bun.JSError!jsc.JSValue {
     return bun.String.createUTF8ForJS(globalObject, extnameWindowsT(T, path));
 }
 
-pub fn extnameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, isWindows: bool, path: []const T) bun.JSError!JSC.JSValue {
+pub fn extnameJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, isWindows: bool, path: []const T) bun.JSError!jsc.JSValue {
     return if (isWindows)
         extnameWindowsJS_T(T, globalObject, path)
     else
         extnamePosixJS_T(T, globalObject, path);
 }
 
-pub fn extname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) bun.JSError!JSC.JSValue {
-    const path_ptr: JSC.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
+pub fn extname(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
+    const path_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
@@ -902,15 +902,15 @@ fn _formatT(comptime T: type, pathObject: PathParsed(T), sep: T, buf: []T) []con
     return buf[0..bufSize];
 }
 
-pub fn formatPosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, pathObject: PathParsed(T), buf: []T) bun.JSError!JSC.JSValue {
+pub fn formatPosixJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, pathObject: PathParsed(T), buf: []T) bun.JSError!jsc.JSValue {
     return bun.String.createUTF8ForJS(globalObject, _formatT(T, pathObject, CHAR_FORWARD_SLASH, buf));
 }
 
-pub fn formatWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, pathObject: PathParsed(T), buf: []T) bun.JSError!JSC.JSValue {
+pub fn formatWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, pathObject: PathParsed(T), buf: []T) bun.JSError!jsc.JSValue {
     return bun.String.createUTF8ForJS(globalObject, _formatT(T, pathObject, CHAR_BACKWARD_SLASH, buf));
 }
 
-pub fn formatJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, pathObject: PathParsed(T)) bun.JSError!JSC.JSValue {
+pub fn formatJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, pathObject: PathParsed(T)) bun.JSError!jsc.JSValue {
     const baseLen = pathObject.base.len;
     const dirLen = pathObject.dir.len;
     // Add one for the possible separator.
@@ -922,8 +922,8 @@ pub fn formatJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator
     return if (isWindows) formatWindowsJS_T(T, globalObject, pathObject, buf) else formatPosixJS_T(T, globalObject, pathObject, buf);
 }
 
-pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) bun.JSError!JSC.JSValue {
-    const pathObject_ptr: JSC.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
+pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
+    const pathObject_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateObject(globalObject, pathObject_ptr, "pathObject", .{}, .{});
 
@@ -931,7 +931,7 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
     const allocator = stack_fallback.get();
 
     var root: []const u8 = "";
-    var root_slice: ?JSC.ZigString.Slice = null;
+    var root_slice: ?jsc.ZigString.Slice = null;
     defer if (root_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "root")) |jsValue| {
@@ -939,7 +939,7 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
         root = root_slice.?.slice();
     }
     var dir: []const u8 = "";
-    var dir_slice: ?JSC.ZigString.Slice = null;
+    var dir_slice: ?jsc.ZigString.Slice = null;
     defer if (dir_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "dir")) |jsValue| {
@@ -947,7 +947,7 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
         dir = dir_slice.?.slice();
     }
     var base: []const u8 = "";
-    var base_slice: ?JSC.ZigString.Slice = null;
+    var base_slice: ?jsc.ZigString.Slice = null;
     defer if (base_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "base")) |jsValue| {
@@ -955,7 +955,7 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
         base = base_slice.?.slice();
     }
     var _name: []const u8 = "";
-    var _name_slice: ?JSC.ZigString.Slice = null;
+    var _name_slice: ?jsc.ZigString.Slice = null;
     defer if (_name_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "name")) |jsValue| {
@@ -963,7 +963,7 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
         _name = _name_slice.?.slice();
     }
     var ext: []const u8 = "";
-    var ext_slice: ?JSC.ZigString.Slice = null;
+    var ext_slice: ?jsc.ZigString.Slice = null;
     defer if (ext_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "ext")) |jsValue| {
@@ -997,7 +997,7 @@ pub fn isAbsoluteWindowsT(comptime T: type, path: []const T) bool {
             isSepWindowsT(T, path[2]));
 }
 
-pub fn isAbsolutePosixZigString(pathZStr: JSC.ZigString) bool {
+pub fn isAbsolutePosixZigString(pathZStr: jsc.ZigString) bool {
     const pathZStrTrunc = pathZStr.trunc(1);
     return if (pathZStrTrunc.len > 0 and pathZStrTrunc.is16Bit())
         isAbsolutePosixT(u16, pathZStrTrunc.utf16SliceAligned())
@@ -1005,22 +1005,22 @@ pub fn isAbsolutePosixZigString(pathZStr: JSC.ZigString) bool {
         isAbsolutePosixT(u8, pathZStrTrunc.slice());
 }
 
-pub fn isAbsoluteWindowsZigString(pathZStr: JSC.ZigString) bool {
+pub fn isAbsoluteWindowsZigString(pathZStr: jsc.ZigString) bool {
     return if (pathZStr.len > 0 and pathZStr.is16Bit())
         isAbsoluteWindowsT(u16, @alignCast(pathZStr.utf16Slice()))
     else
         isAbsoluteWindowsT(u8, pathZStr.slice());
 }
 
-pub fn isAbsolute(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) bun.JSError!JSC.JSValue {
-    const path_ptr: JSC.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
+pub fn isAbsolute(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
+    const path_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
     const pathZStr = try path_ptr.getZigString(globalObject);
-    if (pathZStr.len == 0) return JSC.JSValue.jsBoolean(false);
-    if (isWindows) return JSC.JSValue.jsBoolean(isAbsoluteWindowsZigString(pathZStr));
-    return JSC.JSValue.jsBoolean(isAbsolutePosixZigString(pathZStr));
+    if (pathZStr.len == 0) return jsc.JSValue.jsBoolean(false);
+    if (isWindows) return jsc.JSValue.jsBoolean(isAbsoluteWindowsZigString(pathZStr));
+    return jsc.JSValue.jsBoolean(isAbsolutePosixZigString(pathZStr));
 }
 
 pub fn isSepPosixT(comptime T: type, byte: T) bool {
@@ -1203,15 +1203,15 @@ pub fn joinWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf2: 
     return normalizeWindowsT(T, joined, buf);
 }
 
-pub fn joinPosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) bun.JSError!JSC.JSValue {
+pub fn joinPosixJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) bun.JSError!jsc.JSValue {
     return bun.String.createUTF8ForJS(globalObject, joinPosixT(T, paths, buf, buf2));
 }
 
-pub fn joinWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) bun.JSError!JSC.JSValue {
+pub fn joinWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) bun.JSError!jsc.JSValue {
     return bun.String.createUTF8ForJS(globalObject, joinWindowsT(T, paths, buf, buf2));
 }
 
-pub fn joinJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, paths: []const []const T) bun.JSError!JSC.JSValue {
+pub fn joinJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, paths: []const []const T) bun.JSError!jsc.JSValue {
     // Adding 8 bytes when Windows for the possible UNC root.
     var bufLen: usize = if (isWindows) 8 else 0;
     for (paths) |path| bufLen += if (path.len > 0) path.len + 1 else path.len;
@@ -1223,7 +1223,7 @@ pub fn joinJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: 
     return if (isWindows) joinWindowsJS_T(T, globalObject, paths, buf, buf2) else joinPosixJS_T(T, globalObject, paths, buf, buf2);
 }
 
-pub fn join(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) bun.JSError!JSC.JSValue {
+pub fn join(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
     if (args_len == 0) return bun.String.createUTF8ForJS(globalObject, CHAR_STR_DOT);
 
     var arena = bun.ArenaAllocator.init(bun.default_allocator);
@@ -1615,23 +1615,23 @@ pub fn normalizeT(comptime T: type, path: []const T, buf: []T) []const T {
     };
 }
 
-pub fn normalizePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T) bun.JSError!JSC.JSValue {
+pub fn normalizePosixJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, path: []const T, buf: []T) bun.JSError!jsc.JSValue {
     return bun.String.createUTF8ForJS(globalObject, normalizePosixT(T, path, buf));
 }
 
-pub fn normalizeWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T) bun.JSError!JSC.JSValue {
+pub fn normalizeWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, path: []const T, buf: []T) bun.JSError!jsc.JSValue {
     return bun.String.createUTF8ForJS(globalObject, normalizeWindowsT(T, path, buf));
 }
 
-pub fn normalizeJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, path: []const T) bun.JSError!JSC.JSValue {
+pub fn normalizeJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, path: []const T) bun.JSError!jsc.JSValue {
     const bufLen = @max(path.len, PATH_SIZE(T));
     const buf = allocator.alloc(T, bufLen) catch bun.outOfMemory();
     defer allocator.free(buf);
     return if (isWindows) normalizeWindowsJS_T(T, globalObject, path, buf) else normalizePosixJS_T(T, globalObject, path, buf);
 }
 
-pub fn normalize(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) bun.JSError!JSC.JSValue {
-    const path_ptr: JSC.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
+pub fn normalize(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
+    const path_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
     const pathZStr = try path_ptr.getZigString(globalObject);
@@ -1938,20 +1938,20 @@ pub fn parseWindowsT(comptime T: type, path: []const T) PathParsed(T) {
     return .{ .root = root, .dir = dir, .base = base, .ext = ext, .name = _name };
 }
 
-pub fn parsePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) bun.JSError!JSC.JSValue {
+pub fn parsePosixJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, path: []const T) bun.JSError!jsc.JSValue {
     return parsePosixT(T, path).toJSObject(globalObject);
 }
 
-pub fn parseWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) bun.JSError!JSC.JSValue {
+pub fn parseWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, path: []const T) bun.JSError!jsc.JSValue {
     return parseWindowsT(T, path).toJSObject(globalObject);
 }
 
-pub fn parseJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, isWindows: bool, path: []const T) bun.JSError!JSC.JSValue {
+pub fn parseJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, isWindows: bool, path: []const T) bun.JSError!jsc.JSValue {
     return if (isWindows) parseWindowsJS_T(T, globalObject, path) else parsePosixJS_T(T, globalObject, path);
 }
 
-pub fn parse(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) bun.JSError!JSC.JSValue {
-    const path_ptr: JSC.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
+pub fn parse(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
+    const path_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
@@ -2283,21 +2283,21 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
     return MaybeSlice(T){ .result = toOrig[toStart..toEnd :0] };
 }
 
-pub fn relativePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) bun.JSError!JSC.JSValue {
+pub fn relativePosixJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) bun.JSError!jsc.JSValue {
     return switch (relativePosixT(T, from, to, buf, buf2, buf3)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJS(globalObject),
     };
 }
 
-pub fn relativeWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) bun.JSError!JSC.JSValue {
+pub fn relativeWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) bun.JSError!jsc.JSValue {
     return switch (relativeWindowsT(T, from, to, buf, buf2, buf3)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJS(globalObject),
     };
 }
 
-pub fn relativeJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, from: []const T, to: []const T) bun.JSError!JSC.JSValue {
+pub fn relativeJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, from: []const T, to: []const T) bun.JSError!jsc.JSValue {
     const bufLen = @max(from.len + to.len, PATH_SIZE(T));
     const buf = allocator.alloc(T, bufLen) catch bun.outOfMemory();
     defer allocator.free(buf);
@@ -2308,11 +2308,11 @@ pub fn relativeJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocat
     return if (isWindows) relativeWindowsJS_T(T, globalObject, from, to, buf, buf2, buf3) else relativePosixJS_T(T, globalObject, from, to, buf, buf2, buf3);
 }
 
-pub fn relative(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) bun.JSError!JSC.JSValue {
-    const from_ptr: JSC.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
+pub fn relative(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
+    const from_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, from_ptr, "from", .{});
-    const to_ptr: JSC.JSValue = if (args_len > 1) args_ptr[1] else .js_undefined;
+    const to_ptr: jsc.JSValue = if (args_len > 1) args_ptr[1] else .js_undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, to_ptr, "to", .{});
 
@@ -2732,21 +2732,21 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
     return MaybeSlice(T){ .result = comptime L(T, CHAR_STR_DOT) };
 }
 
-pub fn resolvePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) bun.JSError!JSC.JSValue {
+pub fn resolvePosixJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) bun.JSError!jsc.JSValue {
     return switch (resolvePosixT(T, paths, buf, buf2)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJS(globalObject),
     };
 }
 
-pub fn resolveWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) bun.JSError!JSC.JSValue {
+pub fn resolveWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) bun.JSError!jsc.JSValue {
     return switch (resolveWindowsT(T, paths, buf, buf2)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJS(globalObject),
     };
 }
 
-pub fn resolveJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, paths: []const []const T) bun.JSError!JSC.JSValue {
+pub fn resolveJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, paths: []const []const T) bun.JSError!jsc.JSValue {
     // Adding 8 bytes when Windows for the possible UNC root.
     var bufLen: usize = if (isWindows) 8 else 0;
     for (paths) |path| bufLen += if (bufLen > 0 and path.len > 0) path.len + 1 else path.len;
@@ -2758,9 +2758,9 @@ pub fn resolveJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocato
     return if (isWindows) resolveWindowsJS_T(T, globalObject, paths, buf, buf2) else resolvePosixJS_T(T, globalObject, paths, buf, buf2);
 }
 
-extern "c" fn Process__getCachedCwd(*JSC.JSGlobalObject) JSC.JSValue;
+extern "c" fn Process__getCachedCwd(*jsc.JSGlobalObject) jsc.JSValue;
 
-pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) bun.JSError!JSC.JSValue {
+pub fn resolve(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
     var arena = bun.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
@@ -2875,14 +2875,14 @@ pub fn toNamespacedPathWindowsT(comptime T: type, path: []const T, buf: []T, buf
     return MaybeSlice(T){ .result = resolvedPath };
 }
 
-pub fn toNamespacedPathWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T, buf2: []T) bun.JSError!JSC.JSValue {
+pub fn toNamespacedPathWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, path: []const T, buf: []T, buf2: []T) bun.JSError!jsc.JSValue {
     return switch (toNamespacedPathWindowsT(T, path, buf, buf2)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJS(globalObject),
     };
 }
 
-pub fn toNamespacedPathJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, path: []const T) bun.JSError!JSC.JSValue {
+pub fn toNamespacedPathJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, path: []const T) bun.JSError!jsc.JSValue {
     if (!isWindows or path.len == 0) return bun.String.createUTF8ForJS(globalObject, path);
     const bufLen = @max(path.len, PATH_SIZE(T));
     const buf = allocator.alloc(T, bufLen) catch bun.outOfMemory();
@@ -2892,7 +2892,7 @@ pub fn toNamespacedPathJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject,
     return toNamespacedPathWindowsJS_T(T, globalObject, path, buf, buf2);
 }
 
-pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) bun.JSError!JSC.JSValue {
+pub fn toNamespacedPath(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
     if (args_len == 0) return .js_undefined;
     var path_ptr = args_ptr[0];
 
@@ -2936,9 +2936,9 @@ const validateString = validators.validateString;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
 const Syscall = bun.sys;
-const string = bun.string;
+const jsc = bun.jsc;
+const string = bun.Str;
 const windows = bun.windows;
 const typeBaseNameT = bun.meta.typeBaseNameT;
 

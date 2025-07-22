@@ -2,9 +2,9 @@
 //! combines `Bun.build` and `Bun.serve`, providing a hot-reloading development
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
-pub const production = @import("./production.zig");
-pub const DevServer = @import("./DevServer.zig");
-pub const FrameworkRouter = @import("./FrameworkRouter.zig");
+pub const production = @import("./bake/production.zig");
+pub const DevServer = @import("./bake/DevServer.zig");
+pub const FrameworkRouter = @import("./bake/FrameworkRouter.zig");
 
 /// export default { app: ... };
 pub const api_name = "app";
@@ -26,7 +26,7 @@ pub const UserOptions = struct {
     }
 
     /// Currently, this function must run at the top of the event loop.
-    pub fn fromJS(config: JSValue, global: *JSC.JSGlobalObject) !UserOptions {
+    pub fn fromJS(config: JSValue, global: *jsc.JSGlobalObject) !UserOptions {
         if (!config.isObject()) {
             return global.throwInvalidArguments("'" ++ api_name ++ "' is not an object", .{});
         }
@@ -116,7 +116,7 @@ pub const SplitBundlerOptions = struct {
         .ssr = .{},
     };
 
-    pub fn parsePluginArray(opts: *SplitBundlerOptions, plugin_array: JSValue, global: *JSC.JSGlobalObject) bun.JSError!void {
+    pub fn parsePluginArray(opts: *SplitBundlerOptions, plugin_array: JSValue, global: *jsc.JSGlobalObject) bun.JSError!void {
         const plugin = opts.plugin orelse Plugin.create(global, .bun);
         opts.plugin = plugin;
         const empty_object = JSValue.createEmptyObject(global, 0);
@@ -160,29 +160,29 @@ pub const SplitBundlerOptions = struct {
 };
 
 const BuildConfigSubset = struct {
-    loader: ?bun.Schema.Api.LoaderMap = null,
+    loader: ?bun.schema.api.LoaderMap = null,
     ignoreDCEAnnotations: ?bool = null,
     conditions: bun.StringArrayHashMapUnmanaged(void) = .{},
     drop: bun.StringArrayHashMapUnmanaged(void) = .{},
-    env: bun.Schema.Api.DotEnvBehavior = ._none,
+    env: bun.schema.api.DotEnvBehavior = ._none,
     env_prefix: ?[]const u8 = null,
-    define: bun.Schema.Api.StringMap = .{ .keys = &.{}, .values = &.{} },
-    source_map: bun.Schema.Api.SourceMapMode = .external,
+    define: bun.schema.api.StringMap = .{ .keys = &.{}, .values = &.{} },
+    source_map: bun.schema.api.SourceMapMode = .external,
 
     minify_syntax: ?bool = null,
     minify_identifiers: ?bool = null,
     minify_whitespace: ?bool = null,
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, js_options: JSValue) bun.JSError!BuildConfigSubset {
+    pub fn fromJS(global: *jsc.JSGlobalObject, js_options: JSValue) bun.JSError!BuildConfigSubset {
         var options = BuildConfigSubset{};
 
         if (try js_options.getOptional(global, "sourcemap", JSValue)) |val| brk: {
-            if (try bun.Schema.Api.SourceMapMode.fromJS(global, val)) |sourcemap| {
+            if (try bun.schema.api.SourceMapMode.fromJS(global, val)) |sourcemap| {
                 options.source_map = sourcemap;
                 break :brk;
             }
 
-            return bun.JSC.Node.validators.throwErrInvalidArgType(global, "sourcemap", .{}, "\"inline\" | \"external\" | \"linked\"", val);
+            return bun.jsc.Node.validators.throwErrInvalidArgType(global, "sourcemap", .{}, "\"inline\" | \"external\" | \"linked\"", val);
         }
 
         if (try js_options.getOptional(global, "minify", JSValue)) |minify_options| brk: {
@@ -253,9 +253,9 @@ pub const Framework = struct {
                 "bun-framework-react/server.tsx",
                 "bun-framework-react/ssr.tsx",
             }, if (Environment.codegen_embed) &.{
-                .{ .code = @embedFile("./bun-framework-react/client.tsx") },
-                .{ .code = @embedFile("./bun-framework-react/server.tsx") },
-                .{ .code = @embedFile("./bun-framework-react/ssr.tsx") },
+                .{ .code = @embedFile("./bake/bun-framework-react/client.tsx") },
+                .{ .code = @embedFile("./bake/bun-framework-react/server.tsx") },
+                .{ .code = @embedFile("./bake/bun-framework-react/ssr.tsx") },
             } else &.{
                 // Cannot use .import because resolution must happen from the user's POV
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/client.tsx") },
@@ -406,7 +406,7 @@ pub const Framework = struct {
 
     fn fromJS(
         opts: JSValue,
-        global: *JSC.JSGlobalObject,
+        global: *jsc.JSGlobalObject,
         refs: *StringRefList,
         bundler_options: *SplitBundlerOptions,
         arena: Allocator,
@@ -677,7 +677,7 @@ pub const Framework = struct {
         minify_syntax: ?bool,
         minify_identifiers: ?bool,
     ) !void {
-        const JSAst = bun.JSAst;
+        const JSAst = bun.ast;
 
         var ast_memory_allocator: JSAst.ASTMemoryAllocator = undefined;
         ast_memory_allocator.initWithoutStack(arena);
@@ -691,7 +691,7 @@ pub const Framework = struct {
         out.* = try bun.Transpiler.init(
             arena,
             log,
-            std.mem.zeroes(bun.Schema.Api.TransformOptions),
+            std.mem.zeroes(bun.schema.api.TransformOptions),
             null,
         );
 
@@ -793,7 +793,7 @@ pub const Framework = struct {
 
 fn getOptionalString(
     target: JSValue,
-    global: *JSC.JSGlobalObject,
+    global: *jsc.JSGlobalObject,
     property: []const u8,
     allocations: *StringRefList,
     arena: Allocator,
@@ -905,13 +905,13 @@ pub fn addImportMetaDefines(
 pub const server_virtual_source: bun.logger.Source = .{
     .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),
     .contents = "", // Virtual
-    .index = bun.JSAst.Index.bake_server_data,
+    .index = bun.ast.Index.bake_server_data,
 };
 
 pub const client_virtual_source: bun.logger.Source = .{
     .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/client"),
     .contents = "", // Virtual
-    .index = bun.JSAst.Index.bake_client_data,
+    .index = bun.ast.Index.bake_client_data,
 };
 
 /// Stack-allocated structure that is written to from end to start.
@@ -971,7 +971,7 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const ZigString = JSC.ZigString;
-const Plugin = JSC.API.JSBundler.Plugin;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;
+const Plugin = jsc.API.JSBundler.Plugin;

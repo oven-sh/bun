@@ -274,9 +274,9 @@ pub const PatchTask = patch.PatchTask;
 const std = @import("std");
 
 const bun = @import("bun");
-const JSAst = bun.JSAst;
+const JSAst = bun.ast;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
+const string = bun.Str;
 
 const Semver = bun.Semver;
 const String = Semver.String;

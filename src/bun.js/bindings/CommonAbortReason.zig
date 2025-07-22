@@ -12,6 +12,6 @@ pub const CommonAbortReason = enum(u8) {
 
 const bun = @import("bun");
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

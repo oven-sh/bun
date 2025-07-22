@@ -1,4 +1,3 @@
-src/bake/bake.bind.ts
 src/bake/bake.d.ts
 src/bake/bake.private.d.ts
 src/bake/bun-framework-react/index.ts

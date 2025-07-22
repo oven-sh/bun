@@ -699,10 +699,10 @@ const Output = bun.Output;
 const Path = bun.path;
 const URL = bun.URL;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
+const string = bun.Str;
+const stringZ = bun.StrZ;
 const strings = bun.strings;
-const Api = bun.Schema.Api;
+const Api = bun.schema.api;
 
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;

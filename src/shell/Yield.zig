@@ -46,7 +46,7 @@ pub const Yield = union(enum) {
     ///       it is only used in 2 places. we might need to implement signals
     ///       first tho.
     on_io_writer_chunk: struct {
-        err: ?JSC.SystemError,
+        err: ?jsc.SystemError,
         written: usize,
         /// This type is actually `IOWriterChildPtr`, but because
         /// of an annoying cyclic Zig compile error we're doing this
@@ -144,7 +144,7 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const shell = bun.shell;
 const log = bun.shell.interpret.log;
 

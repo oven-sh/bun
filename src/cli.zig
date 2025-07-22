@@ -7,7 +7,7 @@ pub var Bun__Node__ProcessTitle: ?string = null;
 pub const Cli = struct {
     pub const CompileTarget = @import("./compile_target.zig");
     pub var log_: logger.Log = undefined;
-    pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
+    pub fn startTransform(_: std.mem.Allocator, _: api.TransformOptions, _: *logger.Log) anyerror!void {}
     pub fn start(allocator: std.mem.Allocator) void {
         is_main_thread = true;
         start_time = std.time.nanoTimestamp();
@@ -54,7 +54,7 @@ pub const debug_flags = if (Environment.show_crash_trace) struct {
     }
 } else @compileError("Do not access this namespace in a release build");
 
-pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
+pub const LoaderColonList = ColonListType(api.Loader, Arguments.loader_resolver);
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
 pub fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     @branchHint(.cold);
@@ -367,12 +367,12 @@ pub const Command = struct {
 
     pub const ContextData = struct {
         start_time: i128,
-        args: Api.TransformOptions,
+        args: api.TransformOptions,
         log: *logger.Log,
         allocator: std.mem.Allocator,
         positionals: []const string = &.{},
         passthrough: []const string = &.{},
-        install: ?*Api.BunInstall = null,
+        install: ?*api.BunInstall = null,
 
         debug: DebugOptions = .{},
         test_options: TestOptions = .{},
@@ -414,7 +414,7 @@ pub const Command = struct {
 
             production: bool = false,
 
-            env_behavior: Api.DotEnvBehavior = .disable,
+            env_behavior: api.DotEnvBehavior = .disable,
             env_prefix: []const u8 = "",
             elide_lines: ?usize = null,
             // Compile options
@@ -427,7 +427,7 @@ pub const Command = struct {
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             Cli.cmd = command;
             context_data = .{
-                .args = std.mem.zeroes(Api.TransformOptions),
+                .args = std.mem.zeroes(api.TransformOptions),
                 .log = log,
                 .start_time = start_time,
                 .allocator = allocator,
@@ -628,7 +628,7 @@ pub const Command = struct {
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
         if (comptime Environment.allow_assert) {
             if (bun.getenvZ("MI_VERBOSE") == null) {
-                bun.Mimalloc.mi_option_set_enabled(.verbose, false);
+                bun.mimalloc.mi_option_set_enabled(.verbose, false);
             }
         }
 
@@ -636,7 +636,7 @@ pub const Command = struct {
         if (!bun.getRuntimeFeatureFlag(.BUN_BE_BUN)) {
             if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
                 context_data = .{
-                    .args = std.mem.zeroes(Api.TransformOptions),
+                    .args = std.mem.zeroes(api.TransformOptions),
                     .log = log,
                     .start_time = start_time,
                     .allocator = bun.default_allocator,
@@ -644,14 +644,14 @@ pub const Command = struct {
                 global_cli_ctx = &context_data;
                 var ctx = global_cli_ctx;
 
-                ctx.args.target = Api.Target.bun;
+                ctx.args.target = api.Target.bun;
                 if (bun.argv.len > 1) {
                     ctx.passthrough = bun.argv[1..];
                 } else {
                     ctx.passthrough = &[_]string{};
                 }
 
-                try @import("./bun_js.zig").Run.bootStandalone(
+                try bun_js.Run.bootStandalone(
                     ctx,
                     graph.entryPoint().name,
                     graph,
@@ -1389,7 +1389,7 @@ pub const Command = struct {
         const cwd = try std.posix.getcwd(&entry_point_buf);
         @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
         ctx.passthrough = try std.mem.concat(ctx.allocator, []const u8, &.{ ctx.positionals, ctx.passthrough });
-        try BunJS.Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
+        try bun_js.Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
     }
 
     fn @"bun ./bun.lockb"(ctx: Context) !void {
@@ -1677,13 +1677,11 @@ pub fn printRevisionAndExit() noreturn {
 }
 
 const AddCompletions = @import("./cli/add_completions.zig");
-const BunJS = @import("./bun_js.zig");
 const FilterRun = @import("./cli/filter_run.zig");
 const PmViewCommand = @import("./cli/pm_view_command.zig");
 const fs = @import("./fs.zig");
 const options = @import("./options.zig");
 const std = @import("std");
-const Api = @import("./api/schema.zig").Api;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
@@ -1698,9 +1696,11 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const RegularExpression = bun.RegularExpression;
+const bun_js = bun.bun_js;
 const clap = bun.clap;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const File = bun.sys.File;
+const api = bun.schema.api;

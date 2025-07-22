@@ -1631,7 +1631,7 @@ pub fn GenericSelector(comptime Impl: type) type {
                 var arraylist = ArrayList(u8){};
                 const w = arraylist.writer(bun.default_allocator);
                 defer arraylist.deinit(bun.default_allocator);
-                const symbols = bun.JSAst.Symbol.Map{};
+                const symbols = bun.ast.Symbol.Map{};
                 const P = css.Printer(@TypeOf(w));
                 var printer = P.new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
                 defer printer.deinit();

@@ -59,7 +59,7 @@ pub const S3PartResult = union(enum) {
 
 pub const S3HttpSimpleTask = struct {
     http: bun.http.AsyncHTTP,
-    vm: *JSC.VirtualMachine,
+    vm: *jsc.VirtualMachine,
     sign_result: SignResult,
     headers: bun.http.Headers,
     callback_context: *anyopaque,
@@ -72,7 +72,7 @@ pub const S3HttpSimpleTask = struct {
         },
     },
     result: bun.http.HTTPClientResult = .{},
-    concurrent_task: JSC.ConcurrentTask = .{},
+    concurrent_task: jsc.ConcurrentTask = .{},
     range: ?[]const u8,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
 
@@ -403,7 +403,7 @@ pub fn executeSimpleS3Request(
         .callback = callback,
         .range = options.range,
         .headers = headers,
-        .vm = JSC.VirtualMachine.get(),
+        .vm = jsc.VirtualMachine.get(),
     });
     task.poll_ref.ref(task.vm);
 
@@ -447,6 +447,6 @@ const S3Error = @import("./error.zig").S3Error;
 const getSignErrorCodeAndMessage = @import("./error.zig").getSignErrorCodeAndMessage;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const picohttp = bun.picohttp;
 const strings = bun.strings;

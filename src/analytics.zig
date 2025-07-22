@@ -254,7 +254,7 @@ pub const EventName = enum(u8) {
 
 var random: std.rand.DefaultPrng = undefined;
 
-const platform_arch = if (Environment.isAarch64) Analytics.Architecture.arm else Analytics.Architecture.x64;
+const platform_arch = if (Environment.isAarch64) analytics.Architecture.arm else analytics.Architecture.x64;
 
 // TODO: move this code somewhere more appropriate, and remove it from "analytics"
 // The following code is not currently even used for analytics, just feature-detection
@@ -262,10 +262,10 @@ const platform_arch = if (Environment.isAarch64) Analytics.Architecture.arm else
 pub const GenerateHeader = struct {
     pub const GeneratePlatform = struct {
         var osversion_name: [32]u8 = undefined;
-        fn forMac() Analytics.Platform {
+        fn forMac() analytics.Platform {
             @memset(&osversion_name, 0);
 
-            var platform = Analytics.Platform{ .os = Analytics.OperatingSystem.macos, .version = &[_]u8{}, .arch = platform_arch };
+            var platform = analytics.Platform{ .os = analytics.OperatingSystem.macos, .version = &[_]u8{}, .arch = platform_arch };
             var len = osversion_name.len - 1;
             // this previously used "kern.osrelease", which was the darwin xnu kernel version
             // That is less useful than "kern.osproductversion", which is the macOS version
@@ -276,8 +276,8 @@ pub const GenerateHeader = struct {
         }
 
         pub var linux_os_name: std.c.utsname = undefined;
-        var platform_: Analytics.Platform = undefined;
-        pub const Platform = Analytics.Platform;
+        var platform_: analytics.Platform = undefined;
+        pub const Platform = analytics.Platform;
         var linux_kernel_version: Semver.Version = undefined;
         var run_once = std.once(struct {
             fn run() void {
@@ -292,7 +292,7 @@ pub const GenerateHeader = struct {
                     linux_kernel_version = result.version.min();
                 } else if (Environment.isWindows) {
                     platform_ = Platform{
-                        .os = Analytics.OperatingSystem.windows,
+                        .os = analytics.OperatingSystem.windows,
                         .version = &[_]u8{},
                         .arch = platform_arch,
                     };
@@ -300,7 +300,7 @@ pub const GenerateHeader = struct {
             }
         }.run);
 
-        pub fn forOS() Analytics.Platform {
+        pub fn forOS() analytics.Platform {
             run_once.call();
             return platform_;
         }
@@ -350,7 +350,7 @@ pub const GenerateHeader = struct {
             };
         }
 
-        fn forLinux() Analytics.Platform {
+        fn forLinux() analytics.Platform {
             linux_os_name = std.mem.zeroes(@TypeOf(linux_os_name));
 
             _ = std.c.uname(&linux_os_name);
@@ -360,16 +360,16 @@ pub const GenerateHeader = struct {
 
             // Linux DESKTOP-P4LCIEM 5.10.16.3-microsoft-standard-WSL2 #1 SMP Fri Apr 2 22:23:49 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
             if (std.mem.indexOf(u8, release, "microsoft") != null) {
-                return Analytics.Platform{ .os = Analytics.OperatingSystem.wsl, .version = release, .arch = platform_arch };
+                return analytics.Platform{ .os = analytics.OperatingSystem.wsl, .version = release, .arch = platform_arch };
             }
 
-            return Analytics.Platform{ .os = Analytics.OperatingSystem.linux, .version = release, .arch = platform_arch };
+            return analytics.Platform{ .os = analytics.OperatingSystem.linux, .version = release, .arch = platform_arch };
         }
     };
 };
 
 const std = @import("std");
-const Analytics = @import("./analytics_schema.zig").analytics;
+const analytics = @import("./analytics/schema.zig").analytics;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

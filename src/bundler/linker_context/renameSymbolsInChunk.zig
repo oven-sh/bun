@@ -261,15 +261,15 @@ const std = @import("std");
 const bun = @import("bun");
 const ImportRecord = bun.ImportRecord;
 
+const js_ast = bun.ast;
+const Part = js_ast.Part;
+
 const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
 const JSMeta = bundler.JSMeta;
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const Ref = bun.bundle_v2.Ref;
 const StableRef = bundler.StableRef;
-
-const js_ast = bun.js_ast;
-const Part = js_ast.Part;
 
 const renamer = bun.renamer;
 const MinifyRenamer = renamer.MinifyRenamer;

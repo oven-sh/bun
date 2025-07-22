@@ -103,7 +103,7 @@ pub const AuditCommand = struct {
                 var log = logger.Log.init(ctx.allocator);
                 defer log.deinit();
 
-                const expr = @import("../json_parser.zig").parse(source, &log, ctx.allocator, true) catch {
+                const expr = bun.json.parse(source, &log, ctx.allocator, true) catch {
                     Output.prettyErrorln("<red>error<r>: audit request failed to parse json. Is the registry down?", .{});
                     return 1; // If we can't parse then safe to assume a similar failure
                 };
@@ -348,7 +348,7 @@ fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []c
     return try allocator.dupe(u8, response_buf.slice());
 }
 
-fn parseVulnerability(allocator: std.mem.Allocator, package_name: []const u8, vuln: bun.JSAst.Expr) bun.OOM!VulnerabilityInfo {
+fn parseVulnerability(allocator: std.mem.Allocator, package_name: []const u8, vuln: bun.ast.Expr) bun.OOM!VulnerabilityInfo {
     var vulnerability = VulnerabilityInfo{
         .severity = "moderate",
         .title = "Vulnerability found",
@@ -535,7 +535,7 @@ fn printEnhancedAuditReport(
     var log = logger.Log.init(allocator);
     defer log.deinit();
 
-    const expr = @import("../json_parser.zig").parse(source, &log, allocator, true) catch {
+    const expr = bun.json.parse(source, &log, allocator, true) catch {
         Output.writer().writeAll(response_text) catch {};
         Output.writer().writeByte('\n') catch {};
         return 1;

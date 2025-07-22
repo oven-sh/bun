@@ -666,6 +666,10 @@ const Environment = bun.Environment;
 const ImportRecord = bun.ImportRecord;
 const default_allocator = bun.default_allocator;
 
+const js_ast = bun.ast;
+const B = js_ast.B;
+const Symbol = js_ast.Symbol;
+
 const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
 const Graph = bundler.Graph;
@@ -674,7 +678,3 @@ const LinkerGraph = bundler.LinkerGraph;
 
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const debug = LinkerContext.debug;
-
-const js_ast = bun.js_ast;
-const B = js_ast.B;
-const Symbol = js_ast.Symbol;

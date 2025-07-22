@@ -1,9 +1,9 @@
 tcp: ?*uws.SocketContext = null,
 
-onQueryResolveFn: JSC.Strong.Optional = .empty,
-onQueryRejectFn: JSC.Strong.Optional = .empty,
+onQueryResolveFn: jsc.Strong.Optional = .empty,
+onQueryRejectFn: jsc.Strong.Optional = .empty,
 
-pub fn init(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn init(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var ctx = &globalObject.bunVM().rareData().postgresql_context;
     ctx.onQueryResolveFn.set(globalObject, callframe.argument(0));
     ctx.onQueryRejectFn.set(globalObject, callframe.argument(1));
@@ -12,10 +12,10 @@ pub fn init(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 }
 
 comptime {
-    const js_init = JSC.toJSHostFn(init);
+    const js_init = jsc.toJSHostFn(init);
     @export(&js_init, .{ .name = "PostgresSQLContext__init" });
 }
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const uws = bun.uws;

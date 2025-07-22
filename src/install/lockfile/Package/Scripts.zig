@@ -375,14 +375,12 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const Output = bun.Output;
 const assert = bun.assert;
 const logger = bun.logger;
 const strings = bun.strings;
-
-const JSAst = bun.JSAst;
-const Expr = bun.JSAst.Expr;
+const Expr = bun.ast.Expr;
 
 const Semver = bun.Semver;
 const String = Semver.String;

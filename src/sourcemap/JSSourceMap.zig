@@ -28,7 +28,7 @@ fn findSourceMap(
 
     if (bun.strings.indexOf(source_url, "://")) |source_url_index| {
         if (bun.strings.eqlComptime(source_url[0..source_url_index], "file")) {
-            const path = bun.JSC.URL.pathFromFileURL(source_url_string);
+            const path = bun.jsc.URL.pathFromFileURL(source_url_string);
 
             if (path.tag == .Dead) {
                 return globalObject.ERR(.INVALID_URL, "Invalid URL: {s}", .{source_url}).throw();
@@ -233,14 +233,14 @@ extern fn Bun__createNodeModuleSourceMapEntryObject(
 pub fn findOrigin(this: *JSSourceMap, globalObject: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     const line_number, const column_number = try getLineColumn(globalObject, callFrame);
 
-    const mapping = this.sourcemap.mappings.find(line_number, column_number) orelse return JSC.JSValue.createEmptyObject(globalObject, 0);
+    const mapping = this.sourcemap.mappings.find(line_number, column_number) orelse return jsc.JSValue.createEmptyObject(globalObject, 0);
     const name = try mappingNameToJS(this, globalObject, &mapping);
     const source = try sourceNameToJS(this, globalObject, &mapping);
     return Bun__createNodeModuleSourceMapOriginObject(
         globalObject,
         name,
-        JSC.JSValue.jsNumber(mapping.originalLine()),
-        JSC.JSValue.jsNumber(mapping.originalColumn()),
+        jsc.JSValue.jsNumber(mapping.originalLine()),
+        jsc.JSValue.jsNumber(mapping.originalColumn()),
         source,
     );
 }
@@ -248,16 +248,16 @@ pub fn findOrigin(this: *JSSourceMap, globalObject: *JSGlobalObject, callFrame: 
 pub fn findEntry(this: *JSSourceMap, globalObject: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     const line_number, const column_number = try getLineColumn(globalObject, callFrame);
 
-    const mapping = this.sourcemap.mappings.find(line_number, column_number) orelse return JSC.JSValue.createEmptyObject(globalObject, 0);
+    const mapping = this.sourcemap.mappings.find(line_number, column_number) orelse return jsc.JSValue.createEmptyObject(globalObject, 0);
 
     const name = try mappingNameToJS(this, globalObject, &mapping);
     const source = try sourceNameToJS(this, globalObject, &mapping);
     return Bun__createNodeModuleSourceMapEntryObject(
         globalObject,
-        JSC.JSValue.jsNumber(mapping.generatedLine()),
-        JSC.JSValue.jsNumber(mapping.generatedColumn()),
-        JSC.JSValue.jsNumber(mapping.originalLine()),
-        JSC.JSValue.jsNumber(mapping.originalColumn()),
+        jsc.JSValue.jsNumber(mapping.generatedLine()),
+        jsc.JSValue.jsNumber(mapping.generatedColumn()),
+        jsc.JSValue.jsNumber(mapping.originalLine()),
+        jsc.JSValue.jsNumber(mapping.originalColumn()),
         source,
         name,
     );
@@ -284,11 +284,11 @@ pub fn finalize(this: *JSSourceMap) void {
 }
 
 comptime {
-    const jsFunctionFindSourceMap = JSC.toJSHostFn(findSourceMap);
+    const jsFunctionFindSourceMap = jsc.toJSHostFn(findSourceMap);
     @export(&jsFunctionFindSourceMap, .{ .name = "Bun__JSSourceMap__find" });
 }
 
-pub const js = JSC.Codegen.JSSourceMap;
+pub const js = jsc.Codegen.JSSourceMap;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
@@ -296,9 +296,9 @@ pub const toJS = js.toJS;
 const std = @import("std");
 
 const bun = @import("bun");
-const string = bun.string;
+const string = bun.Str;
 
-const JSC = bun.JSC;
-const CallFrame = JSC.CallFrame;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const CallFrame = jsc.CallFrame;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

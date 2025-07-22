@@ -108,7 +108,7 @@ pub fn BabyList(comptime Type: type) type {
         fn assertValidDeepClone(comptime T: type) void {
             if (@hasDecl(T, "deepClone")) return;
             return switch (T) {
-                bun.JSAst.Expr, bun.JSAst.G.Property, bun.css.ImportConditions, bun.css.LayerName => {},
+                bun.ast.Expr, bun.ast.G.Property, bun.css.ImportConditions, bun.css.LayerName => {},
                 else => {
                     @compileError("Unsupported type for BabyList.deepClone(): " ++ @typeName(Type));
                 },
@@ -470,7 +470,8 @@ pub fn OffsetList(comptime Type: type) type {
     };
 }
 
-const Environment = @import("./env.zig");
-const bun = @import("bun");
 const std = @import("std");
-const strings = @import("./string_immutable.zig");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const strings = bun.strings;

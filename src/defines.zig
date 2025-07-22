@@ -400,16 +400,17 @@ pub const Define = struct {
 
 const fs = @import("./fs.zig");
 const std = @import("std");
-const Ref = @import("./ast/base.zig").Ref;
 
 const table = @import("./defines-table.zig");
 const global_no_side_effect_function_calls_safe_for_to_string = table.global_no_side_effect_function_calls_safe_for_to_string;
 const global_no_side_effect_property_accesses = table.global_no_side_effect_property_accesses;
 
 const bun = @import("bun");
-const js_ast = bun.JSAst;
 const js_lexer = bun.js_lexer;
-const json_parser = bun.JSON;
+const json_parser = bun.json;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
+
+const js_ast = bun.ast;
+const Ref = bun.ast.Ref;

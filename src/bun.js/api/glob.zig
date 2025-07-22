@@ -1,6 +1,6 @@
 const Glob = @This();
 
-pub const js = JSC.Codegen.JSGlob;
+pub const js = jsc.Codegen.JSGlob;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -17,7 +17,7 @@ const ScanOpts = struct {
     follow_symlinks: bool,
     error_on_broken_symlinks: bool,
 
-    fn parseCWD(globalThis: *JSGlobalObject, allocator: std.mem.Allocator, cwdVal: JSC.JSValue, absolute: bool, comptime fnName: string) bun.JSError![]const u8 {
+    fn parseCWD(globalThis: *JSGlobalObject, allocator: std.mem.Allocator, cwdVal: jsc.JSValue, absolute: bool, comptime fnName: string) bun.JSError![]const u8 {
         const cwd_str_raw = try cwdVal.toSlice(globalThis, allocator);
         if (cwd_str_raw.len == 0) return "";
 
@@ -125,7 +125,7 @@ pub const WalkTask = struct {
     walker: *GlobWalker,
     alloc: Allocator,
     err: ?Err = null,
-    global: *JSC.JSGlobalObject,
+    global: *jsc.JSGlobalObject,
     has_pending_activity: *std.atomic.Value(usize),
 
     pub const Err = union(enum) {
@@ -140,10 +140,10 @@ pub const WalkTask = struct {
         }
     };
 
-    pub const AsyncGlobWalkTask = JSC.ConcurrentPromiseTask(WalkTask);
+    pub const AsyncGlobWalkTask = jsc.ConcurrentPromiseTask(WalkTask);
 
     pub fn create(
-        globalThis: *JSC.JSGlobalObject,
+        globalThis: *jsc.JSGlobalObject,
         alloc: Allocator,
         globWalker: *GlobWalker,
         has_pending_activity: *std.atomic.Value(usize),
@@ -172,7 +172,7 @@ pub const WalkTask = struct {
         }
     }
 
-    pub fn then(this: *WalkTask, promise: *JSC.JSPromise) void {
+    pub fn then(this: *WalkTask, promise: *jsc.JSPromise) void {
         defer this.deinit();
 
         if (this.err) |err| {
@@ -193,7 +193,7 @@ pub const WalkTask = struct {
 
 fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     if (globWalk.matchedPaths.keys().len == 0) {
-        return JSC.JSValue.createEmptyArray(globalThis, 0);
+        return jsc.JSValue.createEmptyArray(globalThis, 0);
     }
 
     return BunString.toJSArray(globalThis, globWalk.matchedPaths.keys());
@@ -258,11 +258,11 @@ fn makeGlobWalker(
     return globWalker;
 }
 
-pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Glob {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Glob {
     const alloc = bun.default_allocator;
 
     const arguments_ = callframe.arguments_old(1);
-    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const pat_arg: JSValue = arguments.nextEat() orelse {
         return globalThis.throw("Glob.constructor: expected 1 arguments, got 0", .{});
@@ -283,7 +283,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 pub fn finalize(
     this: *Glob,
 ) callconv(.C) void {
-    const alloc = JSC.VirtualMachine.get().allocator;
+    const alloc = jsc.VirtualMachine.get().allocator;
     alloc.free(this.pattern);
     if (this.pattern_codepoints) |*codepoints| {
         codepoints.deinit();
@@ -303,11 +303,11 @@ fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void 
     _ = has_pending_activity.fetchSub(1, .seq_cst);
 }
 
-pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const alloc = bun.default_allocator;
 
     const arguments_ = callframe.arguments_old(1);
-    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
@@ -326,11 +326,11 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     return task.promise.value();
 }
 
-pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const alloc = bun.default_allocator;
 
     const arguments_ = callframe.arguments_old(1);
-    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
@@ -352,13 +352,13 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
     return matchedPaths;
 }
 
-pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const alloc = bun.default_allocator;
     var arena = Arena.init(alloc);
     defer arena.deinit();
 
     const arguments_ = callframe.arguments_old(1);
-    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const str_arg = arguments.nextEat() orelse {
         return globalThis.throw("Glob.matchString: expected 1 arguments, got 0", .{});
@@ -371,7 +371,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     var str = try str_arg.toSlice(globalThis, arena.allocator());
     defer str.deinit();
 
-    return JSC.JSValue.jsBoolean(globImpl.match(arena.allocator(), this.pattern, str.slice()).matches());
+    return jsc.JSValue.jsBoolean(globImpl.match(arena.allocator(), this.pattern, str.slice()).matches());
 }
 
 pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
@@ -385,7 +385,6 @@ pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
 const ResolvePath = @import("../../resolver/resolve_path.zig");
 const Syscall = @import("../../sys.zig");
 const std = @import("std");
-const CodepointIterator = @import("../../string_immutable.zig").UnsignedCodepointIterator;
 const Allocator = std.mem.Allocator;
 const Arena = std.heap.ArenaAllocator;
 
@@ -394,10 +393,11 @@ const GlobWalker = globImpl.BunGlobWalker;
 
 const bun = @import("bun");
 const BunString = bun.String;
-const string = bun.string;
+const string = bun.Str;
+const CodepointIterator = bun.strings.UnsignedCodepointIterator;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const ZigString = JSC.ZigString;
-const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;
+const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;

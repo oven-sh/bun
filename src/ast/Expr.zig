@@ -64,7 +64,7 @@ pub fn unwrapInlined(expr: Expr) Expr {
 }
 
 pub fn fromBlob(
-    blob: *const JSC.WebCore.Blob,
+    blob: *const jsc.WebCore.Blob,
     allocator: std.mem.Allocator,
     mime_type_: ?MimeType,
     log: *logger.Log,
@@ -108,7 +108,7 @@ pub fn fromBlob(
     return Expr.init(
         E.String,
         E.String{
-            .data = try JSC.ZigString.init(bytes).toBase64DataURL(allocator),
+            .data = try jsc.ZigString.init(bytes).toBase64DataURL(allocator),
         },
         loc,
     );
@@ -147,7 +147,7 @@ pub fn hasAnyPropertyNamed(expr: *const Expr, comptime names: []const string) bo
     return false;
 }
 
-pub fn toJS(this: Expr, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
+pub fn toJS(this: Expr, allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
     return this.data.toJS(allocator, globalObject);
 }
 
@@ -3072,17 +3072,17 @@ pub const Data = union(Tag) {
         return Equality.unknown;
     }
 
-    pub fn toJS(this: Data, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
+    pub fn toJS(this: Data, allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
         return switch (this) {
             .e_array => |e| e.toJS(allocator, globalObject),
             .e_object => |e| e.toJS(allocator, globalObject),
             .e_string => |e| e.toJS(allocator, globalObject),
-            .e_null => JSC.JSValue.null,
+            .e_null => jsc.JSValue.null,
             .e_undefined => .js_undefined,
             .e_boolean => |boolean| if (boolean.value)
-                JSC.JSValue.true
+                jsc.JSValue.true
             else
-                JSC.JSValue.false,
+                jsc.JSValue.false,
             .e_number => |e| e.toJS(),
             // .e_big_int => |e| e.toJS(ctx, exception),
 
@@ -3097,7 +3097,7 @@ pub const Data = union(Tag) {
             // brk: {
             //     // var node = try allocator.create(Macro.JSNode);
             //     // node.* = Macro.JSNode.initExpr(Expr{ .data = this, .loc = logger.Loc.Empty });
-            //     // break :brk JSC.JSValue.c(Macro.JSNode.Class.make(globalObject, node));
+            //     // break :brk jsc.JSValue.c(Macro.JSNode.Class.make(globalObject, node));
             // },
 
             else => {
@@ -3215,19 +3215,19 @@ const std = @import("std");
 const bun = @import("bun");
 const BabyList = bun.BabyList;
 const Environment = bun.Environment;
-const JSC = bun.JSC;
-const JSONParser = bun.JSON;
+const JSONParser = bun.json;
 const MutableString = bun.MutableString;
 const OOM = bun.OOM;
 const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
+const string = bun.Str;
+const stringZ = bun.StrZ;
 const strings = bun.strings;
 const writeAnyToHasher = bun.writeAnyToHasher;
 const MimeType = bun.http.MimeType;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const ASTMemoryAllocator = js_ast.ASTMemoryAllocator;
 const E = js_ast.E;
 const Expr = js_ast.Expr;

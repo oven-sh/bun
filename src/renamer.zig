@@ -952,14 +952,14 @@ pub fn computeReservedNamesForScope(
 const JSLexer = @import("./js_lexer.zig");
 const std = @import("std");
 
-const Ref = @import("./ast/base.zig").Ref;
-const RefCtx = @import("./ast/base.zig").RefCtx;
-
 const bun = @import("bun");
 const Environment = bun.Environment;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const js_ast = bun.JSAst;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
+
+const js_ast = bun.ast;
+const Ref = bun.ast.Ref;
+const RefCtx = bun.ast.RefCtx;

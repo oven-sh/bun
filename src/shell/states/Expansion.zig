@@ -743,8 +743,8 @@ pub const ShellGlobTask = struct {
     walker: *GlobWalker,
 
     result: std.ArrayList([:0]const u8),
-    event_loop: JSC.EventLoopHandle,
-    concurrent_task: JSC.EventLoopTask,
+    event_loop: jsc.EventLoopHandle,
+    concurrent_task: jsc.EventLoopTask,
     // This is a poll because we want it to enter the uSockets loop
     ref: bun.Async.KeepAlive = .{},
     err: ?Err = null,
@@ -759,7 +759,7 @@ pub const ShellGlobTask = struct {
         pub fn toJS(this: Err, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
                 .syscall => |err| err.toJS(globalThis),
-                .unknown => |err| JSC.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
+                .unknown => |err| jsc.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
     };
@@ -771,7 +771,7 @@ pub const ShellGlobTask = struct {
         this.* = .{
             .alloc_scope = alloc_scope,
             .event_loop = expansion.base.eventLoop(),
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(expansion.base.eventLoop()),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(expansion.base.eventLoop()),
             .walker = walker,
             .expansion = expansion,
             .result = std.ArrayList([:0]const u8).init(this.alloc_scope.allocator()),
@@ -853,10 +853,10 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const assert = bun.assert;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const Maybe = JSC.Maybe;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const Maybe = jsc.Maybe;
 
 const ExitCode = bun.shell.ExitCode;
 const Yield = bun.shell.Yield;

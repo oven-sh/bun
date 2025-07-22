@@ -212,11 +212,11 @@ const std = @import("std");
 const bun = @import("bun");
 const ImportRecord = bun.ImportRecord;
 const logger = bun.logger;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 const MimeType = bun.http.MimeType;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const Ast = js_ast.Ast;
 const BundledAst = js_ast.BundledAst;
 const CharFreq = js_ast.CharFreq;

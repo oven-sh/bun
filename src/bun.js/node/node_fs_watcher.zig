@@ -3,7 +3,7 @@ const PathWatcher = if (Environment.isWindows) @import("./win_watcher.zig") else
 
 // TODO: make this a top-level struct
 pub const FSWatcher = struct {
-    pub const js = JSC.Codegen.JSFSWatcher;
+    pub const js = jsc.Codegen.JSFSWatcher;
     pub const toJS = js.toJS;
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
@@ -16,9 +16,9 @@ pub const FSWatcher = struct {
     persistent: bool,
     path_watcher: ?*PathWatcher.PathWatcher,
     poll_ref: Async.KeepAlive = .{},
-    globalThis: *JSC.JSGlobalObject,
-    js_this: JSC.JSValue,
-    encoding: JSC.Node.Encoding,
+    globalThis: *jsc.JSGlobalObject,
+    js_this: jsc.JSValue,
+    encoding: jsc.Node.Encoding,
 
     /// User can call close and pre-detach so we need to track this
     closed: bool,
@@ -31,7 +31,7 @@ pub const FSWatcher = struct {
         return this.ctx.eventLoop();
     }
 
-    pub fn enqueueTaskConcurrent(this: FSWatcher, task: *JSC.ConcurrentTask) void {
+    pub fn enqueueTaskConcurrent(this: FSWatcher, task: *jsc.ConcurrentTask) void {
         this.eventLoop().enqueueTaskConcurrent(task);
     }
 
@@ -51,7 +51,7 @@ pub const FSWatcher = struct {
         count: u8 = 0,
 
         entries: [8]Entry = undefined,
-        concurrent_task: JSC.ConcurrentTask = undefined,
+        concurrent_task: jsc.ConcurrentTask = undefined,
 
         pub const Entry = struct {
             event: Event,
@@ -119,7 +119,7 @@ pub const FSWatcher = struct {
             if (this.ctx.refTask()) {
                 var that = FSWatchTask.new(this.*);
                 this.count = 0;
-                that.concurrent_task.task = JSC.Task.init(that);
+                that.concurrent_task.task = jsc.Task.init(that);
                 this.ctx.enqueueTaskConcurrent(&that.concurrent_task);
                 return;
             }
@@ -177,12 +177,12 @@ pub const FSWatcher = struct {
 
         pub fn toJS(
             this: EventType,
-            globalObject: *JSC.JSGlobalObject,
-        ) JSC.JSValue {
+            globalObject: *jsc.JSGlobalObject,
+        ) jsc.JSValue {
             return Bun__domEventNameToJS(globalObject, this);
         }
 
-        extern fn Bun__domEventNameToJS(*JSC.JSGlobalObject, EventType) JSC.JSValue;
+        extern fn Bun__domEventNameToJS(*jsc.JSGlobalObject, EventType) jsc.JSValue;
     };
 
     pub const FSWatchTaskWindows = struct {
@@ -221,7 +221,7 @@ pub const FSWatcher = struct {
                 .event = .abort,
             });
 
-            ctx.eventLoop().enqueueTask(JSC.Task.init(task));
+            ctx.eventLoop().enqueueTask(jsc.Task.init(task));
         }
 
         /// this runs on JS Context Thread
@@ -303,7 +303,7 @@ pub const FSWatcher = struct {
             .ctx = this,
             .event = event,
         });
-        this.eventLoop().enqueueTask(JSC.Task.init(task));
+        this.eventLoop().enqueueTask(jsc.Task.init(task));
     }
 
     pub const onPathUpdate = if (Environment.isWindows) onPathUpdateWindows else onPathUpdatePosix;
@@ -321,26 +321,26 @@ pub const FSWatcher = struct {
 
     pub const Arguments = struct {
         path: PathLike,
-        listener: JSC.JSValue,
-        global_this: *JSC.JSGlobalObject,
+        listener: jsc.JSValue,
+        global_this: *jsc.JSGlobalObject,
         signal: ?*webcore.AbortSignal,
         persistent: bool,
         recursive: bool,
-        encoding: JSC.Node.Encoding,
+        encoding: jsc.Node.Encoding,
         verbose: bool,
 
-        pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Arguments {
+        pub fn fromJS(ctx: *jsc.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Arguments {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
             };
             var should_deinit_path = true;
             defer if (should_deinit_path) path.deinit();
 
-            var listener: JSC.JSValue = .zero;
+            var listener: jsc.JSValue = .zero;
             var signal: ?*webcore.AbortSignal = null;
             var persistent: bool = true;
             var recursive: bool = false;
-            var encoding: JSC.Node.Encoding = .utf8;
+            var encoding: jsc.Node.Encoding = .utf8;
             var verbose = false;
             if (arguments.nextEat()) |options_or_callable| {
 
@@ -361,7 +361,7 @@ pub const FSWatcher = struct {
                     }
 
                     if (try options_or_callable.fastGet(ctx, .encoding)) |encoding_| {
-                        encoding = try JSC.Node.Encoding.assert(encoding_, ctx, encoding);
+                        encoding = try jsc.Node.Encoding.assert(encoding_, ctx, encoding);
                     }
 
                     if (try options_or_callable.getTruthy(ctx, "recursive")) |recursive_| {
@@ -417,7 +417,7 @@ pub const FSWatcher = struct {
         pub const createFSWatcher = FSWatcher.init;
     };
 
-    pub fn initJS(this: *FSWatcher, listener: JSC.JSValue) void {
+    pub fn initJS(this: *FSWatcher, listener: jsc.JSValue) void {
         if (this.persistent) {
             this.poll_ref.ref(this.ctx);
             _ = this.pending_activity_count.fetchAdd(1, .monotonic);
@@ -452,7 +452,7 @@ pub const FSWatcher = struct {
         }
     }
 
-    pub fn emitAbort(this: *FSWatcher, err: JSC.JSValue) void {
+    pub fn emitAbort(this: *FSWatcher, err: jsc.JSValue) void {
         if (this.closed) return;
         _ = this.pending_activity_count.fetchAdd(1, .monotonic);
         defer this.close();
@@ -464,9 +464,9 @@ pub const FSWatcher = struct {
             js_this.ensureStillAlive();
             if (js.listenerGetCached(js_this)) |listener| {
                 listener.ensureStillAlive();
-                var args = [_]JSC.JSValue{
+                var args = [_]jsc.JSValue{
                     EventType.@"error".toJS(this.globalThis),
-                    if (err.isEmptyOrUndefinedOrNull()) JSC.CommonAbortReason.UserAbort.toJS(this.globalThis) else err,
+                    if (err.isEmptyOrUndefinedOrNull()) jsc.CommonAbortReason.UserAbort.toJS(this.globalThis) else err,
                 };
                 _ = listener.callWithGlobalThis(
                     this.globalThis,
@@ -485,7 +485,7 @@ pub const FSWatcher = struct {
             if (js.listenerGetCached(js_this)) |listener| {
                 listener.ensureStillAlive();
                 const globalObject = this.globalThis;
-                var args = [_]JSC.JSValue{
+                var args = [_]jsc.JSValue{
                     EventType.@"error".toJS(globalObject),
                     err.toJS(globalObject),
                 };
@@ -497,7 +497,7 @@ pub const FSWatcher = struct {
         }
     }
 
-    pub fn emitWithFilename(this: *FSWatcher, file_name: JSC.JSValue, comptime eventType: EventType) void {
+    pub fn emitWithFilename(this: *FSWatcher, file_name: jsc.JSValue, comptime eventType: EventType) void {
         const js_this = this.js_this;
         if (js_this == .zero) return;
         const listener = js.listenerGetCached(js_this) orelse return;
@@ -510,12 +510,12 @@ pub const FSWatcher = struct {
         if (js_this == .zero) return;
         const listener = js.listenerGetCached(js_this) orelse return;
         const globalObject = this.globalThis;
-        var filename: JSC.JSValue = .js_undefined;
+        var filename: jsc.JSValue = .js_undefined;
         if (file_name.len > 0) {
             if (this.encoding == .buffer)
-                filename = JSC.ArrayBuffer.createBuffer(globalObject, file_name) catch return // TODO: properly propagate exception upwards
+                filename = jsc.ArrayBuffer.createBuffer(globalObject, file_name) catch return // TODO: properly propagate exception upwards
             else if (this.encoding == .utf8) {
-                filename = JSC.ZigString.fromUTF8(file_name).toJS(globalObject);
+                filename = jsc.ZigString.fromUTF8(file_name).toJS(globalObject);
             } else {
                 // convert to desired encoding
                 filename = Encoder.toString(file_name, globalObject, this.encoding);
@@ -525,8 +525,8 @@ pub const FSWatcher = struct {
         emitJS(listener, globalObject, filename, event_type);
     }
 
-    fn emitJS(listener: JSC.JSValue, globalObject: *JSC.JSGlobalObject, filename: JSC.JSValue, comptime event_type: EventType) void {
-        var args = [_]JSC.JSValue{
+    fn emitJS(listener: jsc.JSValue, globalObject: *jsc.JSGlobalObject, filename: jsc.JSValue, comptime event_type: EventType) void {
+        var args = [_]jsc.JSValue{
             event_type.toJS(globalObject),
             filename,
         };
@@ -537,7 +537,7 @@ pub const FSWatcher = struct {
         ) catch |err| globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
-    pub fn doRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn doRef(this: *FSWatcher, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         if (!this.closed and !this.persistent) {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
@@ -545,7 +545,7 @@ pub const FSWatcher = struct {
         return .js_undefined;
     }
 
-    pub fn doUnref(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn doUnref(this: *FSWatcher, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         if (this.persistent) {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
@@ -553,8 +553,8 @@ pub const FSWatcher = struct {
         return .js_undefined;
     }
 
-    pub fn hasRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.persistent);
+    pub fn hasRef(this: *FSWatcher, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        return jsc.JSValue.jsBoolean(this.persistent);
     }
 
     // this can be called from Watcher Thread or JS Context Thread
@@ -621,12 +621,12 @@ pub const FSWatcher = struct {
         this.js_this = .zero;
     }
 
-    pub fn doClose(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn doClose(this: *FSWatcher, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         this.close();
         return .js_undefined;
     }
 
-    pub fn init(args: Arguments) bun.JSC.Maybe(*FSWatcher) {
+    pub fn init(args: Arguments) bun.jsc.Maybe(*FSWatcher) {
         const joined_buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(joined_buf);
         const file_path: [:0]const u8 = brk: {
@@ -703,12 +703,12 @@ const Async = bun.Async;
 const Environment = bun.Environment;
 const Mutex = bun.Mutex;
 const Output = bun.Output;
-const string = bun.string;
+const string = bun.Str;
 const webcore = bun.webcore;
 
-const JSC = bun.JSC;
-const EventLoop = JSC.EventLoop;
-const VirtualMachine = JSC.VirtualMachine;
-const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
-const Encoder = JSC.WebCore.encoding;
-const PathLike = JSC.Node.PathLike;
+const jsc = bun.jsc;
+const EventLoop = jsc.EventLoop;
+const VirtualMachine = jsc.VirtualMachine;
+const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;
+const Encoder = jsc.WebCore.encoding;
+const PathLike = jsc.Node.PathLike;

@@ -111,10 +111,10 @@ pub fn writeOutputFilesToDisk(
                     code_result.buffer = buf.items;
                 }
 
-                switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
+                switch (jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
                     &pathbuf,
                     .{
-                        .data = JSC.Node.StringOrBuffer{
+                        .data = jsc.Node.StringOrBuffer{
                             .buffer = bun.api.node.Buffer{
                                 .buffer = .{
                                     .ptr = @constCast(output_source_map.ptr),
@@ -186,15 +186,15 @@ pub fn writeOutputFilesToDisk(
                     .js;
 
                 if (loader.isJavaScriptLike()) {
-                    JSC.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
-                    JSC.initialize(false);
+                    jsc.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
+                    jsc.initialize(false);
                     var fdpath: bun.PathBuffer = undefined;
                     var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
                     source_provider_url.ref();
 
                     defer source_provider_url.deref();
 
-                    if (JSC.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
+                    if (jsc.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
                         const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
                         defer source_provider_url_str.deinit();
                         const bytecode, const cached_bytecode = result;
@@ -202,7 +202,7 @@ pub fn writeOutputFilesToDisk(
                         @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
                         fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
                         defer cached_bytecode.deref();
-                        switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
+                        switch (jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
                             &pathbuf,
                             .{
                                 .data = .{
@@ -258,7 +258,7 @@ pub fn writeOutputFilesToDisk(
             break :brk null;
         };
 
-        switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
+        switch (jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
             &pathbuf,
             .{
                 .data = .{
@@ -276,7 +276,7 @@ pub fn writeOutputFilesToDisk(
 
                 .dirfd = .fromStdDir(root_dir),
                 .file = .{
-                    .path = JSC.Node.PathLike{
+                    .path = jsc.Node.PathLike{
                         .string = bun.PathString.init(rel_path),
                     },
                 },
@@ -371,7 +371,7 @@ pub fn writeOutputFilesToDisk(
                 }
             }
 
-            switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
+            switch (jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
                 &pathbuf,
                 .{
                     .data = .{
@@ -386,7 +386,7 @@ pub fn writeOutputFilesToDisk(
                     .encoding = .buffer,
                     .dirfd = .fromStdDir(root_dir),
                     .file = .{
-                        .path = JSC.Node.PathLike{
+                        .path = jsc.Node.PathLike{
                             .string = bun.PathString.init(src.dest_path),
                         },
                     },
@@ -417,14 +417,14 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 const std = @import("std");
 
 const bun = @import("bun");
-const JSC = bun.JSC;
 const Loader = bun.Loader;
 const Output = bun.Output;
 const base64 = bun.base64;
 const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
 const options = bun.options;
 const sourcemap = bun.sourcemap;
-const string = bun.string;
+const string = bun.Str;
 const strings = bun.strings;
 
 const bundler = bun.bundle_v2;

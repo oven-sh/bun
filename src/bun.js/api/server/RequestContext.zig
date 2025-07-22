@@ -1747,10 +1747,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         return;
                     };
 
-                    if (route_ptr.data.server == null) {
-                        route_ptr.data.server = AnyServer.from(srv);
-                    }
-
+                    route_ptr.data.server = AnyServer.from(srv);
+                    
                     const resp_ptr = this.resp.?;
                     const resp_any = uws.AnyResponse.init(resp_ptr);
                     const response = this.response_ptr.?;

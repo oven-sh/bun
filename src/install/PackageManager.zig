@@ -385,7 +385,7 @@ pub fn isCacheDirectoryRemote(this: *PackageManager) bool {
     if (this.is_cache_directory_an_overlay_fs) |is_overlay_fs| {
         return is_overlay_fs;
     }
-    const statfs = bun.sys.statfs(this.cache_dir_name).unwrap() catch {
+    const statfs = bun.sys.statfs(this.cache_directory_path).unwrap() catch {
         this.is_cache_directory_an_overlay_fs = false;
         return false;
     };

@@ -955,7 +955,7 @@ pub const String = struct {
         };
     }
 
-    pub fn cloneSliceIfNecessary(str: *const String, allocator: std.mem.Allocator) !bun.Str {
+    pub fn cloneSliceIfNecessary(str: *const String, allocator: std.mem.Allocator) ![]const u8 {
         if (str.isUTF8()) {
             return allocator.dupe(u8, str.string(allocator) catch unreachable);
         }
@@ -1005,7 +1005,7 @@ pub const String = struct {
                         return strings.utf16EqlString(other.slice16(), s.data);
                     }
                 },
-                bun.Str => {
+                []const u8 => {
                     return strings.eqlLong(s.data, other, true);
                 },
                 []u16, []const u16 => {
@@ -1024,7 +1024,7 @@ pub const String = struct {
                         return std.mem.eql(u16, other.slice16(), s.slice16());
                     }
                 },
-                bun.Str => {
+                []const u8 => {
                     return strings.utf16EqlString(s.slice16(), other);
                 },
                 []u16, []const u16 => {
@@ -1055,7 +1055,7 @@ pub const String = struct {
             strings.eqlComptimeUTF16(s.slice16()[0..value.len], value);
     }
 
-    pub fn string(s: *const String, allocator: std.mem.Allocator) OOM!bun.Str {
+    pub fn string(s: *const String, allocator: std.mem.Allocator) OOM![]const u8 {
         if (s.isUTF8()) {
             return s.data;
         } else {
@@ -1063,7 +1063,7 @@ pub const String = struct {
         }
     }
 
-    pub fn stringZ(s: *const String, allocator: std.mem.Allocator) OOM!bun.StrZ {
+    pub fn stringZ(s: *const String, allocator: std.mem.Allocator) OOM![:0]const u8 {
         if (s.isUTF8()) {
             return allocator.dupeZ(u8, s.data);
         } else {
@@ -1071,7 +1071,7 @@ pub const String = struct {
         }
     }
 
-    pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) OOM!bun.Str {
+    pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) OOM![]const u8 {
         if (s.isUTF8()) {
             return allocator.dupe(u8, s.data);
         } else {
@@ -1418,6 +1418,9 @@ pub const Import = struct {
 
 pub const Class = G.Class;
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -1427,8 +1430,6 @@ const ImportRecord = bun.ImportRecord;
 const OOM = bun.OOM;
 const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const strings = bun.strings;
 const Loader = bun.options.Loader;
 

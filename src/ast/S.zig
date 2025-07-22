@@ -212,9 +212,10 @@ pub const Continue = struct {
     label: ?LocRef = null,
 };
 
+const string = []const u8;
+
 const bun = @import("bun");
 const logger = bun.logger;
-const string = bun.Str;
 
 const js_ast = bun.ast;
 const Case = js_ast.Case;

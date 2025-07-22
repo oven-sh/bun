@@ -1640,6 +1640,8 @@ pub const AutoSizer = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -1648,7 +1650,6 @@ const Output = bun.Output;
 const Syscall = bun.sys;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 const uws = bun.uws;
 

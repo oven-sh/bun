@@ -786,6 +786,8 @@ pub const BunxCommand = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 const Run = @import("./run_command.zig").RunCommand;
 const Allocator = std.mem.Allocator;
@@ -798,6 +800,5 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 const UpdateRequest = bun.PackageManager.UpdateRequest;

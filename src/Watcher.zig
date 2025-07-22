@@ -674,6 +674,8 @@ pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: bun.Sto
     }
 }
 
+const string = []const u8;
+
 const WindowsWatcher = @import("./watcher/WindowsWatcher.zig");
 const options = @import("./options.zig");
 const std = @import("std");
@@ -684,5 +686,4 @@ const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
 const Mutex = bun.Mutex;
 const Output = bun.Output;
-const string = bun.Str;
 const strings = bun.strings;

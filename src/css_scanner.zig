@@ -1272,6 +1272,8 @@ pub fn NewBundler(
     };
 }
 
+const string = []const u8;
+
 const Fs = @import("./fs.zig");
 const Options = options;
 const import_record = @import("./import_record.zig");
@@ -1286,5 +1288,4 @@ const FeatureFlags = bun.FeatureFlags;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;

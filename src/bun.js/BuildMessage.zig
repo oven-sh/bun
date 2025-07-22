@@ -187,13 +187,14 @@ pub const BuildMessage = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 const Resolver = @import("../resolver//resolver.zig").Resolver;
 
 const bun = @import("bun");
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.Str;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

@@ -1011,13 +1011,14 @@ fn netmaskToCIDRSuffix(mask: anytype) ?u8 {
     return first_zero;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const c = bun.c;
 const jsc = bun.jsc;
-const string = bun.Str;
 const strings = bun.strings;
 const sys = bun.sys;
 const gen = bun.gen.node_os;

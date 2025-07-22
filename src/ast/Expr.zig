@@ -3209,6 +3209,9 @@ fn stringToEquivalentNumberValue(str: []const u8) f64 {
     return bun.cpp.JSC__jsToNumber(str.ptr, str.len);
 }
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const JSPrinter = @import("../js_printer.zig");
 const std = @import("std");
 
@@ -3221,8 +3224,6 @@ const OOM = bun.OOM;
 const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const strings = bun.strings;
 const writeAnyToHasher = bun.writeAnyToHasher;
 const MimeType = bun.http.MimeType;

@@ -1101,6 +1101,8 @@ pub const UpdateInteractiveCommand = struct {
 
 extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -1112,7 +1114,6 @@ const Output = bun.Output;
 const PathBuffer = bun.PathBuffer;
 const glob = bun.glob;
 const path = bun.path;
-const string = bun.Str;
 const strings = bun.strings;
 const FileSystem = bun.fs.FileSystem;
 

@@ -2348,6 +2348,8 @@ pub const JSValue = enum(i64) {
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
 extern "c" fn Bun__JSValue__isAsyncContextFrame(value: JSValue) bool;
 
+const string = []const u8;
+
 const FFI = @import("./FFI.zig");
 const std = @import("std");
 const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
@@ -2358,7 +2360,6 @@ const JSError = bun.JSError;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const String = bun.String;
-const string = bun.Str;
 const FetchHeaders = bun.webcore.FetchHeaders;
 
 const jsc = bun.jsc;

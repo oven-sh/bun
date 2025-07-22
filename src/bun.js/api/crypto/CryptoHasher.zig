@@ -873,12 +873,13 @@ pub const SHA384 = StaticCryptoHasher(Hashers.SHA384, "SHA384");
 pub const SHA512 = StaticCryptoHasher(Hashers.SHA512, "SHA512");
 pub const SHA512_256 = StaticCryptoHasher(Hashers.SHA512_256, "SHA512_256");
 
+const string = []const u8;
+
 const Hashers = @import("../../../sha.zig");
 const std = @import("std");
 
 const bun = @import("bun");
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 const BoringSSL = bun.BoringSSL.c;
 

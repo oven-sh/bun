@@ -393,12 +393,13 @@ pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const BabyList = bun.BabyList;
 const ImportRecord = bun.ImportRecord;
-const string = bun.Str;
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 
 const js_ast = bun.ast;

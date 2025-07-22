@@ -282,6 +282,8 @@ pub const DiffFormatter = struct {
     }
 };
 
+const string = []const u8;
+
 const DiffMatchPatch = @import("../../deps/diffz/DiffMatchPatch.zig");
 const std = @import("std");
 
@@ -289,7 +291,6 @@ const bun = @import("bun");
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 
 const jsc = bun.jsc;
 const ConsoleObject = jsc.ConsoleObject;

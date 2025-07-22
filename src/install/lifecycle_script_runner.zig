@@ -563,6 +563,8 @@ pub const LifecycleScriptSubprocess = struct {
     }
 };
 
+const string = []const u8;
+
 const Lockfile = @import("./lockfile.zig");
 const std = @import("std");
 const PackageManager = @import("./install.zig").PackageManager;
@@ -573,6 +575,5 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const jsc = bun.jsc;
-const string = bun.Str;
 const Process = bun.spawn.Process;
 const Store = bun.install.Store;

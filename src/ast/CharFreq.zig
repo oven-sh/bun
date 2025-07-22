@@ -126,10 +126,10 @@ pub fn compile(this: *const CharFreq, allocator: std.mem.Allocator) NameMinifier
 
 pub const Class = G.Class;
 
-const std = @import("std");
+const string = []const u8;
 
 const bun = @import("bun");
-const string = bun.Str;
+const std = @import("std");
 
 const js_ast = bun.ast;
 const CharFreq = js_ast.CharFreq;

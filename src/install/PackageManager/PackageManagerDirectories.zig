@@ -739,6 +739,9 @@ const PatchHashFmt = struct {
 
 var using_fallback_temp_dir: bool = false;
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -751,8 +754,6 @@ const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const Command = bun.cli.Command;
 const File = bun.sys.File;
 

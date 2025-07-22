@@ -949,6 +949,8 @@ pub fn computeReservedNamesForScope(
     }
 }
 
+const string = []const u8;
+
 const JSLexer = @import("./js_lexer.zig");
 const std = @import("std");
 
@@ -957,7 +959,6 @@ const Environment = bun.Environment;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 
 const js_ast = bun.ast;

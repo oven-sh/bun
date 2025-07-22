@@ -721,6 +721,8 @@ inline fn emptyWithStatus(_: *jsc.JSGlobalObject, status: u16) Response {
 /// https://developer.mozilla.org/en-US/docs/Web/API/Headers
 // TODO: move to http.zig. this has nothing to do with jsc or WebCore
 
+const string = []const u8;
+
 const std = @import("std");
 const Method = @import("../../http/Method.zig").Method;
 
@@ -728,7 +730,6 @@ const bun = @import("bun");
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const s3 = bun.S3;
-const string = bun.Str;
 const FetchHeaders = bun.webcore.FetchHeaders;
 
 const http = bun.http;

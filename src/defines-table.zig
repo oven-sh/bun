@@ -918,9 +918,10 @@ pub const pure_global_identifier_map = bun.ComptimeStringMap(PureGlobalIdentifie
     .{ "crypto", PureGlobalIdentifierValue.other },
 });
 
+const string = []const u8;
+
 const defines = @import("./defines.zig");
 const std = @import("std");
 
 const bun = @import("bun");
 const js_ast = bun.ast;
-const string = bun.Str;

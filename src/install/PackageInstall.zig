@@ -1465,6 +1465,9 @@ pub const PackageInstall = struct {
     }
 };
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const Walker = @import("../walker_skippable.zig");
 const std = @import("std");
 
@@ -1480,8 +1483,6 @@ const Syscall = bun.sys;
 const ThreadPool = bun.ThreadPool;
 const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const strings = bun.strings;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const FileSystem = bun.fs.FileSystem;

@@ -420,6 +420,8 @@ pub const Linker = struct {
     }
 };
 
+const string = []const u8;
+
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
 const std = @import("std");
@@ -437,7 +439,6 @@ const FileDescriptorType = bun.FileDescriptor;
 const allocators = bun.allocators;
 const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 
 const _transpiler = bun.transpiler;

@@ -70,7 +70,7 @@ pub const Source = struct {
         bun.StackCheck.configureThread();
     }
 
-    pub fn configureNamedThread(name: string_types.StrZ) void {
+    pub fn configureNamedThread(name: [:0]const u8) void {
         Global.setThreadName(name);
         configureThread();
     }
@@ -1279,6 +1279,8 @@ pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
     .unbuffered_reader = .{ .context = .{ .handle = if (Environment.isWindows) undefined else .stdin() } },
 };
 
+const string = []const u8;
+
 const Environment = @import("./env.zig");
 const root = @import("root");
 const std = @import("std");
@@ -1288,8 +1290,6 @@ const bun = @import("bun");
 const ComptimeStringMap = bun.ComptimeStringMap;
 const Global = bun.Global;
 const c = bun.c;
-const string = bun.Str;
-const string_types = bun.string_types;
 const strings = bun.strings;
 const use_mimalloc = bun.use_mimalloc;
 const File = bun.sys.File;

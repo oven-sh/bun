@@ -483,6 +483,8 @@ pub const TSConfigJSON = struct {
     }
 };
 
+const string = []const u8;
+
 const cache = @import("../cache.zig");
 const options = @import("../options.zig");
 const std = @import("std");
@@ -493,5 +495,4 @@ const assert = bun.assert;
 const js_ast = bun.ast;
 const js_lexer = bun.js_lexer;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;

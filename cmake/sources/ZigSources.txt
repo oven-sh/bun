@@ -830,7 +830,6 @@ src/string/immutable/escapeHTML.zig
 src/string/immutable/exact_size_matcher.zig
 src/string/immutable/grapheme.zig
 src/string/immutable/paths.zig
-src/string/immutable/types.zig
 src/string/immutable/unicode.zig
 src/string/immutable/visible.zig
 src/string/MutableString.zig

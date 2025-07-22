@@ -1133,6 +1133,8 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callfra
     return named_imports_value;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const ImportRecord = @import("../../import_record.zig").ImportRecord;
 const Runtime = @import("../../runtime.zig").Runtime;
@@ -1150,7 +1152,6 @@ const JSLexer = bun.js_lexer;
 const JSPrinter = bun.js_printer;
 const Transpiler = bun.transpiler;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const MimallocArena = bun.allocators.MimallocArena;
 const api = bun.schema.api;

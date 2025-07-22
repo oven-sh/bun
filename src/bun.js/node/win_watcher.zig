@@ -289,13 +289,14 @@ pub fn watch(
     return .{ .result = watcher };
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
 
 const bun = @import("bun");
 const Output = bun.Output;
 const Watcher = bun.Watcher;
-const string = bun.Str;
 
 const jsc = bun.jsc;
 const VirtualMachine = jsc.VirtualMachine;

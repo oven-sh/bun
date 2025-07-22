@@ -1172,6 +1172,8 @@ export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
 
+const string = []const u8;
+
 const builtin = @import("builtin");
 const std = @import("std");
 
@@ -1188,7 +1190,6 @@ const js_ast = bun.ast;
 const logger = bun.logger;
 const options = bun.options;
 const resolve_path = bun.path;
-const string = bun.Str;
 const strings = bun.strings;
 const Api = bun.schema.api;
 

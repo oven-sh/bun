@@ -4175,6 +4175,8 @@ pub const LinkerContext = @import("./LinkerContext.zig").LinkerContext;
 pub const LinkerGraph = @import("./LinkerGraph.zig").LinkerGraph;
 pub const Graph = @import("./Graph.zig");
 
+const string = []const u8;
+
 const options = @import("../options.zig");
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
@@ -4185,5 +4187,4 @@ const Output = bun.Output;
 const ThreadPoolLib = bun.ThreadPool;
 const Transpiler = bun.Transpiler;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;

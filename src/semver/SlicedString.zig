@@ -37,10 +37,11 @@ pub inline fn sub(this: SlicedString, input: string) SlicedString {
     return SlicedString{ .buf = this.buf, .slice = input };
 }
 
+const string = []const u8;
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const assert = bun.assert;
-const string = bun.Str;
 
 const ExternalString = bun.Semver.ExternalString;
 const String = bun.Semver.String;

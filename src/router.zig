@@ -1887,6 +1887,8 @@ test "Pattern" {
     try expectStr(catch_all.value.catch_all.str(pattern), "catch_all");
 }
 
+const string = []const u8;
+
 const DirInfo = @import("./resolver/dir_info.zig");
 const Options = @import("./options.zig");
 const URLPath = @import("./http/URLPath.zig");
@@ -1904,7 +1906,6 @@ const Output = bun.Output;
 const PathString = bun.PathString;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const api = bun.schema.api;
 
 const strings = bun.strings;

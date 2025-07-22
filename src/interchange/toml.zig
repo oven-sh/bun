@@ -370,6 +370,8 @@ pub const lexer = @import("./toml/lexer.zig");
 pub const Lexer = lexer.Lexer;
 const T = lexer.T;
 
+const string = []const u8;
+
 const std = @import("std");
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const expect = std.testing.expect;
@@ -378,7 +380,6 @@ const bun = @import("bun");
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.Str;
 
 const js_ast = bun.ast;
 const E = js_ast.E;

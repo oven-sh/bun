@@ -93,6 +93,8 @@ pub fn byNameHashAllowExpired(
     return null;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const install = @import("./install.zig");
@@ -103,7 +105,6 @@ const PackageNameHash = install.PackageNameHash;
 
 const bun = @import("bun");
 const IdentityContext = bun.IdentityContext;
-const string = bun.Str;
 
 const Semver = bun.Semver;
 const String = Semver.String;

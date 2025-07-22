@@ -891,6 +891,8 @@ export fn ZigString__freeGlobal(ptr: [*]const u8, len: usize) void {
     Mimalloc.mi_free(untagged);
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -899,7 +901,6 @@ const Mimalloc = bun.mimalloc;
 const NullableAllocator = bun.NullableAllocator;
 const OOM = bun.OOM;
 const String = bun.String;
-const string = bun.Str;
 const strings = bun.strings;
 
 const jsc = bun.jsc;

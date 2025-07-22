@@ -102,6 +102,8 @@ pub const Ref = bun.ast.Ref;
 
 pub const Index = bun.ast.Index;
 
+const string = []const u8;
+
 const Logger = @import("../logger.zig");
 const _resolver = @import("../resolver/resolver.zig");
 const std = @import("std");
@@ -112,7 +114,6 @@ const Loader = options.Loader;
 const bun = @import("bun");
 const MultiArrayList = bun.MultiArrayList;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const BabyList = bun.collections.BabyList;
 
 const allocators = bun.allocators;

@@ -3729,6 +3729,8 @@ comptime {
     @export(&screenshot, .{ .name = "Bun__ConsoleObject__screenshot" });
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const CLI = @import("../cli.zig").Command;
 const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
@@ -3740,7 +3742,6 @@ const JSPrinter = bun.js_printer;
 const Output = bun.Output;
 const String = bun.String;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 
 const jsc = bun.jsc;

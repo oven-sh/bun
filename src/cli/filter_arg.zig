@@ -273,6 +273,8 @@ pub const PackageFilterIterator = struct {
     }
 };
 
+const string = []const u8;
+
 const Glob = @import("../glob.zig");
 const std = @import("std");
 
@@ -280,5 +282,4 @@ const bun = @import("bun");
 const Global = bun.Global;
 const JSON = bun.json;
 const Output = bun.Output;
-const string = bun.Str;
 const strings = bun.strings;

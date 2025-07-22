@@ -2346,7 +2346,9 @@ pub const basename = paths_.basename;
 
 pub const log = bun.Output.scoped(.STR, true);
 pub const grapheme = @import("./immutable/grapheme.zig");
-pub const types = @import("./immutable/types.zig");
+pub const CodePoint = i32;
+
+const string = []const u8;
 
 const escapeHTML_ = @import("./immutable/escapeHTML.zig");
 const paths_ = @import("./immutable/paths.zig");
@@ -2359,4 +2361,3 @@ const Environment = bun.Environment;
 const OOM = bun.OOM;
 const assert = bun.assert;
 const js_lexer = bun.js_lexer;
-const string = bun.Str;

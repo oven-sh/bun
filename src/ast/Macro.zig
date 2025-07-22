@@ -631,6 +631,8 @@ pub const Runner = struct {
     extern "c" fn Bun__startMacro(function: *const anyopaque, *anyopaque) void;
 };
 
+const string = []const u8;
+
 const DotEnv = @import("../env_loader.zig");
 const std = @import("std");
 
@@ -648,7 +650,6 @@ const Output = bun.Output;
 const Transpiler = bun.Transpiler;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const Loader = bun.options.Loader;
 const MimeType = bun.http.MimeType;

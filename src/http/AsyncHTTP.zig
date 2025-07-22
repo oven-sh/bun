@@ -492,6 +492,8 @@ pub const HTTPChannelContext = struct {
     }
 };
 
+const string = []const u8;
+
 const DotEnv = @import("../env_loader.zig");
 const HTTPThread = @import("./HTTPThread.zig");
 const Headers = @import("./Headers.zig");
@@ -508,7 +510,6 @@ const MutableString = bun.MutableString;
 const assert = bun.assert;
 const jsc = bun.jsc;
 const picohttp = bun.picohttp;
-const string = bun.Str;
 const Channel = bun.threading.Channel;
 const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 

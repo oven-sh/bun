@@ -391,6 +391,8 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
     }
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const PackageManager = @import("../install/install.zig").PackageManager;
 const PackageManifest = @import("../install/npm.zig").PackageManifest;
@@ -405,4 +407,3 @@ const Semver = bun.Semver;
 const http = bun.http;
 const logger = bun.logger;
 const strings = bun.strings;
-const string = bun.string_types.Str;

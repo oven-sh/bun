@@ -1450,6 +1450,8 @@ pub const Scanner = struct {
     }
 };
 
+const string = []const u8;
+
 const resolve_path = @import("./resolver/resolve_path.zig");
 const std = @import("std");
 const ParamsList = @import("./router.zig").Param.List;
@@ -1460,6 +1462,5 @@ const Environment = bun.Environment;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
-const string = bun.Str;
 const strings = bun.strings;
 const api = bun.schema.api;

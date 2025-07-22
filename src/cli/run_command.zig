@@ -1711,6 +1711,9 @@ pub const BunXFastPath = struct {
     }
 };
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const DotEnv = @import("../env_loader.zig");
 const ShellCompletions = @import("./shell_completions.zig");
 const options = @import("../options.zig");
@@ -1729,8 +1732,6 @@ const Output = bun.Output;
 const clap = bun.clap;
 const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const strings = bun.strings;
 const transpiler = bun.transpiler;
 const Run = bun.bun_js.Run;

@@ -619,6 +619,8 @@ pub fn closeAndWait() void {
     }
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const Semaphore = std.Thread.Semaphore;
 
@@ -627,6 +629,5 @@ const EventType = PathWatcher.EventType;
 
 const bun = @import("bun");
 const Mutex = bun.Mutex;
-const string = bun.Str;
 const UnboundedQueue = bun.threading.UnboundedQueue;
 const Event = bun.jsc.Node.fs.Watcher.Event;

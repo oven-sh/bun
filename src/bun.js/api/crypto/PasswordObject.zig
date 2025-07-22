@@ -756,13 +756,14 @@ pub const JSPasswordObject = struct {
 
 const unknown_password_algorithm_message = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Async = bun.Async;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 
 const jsc = bun.jsc;

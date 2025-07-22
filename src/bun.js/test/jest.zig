@@ -2420,6 +2420,8 @@ fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject)
     return 0;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const Snapshots = @import("./snapshot.zig").Snapshots;
@@ -2438,7 +2440,6 @@ const RegularExpression = bun.RegularExpression;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.Str;
 
 const jsc = bun.jsc;
 const CallFrame = jsc.CallFrame;

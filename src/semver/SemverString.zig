@@ -644,6 +644,8 @@ pub const String = extern struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -653,7 +655,6 @@ const IdentityContext = bun.IdentityContext;
 const OOM = bun.OOM;
 const assert = bun.assert;
 const jsc = bun.jsc;
-const string = bun.Str;
 const strings = bun.strings;
 const Lockfile = bun.install.Lockfile;
 

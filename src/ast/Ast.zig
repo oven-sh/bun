@@ -114,6 +114,8 @@ pub fn deinit(this: *Ast) void {
 
 pub const Class = G.Class;
 
+const string = []const u8;
+
 const std = @import("std");
 const Runtime = @import("../runtime.zig").Runtime;
 
@@ -121,7 +123,6 @@ const bun = @import("bun");
 const BabyList = bun.BabyList;
 const ImportRecord = bun.ImportRecord;
 const logger = bun.logger;
-const string = bun.Str;
 
 const js_ast = bun.ast;
 const Ast = js_ast.Ast;

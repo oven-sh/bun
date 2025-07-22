@@ -1473,7 +1473,13 @@ pub const SourceMapPieces = struct {
 // After all chunks are computed, they are joined together in a second pass.
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
-pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: bun.Str) !void {
+pub fn appendSourceMapChunk(
+    j: *StringJoiner,
+    allocator: std.mem.Allocator,
+    prev_end_state_: SourceMapState,
+    start_state_: SourceMapState,
+    source_map_: []const u8,
+) !void {
     var prev_end_state = prev_end_state_;
     var start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one
@@ -1973,6 +1979,8 @@ pub const JSSourceMap = @import("./JSSourceMap.zig");
 const decodeVLQAssumeValid = VLQ.decodeAssumeValid;
 const decodeVLQ = VLQ.decode;
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -1982,6 +1990,5 @@ const MutableString = bun.MutableString;
 const StringJoiner = bun.StringJoiner;
 const URL = bun.URL;
 const assert = bun.assert;
-const string = bun.Str;
 const strings = bun.strings;
 const FileSystem = bun.fs.FileSystem;

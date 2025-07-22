@@ -163,12 +163,13 @@ pub const ZigException = extern struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 const ZigURL = @import("../../url.zig").URL;
 
 const bun = @import("bun");
 const String = bun.String;
-const string = bun.Str;
 const api = bun.schema.api;
 
 const jsc = bun.jsc;

@@ -525,6 +525,8 @@ pub noinline fn failWithBuildError(vm: *jsc.VirtualMachine) noreturn {
 const OpaqueWrap = jsc.OpaqueWrap;
 const VirtualMachine = jsc.VirtualMachine;
 
+const string = []const u8;
+
 const options = @import("./options.zig");
 const std = @import("std");
 const Command = @import("./cli.zig").Command;
@@ -536,7 +538,6 @@ const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const transpiler = bun.transpiler;
 const Arena = bun.allocators.MimallocArena;

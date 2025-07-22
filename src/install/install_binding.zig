@@ -75,11 +75,12 @@ pub const bun_install_js_bindings = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Path = bun.path;
 const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.Str;
 const Lockfile = bun.install.Lockfile;

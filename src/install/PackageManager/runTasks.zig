@@ -1054,6 +1054,8 @@ pub fn generateNetworkTaskForTarball(
     return network_task;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -1062,7 +1064,6 @@ const Output = bun.Output;
 const ThreadPool = bun.ThreadPool;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 
 const Fs = bun.fs;

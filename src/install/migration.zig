@@ -1019,6 +1019,8 @@ fn packageNameFromPath(pkg_path: []const u8) []const u8 {
     return pkg_path[pkg_name_start..];
 }
 
+const string = []const u8;
+
 const Dependency = @import("./dependency.zig");
 const Install = @import("./install.zig");
 const Npm = @import("./npm.zig");
@@ -1036,7 +1038,6 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const File = bun.sys.File;
 

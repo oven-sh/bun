@@ -434,6 +434,9 @@ pub const EditorContext = struct {
     }
 };
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const DotEnv = @import("./env_loader.zig");
 const std = @import("std");
 
@@ -442,6 +445,4 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const strings = bun.strings;

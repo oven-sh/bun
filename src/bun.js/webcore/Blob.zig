@@ -4705,6 +4705,8 @@ const WriteFilePromise = write_file.WriteFilePromise;
 const WriteFileWaitFromLockedValueTask = write_file.WriteFileWaitFromLockedValueTask;
 const NewReadFileHandler = read_file.NewReadFileHandler;
 
+const string = []const u8;
+
 const Environment = @import("../../env.zig");
 const S3File = @import("./S3File.zig");
 const std = @import("std");
@@ -4718,7 +4720,6 @@ const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const invalid_fd = bun.invalid_fd;
 const io = bun.io;
-const string = bun.Str;
 const strings = bun.strings;
 const libuv = bun.windows.libuv;
 const streams = bun.webcore.streams;

@@ -628,6 +628,8 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
     );
 }
 
+const string = []const u8;
+
 const fs = @import("../fs.zig");
 const options = @import("../options.zig");
 const resolve_path = @import("../resolver/resolve_path.zig");
@@ -639,6 +641,5 @@ const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 const transpiler = bun.transpiler;

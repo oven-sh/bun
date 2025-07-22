@@ -1944,6 +1944,8 @@ pub fn @"export"() void {
     _ = &Scanner.BunTest__shouldGenerateCodeCoverage;
 }
 
+const string = []const u8;
+
 const DotEnv = @import("../env_loader.zig");
 const Scanner = @import("./test/Scanner.zig");
 const options = @import("../options.zig");
@@ -1961,7 +1963,6 @@ const Output = bun.Output;
 const PathString = bun.PathString;
 const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
-const string = bun.Str;
 const strings = bun.strings;
 const uws = bun.uws;
 const HTTPThread = bun.http.HTTPThread;

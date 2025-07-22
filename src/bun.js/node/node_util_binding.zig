@@ -225,13 +225,13 @@ pub fn parseEnv(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
     return obj;
 }
 
+const string = []const u8;
+
+const bun = @import("bun");
 const envloader = @import("../../env_loader.zig");
 const std = @import("std");
 const validators = @import("./util/validators.zig");
 const Allocator = std.mem.Allocator;
-
-const bun = @import("bun");
-const string = bun.Str;
 
 const jsc = bun.jsc;
 const ZigString = jsc.ZigString;

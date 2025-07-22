@@ -1440,6 +1440,8 @@ pub const Behavior = packed struct(u8) {
     }
 };
 
+const string = []const u8;
+
 const Environment = @import("../env.zig");
 const std = @import("std");
 const Repository = @import("./repository.zig").Repository;
@@ -1453,7 +1455,6 @@ const bun = @import("bun");
 const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;
-const string = bun.string_types.Str;
 
 const Semver = bun.Semver;
 const SlicedString = Semver.SlicedString;

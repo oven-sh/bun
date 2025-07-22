@@ -2587,6 +2587,8 @@ pub const PathTemplate = struct {
     };
 };
 
+const string = []const u8;
+
 const DotEnv = @import("./env_loader.zig");
 const Fs = @import("./fs.zig");
 const resolver = @import("./resolver/resolver.zig");
@@ -2605,6 +2607,5 @@ const analytics = bun.analytics;
 const assert = bun.assert;
 const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const api = bun.schema.api;

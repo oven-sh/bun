@@ -2144,6 +2144,8 @@ pub const JestPrettyFormat = struct {
     }
 };
 
+const string = []const u8;
+
 const expect = @import("./expect.zig");
 const std = @import("std");
 
@@ -2151,7 +2153,6 @@ const bun = @import("bun");
 const JSLexer = bun.js_lexer;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 
 const jsc = bun.jsc;

@@ -681,6 +681,8 @@ pub const Repository = extern struct {
     }
 };
 
+const string = []const u8;
+
 const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
 const Environment = @import("../env.zig");
@@ -697,7 +699,6 @@ const Path = bun.path;
 const logger = bun.logger;
 const strings = bun.strings;
 const File = bun.sys.File;
-const string = bun.string_types.Str;
 
 const Semver = bun.Semver;
 const GitSHA = String;

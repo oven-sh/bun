@@ -326,11 +326,12 @@ pub const Error = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Output = bun.Output;
-const string = bun.Str;
 const Buffer = bun.api.node.Buffer;
 
 const jsc = bun.jsc;

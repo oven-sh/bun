@@ -428,6 +428,8 @@ pub const Resolution = extern struct {
     };
 };
 
+const string = []const u8;
+
 const std = @import("std");
 const Repository = @import("./repository.zig").Repository;
 const VersionedURL = @import("./versioned_url.zig").VersionedURL;
@@ -436,7 +438,6 @@ const bun = @import("bun");
 const OOM = bun.OOM;
 const strings = bun.strings;
 const Dependency = bun.install.Dependency;
-const string = bun.string_types.Str;
 
 const Semver = bun.Semver;
 const String = Semver.String;

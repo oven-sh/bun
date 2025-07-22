@@ -980,6 +980,9 @@ pub fn @"export"() void {
     Version.@"export"();
 }
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const DotEnv = @import("../env_loader.zig");
 const fs = @import("../fs.zig");
 const linker = @import("../linker.zig");
@@ -999,8 +1002,6 @@ const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
 const logger = bun.logger;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const strings = bun.strings;
 
 const HTTP = bun.http;

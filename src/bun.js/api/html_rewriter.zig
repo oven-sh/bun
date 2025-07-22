@@ -1909,12 +1909,13 @@ pub const Element = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const JSError = bun.JSError;
 const LOLHTML = bun.LOLHTML;
-const string = bun.Str;
 const Response = bun.webcore.Response;
 
 const jsc = bun.jsc;

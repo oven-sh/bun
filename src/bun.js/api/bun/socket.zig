@@ -2106,6 +2106,8 @@ pub fn jsSetSocketOptions(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
     return .js_undefined;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const tls_socket_functions = @import("./socket/tls_socket_functions.zig");
 const H2FrameParser = @import("./h2_frame_parser.zig").H2FrameParser;
@@ -2115,7 +2117,6 @@ const Async = bun.Async;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const uws = bun.uws;
 const BoringSSL = bun.BoringSSL.c;
 

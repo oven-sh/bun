@@ -508,10 +508,11 @@ comptime {
     _ = &Bun__encoding__constructFromUTF16;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
-const string = bun.Str;
 const strings = bun.strings;
 
 const jsc = bun.jsc;

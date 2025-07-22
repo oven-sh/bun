@@ -643,12 +643,13 @@ noinline fn getSSLException(globalThis: *jsc.JSGlobalObject, defaultMessage: []c
     return exception;
 }
 
+const string = []const u8;
+
 const X509 = @import("../x509.zig");
 const std = @import("std");
 
 const bun = @import("bun");
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 const BoringSSL = bun.BoringSSL.c;
 

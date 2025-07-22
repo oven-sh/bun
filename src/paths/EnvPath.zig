@@ -82,10 +82,11 @@ pub fn EnvPath(comptime opts: EnvPathOptions) type {
     };
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const AbsPath = bun.AbsPath;
 const OOM = bun.OOM;
-const string = bun.Str;
 const strings = bun.strings;

@@ -288,11 +288,12 @@ pub fn validateStringEnum(comptime T: type, globalThis: *JSGlobalObject, value: 
     return throwErrInvalidArgTypeWithMessage(globalThis, name_fmt ++ " must be one of: {s}", name_args ++ .{values_info});
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const JSError = bun.JSError;
-const string = bun.Str;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

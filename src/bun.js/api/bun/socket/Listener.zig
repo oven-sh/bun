@@ -973,6 +973,8 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
     }
 } else void;
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -981,7 +983,6 @@ const Environment = bun.Environment;
 const Output = bun.Output;
 const api = bun.api;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 const uws = bun.uws;
 const BoringSSL = bun.BoringSSL.c;

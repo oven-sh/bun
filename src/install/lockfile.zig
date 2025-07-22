@@ -2008,6 +2008,9 @@ const MetaHash = [std.crypto.hash.sha2.Sha512T256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
 pub const StringPool = String.Builder.StringPool;
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
 const Path = @import("../resolver/resolve_path.zig");
@@ -2037,8 +2040,6 @@ const Output = bun.Output;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const strings = bun.strings;
 const z_allocator = bun.z_allocator;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;

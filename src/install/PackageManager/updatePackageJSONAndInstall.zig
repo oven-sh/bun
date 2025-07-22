@@ -716,6 +716,8 @@ pub fn updatePackageJSONAndInstall(
     return updatePackageJSONAndInstallAndCLI(ctx, subcommand, cli);
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -726,7 +728,6 @@ const JSPrinter = bun.js_printer;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const Command = bun.cli.Command;
 const File = bun.sys.File;

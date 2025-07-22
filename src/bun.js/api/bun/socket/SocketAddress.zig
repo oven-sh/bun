@@ -677,9 +677,10 @@ win: {
     };
 };
 
+const string = []const u8;
+
 const bun = @import("bun");
 const ares = bun.c_ares;
-const string = bun.Str;
 const StaticStringImpl = bun.WTF.StringImpl;
 
 const Environment = bun.Environment;

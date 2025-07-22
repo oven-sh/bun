@@ -1649,6 +1649,8 @@ pub const ValueBufferer = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -1656,7 +1658,6 @@ const MutableString = bun.MutableString;
 const Output = bun.Output;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 const FetchHeaders = bun.webcore.FetchHeaders;
 const MimeType = bun.http.MimeType;

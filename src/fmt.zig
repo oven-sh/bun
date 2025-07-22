@@ -1878,12 +1878,13 @@ fn truncatedHash32Impl(int: u64, comptime fmt_str: []const u8, _: std.fmt.Format
     });
 }
 
+const string = []const u8;
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const js_lexer = bun.js_lexer;
 const sha = bun.sha;
-const string = bun.Str;
 const strings = bun.strings;
 
 const std = @import("std");

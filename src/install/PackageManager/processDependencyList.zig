@@ -313,6 +313,8 @@ pub fn processDependencyList(
     }
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -324,7 +326,6 @@ const Output = bun.Output;
 const Path = bun.path;
 const Syscall = bun.sys;
 const logger = bun.logger;
-const string = bun.Str;
 
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;

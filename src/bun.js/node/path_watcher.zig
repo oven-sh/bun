@@ -993,6 +993,8 @@ pub fn watch(
     return .{ .result = watcher };
 }
 
+const string = []const u8;
+
 const FSEvents = @import("./fs_events.zig");
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
@@ -1004,7 +1006,6 @@ const FD = bun.FD;
 const Mutex = bun.Mutex;
 const Output = bun.Output;
 const Watcher = bun.Watcher;
-const string = bun.Str;
 
 const FSWatcher = bun.api.node.fs.Watcher;
 const Event = FSWatcher.Event;

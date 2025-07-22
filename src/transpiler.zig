@@ -1552,6 +1552,8 @@ pub const ResolveQueue = std.fifo.LinearFifo(
     std.fifo.LinearFifoBufferType.Dynamic,
 );
 
+const string = []const u8;
+
 const DotEnv = @import("./env_loader.zig");
 const Fs = @import("./fs.zig");
 const MimeType = @import("./http/MimeType.zig");
@@ -1585,7 +1587,6 @@ const js_parser = bun.js_parser;
 const js_printer = bun.js_printer;
 const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const api = bun.schema.api;
 const TOML = bun.interchange.toml.TOML;

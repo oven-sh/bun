@@ -1373,6 +1373,8 @@ pub const Index = bun.ast.Index;
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
+const string = []const u8;
+
 const Fs = @import("../fs.zig");
 const HTMLScanner = @import("../HTMLScanner.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
@@ -1403,7 +1405,6 @@ const bake = bun.bake;
 const base64 = bun.base64;
 const default_allocator = bun.default_allocator;
 const js_parser = bun.js_parser;
-const string = bun.Str;
 const strings = bun.strings;
 const BabyList = bun.collections.BabyList;
 const TOML = bun.interchange.toml.TOML;

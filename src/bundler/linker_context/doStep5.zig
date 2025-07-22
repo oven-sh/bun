@@ -470,12 +470,13 @@ pub fn createExportsForFile(
 
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const options = bun.options;
-const string = bun.Str;
 const strings = bun.strings;
 
 const ImportData = bun.bundle_v2.ImportData;

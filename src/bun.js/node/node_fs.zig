@@ -6899,6 +6899,8 @@ const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 const ReadPosition = i64;
 const NodeFSFunctionEnum = std.meta.DeclEnum(NodeFS);
 
+const string = []const u8;
+
 const DirIterator = @import("./dir_iterator.zig");
 const FileSystem = @import("../../fs.zig").FileSystem;
 
@@ -6909,7 +6911,6 @@ const FileDescriptor = bun.FileDescriptor;
 const Mode = bun.Mode;
 const PathString = bun.PathString;
 const c = bun.c;
-const string = bun.Str;
 const strings = bun.strings;
 const AbortSignal = bun.webcore.AbortSignal;
 const Buffer = bun.api.node.Buffer;

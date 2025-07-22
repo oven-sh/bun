@@ -1366,13 +1366,14 @@ pub fn ipcParse(globalObject: *jsc.JSGlobalObject, target: jsc.JSValue, serializ
     return bun.cpp.IPCParse(globalObject, target, serialized, fd);
 }
 
+const string = []const u8;
+
 const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const string = bun.Str;
 const strings = bun.strings;
 const uws = bun.uws;
 const uv = bun.windows.libuv;

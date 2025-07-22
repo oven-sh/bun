@@ -362,6 +362,8 @@ fn addDependenciesToSet(
     }
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -370,7 +372,6 @@ const Output = bun.Output;
 const Path = bun.path;
 const Syscall = bun.sys;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const Command = bun.cli.Command;
 
 const Semver = bun.Semver;

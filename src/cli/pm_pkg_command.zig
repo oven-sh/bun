@@ -767,6 +767,8 @@ pub const PmPkgCommand = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -776,7 +778,6 @@ const JSPrinter = bun.js_printer;
 const Output = bun.Output;
 const js_ast = bun.ast;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const Command = bun.cli.Command;
 const PackageManager = bun.install.PackageManager;

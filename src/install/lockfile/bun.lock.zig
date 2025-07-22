@@ -2193,6 +2193,8 @@ fn parseAppendDependencies(
     return .{ @intCast(off), @intCast(end - off) };
 }
 
+const string = []const u8;
+
 const ExtractTarball = @import("../extract_tarball.zig");
 const std = @import("std");
 const Integrity = @import("../integrity.zig").Integrity;
@@ -2202,7 +2204,6 @@ const Environment = bun.Environment;
 const JSON = bun.json;
 const OOM = bun.OOM;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const Expr = bun.js_parser.Expr;
 

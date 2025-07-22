@@ -628,6 +628,8 @@ pub const PmVersionCommand = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -639,7 +641,6 @@ const Output = bun.Output;
 const RunCommand = bun.RunCommand;
 const Semver = bun.Semver;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const Command = bun.cli.Command;
 const PackageManager = bun.install.PackageManager;

@@ -4316,6 +4316,8 @@ comptime {
     @export(&Resolver.nodeModulePathsJSValue, .{ .name = "Resolver__nodeModulePathsJSValue" });
 }
 
+const string = []const u8;
+
 const Dependency = @import("../install/dependency.zig");
 const DotEnv = @import("../env_loader.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
@@ -4355,7 +4357,6 @@ const allocators = bun.allocators;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
-const string = bun.Str;
 const strings = bun.strings;
 
 const logger = bun.logger;

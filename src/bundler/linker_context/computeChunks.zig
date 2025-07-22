@@ -413,13 +413,14 @@ pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const BabyList = bun.BabyList;
 const options = bun.options;
 const sourcemap = bun.sourcemap;
-const string = bun.Str;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 
 const bundler = bun.bundle_v2;

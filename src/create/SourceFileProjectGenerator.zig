@@ -849,6 +849,8 @@ pub const Template = union(Tag) {
     };
 };
 
+const string = []const u8;
+
 const linker = @import("../linker.zig");
 const std = @import("std");
 const Example = @import("../cli/create_command.zig").Example;
@@ -861,7 +863,6 @@ const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const BundleV2 = bun.bundle_v2.BundleV2;
 const Command = bun.cli.Command;

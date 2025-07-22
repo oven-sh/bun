@@ -3498,6 +3498,8 @@ pub const Resolver = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -3508,7 +3510,6 @@ const Global = bun.Global;
 const Output = bun.Output;
 const c_ares = bun.c_ares;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 const timespec = bun.timespec;
 const GetAddrInfo = bun.dns.GetAddrInfo;

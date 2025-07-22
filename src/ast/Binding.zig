@@ -147,11 +147,12 @@ pub fn alloc(allocator: std.mem.Allocator, t: anytype, loc: logger.Loc) Binding 
     }
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const logger = bun.logger;
-const string = bun.Str;
 
 const js_ast = bun.ast;
 const B = js_ast.B;

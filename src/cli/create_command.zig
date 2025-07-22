@@ -2422,6 +2422,8 @@ const GitHandler = struct {
     }
 };
 
+const string = []const u8;
+
 const CopyFile = @import("../copy_file.zig");
 const DotEnv = @import("../env_loader.zig");
 const SourceFileProjectGenerator = @import("../create/SourceFileProjectGenerator.zig");
@@ -2447,7 +2449,6 @@ const clap = bun.clap;
 const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const Archiver = bun.libarchive.Archiver;
 

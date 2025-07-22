@@ -240,13 +240,14 @@ pub fn pbkdf2(
     return output;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Async = bun.Async;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const BoringSSL = bun.BoringSSL.c;
 
 const jsc = bun.jsc;

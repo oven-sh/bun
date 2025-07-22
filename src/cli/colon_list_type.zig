@@ -52,10 +52,11 @@ pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type {
     };
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
-const string = bun.Str;
 const strings = bun.strings;

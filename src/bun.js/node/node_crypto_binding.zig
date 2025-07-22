@@ -763,6 +763,8 @@ pub fn createNodeCryptoBindingZig(global: *jsc.JSGlobalObject) jsc.JSValue {
     return crypto;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const validators = @import("./util/validators.zig");
 
@@ -771,7 +773,6 @@ const Async = bun.Async;
 const JSError = bun.JSError;
 const String = bun.String;
 const UUID = bun.UUID;
-const string = bun.Str;
 const BoringSSL = bun.BoringSSL.c;
 
 const jsc = bun.jsc;

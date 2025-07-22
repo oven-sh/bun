@@ -92,8 +92,9 @@ pub fn endProgressBar(manager: *PackageManager) void {
     manager.downloads_node = null;
 }
 
+const string = []const u8;
+
 const bun = @import("bun");
 const Output = bun.Output;
 const Progress = bun.Progress;
-const string = bun.Str;
 const PackageManager = bun.install.PackageManager;

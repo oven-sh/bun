@@ -647,6 +647,8 @@ pub const MatchedRoute = struct {
     }
 };
 
+const string = []const u8;
+
 const Fs = @import("../../fs.zig");
 const Router = @import("../../router.zig");
 const URLPath = @import("../../http/URLPath.zig");
@@ -661,7 +663,6 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Log = bun.logger;
 const Transpiler = bun.transpiler;
-const string = bun.Str;
 const strings = bun.strings;
 
 const jsc = bun.jsc;

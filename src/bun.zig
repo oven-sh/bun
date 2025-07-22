@@ -653,7 +653,7 @@ pub const MemoryReportingAllocator = allocators.MemoryReportingAllocator;
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
 pub const isSliceInBufferT = allocators.isSliceInBufferT;
 
-pub inline fn sliceInBuffer(stable: Str, value: Str) Str {
+pub inline fn sliceInBuffer(stable: []const u8, value: []const u8) []const u8 {
     if (allocators.sliceRange(stable, value)) |_| {
         return value;
     }
@@ -1725,7 +1725,7 @@ pub const StringSet = struct {
         };
     }
 
-    pub fn keys(self: StringSet) []const Str {
+    pub fn keys(self: StringSet) []const []const u8 {
         return self.map.keys();
     }
 
@@ -1759,7 +1759,7 @@ pub const StringMap = struct {
     map: Map,
     dupe_keys: bool = false,
 
-    pub const Map = StringArrayHashMap(Str);
+    pub const Map = StringArrayHashMap([]const u8);
 
     pub fn clone(self: StringMap) !StringMap {
         return StringMap{
@@ -1775,11 +1775,11 @@ pub const StringMap = struct {
         };
     }
 
-    pub fn keys(self: StringMap) []const Str {
+    pub fn keys(self: StringMap) []const []const u8 {
         return self.map.keys();
     }
 
-    pub fn values(self: StringMap) []const Str {
+    pub fn values(self: StringMap) []const []const u8 {
         return self.map.values();
     }
 
@@ -1932,13 +1932,9 @@ pub const HashedString = string.HashedString;
 pub const MutableString = string.MutableString;
 pub const StringBuilder = string.StringBuilder;
 
-pub const string_types = string.immutable.types;
-pub const StrZ = string_types.StrZ;
-pub const Str = string_types.Str;
-pub const CodePoint = string_types.CodePoint;
-
 /// Utilities for immutable strings
 pub const strings = string.immutable;
+pub const CodePoint = strings.CodePoint;
 
 pub const WTF = struct {
     /// The String type from WebKit's WTF library.
@@ -2201,7 +2197,11 @@ pub const LazyBoolValue = enum {
 /// Create a lazily computed boolean value.
 /// Getter must be a function that takes a pointer to the parent struct and returns a boolean.
 /// Parent must be a type which contains the field we are getting.
-pub fn LazyBool(comptime Getter: anytype, comptime Parent: type, comptime field: Str) type {
+pub fn LazyBool(
+    comptime Getter: anytype,
+    comptime Parent: type,
+    comptime field: []const u8,
+) type {
     return struct {
         value: LazyBoolValue = .unknown,
 
@@ -2600,7 +2600,11 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
-pub fn todoPanic(src: std.builtin.SourceLocation, comptime format: Str, args: anytype) noreturn {
+pub fn todoPanic(
+    src: std.builtin.SourceLocation,
+    comptime format: []const u8,
+    args: anytype,
+) noreturn {
     @branchHint(.cold);
     analytics.Features.todo_panic = 1;
     Output.panic("TODO: " ++ format ++ " ({s}:{d})", args ++ .{ src.file, src.line });
@@ -2814,8 +2818,8 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
 
 pub inline fn resolveSourcePath(
     comptime root: enum { codegen, src },
-    comptime sub_path: Str,
-) Str {
+    comptime sub_path: []const u8,
+) []const u8 {
     return comptime path: {
         @setEvalBranchQuota(2000000);
         var buf: bun.PathBuffer = undefined;

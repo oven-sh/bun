@@ -2442,6 +2442,8 @@ pub const InitError = @import("./http/InitError.zig").InitError;
 pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;
 pub const SendFile = @import("./http/SendFile.zig");
 
+const string = []const u8;
+
 const HTTPCertError = @import("./http/HTTPCertError.zig");
 const ProxyTunnel = @import("./http/ProxyTunnel.zig");
 const std = @import("std");
@@ -2458,7 +2460,6 @@ const StringBuilder = bun.StringBuilder;
 const assert = bun.assert;
 const jsc = bun.jsc;
 const picohttp = bun.picohttp;
-const string = bun.Str;
 const strings = bun.strings;
 const uws = bun.uws;
 const Arena = bun.allocators.MimallocArena;

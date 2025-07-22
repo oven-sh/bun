@@ -398,6 +398,8 @@ pub const Define = struct {
     }
 };
 
+const string = []const u8;
+
 const fs = @import("./fs.zig");
 const std = @import("std");
 
@@ -409,7 +411,6 @@ const bun = @import("bun");
 const js_lexer = bun.js_lexer;
 const json_parser = bun.json;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 
 const js_ast = bun.ast;

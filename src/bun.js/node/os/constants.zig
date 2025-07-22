@@ -288,9 +288,10 @@ fn createDlopen(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
     return object;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const jsc = bun.jsc;
-const string = bun.Str;

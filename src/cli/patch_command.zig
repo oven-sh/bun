@@ -8,8 +8,9 @@ pub const PatchCommand = struct {
     }
 };
 
+const string = []const u8;
+
 const bun = @import("bun");
-const string = bun.Str;
 const Command = bun.cli.Command;
 
 const PackageManager = bun.install.PackageManager;

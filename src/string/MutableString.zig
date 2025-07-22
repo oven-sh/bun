@@ -455,10 +455,11 @@ pub fn writeAll(self: *MutableString, bytes: string) Allocator.Error!usize {
     return bytes.len;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const js_lexer = bun.js_lexer;
-const string = bun.Str;
 const strings = bun.strings;

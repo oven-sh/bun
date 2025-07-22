@@ -1624,10 +1624,11 @@ pub fn sniff(bytes: []const u8) ?MimeType {
     return null;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const Loader = @import("../options.zig").Loader;
 
 const bun = @import("bun");
 const ComptimeStringMap = bun.ComptimeStringMap;
-const string = bun.Str;
 const strings = bun.strings;

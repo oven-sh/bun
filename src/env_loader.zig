@@ -1329,6 +1329,8 @@ pub var instance: ?*Loader = null;
 
 pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";
 
+const string = []const u8;
+
 const Fs = @import("./fs.zig");
 const std = @import("std");
 const URL = @import("./url.zig").URL;
@@ -1340,6 +1342,5 @@ const Output = bun.Output;
 const analytics = bun.analytics;
 const logger = bun.logger;
 const s3 = bun.S3;
-const string = bun.Str;
 const strings = bun.strings;
 const api = bun.schema.api;

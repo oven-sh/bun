@@ -1239,6 +1239,9 @@ const Template = enum {
     }
 };
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
 const options = @import("../options.zig");
@@ -1255,8 +1258,6 @@ const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
 const logger = bun.logger;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const strings = bun.strings;
 
 const exists = bun.sys.exists;

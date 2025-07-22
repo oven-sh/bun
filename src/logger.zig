@@ -20,7 +20,7 @@ pub const Kind = enum(u8) {
         };
     }
 
-    pub inline fn string(self: Kind) bun.Str {
+    pub inline fn string(self: Kind) []const u8 {
         return switch (self) {
             .err => "error",
             .warn => "warn",
@@ -1603,6 +1603,8 @@ pub fn rangeData(source: ?*const Source, r: Range, text: string) Data {
     return Data{ .text = text, .location = Location.initOrNull(source, r) };
 }
 
+const string = []const u8;
+
 const fs = @import("./fs.zig");
 const std = @import("std");
 const ImportKind = @import("./import_record.zig").ImportKind;
@@ -1617,7 +1619,6 @@ const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const js = bun.jsc;
 const jsc = bun.jsc;
-const string = bun.Str;
 const strings = bun.strings;
 const Index = bun.ast.Index;
 const api = bun.schema.api;

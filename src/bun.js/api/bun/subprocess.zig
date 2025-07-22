@@ -2721,6 +2721,8 @@ const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.Stdi
 
 pub const MaxBuf = bun.io.MaxBuf;
 
+const string = []const u8;
+
 const IPC = @import("../../ipc.zig");
 const node_cluster_binding = @import("../../node/node_cluster_binding.zig");
 const std = @import("std");
@@ -2731,7 +2733,6 @@ const Async = bun.Async;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 const uws = bun.uws;
 const webcore = bun.webcore;

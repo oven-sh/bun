@@ -6071,6 +6071,8 @@ pub fn printCommonJS(
     return @as(usize, @intCast(@max(printer.writer.written, 0)));
 }
 
+const string = []const u8;
+
 const SourceMap = @import("./sourcemap/sourcemap.zig");
 const fs = @import("./fs.zig");
 const importRecord = @import("./import_record.zig");
@@ -6091,7 +6093,6 @@ const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const js_lexer = bun.js_lexer;
 const logger = bun.logger;
-const string = bun.Str;
 const api = bun.schema.api;
 
 const js_ast = bun.ast;

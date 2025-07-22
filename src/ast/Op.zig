@@ -281,10 +281,10 @@ pub const Table = brk: {
     break :brk table;
 };
 
-const std = @import("std");
+const string = []const u8;
 
 const bun = @import("bun");
-const string = bun.Str;
+const std = @import("std");
 
 const js_ast = bun.ast;
 const AssignTarget = js_ast.AssignTarget;

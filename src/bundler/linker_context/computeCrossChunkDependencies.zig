@@ -421,6 +421,8 @@ pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -429,7 +431,6 @@ const Environment = bun.Environment;
 const ImportRecord = bun.ImportRecord;
 const default_allocator = bun.default_allocator;
 const renamer = bun.renamer;
-const string = bun.Str;
 
 const js_ast = bun.ast;
 const Part = js_ast.Part;

@@ -24902,6 +24902,8 @@ fn floatToInt32(f: f64) i32 {
     return if (f < 0) @as(i32, 0) -% int else int;
 }
 
+const string = []const u8;
+
 const FeatureFlags = @import("./feature_flags.zig");
 const _runtime = @import("./runtime.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
@@ -24915,7 +24917,6 @@ const Output = bun.Output;
 const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
 const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
-const string = bun.Str;
 const strings = bun.strings;
 
 const Index = bun.ast.Index;

@@ -798,10 +798,10 @@ pub const jsxEntity = ComptimeStringMap(CodePoint, .{
     .{ "zwnj", @as(CodePoint, 0x200C) },
 });
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const ComptimeStringMap = bun.ComptimeStringMap;
-
-const CodePoint = bun.string_types.CodePoint;
-const string = bun.string_types.Str;
+const CodePoint = bun.strings.CodePoint;

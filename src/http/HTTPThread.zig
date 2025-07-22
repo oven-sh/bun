@@ -462,6 +462,8 @@ pub const Queue = UnboundedQueue(AsyncHTTP, .next);
 
 const log = Output.scoped(.HTTPThread, false);
 
+const stringZ = [:0]const u8;
+
 const ProxyTunnel = @import("./ProxyTunnel.zig");
 const std = @import("std");
 
@@ -470,7 +472,6 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const jsc = bun.jsc;
-const stringZ = bun.StrZ;
 const strings = bun.strings;
 const uws = bun.uws;
 const Arena = bun.allocators.MimallocArena;

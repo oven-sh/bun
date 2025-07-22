@@ -2664,6 +2664,9 @@ pub const bindings = struct {
     }
 };
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const std = @import("std");
 
 const libarchive = @import("../libarchive/libarchive.zig").lib;
@@ -2685,8 +2688,6 @@ const Semver = bun.Semver;
 const glob = bun.glob;
 const js_printer = bun.js_printer;
 const sha = bun.sha;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const strings = bun.strings;
 const CowString = bun.ptr.CowString;
 const File = bun.sys.File;

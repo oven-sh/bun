@@ -2397,6 +2397,8 @@ fn makeNapiEnvIfNeeded(functions: []const FFI.Function, globalThis: *JSGlobalObj
     return null;
 }
 
+const string = []const u8;
+
 const Fs = @import("../../fs.zig");
 const TCC = @import("../../deps/tcc.zig");
 const napi = @import("../../napi/napi.zig");
@@ -2407,7 +2409,6 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const string = bun.Str;
 const strings = bun.strings;
 
 const jsc = bun.jsc;

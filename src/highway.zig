@@ -298,9 +298,10 @@ pub fn indexOfSpaceOrNewlineOrNonASCII(haystack: string) ?usize {
     return result;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const string = bun.Str;
 const strings = bun.strings;

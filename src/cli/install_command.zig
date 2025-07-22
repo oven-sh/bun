@@ -92,13 +92,14 @@ fn installWithCLI(ctx: Command.Context, cli: CommandLineArguments) !void {
     }
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const Command = bun.cli.Command;
 
 const PackageManager = bun.install.PackageManager;

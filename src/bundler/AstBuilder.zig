@@ -347,6 +347,8 @@ pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
+const string = []const u8;
+
 const options = @import("../options.zig");
 const std = @import("std");
 
@@ -359,7 +361,6 @@ const ImportRecord = bun.ImportRecord;
 const Output = bun.Output;
 const js_parser = bun.js_parser;
 const renamer = bun.renamer;
-const string = bun.Str;
 const strings = bun.strings;
 const BabyList = bun.collections.BabyList;
 

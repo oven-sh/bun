@@ -53,11 +53,12 @@ pub fn apply(this: *HeaderBuilder, client: *HTTPClient) void {
     client.header_buf = this.content.ptr.?[0..this.content.len];
 }
 
+const string = []const u8;
+
 const HTTPClient = @import("../http.zig");
 const std = @import("std");
 
 const bun = @import("bun");
 const StringBuilder = bun.StringBuilder;
-const string = bun.Str;
 const Headers = bun.http.Headers;
 const api = bun.schema.api;

@@ -1279,6 +1279,8 @@ pub const BuildArtifact = struct {
     }
 };
 
+const string = []const u8;
+
 const Fs = @import("../../fs.zig");
 const resolve_path = @import("../../resolver/resolve_path.zig");
 const std = @import("std");
@@ -1294,7 +1296,6 @@ const String = bun.String;
 const Transpiler = bun.transpiler;
 const WebCore = bun.webcore;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const BundleV2 = bun.bundle_v2.BundleV2;
 const Index = bun.ast.Index;

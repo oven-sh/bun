@@ -352,7 +352,7 @@ pub const JSGlobalObject = opaque {
     pub fn throwSysError(
         this: *JSGlobalObject,
         opts: SysErrOptions,
-        comptime message: bun.StrZ,
+        comptime message: [:0]const u8,
         args: anytype,
     ) JSError {
         const err = createErrorInstance(this, message, args);
@@ -878,6 +878,8 @@ pub const JSGlobalObject = opaque {
     }
 };
 
+const string = []const u8;
+
 const napi = @import("../../napi/napi.zig");
 const std = @import("std");
 
@@ -886,7 +888,6 @@ const JSError = bun.JSError;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const String = bun.String;
-const string = bun.Str;
 const strings = bun.strings;
 
 const jsc = bun.jsc;

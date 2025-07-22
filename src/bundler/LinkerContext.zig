@@ -2474,6 +2474,8 @@ pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
+const string = []const u8;
+
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const js_printer = @import("../js_printer.zig");
 const lex = @import("../js_lexer.zig");
@@ -2502,7 +2504,6 @@ const bake = bun.bake;
 const base64 = bun.base64;
 const renamer = bun.renamer;
 const sourcemap = bun.sourcemap;
-const string = bun.Str;
 const strings = bun.strings;
 const sync = bun.threading;
 const AutoBitSet = bun.bit_set.AutoBitSet;

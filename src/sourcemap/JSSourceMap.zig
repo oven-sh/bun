@@ -293,10 +293,10 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
 
-const std = @import("std");
+const string = []const u8;
 
 const bun = @import("bun");
-const string = bun.Str;
+const std = @import("std");
 
 const jsc = bun.jsc;
 const CallFrame = jsc.CallFrame;

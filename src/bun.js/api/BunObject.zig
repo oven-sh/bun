@@ -2027,6 +2027,8 @@ comptime {
     BunObject.exportAll();
 }
 
+const string = []const u8;
+
 const Braces = @import("../../shell/braces.zig");
 const Which = @import("../../which.zig");
 const options = @import("../../options.zig");
@@ -2043,7 +2045,6 @@ const MutableString = bun.MutableString;
 const Output = bun.Output;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 const SemverObject = bun.Semver.SemverObject;
 const gen = bun.gen.BunObject;

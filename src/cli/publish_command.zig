@@ -1342,6 +1342,9 @@ pub const PublishCommand = struct {
     }
 };
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const Open = @import("../open.zig");
 const std = @import("std");
 
@@ -1357,8 +1360,6 @@ const URL = bun.URL;
 const logger = bun.logger;
 const path = bun.path;
 const sha = bun.sha;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const strings = bun.strings;
 const Expr = bun.js_parser.Expr;
 const File = bun.sys.File;

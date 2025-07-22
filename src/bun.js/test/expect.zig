@@ -5790,6 +5790,8 @@ test "fuzz Expect.trimLeadingWhitespaceForInlineSnapshot" {
     try std.testing.fuzz(testOne, .{});
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
 
@@ -5799,7 +5801,6 @@ const MutableString = bun.MutableString;
 const Output = bun.Output;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 
 const jsc = bun.jsc;

@@ -229,6 +229,8 @@ pub const ResolveMessage = struct {
     }
 };
 
+const string = []const u8;
+
 const Resolver = @import("../resolver//resolver.zig");
 const std = @import("std");
 
@@ -236,7 +238,6 @@ const bun = @import("bun");
 const Fs = bun.fs;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 
 const jsc = bun.jsc;

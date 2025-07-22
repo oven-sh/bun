@@ -207,12 +207,13 @@ pub const NamedExports = Ast.NamedExports;
 pub const NamedImports = Ast.NamedImports;
 pub const TopLevelSymbolToParts = Ast.TopLevelSymbolToParts;
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const ImportRecord = bun.ImportRecord;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const MimeType = bun.http.MimeType;
 

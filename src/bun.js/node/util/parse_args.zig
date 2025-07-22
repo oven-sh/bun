@@ -743,6 +743,8 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     return result;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const validators = @import("./validators.zig");
 
@@ -755,7 +757,6 @@ const isOptionLikeValue = utils.isOptionLikeValue;
 
 const bun = @import("bun");
 const String = bun.String;
-const string = bun.Str;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

@@ -500,13 +500,14 @@ pub const StatWatcher = struct {
     }
 };
 
+const string = []const u8;
+
 const Path = @import("../../resolver/resolve_path.zig");
 const fs = @import("../../fs.zig");
 const std = @import("std");
 
 const bun = @import("bun");
 const Output = bun.Output;
-const string = bun.Str;
 const UnboundedQueue = bun.threading.UnboundedQueue;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 

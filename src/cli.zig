@@ -1676,6 +1676,8 @@ pub fn printRevisionAndExit() noreturn {
     Global.exit(0);
 }
 
+const string = []const u8;
+
 const AddCompletions = @import("./cli/add_completions.zig");
 const FilterRun = @import("./cli/filter_run.zig");
 const PmViewCommand = @import("./cli/pm_view_command.zig");
@@ -1700,7 +1702,6 @@ const bun_js = bun.bun_js;
 const clap = bun.clap;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const File = bun.sys.File;
 const api = bun.schema.api;

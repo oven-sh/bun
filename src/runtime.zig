@@ -444,12 +444,13 @@ pub const Runtime = struct {
     };
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const string = bun.Str;
 const strings = bun.strings;
 
 const JSAst = bun.ast;

@@ -221,6 +221,8 @@ comptime {
     _ = Bun__onExit;
 }
 
+const string = []const u8;
+
 const Output = @import("./output.zig");
 const std = @import("std");
 
@@ -229,5 +231,4 @@ const version_string = Environment.version_string;
 
 const bun = @import("bun");
 const Mimalloc = bun.mimalloc;
-const string = bun.Str;
 const use_mimalloc = bun.use_mimalloc;

@@ -241,6 +241,8 @@ pub const PackageInstaller = PackageManager.PackageInstaller;
 pub const PackageJSONEditor = PackageManager.PackageJSONEditor;
 pub const Subcommand = PackageManager.Subcommand;
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -250,7 +252,6 @@ const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 
 const Semver = bun.Semver;

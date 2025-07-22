@@ -382,6 +382,8 @@ pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
     }
 }
 
+const string = []const u8;
+
 const ResolvePath = @import("../../resolver/resolve_path.zig");
 const Syscall = @import("../../sys.zig");
 const std = @import("std");
@@ -393,7 +395,6 @@ const GlobWalker = globImpl.BunGlobWalker;
 
 const bun = @import("bun");
 const BunString = bun.String;
-const string = bun.Str;
 const CodepointIterator = bun.strings.UnsignedCodepointIterator;
 
 const jsc = bun.jsc;

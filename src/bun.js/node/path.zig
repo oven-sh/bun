@@ -2928,6 +2928,8 @@ comptime {
     @export(&bun.jsc.host_fn.wrap4v(Path.toNamespacedPath), .{ .name = "Bun__Path__toNamespacedPath" });
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const validators = @import("./util/validators.zig");
@@ -2938,7 +2940,6 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Syscall = bun.sys;
 const jsc = bun.jsc;
-const string = bun.Str;
 const windows = bun.windows;
 const typeBaseNameT = bun.meta.typeBaseNameT;
 

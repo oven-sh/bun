@@ -687,6 +687,9 @@ pub const Enable = packed struct(u16) {
     _: u7 = 0,
 };
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const CommandLineArguments = @import("./CommandLineArguments.zig");
 const std = @import("std");
 
@@ -699,8 +702,6 @@ const Output = bun.Output;
 const Path = bun.path;
 const URL = bun.URL;
 const logger = bun.logger;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const strings = bun.strings;
 const Api = bun.schema.api;
 

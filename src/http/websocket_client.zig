@@ -1513,6 +1513,8 @@ const Copy = union(enum) {
 
 const log = Output.scoped(.WebSocketClient, false);
 
+const string = []const u8;
+
 const WebSocketDeflate = @import("./websocket_client/WebSocketDeflate.zig");
 const std = @import("std");
 const CppWebSocket = @import("./websocket_client/CppWebSocket.zig").CppWebSocket;
@@ -1527,6 +1529,5 @@ const Environment = bun.Environment;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
-const string = bun.Str;
 const strings = bun.strings;
 const uws = bun.uws;

@@ -2690,6 +2690,8 @@ fn setHeaders(headers: *?Headers, new_headers: []const picohttp.Header, allocato
     }
 }
 
+const string = []const u8;
+
 const X509 = @import("../api/bun/x509.zig");
 const std = @import("std");
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
@@ -2704,7 +2706,6 @@ const Mutex = bun.Mutex;
 const Output = bun.Output;
 const picohttp = bun.picohttp;
 const s3 = bun.S3;
-const string = bun.Str;
 const BoringSSL = bun.BoringSSL.c;
 const FetchHeaders = bun.webcore.FetchHeaders;
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;

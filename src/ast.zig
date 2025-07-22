@@ -686,6 +686,8 @@ pub const RefHashCtx = @import("./ast/base.zig").RefHashCtx;
 
 pub const BabyList = bun.BabyList;
 
+const string = []const u8;
+
 const std = @import("std");
 const TypeScript = @import("./js_parser.zig").TypeScript;
 
@@ -693,5 +695,4 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;

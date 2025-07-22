@@ -2422,6 +2422,8 @@ pub const PackageManifest = struct {
     }
 };
 
+const string = []const u8;
+
 const DotEnv = @import("../env_loader.zig");
 const std = @import("std");
 const Bin = @import("./bin.zig").Bin;
@@ -2452,7 +2454,6 @@ const logger = bun.logger;
 const strings = bun.strings;
 const File = bun.sys.File;
 const api = bun.schema.api;
-const string = bun.string_types.Str;
 
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;

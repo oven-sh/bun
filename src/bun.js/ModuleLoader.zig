@@ -3061,6 +3061,8 @@ export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
 
 const debug = Output.scoped(.ModuleLoader, true);
 
+const string = []const u8;
+
 const Dependency = @import("../install/dependency.zig");
 const Fs = @import("../fs.zig");
 const Runtime = @import("../runtime.zig");
@@ -3092,7 +3094,6 @@ const analytics = bun.analytics;
 const js_ast = bun.ast;
 const js_printer = bun.js_printer;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const Arena = bun.allocators.MimallocArena;
 const api = bun.schema.api;

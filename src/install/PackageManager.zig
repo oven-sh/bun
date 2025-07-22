@@ -1240,6 +1240,9 @@ pub const scheduleTasks = @import("./PackageManager/runTasks.zig").scheduleTasks
 pub const updatePackageJSONAndInstallCatchError = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;
 pub const updatePackageJSONAndInstallWithManager = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallWithManager;
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const DirInfo = @import("../resolver/dir_info.zig");
 const resolution = @import("./PackageManager/PackageManagerResolution.zig");
 const std = @import("std");
@@ -1263,8 +1266,6 @@ const URL = bun.URL;
 const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const strings = bun.strings;
 const transpiler = bun.transpiler;
 const Api = bun.schema.api;

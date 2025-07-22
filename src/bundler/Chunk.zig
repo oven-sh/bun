@@ -628,6 +628,8 @@ pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
+const string = []const u8;
+
 const HTMLImportManifest = @import("./HTMLImportManifest.zig");
 const std = @import("std");
 
@@ -643,7 +645,6 @@ const StringJoiner = bun.StringJoiner;
 const default_allocator = bun.default_allocator;
 const renamer = bun.renamer;
 const sourcemap = bun.sourcemap;
-const string = bun.Str;
 const strings = bun.strings;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 const BabyList = bun.collections.BabyList;

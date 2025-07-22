@@ -248,12 +248,13 @@ pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_b
     return true;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const assert = bun.assert;
-const string = bun.Str;
 
 const Query = bun.Semver.Query;
 const Version = bun.Semver.Version;

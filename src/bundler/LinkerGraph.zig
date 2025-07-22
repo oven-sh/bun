@@ -442,6 +442,8 @@ pub const File = struct {
     pub const List = MultiArrayList(File);
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -450,7 +452,6 @@ const Environment = bun.Environment;
 const ImportRecord = bun.ImportRecord;
 const MultiArrayList = bun.MultiArrayList;
 const Output = bun.Output;
-const string = bun.Str;
 
 const js_ast = bun.ast;
 const Symbol = js_ast.Symbol;

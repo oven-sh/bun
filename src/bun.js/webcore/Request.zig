@@ -956,6 +956,8 @@ pub fn setTimeout(
     _ = this.request_context.setTimeout(seconds);
 }
 
+const string = []const u8;
+
 const Environment = @import("../../env.zig");
 const std = @import("std");
 const FetchRedirect = @import("../../http/FetchRedirect.zig").FetchRedirect;
@@ -964,7 +966,6 @@ const Method = @import("../../http/Method.zig").Method;
 const bun = @import("bun");
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
 const strings = bun.strings;
 const uws = bun.uws;
 const FetchHeaders = bun.webcore.FetchHeaders;

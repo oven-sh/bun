@@ -533,6 +533,8 @@ pub const Snapshots = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 const Expect = @import("./expect.zig").Expect;
 
@@ -544,7 +546,6 @@ const bun = @import("bun");
 const js_ast = bun.ast;
 const js_parser = bun.js_parser;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 
 const jsc = bun.jsc;

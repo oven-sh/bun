@@ -695,6 +695,8 @@ pub const FSWatcher = struct {
     }
 };
 
+const string = []const u8;
+
 const Path = @import("../../resolver/resolve_path.zig");
 const std = @import("std");
 
@@ -703,7 +705,6 @@ const Async = bun.Async;
 const Environment = bun.Environment;
 const Mutex = bun.Mutex;
 const Output = bun.Output;
-const string = bun.Str;
 const webcore = bun.webcore;
 
 const jsc = bun.jsc;

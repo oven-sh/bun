@@ -1167,6 +1167,8 @@ pub const PathOrBlob = union(enum) {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 const URL = @import("../../url.zig").URL;
 
@@ -1176,7 +1178,6 @@ const JSError = bun.JSError;
 const Mode = bun.Mode;
 const jsc = bun.jsc;
 const path_handler = bun.path;
-const string = bun.Str;
 const strings = bun.strings;
 const windows = bun.windows;
 const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;

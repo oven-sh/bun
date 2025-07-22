@@ -3372,6 +3372,8 @@ fn throwSSLErrorIfNecessary(globalThis: *jsc.JSGlobalObject) bool {
     return false;
 }
 
+const string = []const u8;
+
 const Sys = @import("../../sys.zig");
 const options = @import("../../options.zig");
 const std = @import("std");
@@ -3392,7 +3394,6 @@ const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const js_printer = bun.js_printer;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const uws = bun.uws;
 const Arena = bun.allocators.MimallocArena;

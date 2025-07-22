@@ -2024,6 +2024,8 @@ fn findInvalidSegment(path_: string) ?string {
     return null;
 }
 
+const string = []const u8;
+
 const Dependency = @import("../install/dependency.zig");
 const Install = @import("../install/install.zig");
 const cache = @import("../cache.zig");
@@ -2045,7 +2047,6 @@ const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
 const js_lexer = bun.js_lexer;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const api = bun.schema.api;
 

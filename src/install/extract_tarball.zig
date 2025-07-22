@@ -535,6 +535,8 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
     };
 }
 
+const string = []const u8;
+
 const Npm = @import("./npm.zig");
 const std = @import("std");
 const FileSystem = @import("../fs.zig").FileSystem;
@@ -553,4 +555,3 @@ const Semver = bun.Semver;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const strings = bun.strings;
-const string = bun.string_types.Str;

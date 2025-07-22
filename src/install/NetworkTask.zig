@@ -301,6 +301,8 @@ pub fn forTarball(
     }
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const install = @import("./install.zig");
@@ -319,7 +321,6 @@ const OOM = bun.OOM;
 const ThreadPool = bun.ThreadPool;
 const URL = bun.URL;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 
 const Fs = bun.fs;

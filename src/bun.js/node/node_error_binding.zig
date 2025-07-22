@@ -16,9 +16,10 @@ fn createSimpleError(comptime createFn: anytype, comptime code: jsc.Node.ErrorCo
     return R.cbb;
 }
 
+const string = []const u8;
+
 const bun = @import("bun");
 const jsc = bun.jsc;
-const string = bun.Str;
 
 const createError = jsc.JSGlobalObject.createErrorInstanceWithCode;
 const createTypeError = jsc.JSGlobalObject.createTypeErrorInstanceWithCode;

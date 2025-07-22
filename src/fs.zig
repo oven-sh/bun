@@ -1954,6 +1954,9 @@ pub const Path = struct {
 
 pub const StatHash = @import("./fs/stat_hash.zig");
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const path_handler = @import("./resolver/resolve_path.zig");
 const std = @import("std");
 
@@ -1973,6 +1976,4 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const WPathBuffer = bun.WPathBuffer;
 const allocators = bun.allocators;
 const default_allocator = bun.default_allocator;
-const string = bun.Str;
-const stringZ = bun.StrZ;
 const strings = bun.strings;

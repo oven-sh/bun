@@ -1047,6 +1047,8 @@ pub const Bunfig = struct {
     }
 };
 
+const string = []const u8;
+
 const options = @import("./options.zig");
 const resolver = @import("./resolver/resolver.zig");
 const std = @import("std");
@@ -1060,7 +1062,6 @@ const JSONParser = bun.json;
 const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
 const logger = bun.logger;
-const string = bun.Str;
 const strings = bun.strings;
 const PackageManager = bun.install.PackageManager;
 const api = bun.schema.api;

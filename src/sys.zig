@@ -729,7 +729,10 @@ pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
     unreachable;
 }
 
-pub fn chdirOSPath(path: bun.StrZ, destination: if (Environment.isPosix) bun.StrZ else bun.Str) Maybe(void) {
+pub fn chdirOSPath(
+    path: [:0]const u8,
+    destination: if (Environment.isPosix) [:0]const u8 else []const u8,
+) Maybe(void) {
     if (comptime Environment.isPosix) {
         const rc = syscall.chdir(destination);
         return Maybe(void).errnoSysPD(rc, .chdir, path, destination) orelse Maybe(void).success;

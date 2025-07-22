@@ -694,4 +694,19 @@ nativeTests.test_get_value_string = () => {
   }
 };
 
+nativeTests.test_external_buffer_finalizer = async () => {
+  const n = 50;
+  for (let i = 0; i < n; i++) {
+    let arraybuffer = asyncFinalizeAddon.create_buffer();
+    let view = new Uint32Array(arraybuffer);
+    for (const int of view) {
+      // native module memsets to 5
+      assert(int == 0x05050505);
+    }
+    arraybuffer = undefined;
+    view = undefined;
+    await gcUntil(() => asyncFinalizeAddon.get_buffer_finalize_count() == i + 1);
+  }
+};
+
 module.exports = nativeTests;

@@ -36,6 +36,11 @@ public:
     {
         return m_x509.view();
     }
+    
+    JSC::JSGlobalObject* globalObject() const
+    {
+        return structure()->globalObject();
+    }
 
     // Lazily computed certificate data
     LazyProperty<JSX509Certificate, JSString> m_subject;

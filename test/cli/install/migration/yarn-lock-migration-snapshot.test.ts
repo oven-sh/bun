@@ -974,23 +974,23 @@ babel-loader/chalk@^2.4.2:
     expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
 
     const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
-    
+
     // Basic structural checks instead of full snapshot for real-world test
     expect(bunLockContent).toContain('"lockfileVersion":');
     expect(bunLockContent).toContain('"packages":');
     expect(bunLockContent).toContain('"workspaces":');
-    
+
     // Verify some known packages from yarn's dependencies are present
     expect(bunLockContent).toContain("babel-runtime");
     expect(bunLockContent).toContain("chalk");
     expect(bunLockContent).toContain("commander");
     expect(bunLockContent).toContain("semver");
-    
+
     // Verify correct number of packages were migrated (approximate check)
     const packageCount = (bunLockContent.match(/"[^"]+": \[/g) || []).length;
     expect(packageCount).toBeGreaterThan(100); // yarn has many dependencies
 
-    expect(bunLockContent).toMatchSnapshot()
+    expect(bunLockContent).toMatchSnapshot();
   });
 
   test("migration with realistic complex yarn.lock", async () => {

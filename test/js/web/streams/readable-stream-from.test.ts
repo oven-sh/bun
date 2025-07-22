@@ -207,7 +207,8 @@ test("ReadableStream.from() handles iterator that throws", async () => {
   const { value } = await reader.read();
   expect(value).toBe(1);
   
-  // Should handle error from iterator
+  // The error should be reflected in the stream's errored state
+  // Since the error happens synchronously during iteration, the stream becomes errored
   await expect(reader.read()).rejects.toThrow("Iterator error");
 });
 

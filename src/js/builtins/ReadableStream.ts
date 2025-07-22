@@ -584,24 +584,28 @@ export function from(asyncIterable) {
     }
 
     return new ReadableStream({
-      start(controller) {
+      pull(controller) {
+        if (!this._iterator) {
+          try {
+            this._iterator = iteratorMethod.$call(asyncIterable);
+            if (!$isObject(this._iterator)) {
+              throw new TypeError("ReadableStream.from() argument's @@iterator method must return an object");
+            }
+          } catch (error) {
+            controller.error(error);
+            return;
+          }
+        }
+
         try {
-          const iterator = iteratorMethod.$call(asyncIterable);
-          if (!$isObject(iterator)) {
-            throw new TypeError("ReadableStream.from() argument's @@iterator method must return an object");
+          const result = this._iterator.next();
+          if (!$isObject(result)) {
+            throw new TypeError("Iterator result must be an object");
           }
 
-          while (true) {
-            const result = iterator.next();
-            if (!$isObject(result)) {
-              throw new TypeError("Iterator result must be an object");
-            }
-
-            if (result.done) {
-              controller.close();
-              break;
-            }
-
+          if (result.done) {
+            controller.close();
+          } else {
             controller.enqueue(result.value);
           }
         } catch (error) {

@@ -219,10 +219,7 @@ pub const YarnLock = struct {
         var current_optional_deps: ?bun.StringHashMap(string) = null;
         var current_peer_deps: ?bun.StringHashMap(string) = null;
         var current_dev_deps: ?bun.StringHashMap(string) = null;
-        var in_dependencies = false;
-        var in_optional_dependencies = false;
-        var in_peer_dependencies = false;
-        var in_dev_dependencies = false;
+        var current_dep_type: ?DependencyType = null;
 
         while (lines.next()) |line_| {
             const line = std.mem.trimRight(u8, line_, " \r\t");
@@ -268,10 +265,7 @@ pub const YarnLock = struct {
                 current_optional_deps = null;
                 current_peer_deps = null;
                 current_dev_deps = null;
-                in_dependencies = false;
-                in_optional_dependencies = false;
-                in_peer_dependencies = false;
-                in_dev_dependencies = false;
+                current_dep_type = null;
                 continue;
             }
 
@@ -279,46 +273,39 @@ pub const YarnLock = struct {
 
             if (indent > 0) {
                 if (strings.eqlComptime(trimmed, "dependencies:")) {
-                    in_dependencies = true;
-                    in_optional_dependencies = false;
-                    in_peer_dependencies = false;
-                    in_dev_dependencies = false;
+                    current_dep_type = .production;
                     current_deps = bun.StringHashMap(string).init(self.allocator);
                     continue;
                 }
 
                 if (strings.eqlComptime(trimmed, "optionalDependencies:")) {
-                    in_optional_dependencies = true;
-                    in_dependencies = false;
-                    in_peer_dependencies = false;
-                    in_dev_dependencies = false;
+                    current_dep_type = .optional;
                     current_optional_deps = bun.StringHashMap(string).init(self.allocator);
                     continue;
                 }
 
                 if (strings.eqlComptime(trimmed, "peerDependencies:")) {
-                    in_peer_dependencies = true;
-                    in_dependencies = false;
-                    in_optional_dependencies = false;
-                    in_dev_dependencies = false;
+                    current_dep_type = .peer;
                     current_peer_deps = bun.StringHashMap(string).init(self.allocator);
                     continue;
                 }
 
                 if (strings.eqlComptime(trimmed, "devDependencies:")) {
-                    in_dev_dependencies = true;
-                    in_dependencies = false;
-                    in_optional_dependencies = false;
-                    in_peer_dependencies = false;
+                    current_dep_type = .development;
                     current_dev_deps = bun.StringHashMap(string).init(self.allocator);
                     continue;
                 }
 
-                if (in_dependencies or in_optional_dependencies or in_peer_dependencies or in_dev_dependencies) {
+                if (current_dep_type) |dep_type| {
                     if (strings.indexOf(trimmed, " ")) |space_idx| {
                         const key = strings.trim(trimmed[0..space_idx], " \"");
                         const value = strings.trim(trimmed[space_idx + 1 ..], " \"");
-                        const map = if (in_dependencies) &current_deps.? else if (in_optional_dependencies) &current_optional_deps.? else if (in_peer_dependencies) &current_peer_deps.? else &current_dev_deps.?;
+                        const map = switch (dep_type) {
+                            .production => &current_deps.?,
+                            .optional => &current_optional_deps.?,
+                            .peer => &current_peer_deps.?,
+                            .development => &current_dev_deps.?,
+                        };
                         try map.put(key, value);
                     }
                     continue;
@@ -418,12 +405,16 @@ pub const YarnLock = struct {
     }
 };
 
+const DependencyType = enum {
+    production,
+    development,
+    optional,
+    peer,
+};
 const processDeps = struct {
     fn process(
         deps: bun.StringHashMap(string),
-        is_optional: bool,
-        is_peer: bool,
-        is_dev: bool,
+        dep_type: DependencyType,
         yarn_lock_: *YarnLock,
         string_buf_: *Semver.String.Buf,
         deps_buf: []Dependency,
@@ -469,10 +460,10 @@ const processDeps = struct {
                         manager,
                     ) orelse Dependency.Version{},
                     .behavior = .{
-                        .prod = !is_dev,
-                        .optional = is_optional,
-                        .dev = is_dev,
-                        .peer = is_peer,
+                        .prod = dep_type == .production,
+                        .optional = dep_type == .optional,
+                        .dev = dep_type == .development,
+                        .peer = dep_type == .peer,
                         .workspace = dep_entry.workspace,
                     },
                 };
@@ -514,15 +505,16 @@ pub fn migrateYarnLockfile(
 
     var string_buf = this.stringBuf();
 
-    const package_json_path = std.fs.path.dirname(abs_path) orelse ".";
-    const package_json_file_path = try std.fmt.allocPrint(allocator, "{s}/package.json", .{package_json_path});
-    defer allocator.free(package_json_file_path);
+    // read package.json to get specified dependencies
+    var path_buf: bun.PathBuffer = undefined;
+    const package_json_dir = std.fs.path.dirname(abs_path) orelse ".";
+    const package_json_path = bun.path.joinAbsStringBufZ(package_json_dir, &path_buf, &.{"package.json"}, .auto);
 
     var num_deps: u32 = 0;
     var root_dep_count: u32 = 0;
     var root_dep_count_from_package_json: u32 = 0;
 
-    var root_dependencies = std.ArrayList(struct { name: []const u8, version: []const u8, is_dev: bool }).init(allocator);
+    var root_dependencies = std.ArrayList(struct { name: []const u8, version: []const u8, dep_type: DependencyType }).init(allocator);
     defer {
         for (root_dependencies.items) |dep| {
             allocator.free(dep.name);
@@ -531,56 +523,79 @@ pub fn migrateYarnLockfile(
         root_dependencies.deinit();
     }
 
-    if (std.fs.cwd().readFileAlloc(allocator, package_json_file_path, 1024 * 1024)) |content| {
-        defer allocator.free(content);
+    const package_json_contents = bun.sys.File.readFrom(bun.FD.cwd(), package_json_path, allocator).unwrap() catch |err| {
+        Output.errGeneric("Failed to read package.json: {s}", .{@errorName(err)});
+        Global.exit(1);
+    };
+    defer allocator.free(package_json_contents);
 
-        const source = logger.Source.initPathString(package_json_file_path, content);
-        if (JSON.parsePackageJSONUTF8(&source, log, allocator)) |json| {
-            const sections = [_]struct { key: []const u8, is_dev: bool }{
-                .{ .key = "dependencies", .is_dev = false },
-                .{ .key = "devDependencies", .is_dev = true },
-                .{ .key = "optionalDependencies", .is_dev = false },
-            };
+    const package_json_source = logger.Source.initPathString(package_json_path, package_json_contents);
+    const package_json_expr = JSON.parsePackageJSONUTF8WithOpts(
+        &package_json_source,
+        log,
+        allocator,
+        .{
+            .is_json = true,
+            .allow_comments = true,
+            .allow_trailing_commas = true,
+            .guess_indentation = true,
+        },
+    ) catch |err| {
+        Output.errGeneric("Failed to parse package.json: {s}", .{@errorName(err)});
+        Global.exit(1);
+    };
+    const package_json = package_json_expr.root;
 
-            for (sections) |section| {
-                if (json.asProperty(section.key)) |prop| {
-                    if (prop.expr.data == .e_object) {
-                        const obj = prop.expr.data.e_object;
-                        for (obj.properties.slice()) |p| {
-                            if (p.key) |key| {
-                                if (key.data == .e_string) {
-                                    const name_slice = key.data.e_string.string(allocator) catch continue;
-                                    if (p.value) |value| {
-                                        var version_slice: []const u8 = "";
-                                        switch (value.data) {
-                                            .e_string => {
-                                                version_slice = value.data.e_string.string(allocator) catch continue;
-                                            },
-                                            else => continue,
-                                        }
-
-                                        if (version_slice.len > 0) {
-                                            const name = try allocator.dupe(u8, name_slice);
-                                            const version = try allocator.dupe(u8, version_slice);
-                                            try root_dependencies.append(.{
-                                                .name = name,
-                                                .version = version,
-                                                .is_dev = section.is_dev,
-                                            });
-                                            root_dep_count_from_package_json += 1;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+    const package_name: ?[]const u8 = blk: {
+        if (package_json_expr.root.asProperty("name")) |name_prop| {
+            if (name_prop.expr.data == .e_string) {
+                const name_slice = name_prop.expr.data.e_string.string(allocator) catch "";
+                if (name_slice.len > 0) {
+                    break :blk try allocator.dupe(u8, name_slice);
                 }
             }
-        } else |_| {}
-    } else |_| {}
+        }
+        break :blk null;
+    };
+    defer if (package_name) |name| allocator.free(name);
+    const package_name_hash = if (package_name) |name| String.Builder.stringHash(name) else 0;
+
+    {
+        const sections = [_]struct { key: []const u8, dep_type: DependencyType }{
+            .{ .key = "dependencies", .dep_type = .production },
+            .{ .key = "devDependencies", .dep_type = .development },
+            .{ .key = "optionalDependencies", .dep_type = .optional },
+            .{ .key = "peerDependencies", .dep_type = .peer },
+        };
+
+        for (sections) |section_info| {
+            const prop = package_json.asProperty(section_info.key) orelse continue;
+            if (prop.expr.data != .e_object) continue;
+
+            for (prop.expr.data.e_object.properties.slice()) |p| {
+                const key = p.key orelse continue;
+                if (key.data != .e_string) continue;
+
+                const name_slice = key.data.e_string.string(allocator) catch continue;
+                const value = p.value orelse continue;
+                if (value.data != .e_string) continue;
+
+                const version_slice = value.data.e_string.string(allocator) catch continue;
+                if (version_slice.len == 0) continue;
+
+                const name = try allocator.dupe(u8, name_slice);
+                const version = try allocator.dupe(u8, version_slice);
+                try root_dependencies.append(.{
+                    .name = name,
+                    .version = version,
+                    .dep_type = section_info.dep_type,
+                });
+                root_dep_count_from_package_json += 1;
+            }
+        }
+    }
 
     root_dep_count = @max(root_dep_count_from_package_json, 10);
-
     num_deps += root_dep_count;
 
     for (yarn_lock.entries.items) |entry| {
@@ -608,9 +623,11 @@ pub fn migrateYarnLockfile(
     var dependencies_buf = this.buffers.dependencies.items.ptr[0..num_deps];
     var resolutions_buf = this.buffers.resolutions.items.ptr[0..num_deps];
 
+    const root_name = if (package_name) |name| try string_buf.appendWithHash(name, package_name_hash) else try string_buf.append("");
+
     try this.packages.append(allocator, Lockfile.Package{
-        .name = try string_buf.append(""),
-        .name_hash = 0,
+        .name = root_name,
+        .name_hash = package_name_hash,
         .resolution = Resolution.init(.{ .root = {} }),
         .dependencies = .{},
         .resolutions = .{},
@@ -627,37 +644,19 @@ pub fn migrateYarnLockfile(
         .scripts = .{},
     });
 
-    if (std.fs.cwd().readFileAlloc(allocator, package_json_file_path, 1024 * 1024)) |content_for_name| {
-        defer allocator.free(content_for_name);
-        const source = logger.Source.initPathString(package_json_file_path, content_for_name);
-        if (JSON.parsePackageJSONUTF8(&source, log, allocator)) |json| {
-            var root_package = this.packages.get(0);
+    if (package_json.asProperty("resolutions")) |resolutions| {
+        var root_package = this.packages.get(0);
+        var string_builder = this.stringBuilder();
 
-            if (json.asProperty("name")) |name_prop| {
-                if (name_prop.expr.data == .e_string) {
-                    const name_slice = name_prop.expr.data.e_string.string(allocator) catch "";
-                    if (name_slice.len > 0) {
-                        root_package.name = try string_buf.appendWithHash(name_slice, String.Builder.stringHash(name_slice));
-                        root_package.name_hash = String.Builder.stringHash(name_slice);
-                    }
-                }
-            }
-
-            var string_builder = this.stringBuilder();
-            if (json.asProperty("resolutions")) |resolutions| {
-                if (resolutions.expr.data == .e_object) {
-                    string_builder.cap += resolutions.expr.data.e_object.properties.len * 128;
-                }
-            }
-
-            if (string_builder.cap > 0) {
-                try string_builder.allocate();
-            }
-
-            try this.overrides.parseAppend(manager, this, &root_package, log, &source, json, &string_builder);
-            this.packages.set(0, root_package);
-        } else |_| {}
-    } else |_| {}
+        if (resolutions.expr.data == .e_object) {
+            string_builder.cap += resolutions.expr.data.e_object.properties.len * 128;
+        }
+        if (string_builder.cap > 0) {
+            try string_builder.allocate();
+        }
+        try this.overrides.parseAppend(manager, this, &root_package, log, &package_json_source, package_json, &string_builder);
+        this.packages.set(0, root_package);
+    }
 
     var yarn_entry_to_package_id = try allocator.alloc(Install.PackageID, yarn_lock.entries.items.len);
     defer allocator.free(yarn_entry_to_package_id);
@@ -817,11 +816,10 @@ pub fn migrateYarnLockfile(
                         break :blk Resolution{};
                     }
 
-                    const url = if (strings.hasPrefixComptime(resolved, "https://registry.yarnpkg.com/") or
-                        strings.hasPrefixComptime(resolved, "https://registry.npmjs.org/"))
-                        String{}
-                    else
-                        try string_buf.append(resolved);
+                    const is_default_registry = strings.hasPrefixComptime(resolved, "https://registry.yarnpkg.com/") or
+                        strings.hasPrefixComptime(resolved, "https://registry.npmjs.org/");
+
+                    const url = if (is_default_registry) String{} else try string_buf.append(resolved);
 
                     break :blk Resolution.init(.{
                         .npm = .{
@@ -902,10 +900,10 @@ pub fn migrateYarnLockfile(
                         manager,
                     ) orelse Dependency.Version{},
                     .behavior = .{
-                        .prod = !dep.is_dev,
-                        .dev = dep.is_dev,
-                        .optional = false,
-                        .peer = false,
+                        .prod = dep.dep_type == .production,
+                        .dev = dep.dep_type == .development,
+                        .optional = dep.dep_type == .optional,
+                        .peer = dep.dep_type == .peer,
                         .workspace = false,
                     },
                 };
@@ -935,25 +933,25 @@ pub fn migrateYarnLockfile(
         const dependencies_start = dependencies_buf.ptr;
         const resolutions_start = resolutions_buf.ptr;
         if (entry.dependencies) |deps| {
-            const processed = try processDeps(deps, false, false, false, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, manager, yarn_entry_to_package_id);
+            const processed = try processDeps(deps, .production, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, manager, yarn_entry_to_package_id);
             dependencies_buf = dependencies_buf[processed.len..];
             resolutions_buf = resolutions_buf[processed.len..];
         }
 
         if (entry.optionalDependencies) |deps| {
-            const processed = try processDeps(deps, true, false, false, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, manager, yarn_entry_to_package_id);
+            const processed = try processDeps(deps, .optional, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, manager, yarn_entry_to_package_id);
             dependencies_buf = dependencies_buf[processed.len..];
             resolutions_buf = resolutions_buf[processed.len..];
         }
 
         if (entry.peerDependencies) |deps| {
-            const processed = try processDeps(deps, false, true, false, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, manager, yarn_entry_to_package_id);
+            const processed = try processDeps(deps, .peer, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, manager, yarn_entry_to_package_id);
             dependencies_buf = dependencies_buf[processed.len..];
             resolutions_buf = resolutions_buf[processed.len..];
         }
 
         if (entry.devDependencies) |deps| {
-            const processed = try processDeps(deps, false, false, true, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, manager, yarn_entry_to_package_id);
+            const processed = try processDeps(deps, .development, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, manager, yarn_entry_to_package_id);
             dependencies_buf = dependencies_buf[processed.len..];
             resolutions_buf = resolutions_buf[processed.len..];
         }
@@ -1080,9 +1078,7 @@ pub fn migrateYarnLockfile(
                 },
             }
         } else {}
-
     }
-
 
     var final_check_it = scoped_packages.iterator();
     while (final_check_it.next()) |entry| {
@@ -1115,7 +1111,6 @@ pub fn migrateYarnLockfile(
             }
 
             if (!found_in_index) {
-
                 const fallback_name = try std.fmt.allocPrint(allocator, "{s}#{}", .{ base_name, package_id });
                 defer allocator.free(fallback_name);
 
@@ -1158,39 +1153,26 @@ pub fn migrateYarnLockfile(
         }
     }
 
-    var package_by_usage = std.ArrayList(struct { name: []const u8, package_id: PackageID, usage: u32 }).init(allocator);
-    defer package_by_usage.deinit();
-
     for (yarn_lock.entries.items, 0..) |_, entry_idx| {
         const package_id: PackageID = @intCast(entry_idx + 1);
         const base_name = package_names[package_id];
-        const usage = usage_count.get(base_name) orelse 0;
 
-        try package_by_usage.append(.{ .name = base_name, .package_id = package_id, .usage = usage });
-    }
-
-    std.sort.pdq(@TypeOf(package_by_usage.items[0]), package_by_usage.items, {}, struct {
-        fn lessThan(_: void, a: @TypeOf(package_by_usage.items[0]), b: @TypeOf(package_by_usage.items[0])) bool {
-            if (a.usage != b.usage) return a.usage > b.usage;
-            return a.package_id < b.package_id;
-        }
-    }.lessThan);
-    for (package_by_usage.items) |pkg| {
-        if (root_packages.get(pkg.name)) |_| {
-            continue;
-        } else {
-            try root_packages.put(pkg.name, pkg.package_id);
-            const name_hash = stringHash(pkg.name);
-            try this.getOrPutID(pkg.package_id, name_hash);
+        if (root_packages.get(base_name) == null) {
+            try root_packages.put(base_name, package_id);
+            const name_hash = stringHash(base_name);
+            try this.getOrPutID(package_id, name_hash);
         }
     }
 
     var scoped_names = std.AutoHashMap(PackageID, []const u8).init(allocator);
     defer scoped_names.deinit();
     var scoped_count: u32 = 0;
-    for (package_by_usage.items) |pkg| {
-        if (root_packages.get(pkg.name)) |root_pkg_id| {
-            if (root_pkg_id == pkg.package_id) {
+    for (yarn_lock.entries.items, 0..) |_, entry_idx| {
+        const package_id: PackageID = @intCast(entry_idx + 1);
+        const base_name = package_names[package_id];
+
+        if (root_packages.get(base_name)) |root_pkg_id| {
+            if (root_pkg_id == package_id) {
                 continue;
             }
         } else {
@@ -1204,25 +1186,26 @@ pub fn migrateYarnLockfile(
             if (dep_entry.dependencies) |deps| {
                 var deps_iter = deps.iterator();
                 while (deps_iter.next()) |dep| {
-                    if (strings.eql(dep.key_ptr.*, pkg.name)) {
-                        if (dep_package_id != pkg.package_id) {
+                    if (strings.eql(dep.key_ptr.*, base_name)) {
+                        if (dep_package_id != package_id) {
                             const parent_name = package_names[dep_package_id];
 
-                            const potential_name = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent_name, pkg.name });
+                            const potential_name = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent_name, base_name });
 
                             var name_already_used = false;
-                            for (package_by_usage.items) |other_pkg| {
-                                if (scoped_names.get(other_pkg.package_id)) |existing_name| {
-                                    if (strings.eql(existing_name, potential_name)) {
-                                        name_already_used = true;
-                                        break;
-                                    }
+                            var value_iter = scoped_names.valueIterator();
+                            while (value_iter.next()) |existing_name| {
+                                if (strings.eql(existing_name.*, potential_name)) {
+                                    name_already_used = true;
+                                    break;
                                 }
                             }
 
                             if (!name_already_used) {
                                 scoped_name = potential_name;
                                 break;
+                            } else {
+                                allocator.free(potential_name);
                             }
                         }
                     }
@@ -1232,21 +1215,21 @@ pub fn migrateYarnLockfile(
         }
 
         if (scoped_name == null) {
-            const version_str = switch (this.packages.get(pkg.package_id).resolution.tag) {
+            const version_str = switch (this.packages.get(package_id).resolution.tag) {
                 .npm => brk: {
                     var version_buf: [64]u8 = undefined;
-                    const formatted = std.fmt.bufPrint(&version_buf, "{}", .{this.packages.get(pkg.package_id).resolution.value.npm.version.fmt(this.buffers.string_bytes.items)}) catch "";
+                    const formatted = std.fmt.bufPrint(&version_buf, "{}", .{this.packages.get(package_id).resolution.value.npm.version.fmt(this.buffers.string_bytes.items)}) catch "";
                     break :brk formatted;
                 },
                 else => "unknown",
             };
-            scoped_name = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ pkg.name, version_str });
+            scoped_name = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ base_name, version_str });
         }
 
         if (scoped_name) |final_scoped_name| {
             const name_hash = stringHash(final_scoped_name);
-            try this.getOrPutID(pkg.package_id, name_hash);
-            try scoped_names.put(pkg.package_id, final_scoped_name);
+            try this.getOrPutID(package_id, name_hash);
+            try scoped_names.put(package_id, final_scoped_name);
             scoped_count += 1;
         }
     }
@@ -1309,10 +1292,13 @@ pub fn migrateYarnLockfile(
                 .name_hash = name_hash,
                 .name = dep_name_string,
                 .version = parsed_version,
-                .behavior = if (root_dep.is_dev)
-                    Dependency.Behavior{ .dev = true }
-                else
-                    Dependency.Behavior{ .prod = true },
+                .behavior = .{
+                    .prod = root_dep.dep_type == .production,
+                    .dev = root_dep.dep_type == .development,
+                    .optional = root_dep.dep_type == .optional,
+                    .peer = root_dep.dep_type == .peer,
+                    .workspace = false,
+                },
             };
 
             try this.buffers.dependencies.append(allocator, dep);
@@ -1480,6 +1466,7 @@ const Tree = Lockfile.Tree;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const Global = bun.Global;
 const Output = bun.Output;
 const logger = bun.logger;
 const string = bun.string;

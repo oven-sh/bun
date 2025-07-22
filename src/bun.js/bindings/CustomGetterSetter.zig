@@ -1,5 +1,3 @@
-const bun = @import("bun");
-
 pub const CustomGetterSetter = opaque {
     pub fn isGetterNull(this: *CustomGetterSetter) bool {
         return bun.cpp.JSC__CustomGetterSetter__isGetterNull(this);
@@ -9,3 +7,5 @@ pub const CustomGetterSetter = opaque {
         return bun.cpp.JSC__CustomGetterSetter__isSetterNull(this);
     }
 };
+
+const bun = @import("bun");

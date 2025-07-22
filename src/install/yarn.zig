@@ -864,7 +864,7 @@ pub fn migrateYarnLockfile(
 
                     break :blk Resolution.init(.{
                         .npm = .{
-                            .url = try string_buf.append(resolved),
+                            .url = String{}, // Leave URL empty for proper registry handling
                             .version = result.version.min(),
                         },
                     });
@@ -1514,7 +1514,8 @@ pub fn migrateYarnLockfile(
     var package_to_dep_id = std.AutoHashMapUnmanaged(Install.PackageID, DependencyID){};
     defer package_to_dep_id.deinit(allocator);
 
-    // Create dependencies for all packages and ensure they're in the package index
+    // Create dependencies for all packages
+    // But only add them to all_dep_list if they were placed at root OR are scoped
     for (0..this.packages.len) |pkg_idx| {
         const pkg_id = @as(Install.PackageID, @intCast(pkg_idx));
         if (pkg_id == 0) continue; // Skip root package
@@ -1574,6 +1575,7 @@ pub fn migrateYarnLockfile(
             .behavior = Dependency.Behavior{ .prod = true },
         });
 
+        // Add all dependencies to the list - we'll sort them later
         try all_dep_list.append(dep_id);
 
         // Add resolution
@@ -1635,12 +1637,18 @@ pub fn migrateYarnLockfile(
         }.check;
 
         // Separate dependencies into regular and scoped
+        if (Environment.isDebug) {
+            bun.Output.prettyErrorln("DEBUG: Separating {} dependencies into regular and scoped", .{all_dep_list.items.len});
+        }
         for (all_dep_list.items) |dep_id| {
             const dep = this.buffers.dependencies.items[dep_id];
             const dep_name = dep.name.slice(this.buffers.string_bytes.items);
 
             if (isParentChildScoped(dep_name)) {
                 try scoped_deps.append(dep_id);
+                if (Environment.isDebug) {
+                    bun.Output.prettyErrorln("DEBUG: Adding '{s}' to scoped deps", .{dep_name});
+                }
             } else {
                 try regular_deps.append(dep_id);
             }
@@ -1664,6 +1672,10 @@ pub fn migrateYarnLockfile(
         const sorter = DepSorter{ .lockfile = this };
         std.sort.pdq(DependencyID, regular_deps.items, sorter, DepSorter.isLessThan);
         std.sort.pdq(DependencyID, scoped_deps.items, sorter, DepSorter.isLessThan);
+        
+        if (Environment.isDebug) {
+            bun.Output.prettyErrorln("DEBUG: After sorting - {} regular deps, {} scoped deps", .{ regular_deps.items.len, scoped_deps.items.len });
+        }
 
         // Add dependencies to hoisted_dependencies: regular first, then scoped
         const all_deps_off = @as(u32, @intCast(hoisted_off));
@@ -1678,10 +1690,10 @@ pub fn migrateYarnLockfile(
             try this.buffers.hoisted_dependencies.append(allocator, dep_id);
         }
 
-        // Set root tree dependencies to all packages
+        // Set root tree dependencies to point to the sorted hoisted dependencies
         this.buffers.trees.items[0].dependencies = .{
             .off = all_deps_off,
-            .len = @as(u32, @intCast(all_dep_list.items.len)),
+            .len = @as(u32, @intCast(regular_deps.items.len + scoped_deps.items.len)),
         };
 
         hoisted_off += @as(u32, @intCast(all_dep_list.items.len));
@@ -1763,6 +1775,9 @@ pub fn migrateYarnLockfile(
     // Update hoisted dependencies buffer length
     this.buffers.hoisted_dependencies.items.len = hoisted_off;
 
+    // Resolve the lockfile to build proper tree structure
+    try this.resolve(log);
+
     // Parse overrides/resolutions from package.json if it exists
     if (std.fs.cwd().readFileAlloc(allocator, package_json_file_path, 1024 * 1024)) |content| {
         defer allocator.free(content);
@@ -1772,6 +1787,19 @@ pub fn migrateYarnLockfile(
             // Use OverrideMap.parseAppend to handle resolutions properly
             var root_package = this.packages.get(0);
             var string_builder = this.stringBuilder();
+            
+            // Count any strings we might need for overrides
+            if (json.asProperty("resolutions")) |resolutions| {
+                if (resolutions.expr.data == .e_object) {
+                    // Rough estimate - each override might need space for package name + version
+                    string_builder.cap += resolutions.expr.data.e_object.properties.len * 128;
+                }
+            }
+            
+            // Allocate the string builder before using it
+            if (string_builder.cap > 0) {
+                try string_builder.allocate();
+            }
 
             try this.overrides.parseAppend(manager, this, &root_package, log, &source, json, &string_builder);
 

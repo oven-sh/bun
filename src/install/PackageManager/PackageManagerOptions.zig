@@ -64,6 +64,9 @@ preid: string = "",
 message: ?string = null,
 force: bool = false,
 
+// Security provider module path
+security_provider: ?[]const u8 = null,
+
 // `bun pm why` command options
 top_only: bool = false,
 depth: ?usize = null,
@@ -356,6 +359,10 @@ pub fn load(
             if (ignore_scripts) {
                 this.do.run_scripts = false;
             }
+        }
+
+        if (config.security_provider) |security_provider| {
+            this.security_provider = security_provider;
         }
 
         this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;

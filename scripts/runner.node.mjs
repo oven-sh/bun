@@ -28,9 +28,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { userInfo } from "node:os";
+import { availableParallelism, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
+import pLimit from "./p-limit.mjs";
 import {
   getAbi,
   getAbiVersion,
@@ -63,6 +64,7 @@ import {
   unzip,
   uploadArtifact,
 } from "./utils.mjs";
+
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
@@ -152,6 +154,10 @@ const { values: options, positionals: filters } = parseArgs({
     ["coredump-upload"]: {
       type: "boolean",
       default: isBuildkite && isLinux,
+    },
+    ["parallel"]: {
+      type: "boolean",
+      default: false,
     },
   },
 });
@@ -341,6 +347,10 @@ async function runTests() {
   const failedResults = [];
   const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
 
+  const parallelism = options["parallel"] ? availableParallelism() : 1;
+  console.log("parallelism", parallelism);
+  const limit = pLimit(parallelism);
+
   /**
    * @param {string} title
    * @param {function} fn
@@ -355,12 +365,15 @@ async function runTests() {
         await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
       }
 
-      result = await startGroup(
-        attempt === 1
-          ? `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`
-          : `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title} ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`,
-        fn,
-      );
+      let grouptitle = `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`;
+      if (attempt > 1) grouptitle += ` ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`;
+
+      if (parallelism > 1) {
+        console.log(grouptitle);
+        result = await fn();
+      } else {
+        result = await startGroup(grouptitle, fn);
+      }
 
       const { ok, stdoutPreview, error } = result;
       if (ok) {
@@ -375,6 +388,7 @@ async function runTests() {
       const color = attempt >= maxAttempts ? "red" : "yellow";
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
       startGroup(label, () => {
+        if (parallelism > 1) return;
         process.stderr.write(stdoutPreview);
       });
 
@@ -434,48 +448,62 @@ async function runTests() {
   }
 
   if (!failedResults.length) {
-    for (const testPath of tests) {
-      const absoluteTestPath = join(testsPath, testPath);
-      const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
-      if (isNodeTest(testPath)) {
-        const testContent = readFileSync(absoluteTestPath, "utf-8");
-        const runWithBunTest =
-          title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");
-        const subcommand = runWithBunTest ? "test" : "run";
-        const env = {
-          FORCE_COLOR: "0",
-          NO_COLOR: "1",
-          BUN_DEBUG_QUIET_LOGS: "1",
-        };
-        if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
-          env.BUN_JSC_validateExceptionChecks = "1";
-        }
-        await runTest(title, async () => {
-          const { ok, error, stdout } = await spawnBun(execPath, {
-            cwd: cwd,
-            args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
-            timeout: getNodeParallelTestTimeout(title),
-            env,
-            stdout: chunk => pipeTestStdout(process.stdout, chunk),
-            stderr: chunk => pipeTestStdout(process.stderr, chunk),
-          });
-          const mb = 1024 ** 3;
-          const stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
-          return {
-            testPath: title,
-            ok: ok,
-            status: ok ? "pass" : "fail",
-            error: error,
-            errors: [],
-            tests: [],
-            stdout: stdout,
-            stdoutPreview: stdoutPreview,
-          };
-        });
-      } else {
-        await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
-      }
-    }
+    await Promise.all(
+      tests.map(testPath =>
+        limit(() => {
+          const absoluteTestPath = join(testsPath, testPath);
+          const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
+          if (isNodeTest(testPath)) {
+            const testContent = readFileSync(absoluteTestPath, "utf-8");
+            const runWithBunTest =
+              title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");
+            const subcommand = runWithBunTest ? "test" : "run";
+            const env = {
+              FORCE_COLOR: "0",
+              NO_COLOR: "1",
+              BUN_DEBUG_QUIET_LOGS: "1",
+            };
+            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
+              env.BUN_JSC_validateExceptionChecks = "1";
+            }
+            return runTest(title, async () => {
+              const { ok, error, stdout } = await spawnBun(execPath, {
+                cwd: cwd,
+                args: [
+                  subcommand,
+                  "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"),
+                  absoluteTestPath,
+                ],
+                timeout: getNodeParallelTestTimeout(title),
+                env,
+                stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
+                stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              });
+              const mb = 1024 ** 3;
+              const stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
+              return {
+                testPath: title,
+                ok: ok,
+                status: ok ? "pass" : "fail",
+                error: error,
+                errors: [],
+                tests: [],
+                stdout: stdout,
+                stdoutPreview: stdoutPreview,
+              };
+            });
+          } else {
+            return runTest(title, async () =>
+              spawnBunTest(execPath, join("test", testPath), {
+                cwd,
+                stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
+                stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              }),
+            );
+          }
+        }),
+      ),
+    );
   }
 
   if (vendorTests?.length) {
@@ -1059,7 +1087,7 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   const env = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
   };
-  if (basename(execPath).includes("asan") && shouldValidateExceptions(relative(cwd, absPath))) {
+  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
   }
 
@@ -1068,8 +1096,8 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
     cwd: options["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
     env,
-    stdout: chunk => pipeTestStdout(process.stdout, chunk),
-    stderr: chunk => pipeTestStdout(process.stderr, chunk),
+    stdout: options.stdout,
+    stderr: options.stderr,
   });
   const { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
 

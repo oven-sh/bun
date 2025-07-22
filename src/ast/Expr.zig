@@ -3201,14 +3201,12 @@ pub fn StoredData(tag: Tag) type {
     };
 }
 
-extern fn JSC__jsToNumber(latin1_ptr: [*]const u8, len: usize) f64;
-
 fn stringToEquivalentNumberValue(str: []const u8) f64 {
     // +"" -> 0
     if (str.len == 0) return 0;
     if (!bun.strings.isAllASCII(str))
         return std.math.nan(f64);
-    return JSC__jsToNumber(str.ptr, str.len);
+    return bun.cpp.JSC__jsToNumber(str.ptr, str.len);
 }
 
 const JSPrinter = @import("../js_printer.zig");

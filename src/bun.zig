@@ -140,6 +140,7 @@ pub const sys = @import("./sys.zig");
 /// Deprecated: use bun.sys.S
 pub const S = sys.S;
 pub const O = sys.O;
+pub const AT = sys.AT;
 pub const Mode = sys.Mode;
 
 // Platform-specific system APIs. If something can be implemented on multiple

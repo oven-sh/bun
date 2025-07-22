@@ -62,6 +62,16 @@ fn toPackedO(number: anytype) std.posix.O {
 
 pub const Mode = std.posix.mode_t;
 
+pub const AT = switch (Environment.os) {
+    .mac, .wasm, .linux => std.posix.AT,
+    .windows => struct {
+        pub const REMOVEDIR = std.posix.AT.REMOVEDIR;
+        // We're making this one up, doesn't exist in the Zig standard library
+        // or Windows APIs
+        pub const SYMLINK_NOFOLLOW = 0x400;
+    },
+};
+
 pub const O = switch (Environment.os) {
     .mac => struct {
         pub const PATH = 0x0000;
@@ -880,7 +890,7 @@ pub fn lutimes(path: [:0]const u8, atime: JSC.Node.TimeLike, mtime: JSC.Node.Tim
         return sys_uv.lutimes(path, atime, mtime);
     }
 
-    return utimensWithFlags(path, atime, mtime, std.posix.AT.SYMLINK_NOFOLLOW);
+    return utimensWithFlags(path, atime, mtime, bun.AT.SYMLINK_NOFOLLOW);
 }
 
 pub fn mkdiratA(dir_fd: bun.FileDescriptor, file_path: []const u8) Maybe(void) {
@@ -2838,7 +2848,7 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
         return bun.windows.DeleteFileBun(to, .{
             .dir = if (dirfd != bun.invalid_fd) dirfd.cast() else null,
             .remove_dir = flags & std.posix.AT.REMOVEDIR != 0,
-            .follow_symlinks = flags & std.posix.AT.SYMLINK_NOFOLLOW == 0,
+            .no_follow_symlinks = flags & bun.AT.SYMLINK_NOFOLLOW != 0,
         });
     }
 

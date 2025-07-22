@@ -923,7 +923,7 @@ pub const ShellRmTask = struct {
         }
 
         debug("[removeEntryDir] remove after children {s}", .{path});
-        switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, std.posix.AT.REMOVEDIR | std.posix.AT.SYMLINK_NOFOLLOW)) {
+        switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, std.posix.AT.REMOVEDIR | bun.AT.SYMLINK_NOFOLLOW)) {
             .result => {
                 switch (this.verboseDeleted(dir_task, path)) {
                     .err => |e| return .{ .err = e },
@@ -1083,7 +1083,7 @@ pub const ShellRmTask = struct {
             }
         };
         const dirfd = this.cwd;
-        switch (ShellSyscall.unlinkatWithFlags(dirfd, path, std.posix.AT.SYMLINK_NOFOLLOW)) {
+        switch (ShellSyscall.unlinkatWithFlags(dirfd, path, bun.AT.SYMLINK_NOFOLLOW)) {
             .result => return this.verboseDeleted(parent_dir_task, path),
             .err => |e| {
                 debug("unlinkatWithFlags({s}) = {s}", .{ path, @tagName(e.getErrno()) });
@@ -1107,7 +1107,7 @@ pub const ShellRmTask = struct {
                                 // If `path` points to a directory, then it is deleted (if empty) or we handle it as a directory
                                 // If it's actually a file, we get an error so we don't need to call `stat` to check that.
                                 if (this.opts.recursive or this.opts.remove_empty_dirs) {
-                                    return switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, std.posix.AT.REMOVEDIR | std.posix.AT.SYMLINK_NOFOLLOW)) {
+                                    return switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, std.posix.AT.REMOVEDIR | bun.AT.SYMLINK_NOFOLLOW)) {
                                         // it was empty, we saved a syscall
                                         .result => return this.verboseDeleted(parent_dir_task, path),
                                         .err => |e2| {

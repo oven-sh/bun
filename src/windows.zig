@@ -3483,7 +3483,7 @@ pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv
 pub const DeleteFileOptions = struct {
     dir: ?HANDLE,
     remove_dir: bool = false,
-    follow_symlinks: bool = true,
+    no_follow_symlinks: bool = false,
 };
 
 const FILE_DISPOSITION_DELETE: ULONG = 0x00000001;
@@ -3493,10 +3493,10 @@ const FILE_DISPOSITION_ON_CLOSE: ULONG = 0x00000008;
 const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
 
 // Copy-paste of the standard library function except without unreachable.
-pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JSC.Maybe(void) {
-    const FOLLOW_SYMLINKS = if (options.follow_symlinks) FILE_OPEN_REPARSE_POINT else 0;
+pub fn DeleteFileBun(sub_path_w: [:0]const u16, options: DeleteFileOptions) bun.JSC.Maybe(void) {
+    const FOLLOW_SYMLINKS: ULONG = if (options.no_follow_symlinks) FILE_OPEN_REPARSE_POINT else 0;
     const create_options_flags: ULONG = if (options.remove_dir)
-        FILE_DIRECTORY_FILE | FOLLOW_SYMLINKS
+        windows.FILE_DIRECTORY_FILE | FOLLOW_SYMLINKS
     else
         windows.FILE_NON_DIRECTORY_FILE | FOLLOW_SYMLINKS; // would we ever want to delete the target instead? Yes, `rm` is expected to delete symlinks, not the actual files
 
@@ -3538,6 +3538,10 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
     );
     bun.sys.syslog("NtCreateFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
     if (bun.JSC.Maybe(void).errnoSys(rc, .open)) |err| {
+        const attributes = bun.sys.getFileAttributes(sub_path_w) orelse @panic("FUCK");
+        if (attributes.is_reparse_point) {
+            std.debug.print("IS REPARSE mofo!!\n", .{});
+        }
         return err;
     }
     defer _ = bun.windows.CloseHandle(tmp_handle);

@@ -37,11 +37,11 @@ pub fn PosixPipeWriter(
     return struct {
         fn tryWrite(this: *This, force_sync: bool, buf_: []const u8) WriteResult {
             return switch (if (!force_sync) getFileType(this) else .file) {
-                inline else => |ft| return tryWriteWithWriteFn(this, buf_, comptime writeToFileType(ft)),
+                inline else => |ft| return tryWriteWithWriteFn(this, buf_, force_sync, comptime writeToFileType(ft)),
             };
         }
 
-        fn tryWriteWithWriteFn(this: *This, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
+        fn tryWriteWithWriteFn(this: *This, buf: []const u8, force_sync: bool, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
             const fd = getFd(this);
 
             var offset: usize = 0;
@@ -54,6 +54,13 @@ pub fn PosixPipeWriter(
                         }
 
                         if (err.getErrno() == .PIPE) {
+                            // For process stdio (force_sync), emit EPIPE errors so they can be caught
+                            // For regular pipes, treat as completion to maintain compatibility
+                            if (force_sync) {
+                                log("EPIPE error in force_sync mode - propagating error", .{});
+                                return .{ .err = err };
+                            }
+                            log("EPIPE error in regular mode - converting to done", .{});
                             return .{ .done = offset };
                         }
 
@@ -651,7 +658,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
                     onWrite(this.parent, amt, .end_of_file);
                     return .{ .done = amt };
                 },
-                else => {},
+                else => |r| return r,
             }
 
             return rc;

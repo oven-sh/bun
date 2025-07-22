@@ -135,7 +135,9 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         for (let i = 0; i < requests.length; i++) {
           const { headers, payload } = requests[i];
 
-          const req = client.request(headers);
+          const req = client.request(headers, {
+            paddingStrategy: paddingStrategy,
+          });
 
           let response_headers = null;
           req.on("response", (headers, flags) => {

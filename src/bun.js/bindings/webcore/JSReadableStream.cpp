@@ -280,7 +280,6 @@ void JSReadableStream::destroy(JSC::JSCell* cell)
     thisObject->JSReadableStream::~JSReadableStream();
 }
 
-
 JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

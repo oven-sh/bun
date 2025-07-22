@@ -1,5 +1,4 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { expect, test } from "bun:test";
 
 test("ReadableStream.from", () => {
   expect(typeof ReadableStream.from).toBe("function");
@@ -9,12 +8,12 @@ test("ReadableStream.from", () => {
 test("ReadableStream.from() with array", async () => {
   const array = [1, 2, 3, 4, 5];
   const stream = ReadableStream.from(array);
-  
+
   expect(stream).toBeInstanceOf(ReadableStream);
-  
+
   const reader = stream.getReader();
   const results: number[] = [];
-  
+
   let done = false;
   while (!done) {
     const { value, done: isDone } = await reader.read();
@@ -23,17 +22,17 @@ test("ReadableStream.from() with array", async () => {
       results.push(value);
     }
   }
-  
+
   expect(results).toEqual([1, 2, 3, 4, 5]);
 });
 
 test("ReadableStream.from() with empty array", async () => {
   const array: number[] = [];
   const stream = ReadableStream.from(array);
-  
+
   const reader = stream.getReader();
   const { value, done } = await reader.read();
-  
+
   expect(done).toBe(true);
   expect(value).toBeUndefined();
 });
@@ -41,10 +40,10 @@ test("ReadableStream.from() with empty array", async () => {
 test("ReadableStream.from() with string (iterable)", async () => {
   const str = "hello";
   const stream = ReadableStream.from(str);
-  
+
   const reader = stream.getReader();
   const results: string[] = [];
-  
+
   let done = false;
   while (!done) {
     const { value, done: isDone } = await reader.read();
@@ -53,17 +52,17 @@ test("ReadableStream.from() with string (iterable)", async () => {
       results.push(value);
     }
   }
-  
+
   expect(results).toEqual(["h", "e", "l", "l", "o"]);
 });
 
 test("ReadableStream.from() with Set", async () => {
   const set = new Set([1, 2, 3]);
   const stream = ReadableStream.from(set);
-  
+
   const reader = stream.getReader();
   const results: number[] = [];
-  
+
   let done = false;
   while (!done) {
     const { value, done: isDone } = await reader.read();
@@ -72,17 +71,21 @@ test("ReadableStream.from() with Set", async () => {
       results.push(value);
     }
   }
-  
+
   expect(results).toEqual([1, 2, 3]);
 });
 
 test("ReadableStream.from() with Map", async () => {
-  const map = new Map([["a", 1], ["b", 2], ["c", 3]]);
+  const map = new Map([
+    ["a", 1],
+    ["b", 2],
+    ["c", 3],
+  ]);
   const stream = ReadableStream.from(map);
-  
+
   const reader = stream.getReader();
   const results: [string, number][] = [];
-  
+
   let done = false;
   while (!done) {
     const { value, done: isDone } = await reader.read();
@@ -91,8 +94,12 @@ test("ReadableStream.from() with Map", async () => {
       results.push(value);
     }
   }
-  
-  expect(results).toEqual([["a", 1], ["b", 2], ["c", 3]]);
+
+  expect(results).toEqual([
+    ["a", 1],
+    ["b", 2],
+    ["c", 3],
+  ]);
 });
 
 test("ReadableStream.from() with custom iterable", async () => {
@@ -101,14 +108,14 @@ test("ReadableStream.from() with custom iterable", async () => {
       yield 1;
       yield 2;
       yield 3;
-    }
+    },
   };
-  
+
   const stream = ReadableStream.from(customIterable);
-  
+
   const reader = stream.getReader();
   const results: number[] = [];
-  
+
   let done = false;
   while (!done) {
     const { value, done: isDone } = await reader.read();
@@ -117,7 +124,7 @@ test("ReadableStream.from() with custom iterable", async () => {
       results.push(value);
     }
   }
-  
+
   expect(results).toEqual([1, 2, 3]);
 });
 
@@ -127,14 +134,14 @@ test("ReadableStream.from() with async iterable", async () => {
       yield 1;
       yield 2;
       yield 3;
-    }
+    },
   };
-  
+
   const stream = ReadableStream.from(asyncIterable);
-  
+
   const reader = stream.getReader();
   const results: number[] = [];
-  
+
   let done = false;
   while (!done) {
     const { value, done: isDone } = await reader.read();
@@ -143,7 +150,7 @@ test("ReadableStream.from() with async iterable", async () => {
       results.push(value);
     }
   }
-  
+
   expect(results).toEqual([1, 2, 3]);
 });
 
@@ -154,11 +161,11 @@ test("ReadableStream.from() with existing ReadableStream", async () => {
       controller.enqueue(2);
       controller.enqueue(3);
       controller.close();
-    }
+    },
   });
-  
+
   const stream = ReadableStream.from(originalStream);
-  
+
   // Should return the same stream
   expect(stream).toBe(originalStream);
 });
@@ -173,23 +180,29 @@ test("ReadableStream.from() with undefined should throw", () => {
 
 test("ReadableStream.from() with non-iterable should throw", () => {
   const nonIterable = {};
-  expect(() => ReadableStream.from(nonIterable)).toThrow("ReadableStream.from() argument must be an iterable or async iterable");
+  expect(() => ReadableStream.from(nonIterable)).toThrow(
+    "ReadableStream.from() argument must be an iterable or async iterable",
+  );
 });
 
 test("ReadableStream.from() with invalid iterator method should throw", () => {
   const invalidIterable = {
-    [Symbol.iterator]: "not a function"
+    [Symbol.iterator]: "not a function",
   };
-  
-  expect(() => ReadableStream.from(invalidIterable)).toThrow("ReadableStream.from() argument's @@iterator method must be a function");
+
+  expect(() => ReadableStream.from(invalidIterable)).toThrow(
+    "ReadableStream.from() argument's @@iterator method must be a function",
+  );
 });
 
 test("ReadableStream.from() with invalid async iterator method should throw", () => {
   const invalidAsyncIterable = {
-    [Symbol.asyncIterator]: "not a function"
+    [Symbol.asyncIterator]: "not a function",
   };
-  
-  expect(() => ReadableStream.from(invalidAsyncIterable)).toThrow("ReadableStream.from() argument's @@asyncIterator method must be a function");
+
+  expect(() => ReadableStream.from(invalidAsyncIterable)).toThrow(
+    "ReadableStream.from() argument's @@asyncIterator method must be a function",
+  );
 });
 
 test("ReadableStream.from() handles iterator that throws", async () => {
@@ -197,16 +210,16 @@ test("ReadableStream.from() handles iterator that throws", async () => {
     *[Symbol.iterator]() {
       yield 1;
       throw new Error("Iterator error");
-    }
+    },
   };
-  
+
   const stream = ReadableStream.from(throwingIterable);
   const reader = stream.getReader();
-  
+
   // Should read first value successfully
   const { value } = await reader.read();
   expect(value).toBe(1);
-  
+
   // The error should be reflected in the stream's errored state
   // Since the error happens synchronously during iteration, the stream becomes errored
   await expect(reader.read()).rejects.toThrow("Iterator error");
@@ -217,16 +230,16 @@ test("ReadableStream.from() handles async iterator that throws", async () => {
     async *[Symbol.asyncIterator]() {
       yield 1;
       throw new Error("Async iterator error");
-    }
+    },
   };
-  
+
   const stream = ReadableStream.from(throwingAsyncIterable);
   const reader = stream.getReader();
-  
+
   // Should read first value successfully
   const { value } = await reader.read();
   expect(value).toBe(1);
-  
+
   // Should handle error from async iterator
   await expect(reader.read()).rejects.toThrow("Async iterator error");
 });
@@ -236,11 +249,11 @@ test("ReadableStream.from() works with Array.from() like usage", async () => {
   const stream1 = ReadableStream.from("abc");
   const stream2 = ReadableStream.from([1, 2, 3]);
   const stream3 = ReadableStream.from(new Set(["x", "y", "z"]));
-  
+
   const result1 = await new Response(stream1).text();
   const result2 = await streamToArray(stream2);
   const result3 = await streamToArray(stream3);
-  
+
   // For string, each character should be a separate chunk
   expect(result1).toBe("abc");
   expect(result2).toEqual([1, 2, 3]);
@@ -251,7 +264,7 @@ test("ReadableStream.from() works with Array.from() like usage", async () => {
 async function streamToArray(stream: ReadableStream) {
   const reader = stream.getReader();
   const results: any[] = [];
-  
+
   let done = false;
   while (!done) {
     const { value, done: isDone } = await reader.read();
@@ -260,7 +273,7 @@ async function streamToArray(stream: ReadableStream) {
       results.push(value);
     }
   }
-  
+
   return results;
 }
 
@@ -276,6 +289,6 @@ test("ReadableStream.from() integration with Response", async () => {
   const stream = ReadableStream.from(["hello", " ", "world"]);
   const response = new Response(stream);
   const text = await response.text();
-  
+
   expect(text).toBe("hello world");
 });

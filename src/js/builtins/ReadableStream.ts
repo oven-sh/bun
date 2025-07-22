@@ -537,7 +537,7 @@ export function from(asyncIterable) {
         } catch (error) {
           controller.error(error);
         }
-      }
+      },
     });
   }
 
@@ -575,7 +575,7 @@ export function from(asyncIterable) {
         } catch (error) {
           controller.error(error);
         }
-      }
+      },
     });
   } else if (iteratorMethod != null) {
     // Sync iterable
@@ -611,7 +611,7 @@ export function from(asyncIterable) {
         } catch (error) {
           controller.error(error);
         }
-      }
+      },
     });
   } else {
     throw new TypeError("ReadableStream.from() argument must be an iterable or async iterable");

@@ -6,10 +6,6 @@ pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 
 const ScriptsMap = bun.StringArrayHashMap(string);
 
-const Architecture = @import("../install/npm.zig").Architecture;
-const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
-const Libc = @import("../install/npm.zig").Libc;
-
 pub const DependencyMap = struct {
     map: HashMap = .{},
     source_buf: []const u8 = "",
@@ -2053,6 +2049,7 @@ const std = @import("std");
 const Api = @import("../api/schema.zig").Api;
 
 const Architecture = @import("../install/npm.zig").Architecture;
+const Libc = @import("../install/npm.zig").Libc;
 const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
 
 const bun = @import("bun");

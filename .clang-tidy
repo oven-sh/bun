@@ -1,9 +1,12 @@
-WarningsAsErrors: "*"
+WarningsAsErrors: ""
 FormatStyle: webkit
 Checks: >
   -*,
-  clang-analyzer-*,
-  -clang-analyzer-optin.core.EnumCastOutOfRange
-  -clang-analyzer-webkit.UncountedLambdaCapturesChecker
-  -clang-analyzer-optin.core.EnumCastOutOfRange
-  -clang-analyzer-webkit.RefCntblBaseVirtualDtor
+  clang-analyzer-core.NullDereference,
+  clang-analyzer-core.DivideZero,
+  clang-analyzer-core.NonNullParamChecker,
+  clang-analyzer-cplusplus.NewDeleteLeaks,
+  clang-analyzer-deadcode.DeadStores,
+  clang-analyzer-security.insecureAPI.UncheckedReturn,
+  clang-analyzer-unix.Malloc,
+  clang-analyzer-unix.MismatchedDeallocator

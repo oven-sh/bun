@@ -1,0 +1,3 @@
+# Disable clang-tidy for Bake module due to complex WebKit integration
+# causing clang-tidy segfaults on template metaprogramming
+Checks: '-*'

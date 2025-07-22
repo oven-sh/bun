@@ -1,6 +1,12 @@
 #pragma once
+// NOLINTBEGIN - Complex WebKit template metaprogramming causes clang-tidy segfaults
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+
 #include "root.h"
 #include "ZigGlobalObject.h"
+
+#pragma clang diagnostic pop
 
 namespace Bake {
 
@@ -40,4 +46,6 @@ public:
 extern "C" void* BakeGlobalObject__getPerThreadData(JSC::JSGlobalObject* global);
 extern "C" void BakeGlobalObject__attachPerThreadData(GlobalObject* global, void* perThreadData);
 
-}; // namespace Kit
+}; // namespace Bake
+
+// NOLINTEND

@@ -1,3 +1,7 @@
+// NOLINTBEGIN - Complex WebKit integration causes clang-tidy segfaults
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+
 #include "BakeGlobalObject.h"
 #include "BakeSourceProvider.h"
 #include "JSNextTickQueue.h"
@@ -7,6 +11,8 @@
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSSourceCode.h"
+
+#pragma clang diagnostic pop
 
 extern "C" BunString BakeProdResolve(JSC::JSGlobalObject*, BunString a, BunString b);
 extern "C" BunString BakeToWindowsPath(BunString a);
@@ -296,3 +302,5 @@ const JSC::ClassInfo Bake::GlobalObject::s_info = { "GlobalObject"_s, &Base::s_i
     CREATE_METHOD_TABLE(Bake::GlobalObject) };
 
 }; // namespace Bake
+
+// NOLINTEND

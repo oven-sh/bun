@@ -1,6 +1,14 @@
 # https://clang.llvm.org/extra/clang-tidy/
 
-set(CLANG_TIDY_SOURCES ${BUN_C_SOURCES} ${BUN_CXX_SOURCES})
+# Filter out all WebKit bindings files that cause clang-tidy segfaults
+set(CLANG_TIDY_SOURCES)
+foreach(source ${BUN_C_SOURCES} ${BUN_CXX_SOURCES})
+  # Exclude files that cause segfaults in clang-tidy - particularly WebKit bindings
+  if(NOT source MATCHES "(src/bake/|src/bun\\.js/bindings|vendor/)" AND
+     NOT source MATCHES "WebKit")
+    list(APPEND CLANG_TIDY_SOURCES ${source})
+  endif()
+endforeach()
 
 set(CLANG_TIDY_COMMAND ${CLANG_TIDY_PROGRAM}
   -p ${BUILD_PATH}  

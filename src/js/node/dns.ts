@@ -73,11 +73,7 @@ const getRuntimeDefaultResultOrderOption = $newZigFunction(
 
 function newResolver(options) {
   if (!newResolver.zig) {
-    newResolver.zig = $newZigFunction(
-      "bun.js/api/bun/dns.zig",
-      "Resolver.newResolver",
-      1,
-    );
+    newResolver.zig = $newZigFunction("bun.js/api/bun/dns.zig", "Resolver.newResolver", 1);
   }
   return newResolver.zig(options);
 }

@@ -7362,6 +7362,13 @@ declare module "bun" {
      * The promise will resolve when the process exits
      */
     readonly exited: Promise<number>;
+    /**
+     * Wait for the process to exit successfully.
+     *
+     * The promise will resolve when the process exits with an exit code of 0,
+     * and reject when the process exits with any other exit code.
+     */
+    readonly success: Promise<void>;
 
     /**
      * Synchronously get the exit code of the process

@@ -1490,6 +1490,14 @@ fn consumeExitedPromise(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) 
     return null;
 }
 
+fn consumeSuccessPromise(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) ?JSValue {
+    if (JSC.Codegen.JSSubprocess.successPromiseGetCached(this_jsvalue)) |promise| {
+        JSC.Codegen.JSSubprocess.successPromiseSetCached(this_jsvalue, globalThis, .zero);
+        return promise;
+    }
+    return null;
+}
+
 fn consumeOnExitCallback(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) ?JSValue {
     if (JSC.Codegen.JSSubprocess.onExitCallbackGetCached(this_jsvalue)) |callback| {
         JSC.Codegen.JSSubprocess.onExitCallbackSetCached(this_jsvalue, globalThis, .zero);
@@ -1601,6 +1609,41 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                     .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
                     .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)),
                     .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
+                    else => {
+                        // crash in debug mode
+                        if (comptime Environment.allow_assert)
+                            unreachable;
+                    },
+                }
+            }
+
+            if (consumeSuccessPromise(this_jsvalue, globalThis)) |promise| {
+                loop.enter();
+                defer loop.exit();
+
+                if (!did_update_has_pending_activity) {
+                    this.updateHasPendingActivity();
+                    did_update_has_pending_activity = true;
+                }
+
+                switch (status) {
+                    .exited => |exited| {
+                        if (exited.code != 0) {
+                            promise.asAnyPromise().?.reject(globalThis, globalThis.createErrorInstance("Shell error", .{}));
+                        } else {
+                            promise.asAnyPromise().?.resolve(globalThis, undefined);
+                        }
+                    },
+                    .err => |err| {
+                        promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis));
+                    },
+                    .signaled => {
+                        if (128 +% @intFromEnum(status.signaled) != 0) {
+                            promise.asAnyPromise().?.reject(globalThis, globalThis.createErrorInstance("Shell error", .{}));
+                        } else {
+                            promise.asAnyPromise().?.resolve(globalThis, undefined);
+                        }
+                    },
                     else => {
                         // crash in debug mode
                         if (comptime Environment.allow_assert)
@@ -1759,6 +1802,41 @@ pub fn getExited(
         else => {
             const promise = JSC.JSPromise.create(globalThis).toJS();
             JSC.Codegen.JSSubprocess.exitedPromiseSetCached(this_value, globalThis, promise);
+            return promise;
+        },
+    }
+}
+
+pub fn getSuccess(
+    this: *Subprocess,
+    this_value: JSValue,
+    globalThis: *JSGlobalObject,
+) JSValue {
+    if (JSC.Codegen.JSSubprocess.successPromiseGetCached(this_value)) |promise| {
+        return promise;
+    }
+
+    switch (this.process.status) {
+        .exited => |exit| {
+            if (exit.code != 0) {
+                // TODO: this should be a real `ShellError`?
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Shell error", .{}));
+            }
+            return JSC.JSPromise.resolvedPromiseValue(globalThis, undefined);
+        },
+        .signaled => |signal| {
+            if ((signal.toExitCode() orelse 254) != 0) {
+                // TODO: this should be a real `ShellError`?
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Shell error", .{}));
+            }
+            return JSC.JSPromise.resolvedPromiseValue(globalThis, undefined);
+        },
+        .err => |err| {
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+        },
+        else => {
+            const promise = JSC.JSPromise.create(globalThis).asValue(globalThis);
+            JSC.Codegen.JSSubprocess.successPromiseSetCached(this_value, globalThis, promise);
             return promise;
         },
     }

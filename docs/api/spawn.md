@@ -197,6 +197,16 @@ proc.exitCode; // null | number
 proc.signalCode; // null | "SIGABRT" | "SIGALRM" | ...
 ```
 
+Similarly, the `success` property is a `Promise` that resolves or rejects based
+on the exit code when the process exits. This provides an easy way to spawn and
+wait on a command that must succeed before the program continues.
+
+```ts
+const proc = Bun.spawn(["bun", "--version"]);
+
+await proc.success; // Wait for the process to exit successfully, else error.
+```
+
 To kill a process:
 
 ```ts

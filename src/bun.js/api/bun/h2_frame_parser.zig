@@ -719,6 +719,7 @@ pub const H2FrameParser = struct {
     ref_count: RefCount,
 
     auto_flusher: AutoFlusher = .{},
+    paddingStrategy: PaddingStrategy = .none,
 
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
     /// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
@@ -3967,6 +3968,7 @@ pub const H2FrameParser = struct {
         const stream = this.handleReceivedStreamID(stream_id) orelse {
             return jsc.JSValue.jsNumber(-1);
         };
+        stream.paddingStrategy = this.paddingStrategy;
         if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
             stream.setContext(stream_ctx_arg, globalObject);
         }
@@ -4403,6 +4405,15 @@ pub const H2FrameParser = struct {
                 if (try settings_js.get(globalObject, "maxSendHeaderBlockLength")) |max_send_header_block_length| {
                     if (max_send_header_block_length.isNumber()) {
                         this.maxSendHeaderBlockLength = @bitCast(max_send_header_block_length.toInt32());
+                    }
+                }
+                if (try settings_js.get(globalObject, "paddingStrategy")) |padding_strategy| {
+                    if (padding_strategy.isNumber()) {
+                        this.paddingStrategy = switch (padding_strategy.to(u32)) {
+                            1 => .aligned,
+                            2 => .max,
+                            else => .none,
+                        };
                     }
                 }
             }

@@ -1,16 +1,8 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const validators = @import("./../util/validators.zig");
-const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
-const sockaddr = SocketAddress.sockaddr;
-
 const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
 pub const new = bun.TrivialNew(@This());
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
-const js = JSC.Codegen.JSBlockList;
 pub const fromJS = js.fromJS;
 pub const toJS = js.toJS;
 
@@ -233,3 +225,13 @@ fn _compare(l: sockaddr, r: sockaddr) ?std.math.Order {
 fn _compare_ipv6(l: sockaddr.in6, r: sockaddr.in6) std.math.Order {
     return std.math.order(@byteSwap((@as(u128, @bitCast(l.addr)))), @byteSwap((@as(u128, @bitCast(r.addr)))));
 }
+
+const std = @import("std");
+const validators = @import("../util/validators.zig");
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const js = JSC.Codegen.JSBlockList;
+
+const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
+const sockaddr = SocketAddress.sockaddr;

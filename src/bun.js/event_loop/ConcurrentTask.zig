@@ -7,6 +7,7 @@
 //!
 //! If `auto_delete` is true, the task is automatically deallocated when it's finished.
 //! Otherwise, it's expected that the containing struct will deallocate the task.
+
 const ConcurrentTask = @This();
 
 task: Task = undefined,
@@ -51,9 +52,10 @@ pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *Concur
     return this;
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");
+const UnboundedQueue = bun.threading.UnboundedQueue;
+
 const JSC = bun.JSC;
-const Task = JSC.Task;
-const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const ManagedTask = JSC.ManagedTask;
+const Task = JSC.Task;

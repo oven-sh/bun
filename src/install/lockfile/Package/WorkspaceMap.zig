@@ -1,3 +1,5 @@
+const WorkspaceMap = @This();
+
 map: Map,
 
 const Map = bun.StringArrayHashMap(Entry);
@@ -375,21 +377,24 @@ fn ignoredWorkspacePaths(path: []const u8) bool {
 }
 const GlobWalker = Glob.GlobWalker(ignoredWorkspacePaths, Glob.walk.SyscallAccessor, false);
 
-const WorkspaceMap = @This();
-const bun = @import("bun");
-const std = @import("std");
-const logger = bun.logger;
-const Environment = bun.Environment;
-const Output = bun.Output;
-const PackageManager = bun.install.PackageManager;
-const JSAst = bun.JSAst;
 const string = []const u8;
 const debug = Output.scoped(.Lockfile, true);
+const stringZ = [:0]const u8;
+
+const std = @import("std");
 const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Glob = bun.glob;
+const JSAst = bun.JSAst;
+const Output = bun.Output;
+const Path = bun.path;
+const logger = bun.logger;
+const strings = bun.strings;
+
 const install = bun.install;
+const PackageManager = bun.install.PackageManager;
+
 const Lockfile = install.Lockfile;
 const StringBuilder = Lockfile.StringBuilder;
-const Glob = bun.glob;
-const stringZ = [:0]const u8;
-const Path = bun.path;
-const strings = bun.strings;

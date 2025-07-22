@@ -1,5 +1,3 @@
-const std = @import("std");
-
 pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
     switch (max_bytes) {
         1, 2, 4, 8, 12, 16 => {},
@@ -70,3 +68,5 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
         }
     };
 }
+
+const std = @import("std");

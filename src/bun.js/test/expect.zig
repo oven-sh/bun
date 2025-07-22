@@ -1,23 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const default_allocator = bun.default_allocator;
-const string = bun.string;
-const MutableString = bun.MutableString;
-const strings = bun.strings;
-const Output = bun.Output;
-const jest = bun.JSC.Jest;
-const Jest = jest.Jest;
-const TestRunner = jest.TestRunner;
-const DescribeScope = jest.DescribeScope;
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const CallFrame = JSC.CallFrame;
-const ZigString = JSC.ZigString;
-const Environment = bun.Environment;
-const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
-
 pub const Counter = struct {
     expected: u32 = 0,
     actual: u32 = 0,
@@ -5700,8 +5680,6 @@ fn incrementExpectCallCounter() void {
     active_test_expectation_counter.actual += 1;
 }
 
-const assert = bun.assert;
-
 fn testTrimLeadingWhitespaceForSnapshot(src: []const u8, expected: []const u8) !void {
     const cpy = try std.testing.allocator.alloc(u8, src.len);
     defer std.testing.allocator.free(cpy);
@@ -5811,3 +5789,27 @@ test "Expect.trimLeadingWhitespaceForInlineSnapshot" {
 test "fuzz Expect.trimLeadingWhitespaceForInlineSnapshot" {
     try std.testing.fuzz(testOne, .{});
 }
+
+const std = @import("std");
+const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const CallFrame = JSC.CallFrame;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VirtualMachine = JSC.VirtualMachine;
+const ZigString = JSC.ZigString;
+
+const jest = bun.JSC.Jest;
+const DescribeScope = jest.DescribeScope;
+const Jest = jest.Jest;
+const TestRunner = jest.TestRunner;

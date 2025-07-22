@@ -288,7 +288,10 @@ comptime {
     @export(&jsFunctionFindSourceMap, .{ .name = "Bun__JSSourceMap__find" });
 }
 
-// @sortImports
+pub const js = JSC.Codegen.JSSourceMap;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;
 
 const std = @import("std");
 
@@ -299,8 +302,3 @@ const JSC = bun.JSC;
 const CallFrame = JSC.CallFrame;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-
-pub const js = JSC.Codegen.JSSourceMap;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
-pub const toJS = js.toJS;

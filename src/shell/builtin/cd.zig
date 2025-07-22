@@ -2,6 +2,9 @@
 //! - `cd` by itself or `cd ~` will always put the user in their home directory.
 //! - `cd ~username` will put the user in the home directory of the specified user
 //! - `cd -` will put the user in the previous directory
+
+const Cd = @This();
+
 state: union(enum) {
     idle,
     waiting_write_stderr,
@@ -114,15 +117,17 @@ pub fn deinit(this: *Cd) void {
 
 // --
 const log = bun.Output.scoped(.Cd, true);
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
+
 const interpreter = @import("../interpreter.zig");
-const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Cd = @This();
-const JSC = bun.JSC;
 const std = @import("std");
 
+const Interpreter = interpreter.Interpreter;
+const Builtin = Interpreter.Builtin;
+
+const bun = @import("bun");
+const JSC = bun.JSC;
 const Syscall = bun.sys;
 const assert = bun.assert;
+
+const shell = bun.shell;
+const Yield = bun.shell.Yield;

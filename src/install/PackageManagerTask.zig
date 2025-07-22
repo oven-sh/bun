@@ -351,9 +351,21 @@ pub const Request = union {
     },
 };
 
-// @sortImports
-
 const std = @import("std");
+
+const install = @import("./install.zig");
+const DependencyID = install.DependencyID;
+const ExtractData = install.ExtractData;
+const ExtractTarball = install.ExtractTarball;
+const NetworkTask = install.NetworkTask;
+const Npm = install.Npm;
+const PackageID = install.PackageID;
+const PackageManager = install.PackageManager;
+const PatchTask = install.PatchTask;
+const Repository = install.Repository;
+const Resolution = install.Resolution;
+const Task = install.Task;
+const invalid_package_id = install.invalid_package_id;
 
 const bun = @import("bun");
 const DotEnv = bun.DotEnv;
@@ -368,17 +380,3 @@ const File = bun.sys.File;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;
-
-const install = @import("install.zig");
-const DependencyID = install.DependencyID;
-const ExtractData = install.ExtractData;
-const ExtractTarball = install.ExtractTarball;
-const NetworkTask = install.NetworkTask;
-const Npm = install.Npm;
-const PackageID = install.PackageID;
-const PackageManager = install.PackageManager;
-const PatchTask = install.PatchTask;
-const Repository = install.Repository;
-const Resolution = install.Resolution;
-const Task = install.Task;
-const invalid_package_id = install.invalid_package_id;

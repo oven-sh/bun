@@ -27,7 +27,7 @@ const testRoot = process.env.NODE_TEST_DIR ?
 // Using a `.` prefixed name, which is the convention for "hidden" on POSIX,
 // gets tools to ignore it by default or by simple rules, especially eslint.
 const tmpdirName = '.tmp.' +
-  (process.env.TEST_SERIAL_ID || process.env.TEST_THREAD_ID || '0');
+  (process.env.TEST_SERIAL_ID || process.env.TEST_THREAD_ID || process.pid);
 const tmpPath = path.join(testRoot, tmpdirName);
 
 let firstRefresh = true;

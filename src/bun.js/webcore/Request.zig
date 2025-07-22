@@ -1,4 +1,5 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Request
+
 const Request = @This();
 
 url: bun.String = bun.String.empty,
@@ -955,30 +956,31 @@ pub fn setTimeout(
     _ = this.request_context.setTimeout(seconds);
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const MimeType = bun.http.MimeType;
-const JSC = bun.JSC;
-
-const Method = @import("../../http/Method.zig").Method;
-const FetchRedirect = @import("../../http/FetchRedirect.zig").FetchRedirect;
-const FetchHeaders = bun.webcore.FetchHeaders;
-const AbortSignal = JSC.WebCore.AbortSignal;
-const Output = bun.Output;
-const strings = bun.strings;
-const string = bun.string;
-const default_allocator = bun.default_allocator;
-
 const Environment = @import("../../env.zig");
-const ZigString = JSC.ZigString;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
+const std = @import("std");
+const FetchRedirect = @import("../../http/FetchRedirect.zig").FetchRedirect;
+const Method = @import("../../http/Method.zig").Method;
 
+const bun = @import("bun");
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
 const uws = bun.uws;
+const FetchHeaders = bun.webcore.FetchHeaders;
+const MimeType = bun.http.MimeType;
 
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
+
+const AbortSignal = JSC.WebCore.AbortSignal;
+const Response = JSC.WebCore.Response;
+
+const Blob = JSC.WebCore.Blob;
 const InlineBlob = JSC.WebCore.Blob.Inline;
 const InternalBlob = JSC.WebCore.Blob.Internal;
-const BodyMixin = JSC.WebCore.Body.Mixin;
+
 const Body = JSC.WebCore.Body;
-const Blob = JSC.WebCore.Blob;
-const Response = JSC.WebCore.Response;
+const BodyMixin = JSC.WebCore.Body.Mixin;

@@ -1,27 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-
-const logger = bun.logger;
-const options = @import("options.zig");
-const js_ast = bun.JSAst;
-
-const Command = @import("cli.zig").Command;
-const transpiler = bun.transpiler;
-const which = @import("which.zig").which;
-const JSC = bun.JSC;
-const AsyncHTTP = bun.http.AsyncHTTP;
-const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
-const DNSResolver = @import("bun.js/api/bun/dns_resolver.zig").DNSResolver;
-
-const OpaqueWrap = JSC.OpaqueWrap;
-const VirtualMachine = JSC.VirtualMachine;
-
 var run: Run = undefined;
 pub const Run = struct {
     ctx: Command.Context,
@@ -490,19 +466,15 @@ pub const Run = struct {
         vm.globalExit();
     }
 
-    extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
-    /// add `gc()` to `globalThis`.
-    extern fn JSC__JSGlobalObject__addGc(*JSC.JSGlobalObject) void;
-
     fn addConditionalGlobals(this: *Run) void {
         const vm = this.vm;
         const runtime_options: *const Command.RuntimeOptions = &this.ctx.runtime_options;
 
         if (runtime_options.eval.script.len > 0) {
-            Bun__ExposeNodeModuleGlobals(vm.global);
+            bun.cpp.Bun__ExposeNodeModuleGlobals(vm.global);
         }
         if (runtime_options.expose_gc) {
-            JSC__JSGlobalObject__addGc(vm.global);
+            bun.cpp.JSC__JSGlobalObject__addGc(vm.global);
         }
     }
 };
@@ -544,3 +516,25 @@ pub noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
     dumpBuildError(vm);
     Global.exit(1);
 }
+
+const options = @import("./options.zig");
+const std = @import("std");
+const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
+const Command = @import("./cli.zig").Command;
+const DNSResolver = @import("./bun.js/api/bun/dns_resolver.zig").DNSResolver;
+const which = @import("./which.zig").which;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.JSAst;
+const logger = bun.logger;
+const string = bun.string;
+const strings = bun.strings;
+const transpiler = bun.transpiler;
+const AsyncHTTP = bun.http.AsyncHTTP;
+
+const JSC = bun.JSC;
+const OpaqueWrap = JSC.OpaqueWrap;
+const VirtualMachine = JSC.VirtualMachine;

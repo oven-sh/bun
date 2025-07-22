@@ -217,7 +217,8 @@ pub fn compress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.ArrayLis
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const zlib = bun.zlib;
 const JSC = bun.JSC;
 const libdeflate = bun.libdeflate;
+const zlib = bun.zlib;

@@ -1,3 +1,5 @@
+const Yes = @This();
+
 state: enum { idle, waiting_write_err, waiting_io, err, done } = .idle,
 expletive: []const u8 = "y",
 task: YesTask = undefined,
@@ -163,13 +165,16 @@ pub const YesTask = struct {
 };
 
 // --
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
+
 const interpreter = @import("../interpreter.zig");
+const std = @import("std");
+
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const IO = shell.IO;
-const Yes = @This();
+
+const bun = @import("bun");
 const JSC = bun.JSC;
-const std = @import("std");
+
+const shell = bun.shell;
+const IO = shell.IO;
+const Yield = bun.shell.Yield;

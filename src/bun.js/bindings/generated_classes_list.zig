@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const jsc = bun.JSC;
-const api = bun.api;
-const node = api.node;
-const webcore = bun.webcore;
-
 pub const Classes = struct {
     pub const Blob = webcore.Blob;
     pub const HTMLRewriter = api.HTMLRewriter.HTMLRewriter;
@@ -91,3 +85,10 @@ pub const Classes = struct {
     pub const NativeZstd = api.NativeZstd;
     pub const SourceMap = bun.sourcemap.JSSourceMap;
 };
+
+const bun = @import("bun");
+const jsc = bun.JSC;
+const webcore = bun.webcore;
+
+const api = bun.api;
+const node = api.node;

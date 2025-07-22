@@ -5615,7 +5615,9 @@ const DirectoryWatchStore = struct {
             entry.dir,
         });
 
-        store.owner().bun_watcher.removeAtIndex(entry.watch_index, 0, &.{}, .file);
+        const dev = store.owner();
+        dev.bun_watcher.removeAtIndex(entry.watch_index, 0, &.{}, .file);
+        dev.bun_watcher.flushEvictions();
 
         defer if (entry.dir_fd_owned) entry.dir.close();
 

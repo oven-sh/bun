@@ -83,10 +83,8 @@ pub const DiffFormatter = struct {
     }
 };
 
-// @sortImports
-
 const std = @import("std");
-const printDiffMain = @import("diff/printDiff.zig").printDiffMain;
+const printDiffMain = @import("./diff/printDiff.zig").printDiffMain;
 
 const bun = @import("bun");
 const MutableString = bun.MutableString;

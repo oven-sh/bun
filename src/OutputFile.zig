@@ -1,3 +1,5 @@
+const OutputFile = @This();
+
 // Instead of keeping files in-memory, we:
 // 1. Write directly to disk
 // 2. (Optional) move the file to the destination
@@ -20,8 +22,24 @@ side: ?bun.bake.Side,
 /// This is only set for the JS bundle, and not files associated with an
 /// entrypoint like sourcemaps and bytecode
 entry_point_index: ?u32,
-referenced_css_files: []const Index = &.{},
+referenced_css_chunks: []const Index = &.{},
 source_index: Index.Optional = .none,
+bake_extra: BakeExtra = .{},
+
+pub const zero_value = OutputFile{
+    .loader = .file,
+    .src_path = Fs.Path.init(""),
+    .value = .noop,
+    .output_kind = .chunk,
+    .side = null,
+    .entry_point_index = null,
+};
+
+pub const BakeExtra = struct {
+    is_route: bool = false,
+    fully_static: bool = false,
+    bake_is_runtime: bool = false,
+};
 
 pub const Index = bun.GenericIndex(u32, OutputFile);
 
@@ -30,7 +48,7 @@ pub fn deinit(this: *OutputFile) void {
 
     bun.default_allocator.free(this.src_path.text);
     bun.default_allocator.free(this.dest_path);
-    bun.default_allocator.free(this.referenced_css_files);
+    bun.default_allocator.free(this.referenced_css_chunks);
 }
 
 // Depending on:
@@ -97,6 +115,13 @@ pub const Value = union(Kind) {
             .noop => {},
             .pending => {},
         }
+    }
+
+    pub fn asSlice(v: Value) []const u8 {
+        return switch (v) {
+            .buffer => |buf| buf.bytes,
+            else => "",
+        };
     }
 
     pub fn toBunString(v: Value) bun.String {
@@ -206,7 +231,8 @@ pub const Options = struct {
     },
     side: ?bun.bake.Side,
     entry_point_index: ?u32,
-    referenced_css_files: []const Index = &.{},
+    referenced_css_chunks: []const Index = &.{},
+    bake_extra: BakeExtra = .{},
 };
 
 pub fn init(options: Options) OutputFile {
@@ -240,7 +266,8 @@ pub fn init(options: Options) OutputFile {
         },
         .side = options.side,
         .entry_point_index = options.entry_point_index,
-        .referenced_css_files = options.referenced_css_files,
+        .referenced_css_chunks = options.referenced_css_chunks,
+        .bake_extra = options.bake_extra,
     };
 }
 
@@ -489,16 +516,16 @@ pub fn toBlob(
     };
 }
 
-const OutputFile = @This();
 const string = []const u8;
-const FileDescriptorType = bun.FileDescriptor;
 
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Fs = bun.fs;
-const Loader = @import("./options.zig").Loader;
-const resolver = @import("./resolver/resolver.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
+const resolver = @import("./resolver/resolver.zig");
+const std = @import("std");
+const Loader = @import("./options.zig").Loader;
 const Output = @import("./Global.zig").Output;
+
+const bun = @import("bun");
 const Environment = bun.Environment;
+const FileDescriptorType = bun.FileDescriptor;
+const Fs = bun.fs;
+const JSC = bun.JSC;

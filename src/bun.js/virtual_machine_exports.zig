@@ -172,7 +172,6 @@ export fn Bun__getVerboseFetchValue() i32 {
     };
 }
 
-const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
 export fn Bun__addBakeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
     var sfb = std.heap.stackFallback(4096, bun.default_allocator);
     const slice = specifier.toUTF8(sfb.get());
@@ -211,11 +210,14 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject,
     return JSValue.jsNumber(prev);
 }
 
+const IPC = @import("./ipc.zig");
 const std = @import("std");
+
 const bun = @import("bun");
+const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
+const PluginRunner = bun.transpiler.PluginRunner;
+
 const JSC = bun.jsc;
-const VirtualMachine = JSC.VirtualMachine;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const PluginRunner = bun.transpiler.PluginRunner;
-const IPC = @import("ipc.zig");
+const VirtualMachine = JSC.VirtualMachine;

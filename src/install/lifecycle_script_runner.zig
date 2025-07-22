@@ -1,16 +1,3 @@
-const bun = @import("bun");
-const Lockfile = @import("./lockfile.zig");
-const std = @import("std");
-const PackageManager = @import("./install.zig").PackageManager;
-const Environment = bun.Environment;
-const Output = bun.Output;
-const Global = bun.Global;
-const JSC = bun.JSC;
-const Timer = std.time.Timer;
-const string = bun.string;
-const Store = bun.install.Store;
-
-const Process = bun.spawn.Process;
 const log = Output.scoped(.Script, false);
 pub const LifecycleScriptSubprocess = struct {
     package_name: string,
@@ -413,13 +400,7 @@ pub const LifecycleScriptSubprocess = struct {
                                 Lockfile.Scripts.names[new_script_index],
                                 @errorName(err),
                             });
-                            if (this.ctx) |this_ctx| {
-                                this_ctx.installer.store.entries.items(.step)[this_ctx.entry_id.get()].store(.done, .monotonic);
-                                this_ctx.installer.onTaskComplete(this_ctx.entry_id, .fail);
-                            }
-                            _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
-                            this.deinit();
-                            return;
+                            Global.exit(1);
                         };
                         return;
                     }
@@ -577,12 +558,21 @@ pub const LifecycleScriptSubprocess = struct {
                 Lockfile.Scripts.names[list.first_index],
                 @errorName(err),
             });
-            if (lifecycle_subprocess.ctx) |subprocess_ctx| {
-                subprocess_ctx.installer.store.entries.items(.step)[subprocess_ctx.entry_id.get()].store(.done, .monotonic);
-                subprocess_ctx.installer.onTaskComplete(subprocess_ctx.entry_id, .fail);
-            }
-            _ = manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
-            lifecycle_subprocess.deinit();
+            Global.exit(1);
         };
     }
 };
+
+const Lockfile = @import("./lockfile.zig");
+const std = @import("std");
+const PackageManager = @import("./install.zig").PackageManager;
+const Timer = std.time.Timer;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSC = bun.JSC;
+const Output = bun.Output;
+const string = bun.string;
+const Process = bun.spawn.Process;
+const Store = bun.install.Store;

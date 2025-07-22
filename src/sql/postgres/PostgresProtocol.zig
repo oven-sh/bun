@@ -21,8 +21,6 @@ pub fn writeQuery(query: []const u8, comptime Context: type, writer: NewWriter(C
     try writer.string(query);
 }
 
-// @sortImports
-
 pub const ArrayList = @import("./protocol/ArrayList.zig");
 pub const BackendKeyData = @import("./protocol/BackendKeyData.zig");
 pub const CommandComplete = @import("./protocol/CommandComplete.zig");
@@ -46,8 +44,6 @@ pub const SASLInitialResponse = @import("./protocol/SASLInitialResponse.zig");
 pub const SASLResponse = @import("./protocol/SASLResponse.zig");
 pub const StackReader = @import("./protocol/StackReader.zig");
 pub const StartupMessage = @import("./protocol/StartupMessage.zig");
-const std = @import("std");
-const types = @import("./PostgresTypes.zig");
 pub const Authentication = @import("./protocol/Authentication.zig").Authentication;
 pub const ColumnIdentifier = @import("./protocol/ColumnIdentifier.zig").ColumnIdentifier;
 pub const DecoderWrap = @import("./protocol/DecoderWrap.zig").DecoderWrap;
@@ -57,6 +53,9 @@ pub const NewReader = @import("./protocol/NewReader.zig").NewReader;
 pub const NewWriter = @import("./protocol/NewWriter.zig").NewWriter;
 pub const PortalOrPreparedStatement = @import("./protocol/PortalOrPreparedStatement.zig").PortalOrPreparedStatement;
 pub const WriteWrap = @import("./protocol/WriteWrap.zig").WriteWrap;
+
+const std = @import("std");
+const types = @import("./PostgresTypes.zig");
 const toBytes = std.mem.toBytes;
 
 const int_types = @import("./types/int_types.zig");

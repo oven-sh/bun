@@ -1,16 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const builtin = @import("builtin");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
-const JSC = bun.JSC;
-const JSValue = bun.JSC.JSValue;
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const Syscall = @import("../sys.zig");
-const Glob = @import("../glob.zig");
-const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
-const isAllAscii = @import("../string_immutable.zig").isAllASCII;
-
 pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");
 
@@ -3625,8 +3612,6 @@ pub const CmdEnvIter = struct {
     }
 };
 
-const ExpansionStr = union(enum) {};
-
 pub const Test = struct {
     pub const TestToken = union(TokenTag) {
         // |
@@ -3781,7 +3766,7 @@ pub fn handleTemplateValue(
             return;
         }
 
-        if (JSC.WebCore.ReadableStream.fromJS(template_value, globalThis)) |rstream| {
+        if (try JSC.WebCore.ReadableStream.fromJS(template_value, globalThis)) |rstream| {
             _ = rstream;
 
             const idx = out_jsobjs.items.len;
@@ -4438,6 +4423,22 @@ pub const TestingAPIs = struct {
     }
 };
 
+pub const ShellSubprocess = @import("./subproc.zig").ShellSubprocess;
+
+const Glob = @import("../glob.zig");
+const Syscall = @import("../sys.zig");
+const builtin = @import("builtin");
+
+const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
+const isAllAscii = @import("../string_immutable.zig").isAllASCII;
+
+const bun = @import("bun");
 const assert = bun.assert;
 
-pub const ShellSubprocess = @import("subproc.zig").ShellSubprocess;
+const JSC = bun.JSC;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
+const JSValue = bun.JSC.JSValue;
+
+const std = @import("std");
+const ArrayList = std.ArrayList;
+const Allocator = std.mem.Allocator;

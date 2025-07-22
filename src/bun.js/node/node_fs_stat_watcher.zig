@@ -1,21 +1,3 @@
-const std = @import("std");
-const JSC = bun.JSC;
-const bun = @import("bun");
-const Fs = @import("../../fs.zig");
-const Path = @import("../../resolver/resolve_path.zig");
-
-const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
-const EventLoopTimer = @import("../api/Timer.zig").EventLoopTimer;
-const VirtualMachine = JSC.VirtualMachine;
-const EventLoop = JSC.EventLoop;
-const PathLike = JSC.Node.PathLike;
-const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
-const Output = bun.Output;
-const string = bun.string;
-
-const StatsSmall = bun.JSC.Node.StatsSmall;
-const StatsBig = bun.JSC.Node.StatsBig;
-
 const log = bun.Output.scoped(.StatWatcher, false);
 
 fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: *const bun.Stat, bigint: bool) bun.JSError!JSC.JSValue {
@@ -35,7 +17,7 @@ pub const StatWatcherScheduler = struct {
     watchers: WatcherQueue = WatcherQueue{},
 
     event_loop_timer: EventLoopTimer = .{
-        .next = .{},
+        .next = .epoch,
         .tag = .StatWatcherScheduler,
     },
 
@@ -517,3 +499,22 @@ pub const StatWatcher = struct {
         return this;
     }
 };
+
+const Fs = @import("../../fs.zig");
+const Path = @import("../../resolver/resolve_path.zig");
+const std = @import("std");
+const EventLoopTimer = @import("../api/Timer.zig").EventLoopTimer;
+
+const bun = @import("bun");
+const Output = bun.Output;
+const string = bun.string;
+const UnboundedQueue = bun.threading.UnboundedQueue;
+
+const JSC = bun.JSC;
+const EventLoop = JSC.EventLoop;
+const VirtualMachine = JSC.VirtualMachine;
+const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
+
+const PathLike = JSC.Node.PathLike;
+const StatsBig = bun.JSC.Node.StatsBig;
+const StatsSmall = bun.JSC.Node.StatsSmall;

@@ -1,4 +1,5 @@
 const NodeHTTPResponse = @This();
+
 const log = bun.Output.scoped(.NodeHTTPResponse, false);
 
 pub const js = JSC.Codegen.JSNodeHTTPResponse;
@@ -729,7 +730,7 @@ fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event
 
         const bytes: JSC.JSValue = brk: {
             if (chunk.len > 0 and this.buffered_request_body_data_during_pause.len > 0) {
-                const buffer = JSC.JSValue.createBufferFromLength(globalThis, chunk.len + this.buffered_request_body_data_during_pause.len);
+                const buffer = JSC.JSValue.createBufferFromLength(globalThis, chunk.len + this.buffered_request_body_data_during_pause.len) catch return; // TODO: properly propagate exception upwards
                 this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
                 if (buffer.asArrayBuffer(globalThis)) |array_buffer| {
                     var input = array_buffer.slice();
@@ -1127,17 +1128,21 @@ pub export fn Bun__NodeHTTPResponse_setClosed(response: *NodeHTTPResponse) void 
     response.flags.socket_closed = true;
 }
 
+const string = []const u8;
+
+const std = @import("std");
+const HTTPStatusText = @import("../server.zig").HTTPStatusText;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const HTTP = bun.http;
+const Output = bun.Output;
+const uws = bun.uws;
+
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const JSC = bun.JSC;
-const bun = @import("bun");
-const string = []const u8;
-const Environment = bun.Environment;
-const std = @import("std");
 const ZigString = JSC.ZigString;
-const uws = bun.uws;
-const Output = bun.Output;
+
 const AnyServer = JSC.API.AnyServer;
-const HTTP = bun.http;
-const HTTPStatusText = @import("../server.zig").HTTPStatusText;
 const ServerWebSocket = JSC.API.ServerWebSocket;

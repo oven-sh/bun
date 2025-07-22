@@ -40,13 +40,13 @@ pub fn runOnJSThread(this: *DeferredBatchTask) void {
             completion.result == .err
         else
             false,
-    );
+    ) catch return;
 }
-
-const bun = @import("bun");
-const Environment = bun.Environment;
 
 pub const Ref = @import("../ast/base.zig").Ref;
 
 pub const Index = @import("../ast/base.zig").Index;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
 const JSC = bun.JSC;

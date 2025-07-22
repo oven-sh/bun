@@ -359,7 +359,5 @@ pub fn printDiff(
     try printDiffFooter(writer, enable_ansi_colors, original_diff_lines, changed_diff_lines);
 }
 
-// @sortImports
-
-const diff_match_patch = @import("diff_match_patch.zig");
+const diff_match_patch = @import("./diff_match_patch.zig");
 const std = @import("std");

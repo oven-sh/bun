@@ -1,12 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const VM = JSC.VM;
-const ZigString = JSC.ZigString;
-const Api = @import("../../api/schema.zig").Api;
-const StringPointer = Api.StringPointer;
-
 pub const FetchHeaders = opaque {
     extern fn WebCore__FetchHeaders__append(arg0: *FetchHeaders, arg1: *const ZigString, arg2: *const ZigString, arg3: *JSGlobalObject) void;
     extern fn WebCore__FetchHeaders__cast_(JSValue0: JSValue, arg1: *VM) ?*FetchHeaders;
@@ -56,19 +47,16 @@ pub const FetchHeaders = opaque {
     /// Throws an exception if invalid.
     ///
     /// If empty, returns null.
-    pub fn createFromJS(
-        global: *JSGlobalObject,
-        value: JSValue,
-    ) ?*FetchHeaders {
-        return WebCore__FetchHeaders__createFromJS(global, value);
+    pub fn createFromJS(global: *JSGlobalObject, value: JSValue) bun.JSError!?*FetchHeaders {
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), WebCore__FetchHeaders__createFromJS, .{ global, value });
     }
 
-    pub fn putDefault(this: *FetchHeaders, name_: HTTPHeaderName, value: []const u8, global: *JSGlobalObject) void {
+    pub fn putDefault(this: *FetchHeaders, name_: HTTPHeaderName, value: []const u8, global: *JSGlobalObject) bun.JSError!void {
         if (this.fastHas(name_)) {
             return;
         }
 
-        this.put(name_, value, global);
+        try this.put(name_, value, global);
     }
 
     pub fn from(
@@ -157,8 +145,8 @@ pub const FetchHeaders = opaque {
         name_: HTTPHeaderName,
         value: []const u8,
         global: *JSGlobalObject,
-    ) void {
-        WebCore__FetchHeaders__put(this, name_, &ZigString.init(value), global);
+    ) bun.JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), WebCore__FetchHeaders__put, .{ this, name_, &ZigString.init(value), global });
     }
 
     pub fn get_(
@@ -405,11 +393,8 @@ pub const FetchHeaders = opaque {
     pub fn cloneThis(
         this: *FetchHeaders,
         global: *JSGlobalObject,
-    ) ?*FetchHeaders {
-        return WebCore__FetchHeaders__cloneThis(
-            this,
-            global,
-        );
+    ) bun.JSError!?*FetchHeaders {
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), WebCore__FetchHeaders__cloneThis, .{ this, global });
     }
 
     pub fn deref(
@@ -432,3 +417,14 @@ pub const FetchHeaders = opaque {
         );
     }
 };
+
+const bun = @import("bun");
+
+const Api = @import("../../api/schema.zig").Api;
+const StringPointer = Api.StringPointer;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const VM = JSC.VM;
+const ZigString = JSC.ZigString;

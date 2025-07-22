@@ -1,7 +1,6 @@
 pub fn generateCompileResultForCssChunk(task: *ThreadPoolLib.Task) void {
     const part_range: *const PendingPartRange = @fieldParentPtr("task", task);
     const ctx = part_range.ctx;
-    defer ctx.wg.finish();
     var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
     defer worker.unget();
 
@@ -144,25 +143,25 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
     }
 }
 
-const bun = @import("bun");
-const options = bun.options;
-const BabyList = bun.BabyList;
-const Index = bun.bundle_v2.Index;
-const js_printer = bun.js_printer;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const ThreadPoolLib = bun.ThreadPool;
-
-const Environment = bun.Environment;
-
-const js_ast = bun.js_ast;
-const ImportRecord = bun.ImportRecord;
-
-const Symbol = js_ast.Symbol;
-const bundler = bun.bundle_v2;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const Environment = bun.Environment;
+const ImportRecord = bun.ImportRecord;
+const ThreadPoolLib = bun.ThreadPool;
+const js_printer = bun.js_printer;
+const options = bun.options;
+
+const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
 const CompileResult = bundler.CompileResult;
+const Index = bun.bundle_v2.Index;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const PendingPartRange = LinkerContext.PendingPartRange;
+
+const js_ast = bun.js_ast;
+const Symbol = js_ast.Symbol;

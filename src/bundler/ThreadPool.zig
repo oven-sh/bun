@@ -4,75 +4,120 @@ pub const ThreadPool = struct {
     /// On Windows, this seemed to be a small performance improvement.
     /// On Linux, this was a performance regression.
     /// In some benchmarks on macOS, this yielded up to a 60% performance improvement in microbenchmarks that load ~10,000 files.
-    io_pool: *ThreadPoolLib = undefined,
-    worker_pool: *ThreadPoolLib = undefined,
+    io_pool: *ThreadPoolLib,
+    worker_pool: *ThreadPoolLib,
+    worker_pool_is_owned: bool = false,
     workers_assignments: std.AutoArrayHashMap(std.Thread.Id, *Worker) = std.AutoArrayHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
     workers_assignments_lock: bun.Mutex = .{},
-    v2: *BundleV2 = undefined,
+    v2: *BundleV2,
 
     const debug = Output.scoped(.ThreadPool, false);
 
-    pub fn reset(this: *ThreadPool) void {
-        if (this.usesIOPool()) {
-            if (this.io_pool.threadpool_context == @as(?*anyopaque, @ptrCast(this))) {
-                this.io_pool.threadpool_context = null;
+    const IOThreadPool = struct {
+        var thread_pool: ThreadPoolLib = undefined;
+        // Protects initialization and deinitialization of the IO thread pool.
+        var mutex = bun.threading.Mutex{};
+        // 0 means not initialized. 1 means initialized but not used.
+        // N > 1 means N-1 `ThreadPool`s are using the IO thread pool.
+        var ref_count = std.atomic.Value(usize).init(0);
+
+        pub fn acquire() *ThreadPoolLib {
+            var count = ref_count.load(.acquire);
+            while (true) {
+                if (count == 0) break;
+                // .monotonic is okay because we already loaded this value with .acquire,
+                // and we don't need the store to be .release because the only store that
+                // matters is the one that goes from 0 to 1, and that one is .release.
+                count = ref_count.cmpxchgWeak(
+                    count,
+                    count + 1,
+                    .monotonic,
+                    .monotonic,
+                ) orelse return &thread_pool;
             }
-        }
 
-        if (this.worker_pool.threadpool_context == @as(?*anyopaque, @ptrCast(this))) {
-            this.worker_pool.threadpool_context = null;
-        }
-    }
+            mutex.lock();
+            defer mutex.unlock();
 
-    pub fn go(this: *ThreadPool, allocator: std.mem.Allocator, comptime Function: anytype) !ThreadPoolLib.ConcurrentFunction(Function) {
-        return this.worker_pool.go(allocator, Function);
-    }
-
-    pub fn start(this: *ThreadPool, v2: *BundleV2, existing_thread_pool: ?*ThreadPoolLib) !void {
-        this.v2 = v2;
-
-        if (existing_thread_pool) |pool| {
-            this.worker_pool = pool;
-        } else {
-            const cpu_count = bun.getThreadCount();
-            this.worker_pool = try v2.graph.allocator.create(ThreadPoolLib);
-            this.worker_pool.* = ThreadPoolLib.init(.{
-                .max_threads = cpu_count,
+            // .monotonic because the store we care about (the one that stores 1 to
+            // indicate the thread pool is initialized) is guarded by the mutex.
+            if (ref_count.load(.monotonic) != 0) return &thread_pool;
+            thread_pool = .init(.{
+                .max_threads = @max(@min(bun.getThreadCount(), 4), 2),
+                // Use a much smaller stack size for the IO thread pool
+                .stack_size = 512 * 1024,
             });
-            debug("{d} workers", .{cpu_count});
+            // 2 means initialized and referenced by one `ThreadPool`.
+            ref_count.store(2, .release);
+            return &thread_pool;
         }
 
-        this.worker_pool.setThreadContext(this);
+        pub fn release() void {
+            const old = ref_count.fetchSub(1, .release);
+            bun.assertf(old > 1, "IOThreadPool: too many calls to release()", .{});
+        }
 
-        this.worker_pool.warm(8);
-
-        const IOThreadPool = struct {
-            var thread_pool: ThreadPoolLib = undefined;
-            var once = bun.once(startIOThreadPool);
-
-            fn startIOThreadPool() void {
-                thread_pool = ThreadPoolLib.init(.{
-                    .max_threads = @max(@min(bun.getThreadCount(), 4), 2),
-
-                    // Use a much smaller stack size for the IO thread pool
-                    .stack_size = 512 * 1024,
-                });
+        pub fn shutdown() bool {
+            // .acquire instead of .acq_rel is okay because we only need to ensure that other
+            // threads are done using the IO pool if we read 1 from the ref count.
+            //
+            // .monotonic is okay because this function is only guaranteed to succeed when we
+            // can ensure that no `ThreadPool`s exist.
+            if (ref_count.cmpxchgStrong(1, 0, .acquire, .monotonic) != null) {
+                // At least one `ThreadPool` still exists.
+                return false;
             }
 
-            pub fn get() *ThreadPoolLib {
-                once.call(.{});
-                return &thread_pool;
-            }
+            mutex.lock();
+            defer mutex.unlock();
+
+            // .monotonic is okay because the only store that could happen at this point
+            // is guarded by the mutex.
+            if (ref_count.load(.monotonic) != 0) return false;
+            thread_pool.deinit();
+            thread_pool = undefined;
+        }
+    };
+
+    pub fn init(v2: *BundleV2, worker_pool: ?*ThreadPoolLib) !ThreadPool {
+        const pool = worker_pool orelse blk: {
+            const cpu_count = bun.getThreadCount();
+            const pool = try v2.graph.allocator.create(ThreadPoolLib);
+            pool.* = .init(.{ .max_threads = cpu_count });
+            debug("{d} workers", .{cpu_count});
+            break :blk pool;
         };
+        var this = initWithPool(v2, pool);
+        this.worker_pool_is_owned = false;
+        return this;
+    }
 
-        if (this.usesIOPool()) {
-            this.io_pool = IOThreadPool.get();
-            this.io_pool.setThreadContext(this);
+    pub fn initWithPool(v2: *BundleV2, worker_pool: *ThreadPoolLib) ThreadPool {
+        return .{
+            .worker_pool = worker_pool,
+            .io_pool = if (usesIOPool()) IOThreadPool.acquire() else undefined,
+            .v2 = v2,
+        };
+    }
+
+    pub fn deinit(this: *ThreadPool) void {
+        if (this.worker_pool_is_owned) {
+            this.worker_pool.deinit();
+            this.v2.graph.allocator.destroy(this.worker_pool);
+        }
+        if (usesIOPool()) {
+            IOThreadPool.release();
+        }
+    }
+
+    pub fn start(this: *ThreadPool) void {
+        this.worker_pool.warm(8);
+        if (usesIOPool()) {
             this.io_pool.warm(1);
         }
     }
 
-    pub fn usesIOPool(_: *const ThreadPool) bool {
+    pub fn usesIOPool() bool {
         if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_FORCE_IO_POOL)) {
             // For testing.
             return true;
@@ -91,6 +136,13 @@ pub const ThreadPool = struct {
         return false;
     }
 
+    /// Shut down the IO pool, if and only if no `ThreadPool`s exist right now.
+    /// If a `ThreadPool` exists, this function is a no-op and returns false.
+    /// Blocks until the IO pool is shut down.
+    pub fn shutdownIOPool() bool {
+        return if (usesIOPool()) IOThreadPool.shutdown() else true;
+    }
+
     pub fn scheduleWithOptions(this: *ThreadPool, parse_task: *ParseTask, is_inside_thread_pool: bool) void {
         if (parse_task.contents_or_fd == .contents and parse_task.stage == .needs_source_code) {
             parse_task.stage = .{
@@ -103,7 +155,7 @@ pub const ThreadPool = struct {
 
         const scheduleFn = if (is_inside_thread_pool) &ThreadPoolLib.scheduleInsideThreadPool else &ThreadPoolLib.schedule;
 
-        if (this.usesIOPool()) {
+        if (usesIOPool()) {
             switch (parse_task.stage) {
                 .needs_parse => {
                     scheduleFn(this.worker_pool, .from(&parse_task.task));
@@ -283,30 +335,29 @@ pub const ThreadPool = struct {
             if (!this.has_created) {
                 this.create(ctx);
             }
-
-            // no funny business mr. cache
-
         }
     };
 };
 
-const Transpiler = bun.Transpiler;
-const bun = @import("bun");
-const Output = bun.Output;
-const Environment = bun.Environment;
-const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
-
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const js_ast = @import("../js_ast.zig");
-const linker = @import("../linker.zig");
 pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = @import("../thread_pool.zig");
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-const allocators = @import("../allocators.zig");
 
 pub const Index = @import("../ast/base.zig").Index;
+
+const Logger = @import("../logger.zig");
+const allocators = @import("../allocators.zig");
+const js_ast = @import("../js_ast.zig");
+const linker = @import("../linker.zig");
+const std = @import("std");
+const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Output = bun.Output;
+const ThreadPoolLib = bun.ThreadPool;
+const Transpiler = bun.Transpiler;
+const default_allocator = bun.default_allocator;
+
 const BundleV2 = bun.bundle_v2.BundleV2;
-const ParseTask = bun.bundle_v2.ParseTask;
 const LinkerContext = bun.bundle_v2.LinkerContext;
+const ParseTask = bun.bundle_v2.ParseTask;

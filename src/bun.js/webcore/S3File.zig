@@ -1,14 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const Blob = JSC.WebCore.Blob;
-const PathOrBlob = JSC.Node.PathOrBlob;
-const Method = bun.http.Method;
-const strings = bun.strings;
-const Output = bun.Output;
-const S3Client = @import("./S3Client.zig");
-const S3 = bun.S3;
-const S3Stat = @import("./S3Stat.zig").S3Stat;
 pub fn writeFormat(s3: *Blob.Store.S3, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool, content_type: []const u8, offset: usize) !void {
     try writer.writeAll(comptime Output.prettyFmt("<r>S3Ref<r>", enable_ansi_colors));
     const credentials = s3.getCredentials();
@@ -404,13 +393,13 @@ pub const S3BlobStatTask = struct {
         const globalThis = this.global;
         switch (result) {
             .success => |stat_result| {
-                this.promise.resolve(globalThis, S3Stat.init(
+                this.promise.resolve(globalThis, (S3Stat.init(
                     stat_result.size,
                     stat_result.etag,
                     stat_result.contentType,
                     stat_result.lastModified,
                     globalThis,
-                ).toJS(globalThis));
+                ) catch return).toJS(globalThis)); // TODO: properly propagate exception upwards
             },
             .not_found, .failure => |err| {
                 this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
@@ -653,3 +642,17 @@ extern fn BUN__createJSS3FileUnsafely(*JSC.JSGlobalObject, *Blob) callconv(JSC.c
 pub fn createJSS3File(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     return BUN__createJSS3File(globalObject, callframe);
 }
+
+const S3Client = @import("./S3Client.zig");
+const S3Stat = @import("./S3Stat.zig").S3Stat;
+
+const bun = @import("bun");
+const Output = bun.Output;
+const S3 = bun.S3;
+const strings = bun.strings;
+const Method = bun.http.Method;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;
+const Blob = JSC.WebCore.Blob;
+const PathOrBlob = JSC.Node.PathOrBlob;

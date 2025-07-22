@@ -3,12 +3,6 @@
 // - These sequence numbers and ACKs shouldn't exist from JavaScript's perspective
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
-const std = @import("std");
-const bun = @import("bun");
-const Environment = bun.Environment;
-const JSC = bun.JSC;
-const Output = bun.Output;
-const ZigString = JSC.ZigString;
 const log = Output.scoped(.IPC, false);
 
 extern fn Bun__Process__queueNextTick1(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) void;
@@ -70,7 +64,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         const ex = globalThis.createTypeErrorInstance("sendInternal() failed", .{});
         ex.put(globalThis, ZigString.static("syscall"), bun.String.static("write").toJS(globalThis));
         const fnvalue = JSC.JSFunction.create(globalThis, "", S.impl, 1, .{});
-        fnvalue.callNextTick(globalThis, .{ex});
+        try fnvalue.callNextTick(globalThis, .{ex});
         return .false;
     }
 
@@ -299,3 +293,12 @@ export fn Bun__shouldIgnoreOneDisconnectEventListener(globalObject: *JSC.JSGloba
     const vm = globalObject.bunVM();
     return vm.channel_ref_should_ignore_one_disconnect_event_listener;
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+
+const JSC = bun.JSC;
+const ZigString = JSC.ZigString;

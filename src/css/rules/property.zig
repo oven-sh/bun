@@ -1,6 +1,4 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
 const Result = css.Result;
 const Printer = css.Printer;
 const Maybe = css.Maybe;
@@ -222,3 +220,6 @@ pub const PropertyRuleDeclarationParser = struct {
         }
     };
 };
+
+const bun = @import("bun");
+const std = @import("std");

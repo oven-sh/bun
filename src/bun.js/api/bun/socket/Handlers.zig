@@ -206,8 +206,6 @@ pub fn protect(this: *Handlers) void {
     this.onHandshake.protect();
 }
 
-const BinaryType = JSC.ArrayBuffer.BinaryType;
-
 pub const SocketConfig = struct {
     hostname_or_unix: JSC.ZigString.Slice,
     port: ?u16 = null,
@@ -381,10 +379,12 @@ pub const SocketConfig = struct {
 };
 
 const bun = @import("bun");
-const Listener = JSC.API.Listener;
-const uws = bun.uws;
 const Environment = bun.Environment;
+const strings = bun.strings;
+const uws = bun.uws;
+
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
-const strings = bun.strings;
+const BinaryType = JSC.ArrayBuffer.BinaryType;
+const Listener = JSC.API.Listener;

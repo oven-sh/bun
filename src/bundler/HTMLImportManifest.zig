@@ -32,6 +32,7 @@
 //!
 //! The manifest is generated during the linking phase and serialized as a JSON string
 //! that gets embedded directly into the JavaScript output.
+
 const HTMLImportManifest = @This();
 
 index: u32,
@@ -248,18 +249,18 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
     try writer.writeAll("]}");
 }
 
-const bun = @import("bun");
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
 const std = @import("std");
-const options = @import("../options.zig");
 
+const options = @import("../options.zig");
 const Loader = options.Loader;
+
+const bun = @import("bun");
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
 const AutoBitSet = bun.bit_set.AutoBitSet;
+
 const bundler = bun.bundle_v2;
 const BundleV2 = bundler.BundleV2;
+const Chunk = bundler.Chunk;
 const Graph = bundler.Graph;
 const LinkerGraph = bundler.LinkerGraph;
-
-const Chunk = bundler.Chunk;

@@ -1,4 +1,3 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const MediaList = css.MediaList;
 const Printer = css.Printer;
@@ -48,3 +47,5 @@ pub fn MediaRule(comptime R: type) type {
         }
     };
 }
+
+const std = @import("std");

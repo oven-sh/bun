@@ -1,10 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const JSC = bun.JSC;
-const boring = bun.BoringSSL.c;
-const hmac = @import("hmac.zig");
-const string = @import("string.zig");
-
 /// CSRF Token implementation for Bun
 /// It provides protection against Cross-Site Request Forgery attacks
 /// by generating and validating tokens using HMAC signatures
@@ -385,3 +378,11 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
 }
 
 pub const csrf__verify = JSC.toJSHostFn(csrf__verify_impl);
+
+const hmac = @import("./hmac.zig");
+const std = @import("std");
+const string = @import("./string.zig");
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const boring = bun.BoringSSL.c;

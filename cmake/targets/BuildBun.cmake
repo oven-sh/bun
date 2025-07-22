@@ -255,6 +255,10 @@ set(BUN_ZIG_GENERATED_CLASSES_SCRIPT ${CWD}/src/codegen/generate-classes.ts)
 
 absolute_sources(BUN_ZIG_GENERATED_CLASSES_SOURCES ${CWD}/cmake/sources/ZigGeneratedClassesSources.txt)
 
+# hand written cpp source files. Full list of "source" code (including codegen) is in BUN_CPP_SOURCES
+absolute_sources(BUN_CXX_SOURCES ${CWD}/cmake/sources/CxxSources.txt)
+absolute_sources(BUN_C_SOURCES ${CWD}/cmake/sources/CSources.txt)
+
 set(BUN_ZIG_GENERATED_CLASSES_OUTPUTS
   ${CODEGEN_PATH}/ZigGeneratedClasses.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.cpp
@@ -306,6 +310,27 @@ set(BUN_JAVASCRIPT_OUTPUTS
   ${CODEGEN_PATH}/GeneratedJS2Native.h
   # Zig will complain if files are outside of the source directory
   ${CWD}/src/bun.js/bindings/GeneratedJS2Native.zig
+)
+
+set(BUN_CPP_OUTPUTS
+  ${CODEGEN_PATH}/cpp.zig
+)
+
+register_command(
+  TARGET
+    bun-cppbind
+  COMMENT
+    "Generating C++ --> Zig bindings"
+  COMMAND
+    ${BUN_EXECUTABLE}
+      ${CWD}/src/codegen/cppbind.ts
+      ${CWD}/src
+      ${CODEGEN_PATH}
+  SOURCES
+    ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
+    ${BUN_CXX_SOURCES}
+  OUTPUTS
+    ${BUN_CPP_OUTPUTS}
 )
 
 register_command(
@@ -537,6 +562,7 @@ set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_ERROR_CODE_OUTPUTS}
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
+  ${BUN_CPP_OUTPUTS}
 )
 
 # In debug builds, these are not embedded, but rather referenced at runtime.
@@ -606,6 +632,7 @@ register_command(
   TARGETS
     clone-zig
     clone-zstd
+    bun-cppbind
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}
@@ -617,10 +644,6 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 # --- C/C++ Sources ---
 
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
-
-# hand written cpp source files. Full list of "source" code (including codegen) is in BUN_CPP_SOURCES
-absolute_sources(BUN_CXX_SOURCES ${CWD}/cmake/sources/CxxSources.txt)
-absolute_sources(BUN_C_SOURCES ${CWD}/cmake/sources/CSources.txt)
 
 if(WIN32)
   list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle.cpp)
@@ -685,7 +708,7 @@ if(WIN32)
     ${CODEGEN_PATH}/windows-app-info.rc
     @ONLY
   )
-  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.rc)
+  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.rc ${CWD}/src/bun.exe.manifest)
 endif()
 
 # --- Executable ---

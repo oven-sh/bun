@@ -1,25 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Global = bun.Global;
-const Output = bun.Output;
-const Command = bun.CLI.Command;
-const Install = bun.install;
-const PackageManager = Install.PackageManager;
-const PackageID = Install.PackageID;
-const DependencyID = Install.DependencyID;
-const Behavior = Install.Dependency.Behavior;
-const invalid_package_id = Install.invalid_package_id;
-const Resolution = Install.Resolution;
-const string = bun.string;
-const strings = bun.strings;
-const PathBuffer = bun.PathBuffer;
-const FileSystem = bun.fs.FileSystem;
-const path = bun.path;
-const glob = bun.glob;
-const Table = bun.fmt.Table;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const OOM = bun.OOM;
-
 pub const OutdatedCommand = struct {
     fn resolveCatalogDependency(manager: *PackageManager, dep: Install.Dependency) ?Install.Dependency.Version {
         return if (dep.version.tag == .catalog) blk: {
@@ -529,7 +507,7 @@ pub const OutdatedCommand = struct {
         table.printBottomLineSeparator();
     }
 
-    fn updateManifestsIfNecessary(
+    pub fn updateManifestsIfNecessary(
         manager: *PackageManager,
         workspace_pkg_ids: []const PackageID,
     ) !void {
@@ -651,3 +629,28 @@ pub const OutdatedCommand = struct {
         }
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Global = bun.Global;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const PathBuffer = bun.PathBuffer;
+const glob = bun.glob;
+const path = bun.path;
+const string = bun.string;
+const strings = bun.strings;
+const Command = bun.CLI.Command;
+const FileSystem = bun.fs.FileSystem;
+const Table = bun.fmt.Table;
+
+const Install = bun.install;
+const DependencyID = Install.DependencyID;
+const PackageID = Install.PackageID;
+const Resolution = Install.Resolution;
+const invalid_package_id = Install.invalid_package_id;
+const Behavior = Install.Dependency.Behavior;
+
+const PackageManager = Install.PackageManager;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;

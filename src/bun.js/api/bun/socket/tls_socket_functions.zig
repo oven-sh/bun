@@ -1,5 +1,3 @@
-const This = JSC.API.TLSSocket;
-
 pub fn getServername(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     const ssl_ptr = this.socket.ssl();
 
@@ -169,7 +167,7 @@ pub fn getTLSFinishedMessage(this: *This, globalObject: *JSC.JSGlobalObject, _: 
     if (size == 0) return .js_undefined;
 
     const buffer_size = @as(usize, @intCast(size));
-    var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
+    var buffer = try JSValue.createBufferFromLength(globalObject, buffer_size);
     const buffer_ptr = @as(*anyopaque, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
     const result_size = BoringSSL.SSL_get_finished(ssl_ptr, buffer_ptr, buffer_size);
@@ -306,7 +304,7 @@ pub fn getTLSPeerFinishedMessage(this: *This, globalObject: *JSC.JSGlobalObject,
     if (size == 0) return .js_undefined;
 
     const buffer_size = @as(usize, @intCast(size));
-    var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
+    var buffer = try JSValue.createBufferFromLength(globalObject, buffer_size);
     const buffer_ptr = @as(*anyopaque, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
     const result_size = BoringSSL.SSL_get_peer_finished(ssl_ptr, buffer_ptr, buffer_size);
@@ -355,7 +353,7 @@ pub fn exportKeyingMaterial(this: *This, globalObject: *JSC.JSGlobalObject, call
             const context_slice = sb.slice();
 
             const buffer_size = @as(usize, @intCast(length));
-            var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
+            var buffer = try JSValue.createBufferFromLength(globalObject, buffer_size);
             const buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
             const result = BoringSSL.SSL_export_keying_material(ssl_ptr, buffer_ptr, buffer_size, @as([*c]const u8, @ptrCast(label_slice.ptr)), label_slice.len, @as([*c]const u8, @ptrCast(context_slice.ptr)), context_slice.len, 1);
@@ -368,7 +366,7 @@ pub fn exportKeyingMaterial(this: *This, globalObject: *JSC.JSGlobalObject, call
         }
     } else {
         const buffer_size = @as(usize, @intCast(length));
-        var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
+        var buffer = try JSValue.createBufferFromLength(globalObject, buffer_size);
         const buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
         const result = BoringSSL.SSL_export_keying_material(ssl_ptr, buffer_ptr, buffer_size, @as([*c]const u8, @ptrCast(label_slice.ptr)), label_slice.len, null, 0, 0);
@@ -468,7 +466,7 @@ pub fn getSession(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFr
     }
 
     const buffer_size = @as(usize, @intCast(size));
-    var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
+    var buffer = try JSValue.createBufferFromLength(globalObject, buffer_size);
     var buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
     const result_size = BoringSSL.i2d_SSL_SESSION(session, &buffer_ptr);
@@ -645,14 +643,17 @@ noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []c
     return exception;
 }
 
-const default_allocator = bun.default_allocator;
-const bun = @import("bun");
-const strings = bun.strings;
-const string = bun.string;
-const std = @import("std");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ZigString = JSC.ZigString;
-const BoringSSL = bun.BoringSSL.c;
 const X509 = @import("../x509.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+const BoringSSL = bun.BoringSSL.c;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
+const This = JSC.API.TLSSocket;

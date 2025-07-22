@@ -8,11 +8,14 @@ src/codegen/bundle-functions.ts
 src/codegen/bundle-modules.ts
 src/codegen/class-definitions.ts
 src/codegen/client-js.ts
+src/codegen/cppbind.ts
 src/codegen/create-hash-table.ts
 src/codegen/generate-classes.ts
+src/codegen/generate-compact-string-table.ts
 src/codegen/generate-js2native.ts
 src/codegen/generate-jssink.ts
 src/codegen/generate-node-errors.ts
 src/codegen/helpers.ts
 src/codegen/internal-module-registry-scanner.ts
 src/codegen/replacements.ts
+src/codegen/shared-types.ts

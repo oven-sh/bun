@@ -478,7 +478,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
         // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
         // if it's a workspaceOnly dependency
-        if (!dependency.behavior.isWorkspaceOnly() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
+        if (!dependency.behavior.isWorkspace() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
             if (this.lockfile.overrides.get(name_hash)) |new| {
                 debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
 
@@ -1762,8 +1762,6 @@ fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, 
 
     return false;
 }
-
-// @sortImports
 
 const std = @import("std");
 

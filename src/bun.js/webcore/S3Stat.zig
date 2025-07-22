@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-
 pub const S3Stat = struct {
     const log = bun.Output.scoped(.S3Stat, false);
     pub const js = JSC.Codegen.JSS3Stat;
@@ -25,10 +22,10 @@ pub const S3Stat = struct {
         contentType: []const u8,
         lastModified: []const u8,
         globalThis: *JSC.JSGlobalObject,
-    ) *@This() {
+    ) bun.JSError!*@This() {
         var date_str = bun.String.init(lastModified);
         defer date_str.deref();
-        const last_modified = date_str.parseDate(globalThis);
+        const last_modified = try date_str.parseDate(globalThis);
 
         return S3Stat.new(.{
             .size = size,
@@ -60,3 +57,6 @@ pub const S3Stat = struct {
         bun.destroy(this);
     }
 };
+
+const bun = @import("bun");
+const JSC = bun.JSC;

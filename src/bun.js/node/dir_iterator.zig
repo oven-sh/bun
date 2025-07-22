@@ -5,20 +5,7 @@
 // - It uses PathString instead of []const u8
 // - Windows can be configured to return []const u16
 
-const builtin = @import("builtin");
-const std = @import("std");
-const posix = std.posix;
-
-const Dir = std.fs.Dir;
-const JSC = bun.JSC;
-const PathString = bun.PathString;
-const bun = @import("bun");
-
 const IteratorError = error{ AccessDenied, SystemResources } || posix.UnexpectedError;
-const mem = std.mem;
-const strings = bun.strings;
-const Maybe = JSC.Maybe;
-const FD = bun.FD;
 
 pub const IteratorResult = struct {
     name: PathString,
@@ -42,8 +29,6 @@ const IteratorResultW = struct {
     kind: Entry.Kind,
 };
 const ResultW = Maybe(?IteratorResultW);
-
-const Entry = JSC.Node.Dirent;
 
 pub const Iterator = NewIterator(false);
 pub const IteratorW = NewIterator(true);
@@ -478,3 +463,19 @@ pub const WrappedIteratorW = NewWrappedIterator(.u16);
 pub fn iterate(self: FD, comptime path_type: PathType) NewWrappedIterator(path_type) {
     return NewWrappedIterator(path_type).init(self);
 }
+
+const builtin = @import("builtin");
+
+const bun = @import("bun");
+const FD = bun.FD;
+const PathString = bun.PathString;
+const strings = bun.strings;
+
+const JSC = bun.JSC;
+const Maybe = JSC.Maybe;
+const Entry = JSC.Node.Dirent;
+
+const std = @import("std");
+const mem = std.mem;
+const posix = std.posix;
+const Dir = std.fs.Dir;

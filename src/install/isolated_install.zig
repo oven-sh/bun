@@ -61,6 +61,7 @@ pub fn installIsolatedPackages(
                 // check for cycles
                 const nodes_slice = nodes.slice();
                 const node_pkg_ids = nodes_slice.items(.pkg_id);
+                const node_dep_ids = nodes_slice.items(.dep_id);
                 const node_parent_ids = nodes_slice.items(.parent_id);
                 const node_nodes = nodes_slice.items(.nodes);
 
@@ -68,9 +69,20 @@ pub fn installIsolatedPackages(
                 while (curr_id != .invalid) {
                     if (node_pkg_ids[curr_id.get()] == entry.pkg_id) {
                         // skip the new node, and add the previously added node to parent so it appears in
-                        // 'node_modules/.bun/parent@version/node_modules'
-                        node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
-                        continue :next_node;
+                        // 'node_modules/.bun/parent@version/node_modules'.
+
+                        const dep_id = node_dep_ids[curr_id.get()];
+                        if (dep_id == invalid_dependency_id or entry.dep_id == invalid_dependency_id) {
+                            node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
+                            continue :next_node;
+                        }
+
+                        // ensure the dependency name is the same before skipping the cycle. if they aren't
+                        // we lose dependency name information for the symlinks
+                        if (dependencies[dep_id].name_hash == dependencies[entry.dep_id].name_hash) {
+                            node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
+                            continue :next_node;
+                        }
                     }
                     curr_id = node_parent_ids[curr_id.get()];
                 }
@@ -82,7 +94,7 @@ pub fn installIsolatedPackages(
             var skip_dependencies_of_workspace_node = false;
             if (entry.dep_id != invalid_dependency_id) {
                 const entry_dep = dependencies[entry.dep_id];
-                if (pkg_deps.len == 0 or entry_dep.isWorkspaceDep()) dont_dedupe: {
+                if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace) dont_dedupe: {
                     const dedupe_entry = try early_dedupe.getOrPut(lockfile.allocator, entry.pkg_id);
                     if (dedupe_entry.found_existing) {
                         const dedupe_node_id = dedupe_entry.value_ptr.*;
@@ -98,8 +110,8 @@ pub fn installIsolatedPackages(
                             break :dont_dedupe;
                         }
 
-                        if (dedupe_dep.isWorkspaceDep() and entry_dep.isWorkspaceDep()) {
-                            if (dedupe_dep.behavior.isWorkspaceOnly() != entry_dep.behavior.isWorkspaceOnly()) {
+                        if (dedupe_dep.version.tag == .workspace and entry_dep.version.tag == .workspace) {
+                            if (dedupe_dep.behavior.isWorkspace() != entry_dep.behavior.isWorkspace()) {
                                 // only attach the dependencies to one of the workspaces
                                 skip_dependencies_of_workspace_node = true;
                                 break :dont_dedupe;
@@ -374,8 +386,8 @@ pub fn installIsolatedPackages(
                         const curr_dep = dependencies[curr_dep_id];
                         const existing_dep = dependencies[info.dep_id];
 
-                        if (existing_dep.isWorkspaceDep() and curr_dep.isWorkspaceDep()) {
-                            if (existing_dep.behavior.isWorkspaceOnly() != curr_dep.behavior.isWorkspaceOnly()) {
+                        if (existing_dep.version.tag == .workspace and curr_dep.version.tag == .workspace) {
+                            if (existing_dep.behavior.isWorkspace() != curr_dep.behavior.isWorkspace()) {
                                 continue;
                             }
                         }
@@ -395,7 +407,7 @@ pub fn installIsolatedPackages(
 
                         var parents = &entry_parents[info.entry_id.get()];
 
-                        if (curr_dep_id != invalid_dependency_id and dependencies[curr_dep_id].behavior.isWorkspaceOnly()) {
+                        if (curr_dep_id != invalid_dependency_id and dependencies[curr_dep_id].behavior.isWorkspace()) {
                             try parents.append(lockfile.allocator, entry.entry_parent_id);
                             continue :next_entry;
                         }
@@ -436,7 +448,7 @@ pub fn installIsolatedPackages(
             const new_entry_dep_id = node_dep_ids[entry.node_id.get()];
 
             const new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
-            const new_entry_is_workspace = !new_entry_is_root and dependencies[new_entry_dep_id].isWorkspaceDep();
+            const new_entry_is_workspace = !new_entry_is_root and dependencies[new_entry_dep_id].version.tag == .workspace;
 
             const new_entry_dependencies: Store.Entry.Dependencies = if (dedupe_entry.found_existing and new_entry_is_workspace)
                 .empty
@@ -457,7 +469,7 @@ pub fn installIsolatedPackages(
             try store.append(lockfile.allocator, new_entry);
 
             if (entry.entry_parent_id.tryGet()) |entry_parent_id| skip_adding_dependency: {
-                if (new_entry_dep_id != invalid_dependency_id and dependencies[new_entry_dep_id].behavior.isWorkspaceOnly()) {
+                if (new_entry_dep_id != invalid_dependency_id and dependencies[new_entry_dep_id].behavior.isWorkspace()) {
                     // skip implicit workspace dependencies on the root.
                     break :skip_adding_dependency;
                 }
@@ -567,7 +579,7 @@ pub fn installIsolatedPackages(
 
     {
         var root_node: *Progress.Node = undefined;
-        // var download_node: Progress.Node = undefined;
+        var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
         var scripts_node: Progress.Node = undefined;
         var progress = &manager.progress;
@@ -575,12 +587,13 @@ pub fn installIsolatedPackages(
         if (manager.options.log_level.showProgress()) {
             progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             root_node = progress.start("", 0);
-            // download_node = root_node.start(ProgressStrings.download(), 0);
+            download_node = root_node.start(ProgressStrings.download(), 0);
             install_node = root_node.start(ProgressStrings.install(), store.entries.len);
             scripts_node = root_node.start(ProgressStrings.script(), 0);
 
             manager.downloads_node = null;
             manager.scripts_node = &scripts_node;
+            manager.downloads_node = &download_node;
         }
 
         const nodes_slice = store.nodes.slice();
@@ -618,6 +631,7 @@ pub fn installIsolatedPackages(
             .preallocated_tasks = .init(bun.default_allocator),
             .trusted_dependencies_mutex = .{},
             .trusted_dependencies_from_update_requests = manager.findTrustedDependenciesFromUpdateRequests(),
+            .supported_backend = .init(PackageInstall.supported_method),
         };
 
         // add the pending task count upfront
@@ -659,7 +673,7 @@ pub fn installIsolatedPackages(
                         continue;
                     }
                     entry_steps[entry_id.get()].store(.done, .monotonic);
-                    installer.onTaskComplete(entry_id, .success);
+                    installer.onTaskComplete(entry_id, .skipped);
                     continue;
                 },
                 .symlink => {
@@ -691,6 +705,11 @@ pub fn installIsolatedPackages(
                             var store_path: bun.AbsPath(.{}) = .initTopLevelDir();
                             defer store_path.deinit();
                             installer.appendStorePath(&store_path, entry_id);
+                            const scope_for_patch_tag_path = store_path.save();
+                            if (pkg_res_tag == .npm)
+                                // if it's from npm, it should always have a package.json.
+                                // in other cases, probably yes but i'm less confident.
+                                store_path.append("package.json");
                             const exists = sys.existsZ(store_path.sliceZ());
 
                             break :needs_install switch (patch_info) {
@@ -700,11 +719,9 @@ pub fn installIsolatedPackages(
                                 .patch => |patch| {
                                     var hash_buf: install.BuntagHashBuf = undefined;
                                     const hash = install.buntaghashbuf_make(&hash_buf, patch.contents_hash);
-                                    var patch_tag_path: bun.AbsPath(.{}) = .initTopLevelDir();
-                                    defer patch_tag_path.deinit();
-                                    installer.appendStorePath(&patch_tag_path, entry_id);
-                                    patch_tag_path.append(hash);
-                                    break :needs_install !sys.existsZ(patch_tag_path.sliceZ());
+                                    scope_for_patch_tag_path.restore();
+                                    store_path.append(hash);
+                                    break :needs_install !sys.existsZ(store_path.sliceZ());
                                 },
                             };
                         };
@@ -887,6 +904,15 @@ pub fn installIsolatedPackages(
                         return true;
                     };
 
+                    if (wait.manager.scripts_node) |node| {
+                        // if we're just waiting for scripts, make it known. -1 because the root task needs to wait for everything
+                        const pending_lifecycle_scripts = wait.manager.pending_lifecycle_script_tasks.load(.monotonic);
+                        if (pending_lifecycle_scripts > 0 and pending_lifecycle_scripts == wait.manager.pendingTaskCount() -| 1) {
+                            node.activate();
+                            wait.manager.progress.refresh();
+                        }
+                    }
+
                     return wait.manager.pendingTaskCount() == 0;
                 }
             };
@@ -953,8 +979,6 @@ pub fn installIsolatedPackages(
         return installer.summary;
     }
 }
-
-// @sortImports
 
 const std = @import("std");
 

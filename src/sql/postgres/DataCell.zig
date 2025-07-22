@@ -273,7 +273,7 @@ pub const DataCell = extern struct {
                             const date_str = slice[1..current_idx];
                             var str = bun.String.init(date_str);
                             defer str.deref();
-                            try array.append(bun.default_allocator, DataCell{ .tag = .date, .value = .{ .date = str.parseDate(globalObject) } });
+                            try array.append(bun.default_allocator, DataCell{ .tag = .date, .value = .{ .date = try str.parseDate(globalObject) } });
 
                             slice = trySlice(slice, current_idx + 1);
                             continue;
@@ -370,7 +370,7 @@ pub const DataCell = extern struct {
                             if (arrayType == .date_array) {
                                 var str = bun.String.init(element);
                                 defer str.deref();
-                                try array.append(bun.default_allocator, DataCell{ .tag = .date, .value = .{ .date = str.parseDate(globalObject) } });
+                                try array.append(bun.default_allocator, DataCell{ .tag = .date, .value = .{ .date = try str.parseDate(globalObject) } });
                             } else {
                                 // the only escape sequency possible here is \b
                                 if (bun.strings.eqlComptime(element, "\\b")) {
@@ -723,7 +723,7 @@ pub const DataCell = extern struct {
                 } else {
                     var str = bun.String.init(bytes);
                     defer str.deref();
-                    return DataCell{ .tag = .date, .value = .{ .date = str.parseDate(globalObject) } };
+                    return DataCell{ .tag = .date, .value = .{ .date = try str.parseDate(globalObject) } };
                 }
             },
 
@@ -1086,8 +1086,6 @@ pub const DataCell = extern struct {
 };
 
 const debug = bun.Output.scoped(.Postgres, false);
-
-// @sortImports
 
 const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
 const protocol = @import("./PostgresProtocol.zig");

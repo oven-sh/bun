@@ -8,7 +8,7 @@ pub const JSCDeferredWorkTask = opaque {
         scope.init(globalThis, @src());
         defer scope.deinit();
         Bun__runDeferredWork(task);
-        scope.assertNoExceptionExceptTermination() catch return;
+        scope.assertNoExceptionExceptTermination() catch return; // TODO: properly propagate exception upwards
     }
 };
 
@@ -44,7 +44,8 @@ comptime {
 }
 
 const bun = @import("bun");
+
 const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const Task = JSC.Task;
 const ConcurrentTask = JSC.ConcurrentTask;
+const Task = JSC.Task;
+const VirtualMachine = JSC.VirtualMachine;

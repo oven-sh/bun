@@ -2081,21 +2081,23 @@ pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3_fast, comptime T
     unreachable;
 }
 
-const eqlComptimeIgnoreLen = strings.eqlComptimeIgnoreLen;
-const bun = @import("bun");
-const std = @import("std");
 const string = []const u8;
-const strings = bun.strings;
-const u3_fast = strings.u3_fast;
-const CodePoint = bun.CodePoint;
-const js_lexer = bun.js_lexer;
-const OOM = bun.OOM;
-const unicode_replacement = strings.unicode_replacement;
-const Environment = bun.Environment;
-const log = strings.log;
-const firstNonASCII16 = strings.firstNonASCII16;
-const firstNonASCII = strings.firstNonASCII;
 
+const std = @import("std");
+
+const bun = @import("bun");
+const CodePoint = bun.CodePoint;
+const Environment = bun.Environment;
+const OOM = bun.OOM;
 const assert = bun.assert;
-const ascii_vector_size = strings.ascii_vector_size;
+const js_lexer = bun.js_lexer;
+
+const strings = bun.strings;
 const AsciiVector = strings.AsciiVector;
+const ascii_vector_size = strings.ascii_vector_size;
+const eqlComptimeIgnoreLen = strings.eqlComptimeIgnoreLen;
+const firstNonASCII = strings.firstNonASCII;
+const firstNonASCII16 = strings.firstNonASCII16;
+const log = strings.log;
+const u3_fast = strings.u3_fast;
+const unicode_replacement = strings.unicode_replacement;

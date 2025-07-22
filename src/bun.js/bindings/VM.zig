@@ -1,8 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-
 pub const VM = opaque {
     pub const HeapType = enum(u8) {
         SmallHeap = 0,
@@ -24,9 +19,8 @@ pub const VM = opaque {
         return JSC__VM__setControlFlowProfiler(vm, enabled);
     }
 
-    extern fn JSC__VM__isJITEnabled() bool;
     pub fn isJITEnabled() bool {
-        return JSC__VM__isJITEnabled();
+        return bun.cpp.JSC__VM__isJITEnabled();
     }
 
     extern fn JSC__VM__hasExecutionTimeLimit(vm: *VM) bool;
@@ -73,14 +67,6 @@ pub const VM = opaque {
         global_object: *JSGlobalObject,
     ) void {
         return JSC__VM__deleteAllCode(vm, global_object);
-    }
-
-    extern fn JSC__VM__whenIdle(vm: *VM, callback: *const fn (...) callconv(.C) void) void;
-    pub fn whenIdle(
-        vm: *VM,
-        callback: *const fn (...) callconv(.C) void,
-    ) void {
-        return JSC__VM__whenIdle(vm, callback);
     }
 
     extern fn JSC__VM__shrinkFootprint(vm: *VM) void;
@@ -202,3 +188,9 @@ pub const VM = opaque {
         JSC__VM__performOpportunisticallyScheduledTasks(vm, until);
     }
 };
+
+const bun = @import("bun");
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

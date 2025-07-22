@@ -141,24 +141,24 @@ pub const Yield = union(enum) {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
+const JSC = bun.JSC;
 const shell = bun.shell;
+const log = bun.shell.interpret.log;
 
 const Interpreter = bun.shell.Interpreter;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-const IOWriter = bun.shell.Interpreter.IOWriter;
-const IOWriterChildPtr = IOWriter.IOWriterChildPtr;
-
 const Assigns = bun.shell.Interpreter.Assigns;
-const Script = bun.shell.Interpreter.Script;
-const Subshell = bun.shell.Interpreter.Subshell;
 const Cmd = bun.shell.Interpreter.Cmd;
-const If = bun.shell.Interpreter.If;
 const CondExpr = bun.shell.Interpreter.CondExpr;
 const Expansion = bun.shell.Interpreter.Expansion;
-const Stmt = bun.shell.Interpreter.Stmt;
+const IO = bun.shell.Interpreter.IO;
+const If = bun.shell.Interpreter.If;
 const Pipeline = bun.shell.Interpreter.Pipeline;
+const Script = bun.shell.Interpreter.Script;
+const Stmt = bun.shell.Interpreter.Stmt;
+const Subshell = bun.shell.Interpreter.Subshell;
 
-const JSC = bun.JSC;
+const IOWriter = bun.shell.Interpreter.IOWriter;
+const IOWriterChildPtr = IOWriter.IOWriterChildPtr;

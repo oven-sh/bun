@@ -147,8 +147,6 @@ pub fn alloc(allocator: std.mem.Allocator, t: anytype, loc: logger.Loc) Binding 
     }
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");

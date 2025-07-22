@@ -1641,28 +1641,29 @@ pub const AutoSizer = struct {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
-
-const Output = bun.Output;
-const strings = bun.strings;
-const string = bun.string;
-const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
-const ArrayBuffer = JSC.ArrayBuffer;
+const Output = bun.Output;
+const Syscall = bun.sys;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const strings = bun.strings;
+const uws = bun.uws;
 
+const JSC = bun.JSC;
+const ArrayBuffer = JSC.ArrayBuffer;
+const JSGlobalObject = JSC.JSGlobalObject;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
-const uws = bun.uws;
-const Blob = bun.webcore.Blob;
-const Response = JSC.WebCore.Response;
-const assert = bun.assert;
-const Syscall = bun.sys;
+
 const WebCore = JSC.WebCore;
-const Sink = WebCore.Sink;
 const AutoFlusher = WebCore.AutoFlusher;
 const FileSink = WebCore.FileSink;
+const Response = JSC.WebCore.Response;
+const Sink = WebCore.Sink;
 
+const Blob = bun.webcore.Blob;
 const AnyBlob = bun.webcore.Blob.Any;

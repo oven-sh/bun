@@ -1,25 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const CLI = @import("../cli.zig");
-const Fs = @import("../fs.zig");
-const JSON = bun.JSON;
-const js_ast = bun.JSAst;
-const options = @import("../options.zig");
-const initializeStore = @import("./create_command.zig").initializeStore;
-const logger = bun.logger;
-const JSPrinter = bun.js_printer;
-const exists = bun.sys.exists;
-const existsZ = bun.sys.existsZ;
-
 pub const InitCommand = struct {
     pub fn prompt(
         alloc: std.mem.Allocator,
@@ -619,7 +597,7 @@ pub const InitCommand = struct {
                     .blank => template = .blank,
                 }
 
-                try Output.writer().writeAll("\n");
+                Output.print("\n", .{});
                 Output.flush();
             } else {
                 Output.note("package.json already exists, configuring existing project", .{});
@@ -1260,3 +1238,26 @@ const Template = enum {
         Output.flush();
     }
 };
+
+const CLI = @import("../cli.zig");
+const Fs = @import("../fs.zig");
+const options = @import("../options.zig");
+const std = @import("std");
+const initializeStore = @import("./create_command.zig").initializeStore;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.JSON;
+const JSPrinter = bun.js_printer;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.JSAst;
+const logger = bun.logger;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const strings = bun.strings;
+
+const exists = bun.sys.exists;
+const existsZ = bun.sys.existsZ;

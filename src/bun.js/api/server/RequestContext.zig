@@ -1742,6 +1742,65 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         return;
                     }
 
+                    const srv = this.server orelse {
+                        globalThis.throwInvalidArguments("Server unavailable", .{}) catch {};
+                        return;
+                    };
+
+                    if (route_ptr.data.server == null) {
+                        route_ptr.data.server = AnyServer.from(srv);
+                    }
+
+                    const resp_ptr = this.resp.?;
+                    const resp_any = uws.AnyResponse.init(resp_ptr);
+                    const response = this.response_ptr.?;
+                    const status_code = response.statusCode();
+                    var headers_ref: ?*FetchHeaders = null;
+                    if (response.init.headers) |h| {
+                        headers_ref = h.cloneThis(globalThis) catch |err| {
+                            _ = globalThis.takeException(err);
+                            return;
+                        };
+                    }
+
+                    if (this.req) |req| {
+                        if (route_ptr.data.state == .html) {
+                            this.sendHtmlRoute(route_ptr.data.state.html, resp_any, status_code, headers_ref);
+                            return;
+                        }
+                        if (this.method == .HEAD or this.method == .GET) {
+                            if (status_code != 200 or headers_ref != null) {
+                                this.addPendingRoute(route_ptr.data, resp_any, status_code, headers_ref);
+                                return;
+                            }
+                        }
+                        if (this.method == .HEAD) {
+                            route_ptr.data.onHEADRequest(req, resp_any);
+                        } else {
+                            route_ptr.data.onRequest(req, resp_any);
+                        }
+                        if (headers_ref) |h| h.deref();
+                        return;
+                    }
+
+                    switch (route_ptr.data.state) {
+                        .html => |html| {
+                            this.sendHtmlRoute(html, resp_any, status_code, headers_ref);
+                        },
+                        .err => |log| {
+                            if (bun.Environment.enable_logs)
+                                ctxLog("HTML route build failed", .{});
+                            if (srv.config.isDevelopment()) {
+                                _ = log;
+                            }
+                            resp_any.writeStatus("500 Build Failed");
+                            resp_any.endWithoutBody(false);
+                        },
+                        else => {
+                            this.addPendingRoute(route_ptr.data, resp_any, status_code, headers_ref);
+                        },
+                    }
+
                     return;
                 },
                 .Locked => |*lock| {

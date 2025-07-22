@@ -236,6 +236,8 @@ const SocketHandlers: SocketHandler = {
   open(socket) {
     const self = socket.data;
     if (!self) return;
+    // make sure to disable timeout on usocket and handle on TS side
+    socket.timeout(0);
     if (self.timeout) {
       self.setTimeout(self.timeout);
     }
@@ -864,6 +866,8 @@ Socket.prototype[kAttach] = function (port, socket) {
   if (this.timeout) {
     this.setTimeout(this.timeout);
   }
+  // make sure to disable timeout on usocket and handle on TS side
+  socket.timeout(0);
   this._handle = socket;
   this.connecting = false;
 
@@ -1959,7 +1963,9 @@ function internalConnectMultipleTimeout(context, req, handle) {
 }
 
 function afterConnect(status, handle, req, readable, writable) {
+  if (!handle) return;
   const self = handle[owner_symbol];
+  if (!self) return;
 
   // Callback may come after call to destroy
   if (self.destroyed) {

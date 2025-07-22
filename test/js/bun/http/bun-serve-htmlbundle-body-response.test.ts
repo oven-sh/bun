@@ -1,4 +1,3 @@
-import { HTMLBundle } from "bun";
 import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { join } from "path";
@@ -7,7 +6,7 @@ const dir = tempDirWithFiles("htmlbundle", {
   "index.html": "<!DOCTYPE html><html><body>Hello HTML</body></html>",
 });
 
-const html = (await import(join(dir, "index.html"))).default as HTMLBundle;
+const html = (await import(join(dir, "index.html"))).default;
 
 test("fetch routes HTMLBundle", async () => {
   using server = Bun.serve({

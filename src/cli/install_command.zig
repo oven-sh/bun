@@ -13,6 +13,17 @@ pub const InstallCommand = struct {
     }
 };
 
+fn deleteOldNodeModules(fd: bun.FileDescriptor) void {
+    var dir = std.fs.Dir{ .fd = fd.cast() };
+    var iter = dir.iterate();
+    
+    while (iter.next() catch null) |entry| {
+        if (entry.kind == .directory and std.mem.startsWith(u8, entry.name, ".node_modules_old_")) {
+            fd.deleteTree(entry.name) catch {};
+        }
+    }
+}
+
 fn install(ctx: Command.Context) !void {
     var cli = try CommandLineArguments.parse(ctx.allocator, .install);
 
@@ -63,7 +74,16 @@ fn installWithCLI(ctx: Command.Context, cli: CommandLineArguments) !void {
     var manager, const original_cwd = try PackageManager.init(ctx, cli, .install);
 
     if (cli.is_ci_command and subcommand == .install) {
-        manager.root_dir.fd.deleteTree("node_modules") catch {};
+        const timestamp = @as(u64, @intCast(std.time.milliTimestamp()));
+        var temp_name_buf: [256]u8 = undefined;
+        const temp_name = std.fmt.bufPrintZ(&temp_name_buf, ".node_modules_old_{d}", .{timestamp}) catch ".node_modules_old";
+        
+        _ = bun.sys.renameat(manager.root_dir.fd, "node_modules", manager.root_dir.fd, temp_name);
+        
+        const delete_thread = std.Thread.spawn(.{}, deleteOldNodeModules, .{manager.root_dir.fd}) catch null;
+        if (delete_thread) |thread| {
+            thread.detach();
+        }
     }
 
     // switch to `bun add <package>`

@@ -890,6 +890,19 @@ pub const DescribeScope = struct {
         return true;
     }
 
+    pub fn hasRunnableTests(this: *const DescribeScope) bool {
+        for (this.tests.items) |test_scope| {
+            if (test_scope.tag != .skip and
+                test_scope.tag != .todo and
+                test_scope.tag != .skipped_because_label and
+                !(test_scope.tag != .only and Jest.runner.?.only))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     pub fn push(new: *DescribeScope) void {
         if (new.parent) |scope| {
             if (comptime Environment.allow_assert) {
@@ -1181,7 +1194,7 @@ pub const DescribeScope = struct {
 
         var i: TestRunner.Test.ID = 0;
 
-        if (this.shouldEvaluateScope()) {
+        if (this.shouldEvaluateScope() and this.hasRunnableTests()) {
             if (this.runCallback(globalObject, .beforeAll)) |err| {
                 _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
                 while (i < end) {

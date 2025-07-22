@@ -67,6 +67,7 @@ pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
 pub const update_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
     clap.parseParam("-i, --interactive                     Show an interactive list of outdated packages to select for update") catch unreachable,
+    clap.parseParam("-F, --filter <STR>...                        Update dependencies for each matching workspace") catch unreachable,
     clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
 });
 

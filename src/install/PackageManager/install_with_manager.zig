@@ -688,8 +688,8 @@ pub fn installWithManager(
 
     var path_buf: bun.PathBuffer = undefined;
     var workspace_filters: std.ArrayListUnmanaged(WorkspaceFilter) = .{};
-    // only populated when subcommand is `.install`
-    if (manager.subcommand == .install and manager.options.filter_patterns.len > 0) {
+    // only populated when subcommand is `.install` or `.update`
+    if ((manager.subcommand == .install or manager.subcommand == .update) and manager.options.filter_patterns.len > 0) {
         try workspace_filters.ensureUnusedCapacity(manager.allocator, manager.options.filter_patterns.len);
         for (manager.options.filter_patterns) |pattern| {
             try workspace_filters.append(manager.allocator, try WorkspaceFilter.init(manager.allocator, pattern, original_cwd, &path_buf));

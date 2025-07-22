@@ -1,5 +1,5 @@
 pub const SystemError = extern struct {
-    errno: c_int = 0,
+    errno: c_uint = 0,
     /// label for errno
     code: String = .empty,
     message: String, // it is illegal to have an empty message
@@ -22,7 +22,7 @@ pub const SystemError = extern struct {
 
     pub fn getErrno(this: *const SystemError) bun.sys.E {
         // The inverse in bun.sys.Error.toSystemError()
-        return @enumFromInt(this.errno * -1);
+        return @enumFromInt(this.errno);
     }
 
     pub fn deref(this: *const SystemError) void {

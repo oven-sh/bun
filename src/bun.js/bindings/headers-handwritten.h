@@ -128,7 +128,7 @@ typedef struct ErrorableResolvedSource {
 } ErrorableResolvedSource;
 
 typedef struct SystemError {
-    int errno_;
+    unsigned int errno_;
     BunString code;
     BunString message;
     BunString path;
@@ -195,7 +195,7 @@ typedef struct ZigStackTrace {
 typedef struct ZigException {
     unsigned char type;
     uint16_t runtime_type;
-    int errno_;
+    unsigned int errno_;
     BunString syscall;
     BunString system_code;
     BunString path;

@@ -981,6 +981,16 @@ if(APPLE)
     -Wl,-map,${bun}.linker-map
   )
 
+  if(DEBUG)
+    target_link_options(${bun} PUBLIC
+    # Suppress ALL linker warnings on macOS.
+    # The intent is to only suppress linker alignment warnings.
+    # As of July 21st, 2025 there doesn't seem to be a more specific suppression just for linker alignment warnings.
+    # If you find one, please update this to only be for linker alignment.
+    -Wl,-w
+    )
+  endif()
+
   # don't strip in debug, this seems to be needed so that the Zig std library
   # `*dbHelper` DWARF symbols (used by LLDB for pretty printing) are in the
   # output executable

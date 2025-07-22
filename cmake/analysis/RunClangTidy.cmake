@@ -1,16 +1,15 @@
 # https://clang.llvm.org/extra/clang-tidy/
 
-# Filter out specific files that cause clang-tidy segfaults
+# Filter out code that causes static analyzer crashes or is third-party
 set(CLANG_TIDY_SOURCES)
 foreach(source ${BUN_C_SOURCES} ${BUN_CXX_SOURCES})
-  # Exclude files that cause segfaults in clang-tidy
-  # - src/bake/: Complex WebKit integration causing clang-tidy segfaults
-  # - src/bun.js/bindings: WebKit C++ bindings with complex memory management APIs
-  # - src/bun.js/modules: Generated WebKit binding modules with complex template code
-  # - vendor/: Third-party code not under our control
-  # - WebKit: Direct WebKit headers and implementations
-  if(NOT source MATCHES "(src/bake/|src/bun\\.js/(bindings|modules)|vendor/)" AND
-     NOT source MATCHES "WebKit")
+  # Exclude vendor code, bake (complex WebKit integration), and files that use 
+  # WebKit's LazyProperty and heap management patterns that crash static analyzer
+  if(NOT source MATCHES "(src/bake/|vendor/)" AND
+     NOT source MATCHES "/webkit-" AND
+     NOT source MATCHES "WebKit/" AND
+     NOT source MATCHES "(NodeModule|ExposeNodeModuleGlobals|ScriptExecutionContext)" AND
+     NOT source MATCHES "src/bun.js/(modules|bindings)/.*\\.cpp$")
     list(APPEND CLANG_TIDY_SOURCES ${source})
   endif()
 endforeach()

@@ -543,6 +543,14 @@ test("no color", async () => {
   expect(colorStdout).toEqual(noColorStdout);
 });
 
+function getDiffPart(stderr: string): string {
+  stderr = stderr.split("a\\nd\\nc\\nd\\ne")[1];
+  const split = stderr.split("\n\n");
+  split.pop();
+  stderr = split.join("\n\n");
+  return stderr;
+}
+
 test("color", async () => {
   const spawn = Bun.spawn({
     cmd: [bunExe(), import.meta.dir + "/diffexample-color.fixture.ts"],
@@ -553,16 +561,11 @@ test("color", async () => {
     },
   });
   await spawn.exited;
-  let stderr = await spawn.stderr.text();
-  stderr = stderr.split("a\\nd\\nc\\nd\\ne")[1];
-  const split = stderr.split("\n\n");
-  split.pop();
-  stderr = split.join("\n\n");
+  const stderr = await spawn.stderr.text();
 
-  expect(stderr).toMatchInlineSnapshot(`
-    ""\x1B[0m)\x1B[0m\x1B[2m;\x1B[0m
-                                 \x1B[31m\x1B[1m^\x1B[0m
-    \x1B[0m\x1B[31merror\x1B[0m\x1B[2m:\x1B[0m \x1B[1m\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+  expect(stderr).toMatchInlineSnapshot(`""`);
+  expect(await spawn.stdout.text()).toMatchInlineSnapshot(`
+    "\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
 
       \x1B[0m\x1B[2m"a\x1B[0m
@@ -574,9 +577,38 @@ test("color", async () => {
       \x1B[0m\x1B[2me"\x1B[0m
 
     \x1B[32m- Expected  - 2\x1B[0m
-    \x1B[31m+ Received  + 2\x1B[0m"
+    \x1B[31m+ Received  + 2\x1B[0m
+
+
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+
+      \x1B[0m\x1B[2m{\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  age: \x1B[0m\x1B[42m30\x1B[0m\x1B[32m,\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  age: \x1B[0m\x1B[41m25\x1B[0m\x1B[31m,\x1B[0m
+      \x1B[0m\x1B[2m  logs: [\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[42m    "Logged into system",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[42m    "Accessed dashboard",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[42m    "Reviewed daily reports",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[42m    "Updated project status",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[42m    "Sent status email to team",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[42m    "Scheduled follow-up meeting"\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[41m    "Entered the building",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[41m    "Checked in at reception",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[41m    "Took elevator to floor 3",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[41m    "Attended morning meeting",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[41m    "Started working on project"\x1B[0m
+      \x1B[0m\x1B[2m  ],\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  name: "\x1B[0m\x1B[42mBob\x1B[0m\x1B[32m",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  name: "\x1B[0m\x1B[41mAlice\x1B[0m\x1B[31m",\x1B[0m
+      \x1B[0m\x1B[2m}\x1B[0m
+
+    \x1B[32m- Expected  - 8\x1B[0m
+    \x1B[31m+ Received  + 7\x1B[0m
+
+
+    "
   `);
-  expect(await spawn.stdout.text()).toMatchInlineSnapshot(`""`);
   expect(spawn.exitCode).toBe(1);
 });
 

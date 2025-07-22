@@ -83,7 +83,7 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
                 .INTR => {},
 
                 .ACCES, .BADF, .INVAL, .OPNOTSUPP, .NOSYS, .PERM => {
-                    bun.Output.debug("ioctl_ficlonerange is NOT supported", .{});
+                    debug("ioctl_ficlonerange is NOT supported", .{});
                     can_use_ioctl_ficlone_.store(-1, .monotonic);
                     copy_file_state.has_ioctl_ficlone_failed = true;
                 },
@@ -148,18 +148,18 @@ pub fn canUseCopyFileRangeSyscall() bool {
     if (result == 0) {
         // This flag mostly exists to make other code more easily testable.
         if (bun.getenvZ("BUN_CONFIG_DISABLE_COPY_FILE_RANGE") != null) {
-            bun.Output.debug("copy_file_range is disabled by BUN_CONFIG_DISABLE_COPY_FILE_RANGE", .{});
+            debug("copy_file_range is disabled by BUN_CONFIG_DISABLE_COPY_FILE_RANGE", .{});
             can_use_copy_file_range.store(-1, .monotonic);
             return false;
         }
 
         const kernel = Platform.kernelVersion();
         if (kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)) {
-            bun.Output.debug("copy_file_range is supported", .{});
+            debug("copy_file_range is supported", .{});
             can_use_copy_file_range.store(1, .monotonic);
             return true;
         } else {
-            bun.Output.debug("copy_file_range is NOT supported", .{});
+            debug("copy_file_range is NOT supported", .{});
             can_use_copy_file_range.store(-1, .monotonic);
             return false;
         }
@@ -180,18 +180,18 @@ pub fn can_use_ioctl_ficlone() bool {
     if (result == 0) {
         // This flag mostly exists to make other code more easily testable.
         if (bun.getenvZ("BUN_CONFIG_DISABLE_ioctl_ficlonerange") != null) {
-            bun.Output.debug("ioctl_ficlonerange is disabled by BUN_CONFIG_DISABLE_ioctl_ficlonerange", .{});
+            debug("ioctl_ficlonerange is disabled by BUN_CONFIG_DISABLE_ioctl_ficlonerange", .{});
             can_use_ioctl_ficlone_.store(-1, .monotonic);
             return false;
         }
 
         const kernel = Platform.kernelVersion();
         if (kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)) {
-            bun.Output.debug("ioctl_ficlonerange is supported", .{});
+            debug("ioctl_ficlonerange is supported", .{});
             can_use_ioctl_ficlone_.store(1, .monotonic);
             return true;
         } else {
-            bun.Output.debug("ioctl_ficlonerange is NOT supported", .{});
+            debug("ioctl_ficlonerange is NOT supported", .{});
             can_use_ioctl_ficlone_.store(-1, .monotonic);
             return false;
         }
@@ -220,7 +220,7 @@ pub fn copyFileRange(in: fd_t, out: fd_t, len: usize, flags: u32, copy_file_stat
                 // syscall added in Linux 4.5, use fallback
                 .OPNOTSUPP, .NOSYS => {
                     copy_file_state.has_copy_file_range_failed = true;
-                    bun.Output.debug("copy_file_range is NOT supported", .{});
+                    debug("copy_file_range is NOT supported", .{});
                     can_use_copy_file_range.store(-1, .monotonic);
                 },
                 .INTR => continue,
@@ -297,6 +297,7 @@ pub fn copyFileReadWriteLoop(
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Maybe = bun.sys.Maybe;
+const debug = bun.Output.scoped(.copy_file, true);
 const Platform = bun.analytics.GenerateHeader.GeneratePlatform;
 
 const std = @import("std");

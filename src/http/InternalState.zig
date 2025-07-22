@@ -182,6 +182,13 @@ pub fn decompressBytes(this: *InternalState, buffer: []const u8, body_out_str: *
                 Output.flush();
                 return err;
             }
+            
+            // For ShortRead when not done, log it for debugging but continue
+            // This helps identify potential premature stream termination issues like with RavenDB
+            if (bun.http.extremely_verbose) {
+                Output.prettyErrorln("<r><yellow>Warning: ShortRead during decompression (stream may have ended prematurely)<r>", .{});
+                Output.flush();
+            }
         };
     }
 

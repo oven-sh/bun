@@ -128,7 +128,13 @@ export async function prerender(meta: Bake.RouteMetadata) {
   let rscChunks: Array<BlobPart> = [int.buffer as ArrayBuffer, meta.styles.join("\n")];
   rscPayload.on("data", chunk => rscChunks.push(chunk));
 
-  const html = await renderToStaticHtml(rscPayload, meta.modules);
+  let html;
+  try {
+    html = await renderToStaticHtml(rscPayload, meta.modules);
+  } catch (err) {
+    console.error("ah fuck");
+    return undefined;
+  }
   const rsc = new Blob(rscChunks, { type: "text/x-component" });
 
   return {

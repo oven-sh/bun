@@ -17539,7 +17539,9 @@ fn NewParser_(
                             break :check_for_usestate false;
                         }) {
                             bun.assert(p.options.features.server_components.isServerSide());
-                            if (bun.strings.eqlComptime(original_name, "useState")) {
+                            if (!bun.strings.startsWith(p.source.path.pretty, "node_modules") and
+                                bun.strings.eqlComptime(original_name, "useState"))
+                            {
                                 p.log.addError(
                                     p.source,
                                     expr.loc,

@@ -284,7 +284,8 @@ class StaticRscInjectionStream extends EventEmitter {
   }
 
   destroy(error) {
-    console.error(error);
+    // We don't need to console.error here as react does ti itself
+    // console.error(error);
     this.reject(error);
   }
 }

@@ -803,10 +803,8 @@ pub fn deinit(dev: *DevServer) void {
         },
         .route_lookup = dev.route_lookup.deinit(allocator),
         .source_maps = {
-            for (dev.source_maps.entries.values()) |*value| {
-                bun.assert(value.ref_count > 0);
-                value.ref_count = 0;
-                value.deinit(dev);
+            for (dev.source_maps.entries.keys()) |key| {
+                dev.source_maps.unref(key);
             }
             dev.source_maps.entries.deinit(allocator);
 
@@ -2390,7 +2388,7 @@ pub fn finalizeBundle(
         .gts = undefined,
     };
 
-    const quoted_source_contents: []const []const u8 = bv2.linker.graph.files.items(.quoted_source_contents);
+    const quoted_source_contents: []const ?[]const u8 = bv2.linker.graph.files.items(.quoted_source_contents);
     // Pass 1, update the graph's nodes, resolving every bundler source
     // index into its `IncrementalGraph(...).FileIndex`
     for (
@@ -2408,7 +2406,7 @@ pub fn finalizeBundle(
         // TODO: investigate why linker.files is not indexed by linker's index
         // const linker_index = bv2.linker.graph.stable_source_indices[index.get()];
         // const quoted_contents = quoted_source_contents[linker_index];
-        const quoted_contents = quoted_source_contents[part_range.source_index.get()];
+        const quoted_contents = quoted_source_contents[part_range.source_index.get()] orelse "";
         switch (targets[part_range.source_index.get()].bakeGraph()) {
             inline else => |graph| try (switch (graph) {
                 .client => dev.client_graph,

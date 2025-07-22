@@ -354,7 +354,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             {
                 const input = c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index].path;
                 var buf = MutableString.initEmpty(worker.allocator);
-                js_printer.quoteForJSONBuffer(input.pretty, &buf, true) catch bun.outOfMemory();
+                js_printer.quoteForJSON(input.pretty, &buf, true) catch bun.outOfMemory();
                 const str = buf.slice(); // worker.allocator is an arena
                 j.pushStatic(str);
                 line_offset.advance(str);

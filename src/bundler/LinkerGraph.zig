@@ -44,6 +44,15 @@ pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {
     };
 }
 
+pub fn deinit(this: *LinkerGraph) void {
+    for (this.files.items(.quoted_source_contents)) |maybe_contents| {
+        if (maybe_contents) |contents| {
+            this.allocator.free(contents);
+        }
+    }
+    this.files.clearAndFree(this.allocator);
+}
+
 pub fn runtimeFunction(this: *const LinkerGraph, name: string) Ref {
     return this.ast.items(.named_exports)[Index.runtime.value].get(name).?.ref;
 }
@@ -429,7 +438,7 @@ pub const File = struct {
     entry_point_chunk_index: u32 = std.math.maxInt(u32),
 
     line_offset_table: bun.sourcemap.LineOffsetTable.List = .empty,
-    quoted_source_contents: string = "",
+    quoted_source_contents: ?[]const u8 = null,
 
     pub fn isEntryPoint(this: *const File) bool {
         return this.entry_point_kind.isEntryPoint();

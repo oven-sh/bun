@@ -1528,15 +1528,9 @@ pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev
     start_state.original_line += original_line.value;
     start_state.original_column += original_column.value;
 
-    j.push(
-        appendMappingToBuffer(
-            MutableString.initEmpty(allocator),
-            j.lastByte(),
-            prev_end_state,
-            start_state,
-        ).list.items,
-        allocator,
-    );
+    var str = MutableString.initEmpty(allocator);
+    appendMappingToBuffer(&str, j.lastByte(), prev_end_state, start_state);
+    j.push(str.slice(), allocator);
 
     // Then append everything after that without modification.
     j.pushStatic(source_map);
@@ -1561,8 +1555,7 @@ pub fn appendSourceMappingURLRemote(
 }
 
 /// This function is extremely hot.
-pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: SourceMapState, current_state: SourceMapState) MutableString {
-    var buffer = buffer_;
+pub fn appendMappingToBuffer(buffer: *MutableString, last_byte: u8, prev_state: SourceMapState, current_state: SourceMapState) void {
     const needs_comma = last_byte != 0 and last_byte != ';' and last_byte != '"';
 
     const vlqs = [_]VLQ{
@@ -1595,8 +1588,6 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
         @memcpy(writable[0..item.len], item.slice());
         writable = writable[item.len..];
     }
-
-    return buffer;
 }
 
 pub const Chunk = struct {
@@ -1627,11 +1618,11 @@ pub const Chunk = struct {
     pub fn printSourceMapContents(
         chunk: Chunk,
         source: *const Logger.Source,
-        mutable: MutableString,
+        mutable: *MutableString,
         include_sources_contents: bool,
         comptime ascii_only: bool,
-    ) !MutableString {
-        return printSourceMapContentsAtOffset(
+    ) !void {
+        try printSourceMapContentsAtOffset(
             chunk,
             source,
             mutable,
@@ -1644,13 +1635,11 @@ pub const Chunk = struct {
     pub fn printSourceMapContentsAtOffset(
         chunk: Chunk,
         source: *const Logger.Source,
-        mutable: MutableString,
+        mutable: *MutableString,
         include_sources_contents: bool,
         offset: usize,
         comptime ascii_only: bool,
-    ) !MutableString {
-        var output = mutable;
-
+    ) !void {
         // attempt to pre-allocate
 
         var filename_buf: bun.PathBuffer = undefined;
@@ -1663,23 +1652,21 @@ pub const Chunk = struct {
             filename = filename_buf[0 .. filename.len + 1];
         }
 
-        output.growIfNeeded(
+        mutable.growIfNeeded(
             filename.len + 2 + (source.contents.len * @as(usize, @intFromBool(include_sources_contents))) + (chunk.buffer.list.items.len - offset) + 32 + 39 + 29 + 22 + 20,
         ) catch unreachable;
-        try output.append("{\n  \"version\":3,\n  \"sources\": [");
+        try mutable.append("{\n  \"version\":3,\n  \"sources\": [");
 
-        output = try JSPrinter.quoteForJSON(filename, output, ascii_only);
+        try JSPrinter.quoteForJSON(filename, mutable, ascii_only);
 
         if (include_sources_contents) {
-            try output.append("],\n  \"sourcesContent\": [");
-            output = try JSPrinter.quoteForJSON(source.contents, output, ascii_only);
+            try mutable.append("],\n  \"sourcesContent\": [");
+            try JSPrinter.quoteForJSON(source.contents, mutable, ascii_only);
         }
 
-        try output.append("],\n  \"mappings\": ");
-        output = try JSPrinter.quoteForJSON(chunk.buffer.list.items[offset..], output, ascii_only);
-        try output.append(", \"names\": []\n}");
-
-        return output;
+        try mutable.append("],\n  \"mappings\": ");
+        try JSPrinter.quoteForJSON(chunk.buffer.list.items[offset..], mutable, ascii_only);
+        try mutable.append(", \"names\": []\n}");
     }
 
     // TODO: remove the indirection by having generic functions for SourceMapFormat and NewBuilder. Source maps are always VLQ
@@ -1690,6 +1677,10 @@ pub const Chunk = struct {
 
             pub fn init(allocator: std.mem.Allocator, prepend_count: bool) Format {
                 return .{ .ctx = Type.init(allocator, prepend_count) };
+            }
+
+            pub inline fn deinit(this: *Format) void {
+                this.ctx.deinit();
             }
 
             pub inline fn appendLineSeparator(this: *Format) anyerror!void {
@@ -1720,8 +1711,6 @@ pub const Chunk = struct {
         offset: usize = 0,
         approximate_input_line_count: usize = 0,
 
-        pub const Format = SourceMapFormat(VLQSourceMap);
-
         pub fn init(allocator: std.mem.Allocator, prepend_count: bool) VLQSourceMap {
             var map = VLQSourceMap{
                 .data = MutableString.initEmpty(allocator),
@@ -1736,6 +1725,11 @@ pub const Chunk = struct {
             return map;
         }
 
+        pub fn deinit(this: *VLQSourceMap) void {
+            // this.data.deinit();
+            _ = this;
+        }
+
         pub fn appendLineSeparator(this: *VLQSourceMap) anyerror!void {
             try this.data.appendChar(';');
         }
@@ -1746,7 +1740,7 @@ pub const Chunk = struct {
             else
                 0;
 
-            this.data = appendMappingToBuffer(this.data, last_byte, prev_state, current_state);
+            appendMappingToBuffer(&this.data, last_byte, prev_state, current_state);
             this.count += 1;
         }
 
@@ -1766,7 +1760,6 @@ pub const Chunk = struct {
     pub fn NewBuilder(comptime SourceMapFormatType: type) type {
         return struct {
             const ThisBuilder = @This();
-            input_source_map: ?*SourceMap = null,
             source_map: SourceMapper,
             line_offset_tables: LineOffsetTable.List = .{},
             prev_state: SourceMapState = SourceMapState{},
@@ -1879,17 +1872,7 @@ pub const Chunk = struct {
                 b.last_generated_update = @as(u32, @truncate(output.len));
             }
 
-            pub fn appendMapping(b: *ThisBuilder, current_state_: SourceMapState) void {
-                var current_state = current_state_;
-                // If the input file had a source map, map all the way back to the original
-                if (b.input_source_map) |input| {
-                    if (input.find(current_state.original_line, current_state.original_column)) |mapping| {
-                        current_state.source_index = mapping.sourceIndex();
-                        current_state.original_line = mapping.originalLine();
-                        current_state.original_column = mapping.originalColumn();
-                    }
-                }
-
+            pub fn appendMapping(b: *ThisBuilder, current_state: SourceMapState) void {
                 b.appendMappingWithoutRemapping(current_state);
             }
 

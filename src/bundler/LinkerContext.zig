@@ -22,8 +22,6 @@ pub const LinkerContext = struct {
 
     options: LinkerOptions = .{},
 
-    ambiguous_result_pool: std.ArrayList(MatchImport) = undefined,
-
     loop: EventLoop,
 
     /// string buffer containing pre-formatted unique keys
@@ -49,6 +47,11 @@ pub const LinkerContext = struct {
 
     pub fn pathWithPrettyInitialized(this: *LinkerContext, path: Fs.Path) !Fs.Path {
         return bundler.genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.graph.allocator);
+    }
+
+    pub fn deinit(this: *LinkerContext) void {
+        this.cycle_detector.clearAndFree();
+        this.graph.deinit();
     }
 
     pub const LinkerOptions = struct {
@@ -150,15 +153,19 @@ pub const LinkerContext = struct {
         pub fn computeQuotedSourceContents(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
-            const quoted_source_contents: *string = &this.graph.files.items(.quoted_source_contents)[source_index];
+            const quoted_source_contents: *?[]const u8 = &this.graph.files.items(.quoted_source_contents)[source_index];
             if (!loader.canHaveSourceMap()) {
-                quoted_source_contents.* = "";
+                if (quoted_source_contents.*) |slice| {
+                    allocator.free(slice);
+                }
+                quoted_source_contents.* = null;
                 return;
             }
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
-            const mutable = MutableString.initEmpty(allocator);
-            quoted_source_contents.* = (js_printer.quoteForJSON(source.contents, mutable, false) catch bun.outOfMemory()).list.items;
+            var mutable = MutableString.initEmpty(allocator);
+            js_printer.quoteForJSON(source.contents, &mutable, false) catch bun.outOfMemory();
+            quoted_source_contents.* = mutable.slice();
         }
     };
 
@@ -208,7 +215,6 @@ pub const LinkerContext = struct {
 
         try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys());
         bundle.dynamic_import_entry_points.deinit();
-        this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
 
         var runtime_named_exports = &this.graph.ast.items(.named_exports)[Index.runtime.get()];
 
@@ -679,8 +685,8 @@ pub const LinkerContext = struct {
                 }
 
                 var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + 2);
-                quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
-                j.pushStatic(quote_buf.list.items); // freed by arena
+                try js_printer.quoteForJSON(path.pretty, &quote_buf, false);
+                j.pushStatic(quote_buf.slice()); // freed by arena
             }
 
             var next_mapping_source_index: i32 = 1;
@@ -700,8 +706,8 @@ pub const LinkerContext = struct {
 
                 var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + ", ".len + 2);
                 quote_buf.appendAssumeCapacity(", ");
-                quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
-                j.pushStatic(quote_buf.list.items); // freed by arena
+                try js_printer.quoteForJSON(path.pretty, &quote_buf, false);
+                j.pushStatic(quote_buf.slice()); // freed by arena
             }
         }
 
@@ -713,11 +719,11 @@ pub const LinkerContext = struct {
         const source_indices_for_contents = source_id_map.keys();
         if (source_indices_for_contents.len > 0) {
             j.pushStatic("\n    ");
-            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]]);
+            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]] orelse "");
 
             for (source_indices_for_contents[1..]) |index| {
                 j.pushStatic(",\n    ");
-                j.pushStatic(quoted_source_map_contents[index]);
+                j.pushStatic(quoted_source_map_contents[index] orelse "");
             }
         }
         j.pushStatic(

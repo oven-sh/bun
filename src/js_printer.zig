@@ -185,12 +185,6 @@ pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, compt
     return len;
 }
 
-pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_only: bool) !MutableString {
-    var bytes = output_;
-    try quoteForJSONBuffer(text, &bytes, ascii_only);
-    return bytes;
-}
-
 pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
     const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
     if (comptime json and quote_char != '"') @compileError("for json, quote_char must be '\"'");
@@ -387,7 +381,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
         }
     }
 }
-pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
+pub fn quoteForJSON(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
     const writer = bytes.writer();
 
     try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
@@ -5811,6 +5805,7 @@ pub fn printAst(
         if (comptime generate_source_map) {
             printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
         }
+        printer.source_map_builder.source_map.deinit();
     }
     printer.was_lazy_export = tree.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);

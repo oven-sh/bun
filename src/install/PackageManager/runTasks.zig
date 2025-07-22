@@ -269,12 +269,14 @@ pub fn runTasks(
                         entry.value_ptr.manifest.pkg.public_max_age = timestamp_this_tick.?;
 
                         if (manager.options.enable.manifest_cache) {
-                            Npm.PackageManifest.Serializer.saveAsync(
-                                &entry.value_ptr.manifest,
-                                manager.scopeForPackageName(name.slice()),
-                                manager.getTemporaryDirectory(),
-                                manager.getCacheDirectory(),
-                            );
+                            if (!manager.isCacheDirectoryRemote() or bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_MANIFEST_CACHE_NO_SAVE_TTL)) {
+                                Npm.PackageManifest.Serializer.saveAsync(
+                                    &entry.value_ptr.manifest,
+                                    manager.scopeForPackageName(name.slice()),
+                                    manager.getTemporaryDirectory(),
+                                    manager.getCacheDirectory(),
+                                );
+                            }
                         }
 
                         if (@hasField(@TypeOf(callbacks), "manifests_only") and callbacks.manifests_only) {

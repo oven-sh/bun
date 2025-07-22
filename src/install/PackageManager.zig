@@ -19,7 +19,7 @@ scripts_node: ?*Progress.Node = null,
 progress_name_buf: [768]u8 = undefined,
 progress_name_buf_dynamic: []u8 = &[_]u8{},
 cpu_count: u32 = 0,
-
+is_cache_directory_an_overlay_fs: ?bool = null,
 track_installed_bin: TrackInstalledBin = .{
     .none = {},
 },
@@ -379,6 +379,19 @@ pub fn tlsRejectUnauthorized(this: *PackageManager) bool {
 
 pub fn computeIsContinuousIntegration(this: *PackageManager) bool {
     return this.env.isCI();
+}
+
+pub fn isCacheDirectoryRemote(this: *PackageManager) bool {
+    if (this.is_cache_directory_an_overlay_fs) |is_overlay_fs| {
+        return is_overlay_fs;
+    }
+    const statfs = bun.sys.statfs(this.cache_dir_name).unwrap() catch {
+        this.is_cache_directory_an_overlay_fs = false;
+        return false;
+    };
+
+    this.is_cache_directory_an_overlay_fs = bun.sys.isRemoteFilesystem(&statfs);
+    return this.is_cache_directory_an_overlay_fs.?;
 }
 
 pub inline fn isContinuousIntegration(this: *PackageManager) bool {

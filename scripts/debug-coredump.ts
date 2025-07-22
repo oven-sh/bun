@@ -44,8 +44,8 @@ if (!fs.existsSync(join(dir, "bun-profile")) || !fs.existsSync(join(dir, `bun-${
   await Bun.$`bash -c ${`age -d -i <(echo "$AGE_CORES_IDENTITY")`} < ${cores} | tar -zxvC ${dir}`;
 
   console.log("moving cores out of nested directory");
-  for await (const file of new Bun.Glob("bun-cores-*/bun-*.core").scan(dir)) {
-    fs.renameSync(join(dir, file), join(dir, basename(file)));
+  for await (const file of new Bun.Glob("bun-cores-*/*.core").scan(dir)) {
+    fs.renameSync(join(dir, file), join(dir, `bun-${pid}.core`));
   }
 } else {
   console.log(`already downloaded in ${dir}`);

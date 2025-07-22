@@ -59,7 +59,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
 
         const file_name = path.join(tmp_dir, test_name);
         const contents = Buffer.from(`const http2 = require("http2");
-    const server = http2.createServer();
+    const server = http2.createServer({ paddingStrategy: ${paddingStrategy} });
   ${code}
   server.listen(0);
   server.on("listening", () => {

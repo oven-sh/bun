@@ -21,7 +21,7 @@ export default [
       },
       setQuiet: {
         fn: "setQuiet",
-        length: 0,
+        length: 1,
       },
     },
   }),

@@ -4398,17 +4398,11 @@ pub const Internal = struct {
     }
 
     pub fn toOwnedSlice(this: *@This()) []u8 {
-        const bytes = this.bytes.items;
-        const capacity = this.bytes.capacity;
-        if (bytes.len == 0 and capacity > 0) {
-            this.bytes.clearAndFree();
-            return &.{};
-        }
-
+        var bytes = this.bytes;
+        bytes.shrinkAndFree(bytes.items.len);
         this.bytes.items = &.{};
         this.bytes.capacity = 0;
-
-        return bytes;
+        return bytes.items;
     }
 
     pub fn clearAndFree(this: *@This()) void {
@@ -4505,10 +4499,6 @@ pub const Inline = extern struct {
 
     pub inline fn sliceConst(this: *const @This()) []const u8 {
         return this.bytes[0..this.len];
-    }
-
-    pub fn toOwnedSlice(this: *@This()) []u8 {
-        return this.slice();
     }
 
     pub fn clearAndFree(_: *@This()) void {}

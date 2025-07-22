@@ -1240,7 +1240,8 @@ pub const PipeReader = struct {
             return this.state.done;
         }
         // we do not use .toOwnedSlice() because we don't want to reallocate memory.
-        const out = this.reader._buffer;
+        var out = this.reader._buffer;
+        out.shrinkAndFree(out.items.len);
         this.reader._buffer.items = &.{};
         this.reader._buffer.capacity = 0;
 

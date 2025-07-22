@@ -2180,7 +2180,7 @@ pub fn Bun__fetch_(
                     hostname = null;
                     allocator.free(host);
                 }
-                hostname = _hostname.toOwnedSliceZ(allocator) catch bun.outOfMemory();
+                hostname = _hostname.toOwnedSlice(allocator) catch bun.outOfMemory();
             }
             if (url.isS3()) {
                 if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Range)) |_range| {
@@ -2188,7 +2188,7 @@ pub fn Bun__fetch_(
                         range = null;
                         allocator.free(range_);
                     }
-                    range = _range.toOwnedSliceZ(allocator) catch bun.outOfMemory();
+                    range = _range.toOwnedSlice(allocator) catch bun.outOfMemory();
                 }
             }
 

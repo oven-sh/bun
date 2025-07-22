@@ -863,12 +863,12 @@ pub fn migrateYarnLockfile(
                     }
 
                     // Only leave URL empty for default registries
-                    const url = if (strings.hasPrefixComptime(resolved, "https://registry.yarnpkg.com/") or 
-                                   strings.hasPrefixComptime(resolved, "https://registry.npmjs.org/"))
+                    const url = if (strings.hasPrefixComptime(resolved, "https://registry.yarnpkg.com/") or
+                        strings.hasPrefixComptime(resolved, "https://registry.npmjs.org/"))
                         String{}
                     else
                         try string_buf.append(resolved);
-                    
+
                     break :blk Resolution.init(.{
                         .npm = .{
                             .url = url,
@@ -1679,7 +1679,7 @@ pub fn migrateYarnLockfile(
         const sorter = DepSorter{ .lockfile = this };
         std.sort.pdq(DependencyID, regular_deps.items, sorter, DepSorter.isLessThan);
         std.sort.pdq(DependencyID, scoped_deps.items, sorter, DepSorter.isLessThan);
-        
+
         if (Environment.isDebug) {
             bun.Output.prettyErrorln("DEBUG: After sorting - {} regular deps, {} scoped deps", .{ regular_deps.items.len, scoped_deps.items.len });
         }
@@ -1794,7 +1794,7 @@ pub fn migrateYarnLockfile(
             // Use OverrideMap.parseAppend to handle resolutions properly
             var root_package = this.packages.get(0);
             var string_builder = this.stringBuilder();
-            
+
             // Count any strings we might need for overrides
             if (json.asProperty("resolutions")) |resolutions| {
                 if (resolutions.expr.data == .e_object) {
@@ -1802,7 +1802,7 @@ pub fn migrateYarnLockfile(
                     string_builder.cap += resolutions.expr.data.e_object.properties.len * 128;
                 }
             }
-            
+
             // Allocate the string builder before using it
             if (string_builder.cap > 0) {
                 try string_builder.allocate();

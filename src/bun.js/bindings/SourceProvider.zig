@@ -6,3 +6,5 @@ pub const SourceProvider = opaque {
         JSC__SourceProvider__deref(provider);
     }
 };
+
+const bun = @import("bun");

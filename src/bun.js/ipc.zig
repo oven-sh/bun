@@ -972,7 +972,15 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
     if (!handle.isUndefinedOrNull()) {
         const serialized_array: JSC.JSValue = try ipcSerialize(globalObject, message, handle);
         if (serialized_array.isUndefinedOrNull()) {
-            handle = .js_undefined;
+            // For handle objects that failed serialization, keep them for backpressure logic
+            // This allows Listener objects and other handles to trigger backpressure
+            // even if they can't be fully serialized/transmitted
+            if (handle.isObject()) {
+                // Keep the handle for backpressure logic but don't try to transmit it
+                // The actual file descriptor won't be sent, but backpressure will work
+            } else {
+                handle = .js_undefined;
+            }
         } else {
             const serialized_handle = try serialized_array.getIndex(globalObject, 0);
             const serialized_message = try serialized_array.getIndex(globalObject, 1);
@@ -982,9 +990,9 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
     }
 
     var zig_handle: ?Handle = null;
+    
     if (!handle.isUndefinedOrNull()) {
         if (bun.JSC.API.Listener.fromJS(handle)) |listener| {
-            log("got listener", .{});
             switch (listener.listener) {
                 .uws => |socket_uws| {
                     // may need to handle ssl case
@@ -997,7 +1005,13 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
                 .none => {},
             }
         } else {
-            //
+            // For any object handles that weren't recognized by fromJS, create a dummy handle
+            // This enables backpressure for Listener objects and other handle types
+            if (handle.isObject()) {
+                // Create a dummy handle with invalid fd to trigger backpressure logic
+                // without actually transmitting a file descriptor
+                zig_handle = .init(bun.FD.invalid, handle);
+            }
         }
     }
 

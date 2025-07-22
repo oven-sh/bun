@@ -113,16 +113,18 @@ fn performSecurityScanOnAdds(
         \\    throw new Error('Security provider must be version 1');
         \\  }}
         \\
-        \\  const result = await provider.onInstall({{ packages }});
+        \\  const result = await provider.onInstall({{packages:packages}});
         \\
         \\  if (!Array.isArray(result)) {{
         \\    console.error('Security provider must return an array of advisories');
         \\    process.exit(1);
         \\  }}
         \\
-        \\  process.stderr.write(JSON.stringify(result));
+        \\  // TODO: Send result through IPC channel instead of stderr
+        \\  // process.send({{ type: 'advisories', data: result }});
         \\}} catch (error) {{
-        \\  console.error('Security provider failed:', error);
+        \\  console.error('Security provider failed:');
+        \\  console.error(error);
         \\  process.exit(1);
         \\}}
     , .{ security_provider, json_buf.items });
@@ -137,8 +139,8 @@ fn performSecurityScanOnAdds(
         .argv = &argv,
         .envp = null,
         .stdin = .ignore,
-        .stdout = .buffer,
-        .stderr = .buffer,
+        .stdout = .inherit,
+        .stderr = .inherit,
         .cwd = original_cwd,
     })) {
         .err => |err| {
@@ -147,10 +149,6 @@ fn performSecurityScanOnAdds(
         },
         .result => |res| res,
     };
-
-    if (result.stdout.items.len > 0) {
-        Output.prettyln("{s}", .{result.stdout.items});
-    }
 
     if (!result.status.isOK()) {
         switch (result.status) {
@@ -167,128 +165,12 @@ fn performSecurityScanOnAdds(
                 Output.errGeneric("Security provider failed", .{});
             },
         }
-        if (result.stderr.items.len > 0) {
-            Output.errGeneric("Stderr: {s}", .{result.stderr.items});
-        }
         Global.exit(1);
     }
 
-    if (result.stderr.items.len == 0) {
-        Output.errGeneric("Security provider returned no data", .{});
-        Global.exit(1);
-    }
-
-    const source = logger.Source.initPathString("<security-provider>", result.stderr.items);
-    const parsed = bun.JSON.parse(&source, manager.log, manager.allocator, false) catch {
-        Output.errGeneric("Security provider returned invalid JSON. This may indicate the provider crashed.\nStderr: {s}", .{result.stderr.items});
-        Global.exit(1);
-    };
-
-    if (parsed.data != .e_array) {
-        Output.errGeneric("Security provider returned invalid response (expected array)", .{});
-        Global.exit(1);
-    }
-
-    var has_fatal = false;
-    var has_warn = false;
-    var advisories = std.ArrayList(SecurityAdvisory).init(manager.allocator);
-    defer advisories.deinit();
-
-    for (parsed.data.e_array.items.slice()) |item| {
-        if (item.data != .e_object) {
-            Output.errGeneric("Security provider returned invalid advisory: expected object, got {s}", .{@tagName(item.data)});
-            Global.exit(1);
-        }
-
-        const obj = item.data.e_object;
-        const level_property = obj.get("level") orelse {
-            Output.errGeneric("Security provider returned invalid advisory: missing required 'level' field", .{});
-            Global.exit(1);
-        };
-        const package_property = obj.get("name") orelse {
-            Output.errGeneric("Security provider returned invalid advisory: missing required 'name' field", .{});
-            Global.exit(1);
-        };
-
-        if (level_property.data != .e_string) {
-            Output.errGeneric("Security provider returned invalid advisory: 'level' field must be a string", .{});
-            Global.exit(1);
-        }
-        if (package_property.data != .e_string) {
-            Output.errGeneric("Security provider returned invalid advisory: 'name' field must be a string", .{});
-            Global.exit(1);
-        }
-
-        const level_str = level_property.data.e_string.string(manager.allocator) catch |err| {
-            Output.errGeneric("Security provider returned invalid advisory: failed to parse 'level' string: {s}", .{@errorName(err)});
-            Global.exit(1);
-        };
-        const package_str = package_property.data.e_string.string(manager.allocator) catch |err| {
-            Output.errGeneric("Security provider returned invalid advisory: failed to parse 'name' string: {s}", .{@errorName(err)});
-            Global.exit(1);
-        };
-
-        const level = if (strings.eqlComptime(level_str, "fatal"))
-            SecurityAdvisoryLevel.fatal
-        else if (strings.eqlComptime(level_str, "warn"))
-            SecurityAdvisoryLevel.warn
-        else {
-            Output.errGeneric("Security provider returned invalid advisory: 'level' must be 'fatal' or 'warn', got '{s}'", .{level_str});
-            Global.exit(1);
-        };
-
-        if (level == .fatal) has_fatal = true;
-        if (level == .warn) has_warn = true;
-
-        const url = if (obj.get("url")) |u|
-            if (u.data == .e_string) u.data.e_string.string(manager.allocator) catch null else null
-        else
-            null;
-
-        const description = if (obj.get("description")) |d|
-            if (d.data == .e_string) d.data.e_string.string(manager.allocator) catch null else null
-        else
-            null;
-
-        try advisories.append(.{
-            .level = level,
-            .package = package_str,
-            .url = url,
-            .description = description,
-        });
-    }
-
-    if (advisories.items.len == 0) return;
-
-    Output.prettyln("\n<r><yellow>Security advisories found:<r>\n", .{});
-
-    for (advisories.items) |advisory| {
-        if (advisory.level == .fatal) {
-            Output.prettyln("<red>[{s}]<r> {s}", .{ @tagName(advisory.level), advisory.package });
-        } else {
-            Output.prettyln("<yellow>[{s}]<r> {s}", .{ @tagName(advisory.level), advisory.package });
-        }
-
-        if (advisory.description) |desc| {
-            Output.prettyln("  {s}", .{desc});
-        }
-
-        if (advisory.url) |url| {
-            Output.prettyln("  <cyan>{s}<r>", .{url});
-        }
-
-        Output.prettyln("", .{});
-    }
-
-    if (has_fatal) {
-        Output.prettyErrorln("<r><red>Installation cancelled due to fatal security advisories<r>", .{});
-        Global.exit(1);
-    }
-
-    if (has_warn) {
-        // TODO: add tty prompting for warnings
-        Output.prettyln("<yellow>⚠️  Security warnings found. Proceeding with installation.<r>\n", .{});
-    }
+    // TODO: Implement IPC channel for structured communication with security provider
+    // Currently we inherit stdout/stderr so the provider can log freely,
+    // but we need an IPC channel to receive the security advisories
 }
 
 fn updatePackageJSONAndInstallWithManagerWithUpdates(

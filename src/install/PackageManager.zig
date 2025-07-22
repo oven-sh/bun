@@ -382,6 +382,11 @@ pub fn computeIsContinuousIntegration(this: *PackageManager) bool {
 }
 
 pub fn isCacheDirectoryRemote(this: *PackageManager) bool {
+    if (comptime Environment.isWindows) {
+        // TODO:
+        return false;
+    }
+
     if (this.is_cache_directory_an_overlay_fs) |is_overlay_fs| {
         return is_overlay_fs;
     }

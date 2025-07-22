@@ -2588,12 +2588,19 @@ pub const bindings = struct {
                     return global.throw("failed to read archive header: {s}", .{Archive.errorString(@ptrCast(archive))});
                 },
                 else => {
-                    const pathname = archive_entry.pathname();
+                    const pathname_string = if (bun.Environment.isWindows) blk: {
+                        const pathname_w = archive_entry.pathnameW();
+                        const list = std.ArrayList(u8).init(bun.default_allocator);
+                        var result = bun.strings.toUTF8ListWithType(list, []const u16, pathname_w) catch bun.outOfMemory();
+                        defer result.deinit();
+                        break :blk String.cloneUTF8(result.items);
+                    } else String.cloneUTF8(archive_entry.pathname());
+
                     const kind = bun.sys.kindFromMode(archive_entry.filetype());
                     const perm = archive_entry.perm();
 
                     var entry_info: EntryInfo = .{
-                        .pathname = String.cloneUTF8(pathname),
+                        .pathname = pathname_string,
                         .kind = String.static(@tagName(kind)),
                         .perm = perm,
                     };
@@ -2605,8 +2612,10 @@ pub const bindings = struct {
 
                         const read = archive.readData(read_buf.items);
                         if (read < 0) {
-                            return global.throw("failed to read archive entry \"{}\": {s}", .{
-                                bun.fmt.fmtPath(u8, pathname, .{}),
+                            const pathname_utf8 = pathname_string.toUTF8(bun.default_allocator);
+                            defer pathname_utf8.deinit();
+                            return global.throw("failed to read archive entry \"{s}\": {s}", .{
+                                pathname_utf8.slice(),
                                 Archive.errorString(@ptrCast(archive)),
                             });
                         }

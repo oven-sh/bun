@@ -144,6 +144,47 @@ foo/
       expect(await fileExists(`${tempdir}/sub_dir_files`)).toBeTrue();
     }
   });
+
+  test("removes symlinks, not the files referenced by the links", async () => {
+    const tempdir = tempDirWithFiles("rm-symlinks", {
+      "target.txt": "original content",
+      "dir/file.txt": "directory file",
+    });
+
+    // Create symlinks
+    await $`ln -s ${tempdir}/target.txt ${tempdir}/link.txt`.cwd(tempdir);
+    await $`ln -s ${tempdir}/dir ${tempdir}/dirlink`.cwd(tempdir);
+
+    // Verify symlinks exist and point to correct targets
+    expect(await fileExists(`${tempdir}/link.txt`)).toBeTrue();
+    expect(await fileExists(`${tempdir}/dirlink`)).toBeTrue();
+    expect(await Bun.file(`${tempdir}/link.txt`).text()).toBe("original content");
+    expect(await Bun.file(`${tempdir}/dirlink/file.txt`).text()).toBe("directory file");
+
+    // Remove the symlinks
+    {
+      const { stdout, exitCode } = await $`rm -v ${tempdir}/link.txt`;
+      expect(stdout.toString()).toEqual(`${tempdir}/link.txt\n`);
+      expect(exitCode).toBe(0);
+    }
+
+    {
+      const { stdout, exitCode } = await $`rm -v ${tempdir}/dirlink`;
+      expect(stdout.toString()).toEqual(`${tempdir}/dirlink\n`);
+      expect(exitCode).toBe(0);
+    }
+
+    // Verify symlinks are gone but targets remain
+    expect(await fileExists(`${tempdir}/link.txt`)).toBeFalse();
+    expect(await fileExists(`${tempdir}/dirlink`)).toBeFalse();
+    expect(await fileExists(`${tempdir}/target.txt`)).toBeTrue();
+    expect(await fileExists(`${tempdir}/dir`)).toBeTrue();
+    expect(await fileExists(`${tempdir}/dir/file.txt`)).toBeTrue();
+
+    // Verify target files still have their content
+    expect(await Bun.file(`${tempdir}/target.txt`).text()).toBe("original content");
+    expect(await Bun.file(`${tempdir}/dir/file.txt`).text()).toBe("directory file");
+  });
 });
 
 function packagejson() {

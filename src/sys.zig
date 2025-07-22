@@ -2834,9 +2834,11 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
             return unlinkatWithFlags(dirfd, bun.strings.toNTPath(w_buf, bun.span(to)), flags);
         }
 
+        // const follow_symlinks = flags
         return bun.windows.DeleteFileBun(to, .{
             .dir = if (dirfd != bun.invalid_fd) dirfd.cast() else null,
             .remove_dir = flags & std.posix.AT.REMOVEDIR != 0,
+            .follow_symlinks = flags & std.posix.AT.SYMLINK_NOFOLLOW == 0,
         });
     }
 

@@ -187,3 +187,6 @@ tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: ["ignore", "inherit"
 tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: [null, null, null] }));
 
 tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>>(Bun.spawnSync([], {}));
+
+Bun.spawnSync({ cmd: ["echo", "hello"] });
+Bun.spawnSync(["echo", "hello"], { stdio: ["ignore", "pipe", "pipe"] });

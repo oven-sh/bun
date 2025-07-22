@@ -267,7 +267,9 @@ FFI_Callback_call_1(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::E
     auto& vm = JSC::getVM(globalObject);
 
     JSC::MarkedArgumentBuffer arguments;
-    arguments.append(JSC::JSValue::decode(args[0]));
+    if (argCount >= 1) {
+        arguments.append(JSC::JSValue::decode(args[0]));
+    }
 
     WTF::NakedPtr<JSC::Exception> exception;
     auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
@@ -288,8 +290,12 @@ FFI_Callback_call_2(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::E
     auto& vm = JSC::getVM(globalObject);
 
     JSC::MarkedArgumentBuffer arguments;
-    arguments.append(JSC::JSValue::decode(args[0]));
-    arguments.append(JSC::JSValue::decode(args[1]));
+    if (argCount >= 1) {
+        arguments.append(JSC::JSValue::decode(args[0]));
+    }
+    if (argCount >= 2) {
+        arguments.append(JSC::JSValue::decode(args[1]));
+    }
 
     WTF::NakedPtr<JSC::Exception> exception;
     auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
@@ -309,9 +315,15 @@ extern "C" JSC::EncodedJSValue FFI_Callback_call_3(FFICallbackFunctionWrapper& w
     auto& vm = JSC::getVM(globalObject);
 
     JSC::MarkedArgumentBuffer arguments;
-    arguments.append(JSC::JSValue::decode(args[0]));
-    arguments.append(JSC::JSValue::decode(args[1]));
-    arguments.append(JSC::JSValue::decode(args[2]));
+    if (argCount >= 1) {
+        arguments.append(JSC::JSValue::decode(args[0]));
+    }
+    if (argCount >= 2) {
+        arguments.append(JSC::JSValue::decode(args[1]));
+    }
+    if (argCount >= 3) {
+        arguments.append(JSC::JSValue::decode(args[2]));
+    }
 
     WTF::NakedPtr<JSC::Exception> exception;
     auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);

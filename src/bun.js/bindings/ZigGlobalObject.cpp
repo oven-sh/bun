@@ -700,7 +700,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
 
     // We need to sourcemap it if it's a GlobalObject.
 
-    for (int i = 0; i < stackTrace.size(); i++) {
+    for (size_t i = 0; i < stackTrace.size(); i++) {
         ZigStackFrame frame = {};
         auto& stackFrame = stackFrames.at(i);
         String sourceURLForFrame = Zig::sourceURL(vm, stackFrame);

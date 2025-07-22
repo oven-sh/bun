@@ -29,6 +29,27 @@ const formatTime = (ms: number): string => {
 const start = Date.now();
 let totalTimeEstimate = -1;
 
+function report() {
+  process.stdout.write("\n");
+  const attemptsReached =
+    numOk + numTimedOut + signals.values().reduce((a, b) => a + b, 0) + codes.values().reduce((a, b) => a + b, 0);
+
+  green(`${pad(numOk)}/${attemptsReached} OK`);
+  if (numTimedOut > 0) {
+    red(`${pad(numTimedOut)}/${attemptsReached} timeout`);
+  }
+  for (const [signal, count] of signals.entries()) {
+    red(`${pad(count)}/${attemptsReached} ${signal}`);
+  }
+  for (const [code, count] of codes.entries()) {
+    red(`${pad(count)}/${attemptsReached} code ${code}`);
+  }
+
+  process.exit(numOk === attemptsReached ? 0 : 1);
+}
+
+process.on("SIGINT", report);
+
 for (let i = 0; i < attempts; i++) {
   const proc = Bun.spawn({
     cmd: argv,
@@ -75,17 +96,5 @@ for (let i = 0; i < attempts; i++) {
   const remaining = totalTimeEstimate - (now - start);
   process.stdout.write(`\r\x1b[2K${pad(i + 1)}/${attempts} completed, ${formatTime(remaining)} remaining`);
 }
-process.stdout.write("\n");
 
-green(`${pad(numOk)}/${attempts} OK`);
-if (numTimedOut > 0) {
-  red(`${pad(numTimedOut)}/${attempts} timeout`);
-}
-for (const [signal, count] of signals.entries()) {
-  red(`${pad(count)}/${attempts} ${signal}`);
-}
-for (const [code, count] of codes.entries()) {
-  red(`${pad(count)}/${attempts} code ${code}`);
-}
-
-process.exit(numOk === attempts ? 0 : 1);
+report();

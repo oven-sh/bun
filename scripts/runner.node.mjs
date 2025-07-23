@@ -360,7 +360,8 @@ async function runTests() {
     const index = ++i;
 
     let result, failure, flaky;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let attempt = 1;
+    for (; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) {
         await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
       }
@@ -409,14 +410,15 @@ async function runTests() {
       // Group flaky tests together, regardless of the title
       const context = flaky ? "flaky" : title;
       const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+      if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
       if (title.startsWith("vendor")) {
-        const content = formatTestToMarkdown({ ...failure, testPath: title });
+        const content = formatTestToMarkdown({ ...failure, testPath: title }, false, attempt - 1);
         if (content) {
           reportAnnotationToBuildKite({ context, label: title, content, style });
         }
       } else {
-        const content = formatTestToMarkdown(failure);
+        const content = formatTestToMarkdown(failure, false, attempt - 1);
         if (content) {
           reportAnnotationToBuildKite({ context, label: title, content, style });
         }
@@ -426,10 +428,10 @@ async function runTests() {
     if (isGithubAction) {
       const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
       if (summaryPath) {
-        const longMarkdown = formatTestToMarkdown(failure);
+        const longMarkdown = formatTestToMarkdown(failure, false, attempt - 1);
         appendFileSync(summaryPath, longMarkdown);
       }
-      const shortMarkdown = formatTestToMarkdown(failure, true);
+      const shortMarkdown = formatTestToMarkdown(failure, true, attempt - 1);
       appendFileSync("comment.md", shortMarkdown);
     }
 
@@ -545,7 +547,7 @@ async function runTests() {
 
   if (isGithubAction) {
     reportOutputToGitHubAction("failing_tests_count", failedResults.length);
-    const markdown = formatTestToMarkdown(failedResults);
+    const markdown = formatTestToMarkdown(failedResults, false);
     reportOutputToGitHubAction("failing_tests", markdown);
   }
 
@@ -1759,9 +1761,10 @@ function getTestLabel() {
 /**
  * @param  {TestResult | TestResult[]} result
  * @param  {boolean} concise
+ * @param  {number} retries
  * @returns {string}
  */
-function formatTestToMarkdown(result, concise) {
+function formatTestToMarkdown(result, concise, retries) {
   const results = Array.isArray(result) ? result : [result];
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
@@ -1804,6 +1807,9 @@ function formatTestToMarkdown(result, concise) {
     }
     if (platform) {
       markdown += ` on ${platform}`;
+    }
+    if (retries > 0) {
+      markdown += ` (${retries} retries)`;
     }
 
     if (concise) {

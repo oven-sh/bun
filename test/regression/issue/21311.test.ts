@@ -1,6 +1,6 @@
+import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import { getSecret } from "harness";
-import { SQL } from "bun";
 const postgres = (...args) => new SQL(...args);
 const databaseUrl = getSecret("TLS_POSTGRES_DATABASE_URL");
 

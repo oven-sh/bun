@@ -426,15 +426,15 @@ pub fn generateChunksInParallel(
                         .js;
 
                     if (loader.isJavaScriptLike()) {
-                        JSC.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
-                        JSC.initialize(false);
+                        jsc.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
+                        jsc.initialize(false);
                         var fdpath: bun.PathBuffer = undefined;
                         var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
                         source_provider_url.ref();
 
                         defer source_provider_url.deref();
 
-                        if (JSC.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
+                        if (jsc.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
                             const bytecode, const cached_bytecode = result;
                             const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
                             defer source_provider_url_str.deinit();
@@ -553,11 +553,11 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
 const Loader = bun.Loader;
 const Output = bun.Output;
 const ThreadPoolLib = bun.ThreadPool;
 const base64 = bun.base64;
+const jsc = bun.jsc;
 const strings = bun.strings;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 

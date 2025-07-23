@@ -87,7 +87,7 @@ pub const WTFStringImplStruct = extern struct {
     }
 
     pub inline fn deref(self: WTFStringImpl) void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         const current_count = self.refCount();
         bun.assert(self.hasAtLeastOneRef()); // do not use current_count, it breaks for static strings
         bun.cpp.Bun__WTFStringImpl__deref(self);
@@ -99,7 +99,7 @@ pub const WTFStringImplStruct = extern struct {
     }
 
     pub inline fn ref(self: WTFStringImpl) void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         const current_count = self.refCount();
         bun.assert(self.hasAtLeastOneRef()); // do not use current_count, it breaks for static strings
         bun.cpp.Bun__WTFStringImpl__ref(self);
@@ -118,7 +118,7 @@ pub const WTFStringImplStruct = extern struct {
 
     /// Compute the hash() if necessary
     pub fn ensureHash(this: WTFStringImpl) void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         bun.cpp.Bun__WTFStringImpl__ensureHash(this);
     }
 
@@ -197,7 +197,7 @@ pub const WTFStringImplStruct = extern struct {
     pub fn utf8ByteLength(this: WTFStringImpl) usize {
         if (this.is8Bit()) {
             const input = this.latin1Slice();
-            return if (input.len > 0) JSC.WebCore.encoding.byteLengthU8(input.ptr, input.len, .utf8) else 0;
+            return if (input.len > 0) jsc.WebCore.encoding.byteLengthU8(input.ptr, input.len, .utf8) else 0;
         } else {
             const input = this.utf16Slice();
             return if (input.len > 0) bun.strings.elementLengthUTF16IntoUTF8([]const u16, input) else 0;
@@ -260,5 +260,5 @@ pub const StringImplAllocator = struct {
 const bun = @import("bun");
 const std = @import("std");
 
-const JSC = bun.JSC;
-const ZigString = bun.JSC.ZigString;
+const jsc = bun.jsc;
+const ZigString = bun.jsc.ZigString;

@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to publish (e.g. 0.0.25) - Check the marketplace for the latest version'
+        description: "Version to publish (e.g. 0.0.25) - Check the marketplace for the latest version"
         required: true
         type: string
 
@@ -28,7 +28,7 @@ jobs:
         working-directory: packages/bun-vscode
 
       - name: Set Version
-        run: bun pm version ${{ github.event.inputs.version }} --no-git-tag-version
+        run: bun pm version ${{ github.event.inputs.version }} --no-git-tag-version --allow-same-version
         working-directory: packages/bun-vscode
 
       - name: Build (inspector protocol)

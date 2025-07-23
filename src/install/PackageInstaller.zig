@@ -1395,6 +1395,8 @@ pub const PackageInstaller = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -1405,10 +1407,9 @@ const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
 const Syscall = bun.sys;
-const string = bun.string;
 const strings = bun.strings;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const FileSystem = bun.fs.FileSystem;
 const String = bun.Semver.String;
 

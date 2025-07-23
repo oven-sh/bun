@@ -870,8 +870,8 @@ pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame)
 
 pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(3);
-    const value = doResolve(globalObject, arguments.slice()) catch {
-        const err = globalObject.tryTakeException().?;
+    const value = doResolve(globalObject, arguments.slice()) catch |e| {
+        const err = globalObject.takeError(e);
         return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, err);
     };
     return JSC.JSPromise.resolvedPromiseValue(globalObject, value);

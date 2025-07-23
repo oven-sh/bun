@@ -715,8 +715,7 @@ pub const DataCell = extern struct {
             },
             .date, .timestamp, .timestamptz => |tag| {
                 if (bytes.len == 0) {
-                    // In what case would this happen?
-                    return DataCell{ .tag = .date, .value = .{ .date = std.math.nan(f64) } };
+                    return DataCell{ .tag = .null, .value = .{ .null = 0 } };
                 }
                 if (binary and bytes.len == 8) {
                     switch (tag) {
@@ -725,6 +724,9 @@ pub const DataCell = extern struct {
                         else => unreachable,
                     }
                 } else {
+                    if (bun.strings.eqlCaseInsensitiveASCII(bytes, "NULL", true)) {
+                        return DataCell{ .tag = .null, .value = .{ .null = 0 } };
+                    }
                     var str = bun.String.init(bytes);
                     defer str.deref();
                     return DataCell{ .tag = .date, .value = .{ .date = try str.parseDate(globalObject) } };

@@ -165,7 +165,7 @@ pub const JSPromise = opaque {
         globalObject: *JSGlobalObject,
         comptime Function: anytype,
         args: std.meta.ArgsTuple(@TypeOf(Function)),
-    ) JSValue {
+    ) bun.JSExecutionTerminated!JSValue {
         const Args = std.meta.ArgsTuple(@TypeOf(Function));
         const Fn = Function;
         const Wrapper = struct {
@@ -181,7 +181,7 @@ pub const JSPromise = opaque {
         defer scope.deinit();
         var ctx = Wrapper{ .args = args };
         const promise = JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
-        scope.assertNoException();
+        if (scope.hasException()) return error.JSExecutionTerminated;
         return promise;
     }
 

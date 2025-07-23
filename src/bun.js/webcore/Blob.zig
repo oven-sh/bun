@@ -1824,10 +1824,7 @@ comptime {
     _ = JSDOMFile__hasInstance;
 }
 
-pub fn constructBunFile(
-    globalObject: *jsc.JSGlobalObject,
-    callframe: *jsc.CallFrame,
-) bun.JSError!jsc.JSValue {
+pub fn constructBunFile(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var vm = globalObject.bunVM();
     const arguments = callframe.arguments_old(2).slice();
     var args = jsc.CallFrame.ArgumentsSlice.init(vm, arguments);
@@ -1947,11 +1944,7 @@ pub fn findOrCreateFileFromPath(path_or_fd: *jsc.Node.PathOrFileDescriptor, glob
     return Blob.initWithStore(Blob.Store.initFile(path, null, allocator) catch bun.outOfMemory(), globalThis);
 }
 
-pub fn getStream(
-    this: *Blob,
-    globalThis: *jsc.JSGlobalObject,
-    callframe: *jsc.CallFrame,
-) bun.JSError!jsc.JSValue {
+pub fn getStream(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const thisValue = callframe.this();
     if (js.streamGetCached(thisValue)) |cached| {
         return cached;
@@ -1990,10 +1983,7 @@ pub fn getStream(
     return stream;
 }
 
-pub fn toStreamWithOffset(
-    globalThis: *jsc.JSGlobalObject,
-    callframe: *jsc.CallFrame,
-) bun.JSError!jsc.JSValue {
+pub fn toStreamWithOffset(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const this = callframe.this().as(Blob) orelse @panic("this is not a Blob");
     const args = callframe.arguments_old(1).slice();
 
@@ -2013,55 +2003,35 @@ fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: jsc.WebCore.Lifetime) f
     }.wrap;
 }
 
-pub fn getText(
-    this: *Blob,
-    globalThis: *jsc.JSGlobalObject,
-    _: *jsc.CallFrame,
-) bun.JSError!jsc.JSValue {
+pub fn getText(this: *Blob, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return this.getTextClone(globalThis);
 }
 
-pub fn getTextClone(
-    this: *Blob,
-    globalObject: *jsc.JSGlobalObject,
-) jsc.JSValue {
+pub fn getTextClone(this: *Blob, globalObject: *jsc.JSGlobalObject) bun.JSExecutionTerminated!jsc.JSValue {
     const store = this.store;
     if (store) |st| st.ref();
     defer if (store) |st| st.deref();
     return jsc.JSPromise.wrap(globalObject, lifetimeWrap(toString, .clone), .{ this, globalObject });
 }
 
-pub fn getTextTransfer(
-    this: *Blob,
-    globalObject: *jsc.JSGlobalObject,
-) jsc.JSValue {
+pub fn getTextTransfer(this: *Blob, globalObject: *jsc.JSGlobalObject) bun.JSExecutionTerminated!jsc.JSValue {
     const store = this.store;
     if (store) |st| st.ref();
     defer if (store) |st| st.deref();
     return jsc.JSPromise.wrap(globalObject, lifetimeWrap(toString, .transfer), .{ this, globalObject });
 }
 
-pub fn getJSON(
-    this: *Blob,
-    globalThis: *jsc.JSGlobalObject,
-    _: *jsc.CallFrame,
-) bun.JSError!jsc.JSValue {
+pub fn getJSON(this: *Blob, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return this.getJSONShare(globalThis);
 }
 
-pub fn getJSONShare(
-    this: *Blob,
-    globalObject: *jsc.JSGlobalObject,
-) jsc.JSValue {
+pub fn getJSONShare(this: *Blob, globalObject: *jsc.JSGlobalObject) bun.JSExecutionTerminated!jsc.JSValue {
     const store = this.store;
     if (store) |st| st.ref();
     defer if (store) |st| st.deref();
     return jsc.JSPromise.wrap(globalObject, lifetimeWrap(toJSON, .share), .{ this, globalObject });
 }
-pub fn getArrayBufferTransfer(
-    this: *Blob,
-    globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
+pub fn getArrayBufferTransfer(this: *Blob, globalThis: *jsc.JSGlobalObject) bun.JSExecutionTerminated!jsc.JSValue {
     const store = this.store;
     if (store) |st| st.ref();
     defer if (store) |st| st.deref();
@@ -2069,57 +2039,36 @@ pub fn getArrayBufferTransfer(
     return jsc.JSPromise.wrap(globalThis, lifetimeWrap(toArrayBuffer, .transfer), .{ this, globalThis });
 }
 
-pub fn getArrayBufferClone(
-    this: *Blob,
-    globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
+pub fn getArrayBufferClone(this: *Blob, globalThis: *jsc.JSGlobalObject) bun.JSExecutionTerminated!jsc.JSValue {
     const store = this.store;
     if (store) |st| st.ref();
     defer if (store) |st| st.deref();
     return jsc.JSPromise.wrap(globalThis, lifetimeWrap(toArrayBuffer, .clone), .{ this, globalThis });
 }
 
-pub fn getArrayBuffer(
-    this: *Blob,
-    globalThis: *jsc.JSGlobalObject,
-    _: *jsc.CallFrame,
-) bun.JSError!JSValue {
+pub fn getArrayBuffer(this: *Blob, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     return this.getArrayBufferClone(globalThis);
 }
 
-pub fn getBytesClone(
-    this: *Blob,
-    globalThis: *jsc.JSGlobalObject,
-) JSValue {
+pub fn getBytesClone(this: *Blob, globalThis: *jsc.JSGlobalObject) bun.JSExecutionTerminated!JSValue {
     const store = this.store;
     if (store) |st| st.ref();
     defer if (store) |st| st.deref();
     return jsc.JSPromise.wrap(globalThis, lifetimeWrap(toUint8Array, .clone), .{ this, globalThis });
 }
 
-pub fn getBytes(
-    this: *Blob,
-    globalThis: *jsc.JSGlobalObject,
-    _: *jsc.CallFrame,
-) bun.JSError!JSValue {
+pub fn getBytes(this: *Blob, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     return this.getBytesClone(globalThis);
 }
 
-pub fn getBytesTransfer(
-    this: *Blob,
-    globalThis: *jsc.JSGlobalObject,
-) JSValue {
+pub fn getBytesTransfer(this: *Blob, globalThis: *jsc.JSGlobalObject) JSValue {
     const store = this.store;
     if (store) |st| st.ref();
     defer if (store) |st| st.deref();
     return jsc.JSPromise.wrap(globalThis, lifetimeWrap(toUint8Array, .transfer), .{ this, globalThis });
 }
 
-pub fn getFormData(
-    this: *Blob,
-    globalThis: *jsc.JSGlobalObject,
-    _: *jsc.CallFrame,
-) bun.JSError!JSValue {
+pub fn getFormData(this: *Blob, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     const store = this.store;
     if (store) |st| st.ref();
     defer if (store) |st| st.deref();
@@ -4104,7 +4053,7 @@ pub const Any = union(enum) {
         }
     }
 
-    pub fn toPromise(this: *Any, globalThis: *JSGlobalObject, action: streams.BufferAction.Tag) jsc.JSValue {
+    pub fn toPromise(this: *Any, globalThis: *JSGlobalObject, action: streams.BufferAction.Tag) bun.JSExecutionTerminated!jsc.JSValue {
         return jsc.JSPromise.wrap(globalThis, toActionValue, .{ this, globalThis, action });
     }
 

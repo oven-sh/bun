@@ -19,7 +19,7 @@ scripts_node: ?*Progress.Node = null,
 progress_name_buf: [768]u8 = undefined,
 progress_name_buf_dynamic: []u8 = &[_]u8{},
 cpu_count: u32 = 0,
-is_cache_directory_an_overlay_fs: ?bool = null,
+is_cache_directory_remote: ?bun.sys.RemoteFileSystem = null,
 track_installed_bin: TrackInstalledBin = .{
     .none = {},
 },
@@ -381,22 +381,22 @@ pub fn computeIsContinuousIntegration(this: *PackageManager) bool {
     return this.env.isCI();
 }
 
-pub fn isCacheDirectoryRemote(this: *PackageManager) bool {
+pub fn isCacheDirectoryRemote(this: *PackageManager) bun.sys.RemoteFileSystem {
     if (comptime Environment.isWindows) {
         // TODO:
-        return false;
+        return .none;
     }
 
-    if (this.is_cache_directory_an_overlay_fs) |is_overlay_fs| {
-        return is_overlay_fs;
+    if (this.is_cache_directory_remote) |remote_fs| {
+        return remote_fs;
     }
     const statfs = bun.sys.statfs(this.cache_directory_path).unwrap() catch {
-        this.is_cache_directory_an_overlay_fs = false;
-        return false;
+        this.is_cache_directory_remote = .none;
+        return .none;
     };
 
-    this.is_cache_directory_an_overlay_fs = bun.sys.isRemoteFilesystem(&statfs);
-    return this.is_cache_directory_an_overlay_fs.?;
+    this.is_cache_directory_remote = bun.sys.RemoteFileSystem.get(&statfs);
+    return this.is_cache_directory_remote.?;
 }
 
 pub inline fn isContinuousIntegration(this: *PackageManager) bool {
@@ -574,6 +574,34 @@ fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) no
         },
     }
     Global.crash();
+}
+
+pub fn useCopyfileBackendIfFaster(this: *PackageManager) void {
+    if (this.options.do.auto_choose_backend) {
+        // Only do this once.
+        this.options.do.auto_choose_backend = false;
+
+        const PackageInstall = @import("./PackageInstall.zig").PackageInstall;
+        if (PackageInstall.supported_method == .hardlink) {
+            // Vercel builds:
+            //
+            // --backend=copyfile:
+            // 268 packages installed [5.06s]
+            //
+            // --backend=hardlink
+            // 268 packages installed [11.55s]
+            if (this.isCacheDirectoryRemote() == .overlayfs) {
+                if (PackageManager.verbose_install) {
+                    if (this.options.node_linker == .hoisted) {
+                        Output.prettyErrorln("<d>[PackageManager]<r> using <b>\"copyfile\"<r> backend instead of <b>\"hardlink\"<r> for faster installs in OverlayFS. Consider --linker=isolated to further speed up installs.", .{});
+                    } else {
+                        Output.prettyErrorln("<d>[PackageManager]<r> using <b>\"copyfile\"<r> backend instead of <b>\"hardlink\"<r> for faster installs in OverlayFS", .{});
+                    }
+                }
+                PackageInstall.supported_method = .copyfile;
+            }
+        }
+    }
 }
 
 pub fn init(

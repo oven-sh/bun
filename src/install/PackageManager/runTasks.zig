@@ -270,7 +270,7 @@ pub fn runTasks(
 
                         if (manager.options.enable.manifest_cache) {
                             if (!bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_MANIFEST_CACHE_NO_SAVE_TTL)) {
-                                if (!manager.isCacheDirectoryRemote()) {
+                                if (manager.isCacheDirectoryRemote() == .none) {
                                     Npm.PackageManifest.Serializer.saveAsync(
                                         &entry.value_ptr.manifest,
                                         manager.scopeForPackageName(name.slice()),

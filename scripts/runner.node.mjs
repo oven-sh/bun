@@ -506,7 +506,7 @@ async function runTests() {
           env.BUN_JSC_validateExceptionChecks = "1";
         }
         await runTest(title, async () => {
-          const { ok, error, stdout } = await spawnBun(execPath, {
+          const { ok, error, stdout, crashes } = await spawnBun(execPath, {
             cwd: cwd,
             args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
             timeout: getNodeParallelTestTimeout(title),
@@ -515,7 +515,8 @@ async function runTests() {
             stderr: chunk => pipeTestStdout(process.stderr, chunk),
           });
           const mb = 1024 ** 3;
-          const stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
+          let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
+          if (crashes) stdoutPreview += crashes;
           return {
             testPath: title,
             ok: ok,
@@ -964,9 +965,15 @@ function getCombinedPath(execPath) {
 }
 
 /**
+ * @typedef {object} SpawnBunResult
+ * @extends SpawnResult
+ * @property {string} [crashes]
+ */
+
+/**
  * @param {string} execPath Path to bun binary
  * @param {SpawnOptions} options
- * @returns {Promise<SpawnResult>}
+ * @returns {Promise<SpawnBunResult>}
  */
 async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const path = getCombinedPath(execPath);
@@ -1024,6 +1031,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       stdout,
       stderr,
     });
+    let crashes = "";
     if (options["coredump-upload"] && result.signalCode !== null) {
       const corePath = join(coresDir, `${basename(execPath)}-${result.pid}.core`);
       if (existsSync(corePath)) {
@@ -1038,13 +1046,22 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
           },
         });
         if (!gdb.ok) {
-          console.warn(`failed to get backtrace from GDB: ${gdb.error}`);
+          crashes += `failed to get backtrace from GDB: ${gdb.error}\n`;
         } else {
-          console.log("======== Stack traces from GDB: ========");
-          console.log(out);
+          crashes += "======== Stack traces from GDB: ========\n";
+          for (const line of out.split("\n")) {
+            // filter GDB output since it is pretty verbose
+            if (
+              line.startsWith("Program terminated") ||
+              line.startsWith("#") || // gdb backtrace lines start with #0, #1, etc.
+              line.startsWith("[Current thread is")
+            ) {
+              crashes += line + "\n";
+            }
+          }
         }
       } else {
-        console.warn(`process killed by ${result.signalCode} but no core file found at ${corePath}`);
+        crashes += `process killed by ${result.signalCode} but no core file found at ${corePath}\n`;
       }
     }
 
@@ -1060,26 +1077,25 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
         if (!response.ok || response.status !== 200) throw new Error(`server responded with code ${response.status}`);
         const traces = await response.json();
         if (traces.length > 0) {
-          console.log(`${traces.length} crashes reported during this test`);
+          crashes += `${traces.length} crashes reported during this test\n`;
           for (const t of traces) {
             if (t.failed_parse) {
-              console.log("Trace string failed to parse:");
-              console.log(t.failed_parse);
+              crashes += "Trace string failed to parse:\n";
+              crashes += t.failed_parse + "\n";
             } else if (t.failed_remap) {
-              console.log("Parsed trace failed to remap:");
-              console.log(JSON.stringify(t.failed_remap, null, 2));
+              crashes += "Parsed trace failed to remap:\n";
+              crashes += JSON.stringify(t.failed_remap, null, 2) + "\n";
             } else {
-              console.log("================");
-              console.log(t.remap);
+              crashes += "================\n";
+              crashes += t.remap + "\n";
             }
           }
-        } else {
-          console.log("no traces?");
         }
       } catch (e) {
-        console.warn("failed to fetch traces:", e);
+        crashes += "failed to fetch traces: " + e.toString() + "\n";
       }
     }
+    if (crashes.length > 0) result.crashes = crashes;
     return result;
   } finally {
     try {
@@ -1166,7 +1182,7 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
     env.BUN_JSC_validateExceptionChecks = "1";
   }
 
-  const { ok, error, stdout } = await spawnBun(execPath, {
+  const { ok, error, stdout, crashes } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
     cwd: options["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
@@ -1174,7 +1190,8 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
     stdout: chunk => pipeTestStdout(process.stdout, chunk),
     stderr: chunk => pipeTestStdout(process.stderr, chunk),
   });
-  const { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
+  let { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
+  if (crashes) stdoutPreview += crashes;
 
   // If we generated a JUnit file and we're on BuildKite, upload it immediately
   if (junitFilePath && isReallyTest && isBuildkite && cliOptions["junit-upload"]) {
@@ -1349,11 +1366,12 @@ function parseTestStdout(stdout, testPath) {
  * @returns {Promise<TestResult>}
  */
 async function spawnBunInstall(execPath, options) {
-  const { ok, error, stdout, duration } = await spawnBun(execPath, {
+  let { ok, error, stdout, duration, crashes } = await spawnBun(execPath, {
     args: ["install"],
     timeout: testTimeout,
     ...options,
   });
+  if (crashes) stdout += crashes;
   const relativePath = relative(cwd, options.cwd);
   const testPath = join(relativePath, "package.json");
   const status = ok ? "pass" : "fail";

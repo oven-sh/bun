@@ -20,6 +20,6 @@ pub const JSArray = opaque {
 const bun = @import("bun");
 const JSArrayIterator = @import("./JSArrayIterator.zig").JSArrayIterator;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

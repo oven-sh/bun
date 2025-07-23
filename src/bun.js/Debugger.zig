@@ -42,7 +42,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
     if (comptime Environment.enable_logs)
         Debugger.log("waitForDebugger: {}", .{Output.ElapsedFormatter{
             .colors = Output.enable_ansi_colors_stderr,
-            .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.CLI.start_time))),
+            .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.cli.start_time))),
         }});
 
     Bun__ensureDebugger(debugger.script_execution_context_id, debugger.wait_for_connection != .off);
@@ -82,7 +82,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
                 this.eventLoop().autoTickActive();
 
                 if (comptime Environment.enable_logs)
-                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
+                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))))});
             },
             .shortly => {
                 // Handle .incrementRefConcurrently
@@ -97,7 +97,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
                 this.uwsLoop().tickWithTimeout(&deadline);
 
                 if (comptime Environment.enable_logs)
-                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
+                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))))});
 
                 const elapsed = bun.timespec.now();
                 if (elapsed.order(&deadline) != .lt) {
@@ -148,7 +148,7 @@ pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
 
     var vm = VirtualMachine.init(.{
         .allocator = arena.allocator(),
-        .args = std.mem.zeroes(bun.Schema.Api.TransformOptions),
+        .args = std.mem.zeroes(bun.schema.api.TransformOptions),
         .store_fd = false,
     }) catch @panic("Failed to create Debugger VM");
     vm.allocator = arena.allocator();

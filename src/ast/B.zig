@@ -94,7 +94,7 @@ const std = @import("std");
 const bun = @import("bun");
 const writeAnyToHasher = bun.writeAnyToHasher;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const ArrayBinding = js_ast.ArrayBinding;
 const Binding = js_ast.Binding;
 const Expr = js_ast.Expr;

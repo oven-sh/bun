@@ -612,6 +612,8 @@ pub const Archiver = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -621,5 +623,4 @@ const MutableString = bun.MutableString;
 const Output = bun.Output;
 const c = bun.c;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
 const strings = bun.strings;

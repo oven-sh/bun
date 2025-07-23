@@ -3092,7 +3092,7 @@ const sockaddr_storage = std.os.linux.sockaddr_storage;
 
 const bun = @import("bun");
 const Env = bun.Environment;
-const Maybe = bun.JSC.Maybe;
+const Maybe = bun.jsc.Maybe;
 
 const windows = bun.windows;
 const BOOL = windows.BOOL;

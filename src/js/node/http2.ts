@@ -3800,6 +3800,14 @@ class Http2Server extends net.Server {
     }
   }
 
+  emit(event: string, ...args: any[]) {
+    if (event === "connection") {
+      // TODO: implement this at net/tls level to allow to inject socket in the server
+      // this works for now for Http2Server
+      connectionListener.$call(this, ...args);
+    }
+    return super.emit(event, ...args);
+  }
   setTimeout(ms, callback) {
     this.timeout = ms;
     if (typeof callback === "function") {

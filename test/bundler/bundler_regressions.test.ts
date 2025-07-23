@@ -313,12 +313,14 @@ describe("bundler", () => {
     onAfterBundle(api) {
       // Check entry-b.js output for duplicate exports
       const entryB = api.readFile("/out/entry-b.js");
-      
+
       // Count all export statements (both single line and multiline)
       const exportMatches = entryB.match(/export\s*\{[^}]*\}/g);
-      
+
       if (exportMatches && exportMatches.length > 1) {
-        throw new Error(`Found ${exportMatches.length} export statements (expected 1) in entry-b.js:\n${exportMatches.join('\n')}\n\nFull output:\n${entryB}`);
+        throw new Error(
+          `Found ${exportMatches.length} export statements (expected 1) in entry-b.js:\n${exportMatches.join("\n")}\n\nFull output:\n${entryB}`,
+        );
       }
     },
   });
@@ -348,9 +350,11 @@ describe("bundler", () => {
       for (const file of files) {
         const content = api.readFile(`/out/${file}`);
         const exportMatches = content.match(/export\s*\{[^}]*\}/g);
-        
+
         if (exportMatches && exportMatches.length > 1) {
-          throw new Error(`Found ${exportMatches.length} export statements (expected max 1) in ${file}:\n${exportMatches.join('\n')}\n\nFull output:\n${content}`);
+          throw new Error(
+            `Found ${exportMatches.length} export statements (expected max 1) in ${file}:\n${exportMatches.join("\n")}\n\nFull output:\n${content}`,
+          );
         }
       }
     },

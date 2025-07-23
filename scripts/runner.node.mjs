@@ -161,6 +161,10 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: false,
     },
+    ["fail-on-coredump-or-report"]: {
+      type: "boolean",
+      default: false, // STAB-861
+    },
   },
 });
 
@@ -1068,6 +1072,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
         crashes += `main process killed by ${result.signalCode} but no core file found at ${corePath}\n`;
       }
 
+      if (options["fail-on-coredump-or-report"] && newCores.length > 0) {
+        result.ok = false;
+        if (!isAlwaysFailure(result.error)) result.error = "core dumped";
+      }
+
       for (const coreName of newCores) {
         const corePath = join(coresDir, coreName);
         let out = "";
@@ -1110,6 +1119,10 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
         if (!response.ok || response.status !== 200) throw new Error(`server responded with code ${response.status}`);
         const traces = await response.json();
         if (traces.length > 0) {
+          if (options["fail-on-coredump-or-report"]) {
+            result.ok = false;
+            if (!isAlwaysFailure(result.error)) result.error = "crash reported";
+          }
           crashes += `${traces.length} crashes reported during this test\n`;
           for (const t of traces) {
             if (t.failed_parse) {
@@ -2135,7 +2148,9 @@ function isAlwaysFailure(error) {
     error.includes("segmentation fault") ||
     error.includes("illegal instruction") ||
     error.includes("sigtrap") ||
-    error.includes("error: addresssanitizer")
+    error.includes("error: addresssanitizer") ||
+    error.includes("core dumped") ||
+    error.includes("crash reported")
   );
 }
 

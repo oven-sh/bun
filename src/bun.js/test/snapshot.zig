@@ -1,17 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const logger = bun.logger;
-const jest = @import("./jest.zig");
-const Jest = jest.Jest;
-const TestRunner = jest.TestRunner;
-const js_parser = bun.js_parser;
-const js_ast = bun.JSAst;
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const Expect = @import("./expect.zig").Expect;
-
 pub const Snapshots = struct {
     const file_header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
     const snapshots_dir_name = "__snapshots__" ++ [_]u8{std.fs.path.sep};
@@ -469,7 +455,7 @@ pub const Snapshots = struct {
         return success;
     }
 
-    fn getSnapshotFile(this: *Snapshots, file_id: TestRunner.File.ID) !JSC.Maybe(void) {
+    fn getSnapshotFile(this: *Snapshots, file_id: TestRunner.File.ID) !jsc.Maybe(void) {
         if (this._current_file == null or this._current_file.?.id != file_id) {
             try this.writeSnapshotFile();
 
@@ -492,7 +478,7 @@ pub const Snapshots = struct {
                     .err => |err| {
                         switch (err.getErrno()) {
                             .EXIST => this.snapshot_dir_path = dir_path,
-                            else => return JSC.Maybe(void){
+                            else => return jsc.Maybe(void){
                                 .err = err,
                             },
                         }
@@ -511,7 +497,7 @@ pub const Snapshots = struct {
             if (this.update_snapshots) flags |= bun.O.TRUNC;
             const fd = switch (bun.sys.open(snapshot_file_path, flags, 0o644)) {
                 .result => |_fd| _fd,
-                .err => |err| return JSC.Maybe(void){
+                .err => |err| return jsc.Maybe(void){
                     .err = err,
                 },
             };
@@ -543,6 +529,24 @@ pub const Snapshots = struct {
             this._current_file = file;
         }
 
-        return JSC.Maybe(void).success;
+        return jsc.Maybe(void).success;
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+const Expect = @import("./expect.zig").Expect;
+
+const jest = @import("./jest.zig");
+const Jest = jest.Jest;
+const TestRunner = jest.TestRunner;
+
+const bun = @import("bun");
+const js_ast = bun.ast;
+const js_parser = bun.js_parser;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const jsc = bun.jsc;
+const VirtualMachine = jsc.VirtualMachine;

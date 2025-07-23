@@ -1,7 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-
 pub const css = @import("../css_parser.zig");
 
 const Printer = css.Printer;
@@ -571,3 +567,7 @@ pub fn getWebkitMaskProperty(property_id: *const css.PropertyId) ?css.PropertyId
         else => null,
     };
 }
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

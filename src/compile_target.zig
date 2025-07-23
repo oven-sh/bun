@@ -1,3 +1,5 @@
+const CompileTarget = @This();
+
 /// Used for `bun build --compile`
 ///
 /// This downloads and extracts the bun binary for the target platform
@@ -5,11 +7,9 @@
 /// It stores the downloaded binary into the bun install cache.
 ///
 const bun = @import("bun");
-const std = @import("std");
 const Environment = bun.Environment;
 const strings = bun.strings;
 const Output = bun.Output;
-const CompileTarget = @This();
 
 os: Environment.OperatingSystem = Environment.os,
 arch: Environment.Architecture = Environment.arch,
@@ -451,3 +451,5 @@ pub fn defineValues(this: *const CompileTarget) []const []const u8 {
         },
     }
 }
+
+const std = @import("std");

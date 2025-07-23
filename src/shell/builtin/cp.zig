@@ -1,3 +1,5 @@
+const Cp = @This();
+
 opts: Opts = .{},
 state: union(enum) {
     idle,
@@ -188,7 +190,7 @@ pub fn writeFailingError(this: *Cp, buf: []const u8, exit_code: ExitCode) Yield 
     return this.bltn().done(exit_code);
 }
 
-pub fn onIOWriterChunk(this: *Cp, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Cp, _: usize, e: ?jsc.SystemError) Yield {
     if (e) |err| err.deref();
     if (this.state == .waiting_write_err) {
         return this.bltn().done(1);
@@ -306,9 +308,9 @@ pub const ShellCpTask = struct {
     verbose_output_lock: bun.Mutex = .{},
     verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.default_allocator),
 
-    task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
-    event_loop: JSC.EventLoopHandle,
-    concurrent_task: JSC.EventLoopTask,
+    task: jsc.WorkPoolTask = .{ .callback = &runFromThreadPool },
+    event_loop: jsc.EventLoopHandle,
+    concurrent_task: jsc.EventLoopTask,
     err: ?bun.shell.ShellErr = null,
 
     const debug = bun.Output.scoped(.ShellCpTask, false);
@@ -335,7 +337,7 @@ pub const ShellCpTask = struct {
 
     pub fn create(
         cp: *Cp,
-        evtloop: JSC.EventLoopHandle,
+        evtloop: jsc.EventLoopHandle,
         opts: Opts,
         operands: usize,
         src: [:0]const u8,
@@ -350,7 +352,7 @@ pub const ShellCpTask = struct {
             .tgt = tgt,
             .cwd_path = cwd_path,
             .event_loop = evtloop,
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
         });
     }
 
@@ -360,8 +362,8 @@ pub const ShellCpTask = struct {
         return out;
     }
 
-    pub fn ensureDest(nodefs: *JSC.Node.fs.NodeFS, dest: bun.OSPathSliceZ) Maybe(void) {
-        return switch (nodefs.mkdirRecursiveOSPath(dest, JSC.Node.Arguments.Mkdir.DefaultMode, false)) {
+    pub fn ensureDest(nodefs: *jsc.Node.fs.NodeFS, dest: bun.OSPathSliceZ) Maybe(void) {
+        return switch (nodefs.mkdirRecursiveOSPath(dest, jsc.Node.Arguments.Mkdir.DefaultMode, false)) {
             .err => |err| Maybe(void){ .err = err },
             .result => Maybe(void).success,
         };
@@ -528,9 +530,9 @@ pub const ShellCpTask = struct {
         this.src_absolute = bun.default_allocator.dupeZ(u8, src[0..src.len]) catch bun.outOfMemory();
         this.tgt_absolute = bun.default_allocator.dupeZ(u8, tgt[0..tgt.len]) catch bun.outOfMemory();
 
-        const args = JSC.Node.fs.Arguments.Cp{
-            .src = JSC.Node.PathLike{ .string = bun.PathString.init(this.src_absolute.?) },
-            .dest = JSC.Node.PathLike{ .string = bun.PathString.init(this.tgt_absolute.?) },
+        const args = jsc.Node.fs.Arguments.Cp{
+            .src = jsc.Node.PathLike{ .string = bun.PathString.init(this.src_absolute.?) },
+            .dest = jsc.Node.PathLike{ .string = bun.PathString.init(this.tgt_absolute.?) },
             .flags = .{
                 .mode = @enumFromInt(0),
                 .recursive = this.opts.recursive,
@@ -542,7 +544,7 @@ pub const ShellCpTask = struct {
 
         debug("Scheduling {s} -> {s}", .{ this.src_absolute.?, this.tgt_absolute.? });
         if (this.event_loop == .js) {
-            const vm: *JSC.VirtualMachine = this.event_loop.js.getVmImpl();
+            const vm: *jsc.VirtualMachine = this.event_loop.js.getVmImpl();
             debug("Yoops", .{});
             _ = bun.api.node.fs.ShellAsyncCpTask.createWithShellTask(
                 vm.global,
@@ -728,29 +730,33 @@ const Opts = packed struct(u16) {
 
 // --
 const log = bun.Output.scoped(.cp, true);
-const ArrayList = std.ArrayList;
-const Syscall = bun.sys;
-const bun = @import("bun");
-const shell = bun.shell;
-const Yield = shell.Yield;
+
 const interpreter = @import("../interpreter.zig");
+const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
+const OutputSrc = interpreter.OutputSrc;
+const OutputTask = interpreter.OutputTask;
 const ParseError = interpreter.ParseError;
 const ParseFlagResult = interpreter.ParseFlagResult;
-const ExitCode = shell.ExitCode;
-const Cp = @This();
-const OutputTask = interpreter.OutputTask;
+const unsupportedFlag = interpreter.unsupportedFlag;
+
+const Builtin = Interpreter.Builtin;
+const Result = Interpreter.Builtin.Result;
+
+const bun = @import("bun");
+const ResolvePath = bun.path;
 const assert = bun.assert;
 
-const OutputSrc = interpreter.OutputSrc;
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
-const std = @import("std");
-const FlagParser = interpreter.FlagParser;
+const jsc = bun.jsc;
+const WorkPool = jsc.WorkPool;
+const WorkPoolTask = jsc.WorkPoolTask;
 
-const unsupportedFlag = interpreter.unsupportedFlag;
-const WorkPool = JSC.WorkPool;
-const WorkPoolTask = JSC.WorkPoolTask;
-const ResolvePath = bun.path;
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = shell.Yield;
+
+const Syscall = bun.sys;
+const Maybe = bun.sys.Maybe;
+
+const std = @import("std");
+const ArrayList = std.ArrayList;

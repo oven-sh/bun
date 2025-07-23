@@ -44,7 +44,7 @@ fn print(this: *@This(), msg: []const u8) Maybe(void) {
     return Maybe(void).success;
 }
 
-pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?jsc.SystemError) Yield {
     if (maybe_e) |e| {
         defer e.deref();
         this.state = .err;
@@ -63,11 +63,14 @@ pub inline fn bltn(this: *@This()) *Builtin {
 }
 
 // --
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
+
 const interpreter = @import("../interpreter.zig");
+const std = @import("std");
+
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const JSC = bun.JSC;
+
+const bun = @import("bun");
+const jsc = bun.jsc;
 const Maybe = bun.sys.Maybe;
-const std = @import("std");
+const Yield = bun.shell.Yield;

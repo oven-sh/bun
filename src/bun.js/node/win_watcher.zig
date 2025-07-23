@@ -1,17 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const windows = bun.windows;
-const uv = windows.libuv;
-const string = bun.string;
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const Output = bun.Output;
-const Watcher = bun.Watcher;
-
-const FSWatcher = bun.JSC.Node.fs.Watcher;
-const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
-const Event = FSWatcher.Event;
-
 var default_manager: ?*PathWatcherManager = null;
 
 // TODO: make this a generic so we can reuse code with path_watcher
@@ -21,12 +7,12 @@ pub const PathWatcherManager = struct {
     const log = Output.scoped(.PathWatcherManager, false);
 
     watchers: bun.StringArrayHashMapUnmanaged(*PathWatcher) = .{},
-    vm: *JSC.VirtualMachine,
+    vm: *jsc.VirtualMachine,
     deinit_on_last_watcher: bool = false,
 
     pub const new = bun.TrivialNew(PathWatcherManager);
 
-    pub fn init(vm: *JSC.VirtualMachine) *PathWatcherManager {
+    pub fn init(vm: *jsc.VirtualMachine) *PathWatcherManager {
         return PathWatcherManager.new(.{
             .watchers = .{},
             .vm = vm,
@@ -76,9 +62,6 @@ pub const PathWatcherManager = struct {
         bun.destroy(this);
     }
 };
-
-const onPathUpdateFn = JSC.Node.fs.Watcher.onPathUpdate;
-const onUpdateEndFn = JSC.Node.fs.Watcher.onUpdateEnd;
 
 pub const PathWatcher = struct {
     handle: uv.uv_fs_event_t,
@@ -177,7 +160,7 @@ pub const PathWatcher = struct {
         this.maybeDeinit();
     }
 
-    pub fn init(manager: *PathWatcherManager, path: [:0]const u8, recursive: bool) bun.JSC.Maybe(*PathWatcher) {
+    pub fn init(manager: *PathWatcherManager, path: [:0]const u8, recursive: bool) bun.jsc.Maybe(*PathWatcher) {
         var outbuf: bun.PathBuffer = undefined;
         const event_path = switch (bun.sys.readlink(path, &outbuf)) {
             .err => |err| brk: {
@@ -279,7 +262,7 @@ pub fn watch(
     comptime callback: PathWatcher.Callback,
     comptime updateEnd: PathWatcher.UpdateEndCallback,
     ctx: *anyopaque,
-) bun.JSC.Maybe(*PathWatcher) {
+) bun.jsc.Maybe(*PathWatcher) {
     comptime {
         if (callback != onPathUpdateFn) {
             @compileError("callback must be onPathUpdateFn");
@@ -305,3 +288,23 @@ pub fn watch(
     watcher.handlers.put(bun.default_allocator, ctx, .{}) catch bun.outOfMemory();
     return .{ .result = watcher };
 }
+
+const string = []const u8;
+
+const std = @import("std");
+const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
+
+const bun = @import("bun");
+const Output = bun.Output;
+const Watcher = bun.Watcher;
+
+const jsc = bun.jsc;
+const VirtualMachine = jsc.VirtualMachine;
+
+const FSWatcher = bun.jsc.Node.fs.Watcher;
+const Event = FSWatcher.Event;
+const onPathUpdateFn = jsc.Node.fs.Watcher.onPathUpdate;
+const onUpdateEndFn = jsc.Node.fs.Watcher.onUpdateEnd;
+
+const windows = bun.windows;
+const uv = windows.libuv;

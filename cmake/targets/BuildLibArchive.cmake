@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     libarchive/libarchive
   COMMIT
-    898dc8319355b7e985f68a9819f182aaed61b53a
+    7118f97c26bf0b2f426728b482f86508efc81d02
 )
 
 register_cmake_command(
@@ -20,11 +20,14 @@ register_cmake_command(
     -DENABLE_WERROR=OFF
     -DENABLE_BZip2=OFF
     -DENABLE_CAT=OFF
+    -DENABLE_CPIO=OFF
+    -DENABLE_UNZIP=OFF
     -DENABLE_EXPAT=OFF
     -DENABLE_ICONV=OFF
     -DENABLE_LIBB2=OFF
     -DENABLE_LibGCC=OFF
     -DENABLE_LIBXML2=OFF
+    -DENABLE_WIN32_XMLLITE=OFF
     -DENABLE_LZ4=OFF
     -DENABLE_LZMA=OFF
     -DENABLE_LZO=OFF

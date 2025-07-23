@@ -104,7 +104,7 @@ peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.Linear
 // name hash from alias package name -> aliased package dependency version info
 known_npm_aliases: NpmAliasMap = .{},
 
-event_loop: JSC.AnyEventLoop,
+event_loop: jsc.AnyEventLoop,
 
 // During `installPackages` we learn exactly what dependencies from --trust
 // actually have scripts to run, and we add them to this list
@@ -862,7 +862,7 @@ pub fn init(
         .root_package_json_file = root_package_json_file,
         // .progress
         .event_loop = .{
-            .mini = JSC.MiniEventLoop.init(bun.default_allocator),
+            .mini = jsc.MiniEventLoop.init(bun.default_allocator),
         },
         .original_package_json_path = original_package_json_path,
         .workspace_package_json_cache = workspace_package_json_cache,
@@ -870,9 +870,9 @@ pub fn init(
         .subcommand = subcommand,
         .root_package_json_name_at_time_of_init = root_package_json_name_at_time_of_init,
     };
-    manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(&manager.event_loop));
+    manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(&manager.event_loop));
     manager.lockfile = try ctx.allocator.create(Lockfile);
-    JSC.MiniEventLoop.global = &manager.event_loop.mini;
+    jsc.MiniEventLoop.global = &manager.event_loop.mini;
     if (!manager.options.enable.cache) {
         manager.options.enable.manifest_cache = false;
         manager.options.enable.manifest_cache_control = false;
@@ -1031,7 +1031,7 @@ pub fn initWithRuntimeOnce(
         .lockfile = undefined,
         .root_package_json_file = undefined,
         .event_loop = .{
-            .js = JSC.VirtualMachine.get().eventLoop(),
+            .js = jsc.VirtualMachine.get().eventLoop(),
         },
         .original_package_json_path = original_package_json_path[0..original_package_json_path.len :0],
         .subcommand = .install,
@@ -1131,19 +1131,15 @@ const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
 
 // pub const ensureTempNodeGypScript = directories.ensureTempNodeGypScript;
 
-// @sortImports
-
 pub const CommandLineArguments = @import("./PackageManager/CommandLineArguments.zig");
-const DirInfo = @import("../resolver/dir_info.zig");
 pub const Options = @import("./PackageManager/PackageManagerOptions.zig");
 pub const PackageJSONEditor = @import("./PackageManager/PackageJSONEditor.zig");
-pub const UpdateRequest = @import("PackageManager/UpdateRequest.zig");
-pub const WorkspacePackageJSONCache = @import("PackageManager/WorkspacePackageJSONCache.zig");
-const std = @import("std");
+pub const UpdateRequest = @import("./PackageManager/UpdateRequest.zig");
+pub const WorkspacePackageJSONCache = @import("./PackageManager/WorkspacePackageJSONCache.zig");
 pub const PackageInstaller = @import("./PackageInstaller.zig").PackageInstaller;
-pub const installWithManager = @import("PackageManager/install_with_manager.zig").installWithManager;
+pub const installWithManager = @import("./PackageManager/install_with_manager.zig").installWithManager;
 
-pub const directories = @import("PackageManager/PackageManagerDirectories.zig");
+pub const directories = @import("./PackageManager/PackageManagerDirectories.zig");
 pub const attemptToCreatePackageJSON = directories.attemptToCreatePackageJSON;
 const attemptToCreatePackageJSONAndOpen = directories.attemptToCreatePackageJSONAndOpen;
 pub const cachedGitFolderName = directories.cachedGitFolderName;
@@ -1173,7 +1169,7 @@ pub const setupGlobalDir = directories.setupGlobalDir;
 pub const updateLockfileIfNeeded = directories.updateLockfileIfNeeded;
 pub const writeYarnLock = directories.writeYarnLock;
 
-pub const enqueue = @import("PackageManager/PackageManagerEnqueue.zig");
+pub const enqueue = @import("./PackageManager/PackageManagerEnqueue.zig");
 pub const enqueueDependencyList = enqueue.enqueueDependencyList;
 pub const enqueueDependencyToRoot = enqueue.enqueueDependencyToRoot;
 pub const enqueueDependencyWithMain = enqueue.enqueueDependencyWithMain;
@@ -1189,8 +1185,6 @@ pub const enqueuePatchTaskPre = enqueue.enqueuePatchTaskPre;
 pub const enqueueTarballForDownload = enqueue.enqueueTarballForDownload;
 pub const enqueueTarballForReading = enqueue.enqueueTarballForReading;
 
-const lifecycle = @import("PackageManager/PackageManagerLifecycle.zig");
-const LifecycleScriptTimeLog = lifecycle.LifecycleScriptTimeLog;
 pub const determinePreinstallState = lifecycle.determinePreinstallState;
 pub const ensurePreinstallStateListCapacity = lifecycle.ensurePreinstallStateListCapacity;
 pub const findTrustedDependenciesFromUpdateRequests = lifecycle.findTrustedDependenciesFromUpdateRequests;
@@ -1203,7 +1197,6 @@ pub const sleep = lifecycle.sleep;
 pub const spawnPackageLifecycleScripts = lifecycle.spawnPackageLifecycleScripts;
 pub const tickLifecycleScripts = lifecycle.tickLifecycleScripts;
 
-const resolution = @import("PackageManager/PackageManagerResolution.zig");
 pub const assignResolution = resolution.assignResolution;
 pub const assignRootResolution = resolution.assignRootResolution;
 pub const formatLaterVersionInCache = resolution.formatLaterVersionInCache;
@@ -1212,48 +1205,57 @@ pub const resolveFromDiskCache = resolution.resolveFromDiskCache;
 pub const scopeForPackageName = resolution.scopeForPackageName;
 pub const verifyResolutions = resolution.verifyResolutions;
 
-pub const progress_zig = @import("PackageManager/ProgressStrings.zig");
+pub const progress_zig = @import("./PackageManager/ProgressStrings.zig");
 pub const ProgressStrings = progress_zig.ProgressStrings;
 pub const endProgressBar = progress_zig.endProgressBar;
 pub const setNodeName = progress_zig.setNodeName;
 pub const startProgressBar = progress_zig.startProgressBar;
 pub const startProgressBarIfNone = progress_zig.startProgressBarIfNone;
 
-pub const PatchCommitResult = @import("PackageManager/patchPackage.zig").PatchCommitResult;
-pub const doPatchCommit = @import("PackageManager/patchPackage.zig").doPatchCommit;
-pub const preparePatch = @import("PackageManager/patchPackage.zig").preparePatch;
+pub const PatchCommitResult = @import("./PackageManager/patchPackage.zig").PatchCommitResult;
+pub const doPatchCommit = @import("./PackageManager/patchPackage.zig").doPatchCommit;
+pub const preparePatch = @import("./PackageManager/patchPackage.zig").preparePatch;
 
-pub const GitResolver = @import("PackageManager/processDependencyList.zig").GitResolver;
-pub const processDependencyList = @import("PackageManager/processDependencyList.zig").processDependencyList;
-pub const processDependencyListItem = @import("PackageManager/processDependencyList.zig").processDependencyListItem;
-pub const processExtractedTarballPackage = @import("PackageManager/processDependencyList.zig").processExtractedTarballPackage;
-pub const processPeerDependencyList = @import("PackageManager/processDependencyList.zig").processPeerDependencyList;
+pub const GitResolver = @import("./PackageManager/processDependencyList.zig").GitResolver;
+pub const processDependencyList = @import("./PackageManager/processDependencyList.zig").processDependencyList;
+pub const processDependencyListItem = @import("./PackageManager/processDependencyList.zig").processDependencyListItem;
+pub const processExtractedTarballPackage = @import("./PackageManager/processDependencyList.zig").processExtractedTarballPackage;
+pub const processPeerDependencyList = @import("./PackageManager/processDependencyList.zig").processPeerDependencyList;
 
-pub const allocGitHubURL = @import("PackageManager/runTasks.zig").allocGitHubURL;
-pub const decrementPendingTasks = @import("PackageManager/runTasks.zig").decrementPendingTasks;
-pub const drainDependencyList = @import("PackageManager/runTasks.zig").drainDependencyList;
-pub const flushDependencyQueue = @import("PackageManager/runTasks.zig").flushDependencyQueue;
-pub const flushNetworkQueue = @import("PackageManager/runTasks.zig").flushNetworkQueue;
-pub const flushPatchTaskQueue = @import("PackageManager/runTasks.zig").flushPatchTaskQueue;
-pub const generateNetworkTaskForTarball = @import("PackageManager/runTasks.zig").generateNetworkTaskForTarball;
-pub const getNetworkTask = @import("PackageManager/runTasks.zig").getNetworkTask;
-pub const hasCreatedNetworkTask = @import("PackageManager/runTasks.zig").hasCreatedNetworkTask;
-pub const incrementPendingTasks = @import("PackageManager/runTasks.zig").incrementPendingTasks;
-pub const isNetworkTaskRequired = @import("PackageManager/runTasks.zig").isNetworkTaskRequired;
-pub const pendingTaskCount = @import("PackageManager/runTasks.zig").pendingTaskCount;
-pub const runTasks = @import("PackageManager/runTasks.zig").runTasks;
-pub const scheduleTasks = @import("PackageManager/runTasks.zig").scheduleTasks;
+pub const allocGitHubURL = @import("./PackageManager/runTasks.zig").allocGitHubURL;
+pub const decrementPendingTasks = @import("./PackageManager/runTasks.zig").decrementPendingTasks;
+pub const drainDependencyList = @import("./PackageManager/runTasks.zig").drainDependencyList;
+pub const flushDependencyQueue = @import("./PackageManager/runTasks.zig").flushDependencyQueue;
+pub const flushNetworkQueue = @import("./PackageManager/runTasks.zig").flushNetworkQueue;
+pub const flushPatchTaskQueue = @import("./PackageManager/runTasks.zig").flushPatchTaskQueue;
+pub const generateNetworkTaskForTarball = @import("./PackageManager/runTasks.zig").generateNetworkTaskForTarball;
+pub const getNetworkTask = @import("./PackageManager/runTasks.zig").getNetworkTask;
+pub const hasCreatedNetworkTask = @import("./PackageManager/runTasks.zig").hasCreatedNetworkTask;
+pub const incrementPendingTasks = @import("./PackageManager/runTasks.zig").incrementPendingTasks;
+pub const isNetworkTaskRequired = @import("./PackageManager/runTasks.zig").isNetworkTaskRequired;
+pub const pendingTaskCount = @import("./PackageManager/runTasks.zig").pendingTaskCount;
+pub const runTasks = @import("./PackageManager/runTasks.zig").runTasks;
+pub const scheduleTasks = @import("./PackageManager/runTasks.zig").scheduleTasks;
 
-const updatePackageJSONAndInstall = @import("PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstall;
-pub const updatePackageJSONAndInstallCatchError = @import("PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;
-pub const updatePackageJSONAndInstallWithManager = @import("PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallWithManager;
+pub const updatePackageJSONAndInstallCatchError = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;
+pub const updatePackageJSONAndInstallWithManager = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallWithManager;
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const DirInfo = @import("../resolver/dir_info.zig");
+const resolution = @import("./PackageManager/PackageManagerResolution.zig");
+const std = @import("std");
+const updatePackageJSONAndInstall = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstall;
+
+const lifecycle = @import("./PackageManager/PackageManagerLifecycle.zig");
+const LifecycleScriptTimeLog = lifecycle.LifecycleScriptTimeLog;
 
 const bun = @import("bun");
 const DotEnv = bun.DotEnv;
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSC = bun.JSC;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const Path = bun.path;
@@ -1262,19 +1264,18 @@ const RunCommand = bun.RunCommand;
 const ThreadPool = bun.ThreadPool;
 const URL = bun.URL;
 const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;
 const transpiler = bun.transpiler;
-const Api = bun.Schema.Api;
+const Api = bun.schema.api;
 const File = bun.sys.File;
-
-const BunArguments = bun.CLI.Arguments;
-const Command = bun.CLI.Command;
 
 const Semver = bun.Semver;
 const String = Semver.String;
+
+const BunArguments = bun.cli.Arguments;
+const Command = bun.cli.Command;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;

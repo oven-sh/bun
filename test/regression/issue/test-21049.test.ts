@@ -85,17 +85,30 @@ test("fetch with Request object respects redirect: 'manual' option", async () =>
 // Additional test to verify it works with external redirects
 test("fetch with Request object respects redirect: 'manual' for external URLs", async () => {
   // This test uses a real URL that redirects
-  const request = new Request("https://w3id.org/security/v1", {
+  using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/redirect": new Response(null, {
+        status: 302,
+        headers: {
+          Location: "/target",
+        },
+      }),
+      "/target": new Response("Target reached", { status: 200 }),
+    },
+  });
+
+  const request = new Request(`${server.url}/redirect`, {
     redirect: "manual",
   });
 
   const response = await fetch(request);
 
   // When redirect: "manual" is set, we should get the redirect response
-  expect([301, 302, 303, 307, 308]).toContain(response.status); // Any redirect status
-  expect(response.url).toBe("https://w3id.org/security/v1");
+  expect(response.status).toBe(302);
+  expect(response.url).toBe(`${server.url}/redirect`);
   expect(response.redirected).toBe(false);
-  expect(response.headers.get("location")).toBeTruthy();
+  expect(response.headers.get("location")).toBe("/target");
 });
 
 // Test edge case: fetch with options but no redirect should use Request's redirect

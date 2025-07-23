@@ -1,3 +1,5 @@
+const DiffMatchPatch = @This();
+
 // MIT License
 
 // Copyright (c) 2023 diffz authors
@@ -20,12 +22,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-const DiffMatchPatch = @This();
-
-const std = @import("std");
-const bun = @import("bun");
-const testing = std.testing;
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const DiffList = ArrayListUnmanaged(Diff);
 
 /// DMP with default configuration options
@@ -1987,7 +1983,6 @@ test diffBisect {
     try testing.expectEqualDeep(diffs, try this.diffBisect(arena.allocator(), a, b, 0)); // Timeout.
 }
 
-const talloc = testing.allocator;
 test diff {
     var arena = bun.ArenaAllocator.init(talloc);
     defer arena.deinit();
@@ -2248,3 +2243,11 @@ test diffCleanupSemantic {
         Diff.init(.insert, "BC"),
     }), diffs.items);
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
+
+const testing = std.testing;
+const talloc = testing.allocator;

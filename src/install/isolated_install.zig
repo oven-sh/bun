@@ -6,7 +6,7 @@ pub fn installIsolatedPackages(
     install_root_dependencies: bool,
     workspace_filters: []const WorkspaceFilter,
 ) OOM!PackageInstall.Summary {
-    bun.Analytics.Features.isolated_bun_install += 1;
+    bun.analytics.Features.isolated_bun_install += 1;
 
     const lockfile = manager.lockfile;
 
@@ -61,6 +61,7 @@ pub fn installIsolatedPackages(
                 // check for cycles
                 const nodes_slice = nodes.slice();
                 const node_pkg_ids = nodes_slice.items(.pkg_id);
+                const node_dep_ids = nodes_slice.items(.dep_id);
                 const node_parent_ids = nodes_slice.items(.parent_id);
                 const node_nodes = nodes_slice.items(.nodes);
 
@@ -68,9 +69,20 @@ pub fn installIsolatedPackages(
                 while (curr_id != .invalid) {
                     if (node_pkg_ids[curr_id.get()] == entry.pkg_id) {
                         // skip the new node, and add the previously added node to parent so it appears in
-                        // 'node_modules/.bun/parent@version/node_modules'
-                        node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
-                        continue :next_node;
+                        // 'node_modules/.bun/parent@version/node_modules'.
+
+                        const dep_id = node_dep_ids[curr_id.get()];
+                        if (dep_id == invalid_dependency_id or entry.dep_id == invalid_dependency_id) {
+                            node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
+                            continue :next_node;
+                        }
+
+                        // ensure the dependency name is the same before skipping the cycle. if they aren't
+                        // we lose dependency name information for the symlinks
+                        if (dependencies[dep_id].name_hash == dependencies[entry.dep_id].name_hash) {
+                            node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
+                            continue :next_node;
+                        }
                     }
                     curr_id = node_parent_ids[curr_id.get()];
                 }
@@ -968,8 +980,6 @@ pub fn installIsolatedPackages(
     }
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");
@@ -980,7 +990,7 @@ const OOM = bun.OOM;
 const Output = bun.Output;
 const Progress = bun.Progress;
 const sys = bun.sys;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const install = bun.install;
 const DependencyID = install.DependencyID;

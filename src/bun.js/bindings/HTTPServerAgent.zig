@@ -11,7 +11,7 @@ pub fn isEnabled(this: *const HTTPServerAgent) bool {
 }
 
 //#region Events
-pub fn notifyServerStarted(this: *HTTPServerAgent, instance: JSC.API.AnyServer) void {
+pub fn notifyServerStarted(this: *HTTPServerAgent, instance: jsc.API.AnyServer) void {
     if (this.agent) |agent| {
         this.next_server_id = .init(this.next_server_id.get() + 1);
         instance.setInspectorServerID(this.next_server_id);
@@ -28,13 +28,13 @@ pub fn notifyServerStarted(this: *HTTPServerAgent, instance: JSC.API.AnyServer) 
     }
 }
 
-pub fn notifyServerStopped(this: *const HTTPServerAgent, server: JSC.API.AnyServer) void {
+pub fn notifyServerStopped(this: *const HTTPServerAgent, server: jsc.API.AnyServer) void {
     if (this.agent) |agent| {
         agent.notifyServerStopped(server.inspectorServerID(), @floatFromInt(std.time.milliTimestamp()));
     }
 }
 
-pub fn notifyServerRoutesUpdated(this: *const HTTPServerAgent, server: JSC.API.AnyServer) !void {
+pub fn notifyServerRoutesUpdated(this: *const HTTPServerAgent, server: jsc.API.AnyServer) !void {
     if (this.agent) |agent| {
         const config = server.config();
         var routes = std.ArrayList(Route).init(bun.default_allocator);
@@ -50,7 +50,7 @@ pub fn notifyServerRoutesUpdated(this: *const HTTPServerAgent, server: JSC.API.A
         switch (server.userRoutes()) {
             inline else => |user_routes| {
                 for (user_routes) |*user_route| {
-                    const decl: *const JSC.API.ServerConfig.RouteDeclaration = &user_route.route;
+                    const decl: *const jsc.API.ServerConfig.RouteDeclaration = &user_route.route;
                     max_id = @max(max_id, user_route.id);
                     try routes.append(.{
                         .route_id = @intCast(user_route.id),
@@ -87,7 +87,7 @@ pub fn notifyServerRoutesUpdated(this: *const HTTPServerAgent, server: JSC.API.A
             max_id += 1;
         }
 
-        agent.notifyServerRoutesUpdated(server.inspectorServerID(), @intCast(JSC.VirtualMachine.get().hot_reload_counter), routes.items);
+        agent.notifyServerRoutesUpdated(server.inspectorServerID(), @intCast(jsc.VirtualMachine.get().hot_reload_counter), routes.items);
     }
 }
 
@@ -134,9 +134,6 @@ pub const Route = extern struct {
 
 //#region C++ agent reference type for Zig
 pub const InspectorHTTPServerAgent = opaque {
-    extern fn Bun__HTTPServerAgent__notifyServerStarted(agent: *InspectorHTTPServerAgent, serverId: ServerId, hotReloadId: HotReloadId, address: *const BunString, startTime: f64, serverInstance: *anyopaque) void;
-    extern fn Bun__HTTPServerAgent__notifyServerStopped(agent: *InspectorHTTPServerAgent, serverId: ServerId, timestamp: f64) void;
-    extern fn Bun__HTTPServerAgent__notifyServerRoutesUpdated(agent: *InspectorHTTPServerAgent, serverId: ServerId, hotReloadId: HotReloadId, routes: [*]Route, routesCount: usize) void;
     extern fn Bun__HTTPServerAgent__notifyRequestWillBeSent(agent: *InspectorHTTPServerAgent, requestId: RequestId, serverId: ServerId, routeId: RouteId, url: *const BunString, fullUrl: *const BunString, method: HTTPMethod, headersJson: *const BunString, paramsJson: *const BunString, hasBody: bool, timestamp: f64) void;
     extern fn Bun__HTTPServerAgent__notifyResponseReceived(agent: *InspectorHTTPServerAgent, requestId: RequestId, serverId: ServerId, statusCode: i32, statusText: *const BunString, headersJson: *const BunString, hasBody: bool, timestamp: f64) void;
     extern fn Bun__HTTPServerAgent__notifyBodyChunkReceived(agent: *InspectorHTTPServerAgent, requestId: RequestId, serverId: ServerId, flags: i32, chunk: *const BunString, timestamp: f64) void;
@@ -144,15 +141,15 @@ pub const InspectorHTTPServerAgent = opaque {
     extern fn Bun__HTTPServerAgent__notifyRequestHandlerException(agent: *InspectorHTTPServerAgent, requestId: RequestId, serverId: ServerId, message: *const BunString, url: *const BunString, line: i32, timestamp: f64) void;
 
     pub fn notifyServerStarted(agent: *InspectorHTTPServerAgent, serverId: ServerId, hotReloadId: HotReloadId, address: *const BunString, startTime: f64, serverInstance: *anyopaque) void {
-        Bun__HTTPServerAgent__notifyServerStarted(agent, serverId, hotReloadId, address, startTime, serverInstance);
+        bun.cpp.Bun__HTTPServerAgent__notifyServerStarted(agent, serverId, hotReloadId, address, startTime, serverInstance);
     }
 
     pub fn notifyServerStopped(agent: *InspectorHTTPServerAgent, serverId: ServerId, timestamp: f64) void {
-        Bun__HTTPServerAgent__notifyServerStopped(agent, serverId, timestamp);
+        bun.cpp.Bun__HTTPServerAgent__notifyServerStopped(agent, serverId, timestamp);
     }
 
     pub fn notifyServerRoutesUpdated(agent: *InspectorHTTPServerAgent, serverId: ServerId, hotReloadId: HotReloadId, routes: []Route) void {
-        Bun__HTTPServerAgent__notifyServerRoutesUpdated(agent, serverId, hotReloadId, routes.ptr, routes.len);
+        bun.cpp.Bun__HTTPServerAgent__notifyServerRoutesUpdated(agent, serverId, hotReloadId, routes.ptr, routes.len);
     }
 };
 
@@ -161,7 +158,7 @@ pub const InspectorHTTPServerAgent = opaque {
 //#region Zig -> C++
 
 export fn Bun__HTTPServerAgent__setEnabled(agent: ?*InspectorHTTPServerAgent) void {
-    if (JSC.VirtualMachine.get().debugger) |*debugger| {
+    if (jsc.VirtualMachine.get().debugger) |*debugger| {
         debugger.http_server_agent.agent = agent;
     }
 }
@@ -169,13 +166,14 @@ export fn Bun__HTTPServerAgent__setEnabled(agent: ?*InspectorHTTPServerAgent) vo
 //#endregion
 
 // Typedefs from HTTPServer.json
-pub const ServerId = JSC.Debugger.DebuggerId;
+pub const ServerId = jsc.Debugger.DebuggerId;
 pub const RequestId = i32;
 pub const RouteId = i32;
 pub const HotReloadId = i32;
 pub const HTTPMethod = bun.http.Method;
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
 const BunString = bun.String;
+const jsc = bun.jsc;

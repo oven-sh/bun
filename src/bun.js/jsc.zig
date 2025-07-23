@@ -164,8 +164,6 @@ pub const WebCore = bun.webcore;
 pub const API = bun.api;
 /// Deprecated: Use `bun.api.node`
 pub const Node = bun.api.node;
-/// Deprecated: use `bun.api.HTMLRewriter`
-pub const Cloudflare = bun.api.HTMLRewriter;
 
 const log = bun.Output.scoped(.JSC, true);
 pub inline fn markBinding(src: std.builtin.SourceLocation) void {

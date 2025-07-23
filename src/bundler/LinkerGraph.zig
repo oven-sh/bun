@@ -47,10 +47,10 @@ pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {
 pub fn deinit(this: *LinkerGraph) void {
     for (this.files.items(.quoted_source_contents)) |maybe_contents| {
         if (maybe_contents) |contents| {
-            this.allocator.free(contents);
+            bun.default_allocator.free(contents);
         }
     }
-    this.files.clearAndFree(this.allocator);
+    this.files.clearAndFree(bun.default_allocator);
 }
 
 pub fn runtimeFunction(this: *const LinkerGraph, name: string) Ref {

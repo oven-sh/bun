@@ -150,21 +150,24 @@ pub const LinkerContext = struct {
             );
         }
 
-        pub fn computeQuotedSourceContents(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
+        pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
             const quoted_source_contents: *?[]const u8 = &this.graph.files.items(.quoted_source_contents)[source_index];
             if (!loader.canHaveSourceMap()) {
                 if (quoted_source_contents.*) |slice| {
-                    allocator.free(slice);
+                    bun.default_allocator.free(slice);
+                    quoted_source_contents.* = null;
                 }
-                quoted_source_contents.* = null;
                 return;
             }
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
-            var mutable = MutableString.initEmpty(allocator);
+            var mutable = MutableString.initEmpty(bun.default_allocator);
             js_printer.quoteForJSON(source.contents, &mutable, false) catch bun.outOfMemory();
+            if (quoted_source_contents.*) |slice| {
+                bun.default_allocator.free(slice);
+            }
             quoted_source_contents.* = mutable.slice();
         }
     };

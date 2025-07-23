@@ -2406,7 +2406,7 @@ pub fn finalizeBundle(
         // TODO: investigate why linker.files is not indexed by linker's index
         // const linker_index = bv2.linker.graph.stable_source_indices[index.get()];
         // const quoted_contents = quoted_source_contents[linker_index];
-        const quoted_contents = quoted_source_contents[part_range.source_index.get()] orelse "";
+        const quoted_contents = &quoted_source_contents[part_range.source_index.get()];
         switch (targets[part_range.source_index.get()].bakeGraph()) {
             inline else => |graph| try (switch (graph) {
                 .client => dev.client_graph,
@@ -2418,7 +2418,7 @@ pub fn finalizeBundle(
                     .code = compile_result.code(),
                     .source_map = .{
                         .chunk = source_map,
-                        .escaped_source = @constCast(quoted_contents),
+                        .escaped_source = @constCast(@ptrCast(quoted_contents)),
                     },
                 } },
                 graph == .ssr,
@@ -3357,7 +3357,6 @@ pub const PackedMap = struct {
 
     fn destroy(self: *@This(), dev: *DevServer) void {
         dev.allocator.free(self.vlq());
-        dev.allocator.free(self.quotedContents());
         bun.destroy(self);
     }
 
@@ -3869,7 +3868,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     code: []const u8,
                     source_map: ?struct {
                         chunk: SourceMap.Chunk,
-                        escaped_source: []u8,
+                        escaped_source: *?[]u8,
                     },
                 },
                 css: u64,
@@ -3964,16 +3963,16 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                     bun.debugAssert(!flags.is_html_route); // suspect behind #17956
                                     if (source_map.chunk.buffer.len() > 0) {
                                         dev.allocation_scope.assertOwned(source_map.chunk.buffer.list.items);
-                                        dev.allocation_scope.assertOwned(source_map.escaped_source);
                                         flags.source_map_state = .ref;
                                         break :brk .{ .ref = PackedMap.newNonEmpty(
                                             source_map.chunk,
-                                            source_map.escaped_source,
+                                            source_map.escaped_source.*.?,
                                         ) };
                                     }
                                     var take = source_map.chunk.buffer;
                                     take.deinit();
-                                    dev.allocator.free(source_map.escaped_source);
+                                    bun.default_allocator.free(source_map.escaped_source.*.?);
+                                    source_map.escaped_source.* = null;
                                 }
 
                                 // Must precompute this. Otherwise, source maps won't have
@@ -4060,7 +4059,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         if (content.js.source_map) |source_map| {
                             var take = source_map.chunk.buffer;
                             take.deinit();
-                            dev.allocator.free(source_map.escaped_source);
+                            bun.default_allocator.free(source_map.escaped_source.*.?);
+                            source_map.escaped_source.* = null;
                         }
                     }
                 },

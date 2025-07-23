@@ -8,7 +8,7 @@ pub fn getDefaultAutoSelectFamily(global: *jsc.JSGlobalObject) jsc.JSValue {
         fn getter(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             _ = globalThis;
             _ = callframe;
-            return jsc.jsBoolean(autoSelectFamilyDefault);
+            return .jsBoolean(autoSelectFamilyDefault);
         }
     }).getter, 0, .{});
 }
@@ -26,7 +26,7 @@ pub fn setDefaultAutoSelectFamily(global: *jsc.JSGlobalObject) jsc.JSValue {
             }
             const value = arg.toBoolean();
             autoSelectFamilyDefault = value;
-            return jsc.jsBoolean(value);
+            return .jsBoolean(value);
         }
     }).setter, 1, .{});
 }

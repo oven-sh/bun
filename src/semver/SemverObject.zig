@@ -121,10 +121,10 @@ pub fn satisfies(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun
     const right_version = right_group.getExactVersion();
 
     if (right_version != null) {
-        return jsc.jsBoolean(left_version.eql(right_version.?));
+        return .jsBoolean(left_version.eql(right_version.?));
     }
 
-    return jsc.jsBoolean(right_group.satisfies(left_version, right.slice(), left.slice()));
+    return .jsBoolean(right_group.satisfies(left_version, right.slice(), left.slice()));
 }
 
 const std = @import("std");

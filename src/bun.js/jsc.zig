@@ -154,8 +154,6 @@ pub const WorkTask = EventLoop.WorkTask;
 pub const Maybe = bun.sys.Maybe;
 /// Deprecated: Use the .fromAny() decl literal
 pub const toJS = JSValue.fromAny;
-/// Deprecated: Use the .jsBoolean() decl literal
-pub const jsBoolean = JSValue.jsBoolean;
 /// Deprecated: Use the .jsEmptyString() decl literal
 pub const jsEmptyString = JSValue.jsEmptyString;
 /// Deprecated: Use the .jsNumber() decl literal

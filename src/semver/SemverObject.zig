@@ -55,8 +55,8 @@ pub fn order(
     const right = right_string.toSlice(globalThis, allocator);
     defer right.deinit();
 
-    if (!strings.isAllASCII(left.slice())) return jsc.jsNumber(0);
-    if (!strings.isAllASCII(right.slice())) return jsc.jsNumber(0);
+    if (!strings.isAllASCII(left.slice())) return .jsNumber(0);
+    if (!strings.isAllASCII(right.slice())) return .jsNumber(0);
 
     const left_result = Version.parse(SlicedString.init(left.slice(), left.slice()));
     const right_result = Version.parse(SlicedString.init(right.slice(), right.slice()));
@@ -73,9 +73,9 @@ pub fn order(
     const right_version = right_result.version.max();
 
     return switch (left_version.orderWithoutBuild(right_version, left.slice(), right.slice())) {
-        .eq => jsc.jsNumber(0),
-        .gt => jsc.jsNumber(1),
-        .lt => jsc.jsNumber(-1),
+        .eq => .jsNumber(0),
+        .gt => .jsNumber(1),
+        .lt => .jsNumber(-1),
     };
 }
 

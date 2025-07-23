@@ -260,10 +260,10 @@ pub fn writableStream(
                 switch (result) {
                     .success => {
                         if (sink.flushPromise.hasValue()) {
-                            sink.flushPromise.resolve(sink.globalThis, jsc.jsNumber(0));
+                            sink.flushPromise.resolve(sink.globalThis, .jsNumber(0));
                         }
                         if (sink.endPromise.hasValue()) {
-                            sink.endPromise.resolve(sink.globalThis, jsc.jsNumber(0));
+                            sink.endPromise.resolve(sink.globalThis, .jsNumber(0));
                         }
                     },
                     .failure => |err| {
@@ -389,7 +389,7 @@ pub const S3UploadStreamWrapper = struct {
         switch (result) {
             .success => {
                 if (self.endPromise.hasValue()) {
-                    self.endPromise.resolve(self.global, jsc.jsNumber(0));
+                    self.endPromise.resolve(self.global, .jsNumber(0));
                     self.endPromise = .empty;
                 }
             },

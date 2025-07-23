@@ -45,7 +45,7 @@ pub fn getDefaultAutoSelectFamilyAttemptTimeout(global: *jsc.JSGlobalObject) jsc
         fn getter(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             _ = globalThis;
             _ = callframe;
-            return jsc.jsNumber(autoSelectFamilyAttemptTimeoutDefault);
+            return .jsNumber(autoSelectFamilyAttemptTimeoutDefault);
         }
     }).getter, 0, .{});
 }
@@ -61,7 +61,7 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *jsc.JSGlobalObject) jsc
             var value = try validators.validateInt32(globalThis, arg, "value", .{}, 1, null);
             if (value < 10) value = 10;
             autoSelectFamilyAttemptTimeoutDefault = @intCast(value);
-            return jsc.jsNumber(value);
+            return .jsNumber(value);
         }
     }).setter, 1, .{});
 }

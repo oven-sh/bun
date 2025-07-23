@@ -358,7 +358,7 @@ const random = struct {
 
         const offset = try assertOffset(
             global,
-            if (offset_value.isUndefined()) jsc.jsNumber(0) else offset_value,
+            if (offset_value.isUndefined()) .jsNumber(0) else offset_value,
             element_size,
             buf.byte_len,
         );

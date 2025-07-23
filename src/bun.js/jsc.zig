@@ -152,8 +152,6 @@ pub const WorkTask = EventLoop.WorkTask;
 
 /// Deprecated: Use `bun.sys.Maybe`
 pub const Maybe = bun.sys.Maybe;
-/// Deprecated: Use the .fromAny() decl literal
-pub const toJS = JSValue.fromAny;
 /// Deprecated: Avoid using this in new code.
 pub const C = @import("./javascript_core_c_api.zig");
 /// Deprecated: Remove all of these please.

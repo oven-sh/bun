@@ -170,6 +170,12 @@ export function getStdinStream(
     };
   }
 
+  const originalPause = stream.pause;
+  stream.pause = function () {
+    $debug("pause();");
+    return originalPause.$call(this);
+  };
+
   const originalResume = stream.resume;
   stream.resume = function () {
     $debug("resume();");

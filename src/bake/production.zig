@@ -176,7 +176,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     };
 
     config_promise.setHandled(vm.jsc);
-    vm.waitForPromise(.{ .internal = config_promise });
+    try vm.waitForPromise(.{ .internal = config_promise });
     var options = switch (config_promise.unwrap(vm.jsc, .mark_handled)) {
         .pending => unreachable,
         .fulfilled => |resolved| config: {
@@ -675,7 +675,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         route_style_references,
     );
     render_promise.setHandled(vm.jsc);
-    vm.waitForPromise(.{ .normal = render_promise });
+    try vm.waitForPromise(.{ .normal = render_promise });
     switch (render_promise.unwrap(vm.jsc, .mark_handled)) {
         .pending => unreachable,
         .fulfilled => {
@@ -686,7 +686,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             return vm.global.throwValue(err);
         },
     }
-    vm.waitForTasks();
+    try vm.waitForTasks();
 }
 
 /// unsafe function, must be run outside of the event loop
@@ -694,7 +694,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
 fn loadModule(vm: *VirtualMachine, global: *JSC.JSGlobalObject, key: JSValue) !JSValue {
     const promise = BakeLoadModuleByKey(global, key).asAnyPromise().?.internal;
     promise.setHandled(vm.jsc);
-    vm.waitForPromise(.{ .internal = promise });
+    try vm.waitForPromise(.{ .internal = promise });
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.

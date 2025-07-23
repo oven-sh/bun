@@ -1,5 +1,5 @@
 pub const WriteFileResultType = SystemError.Maybe(SizeType);
-pub const WriteFileOnWriteFileCallback = *const fn (ctx: *anyopaque, count: WriteFileResultType) void;
+pub const WriteFileOnWriteFileCallback = *const fn (ctx: *anyopaque, count: WriteFileResultType) bun.JSExecutionTerminated!void;
 pub const WriteFileTask = JSC.WorkTask(WriteFile);
 
 pub const WriteFile = struct {
@@ -96,12 +96,12 @@ pub const WriteFile = struct {
         bytes_blob: Blob,
         comptime Context: type,
         context: Context,
-        comptime callback: fn (ctx: Context, bytes: WriteFileResultType) void,
+        comptime callback: fn (ctx: Context, bytes: WriteFileResultType) bun.JSExecutionTerminated!void,
         mkdirp_if_not_exists: bool,
     ) !*WriteFile {
         const Handler = struct {
-            pub fn run(ptr: *anyopaque, bytes: WriteFileResultType) void {
-                callback(bun.cast(Context, ptr), bytes);
+            pub fn run(ptr: *anyopaque, bytes: WriteFileResultType) bun.JSExecutionTerminated!void {
+                return callback(bun.cast(Context, ptr), bytes);
             }
         };
 
@@ -161,7 +161,7 @@ pub const WriteFile = struct {
         return true;
     }
 
-    pub fn then(this: *WriteFile, _: *JSC.JSGlobalObject) void {
+    pub fn then(this: *WriteFile, _: *JSC.JSGlobalObject) bun.JSExecutionTerminated!void {
         const cb = this.onCompleteCallback;
         const cb_ctx = this.onCompleteCtx;
 
@@ -170,15 +170,14 @@ pub const WriteFile = struct {
 
         if (this.system_error) |err| {
             bun.destroy(this);
-            cb(cb_ctx, .{
+            return cb(cb_ctx, .{
                 .err = err,
             });
-            return;
         }
 
         const wrote = this.total_written;
         bun.destroy(this);
-        cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
+        return cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
     }
 
     pub fn run(this: *WriteFile, task: *WriteFileTask) void {
@@ -638,7 +637,7 @@ pub const WriteFileWindows = struct {
 pub const WriteFilePromise = struct {
     promise: JSPromise.Strong = .{},
     globalThis: *JSGlobalObject,
-    pub fn run(handler: *@This(), count: WriteFileResultType) void {
+    pub fn run(handler: *@This(), count: WriteFileResultType) bun.JSExecutionTerminated!void {
         var promise = handler.promise.swap();
         const globalThis = handler.globalThis;
         bun.destroy(handler);
@@ -646,10 +645,10 @@ pub const WriteFilePromise = struct {
         value.ensureStillAlive();
         switch (count) {
             .err => |err| {
-                promise.reject(globalThis, err.toErrorInstance(globalThis));
+                return promise.reject(globalThis, err.toErrorInstance(globalThis));
             },
             .result => |wrote| {
-                promise.resolve(globalThis, JSC.JSValue.jsNumberFromUint64(wrote));
+                return promise.resolve(globalThis, JSC.JSValue.jsNumberFromUint64(wrote));
             },
         }
     }
@@ -661,11 +660,11 @@ pub const WriteFileWaitFromLockedValueTask = struct {
     promise: JSC.JSPromise.Strong,
     mkdirp_if_not_exists: bool = false,
 
-    pub fn thenWrap(this: *anyopaque, value: *Body.Value) void {
-        then(bun.cast(*WriteFileWaitFromLockedValueTask, this), value);
+    pub fn thenWrap(this: *anyopaque, value: *Body.Value) bun.JSExecutionTerminated!void {
+        return then(bun.cast(*WriteFileWaitFromLockedValueTask, this), value);
     }
 
-    pub fn then(this: *WriteFileWaitFromLockedValueTask, value: *Body.Value) void {
+    pub fn then(this: *WriteFileWaitFromLockedValueTask, value: *Body.Value) bun.JSExecutionTerminated!void {
         var promise = this.promise.get();
         var globalThis = this.globalThis;
         var file_blob = this.file_blob;
@@ -675,14 +674,14 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                 _ = value.use();
                 this.promise.deinit();
                 bun.destroy(this);
-                promise.reject(globalThis, err_ref.toJS(globalThis));
+                return promise.reject(globalThis, err_ref.toJS(globalThis));
             },
             .Used => {
                 file_blob.detach();
                 _ = value.use();
                 this.promise.deinit();
                 bun.destroy(this);
-                promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
+                return promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
             },
             .WTFStringImpl,
             .InternalBlob,
@@ -696,22 +695,21 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                     file_blob.detach();
                     this.promise.deinit();
                     bun.destroy(this);
-                    promise.reject(globalThis, err);
-                    return;
+                    return promise.reject(globalThis, err);
                 };
+                defer bun.destroy(this);
+                defer this.promise.deinit();
+                defer file_blob.detach();
+
                 if (new_promise.asAnyPromise()) |p| {
-                    switch (p.unwrap(globalThis.vm(), .mark_handled)) {
+                    return switch (p.unwrap(globalThis.vm(), .mark_handled)) {
                         // Fulfill the new promise using the pending promise
                         .pending => promise.resolve(globalThis, new_promise),
 
                         .rejected => |err| promise.reject(globalThis, err),
                         .fulfilled => |result| promise.resolve(globalThis, result),
-                    }
+                    };
                 }
-
-                file_blob.detach();
-                this.promise.deinit();
-                bun.destroy(this);
             },
             .Locked => {
                 value.Locked.onReceiveValue = thenWrap;

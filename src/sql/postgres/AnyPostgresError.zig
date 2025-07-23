@@ -1,4 +1,4 @@
-pub const AnyPostgresError = error{
+pub const AnyPostgresError = bun.JSError || error{
     ConnectionClosed,
     ExpectedRequest,
     ExpectedStatement,
@@ -12,10 +12,8 @@ pub const AnyPostgresError = error{
     InvalidQueryBinding,
     InvalidServerKey,
     InvalidServerSignature,
-    JSError,
     MultidimensionalArrayNotSupportedYet,
     NullsInArrayNotSupportedYet,
-    OutOfMemory,
     Overflow,
     PBKDFD2,
     SASL_SIGNATURE_MISMATCH,
@@ -70,6 +68,9 @@ pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8
         error.OutOfMemory => {
             // TODO: add binding for creating an out of memory error?
             return globalObject.takeException(globalObject.throwOutOfMemory());
+        },
+        error.JSExecutionTerminated => {
+            return globalObject.takeException(error.JSExecutionTerminated);
         },
         error.ShortRead => {
             bun.unreachablePanic("Assertion failed: ShortRead should be handled by the caller in postgres", .{});

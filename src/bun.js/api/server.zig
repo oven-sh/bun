@@ -2042,7 +2042,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 prepared.request_object.request_context.detachRequest();
             }
 
-            ctx.onResponse(this, prepared.js_request, response_value);
+            ctx.onResponse(this, prepared.js_request, response_value) catch return; // TODO: properly propagate exception upwards
             // Reference in the stack here in case it is not for whatever reason
             prepared.js_request.ensureStillAlive();
 
@@ -2118,7 +2118,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const original_state = ctx.defer_deinit_until_callback_completes;
             var should_deinit_context = false;
             ctx.defer_deinit_until_callback_completes = &should_deinit_context;
-            ctx.onResponse(this, prepared.js_request, response_value);
+            ctx.onResponse(this, prepared.js_request, response_value) catch return; // TODO: properly propagate exception upwards
             ctx.defer_deinit_until_callback_completes = original_state;
 
             // Reference in the stack here in case it is not for whatever reason
@@ -2341,11 +2341,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 // uWS request will not live longer than this function
                 request_object.request_context.detachRequest();
             }
-            ctx.onResponse(
-                this,
-                request_value,
-                response_value,
-            );
+            ctx.onResponse(this, request_value, response_value) catch {}; // TODO: properly propagate exception upwards
 
             ctx.defer_deinit_until_callback_completes = null;
 
@@ -2838,19 +2834,27 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return route_list_value;
         }
 
-        pub fn onClientErrorCallback(this: *ThisServer, socket: *uws.Socket, error_code: u8, raw_packet: []const u8) void {
+        pub fn onClientErrorCallback(this: *ThisServer, socket: *uws.Socket, error_code: u8, raw_packet: []const u8) bun.JSExecutionTerminated!void {
             if (this.on_clienterror.get()) |callback| {
                 const is_ssl = protocol_enum == .https;
-                const node_socket = bun.jsc.fromJSHostCall(this.globalThis, @src(), Bun__createNodeHTTPServerSocket, .{ is_ssl, socket, this.globalThis }) catch return;
-                if (node_socket.isUndefinedOrNull()) return;
-
-                const error_code_value = JSValue.jsNumber(error_code);
-                const raw_packet_value = JSC.ArrayBuffer.createBuffer(this.globalThis, raw_packet) catch return; // TODO: properly propagate exception upwards
                 const loop = this.globalThis.bunVM().eventLoop();
                 loop.enter();
                 defer loop.exit();
-                _ = callback.call(this.globalThis, .js_undefined, &.{ JSValue.jsBoolean(is_ssl), node_socket, error_code_value, raw_packet_value }) catch |err| {
-                    this.globalThis.reportActiveExceptionAsUnhandled(err);
+
+                const node_socket = bun.jsc.fromJSHostCall(this.globalThis, @src(), Bun__createNodeHTTPServerSocket, .{ is_ssl, socket, this.globalThis }) catch |err| {
+                    try this.globalThis.reportActiveExceptionAsUnhandled(err);
+                    return;
+                };
+                if (node_socket.isUndefinedOrNull()) return;
+
+                const error_code_value = JSValue.jsNumber(error_code);
+                const raw_packet_value = JSC.ArrayBuffer.createBuffer(this.globalThis, raw_packet) catch |err| {
+                    try this.globalThis.reportActiveExceptionAsUnhandled(err);
+                    return;
+                };
+                _ = callback.call(this.globalThis, .js_undefined, &.{ .jsBoolean(is_ssl), node_socket, error_code_value, raw_packet_value }) catch |err| {
+                    try this.globalThis.reportActiveExceptionAsUnhandled(err);
+                    return;
                 };
             }
         }
@@ -2884,7 +2888,7 @@ pub const ServerAllConnectionsClosedTask = struct {
 
     pub const new = bun.TrivialNew(@This());
 
-    pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *JSC.VirtualMachine) void {
+    pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *JSC.VirtualMachine) bun.JSError!void {
         httplog("ServerAllConnectionsClosedTask runFromJSThread", .{});
 
         const globalObject = this.globalObject;
@@ -2897,7 +2901,7 @@ pub const ServerAllConnectionsClosedTask = struct {
         bun.destroy(this);
 
         if (!vm.isShuttingDown()) {
-            promise.resolve(globalObject, .js_undefined);
+            try promise.resolve(globalObject, .js_undefined);
         }
     }
 };
@@ -3206,6 +3210,7 @@ pub export fn Server__setIdleTimeout(server: JSC.JSValue, seconds: JSC.JSValue, 
         error.OutOfMemory => {
             _ = globalThis.throwOutOfMemoryValue();
         },
+        error.JSExecutionTerminated => {},
     };
 }
 

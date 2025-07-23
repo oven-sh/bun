@@ -58,6 +58,7 @@ pub const Yield = union(enum) {
     /// Failed and threw a JS error
     failed,
     done,
+    terminated,
 
     /// Used in debug builds to ensure the shell is not creating a callstack
     /// that is too deep.
@@ -122,6 +123,7 @@ pub const Yield = union(enum) {
                 }
                 return;
             },
+            .terminated => return,
         }
     }
 

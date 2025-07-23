@@ -125,7 +125,7 @@ pub fn CompressionStream(comptime T: type) type {
             }
         };
 
-        pub fn runFromJSThread(this: *T) void {
+        pub fn runFromJSThread(this: *T) bun.JSError!void {
             const global: *JSC.JSGlobalObject = this.globalThis;
             const vm = global.bunVM();
             this.poll_ref.unref(vm);
@@ -141,9 +141,7 @@ pub fn CompressionStream(comptime T: type) type {
 
             this_value.ensureStillAlive();
 
-            if (!(checkError(this, global, this_value) catch return global.reportActiveExceptionAsUnhandled(error.JSError))) {
-                return; // TODO: properly propagate exception upwards
-            }
+            try checkError(this, global, this_value);
 
             this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
             this_value.ensureStillAlive();
@@ -203,10 +201,9 @@ pub fn CompressionStream(comptime T: type) type {
             const this_value = callframe.this();
 
             this.stream.doWork();
-            if (try checkError(this, globalThis, this_value)) {
-                this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
-                this.write_in_progress = false;
-            }
+            try checkError(this, globalThis, this_value);
+            this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
+            this.write_in_progress = false;
             this.deref();
 
             return .js_undefined;
@@ -249,14 +246,13 @@ pub fn CompressionStream(comptime T: type) type {
         }
 
         /// returns true if no error was detected/emitted
-        fn checkError(this: *T, globalThis: *JSC.JSGlobalObject, this_value: JSC.JSValue) !bool {
+        fn checkError(this: *T, globalThis: *JSC.JSGlobalObject, this_value: JSC.JSValue) bun.JSError!void {
             const err = this.stream.getErrorInfo();
-            if (!err.isError()) return true;
-            try emitError(this, globalThis, this_value, err);
-            return false;
+            if (!err.isError()) return;
+            return emitError(this, globalThis, this_value, err);
         }
 
-        pub fn emitError(this: *T, globalThis: *JSC.JSGlobalObject, this_value: JSC.JSValue, err_: Error) !void {
+        pub fn emitError(this: *T, globalThis: *JSC.JSGlobalObject, this_value: JSC.JSValue, err_: Error) bun.JSError!void {
             var msg_str = bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.msg, 0) orelse ""}) catch bun.outOfMemory();
             const msg_value = msg_str.transferToJS(globalThis);
             const err_value = JSC.jsNumber(err_.err);

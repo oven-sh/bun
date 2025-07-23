@@ -928,9 +928,9 @@ pub export fn napi_resolve_deferred(env_: napi_env, deferred: napi_deferred, res
     };
     const resolution = resolution_.get();
     var prom = deferred.get();
-    prom.resolve(env.toJS(), resolution);
-    deferred.deinit();
-    bun.default_allocator.destroy(deferred);
+    defer bun.default_allocator.destroy(deferred);
+    defer deferred.deinit();
+    prom.resolve(env.toJS(), resolution) catch return env.setLastError(.pending_exception);
     return env.ok();
 }
 pub export fn napi_reject_deferred(env_: napi_env, deferred: napi_deferred, rejection_: napi_value) napi_status {
@@ -940,9 +940,9 @@ pub export fn napi_reject_deferred(env_: napi_env, deferred: napi_deferred, reje
     };
     const rejection = rejection_.get();
     var prom = deferred.get();
-    prom.reject(env.toJS(), rejection);
-    deferred.deinit();
-    bun.default_allocator.destroy(deferred);
+    defer bun.default_allocator.destroy(deferred);
+    defer deferred.deinit();
+    prom.reject(env.toJS(), rejection) catch return env.setLastError(.pending_exception);
     return env.ok();
 }
 pub export fn napi_is_promise(env_: napi_env, value_: napi_value, is_promise_: ?*bool) napi_status {
@@ -1072,7 +1072,7 @@ pub const napi_async_work = struct {
         return this.status.cmpxchgStrong(.pending, .cancelled, .seq_cst, .seq_cst) == null;
     }
 
-    pub fn runFromJS(this: *napi_async_work, vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject) void {
+    pub fn runFromJS(this: *napi_async_work, vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject) bun.JSError!void {
         // Note: the "this" value here may already be freed by the user in `complete`
         var poll_ref = this.poll_ref;
         defer poll_ref.unref(vm);
@@ -1098,7 +1098,7 @@ pub const napi_async_work = struct {
         );
 
         if (global.hasException()) {
-            global.reportActiveExceptionAsUnhandled(error.JSError);
+            return error.JSError;
         }
     }
 };
@@ -1563,8 +1563,7 @@ pub const ThreadSafeFunction = struct {
                     return;
                 }
 
-                _ = js.call(globalObject, .js_undefined, &.{}) catch |err|
-                    globalObject.reportActiveExceptionAsUnhandled(err);
+                _ = js.call(globalObject, .js_undefined, &.{}) catch |err| try globalObject.reportActiveExceptionAsUnhandled(err);
             },
             .c => |cb| {
                 const js: JSValue = cb.js.get() orelse .js_undefined;

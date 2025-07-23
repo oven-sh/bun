@@ -176,13 +176,13 @@ pub const TestRunner = struct {
         vm.wakeup();
     }
 
-    pub fn drain(this: *TestRunner) void {
+    pub fn drain(this: *TestRunner) bun.JSExecutionTerminated!void {
         if (this.pending_test != null) return;
 
         if (this.queue.readItem()) |task| {
             this.pending_test = task;
             this.has_pending_tests = true;
-            if (!task.run()) {
+            if (!try task.run()) {
                 this.has_pending_tests = false;
                 this.pending_test = null;
             }
@@ -642,7 +642,7 @@ pub const TestScope = struct {
         const err = arguments.ptr[0];
         _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
-        task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .promise);
+        try task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .promise);
         globalThis.bunVM().autoGarbageCollect();
         return .js_undefined;
     }
@@ -652,7 +652,7 @@ pub const TestScope = struct {
         debug("onResolve", .{});
         const arguments = callframe.arguments_old(2);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
-        task.handleResult(.{ .pass = expect.active_test_expectation_counter.actual }, .promise);
+        try task.handleResult(.{ .pass = expect.active_test_expectation_counter.actual }, .promise);
         globalThis.bunVM().autoGarbageCollect();
         return .js_undefined;
     }
@@ -680,7 +680,7 @@ pub const TestScope = struct {
                 const err = args.ptr[0];
                 if (err.isEmptyOrUndefinedOrNull()) {
                     debug("done()", .{});
-                    task.handleResult(no_err_result, .callback);
+                    try task.handleResult(no_err_result, .callback);
                 } else {
                     debug("done(err)", .{});
                     const result: Result = if (current_test.tag == .fail) failing_passed: {
@@ -692,11 +692,11 @@ pub const TestScope = struct {
                         _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
                         break :passing_failed Result{ .fail = expect_count };
                     };
-                    task.handleResult(result, .callback);
+                    try task.handleResult(result, .callback);
                 }
             } else {
                 debug("done()", .{});
-                task.handleResult(no_err_result, .callback);
+                try task.handleResult(no_err_result, .callback);
             }
         }
 
@@ -706,7 +706,7 @@ pub const TestScope = struct {
     pub fn run(
         this: *TestScope,
         task: *TestRunnerTask,
-    ) Result {
+    ) bun.JSExecutionTerminated!Result {
         var vm = VirtualMachine.get();
         const func = this.func;
         defer {
@@ -781,7 +781,7 @@ pub const TestScope = struct {
             // TODO: not easy to coerce JSInternalPromise as JSValue,
             // so simply wait for completion for now.
             switch (promise) {
-                .internal => vm.waitForPromise(promise),
+                .internal => try vm.waitForPromise(promise),
                 else => {},
             }
             switch (promise.status(vm.global.vm())) {
@@ -968,7 +968,7 @@ pub const DescribeScope = struct {
     pub const beforeEach = createCallback(.beforeEach);
 
     // TODO this should return JSError
-    pub fn execCallback(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
+    pub fn execCallback(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) bun.JSExecutionTerminated!?JSValue {
         var hooks = &@field(this, @tagName(hook) ++ "s");
         defer {
             if (comptime hook == .beforeAll or hook == .afterAll) {
@@ -1004,14 +1004,14 @@ pub const DescribeScope = struct {
                     if (result.toError()) |err| {
                         return err;
                     }
-                    vm.waitFor(&this.done);
+                    try vm.waitFor(&this.done);
                     break :brk result;
                 },
             };
             if (result.asAnyPromise()) |promise| {
                 if (promise.status(globalObject.vm()) == .pending) {
                     result.protect();
-                    vm.waitForPromise(promise);
+                    try vm.waitForPromise(promise);
                     result.unprotect();
                 }
 
@@ -1024,7 +1024,7 @@ pub const DescribeScope = struct {
         return null;
     }
 
-    pub fn runGlobalCallbacks(globalThis: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
+    pub fn runGlobalCallbacks(globalThis: *JSGlobalObject, comptime hook: LifecycleHook) bun.JSExecutionTerminated!?JSValue {
         // global callbacks
         var hooks = &@field(Jest.runner.?.global_callbacks, @tagName(hook));
         defer {
@@ -1051,7 +1051,7 @@ pub const DescribeScope = struct {
             if (result.asAnyPromise()) |promise| {
                 if (promise.status(globalThis.vm()) == .pending) {
                     result.protect();
-                    vm.waitForPromise(promise);
+                    try vm.waitForPromise(promise);
                     result.unprotect();
                 }
 
@@ -1064,32 +1064,32 @@ pub const DescribeScope = struct {
         return null;
     }
 
-    fn runBeforeCallbacks(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
+    fn runBeforeCallbacks(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) bun.JSExecutionTerminated!?JSValue {
         if (this.parent) |scope| {
-            if (scope.runBeforeCallbacks(globalObject, hook)) |err| {
+            if (try scope.runBeforeCallbacks(globalObject, hook)) |err| {
                 return err;
             }
         }
         return this.execCallback(globalObject, hook);
     }
 
-    pub fn runCallback(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
+    pub fn runCallback(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) bun.JSExecutionTerminated!?JSValue {
         if (comptime hook == .afterAll or hook == .afterEach) {
             var parent: ?*DescribeScope = this;
             while (parent) |scope| {
-                if (scope.execCallback(globalObject, hook)) |err| {
+                if (try scope.execCallback(globalObject, hook)) |err| {
                     return err;
                 }
                 parent = scope.parent;
             }
         }
 
-        if (runGlobalCallbacks(globalObject, hook)) |err| {
+        if (try runGlobalCallbacks(globalObject, hook)) |err| {
             return err;
         }
 
         if (comptime hook == .beforeAll or hook == .beforeEach) {
-            if (this.runBeforeCallbacks(globalObject, hook)) |err| {
+            if (try this.runBeforeCallbacks(globalObject, hook)) |err| {
                 return err;
             }
         }
@@ -1129,7 +1129,7 @@ pub const DescribeScope = struct {
         return createIfScope(globalThis, callframe, "describe.todoIf()", "todoIf", DescribeScope, .todo);
     }
 
-    pub fn run(this: *DescribeScope, globalObject: *JSGlobalObject, callback: JSValue, args: []const JSValue) JSValue {
+    pub fn run(this: *DescribeScope, globalObject: *JSGlobalObject, callback: JSValue, args: []const JSValue) bun.JSExecutionTerminated!JSValue {
         callback.protect();
         defer callback.unprotect();
         this.push();
@@ -1137,7 +1137,7 @@ pub const DescribeScope = struct {
         debug("describe({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
         if (callback == .zero) {
-            this.runTests(globalObject);
+            try this.runTests(globalObject);
             return .js_undefined;
         }
 
@@ -1146,7 +1146,7 @@ pub const DescribeScope = struct {
             var result = callJSFunctionForTestRunner(VirtualMachine.get(), globalObject, callback, args);
 
             if (result.asAnyPromise()) |prom| {
-                globalObject.bunVM().waitForPromise(prom);
+                try globalObject.bunVM().waitForPromise(prom);
                 switch (prom.status(globalObject.vm())) {
                     .fulfilled => {},
                     else => {
@@ -1160,11 +1160,11 @@ pub const DescribeScope = struct {
             }
         }
 
-        this.runTests(globalObject);
+        try this.runTests(globalObject);
         return .js_undefined;
     }
 
-    pub fn runTests(this: *DescribeScope, globalObject: *JSGlobalObject) void {
+    pub fn runTests(this: *DescribeScope, globalObject: *JSGlobalObject) bun.JSExecutionTerminated!void {
         // Step 1. Initialize the test block
         globalObject.clearTerminationException();
 
@@ -1182,7 +1182,7 @@ pub const DescribeScope = struct {
         var i: TestRunner.Test.ID = 0;
 
         if (this.shouldEvaluateScope()) {
-            if (this.runCallback(globalObject, .beforeAll)) |err| {
+            if (try this.runCallback(globalObject, .beforeAll)) |err| {
                 _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
                 while (i < end) {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this, tests[i].line_number);
@@ -1226,14 +1226,14 @@ pub const DescribeScope = struct {
         }
     }
 
-    pub fn onTestComplete(this: *DescribeScope, globalThis: *JSGlobalObject, test_id: TestRunner.Test.ID, skipped: bool) void {
+    pub fn onTestComplete(this: *DescribeScope, globalThis: *JSGlobalObject, test_id: TestRunner.Test.ID, skipped: bool) bun.JSExecutionTerminated!void {
         // invalidate it
         this.current_test_id = TestRunner.Test.null_id;
         if (test_id != TestRunner.Test.null_id) this.pending_tests.unset(test_id);
         globalThis.bunVM().onUnhandledRejectionCtx = null;
 
         if (!skipped) {
-            if (this.runCallback(globalThis, .afterEach)) |err| {
+            if (try this.runCallback(globalThis, .afterEach)) |err| {
                 _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
             }
         }
@@ -1242,14 +1242,15 @@ pub const DescribeScope = struct {
             return;
         }
 
+        defer this.deinit(globalThis);
+
         if (this.shouldEvaluateScope()) {
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
-            if (this.execCallback(globalThis, .afterAll)) |err| {
+            if (try this.execCallback(globalThis, .afterAll)) |err| {
                 _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
             }
         }
-        this.deinit(globalThis);
     }
 
     pub fn deinit(this: *DescribeScope, globalThis: *JSGlobalObject) void {
@@ -1380,7 +1381,7 @@ pub const TestRunnerTask = struct {
                 .{ .pass = expect.active_test_expectation_counter.actual }
             else
                 .{ .fail = expect.active_test_expectation_counter.actual };
-            this.handleResult(result, .unhandledRejection);
+            this.handleResult(result, .unhandledRejection) catch return; // XXX:
         } else if (Jest.runner) |runner| {
             if (!deduped)
                 runner.unhandled_errors_between_tests += 1;
@@ -1401,7 +1402,7 @@ pub const TestRunnerTask = struct {
         }
     }
 
-    pub fn run(this: *TestRunnerTask) bool {
+    pub fn run(this: *TestRunnerTask) bun.JSExecutionTerminated!bool {
         var describe = this.describe;
         var globalThis = this.globalThis;
         var jsc_vm = globalThis.bunVM();
@@ -1416,9 +1417,9 @@ pub const TestRunnerTask = struct {
 
         const test_id = this.test_id;
         if (test_id == TestRunner.Test.null_id) {
-            describe.onTestComplete(globalThis, test_id, true);
+            defer this.deinit();
+            try describe.onTestComplete(globalThis, test_id, true);
             Jest.runner.?.runNextTest();
-            this.deinit();
             return false;
         }
 
@@ -1429,19 +1430,19 @@ pub const TestRunnerTask = struct {
 
         if (test_.func == .zero or !describe.shouldEvaluateScope() or (test_.tag != .only and Jest.runner.?.only)) {
             const tag = if (!describe.shouldEvaluateScope()) describe.tag else test_.tag;
+            defer this.deinit();
             switch (tag) {
                 .todo => {
-                    this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, test_id_for_debugger, describe);
+                    try this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, test_id_for_debugger, describe);
                 },
                 .skip => {
-                    this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, test_id_for_debugger, describe);
+                    try this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, test_id_for_debugger, describe);
                 },
                 .skipped_because_label => {
-                    this.processTestResult(globalThis, .{ .skipped_because_label = {} }, test_, test_id, test_id_for_debugger, describe);
+                    try this.processTestResult(globalThis, .{ .skipped_because_label = {} }, test_, test_id, test_id_for_debugger, describe);
                 },
                 else => {},
             }
-            this.deinit();
             return false;
         }
 
@@ -1453,7 +1454,7 @@ pub const TestRunnerTask = struct {
             const label = bun.default_allocator.dupe(u8, test_.label) catch bun.outOfMemory();
             defer bun.default_allocator.free(label);
 
-            if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
+            if (try this.describe.runCallback(globalThis, .beforeEach)) |err| {
                 _ = jsc_vm.uncaughtException(globalThis, err, true);
                 Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe, test_.line_number);
                 return false;
@@ -1462,7 +1463,7 @@ pub const TestRunnerTask = struct {
 
         this.sync_state = .pending;
         jsc_vm.auto_killer.enable();
-        var result = TestScope.run(&test_, this);
+        var result = try TestScope.run(&test_, this);
 
         if (this.describe.tests.items.len > test_id) {
             this.describe.tests.items[test_id].timeout_millis = test_.timeout_millis;
@@ -1483,7 +1484,7 @@ pub const TestRunnerTask = struct {
             return true;
         }
 
-        this.handleResultPtr(&result, .sync);
+        try this.handleResultPtr(&result, .sync);
 
         if (result.isFailure()) {
             globalThis.handleRejectedPromises();
@@ -1497,7 +1498,9 @@ pub const TestRunnerTask = struct {
         const elapsed = now.duration(&this.started_at).ms();
         this.ref.unref(this.globalThis.bunVM());
         this.globalThis.requestTermination();
-        this.handleResult(.{ .timeout = {} }, .{ .timeout = @intCast(@max(elapsed, 0)) });
+        this.handleResult(.{ .timeout = {} }, .{ .timeout = @intCast(@max(elapsed, 0)) }) catch |err| switch (err) {
+            error.JSExecutionTerminated => {}, // XXX:
+        };
     }
 
     const ResultType = union(enum) {
@@ -1508,9 +1511,9 @@ pub const TestRunnerTask = struct {
         unhandledRejection: void,
     };
 
-    pub fn handleResult(this: *TestRunnerTask, result: Result, from: ResultType) void {
+    pub fn handleResult(this: *TestRunnerTask, result: Result, from: ResultType) bun.JSExecutionTerminated!void {
         var result_copy = result;
-        this.handleResultPtr(&result_copy, from);
+        try this.handleResultPtr(&result_copy, from);
     }
 
     fn continueRunningTestsAfterMicrotasksRun(this: *TestRunnerTask) void {
@@ -1521,7 +1524,7 @@ pub const TestRunnerTask = struct {
             this.globalThis.bunVM().enqueueTask(JSC.ManagedTask.New(@This(), deinit).init(this));
     }
 
-    pub fn handleResultPtr(this: *TestRunnerTask, result: *Result, from: ResultType) void {
+    pub fn handleResultPtr(this: *TestRunnerTask, result: *Result, from: ResultType) bun.JSExecutionTerminated!void {
         switch (from) {
             .promise => {
                 if (comptime Environment.allow_assert) assert(this.promise_state == .pending);
@@ -1621,10 +1624,10 @@ pub const TestRunnerTask = struct {
         }
 
         checkAssertionsCounter(result);
-        processTestResult(this, this.globalThis, result.*, test_, test_id, this.test_id_for_debugger, describe);
+        try processTestResult(this, this.globalThis, result.*, test_, test_id, this.test_id_for_debugger, describe);
     }
 
-    fn processTestResult(this: *TestRunnerTask, globalThis: *JSGlobalObject, result: Result, test_: TestScope, test_id: u32, test_id_for_debugger: u32, describe: *DescribeScope) void {
+    fn processTestResult(this: *TestRunnerTask, globalThis: *JSGlobalObject, result: Result, test_: TestScope, test_id: u32, test_id_for_debugger: u32, describe: *DescribeScope) bun.JSExecutionTerminated!void {
         const elapsed = this.started_at.sinceNow();
         switch (result.forceTODO(test_.tag == .todo)) {
             .pass => |count| Jest.runner.?.reportPass(
@@ -1728,7 +1731,7 @@ pub const TestRunnerTask = struct {
             }
         }
 
-        describe.onTestComplete(globalThis, test_id, result == .skip or (!Jest.runner.?.test_options.run_todo and result == .todo));
+        try describe.onTestComplete(globalThis, test_id, result == .skip or (!Jest.runner.?.test_options.run_todo and result == .todo));
 
         Jest.runner.?.runNextTest();
     }
@@ -2358,7 +2361,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     },
                 };
 
-                const ret = scope.run(globalThis, function, function_args);
+                const ret = try scope.run(globalThis, function, function_args);
                 _ = ret;
                 allocator.free(function_args);
             }

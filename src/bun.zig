@@ -120,6 +120,8 @@ pub const JSError = error{
     JSError,
     // XXX: This is temporary! meghan will remove this soon
     OutOfMemory,
+    // Similar to error.JSError but always represents a termination exception.
+    JSExecutionTerminated,
 };
 
 pub const JSExecutionTerminated = error{

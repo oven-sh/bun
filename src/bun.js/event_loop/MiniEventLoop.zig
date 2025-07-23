@@ -137,7 +137,7 @@ pub fn tickConcurrentWithCount(this: *MiniEventLoop) usize {
 pub fn tickOnce(
     this: *MiniEventLoop,
     context: *anyopaque,
-) void {
+) bun.JSExecutionTerminated!void {
     if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
         defer this.onAfterEventLoop();
         this.loop.inc();
@@ -146,20 +146,20 @@ pub fn tickOnce(
     }
 
     while (this.tasks.readItem()) |task| {
-        task.run(context);
+        try task.run(context);
     }
 }
 
 pub fn tickWithoutIdle(
     this: *MiniEventLoop,
     context: *anyopaque,
-) void {
+) bun.JSExecutionTerminated!void {
     defer this.onAfterEventLoop();
 
     while (true) {
         _ = this.tickConcurrentWithCount();
         while (this.tasks.readItem()) |task| {
-            task.run(context);
+            try task.run(context);
         }
 
         this.loop.tickWithoutIdle();
@@ -172,7 +172,7 @@ pub fn tick(
     this: *MiniEventLoop,
     context: *anyopaque,
     comptime isDone: *const fn (*anyopaque) bool,
-) void {
+) bun.JSExecutionTerminated!void {
     while (!isDone(context)) {
         if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
             defer this.onAfterEventLoop();
@@ -182,7 +182,7 @@ pub fn tick(
         }
 
         while (this.tasks.readItem()) |task| {
-            task.run(context);
+            try task.run(context);
         }
     }
 }

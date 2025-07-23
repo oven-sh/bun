@@ -105,7 +105,7 @@ pub const JSBundler = struct {
                     if (!plugin_result.isEmptyOrUndefinedOrNull()) {
                         if (plugin_result.asAnyPromise()) |promise| {
                             promise.setHandled(globalThis.vm());
-                            globalThis.bunVM().waitForPromise(promise);
+                            try globalThis.bunVM().waitForPromise(promise);
                             switch (promise.unwrap(globalThis.vm(), .mark_handled)) {
                                 .pending => unreachable,
                                 .fulfilled => |val| {
@@ -813,10 +813,9 @@ pub const JSBundler = struct {
                 const global = this.bv2.plugins.?.globalObject();
                 const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(global, source_code_value, bun.default_allocator) catch |err| {
                     switch (err) {
-                        error.OutOfMemory => {
-                            bun.outOfMemory();
-                        },
+                        error.OutOfMemory => bun.outOfMemory(),
                         error.JSError => {},
+                        error.JSExecutionTerminated => {},
                     }
 
                     @panic("Unexpected: source_code is not a string");

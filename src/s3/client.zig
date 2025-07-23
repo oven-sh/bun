@@ -252,7 +252,7 @@ pub fn writableStream(
     storage_class: ?StorageClass,
 ) bun.JSError!JSC.JSValue {
     const Wrapper = struct {
-        pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.NetworkSink) void {
+        pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.NetworkSink) bun.JSExecutionTerminated!void {
             if (sink.endPromise.hasValue() or sink.flushPromise.hasValue()) {
                 const event_loop = sink.globalThis.bunVM().eventLoop();
                 event_loop.enter();
@@ -260,19 +260,19 @@ pub fn writableStream(
                 switch (result) {
                     .success => {
                         if (sink.flushPromise.hasValue()) {
-                            sink.flushPromise.resolve(sink.globalThis, JSC.jsNumber(0));
+                            try sink.flushPromise.resolve(sink.globalThis, JSC.jsNumber(0));
                         }
                         if (sink.endPromise.hasValue()) {
-                            sink.endPromise.resolve(sink.globalThis, JSC.jsNumber(0));
+                            try sink.endPromise.resolve(sink.globalThis, JSC.jsNumber(0));
                         }
                     },
                     .failure => |err| {
                         const js_err = err.toJS(sink.globalThis, sink.path());
                         if (sink.flushPromise.hasValue()) {
-                            sink.flushPromise.reject(sink.globalThis, js_err);
+                            try sink.flushPromise.reject(sink.globalThis, js_err);
                         }
                         if (sink.endPromise.hasValue()) {
-                            sink.endPromise.reject(sink.globalThis, js_err);
+                            try sink.endPromise.reject(sink.globalThis, js_err);
                         }
                         if (!sink.done) {
                             sink.abort();
@@ -369,7 +369,7 @@ pub const S3UploadStreamWrapper = struct {
                 // if we have a explicit error, reject the promise
                 // if not when calling .fail will create a S3Error instance
                 // this match the previous behavior
-                this.endPromise.reject(this.global, js_err);
+                this.endPromise.reject(this.global, js_err) catch {}; // TODO: properly propagate exception upwards
                 this.endPromise = .empty;
             }
             if (!this.task.ended) {
@@ -383,14 +383,14 @@ pub const S3UploadStreamWrapper = struct {
         }
     }
 
-    pub fn resolve(result: S3UploadResult, self: *@This()) void {
+    pub fn resolve(result: S3UploadResult, self: *@This()) bun.JSExecutionTerminated!void {
         log("resolve {any}", .{result});
         defer self.deref();
         switch (result) {
             .success => {
                 if (self.endPromise.hasValue()) {
-                    self.endPromise.resolve(self.global, JSC.jsNumber(0));
-                    self.endPromise = .empty;
+                    defer self.endPromise = .empty;
+                    try self.endPromise.resolve(self.global, JSC.jsNumber(0));
                 }
             },
             .failure => |err| {
@@ -400,8 +400,8 @@ pub const S3UploadStreamWrapper = struct {
                     sink.cancel(err.toJS(self.global, self.path));
                     sink.deref();
                 } else if (self.endPromise.hasValue()) {
-                    self.endPromise.reject(self.global, err.toJS(self.global, self.path));
-                    self.endPromise = .empty;
+                    defer self.endPromise = .empty;
+                    try self.endPromise.reject(self.global, err.toJS(self.global, self.path));
                 }
             },
         }
@@ -613,31 +613,28 @@ pub fn readableStream(
         path: []const u8,
         global: *JSC.JSGlobalObject,
 
-        pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?Error.S3Error, self: *@This()) void {
+        pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?Error.S3Error, self: *@This()) bun.JSExecutionTerminated!void {
             defer if (!has_more) self.deinit();
 
             if (self.readable_stream_ref.get(self.global)) |readable| {
                 if (readable.ptr == .Bytes) {
                     if (request_err) |err| {
-                        readable.ptr.Bytes.onData(
+                        return readable.ptr.Bytes.onData(
                             .{ .err = .{ .JSValue = err.toJS(self.global, self.path) } },
                             bun.default_allocator,
                         );
-                        return;
                     }
                     if (has_more) {
-                        readable.ptr.Bytes.onData(
+                        return readable.ptr.Bytes.onData(
                             .{ .temporary = bun.ByteList.initConst(chunk.list.items) },
                             bun.default_allocator,
                         );
-                        return;
                     }
 
-                    readable.ptr.Bytes.onData(
+                    return readable.ptr.Bytes.onData(
                         .{ .temporary_and_done = bun.ByteList.initConst(chunk.list.items) },
                         bun.default_allocator,
                     );
-                    return;
                 }
             }
         }
@@ -650,7 +647,7 @@ pub fn readableStream(
 
         pub fn opaqueCallback(chunk: bun.MutableString, has_more: bool, err: ?Error.S3Error, opaque_self: *anyopaque) void {
             const self: *@This() = @ptrCast(@alignCast(opaque_self));
-            callback(chunk, has_more, err, self);
+            callback(chunk, has_more, err, self) catch return;
         }
     };
 

@@ -381,7 +381,7 @@ pub const JSPasswordObject = struct {
                 }
             };
 
-            pub fn runFromJS(this: *Result) void {
+            pub fn runFromJS(this: *Result) bun.JSExecutionTerminated!void {
                 var promise = this.promise;
                 defer promise.deinit();
                 this.promise = .{};
@@ -391,12 +391,12 @@ pub const JSPasswordObject = struct {
                     .err => {
                         const error_instance = this.value.toErrorInstance(global);
                         bun.destroy(this);
-                        promise.reject(global, error_instance);
+                        return promise.reject(global, error_instance);
                     },
                     .hash => |value| {
                         const js_string = JSC.ZigString.init(value).toJS(global);
                         bun.destroy(this);
-                        promise.resolve(global, js_string);
+                        return promise.resolve(global, js_string);
                     },
                 }
             }
@@ -593,7 +593,7 @@ pub const JSPasswordObject = struct {
                 }
             };
 
-            pub fn runFromJS(this: *Result) void {
+            pub fn runFromJS(this: *Result) bun.JSExecutionTerminated!void {
                 var promise = this.promise;
                 defer promise.deinit();
                 this.promise = .{};
@@ -603,11 +603,11 @@ pub const JSPasswordObject = struct {
                     .err => {
                         const error_instance = this.value.toErrorInstance(global);
                         bun.destroy(this);
-                        promise.reject(global, error_instance);
+                        return promise.reject(global, error_instance);
                     },
                     .pass => |pass| {
                         bun.destroy(this);
-                        promise.resolve(global, JSC.JSValue.jsBoolean(pass));
+                        return promise.resolve(global, JSC.JSValue.jsBoolean(pass));
                     },
                 }
             }

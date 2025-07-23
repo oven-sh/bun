@@ -34,11 +34,10 @@ pub const Handler = struct {
         publish_to_self: bool = false,
     } = .{},
 
-    pub fn runErrorCallback(this: *const Handler, vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_value: JSC.JSValue) void {
+    pub fn runErrorCallback(this: *const Handler, vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_value: JSC.JSValue) bun.JSExecutionTerminated!void {
         const onError = this.onError;
         if (!onError.isEmptyOrUndefinedOrNull()) {
-            _ = onError.call(globalObject, .js_undefined, &.{error_value}) catch |err|
-                this.globalObject.reportActiveExceptionAsUnhandled(err);
+            _ = onError.call(globalObject, .js_undefined, &.{error_value}) catch |err| try this.globalObject.reportActiveExceptionAsUnhandled(err);
             return;
         }
 

@@ -55,16 +55,16 @@ pub const AnyEventLoop = union(EventLoopKind) {
         this: *AnyEventLoop,
         context: anytype,
         comptime isDone: *const fn (@TypeOf(context)) bool,
-    ) void {
+    ) bun.JSExecutionTerminated!void {
         switch (this.*) {
             .js => {
                 while (!isDone(context)) {
-                    this.js.tick();
-                    this.js.autoTick();
+                    try this.js.tick();
+                    try this.js.autoTick();
                 }
             },
             .mini => {
-                this.mini.tick(context, @ptrCast(isDone));
+                try this.mini.tick(context, @ptrCast(isDone));
             },
         }
     }
@@ -72,14 +72,14 @@ pub const AnyEventLoop = union(EventLoopKind) {
     pub fn tickOnce(
         this: *AnyEventLoop,
         context: anytype,
-    ) void {
+    ) bun.JSExecutionTerminated!void {
         switch (this.*) {
             .js => {
-                this.js.tick();
-                this.js.autoTickActive();
+                try this.js.tick();
+                try this.js.autoTickActive();
             },
             .mini => {
-                this.mini.tickWithoutIdle(context);
+                try this.mini.tickWithoutIdle(context);
             },
         }
     }

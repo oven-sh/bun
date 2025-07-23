@@ -1733,15 +1733,15 @@ pub const TestCommand = struct {
     }
 
     fn runEventLoopForWatch(vm: *JSC.VirtualMachine) void {
-        vm.eventLoop().tickPossiblyForever();
+        vm.eventLoop().tickPossiblyForever() catch return;
 
         while (true) {
             while (vm.isEventLoopAlive()) {
-                vm.tick();
-                vm.eventLoop().autoTickActive();
+                vm.tick() catch return;
+                vm.eventLoop().autoTickActive() catch return;
             }
 
-            vm.eventLoop().tickPossiblyForever();
+            vm.eventLoop().tickPossiblyForever() catch return;
         }
     }
 
@@ -1867,20 +1867,20 @@ pub const TestCommand = struct {
 
                 vm.onUnhandledRejectionCtx = null;
                 vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
-                module.runTests(vm.global);
-                vm.eventLoop().tick();
+                try module.runTests(vm.global);
+                try vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
                 while (vm.active_tasks > 0) {
                     if (!jest.Jest.runner.?.has_pending_tests) {
-                        jest.Jest.runner.?.drain();
+                        try jest.Jest.runner.?.drain();
                     }
-                    vm.eventLoop().tick();
+                    try vm.eventLoop().tick();
 
                     while (jest.Jest.runner.?.has_pending_tests) {
-                        vm.eventLoop().autoTick();
+                        try vm.eventLoop().autoTick();
                         if (!jest.Jest.runner.?.has_pending_tests) break;
-                        vm.eventLoop().tick();
+                        try vm.eventLoop().tick();
                     } else {
                         vm.eventLoop().tickImmediateTasks(vm);
                     }
@@ -1923,7 +1923,7 @@ pub const TestCommand = struct {
 
         if (is_last) {
             if (jest.Jest.runner != null) {
-                if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |err| {
+                if (try jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |err| {
                     _ = vm.uncaughtException(vm.global, err, true);
                 }
             }

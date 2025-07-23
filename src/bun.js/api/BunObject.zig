@@ -1930,7 +1930,7 @@ pub const JSZstd = struct {
             }
         }
 
-        pub fn runFromJS(this: *ZstdJob) void {
+        pub fn runFromJS(this: *ZstdJob) bun.JSExecutionTerminated!void {
             defer this.deinit();
             if (this.vm.isShuttingDown()) {
                 return;
@@ -1940,14 +1940,13 @@ pub const JSZstd = struct {
             const promise = this.promise.swap();
 
             if (this.error_message) |err_msg| {
-                promise.reject(globalThis, globalThis.ERR(.ZSTD, "{s}", .{err_msg}).toJS());
-                return;
+                return promise.reject(globalThis, globalThis.ERR(.ZSTD, "{s}", .{err_msg}).toJS());
             }
 
             const output_slice = this.output;
             const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
             this.output = &[_]u8{};
-            promise.resolve(globalThis, buffer_value);
+            return promise.resolve(globalThis, buffer_value);
         }
 
         pub fn deinit(this: *ZstdJob) void {

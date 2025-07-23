@@ -76,10 +76,10 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
     }
 
     while (debugger.wait_for_connection != .off) {
-        this.eventLoop().tick();
+        this.eventLoop().tick() catch break;
         switch (debugger.wait_for_connection) {
             .forever => {
-                this.eventLoop().autoTickActive();
+                this.eventLoop().autoTickActive() catch break;
 
                 if (comptime Environment.enable_logs)
                     log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
@@ -208,17 +208,17 @@ fn start(other_vm: *VirtualMachine) void {
 
     other_vm.eventLoop().wakeup();
 
-    this.eventLoop().tick();
+    this.eventLoop().tick() catch return;
 
     other_vm.eventLoop().wakeup();
 
     while (true) {
         while (this.isEventLoopAlive()) {
-            this.tick();
-            this.eventLoop().autoTickActive();
+            this.tick() catch return;
+            this.eventLoop().autoTickActive() catch return;
         }
 
-        this.eventLoop().tickPossiblyForever();
+        this.eventLoop().tickPossiblyForever() catch return;
     }
 }
 

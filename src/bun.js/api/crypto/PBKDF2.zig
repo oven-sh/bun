@@ -62,7 +62,7 @@ pub const Job = struct {
         }
     }
 
-    pub fn runFromJS(this: *Job) void {
+    pub fn runFromJS(this: *Job) bun.JSExecutionTerminated!void {
         defer this.deinit();
         if (this.vm.isShuttingDown()) {
             return;
@@ -71,15 +71,14 @@ pub const Job = struct {
         const globalThis = this.vm.global;
         const promise = this.promise.swap();
         if (this.err) |err| {
-            promise.reject(globalThis, createCryptoError(globalThis, err));
-            return;
+            return promise.reject(globalThis, createCryptoError(globalThis, err));
         }
 
         const output_slice = this.output;
         assert(output_slice.len == @as(usize, @intCast(this.pbkdf2.length)));
         const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
         this.output = &[_]u8{};
-        promise.resolve(globalThis, buffer_value);
+        return promise.resolve(globalThis, buffer_value);
     }
 
     pub fn deinit(this: *Job) void {

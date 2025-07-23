@@ -224,7 +224,7 @@ pub const struct_hostent = extern struct {
     }
 
     pub fn Callback(comptime Type: type) type {
-        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_hostent) void;
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_hostent) bun.JSError!void;
     }
 
     pub fn hostCallbackWrapper(
@@ -235,10 +235,9 @@ pub const struct_hostent = extern struct {
             pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*struct_hostent) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
-                    function(this, Error.get(status), timeouts, null);
-                    return;
+                    return function(this, Error.get(status), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
-                function(this, null, timeouts, hostent);
+                return function(this, null, timeouts, hostent) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         }.handle;
     }
@@ -252,8 +251,7 @@ pub const struct_hostent = extern struct {
             pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
-                    function(this, Error.get(status), timeouts, null);
-                    return;
+                    return function(this, Error.get(status), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
 
                 var start: [*c]struct_hostent = undefined;
@@ -263,24 +261,21 @@ pub const struct_hostent = extern struct {
 
                     const result = ares_parse_a_reply(buffer, buffer_length, &start, &addrttls, &naddrttls);
                     if (result != ARES_SUCCESS) {
-                        function(this, Error.get(result), timeouts, null);
-                        return;
+                        return function(this, Error.get(result), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                     }
-                    function(this, null, timeouts, start);
+                    return function(this, null, timeouts, start) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 } else if (comptime strings.eqlComptime(lookup_name, "ns")) {
                     const result = ares_parse_ns_reply(buffer, buffer_length, &start);
                     if (result != ARES_SUCCESS) {
-                        function(this, Error.get(result), timeouts, null);
-                        return;
+                        return function(this, Error.get(result), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                     }
-                    function(this, null, timeouts, start);
+                    return function(this, null, timeouts, start) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 } else if (comptime strings.eqlComptime(lookup_name, "ptr")) {
                     const result = ares_parse_ptr_reply(buffer, buffer_length, null, 0, AF.INET, &start);
                     if (result != ARES_SUCCESS) {
-                        function(this, Error.get(result), timeouts, null);
-                        return;
+                        return function(this, Error.get(result), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                     }
-                    function(this, null, timeouts, start);
+                    return function(this, null, timeouts, start) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 } else {
                     @compileError(std.fmt.comptimePrint("Unsupported struct_hostent record type: {s}", .{lookup_name}));
                 }
@@ -318,7 +313,7 @@ pub const hostent_with_ttls = struct {
                 const addrString = (if (this.hostent.h_addrtype == AF.INET6)
                     bun.dns.addressToJS(&std.net.Address.initIp6(addr[0..16].*, 0, 0, 0), globalThis)
                 else
-                    bun.dns.addressToJS(&std.net.Address.initIp4(addr[0..4].*, 0), globalThis)) catch return globalThis.throwOutOfMemoryValue();
+                    bun.dns.addressToJS(&std.net.Address.initIp4(addr[0..4].*, 0), globalThis));
 
                 const ttl: ?c_int = if (count < this.ttls.len) this.ttls[count] else null;
                 const resultObject = try JSC.JSValue.createObject2(globalThis, &addressKey, &ttlKey, addrString, if (ttl) |val| JSC.jsNumber(val) else .js_undefined);
@@ -332,7 +327,7 @@ pub const hostent_with_ttls = struct {
     }
 
     pub fn Callback(comptime Type: type) type {
-        return fn (*Type, status: ?Error, timeouts: i32, results: ?*hostent_with_ttls) void;
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*hostent_with_ttls) bun.JSError!void;
     }
 
     pub fn hostCallbackWrapper(
@@ -343,10 +338,9 @@ pub const hostent_with_ttls = struct {
             pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*hostent_with_ttls) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
-                    function(this, Error.get(status), timeouts, null);
-                    return;
+                    return function(this, Error.get(status), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
-                function(this, null, timeouts, hostent);
+                return function(this, null, timeouts, hostent) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         }.handle;
     }
@@ -360,14 +354,13 @@ pub const hostent_with_ttls = struct {
             pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
-                    function(this, Error.get(status), timeouts, null);
-                    return;
+                    return function(this, Error.get(status), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
 
-                switch (parse(lookup_name, buffer, buffer_length)) {
+                return switch (parse(lookup_name, buffer, buffer_length)) {
                     .result => |result| function(this, null, timeouts, result),
                     .err => |err| function(this, err, timeouts, null),
-                }
+                } catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         }.handle;
     }
@@ -443,7 +436,7 @@ pub const struct_nameinfo = extern struct {
     }
 
     pub fn Callback(comptime Type: type) type {
-        return fn (*Type, status: ?Error, timeouts: i32, node: ?struct_nameinfo) void;
+        return fn (*Type, status: ?Error, timeouts: i32, node: ?struct_nameinfo) bun.JSError!void;
     }
 
     pub fn CallbackWrapper(
@@ -454,11 +447,9 @@ pub const struct_nameinfo = extern struct {
             pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, node: [*c]u8, service: [*c]u8) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
-                    function(this, Error.get(status), timeouts, null);
-                    return;
+                    return function(this, Error.get(status), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
-                function(this, null, timeouts, .{ .node = node, .service = service });
-                return;
+                return function(this, null, timeouts, .{ .node = node, .service = service }) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         }.handle;
     }
@@ -538,7 +529,7 @@ pub const AddrInfo = extern struct {
     }
 
     pub fn Callback(comptime Type: type) type {
-        return fn (*Type, status: ?Error, timeouts: i32, results: ?*AddrInfo) void;
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*AddrInfo) bun.JSError!void;
     }
 
     pub fn callbackWrapper(
@@ -549,7 +540,11 @@ pub const AddrInfo = extern struct {
             pub fn handleAddrInfo(ctx: ?*anyopaque, status: c_int, timeouts: c_int, addr_info: ?*AddrInfo) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
 
-                function(this, Error.get(status), timeouts, addr_info);
+                return function(this, Error.get(status), timeouts, addr_info) catch |err| switch (err) {
+                    error.JSError => {},
+                    error.OutOfMemory => {}, //TODO:
+                    error.JSExecutionTerminated => {},
+                };
             }
         }.handleAddrInfo;
     }
@@ -898,7 +893,7 @@ pub const struct_ares_caa_reply = extern struct {
     }
 
     pub fn Callback(comptime Type: type) type {
-        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_caa_reply) void;
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_caa_reply) bun.JSError!void;
     }
 
     pub fn callbackWrapper(
@@ -910,17 +905,15 @@ pub const struct_ares_caa_reply = extern struct {
             pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
-                    function(this, Error.get(status), timeouts, null);
-                    return;
+                    return function(this, Error.get(status), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
 
                 var start: [*c]struct_ares_caa_reply = undefined;
                 const result = ares_parse_caa_reply(buffer, buffer_length, &start);
                 if (result != ARES_SUCCESS) {
-                    function(this, Error.get(result), timeouts, null);
-                    return;
+                    return function(this, Error.get(result), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
-                function(this, null, timeouts, start);
+                return function(this, null, timeouts, start) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         }.handle;
     }
@@ -983,7 +976,7 @@ pub const struct_ares_srv_reply = extern struct {
     }
 
     pub fn Callback(comptime Type: type) type {
-        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_srv_reply) void;
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_srv_reply) bun.JSError!void;
     }
 
     pub fn callbackWrapper(
@@ -995,17 +988,15 @@ pub const struct_ares_srv_reply = extern struct {
             pub fn handleSrv(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
-                    function(this, Error.get(status), timeouts, null);
-                    return;
+                    return function(this, Error.get(status), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
 
                 var srv_start: [*c]struct_ares_srv_reply = undefined;
                 const result = ares_parse_srv_reply(buffer, buffer_length, &srv_start);
                 if (result != ARES_SUCCESS) {
-                    function(this, Error.get(result), timeouts, null);
-                    return;
+                    return function(this, Error.get(result), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
-                function(this, null, timeouts, srv_start);
+                return function(this, null, timeouts, srv_start) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         }.handleSrv;
     }
@@ -1057,7 +1048,7 @@ pub const struct_ares_mx_reply = extern struct {
     }
 
     pub fn Callback(comptime Type: type) type {
-        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_mx_reply) void;
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_mx_reply) bun.JSError!void;
     }
 
     pub fn callbackWrapper(
@@ -1069,17 +1060,15 @@ pub const struct_ares_mx_reply = extern struct {
             pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
-                    function(this, Error.get(status), timeouts, null);
-                    return;
+                    return function(this, Error.get(status), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
 
                 var start: [*c]struct_ares_mx_reply = undefined;
                 const result = ares_parse_mx_reply(buffer, buffer_length, &start);
                 if (result != ARES_SUCCESS) {
-                    function(this, Error.get(result), timeouts, null);
-                    return;
+                    return function(this, Error.get(result), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
-                function(this, null, timeouts, start);
+                return function(this, null, timeouts, start) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         }.handle;
     }
@@ -1149,7 +1138,7 @@ pub const struct_ares_txt_reply = extern struct {
     }
 
     pub fn Callback(comptime Type: type) type {
-        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_txt_reply) void;
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_txt_reply) bun.JSError!void;
     }
 
     pub fn callbackWrapper(
@@ -1161,17 +1150,15 @@ pub const struct_ares_txt_reply = extern struct {
             pub fn handleTxt(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
-                    function(this, Error.get(status), timeouts, null);
-                    return;
+                    return function(this, Error.get(status), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
 
                 var srv_start: [*c]struct_ares_txt_reply = undefined;
                 const result = ares_parse_txt_reply(buffer, buffer_length, &srv_start);
                 if (result != ARES_SUCCESS) {
-                    function(this, Error.get(result), timeouts, null);
-                    return;
+                    return function(this, Error.get(result), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
-                function(this, null, timeouts, srv_start);
+                return function(this, null, timeouts, srv_start) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         }.handleTxt;
     }
@@ -1247,7 +1234,7 @@ pub const struct_ares_naptr_reply = extern struct {
     }
 
     pub fn Callback(comptime Type: type) type {
-        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_naptr_reply) void;
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_naptr_reply) bun.JSError!void;
     }
 
     pub fn callbackWrapper(
@@ -1259,17 +1246,15 @@ pub const struct_ares_naptr_reply = extern struct {
             pub fn handleNaptr(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
-                    function(this, Error.get(status), timeouts, null);
-                    return;
+                    return function(this, Error.get(status), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
 
                 var naptr_start: [*c]struct_ares_naptr_reply = undefined;
                 const result = ares_parse_naptr_reply(buffer, buffer_length, &naptr_start);
                 if (result != ARES_SUCCESS) {
-                    function(this, Error.get(result), timeouts, null);
-                    return;
+                    return function(this, Error.get(result), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
-                function(this, null, timeouts, naptr_start);
+                return function(this, null, timeouts, naptr_start) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         }.handleNaptr;
     }
@@ -1318,7 +1303,7 @@ pub const struct_ares_soa_reply = extern struct {
     }
 
     pub fn Callback(comptime Type: type) type {
-        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_soa_reply) void;
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_soa_reply) bun.JSError!void;
     }
 
     pub fn callbackWrapper(
@@ -1330,17 +1315,15 @@ pub const struct_ares_soa_reply = extern struct {
             pub fn handleSoa(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
-                    function(this, Error.get(status), timeouts, null);
-                    return;
+                    return function(this, Error.get(status), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
 
                 var soa_start: [*c]struct_ares_soa_reply = undefined;
                 const result = ares_parse_soa_reply(buffer, buffer_length, &soa_start);
                 if (result != ARES_SUCCESS) {
-                    function(this, Error.get(result), timeouts, null);
-                    return;
+                    return function(this, Error.get(result), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
-                function(this, null, timeouts, soa_start);
+                return function(this, null, timeouts, soa_start) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         }.handleSoa;
     }
@@ -1442,7 +1425,7 @@ pub const struct_any_reply = struct {
     }
 
     pub fn Callback(comptime Type: type) type {
-        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_any_reply) void;
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_any_reply) bun.JSError!void;
     }
 
     pub fn callbackWrapper(
@@ -1454,8 +1437,7 @@ pub const struct_any_reply = struct {
             pub fn handleAny(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
-                    function(this, Error.get(status), timeouts, null);
-                    return;
+                    return function(this, Error.get(status), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
 
                 var any_success = false;
@@ -1537,11 +1519,10 @@ pub const struct_any_reply = struct {
 
                 if (!any_success) {
                     reply.deinit();
-                    function(this, Error.get(last_error.?), timeouts, null);
-                    return;
+                    return function(this, Error.get(last_error.?), timeouts, null) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
                 }
 
-                function(this, null, timeouts, reply);
+                return function(this, null, timeouts, reply) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         }.handleAny;
     }
@@ -1682,7 +1663,7 @@ pub const Error = enum(i32) {
             });
         }
 
-        pub fn reject(this: *Deferred, globalThis: *JSC.JSGlobalObject) void {
+        pub fn reject(this: *Deferred, globalThis: *JSC.JSGlobalObject) bun.JSExecutionTerminated!void {
             const system_error = JSC.SystemError{
                 .errno = @intFromEnum(this.errno),
                 .code = bun.String.static(this.errno.code()),
@@ -1693,22 +1674,22 @@ pub const Error = enum(i32) {
                 .syscall = bun.String.cloneUTF8(this.syscall),
                 .hostname = this.hostname orelse bun.String.empty,
             };
+            defer this.deinit();
+            defer this.hostname = null;
 
             const instance = system_error.toErrorInstance(globalThis);
             instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
 
-            this.promise.reject(globalThis, instance);
-            this.hostname = null;
-            this.deinit();
+            return this.promise.reject(globalThis, instance);
         }
 
         pub fn rejectLater(this: *Deferred, globalThis: *JSC.JSGlobalObject) void {
             const Context = struct {
                 deferred: *Deferred,
                 globalThis: *JSC.JSGlobalObject,
-                pub fn callback(context: *@This()) void {
-                    context.deferred.reject(context.globalThis);
-                    bun.default_allocator.destroy(context);
+                pub fn callback(context: *@This()) bun.JSExecutionTerminated!void {
+                    defer bun.default_allocator.destroy(context);
+                    return context.deferred.reject(context.globalThis);
                 }
             };
 

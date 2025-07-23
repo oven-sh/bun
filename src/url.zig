@@ -925,11 +925,10 @@ pub const FormData = struct {
             this.allocator.destroy(this);
         }
 
-        pub fn toJS(this: *AsyncFormData, global: *JSC.JSGlobalObject, data: []const u8, promise: JSC.AnyPromise) void {
+        pub fn toJS(this: *AsyncFormData, global: *JSC.JSGlobalObject, data: []const u8, promise: JSC.AnyPromise) bun.JSExecutionTerminated!void {
             if (this.encoding == .Multipart and this.encoding.Multipart.len == 0) {
                 log("AsnycFormData.toJS -> promise.reject missing boundary", .{});
-                promise.reject(global, JSC.ZigString.init("FormData missing boundary").toErrorInstance(global));
-                return;
+                return promise.reject(global, JSC.ZigString.init("FormData missing boundary").toErrorInstance(global));
             }
 
             const js_value = bun.FormData.toJS(
@@ -938,10 +937,9 @@ pub const FormData = struct {
                 this.encoding,
             ) catch |err| {
                 log("AsnycFormData.toJS -> failed ", .{});
-                promise.reject(global, global.createErrorInstance("FormData {s}", .{@errorName(err)}));
-                return;
+                return promise.reject(global, global.createErrorInstance("FormData {s}", .{@errorName(err)}));
             };
-            promise.resolve(global, js_value);
+            return promise.resolve(global, js_value);
         }
     };
 

@@ -500,7 +500,7 @@ pub const Runner = struct {
 
                     const promise = value.asAnyPromise() orelse @panic("Unexpected promise type");
 
-                    this.macro.vm.waitForPromise(promise);
+                    try this.macro.vm.waitForPromise(promise);
 
                     const promise_result = promise.result(this.macro.vm.jsc);
                     const rejected = promise.status(this.macro.vm.jsc) == .rejected;

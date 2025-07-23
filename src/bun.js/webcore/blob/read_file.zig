@@ -25,10 +25,10 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
                         }
                     };
 
-                    JSC.AnyPromise.wrap(.{ .normal = promise }, globalThis, WrappedFn.wrapped, .{ &blob, globalThis, bytes });
+                    return JSC.AnyPromise.wrap(.{ .normal = promise }, globalThis, WrappedFn.wrapped, .{ &blob, globalThis, bytes }) catch return; // TODO: properly propagate exception upwards
                 },
                 .err => |err| {
-                    promise.reject(globalThis, err.toErrorInstance(globalThis));
+                    return promise.reject(globalThis, err.toErrorInstance(globalThis)) catch return; // TODO: properly propagate exception upwards
                 },
             }
         }
@@ -233,7 +233,7 @@ pub const ReadFile = struct {
         return true;
     }
 
-    pub fn then(this: *ReadFile, _: *JSC.JSGlobalObject) void {
+    pub fn then(this: *ReadFile, _: *JSC.JSGlobalObject) error{}!void {
         const cb = this.onCompleteCallback;
         const cb_ctx = this.onCompleteCtx;
 

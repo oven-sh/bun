@@ -310,7 +310,7 @@ pub const TrustCommand = struct {
                             if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.monotonic)});
                         }
 
-                        pm.sleep();
+                        try pm.sleep();
                     }
 
                     const output_in_foreground = false;
@@ -330,7 +330,7 @@ pub const TrustCommand = struct {
                 }
 
                 while (pm.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
-                    pm.sleep();
+                    try pm.sleep();
                 }
             }
         }

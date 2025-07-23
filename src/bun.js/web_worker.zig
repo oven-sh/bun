@@ -409,6 +409,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         switch (err) {
             error.JSError => {},
             error.OutOfMemory => globalObject.throwOutOfMemory() catch {},
+            error.JSExecutionTerminated => return,
         }
         error_instance = globalObject.tryTakeException().?;
     };
@@ -498,12 +499,12 @@ fn spin(this: *WebWorker) void {
     }
 
     // always doing a first tick so we call CppTask without delay after dispatchOnline
-    vm.tick();
+    vm.tick() catch {};
 
     while (vm.isEventLoopAlive()) {
-        vm.tick();
+        vm.tick() catch break;
         if (this.hasRequestedTerminate()) break;
-        vm.eventLoop().autoTickActive();
+        vm.eventLoop().autoTickActive() catch break;
         if (this.hasRequestedTerminate()) break;
     }
 
@@ -512,7 +513,7 @@ fn spin(this: *WebWorker) void {
     // Only call "beforeExit" if we weren't from a .terminate
     if (!this.hasRequestedTerminate()) {
         // TODO: is this able to allow the event loop to continue?
-        vm.onBeforeExit();
+        vm.onBeforeExit() catch {};
     }
 
     this.flushLogs();

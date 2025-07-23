@@ -375,10 +375,7 @@ pub const GetAddrInfo = struct {
 
         pub fn toJS(this: *const Result, globalThis: *JSC.JSGlobalObject) JSValue {
             const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-            obj.put(globalThis, JSC.ZigString.static("address"), addressToJS(&this.address, globalThis) catch |err| return switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-            });
+            obj.put(globalThis, JSC.ZigString.static("address"), addressToJS(&this.address, globalThis));
             obj.put(globalThis, JSC.ZigString.static("family"), switch (this.address.any.family) {
                 std.posix.AF.INET => JSValue.jsNumber(4),
                 std.posix.AF.INET6 => JSValue.jsNumber(6),
@@ -422,8 +419,8 @@ pub fn addressToString(address: *const std.net.Address) bun.OOM!bun.String {
     }
 }
 
-pub fn addressToJS(address: *const std.net.Address, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-    var str = addressToString(address) catch return globalThis.throwOutOfMemory();
+pub fn addressToJS(address: *const std.net.Address, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    var str = addressToString(address) catch bun.outOfMemory();
     return str.transferToJS(globalThis);
 }
 

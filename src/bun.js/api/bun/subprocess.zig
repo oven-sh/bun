@@ -1506,7 +1506,7 @@ fn consumeOnDisconnectCallback(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalO
     return null;
 }
 
-pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
+pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Status, rusage: *const Rusage) bun.JSExecutionTerminated!void {
     log("onProcessExit()", .{});
     const this_jsvalue = this.this_jsvalue;
     const globalThis = this.globalThis;
@@ -1598,9 +1598,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                 }
 
                 switch (status) {
-                    .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
-                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)),
-                    .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
+                    .exited => |exited| try promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
+                    .err => |err| try promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)),
+                    .signaled => try promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
                     else => {
                         // crash in debug mode
                         if (comptime Environment.allow_assert)
@@ -2511,11 +2511,11 @@ pub fn spawnMaybeSync(
         if (send_exit_notification) {
             if (subprocess.process.hasExited()) {
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
-                subprocess.process.onExit(subprocess.process.status, &std.mem.zeroes(Rusage));
+                subprocess.process.onExit(subprocess.process.status, &std.mem.zeroes(Rusage)) catch {}; // TODO: properly propagate exception upwards
             } else {
                 // process has already exited, but we haven't called wait4() yet
                 // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                subprocess.process.wait(is_sync);
+                subprocess.process.wait(is_sync) catch {}; // TODO: properly propagate exception upwards
             }
         }
     }
@@ -2561,7 +2561,7 @@ pub fn spawnMaybeSync(
     if (can_block_entire_thread_to_reduce_cpu_usage_in_fast_path) {
         jsc_vm.counters.mark(.spawnSync_blocking);
         const debug_timer = Output.DebugTimer.start();
-        subprocess.process.wait(true);
+        try subprocess.process.wait(true);
         log("spawnSync fast path took {}", .{debug_timer});
 
         // watchOrReap will handle the already exited case for us.
@@ -2579,7 +2579,7 @@ pub fn spawnMaybeSync(
             }
         },
         .err => {
-            subprocess.process.wait(true);
+            try subprocess.process.wait(true);
         },
     }
 
@@ -2607,8 +2607,8 @@ pub fn spawnMaybeSync(
                 subprocess.stdout.pipe.watch();
             }
 
-            jsc_vm.tick();
-            jsc_vm.eventLoop().autoTick();
+            try jsc_vm.tick();
+            try jsc_vm.eventLoop().autoTick();
         }
     }
 

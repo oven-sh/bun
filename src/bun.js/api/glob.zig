@@ -172,17 +172,16 @@ pub const WalkTask = struct {
         }
     }
 
-    pub fn then(this: *WalkTask, promise: *JSC.JSPromise) void {
+    pub fn then(this: *WalkTask, promise: *JSC.JSPromise) bun.JSExecutionTerminated!void {
         defer this.deinit();
 
         if (this.err) |err| {
             const errJs = err.toJS(this.global);
-            promise.reject(this.global, errJs);
-            return;
+            return promise.reject(this.global, errJs);
         }
 
         const jsStrings = globWalkResultToJS(this.walker, this.global) catch return promise.reject(this.global, error.JSError);
-        promise.resolve(this.global, jsStrings);
+        return promise.resolve(this.global, jsStrings);
     }
 
     fn deinit(this: *WalkTask) void {

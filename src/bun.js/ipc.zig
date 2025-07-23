@@ -41,6 +41,7 @@ pub const IPCDecodeError = error{
     NotEnoughBytes,
     /// Format could not be recognized. Report an error and close the socket.
     InvalidFormat,
+    JSExecutionTerminated,
 } || bun.JSError;
 
 pub const IPCSerializationError = error{
@@ -202,6 +203,7 @@ const json = struct {
                     return IPCDecodeError.InvalidFormat;
                 },
                 error.OutOfMemory => return bun.outOfMemory(),
+                error.JSExecutionTerminated => |err| return err,
             };
 
             return switch (kind) {
@@ -541,7 +543,7 @@ pub const SendQueue = struct {
         JSC.VirtualMachine.get().enqueueTask(this.close_next_tick.?);
     }
 
-    fn _closeSocketTask(this: *SendQueue) void {
+    fn _closeSocketTask(this: *SendQueue) bun.JSExecutionTerminated!void {
         log("SendQueue#closeSocketTask", .{});
         bun.assert(this.close_next_tick != null);
         this.close_next_tick = null;
@@ -1018,7 +1020,7 @@ const IPCCommand = union(enum) {
     nack,
 };
 
-fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalThis: *JSC.JSGlobalObject) void {
+fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalThis: *JSC.JSGlobalObject) bun.JSExecutionTerminated!void {
     if (Environment.isDebug) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
         defer formatter.deinit();
@@ -1088,7 +1090,7 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
                 defer vm.eventLoop().exit();
                 _ = ipcParse(globalThis, target, msg_data, fd.toJS(globalThis)) catch |e| {
                     // ack written already, that's okay.
-                    globalThis.reportActiveExceptionAsUnhandled(e);
+                    try globalThis.reportActiveExceptionAsUnhandled(e);
                     return;
                 };
 
@@ -1116,7 +1118,7 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
     }
 }
 
-fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
+fn onData2(send_queue: *SendQueue, all_data: []const u8) bun.JSExecutionTerminated!void {
     var data = all_data;
     // log("onData '{'}'", .{std.zig.fmtEscapes(data)});
 
@@ -1143,9 +1145,10 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                     send_queue.closeSocket(.failure, .user);
                     return;
                 },
+                error.JSExecutionTerminated => return,
             };
 
-            handleIPCMessage(send_queue, result.message, globalThis);
+            handleIPCMessage(send_queue, result.message, globalThis) catch return;
 
             if (result.bytes_consumed < data.len) {
                 data = data[result.bytes_consumed..];
@@ -1176,9 +1179,10 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                 send_queue.closeSocket(.failure, .user);
                 return;
             },
+            error.JSExecutionTerminated => |err| return err,
         };
 
-        handleIPCMessage(send_queue, result.message, globalThis);
+        try handleIPCMessage(send_queue, result.message, globalThis);
 
         if (result.bytes_consumed < slice.len) {
             slice = slice[result.bytes_consumed..];
@@ -1227,7 +1231,7 @@ pub const IPCHandlers = struct {
             const loop = globalThis.bunVM().eventLoop();
             loop.enter();
             defer loop.exit();
-            onData2(send_queue, all_data);
+            onData2(send_queue, all_data) catch return;
         }
 
         pub fn onFd(
@@ -1339,7 +1343,7 @@ pub const IPCHandlers = struct {
                     },
                 };
 
-                handleIPCMessage(send_queue, result.message, globalThis);
+                try handleIPCMessage(send_queue, result.message, globalThis);
 
                 if (result.bytes_consumed < slice.len) {
                     slice = slice[result.bytes_consumed..];

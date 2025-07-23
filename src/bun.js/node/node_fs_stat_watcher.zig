@@ -369,33 +369,33 @@ pub const StatWatcher = struct {
         }
     };
 
-    pub fn initialStatSuccessOnMainThread(this: *StatWatcher) void {
+    pub fn initialStatSuccessOnMainThread(this: *StatWatcher) bun.JSError!void {
         if (this.closed) {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
+        const jsvalue = try statToJSStats(this.globalThis, &this.last_stat, this.bigint);
         this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         this.scheduler.data.append(this);
     }
 
-    pub fn initialStatErrorOnMainThread(this: *StatWatcher) void {
+    pub fn initialStatErrorOnMainThread(this: *StatWatcher) bun.JSError!void {
         if (this.closed) {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
+        const jsvalue = try statToJSStats(this.globalThis, &this.last_stat, this.bigint);
         this.last_jsvalue = .create(jsvalue, this.globalThis);
 
-        _ = js.listenerGetCached(this.js_this).?.call(
+        _ = try js.listenerGetCached(this.js_this).?.call(
             this.globalThis,
             .js_undefined,
             &[2]JSC.JSValue{
                 jsvalue,
                 jsvalue,
             },
-        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
+        );
 
         if (this.closed) {
             return;
@@ -429,19 +429,19 @@ pub const StatWatcher = struct {
     }
 
     /// After a restat found the file changed, this calls the listener function.
-    pub fn swapAndCallListenerOnMainThread(this: *StatWatcher) void {
+    pub fn swapAndCallListenerOnMainThread(this: *StatWatcher) bun.JSError!void {
         const prev_jsvalue = this.last_jsvalue.swap();
-        const current_jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
+        const current_jsvalue = try statToJSStats(this.globalThis, &this.last_stat, this.bigint);
         this.last_jsvalue.set(this.globalThis, current_jsvalue);
 
-        _ = js.listenerGetCached(this.js_this).?.call(
+        _ = try js.listenerGetCached(this.js_this).?.call(
             this.globalThis,
             .js_undefined,
             &[2]JSC.JSValue{
                 current_jsvalue,
                 prev_jsvalue,
             },
-        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
+        );
     }
 
     pub fn init(args: Arguments) !*StatWatcher {

@@ -1,4 +1,4 @@
-pub const RedisError = error{
+pub const RedisError = bun.JSError || error{
     AuthenticationFailed,
     ConnectionClosed,
     InvalidArgument,
@@ -20,14 +20,12 @@ pub const RedisError = error{
     InvalidSet,
     InvalidSimpleString,
     InvalidVerbatimString,
-    JSError,
-    OutOfMemory,
     UnsupportedProtocol,
     ConnectionTimeout,
     IdleTimeout,
 };
 
-pub fn valkeyErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: RedisError) JSC.JSValue {
+pub fn valkeyErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: RedisError) bun.JSExecutionTerminated!JSC.JSValue {
     const error_code: JSC.Error = switch (err) {
         error.ConnectionClosed => .REDIS_CONNECTION_CLOSED,
         error.InvalidResponse => .REDIS_INVALID_RESPONSE,
@@ -55,8 +53,8 @@ pub fn valkeyErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, 
         error.ConnectionTimeout => .REDIS_CONNECTION_TIMEOUT,
         error.IdleTimeout => .REDIS_IDLE_TIMEOUT,
         error.JSError => return globalObject.takeException(error.JSError),
-        error.OutOfMemory => globalObject.throwOutOfMemory() catch
-            return globalObject.takeException(error.JSError),
+        error.OutOfMemory => globalObject.throwOutOfMemory() catch return globalObject.takeException(error.JSError),
+        error.JSExecutionTerminated => |e| return e,
     };
 
     if (message) |msg| {

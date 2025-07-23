@@ -333,16 +333,16 @@ pub const S3 = struct {
 
             pub const new = bun.TrivialNew(@This());
 
-            pub fn resolve(result: bun.S3.S3DeleteResult, opaque_self: *anyopaque) void {
+            pub fn resolve(result: bun.S3.S3DeleteResult, opaque_self: *anyopaque) bun.JSExecutionTerminated!void {
                 const self: *@This() = @ptrCast(@alignCast(opaque_self));
                 defer self.deinit();
                 const globalObject = self.global;
                 switch (result) {
                     .success => {
-                        self.promise.resolve(globalObject, .true);
+                        return self.promise.resolve(globalObject, .true);
                     },
                     .not_found, .failure => |err| {
-                        self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        return self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
                     },
                 }
             }
@@ -380,7 +380,7 @@ pub const S3 = struct {
             resolvedlistOptions: bun.S3.S3ListObjectsOptions,
             global: *JSGlobalObject,
 
-            pub fn resolve(result: bun.S3.S3ListObjectsResult, opaque_self: *anyopaque) void {
+            pub fn resolve(result: bun.S3.S3ListObjectsResult, opaque_self: *anyopaque) bun.JSExecutionTerminated!void {
                 const self: *@This() = @ptrCast(@alignCast(opaque_self));
                 defer self.deinit();
                 const globalObject = self.global;
@@ -389,11 +389,11 @@ pub const S3 = struct {
                     .success => |list_result| {
                         defer list_result.deinit();
                         const list_result_js = list_result.toJS(globalObject) catch return self.promise.reject(globalObject, error.JSError);
-                        self.promise.resolve(globalObject, list_result_js);
+                        return self.promise.resolve(globalObject, list_result_js);
                     },
 
                     inline .not_found, .failure => |err| {
-                        self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        return self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
                     },
                 }
             }

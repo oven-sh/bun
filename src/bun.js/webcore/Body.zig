@@ -62,7 +62,7 @@ pub const PendingValue = struct {
     task: ?*anyopaque = null,
 
     /// runs after the data is available.
-    onReceiveValue: ?*const fn (ctx: *anyopaque, value: *Value) void = null,
+    onReceiveValue: ?*const fn (ctx: *anyopaque, value: *Value) bun.JSExecutionTerminated!void = null,
 
     /// conditionally runs when requesting data
     /// used in HTTP server to ignore request bodies unless asked for it
@@ -653,7 +653,7 @@ pub const Value = union(Tag) {
         new: *Value,
         global: *JSGlobalObject,
         headers: ?*FetchHeaders,
-    ) void {
+    ) bun.JSExecutionTerminated!void {
         log("resolve", .{});
         if (to_resolve.* == .Locked) {
             var locked = &to_resolve.Locked;
@@ -665,8 +665,7 @@ pub const Value = union(Tag) {
 
             if (locked.onReceiveValue) |callback| {
                 locked.onReceiveValue = null;
-                callback(locked.task.?, new);
-                return;
+                return callback(locked.task.?, new);
             }
 
             if (locked.promise) |promise_| {
@@ -683,37 +682,37 @@ pub const Value = union(Tag) {
                             // .InlineBlob,
                             => {
                                 var blob = new.useAsAnyBlobAllowNonUTF8String();
-                                promise.wrap(global, AnyBlob.toStringTransfer, .{ &blob, global });
+                                return promise.wrap(global, AnyBlob.toStringTransfer, .{ &blob, global });
                             },
                             else => {
                                 var blob = new.use();
-                                promise.wrap(global, Blob.toStringTransfer, .{ &blob, global });
+                                return promise.wrap(global, Blob.toStringTransfer, .{ &blob, global });
                             },
                         }
                     },
                     .getJSON => {
                         var blob = new.useAsAnyBlobAllowNonUTF8String();
-                        promise.wrap(global, AnyBlob.toJSONShare, .{ &blob, global });
-                        blob.detach();
+                        defer blob.detach();
+                        return promise.wrap(global, AnyBlob.toJSONShare, .{ &blob, global });
                     },
                     .getArrayBuffer => {
                         var blob = new.useAsAnyBlobAllowNonUTF8String();
-                        promise.wrap(global, AnyBlob.toArrayBufferTransfer, .{ &blob, global });
+                        return promise.wrap(global, AnyBlob.toArrayBufferTransfer, .{ &blob, global });
                     },
                     .getBytes => {
                         var blob = new.useAsAnyBlobAllowNonUTF8String();
-                        promise.wrap(global, AnyBlob.toUint8ArrayTransfer, .{ &blob, global });
+                        return promise.wrap(global, AnyBlob.toUint8ArrayTransfer, .{ &blob, global });
                     },
 
                     .getFormData => inner: {
                         var blob = new.useAsAnyBlob();
                         defer blob.detach();
                         var async_form_data: *bun.FormData.AsyncFormData = locked.action.getFormData orelse {
-                            promise.reject(global, ZigString.init("Internal error: task for FormData must not be null").toErrorInstance(global));
+                            try promise.reject(global, ZigString.init("Internal error: task for FormData must not be null").toErrorInstance(global));
                             break :inner;
                         };
                         defer async_form_data.deinit();
-                        async_form_data.toJS(global, blob.slice(), promise);
+                        return async_form_data.toJS(global, blob.slice(), promise);
                     },
                     .none, .getBlob => {
                         var blob = Blob.new(new.use());
@@ -738,7 +737,7 @@ pub const Value = union(Tag) {
                             blob.content_type_was_set = true;
                             blob.store.?.mime_type = MimeType.text;
                         }
-                        promise.resolve(global, blob.toJS(global));
+                        return promise.resolve(global, blob.toJS(global));
                     },
                 }
                 promise_.unprotect();
@@ -885,7 +884,7 @@ pub const Value = union(Tag) {
         return any_blob;
     }
 
-    pub fn toErrorInstance(this: *Value, err: ValueError, global: *JSGlobalObject) void {
+    pub fn toErrorInstance(this: *Value, err: ValueError, global: *JSGlobalObject) bun.JSExecutionTerminated!void {
         if (this.* == .Locked) {
             var locked = this.Locked;
             this.* = .{ .Error = err };
@@ -900,7 +899,7 @@ pub const Value = union(Tag) {
                 locked.promise = null;
 
                 if (promise.asAnyPromise()) |internal| {
-                    internal.reject(global, this.Error.toJS(global));
+                    try internal.reject(global, this.Error.toJS(global));
                 }
             }
 
@@ -908,7 +907,7 @@ pub const Value = union(Tag) {
             // Avoid creating unnecessary duplicate JSValue.
             if (strong_readable.get(global)) |readable| {
                 if (readable.ptr == .Bytes) {
-                    readable.ptr.Bytes.onData(
+                    try readable.ptr.Bytes.onData(
                         .{ .err = this.Error.toStreamError(global) },
                         bun.default_allocator,
                     );
@@ -919,18 +918,16 @@ pub const Value = union(Tag) {
 
             if (locked.onReceiveValue) |onReceiveValue| {
                 locked.onReceiveValue = null;
-                onReceiveValue(locked.task.?, this);
+                try onReceiveValue(locked.task.?, this);
             }
             return;
         }
         this.* = .{ .Error = err };
     }
 
-    pub fn toError(this: *Value, err: anyerror, global: *JSGlobalObject) void {
-        return this.toErrorInstance(.{ .Message = bun.String.createFormat(
-            "Error reading file {s}",
-            .{@errorName(err)},
-        ) catch bun.outOfMemory() }, global);
+    pub fn toError(this: *Value, err: anyerror, global: *JSGlobalObject) bun.JSExecutionTerminated!void {
+        const msg = bun.String.createFormat("Error reading file {s}", .{@errorName(err)}) catch bun.outOfMemory();
+        return this.toErrorInstance(.{ .Message = msg }, global);
     }
 
     pub fn deinit(this: *Value) void {
@@ -1623,7 +1620,7 @@ pub const ValueBufferer = struct {
         locked.onReceiveValue = @This().onReceiveValue;
     }
 
-    fn onReceiveValue(ctx: *anyopaque, value: *JSC.WebCore.Body.Value) void {
+    fn onReceiveValue(ctx: *anyopaque, value: *JSC.WebCore.Body.Value) bun.JSExecutionTerminated!void {
         const sink = bun.cast(*@This(), ctx);
         switch (value.*) {
             .Error => |err| {

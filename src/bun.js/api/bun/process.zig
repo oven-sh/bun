@@ -93,7 +93,7 @@ pub const ProcessExitHandler = struct {
         this.ptr = TaggedPointer.init(ptr);
     }
 
-    pub fn call(this: *const ProcessExitHandler, process: *Process, status: Status, rusage: *const Rusage) void {
+    pub fn call(this: *const ProcessExitHandler, process: *Process, status: Status, rusage: *const Rusage) bun.JSExecutionTerminated!void {
         if (this.ptr.isNull()) {
             return;
         }
@@ -101,26 +101,26 @@ pub const ProcessExitHandler = struct {
         switch (this.ptr.tag()) {
             @field(TaggedPointer.Tag, @typeName(Subprocess)) => {
                 const subprocess = this.ptr.as(Subprocess);
-                subprocess.onProcessExit(process, status, rusage);
+                return subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(LifecycleScriptSubprocess)) => {
                 const subprocess = this.ptr.as(LifecycleScriptSubprocess);
-                subprocess.onProcessExit(process, status, rusage);
+                return subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(ProcessHandle)) => {
                 const subprocess = this.ptr.as(ProcessHandle);
-                subprocess.onProcessExit(process, status, rusage);
+                return subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
                 const subprocess = this.ptr.as(ShellSubprocess);
-                subprocess.onProcessExit(process, status, rusage);
+                return subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(SyncProcess)) => {
                 const subprocess = this.ptr.as(SyncProcess);
                 if (comptime Environment.isPosix) {
                     @panic("This code should not reached");
                 }
-                subprocess.onProcessExit(status, rusage);
+                return subprocess.onProcessExit(status, rusage);
             },
             else => {
                 @panic("Internal Bun error: ProcessExitHandler has an invalid tag. Please file a bug report.");
@@ -203,7 +203,7 @@ pub const Process = struct {
         };
     }
 
-    pub fn onExit(this: *Process, status: Status, rusage: *const Rusage) void {
+    pub fn onExit(this: *Process, status: Status, rusage: *const Rusage) bun.JSExecutionTerminated!void {
         const exit_handler = this.exit_handler;
         this.status = status;
 
@@ -211,26 +211,26 @@ pub const Process = struct {
             this.detach();
         }
 
-        exit_handler.call(this, status, rusage);
+        return exit_handler.call(this, status, rusage);
     }
 
     pub fn signalCode(this: *const Process) ?bun.SignalCode {
         return this.status.signalCode();
     }
 
-    pub fn waitPosix(this: *Process, sync_: bool) void {
+    pub fn waitPosix(this: *Process, sync_: bool) bun.JSExecutionTerminated!void {
         var rusage = std.mem.zeroes(Rusage);
         const waitpid_result = PosixSpawn.wait4(this.pid, if (sync_) 0 else std.posix.W.NOHANG, &rusage);
-        this.onWaitPid(&waitpid_result, &rusage);
+        return this.onWaitPid(&waitpid_result, &rusage);
     }
 
-    pub fn wait(this: *Process, sync_: bool) void {
+    pub fn wait(this: *Process, sync_: bool) bun.JSExecutionTerminated!void {
         if (comptime Environment.isPosix) {
-            this.waitPosix(sync_);
+            try this.waitPosix(sync_);
         } else if (comptime Environment.isWindows) {}
     }
 
-    pub fn onWaitPidFromWaiterThread(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
+    pub fn onWaitPidFromWaiterThread(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) bun.JSExecutionTerminated!void {
         if (comptime Environment.isWindows) {
             @compileError("not implemented on this platform");
         }
@@ -238,19 +238,19 @@ pub const Process = struct {
             this.poller.waiter_thread.unref(this.event_loop);
             this.poller = .{ .detached = {} };
         }
-        this.onWaitPid(waitpid_result, rusage);
-        this.deref();
+        defer this.deref();
+        try this.onWaitPid(waitpid_result, rusage);
     }
 
-    pub fn onWaitPidFromEventLoopTask(this: *Process) void {
+    pub fn onWaitPidFromEventLoopTask(this: *Process) bun.JSExecutionTerminated!void {
         if (comptime Environment.isWindows) {
             @compileError("not implemented on this platform");
         }
-        this.wait(false);
-        this.deref();
+        defer this.deref();
+        try this.wait(false);
     }
 
-    fn onWaitPid(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
+    fn onWaitPid(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) bun.JSExecutionTerminated!void {
         if (comptime !Environment.isPosix) {
             @compileError("not implemented on this platform");
         }
@@ -286,12 +286,12 @@ pub const Process = struct {
             break :brk null;
         } orelse return;
 
-        this.onExit(status, &rusage_result);
+        try this.onExit(status, &rusage_result);
     }
 
     pub fn watchOrReap(this: *Process) JSC.Maybe(bool) {
         if (this.hasExited()) {
-            this.onExit(this.status, &std.mem.zeroes(Rusage));
+            this.onExit(this.status, &std.mem.zeroes(Rusage)) catch {}; // TODO: audit callers
             return .{ .result = true };
         }
 
@@ -299,7 +299,7 @@ pub const Process = struct {
             .err => |err| {
                 if (comptime Environment.isPosix) {
                     if (err.getErrno() == .SRCH) {
-                        this.wait(true);
+                        this.wait(true) catch {}; // TODO: audit callers
                         return .{ .result = this.hasExited() };
                     }
                 }
@@ -757,16 +757,16 @@ const WaiterThreadPosix = struct {
 
                 pub const runFromJSThread = runFromMainThread;
 
-                pub fn runFromMainThread(self: *@This()) void {
+                pub fn runFromMainThread(self: *@This()) bun.JSExecutionTerminated!void {
                     const result = self.result;
                     const subprocess = self.subprocess;
                     const rusage = self.rusage;
                     bun.destroy(self);
-                    subprocess.onWaitPidFromWaiterThread(&result, &rusage);
+                    return subprocess.onWaitPidFromWaiterThread(&result, &rusage);
                 }
 
-                pub fn runFromMainThreadMini(self: *@This(), _: *void) void {
-                    self.runFromMainThread();
+                pub fn runFromMainThreadMini(self: *@This(), _: *void) bun.JSExecutionTerminated!void {
+                    return self.runFromMainThread();
                 }
             };
 
@@ -779,15 +779,15 @@ const WaiterThreadPosix = struct {
 
                 pub const runFromJSThread = runFromMainThread;
 
-                pub fn runFromMainThread(self: *@This()) void {
+                pub fn runFromMainThread(self: *@This()) bun.JSExecutionTerminated!void {
                     const result = self.result;
                     const subprocess = self.subprocess;
                     bun.destroy(self);
-                    subprocess.onWaitPidFromWaiterThread(&result, &std.mem.zeroes(Rusage));
+                    return subprocess.onWaitPidFromWaiterThread(&result, &std.mem.zeroes(Rusage));
                 }
 
-                pub fn runFromMainThreadMini(self: *@This(), _: *void) void {
-                    self.runFromMainThread();
+                pub fn runFromMainThreadMini(self: *@This(), _: *void) bun.JSExecutionTerminated!void {
+                    return self.runFromMainThread();
                 }
             };
 

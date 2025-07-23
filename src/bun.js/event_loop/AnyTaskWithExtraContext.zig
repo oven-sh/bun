@@ -4,7 +4,7 @@
 const AnyTaskWithExtraContext = @This();
 
 ctx: ?*anyopaque = undefined,
-callback: *const (fn (*anyopaque, *anyopaque) void) = undefined,
+callback: *const (fn (*anyopaque, *anyopaque) bun.JSExecutionTerminated!void) = undefined,
 next: ?*AnyTaskWithExtraContext = null,
 
 pub fn fromCallbackAutoDeinit(ptr: anytype, comptime fieldName: [:0]const u8) *AnyTaskWithExtraContext {
@@ -12,11 +12,11 @@ pub fn fromCallbackAutoDeinit(ptr: anytype, comptime fieldName: [:0]const u8) *A
     const Wrapper = struct {
         any_task: AnyTaskWithExtraContext,
         wrapped: *Ptr,
-        pub fn function(this: *anyopaque, extra: *anyopaque) void {
+        pub fn function(this: *anyopaque, extra: *anyopaque) bun.JSExecutionTerminated!void {
             const that: *@This() = @ptrCast(@alignCast(this));
             defer bun.default_allocator.destroy(that);
             const ctx = that.wrapped;
-            @field(Ptr, fieldName)(ctx, extra);
+            return @field(Ptr, fieldName)(ctx, extra);
         }
     };
     const task = bun.default_allocator.create(Wrapper) catch bun.outOfMemory();
@@ -36,11 +36,11 @@ pub fn from(this: *@This(), of: anytype, comptime field: []const u8) *@This() {
     return this;
 }
 
-pub fn run(this: *AnyTaskWithExtraContext, extra: *anyopaque) void {
+pub fn run(this: *AnyTaskWithExtraContext, extra: *anyopaque) bun.JSExecutionTerminated!void {
     @setRuntimeSafety(false);
     const callback = this.callback;
     const ctx = this.ctx;
-    callback(ctx.?, extra);
+    return callback(ctx.?, extra);
 }
 
 pub fn New(comptime Type: type, comptime ContextType: type, comptime Callback: anytype) type {
@@ -52,8 +52,8 @@ pub fn New(comptime Type: type, comptime ContextType: type, comptime Callback: a
             };
         }
 
-        pub fn wrap(this: ?*anyopaque, extra: ?*anyopaque) void {
-            @call(
+        pub fn wrap(this: ?*anyopaque, extra: ?*anyopaque) bun.JSExecutionTerminated!void {
+            return @call(
                 .always_inline,
                 Callback,
                 .{

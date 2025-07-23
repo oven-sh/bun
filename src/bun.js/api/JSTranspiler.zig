@@ -148,7 +148,7 @@ pub const TransformTask = struct {
         }
     }
 
-    pub fn then(this: *TransformTask, promise: *JSC.JSPromise) void {
+    pub fn then(this: *TransformTask, promise: *JSC.JSPromise) bun.JSError!void {
         if (this.log.hasAny() or this.err != null) {
             const error_value: bun.OOM!JSValue = brk: {
                 if (this.err) |err| {
@@ -163,11 +163,10 @@ pub const TransformTask = struct {
                     }
                 }
 
-                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed") catch return; // TODO: properly propagate exception upwards
+                break :brk try this.log.toJS(this.global, bun.default_allocator, "Transform failed");
             };
 
-            promise.reject(this.global, error_value);
-            return;
+            return promise.reject(this.global, error_value);
         }
 
         const global = this.global;
@@ -175,12 +174,11 @@ pub const TransformTask = struct {
         this.output_code = bun.String.empty;
         this.deinit();
 
-        finish(code, global, promise);
+        return finish(code, global, promise);
     }
 
-    noinline fn finish(code: bun.String, global: *JSGlobalObject, promise: *JSC.JSPromise) void {
-        promise.resolve(global, code.toJS(global));
-        code.deref();
+    noinline fn finish(code: bun.String, global: *JSGlobalObject, promise: *JSC.JSPromise) bun.JSExecutionTerminated!void {
+        try promise.resolve(global, code.transferToJS(global));
     }
 
     pub fn deinit(this: *TransformTask) void {

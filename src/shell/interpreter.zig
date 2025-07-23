@@ -950,7 +950,7 @@ pub const Interpreter = struct {
             },
             else => {},
         }
-        mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
+        try mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         const code = interp.exit_code.?;
         interp.deinitEverything();
         return code;
@@ -1017,7 +1017,7 @@ pub const Interpreter = struct {
             },
             else => {},
         }
-        mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
+        try mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         const code = interp.exit_code.?;
         interp.deinitEverything();
         return code;
@@ -1150,14 +1150,14 @@ pub const Interpreter = struct {
                     this.this_jsvalue = .zero;
                     this.keep_alive.disable();
                     loop.enter();
+                    defer loop.exit();
                     _ = resolve.call(globalThis, .js_undefined, &.{
                         JSValue.jsNumberFromU16(exit_code),
                         this.getBufferedStdout(globalThis),
                         this.getBufferedStderr(globalThis),
-                    }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+                    }) catch |err| (globalThis.reportActiveExceptionAsUnhandled(err) catch return .failed);
                     JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
                     JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
-                    loop.exit();
                 }
             }
         } else {

@@ -2142,20 +2142,20 @@ pub const RuntimeTranspilerStore = struct {
         };
     }
 
-    pub fn runFromJSThread(this: *RuntimeTranspilerStore, event_loop: *JSC.EventLoop, global: *JSC.JSGlobalObject, vm: *JSC.VirtualMachine) void {
+    pub fn runFromJSThread(this: *RuntimeTranspilerStore, event_loop: *JSC.EventLoop, global: *JSC.JSGlobalObject, vm: *JSC.VirtualMachine) bun.JSError!void {
         var batch = this.queue.popBatch();
         const jsc_vm = vm.jsc;
         var iter = batch.iterator();
         if (iter.next()) |job| {
             // we run just one job first to see if there are more
-            job.runFromJSThread() catch |err| global.reportUncaughtExceptionFromError(err);
+            try job.runFromJSThread();
         } else {
             return;
         }
         while (iter.next()) |job| {
             // if there are more, we need to drain the microtasks from the previous run
-            event_loop.drainMicrotasksWithGlobal(global, jsc_vm) catch return;
-            job.runFromJSThread() catch |err| global.reportUncaughtExceptionFromError(err);
+            try event_loop.drainMicrotasksWithGlobal(global, jsc_vm);
+            try job.runFromJSThread();
         }
 
         // immediately after this is called, the microtasks will be drained again.

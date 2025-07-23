@@ -499,6 +499,7 @@ pub const JSGlobalObject = opaque {
         switch (proof) {
             error.JSError => {},
             error.OutOfMemory => this.throwOutOfMemory() catch {},
+            error.JSExecutionTerminated => {},
         }
 
         return this.tryTakeException() orelse {
@@ -510,6 +511,7 @@ pub const JSGlobalObject = opaque {
         switch (proof) {
             error.JSError => {},
             error.OutOfMemory => this.throwOutOfMemory() catch {},
+            error.JSExecutionTerminated => {},
         }
 
         return (this.tryTakeException() orelse {
@@ -533,11 +535,10 @@ pub const JSGlobalObject = opaque {
     ///     const result = value.call(...) catch |err|
     ///         return global.reportActiveExceptionAsUnhandled(err);
     ///
-    pub fn reportActiveExceptionAsUnhandled(this: *JSGlobalObject, err: bun.JSError) void {
+    pub fn reportActiveExceptionAsUnhandled(this: *JSGlobalObject, err: bun.JSError) bun.JSExecutionTerminated!void {
         const exception = this.takeException(err);
-        if (!exception.isTerminationException()) {
-            _ = this.bunVM().uncaughtException(this, exception, false);
-        }
+        if (exception.isTerminationException()) return error.JSExecutionTerminated;
+        _ = this.bunVM().uncaughtException(this, exception, false);
     }
 
     pub fn vm(this: *JSGlobalObject) *VM {

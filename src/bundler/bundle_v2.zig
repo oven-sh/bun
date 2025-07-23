@@ -458,8 +458,8 @@ pub const BundleV2 = struct {
         return false;
     }
 
-    pub fn waitForParse(this: *BundleV2) void {
-        this.loop().tick(this, &isDone);
+    pub fn waitForParse(this: *BundleV2) bun.JSExecutionTerminated!void {
+        try this.loop().tick(this, &isDone);
 
         debug("Parsed {d} files, producing {d} ASTs", .{ this.graph.input_files.len, this.graph.ast.len });
     }
@@ -1393,7 +1393,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        this.waitForParse();
+        try this.waitForParse();
 
         minify_duration.* = @as(u64, @intCast(@divTrunc(@as(i64, @truncate(std.time.nanoTimestamp())) - @as(i64, @truncate(bun.CLI.start_time)), @as(i64, std.time.ns_per_ms))));
         source_code_size.* = this.source_code_length;
@@ -1457,7 +1457,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        this.waitForParse();
+        try this.waitForParse();
 
         if (this.transpiler.log.hasErrors()) {
             return error.BuildFailed;
@@ -1798,12 +1798,12 @@ pub const BundleV2 = struct {
                 .pending => unreachable,
                 .err => brk: {
                     if (this.config.throw_on_error) {
-                        promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")));
+                        promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed"))) catch return;
                         break :brk;
                     }
 
                     const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
+                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError) catch return);
                     root_obj.put(
                         globalThis,
                         JSC.ZigString.static("success"),
@@ -1813,15 +1813,15 @@ pub const BundleV2 = struct {
                         globalThis,
                         JSC.ZigString.static("logs"),
                         this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
-                            return promise.reject(globalThis, err);
+                            return promise.reject(globalThis, err) catch return;
                         },
                     );
-                    promise.resolve(globalThis, root_obj);
+                    promise.resolve(globalThis, root_obj) catch return;
                 },
                 .value => |*build| {
                     const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
                     const output_files: []options.OutputFile = build.output_files.items;
-                    const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError);
+                    const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError) catch return;
                     if (output_files_js == .zero) {
                         @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
                     }
@@ -1880,10 +1880,10 @@ pub const BundleV2 = struct {
                         globalThis,
                         JSC.ZigString.static("logs"),
                         this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
-                            return promise.reject(globalThis, err);
+                            return promise.reject(globalThis, err) catch return;
                         },
                     );
-                    promise.resolve(globalThis, root_obj);
+                    promise.resolve(globalThis, root_obj) catch return;
                 },
             }
 
@@ -2250,7 +2250,7 @@ pub const BundleV2 = struct {
         try this.enqueueEntryPoints(.normal, entry_points);
 
         // We must wait for all the parse tasks to complete, even if there are errors.
-        this.waitForParse();
+        try this.waitForParse();
 
         this.graph.heap.helpCatchMemoryIssues();
 

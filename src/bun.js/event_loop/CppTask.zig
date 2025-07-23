@@ -1,12 +1,9 @@
 /// A task created from C++ code, usually via ScriptExecutionContext.
 pub const CppTask = opaque {
     extern fn Bun__performTask(globalObject: *JSC.JSGlobalObject, task: *CppTask) void;
-    pub fn run(this: *CppTask, global: *JSC.JSGlobalObject) void {
+    pub fn run(this: *CppTask, global: *JSC.JSGlobalObject) bun.JSError!void {
         JSC.markBinding(@src());
-        // TODO: properly propagate exception upwards
-        bun.jsc.fromJSHostCallGeneric(global, @src(), Bun__performTask, .{ global, this }) catch |err| {
-            _ = global.reportUncaughtException(global.takeException(err).asException(global.vm()).?);
-        };
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), Bun__performTask, .{ global, this });
     }
 };
 

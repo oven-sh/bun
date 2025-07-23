@@ -150,7 +150,7 @@ pub fn runCallback(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.J
     this.enter();
     defer this.exit();
     _ = callback.call(globalObject, thisValue, arguments) catch |err|
-        globalObject.reportActiveExceptionAsUnhandled(err);
+        (globalObject.reportActiveExceptionAsUnhandled(err) catch return);
 }
 
 fn externRunCallback1(global: *JSC.JSGlobalObject, callback: JSC.JSValue, thisValue: JSC.JSValue, arg0: JSC.JSValue) callconv(.c) void {
@@ -182,13 +182,13 @@ pub fn runCallbackWithResult(this: *EventLoop, callback: JSC.JSValue, globalObje
     defer this.exit();
 
     const result = callback.call(globalObject, thisValue, arguments) catch |err| {
-        globalObject.reportActiveExceptionAsUnhandled(err);
+        globalObject.reportActiveExceptionAsUnhandled(err) catch return .zero;
         return .zero;
     };
     return result;
 }
 
-fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
+fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) bun.JSExecutionTerminated!u32 {
     return this.tickQueueWithCount(virtual_machine);
 }
 
@@ -320,7 +320,7 @@ pub fn usocketsLoop(this: *const EventLoop) *uws.Loop {
     return this.virtual_machine.event_loop_handle.?;
 }
 
-pub fn autoTick(this: *EventLoop) void {
+pub fn autoTick(this: *EventLoop) bun.JSExecutionTerminated!void {
     var loop = this.usocketsLoop();
     var ctx = this.virtual_machine;
 
@@ -352,7 +352,7 @@ pub fn autoTick(this: *EventLoop) void {
         var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable;
         // for the printer, this is defined:
         var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
-        loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
+        loop.tickWithTimeout(if (try ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
 
         if (comptime Environment.isDebug) {
             log("tick {}, timeout: {}", .{ std.fmt.fmtDuration(event_loop_sleep_timer.read()), std.fmt.fmtDuration(timespec.ns()) });
@@ -365,14 +365,14 @@ pub fn autoTick(this: *EventLoop) void {
     }
 
     if (Environment.isPosix) {
-        ctx.timer.drainTimers(ctx);
+        try ctx.timer.drainTimers(ctx);
     }
 
     ctx.onAfterEventLoop();
     this.global.handleRejectedPromises();
 }
 
-pub fn tickPossiblyForever(this: *EventLoop) void {
+pub fn tickPossiblyForever(this: *EventLoop) bun.JSExecutionTerminated!void {
     var ctx = this.virtual_machine;
     var loop = this.usocketsLoop();
 
@@ -398,14 +398,14 @@ pub fn tickPossiblyForever(this: *EventLoop) void {
 
     ctx.onAfterEventLoop();
     this.tickConcurrent();
-    this.tick();
+    try this.tick();
 }
 
 fn noopForeverTimer(_: *uws.Timer) callconv(.C) void {
     // do nothing
 }
 
-pub fn autoTickActive(this: *EventLoop) void {
+pub fn autoTickActive(this: *EventLoop) bun.JSExecutionTerminated!void {
     var loop = this.usocketsLoop();
     var ctx = this.virtual_machine;
 
@@ -428,13 +428,13 @@ pub fn autoTickActive(this: *EventLoop) void {
         this.processGCTimer();
         var timespec: bun.timespec = undefined;
 
-        loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
+        loop.tickWithTimeout(if (try ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
     } else {
         loop.tickWithoutIdle();
     }
 
     if (Environment.isPosix) {
-        ctx.timer.drainTimers(ctx);
+        try ctx.timer.drainTimers(ctx);
     }
 
     ctx.onAfterEventLoop();
@@ -444,7 +444,7 @@ pub fn processGCTimer(this: *EventLoop) void {
     this.virtual_machine.gc_controller.processGCTimer();
 }
 
-pub fn tick(this: *EventLoop) void {
+pub fn tick(this: *EventLoop) bun.JSExecutionTerminated!void {
     JSC.markBinding(@src());
     var scope: JSC.CatchScope = undefined;
     scope.init(this.global, @src());
@@ -464,7 +464,7 @@ pub fn tick(this: *EventLoop) void {
     const global_vm = ctx.jsc;
 
     while (true) {
-        while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
+        while (try this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
             this.tickConcurrent();
         } else {
             this.drainMicrotasksWithGlobal(global, global_vm) catch return;
@@ -475,22 +475,22 @@ pub fn tick(this: *EventLoop) void {
         break;
     }
 
-    while (this.tickWithCount(ctx) > 0) {
+    while (try this.tickWithCount(ctx) > 0) {
         this.tickConcurrent();
     }
 
     this.global.handleRejectedPromises();
 }
 
-pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
+pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) bun.JSExecutionTerminated!void {
     const jsc_vm = this.virtual_machine.jsc;
     switch (promise.status(jsc_vm)) {
         .pending => {
             while (promise.status(jsc_vm) == .pending) {
-                this.tick();
+                try this.tick();
 
                 if (promise.status(jsc_vm) == .pending) {
-                    this.autoTick();
+                    try this.autoTick();
                 }
             }
         },
@@ -498,16 +498,16 @@ pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
     }
 }
 
-pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) void {
+pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) bun.JSExecutionTerminated!void {
     const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
     const jsc_vm = this.virtual_machine.jsc;
     switch (promise.status(jsc_vm)) {
         .pending => {
             while (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {
-                this.tick();
+                try this.tick();
 
                 if (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {
-                    this.autoTick();
+                    try this.autoTick();
                 }
             }
         },

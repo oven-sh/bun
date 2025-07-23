@@ -219,19 +219,19 @@ pub const FilePoll = struct {
         return .pipe;
     }
 
-    pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const std.posix.system.kevent64_s) void {
+    pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const std.posix.system.kevent64_s) bun.JSExecutionTerminated!void {
         poll.updateFlags(Flags.fromKQueueEvent(kqueue_event.*));
         log("onKQueueEvent: {}", .{poll});
 
         if (KQueueGenerationNumber != u0)
             bun.assert(poll.generation_number == kqueue_event.ext[0]);
 
-        poll.onUpdate(kqueue_event.data);
+        return poll.onUpdate(kqueue_event.data);
     }
 
-    pub fn onEpollEvent(poll: *FilePoll, _: *Loop, epoll_event: *std.os.linux.epoll_event) void {
+    pub fn onEpollEvent(poll: *FilePoll, _: *Loop, epoll_event: *std.os.linux.epoll_event) bun.JSExecutionTerminated!void {
         poll.updateFlags(Flags.fromEpollEvent(epoll_event.*));
-        poll.onUpdate(0);
+        return poll.onUpdate(0);
     }
 
     pub fn clearEvent(poll: *FilePoll, flag: Flags) void {
@@ -321,7 +321,7 @@ pub const FilePoll = struct {
 
     const kqueue_or_epoll = if (Environment.isMac) "kevent" else "epoll";
 
-    pub fn onUpdate(poll: *FilePoll, size_or_offset: i64) void {
+    pub fn onUpdate(poll: *FilePoll, size_or_offset: i64) bun.JSExecutionTerminated!void {
         if (poll.flags.contains(.one_shot) and !poll.flags.contains(.needs_rearm)) {
             poll.flags.insert(.needs_rearm);
         }
@@ -384,8 +384,7 @@ pub const FilePoll = struct {
             @field(Owner.Tag, @typeName(Process)) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) Process", .{poll.fd});
                 var loader = ptr.as(Process);
-
-                loader.onWaitPidFromEventLoopTask();
+                try loader.onWaitPidFromEventLoopTask();
             },
 
             @field(Owner.Tag, @typeName(DNSResolver)) => {
@@ -755,21 +754,28 @@ pub const FilePoll = struct {
         this.deactivate(event_loop_ctx.platformEventLoop());
     }
 
-    pub fn onTick(loop: *Loop, tagged_pointer: ?*anyopaque) callconv(.C) void {
+    pub fn onTick(loop: *Loop, tagged_pointer: ?*anyopaque) callconv(.C) bool {
         var tag = Pollable.from(tagged_pointer);
 
         if (tag.tag() != @field(Pollable.Tag, @typeName(FilePoll)))
-            return;
+            return true;
 
         var file_poll: *FilePoll = tag.as(FilePoll);
         if (file_poll.flags.contains(.ignore_updates)) {
-            return;
+            return true;
         }
 
-        if (comptime Environment.isMac)
-            onKQueueEvent(file_poll, loop, &loop.ready_polls[@as(usize, @intCast(loop.current_ready_poll))])
-        else if (comptime Environment.isLinux)
-            onEpollEvent(file_poll, loop, &loop.ready_polls[@as(usize, @intCast(loop.current_ready_poll))]);
+        if (comptime Environment.isMac) {
+            onKQueueEvent(file_poll, loop, &loop.ready_polls[@as(usize, @intCast(loop.current_ready_poll))]) catch |err| switch (err) {
+                error.JSExecutionTerminated => return false,
+            };
+            return true;
+        } else if (comptime Environment.isLinux) {
+            onEpollEvent(file_poll, loop, &loop.ready_polls[@as(usize, @intCast(loop.current_ready_poll))]) catch |err| switch (err) {
+                error.JSExecutionTerminated => return false,
+            };
+            return true;
+        }
     }
 
     const Pollable = bun.TaggedPointerUnion(.{

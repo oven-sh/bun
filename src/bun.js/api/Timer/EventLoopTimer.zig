@@ -174,7 +174,7 @@ pub const Arm = union(enum) {
     disarm,
 };
 
-pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Arm {
+pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) bun.JSExecutionTerminated!Arm {
     switch (this.tag) {
         .PostgresSQLConnectionTimeout => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
         .PostgresSQLConnectionMaxLifetime => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),

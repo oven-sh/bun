@@ -287,7 +287,7 @@ pub const Async = struct {
                 this.globalObject.bunVM().eventLoop().enqueueTask(JSC.Task.init(this));
             }
 
-            pub fn runFromJSThread(this: *Task) void {
+            pub fn runFromJSThread(this: *Task) bun.JSError!void {
                 const globalObject = this.globalObject;
                 const success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
                 var promise_value = this.promise.value();
@@ -386,7 +386,7 @@ pub const Async = struct {
                 this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
             }
 
-            pub fn runFromJSThread(this: *Task) void {
+            pub fn runFromJSThread(this: *Task) bun.JSError!void {
                 const globalObject = this.globalObject;
                 const success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
                 var promise_value = this.promise.value();
@@ -407,20 +407,15 @@ pub const Async = struct {
                     const signal = this.args.signal orelse break :check_abort;
                     if (signal.reasonIfAborted(globalObject)) |reason| {
                         this.deinit();
-                        promise.reject(globalObject, reason.toJS(globalObject));
-                        return;
+                        return promise.reject(globalObject, reason.toJS(globalObject));
                     }
                 }
 
                 this.deinit();
-                switch (success) {
-                    false => {
-                        promise.reject(globalObject, result);
-                    },
-                    true => {
-                        promise.resolve(globalObject, result);
-                    },
-                }
+                return switch (success) {
+                    false => promise.reject(globalObject, result),
+                    true => promise.resolve(globalObject, result),
+                };
             }
 
             pub fn deinit(this: *Task) void {
@@ -649,11 +644,11 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             }
         }
 
-        pub fn runFromJSThreadMini(this: *ThisAsyncCpTask, _: *anyopaque) void {
-            this.runFromJSThread();
+        pub fn runFromJSThreadMini(this: *ThisAsyncCpTask, _: *anyopaque) bun.JSExecutionTerminated!void {
+            return this.runFromJSThread();
         }
 
-        fn runFromJSThread(this: *ThisAsyncCpTask) void {
+        fn runFromJSThread(this: *ThisAsyncCpTask) bun.JSExecutionTerminated!void {
             if (comptime is_shell) {
                 this.shelltask.cpOnFinish(this.result);
                 this.deinit();
@@ -678,14 +673,10 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             defer tracker.didDispatch(globalObject);
 
             this.deinit();
-            switch (success) {
-                false => {
-                    promise.reject(globalObject, result);
-                },
-                true => {
-                    promise.resolve(globalObject, result);
-                },
-            }
+            return switch (success) {
+                false => promise.reject(globalObject, result),
+                true => promise.resolve(globalObject, result),
+            };
         }
 
         pub fn deinit(this: *ThisAsyncCpTask) void {
@@ -1211,7 +1202,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         this.result_list_count.store(0, .monotonic);
     }
 
-    pub fn runFromJSThread(this: *AsyncReaddirRecursiveTask) void {
+    pub fn runFromJSThread(this: *AsyncReaddirRecursiveTask) bun.JSExecutionTerminated!void {
         const globalObject = this.globalObject;
         const success = this.pending_err == null;
         var promise_value = this.promise.value();
@@ -1231,14 +1222,10 @@ pub const AsyncReaddirRecursiveTask = struct {
         defer tracker.didDispatch(globalObject);
 
         this.deinit();
-        switch (success) {
-            false => {
-                promise.reject(globalObject, result);
-            },
-            true => {
-                promise.resolve(globalObject, result);
-            },
-        }
+        return switch (success) {
+            false => promise.reject(globalObject, result),
+            true => promise.resolve(globalObject, result),
+        };
     }
 
     pub fn deinit(this: *AsyncReaddirRecursiveTask) void {

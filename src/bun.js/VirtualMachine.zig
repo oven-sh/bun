@@ -749,13 +749,13 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
     loop.run();
 }
 
-pub fn onBeforeExit(this: *VirtualMachine) void {
+pub fn onBeforeExit(this: *VirtualMachine) bun.JSExecutionTerminated!void {
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
     while (true) {
         while (this.isEventLoopAlive()) : (dispatch = true) {
-            this.tick();
-            this.eventLoop().autoTickActive();
+            try this.tick();
+            try this.eventLoop().autoTickActive();
         }
 
         if (dispatch) {
@@ -860,30 +860,30 @@ pub inline fn enqueueTaskConcurrent(this: *VirtualMachine, task: *JSC.Concurrent
     this.eventLoop().enqueueTaskConcurrent(task);
 }
 
-pub fn tick(this: *VirtualMachine) void {
-    this.eventLoop().tick();
+pub fn tick(this: *VirtualMachine) bun.JSExecutionTerminated!void {
+    return this.eventLoop().tick();
 }
 
-pub fn waitFor(this: *VirtualMachine, cond: *bool) void {
+pub fn waitFor(this: *VirtualMachine, cond: *bool) bun.JSExecutionTerminated!void {
     while (!cond.*) {
-        this.eventLoop().tick();
+        try this.eventLoop().tick();
 
         if (!cond.*) {
-            this.eventLoop().autoTick();
+            try this.eventLoop().autoTick();
         }
     }
 }
 
-pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
-    this.eventLoop().waitForPromise(promise);
+pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) bun.JSExecutionTerminated!void {
+    return this.eventLoop().waitForPromise(promise);
 }
 
-pub fn waitForTasks(this: *VirtualMachine) void {
+pub fn waitForTasks(this: *VirtualMachine) bun.JSExecutionTerminated!void {
     while (this.isEventLoopAlive()) {
-        this.eventLoop().tick();
+        try this.eventLoop().tick();
 
         if (this.isEventLoopAlive()) {
-            this.eventLoop().autoTick();
+            try this.eventLoop().autoTick();
         }
     }
 }
@@ -2043,10 +2043,10 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
             switch (this.pending_internal_promise.?.status(this.global.vm())) {
                 .pending => {
                     while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
-                        this.eventLoop().tick();
+                        try this.eventLoop().tick();
 
                         if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
-                            this.eventLoop().autoTick();
+                            try this.eventLoop().autoTick();
                         }
                     }
                 },
@@ -2054,7 +2054,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
             }
         } else {
             this.eventLoop().performGC();
-            this.waitForPromise(JSC.AnyPromise{
+            try this.waitForPromise(JSC.AnyPromise{
                 .internal = promise,
             });
         }
@@ -2181,7 +2181,15 @@ pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) any
     this.eventLoop().performGC();
     this.eventLoop().waitForPromiseWithTermination(JSC.AnyPromise{
         .internal = promise,
-    });
+    }) catch |err| switch (err) {
+        error.JSExecutionTerminated => {
+            if (this.worker) |worker| {
+                if (worker.hasRequestedTerminate()) {
+                    return error.WorkerTerminated;
+                }
+            }
+        },
+    };
     if (this.worker) |worker| {
         if (worker.hasRequestedTerminate()) {
             return error.WorkerTerminated;
@@ -2199,10 +2207,10 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
         switch (this.pending_internal_promise.?.status(this.global.vm())) {
             .pending => {
                 while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
-                    this.eventLoop().tick();
+                    try this.eventLoop().tick();
 
                     if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
-                        this.eventLoop().autoTick();
+                        try this.eventLoop().autoTick();
                     }
                 }
             },
@@ -2214,10 +2222,10 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
         }
 
         this.eventLoop().performGC();
-        this.waitForPromise(.{ .internal = promise });
+        try this.waitForPromise(.{ .internal = promise });
     }
 
-    this.eventLoop().autoTick();
+    try this.eventLoop().autoTick();
 
     return this.pending_internal_promise.?;
 }
@@ -2231,10 +2239,10 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
         switch (this.pending_internal_promise.?.status(this.global.vm())) {
             .pending => {
                 while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
-                    this.eventLoop().tick();
+                    try this.eventLoop().tick();
 
                     if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
-                        this.eventLoop().autoTick();
+                        try this.eventLoop().autoTick();
                     }
                 }
             },
@@ -2246,7 +2254,7 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
         }
 
         this.eventLoop().performGC();
-        this.waitForPromise(.{ .internal = promise });
+        try this.waitForPromise(.{ .internal = promise });
     }
 
     return this.pending_internal_promise.?;
@@ -2306,9 +2314,7 @@ pub inline fn _loadMacroEntryPoint(this: *VirtualMachine, entry_path: string) ?*
     var promise: *JSInternalPromise = undefined;
 
     promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path)) orelse return null;
-    this.waitForPromise(JSC.AnyPromise{
-        .internal = promise,
-    });
+    this.waitForPromise(JSC.AnyPromise{ .internal = promise }) catch return null;
 
     return promise;
 }

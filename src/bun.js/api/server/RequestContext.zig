@@ -104,7 +104,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const result = arguments.ptr[0];
             result.ensureStillAlive();
 
-            handleResolve(ctx, result);
+            try handleResolve(ctx, result);
             return .js_undefined;
         }
 
@@ -139,7 +139,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             ctx.renderMissing();
         }
 
-        fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
+        fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) bun.JSError!void {
             if (ctx.isAbortedOrEnded() or ctx.didUpgradeWebSocket()) {
                 return;
             }
@@ -170,7 +170,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            ctx.render(response);
+            return ctx.render(response);
         }
 
         pub fn shouldRenderMissing(this: *RequestContext) bool {
@@ -254,11 +254,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const ctx = arguments.ptr[1].asPromisePtr(@This());
             const err = arguments.ptr[0];
             defer ctx.deref();
-            handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .js_undefined);
+            try handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .js_undefined);
             return .js_undefined;
         }
 
-        fn handleReject(ctx: *RequestContext, value: JSC.JSValue) void {
+        fn handleReject(ctx: *RequestContext, value: JSC.JSValue) bun.JSExecutionTerminated!void {
             if (ctx.isAbortedOrEnded()) {
                 return;
             }
@@ -269,9 +269,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 const original_state = ctx.defer_deinit_until_callback_completes;
                 var should_deinit_context = if (original_state) |defer_deinit| defer_deinit.* else false;
                 ctx.defer_deinit_until_callback_completes = &should_deinit_context;
-                ctx.runErrorHandler(
-                    value,
-                );
+                try ctx.runErrorHandler(value);
                 ctx.defer_deinit_until_callback_completes = original_state;
                 // we try to deinit inside runErrorHandler so we just return here and let it deinit
                 if (should_deinit_context) {
@@ -549,7 +547,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
 
             if (this.request_weakref.get()) |request| {
-                if (request.internal_event_callback.trigger(Request.InternalJSEventCallback.EventType.timeout, globalThis)) {
+                if (request.internal_event_callback.trigger(Request.InternalJSEventCallback.EventType.timeout, globalThis) catch return) { // TODO: properly propagate exception upwards
                     any_js_calls = true;
                 }
             }
@@ -577,7 +575,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (this.request_weakref.get()) |request| {
                 request.request_context = AnyRequestContext.Null;
-                if (request.internal_event_callback.trigger(Request.InternalJSEventCallback.EventType.abort, globalThis)) {
+                if (request.internal_event_callback.trigger(Request.InternalJSEventCallback.EventType.abort, globalThis) catch return) { // TODO: properly propagate exception upwards
                     any_js_calls = true;
                 }
                 // we can already clean this strong refs
@@ -843,7 +841,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         // We tried open() in another thread for this
         // it was not faster due to the mountain of syscalls
-        pub fn renderSendFile(this: *RequestContext, blob: JSC.WebCore.Blob) void {
+        pub fn renderSendFile(this: *RequestContext, blob: JSC.WebCore.Blob) bun.JSExecutionTerminated!void {
             if (this.resp == null or this.server == null) return;
             const globalThis = this.server.?.globalThis;
             const resp = this.resp.?;
@@ -863,11 +861,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
-                    this.runErrorHandler(err.withPathLike(file.pathlike).toJS(globalThis));
-                    if (auto_close) {
-                        fd.close();
-                    }
-                    return;
+                    defer if (auto_close) fd.close();
+                    return this.runErrorHandler(err.withPathLike(file.pathlike).toJS(globalThis));
                 },
             };
 
@@ -883,10 +878,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
                     sys.message = bun.String.static("MacOS does not support sending non-regular files");
-                    this.runErrorHandler(sys.toErrorInstance(
-                        globalThis,
-                    ));
-                    return;
+                    return this.runErrorHandler(sys.toErrorInstance(globalThis));
                 }
             }
 
@@ -902,8 +894,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     };
                     var sys = err.withPathLike(file.pathlike).toShellSystemError();
                     sys.message = bun.String.static("File must be regular or FIFO");
-                    this.runErrorHandler(sys.toErrorInstance(globalThis));
-                    return;
+                    return this.runErrorHandler(sys.toErrorInstance(globalThis));
                 }
             }
 
@@ -954,7 +945,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
         }
 
-        pub fn doSendfile(this: *RequestContext, blob: Blob) void {
+        pub fn doSendfile(this: *RequestContext, blob: Blob) bun.JSExecutionTerminated!void {
             if (this.isAbortedOrEnded()) {
                 return;
             }
@@ -981,7 +972,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (result == .err) {
                 if (this.server) |server| {
-                    this.runErrorHandler(result.err.toErrorInstance(server.globalThis));
+                    return this.runErrorHandler(result.err.toErrorInstance(server.globalThis)) catch return; // TODO: properly propagate exception upwards
                 }
                 return;
             }
@@ -1024,18 +1015,18 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
         }
 
-        pub fn doRenderWithBodyLocked(this: *anyopaque, value: *JSC.WebCore.Body.Value) void {
-            doRenderWithBody(bun.cast(*RequestContext, this), value);
+        pub fn doRenderWithBodyLocked(this: *anyopaque, value: *JSC.WebCore.Body.Value) bun.JSExecutionTerminated!void {
+            return doRenderWithBody(bun.cast(*RequestContext, this), value);
         }
 
-        fn renderWithBlobFromBodyValue(this: *RequestContext) void {
+        fn renderWithBlobFromBodyValue(this: *RequestContext) bun.JSExecutionTerminated!void {
             if (this.isAbortedOrEnded()) {
                 return;
             }
 
             if (this.blob.needsToReadFile()) {
                 if (!this.flags.has_sendfile_ctx)
-                    this.doSendfile(this.blob.Blob);
+                    try this.doSendfile(this.blob.Blob);
                 return;
             }
 
@@ -1118,7 +1109,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 response_stream.detach(globalThis);
                 this.sink = null;
                 response_stream.sink.destroy();
-                return this.handleReject(err_value);
+                return this.handleReject(err_value) catch return; // TODO: properly propagate exception upwards
             }
 
             if (resp.hasResponded()) {
@@ -1194,7 +1185,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     response_stream.detach(globalThis);
                     this.sink = null;
                     response_stream.sink.destroy();
-                    return this.handleReject(assignment_result);
+                    return this.handleReject(assignment_result) catch return; // TODO: properly propagate exception upwards
                 }
             }
 
@@ -1290,7 +1281,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 if (body.value == .Locked) {
-                    body.value.toErrorInstance(.{ .AbortReason = .ConnectionClosed }, this.server.?.globalThis);
+                    body.value.toErrorInstance(.{ .AbortReason = .ConnectionClosed }, this.server.?.globalThis) catch {}; // TODO: properly propagate exception upwards
                     return true;
                 }
             }
@@ -1457,7 +1448,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this: *ThisServer,
             request_value: JSValue,
             response_value: JSValue,
-        ) void {
+        ) bun.JSExecutionTerminated!void {
             request_value.ensureStillAlive();
             response_value.ensureStillAlive();
             ctx.drainMicrotasks();
@@ -1479,8 +1470,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
 
             if (response_value.toError()) |err_value| {
-                ctx.runErrorHandler(err_value);
-                return;
+                return ctx.runErrorHandler(err_value);
             }
 
             if (response_value.as(JSC.WebCore.Response)) |response| {
@@ -1509,7 +1499,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         },
                         else => {},
                     }
-                    ctx.render(response);
+                    try ctx.render(response);
                 }
                 return;
             }
@@ -1567,12 +1557,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             },
                             else => {},
                         }
-                        ctx.render(response);
-                        return;
+                        return ctx.render(response);
                     },
                     .rejected => |err| {
-                        ctx.handleReject(err);
-                        return;
+                        return ctx.handleReject(err);
                     },
                 }
             }
@@ -1681,7 +1669,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             req.endStream(req.shouldCloseConnection());
         }
 
-        pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) void {
+        pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) bun.JSExecutionTerminated!void {
             this.drainMicrotasks();
 
             // If a ReadableStream can trivially be converted to a Blob, do so.
@@ -1694,8 +1682,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     if (this.isAbortedOrEnded()) {
                         return;
                     }
-                    this.runErrorHandler(err_ref.toJS(globalThis));
-                    return;
+                    return this.runErrorHandler(err_ref.toJS(globalThis));
                 },
                 // .InlineBlob,
                 .WTFStringImpl,
@@ -1704,7 +1691,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 => {
                     // toBlobIfPossible checks for WTFString needing a conversion.
                     this.blob = value.useAsAnyBlobAllowNonUTF8String();
-                    this.renderWithBlobFromBodyValue();
+                    try this.renderWithBlobFromBodyValue();
                     return;
                 },
                 .Locked => |*lock| {
@@ -1725,8 +1712,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 .message = bun.String.static("Stream already used, please create a new one"),
                             };
                             stream.value.unprotect();
-                            this.runErrorHandler(err.toErrorInstance(globalThis));
-                            return;
+                            return this.runErrorHandler(err.toErrorInstance(globalThis));
                         }
 
                         switch (stream.ptr) {
@@ -1792,8 +1778,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         // someone else is waiting for the stream or waiting for `onStartStreaming`
                         const readable = value.toReadableStream(globalThis) catch return; // TODO: properly propagate exception upwards
                         readable.ensureStillAlive();
-                        this.doRenderWithBody(value);
-                        return;
+                        return this.doRenderWithBody(value);
                     }
 
                     // when there's no stream, we need to
@@ -1865,14 +1850,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this.renderBytes();
         }
 
-        pub fn doRender(this: *RequestContext) void {
+        pub fn doRender(this: *RequestContext) bun.JSExecutionTerminated!void {
             ctxLog("doRender", .{});
 
             if (this.isAbortedOrEnded()) {
                 return;
             }
             var response = this.response_ptr.?;
-            this.doRenderWithBody(&response.body.value);
+            return this.doRenderWithBody(&response.body.value);
         }
 
         pub fn renderProductionError(this: *RequestContext, status: u16) void {
@@ -1898,11 +1883,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
         }
 
-        pub fn runErrorHandler(
-            this: *RequestContext,
-            value: JSC.JSValue,
-        ) void {
-            runErrorHandlerWithStatusCode(this, value, 500);
+        pub fn runErrorHandler(this: *RequestContext, value: JSC.JSValue) bun.JSExecutionTerminated!void {
+            return runErrorHandlerWithStatusCode(this, value, 500);
         }
 
         const PathnameFormatter = struct {
@@ -1971,7 +1953,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this: *RequestContext,
             value: JSC.JSValue,
             status: u16,
-        ) void {
+        ) bun.JSExecutionTerminated!void {
             JSC.markBinding(@src());
             if (this.server) |server| {
                 if (server.config.onError != .zero and !this.flags.has_called_error_handler) {
@@ -1987,11 +1969,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             this.finishRunningErrorHandler(err, status);
                             return;
                         } else if (result.asAnyPromise()) |promise| {
-                            this.processOnErrorPromise(result, promise, value, status);
-                            return;
+                            return this.processOnErrorPromise(result, promise, value, status);
                         } else if (result.as(Response)) |response| {
-                            this.render(response);
-                            return;
+                            return this.render(response);
                         }
                     }
                 }
@@ -2006,7 +1986,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             promise: JSC.AnyPromise,
             value: JSC.JSValue,
             status: u16,
-        ) void {
+        ) bun.JSExecutionTerminated!void {
             assert(ctx.server != null);
             var vm = ctx.server.?.vm;
 
@@ -2054,8 +2034,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         },
                         else => {},
                     }
-                    ctx.render(response);
-                    return;
+                    return ctx.render(response);
                 },
                 .rejected => |err| {
                     ctx.finishRunningErrorHandler(err, status);
@@ -2068,11 +2047,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this: *RequestContext,
             value: JSC.JSValue,
             status: u16,
-        ) void {
+        ) bun.JSExecutionTerminated!void {
             JSC.markBinding(@src());
             if (this.resp == null or this.resp.?.hasResponded()) return;
-
-            runErrorHandlerWithStatusCodeDontCheckResponded(this, value, status);
+            return runErrorHandlerWithStatusCodeDontCheckResponded(this, value, status);
         }
 
         pub fn renderMetadata(this: *RequestContext) void {
@@ -2205,11 +2183,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this.deref();
         }
 
-        pub fn render(this: *RequestContext, response: *JSC.WebCore.Response) void {
+        pub fn render(this: *RequestContext, response: *JSC.WebCore.Response) bun.JSExecutionTerminated!void {
             ctxLog("render", .{});
             this.response_ptr = response;
-
-            this.doRender();
+            return this.doRender();
         }
 
         pub fn onBufferedBodyChunk(this: *RequestContext, resp: *App.Response, chunk: []const u8, last: bool) void {
@@ -2236,12 +2213,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 defer vm.eventLoop().exit();
 
                 if (!last) {
-                    readable.ptr.Bytes.onData(
-                        .{
-                            .temporary = bun.ByteList.initConst(chunk),
-                        },
-                        bun.default_allocator,
-                    );
+                    readable.ptr.Bytes.onData(.{ .temporary = bun.ByteList.initConst(chunk) }, bun.default_allocator) catch {}; // TODO: properly propagate exception upwards
                 } else {
                     var strong = this.request_body_readable_stream_ref;
                     this.request_body_readable_stream_ref = .{};
@@ -2252,12 +2224,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     }
 
                     readable.value.ensureStillAlive();
-                    readable.ptr.Bytes.onData(
-                        .{
-                            .temporary_and_done = bun.ByteList.initConst(chunk),
-                        },
-                        bun.default_allocator,
-                    );
+                    readable.ptr.Bytes.onData(.{ .temporary_and_done = bun.ByteList.initConst(chunk) }, bun.default_allocator) catch {}; // TODO: properly propagate exception upwards
                 }
 
                 return;
@@ -2285,7 +2252,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         // } else {
                         bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
                             this.request_body_buf.clearAndFree(this.allocator);
-                            body.value.toError(err, globalThis);
+                            body.value.toError(err, globalThis) catch return; // TODO: properly propagate exception upwards
                             break :getter;
                         };
 
@@ -2307,7 +2274,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         loop.enter();
                         defer loop.exit();
 
-                        old.resolve(&body.value, globalThis, null);
+                        old.resolve(&body.value, globalThis, null) catch return; // TODO: properly propagate exception upwards
                     }
                     return;
                 }
@@ -2360,7 +2327,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         var old = body.value;
                         old.Locked.onReceiveValue = null;
                         var new_body: WebCore.Body.Value = .{ .Null = {} };
-                        old.resolve(&new_body, server.globalThis, null);
+                        old.resolve(&new_body, server.globalThis, null) catch return; // TODO: properly propagate exception upwards
                         body.value = new_body;
                     }
                 }

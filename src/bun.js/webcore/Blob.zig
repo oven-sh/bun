@@ -912,11 +912,11 @@ fn writeFileWithEmptySourceToDestination(ctx: *JSC.JSGlobalObject, destination_b
 
                 pub fn resolve(result: S3.S3UploadResult, opaque_this: *anyopaque) void {
                     const this: *@This() = @ptrCast(@alignCast(opaque_this));
-                    switch (result) {
+                    defer this.deinit();
+                    return switch (result) {
                         .success => this.promise.resolve(this.global, JSC.jsNumber(0)),
                         .failure => |err| this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
-                    }
-                    this.deinit();
+                    } catch return; //TODO:
                 }
 
                 fn deinit(this: *@This()) void {
@@ -1101,11 +1101,11 @@ pub fn writeFileWithSourceDestination(ctx: *JSC.JSGlobalObject, source_blob: *Bl
 
                         pub fn resolve(result: S3.S3UploadResult, opaque_self: *anyopaque) void {
                             const this: *@This() = @ptrCast(@alignCast(opaque_self));
-                            switch (result) {
+                            defer this.deinit();
+                            return switch (result) {
                                 .success => this.promise.resolve(this.global, JSC.jsNumber(this.store.data.bytes.len)),
                                 .failure => |err| this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
-                            }
-                            this.deinit();
+                            } catch return; //TODO:
                         }
 
                         fn deinit(this: *@This()) void {
@@ -1687,6 +1687,7 @@ export fn JSDOMFile__construct(globalThis: *JSC.JSGlobalObject, callframe: *JSC.
             globalThis.throwOutOfMemory() catch {};
             return null;
         },
+        error.JSExecutionTerminated => null,
     };
 }
 pub fn JSDOMFile__construct_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Blob {
@@ -1705,6 +1706,7 @@ pub fn JSDOMFile__construct_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Ca
 
         blob = get(globalThis, args[0], false, true) catch |err| switch (err) {
             error.JSError, error.OutOfMemory => |e| return e,
+            error.JSExecutionTerminated => |e| return e,
             error.InvalidArguments => {
                 return globalThis.throwInvalidArguments("new Blob() expects an Array", .{});
             },
@@ -2166,7 +2168,7 @@ const S3BlobDownloadTask = struct {
     pub fn callHandler(this: *S3BlobDownloadTask, raw_bytes: []u8) JSValue {
         return this.handler(&this.blob, this.globalThis, raw_bytes);
     }
-    pub fn onS3DownloadResolved(result: S3.S3DownloadResult, this: *S3BlobDownloadTask) void {
+    pub fn onS3DownloadResolved(result: S3.S3DownloadResult, this: *S3BlobDownloadTask) bun.JSExecutionTerminated!void {
         defer this.deinit();
         switch (result) {
             .success => |response| {
@@ -2174,10 +2176,10 @@ const S3BlobDownloadTask = struct {
                 if (this.blob.size == Blob.max_size) {
                     this.blob.size = @truncate(bytes.len);
                 }
-                JSC.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, bytes });
+                return JSC.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, bytes });
             },
             inline .not_found, .failure => |err| {
-                this.promise.reject(this.globalThis, err.toJS(this.globalThis, this.blob.store.?.getPath()));
+                return this.promise.reject(this.globalThis, err.toJS(this.globalThis, this.blob.store.?.getPath()));
             },
         }
     }
@@ -2322,7 +2324,7 @@ pub fn onFileStreamResolveRequestStream(globalThis: *JSC.JSGlobalObject, callfra
     if (strong.get(globalThis)) |stream| {
         stream.done(globalThis);
     }
-    this.promise.resolve(globalThis, JSC.JSValue.jsNumber(0));
+    try this.promise.resolve(globalThis, JSC.JSValue.jsNumber(0));
     return .js_undefined;
 }
 
@@ -2336,7 +2338,7 @@ pub fn onFileStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callfram
     defer strong.deinit();
     this.readable_stream_ref = .{};
 
-    this.promise.reject(globalThis, err);
+    try this.promise.reject(globalThis, err);
 
     if (strong.get(globalThis)) |stream| {
         stream.cancel(globalThis);
@@ -3136,6 +3138,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
             blob = get(globalThis, args[0], false, true) catch |err| switch (err) {
                 error.OutOfMemory, error.JSError => |e| return e,
                 error.InvalidArguments => return globalThis.throwInvalidArguments("new Blob() expects an Array", .{}),
+                error.JSExecutionTerminated => |e| return e,
             };
 
             if (args.len > 1) {
@@ -4105,8 +4108,8 @@ pub const Any = union(enum) {
         return JSC.JSPromise.wrap(globalThis, toActionValue, .{ this, globalThis, action });
     }
 
-    pub fn wrap(this: *Any, promise: JSC.AnyPromise, globalThis: *JSGlobalObject, action: streams.BufferAction.Tag) void {
-        promise.wrap(globalThis, toActionValue, .{ this, globalThis, action });
+    pub fn wrap(this: *Any, promise: JSC.AnyPromise, globalThis: *JSGlobalObject, action: streams.BufferAction.Tag) bun.JSExecutionTerminated!void {
+        return promise.wrap(globalThis, toActionValue, .{ this, globalThis, action });
     }
 
     pub fn toJSON(this: *Any, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) bun.JSError!JSValue {

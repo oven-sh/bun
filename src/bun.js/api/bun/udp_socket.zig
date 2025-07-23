@@ -29,7 +29,7 @@ fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
     event_loop.enter();
     defer event_loop.exit();
     _ = callback.call(this.globalThis, this.thisValue, &.{this.thisValue}) catch |err| {
-        this.callErrorHandler(.zero, this.globalThis.takeException(err));
+        this.callErrorHandler(.zero, this.globalThis.takeException(err)) catch return;
     };
 }
 
@@ -97,7 +97,7 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
             JSC.jsNumber(port),
             hostname_string.transferToJS(globalThis),
         }) catch |err| {
-            udpSocket.callErrorHandler(.zero, udpSocket.globalThis.takeException(err));
+            udpSocket.callErrorHandler(.zero, udpSocket.globalThis.takeException(err)) catch return; // TODO: properly propagate exception upwards
         };
     }
 }
@@ -362,7 +362,7 @@ pub const UDPSocket = struct {
         this: *This,
         thisValue: JSValue,
         err: JSValue,
-    ) void {
+    ) bun.JSExecutionTerminated!void {
         const callback = this.config.on_error;
         const globalThis = this.globalThis;
         const vm = globalThis.bunVM();
@@ -375,7 +375,7 @@ pub const UDPSocket = struct {
             return;
         }
 
-        _ = callback.call(globalThis, thisValue, &.{err}) catch |e| globalThis.reportActiveExceptionAsUnhandled(e);
+        _ = callback.call(globalThis, thisValue, &.{err}) catch |e| try globalThis.reportActiveExceptionAsUnhandled(e);
     }
 
     pub fn setBroadcast(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {

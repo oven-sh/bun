@@ -6332,7 +6332,7 @@ const HmrSocket = struct {
         });
     }
 
-    pub fn onOpen(s: *HmrSocket, ws: AnyWebSocket) void {
+    pub fn onOpen(s: *HmrSocket, ws: AnyWebSocket) error{}!void {
         const send_status = ws.send(&(.{MessageId.version.char()} ++ s.dev.configuration_hash_key), .binary, false, true);
         s.underlying = ws;
 
@@ -6345,7 +6345,7 @@ const HmrSocket = struct {
         }
     }
 
-    pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
+    pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) error{}!void {
         _ = opcode;
 
         if (msg.len == 0)

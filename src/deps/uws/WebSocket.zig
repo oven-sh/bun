@@ -219,7 +219,9 @@ pub const WebSocketBehavior = extern struct {
                 @call(bun.callmod_inline, Type.onOpen, .{
                     this,
                     ws,
-                });
+                }) catch |err| switch (err) {
+                    error.JSExecutionTerminated => return,
+                };
             }
 
             pub fn onMessage(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
@@ -230,7 +232,9 @@ pub const WebSocketBehavior = extern struct {
                     ws,
                     if (length > 0) message[0..length] else "",
                     opcode,
-                });
+                }) catch |err| switch (err) {
+                    error.JSExecutionTerminated => return,
+                };
             }
 
             pub fn onDrain(raw_ws: *RawWebSocket) callconv(.C) void {
@@ -239,7 +243,9 @@ pub const WebSocketBehavior = extern struct {
                 @call(bun.callmod_inline, Type.onDrain, .{
                     this,
                     ws,
-                });
+                }) catch |err| switch (err) {
+                    error.JSExecutionTerminated => return,
+                };
             }
 
             pub fn onPing(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
@@ -249,7 +255,9 @@ pub const WebSocketBehavior = extern struct {
                     this,
                     ws,
                     if (length > 0) message[0..length] else "",
-                });
+                }) catch |err| switch (err) {
+                    error.JSExecutionTerminated => return,
+                };
             }
 
             pub fn onPong(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
@@ -259,7 +267,9 @@ pub const WebSocketBehavior = extern struct {
                     this,
                     ws,
                     if (length > 0) message[0..length] else "",
-                });
+                }) catch |err| switch (err) {
+                    error.JSExecutionTerminated => return,
+                };
             }
 
             pub fn onClose(raw_ws: *RawWebSocket, code: i32, message: [*c]const u8, length: usize) callconv(.C) void {

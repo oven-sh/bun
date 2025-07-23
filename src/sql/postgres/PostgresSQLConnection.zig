@@ -325,7 +325,7 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
             value,
             this.getQueriesArray(),
         },
-    ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
+    ) catch |e| (this.globalObject.reportActiveExceptionAsUnhandled(e) catch return);
 }
 
 pub fn failFmt(this: *PostgresSQLConnection, comptime error_code: JSC.Error, comptime fmt: [:0]const u8, args: anytype) void {

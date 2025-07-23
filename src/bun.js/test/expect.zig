@@ -187,7 +187,7 @@ pub const Expect = struct {
                     const vm = globalThis.vm();
                     promise.setHandled(vm);
 
-                    globalThis.bunVM().waitForPromise(promise);
+                    try globalThis.bunVM().waitForPromise(promise);
 
                     const newValue = promise.result(vm);
                     switch (promise.status(vm)) {
@@ -2481,7 +2481,7 @@ pub const Expect = struct {
         }
 
         if (return_value.asAnyPromise()) |promise| {
-            vm.waitForPromise(promise);
+            try vm.waitForPromise(promise);
             scope.apply(vm);
             switch (promise.unwrap(globalThis.vm(), .mark_handled)) {
                 .fulfilled => {
@@ -4753,7 +4753,7 @@ pub const Expect = struct {
             const vm = globalThis.vm();
             promise.setHandled(vm);
 
-            globalThis.bunVM().waitForPromise(promise);
+            try globalThis.bunVM().waitForPromise(promise);
 
             result = promise.result(vm);
             result.ensureStillAlive();

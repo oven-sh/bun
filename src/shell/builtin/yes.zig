@@ -88,7 +88,7 @@ fn writeNoIO(this: *@This()) Yield {
     if (this.writeOnceNoIO(this.buffer[0..this.buffer_used])) |yield| return yield;
     if (this.writeOnceNoIO(this.buffer[0..this.buffer_used])) |yield| return yield;
     if (this.writeOnceNoIO(this.buffer[0..this.buffer_used])) |yield| return yield;
-    this.task.enqueue();
+    this.task.enqueue() catch return .terminated;
     return .suspended;
 }
 
@@ -144,9 +144,9 @@ pub const YesTask = struct {
     evtloop: JSC.EventLoopHandle,
     concurrent_task: JSC.EventLoopTask,
 
-    pub fn enqueue(this: *@This()) void {
+    pub fn enqueue(this: *@This()) bun.JSExecutionTerminated!void {
         if (this.evtloop == .js) {
-            this.evtloop.js.tick();
+            try this.evtloop.js.tick();
             this.evtloop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
         } else {
             this.evtloop.mini.loop.tick();

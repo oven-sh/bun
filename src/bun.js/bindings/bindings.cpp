@@ -3324,18 +3324,19 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
         scope.clearException();
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value())));
+        return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value()));
     }
+    scope.assertNoException();
 
     if (auto* promise = jsDynamicCast<JSC::JSPromise*>(result)) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(promise));
+        return JSValue::encode(promise);
     }
 
     if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(result)) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err)));
+        return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err));
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result)));
+    return JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result));
 }
 
 void JSC__JSPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* globalObject,
@@ -5379,6 +5380,8 @@ void JSC__VM__drainMicrotasks(JSC::VM* arg0) { arg0->drainMicrotasks(); }
 bool JSC__VM__executionForbidden(JSC::VM* arg0) { return (*arg0).executionForbidden(); }
 
 bool JSC__VM__isEntered(JSC::VM* arg0) { return (*arg0).isEntered(); }
+
+bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception) { return vm->isTerminationException(exception); }
 
 void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1) { (*arg0).setExecutionForbidden(); }
 

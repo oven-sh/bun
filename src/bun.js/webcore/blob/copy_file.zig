@@ -61,7 +61,7 @@ pub const CopyFile = struct {
         bun.destroy(this);
     }
 
-    pub fn reject(this: *CopyFile, promise: *JSC.JSPromise) void {
+    pub fn reject(this: *CopyFile, promise: *JSC.JSPromise) bun.JSExecutionTerminated!void {
         const globalThis = this.globalThis;
         var system_error: SystemError = this.system_error orelse SystemError{ .message = .empty };
         if (this.source_file_store.pathlike == .path and system_error.path.isEmpty()) {
@@ -76,18 +76,17 @@ pub const CopyFile = struct {
         if (this.store) |store| {
             store.deref();
         }
-        promise.reject(globalThis, instance);
+        return promise.reject(globalThis, instance);
     }
 
-    pub fn then(this: *CopyFile, promise: *JSC.JSPromise) void {
+    pub fn then(this: *CopyFile, promise: *JSC.JSPromise) bun.JSExecutionTerminated!void {
         this.source_store.?.deref();
 
         if (this.system_error != null) {
-            this.reject(promise);
-            return;
+            return this.reject(promise);
         }
 
-        promise.resolve(this.globalThis, JSC.JSValue.jsNumberFromUint64(this.read_len));
+        return promise.resolve(this.globalThis, JSC.JSValue.jsNumberFromUint64(this.read_len));
     }
 
     pub fn run(this: *CopyFile) void {

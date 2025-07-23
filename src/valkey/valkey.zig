@@ -181,16 +181,16 @@ pub const ValkeyClient = struct {
         defer commands.deinit();
 
         if (globalObjectOrFinalizing) |globalThis| {
-            const object = protocol.valkeyErrorToJS(globalThis, "Connection closed", protocol.RedisError.ConnectionClosed);
+            const object = protocol.valkeyErrorToJS(globalThis, "Connection closed", protocol.RedisError.ConnectionClosed) catch unreachable;
             for (pending.readableSlice(0)) |pair| {
                 var pair_ = pair;
-                pair_.rejectCommand(globalThis, object);
+                pair_.rejectCommand(globalThis, object) catch return;
             }
 
             for (commands.readableSlice(0)) |cmd| {
                 var offline_cmd = cmd;
-                offline_cmd.promise.reject(globalThis, object);
-                offline_cmd.deinit(this.allocator);
+                defer offline_cmd.deinit(this.allocator);
+                offline_cmd.promise.reject(globalThis, object) catch return;
             }
         } else {
             // finalizing. we can't call into JS.
@@ -320,7 +320,7 @@ pub const ValkeyClient = struct {
     }
 
     /// Reject all pending commands with an error
-    fn rejectAllPendingCommands(pending_ptr: *Command.PromisePair.Queue, entries_ptr: *Command.Entry.Queue, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, jsvalue: JSC.JSValue) void {
+    fn rejectAllPendingCommands(pending_ptr: *Command.PromisePair.Queue, entries_ptr: *Command.Entry.Queue, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, jsvalue: JSC.JSValue) bun.JSExecutionTerminated!void {
         var pending = pending_ptr.*;
         var entries = entries_ptr.*;
         defer pending.deinit();
@@ -331,14 +331,14 @@ pub const ValkeyClient = struct {
         // Reject commands in the command queue
         for (pending.readableSlice(0)) |item| {
             var command_pair = item;
-            command_pair.rejectCommand(globalThis, jsvalue);
+            try command_pair.rejectCommand(globalThis, jsvalue);
         }
 
         // Reject commands in the offline queue
         for (entries.readableSlice(0)) |item| {
             var cmd = item;
-            cmd.promise.reject(globalThis, jsvalue);
-            cmd.deinit(allocator);
+            defer cmd.deinit(allocator);
+            try cmd.promise.reject(globalThis, jsvalue);
         }
     }
 
@@ -360,14 +360,14 @@ pub const ValkeyClient = struct {
         in_flight: Command.PromisePair.Queue,
         queue: Command.Entry.Queue,
 
-        pub fn run(this: *DeferredFailure) void {
+        pub fn run(this: *DeferredFailure) bun.JSExecutionTerminated!void {
             defer {
                 bun.default_allocator.free(this.message);
                 bun.destroy(this);
             }
             debug("running deferred failure", .{});
-            const err = protocol.valkeyErrorToJS(this.globalThis, this.message, this.err);
-            rejectAllPendingCommands(&this.in_flight, &this.queue, this.globalThis, bun.default_allocator, err);
+            const err = try protocol.valkeyErrorToJS(this.globalThis, this.message, this.err);
+            try rejectAllPendingCommands(&this.in_flight, &this.queue, this.globalThis, bun.default_allocator, err);
         }
 
         pub fn enqueue(this: *DeferredFailure) void {
@@ -378,7 +378,7 @@ pub const ValkeyClient = struct {
     };
 
     /// Mark the connection as failed with error message
-    pub fn fail(this: *ValkeyClient, message: []const u8, err: protocol.RedisError) void {
+    pub fn fail(this: *ValkeyClient, message: []const u8, err: protocol.RedisError) bun.JSExecutionTerminated!void {
         debug("failed: {s}: {s}", .{ message, @errorName(err) });
         if (this.status == .failed) return;
 
@@ -405,12 +405,12 @@ pub const ValkeyClient = struct {
         }
 
         const globalThis = this.globalObject();
-        this.failWithJSValue(globalThis, protocol.valkeyErrorToJS(globalThis, message, err));
+        return this.failWithJSValue(globalThis, try protocol.valkeyErrorToJS(globalThis, message, err));
     }
 
-    pub fn failWithJSValue(this: *ValkeyClient, globalThis: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
+    pub fn failWithJSValue(this: *ValkeyClient, globalThis: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) bun.JSExecutionTerminated!void {
         this.status = .failed;
-        rejectAllPendingCommands(&this.in_flight, &this.queue, globalThis, this.allocator, jsvalue);
+        try rejectAllPendingCommands(&this.in_flight, &this.queue, globalThis, this.allocator, jsvalue);
 
         if (!this.flags.is_authenticated) {
             this.flags.is_manually_closed = true;
@@ -425,23 +425,23 @@ pub const ValkeyClient = struct {
     }
 
     /// Handle connection closed event
-    pub fn onClose(this: *ValkeyClient) void {
+    pub fn onClose(this: *ValkeyClient) bun.JSExecutionTerminated!void {
         this.unregisterAutoFlusher();
         this.write_buffer.deinit(this.allocator);
 
         // If manually closing, don't attempt to reconnect
         if (this.flags.is_manually_closed) {
             debug("skip reconnecting since the connection is manually closed", .{});
-            this.fail("Connection closed", protocol.RedisError.ConnectionClosed);
-            this.onValkeyClose();
+            try this.fail("Connection closed", protocol.RedisError.ConnectionClosed);
+            try this.onValkeyClose();
             return;
         }
 
         // If auto reconnect is disabled, just fail
         if (!this.flags.enable_auto_reconnect) {
             debug("skip reconnecting since auto reconnect is disabled", .{});
-            this.fail("Connection closed", protocol.RedisError.ConnectionClosed);
-            this.onValkeyClose();
+            try this.fail("Connection closed", protocol.RedisError.ConnectionClosed);
+            try this.onValkeyClose();
             return;
         }
 
@@ -451,8 +451,8 @@ pub const ValkeyClient = struct {
 
         if (delay_ms == 0 or this.retry_attempts > this.max_retries) {
             debug("Max retries reached or retry strategy returned 0, giving up reconnection", .{});
-            this.fail("Max reconnection attempts reached", protocol.RedisError.ConnectionClosed);
-            this.onValkeyClose();
+            try this.fail("Max reconnection attempts reached", protocol.RedisError.ConnectionClosed);
+            try this.onValkeyClose();
             return;
         }
 
@@ -498,7 +498,7 @@ pub const ValkeyClient = struct {
     }
 
     /// Process data received from socket
-    pub fn onData(this: *ValkeyClient, data: []const u8) void {
+    pub fn onData(this: *ValkeyClient, data: []const u8) bun.JSExecutionTerminated!void {
         // Caller refs / derefs.
 
         // Path 1: Buffer already has data, append and process from buffer
@@ -523,24 +523,21 @@ pub const ValkeyClient = struct {
                         }
                         return;
                     } else {
-                        this.fail("Failed to read data (buffer path)", err);
-                        return;
+                        return this.fail("Failed to read data (buffer path)", err);
                     }
                 };
                 defer value.deinit(this.allocator);
 
                 const bytes_consumed = reader.pos - before_read_pos;
                 if (bytes_consumed == 0 and remaining_buffer.len > 0) {
-                    this.fail("Parser consumed 0 bytes unexpectedly (buffer path)", error.InvalidResponse);
-                    return;
+                    return this.fail("Parser consumed 0 bytes unexpectedly (buffer path)", error.InvalidResponse);
                 }
 
                 this.read_buffer.consume(@truncate(bytes_consumed));
 
                 var value_to_handle = value; // Use temp var for defer
                 this.handleResponse(&value_to_handle) catch |err| {
-                    this.fail("Failed to handle response (buffer path)", err);
-                    return;
+                    return this.fail("Failed to handle response (buffer path)", err);
                 };
 
                 if (this.status == .disconnected or this.status == .failed) {
@@ -569,8 +566,7 @@ pub const ValkeyClient = struct {
                     return; // Exit onData, next call will use the buffer path
                 } else {
                     // Any other error is fatal
-                    this.fail("Failed to read data (stack path)", err);
-                    return;
+                    return this.fail("Failed to read data (stack path)", err);
                 }
             };
             // Successfully read a full message from the stack data
@@ -579,8 +575,7 @@ pub const ValkeyClient = struct {
             const bytes_consumed = reader.pos - before_read_pos;
             if (bytes_consumed == 0) {
                 // This case should ideally not happen if readValue succeeded and slice wasn't empty
-                this.fail("Parser consumed 0 bytes unexpectedly (stack path)", error.InvalidResponse);
-                return;
+                return this.fail("Parser consumed 0 bytes unexpectedly (stack path)", error.InvalidResponse);
             }
 
             // Advance the view into the stack data slice for the next iteration
@@ -589,8 +584,7 @@ pub const ValkeyClient = struct {
             // Handle the successfully parsed response
             var value_to_handle = value; // Use temp var for defer
             this.handleResponse(&value_to_handle) catch |err| {
-                this.fail("Failed to handle response (stack path)", err);
-                return;
+                return this.fail("Failed to handle response (stack path)", err);
             };
 
             // Check connection status after handling
@@ -607,13 +601,12 @@ pub const ValkeyClient = struct {
         // If the loop finishes, the entire 'data' was processed without needing the buffer.
     }
 
-    fn handleHelloResponse(this: *ValkeyClient, value: *protocol.RESPValue) void {
+    fn handleHelloResponse(this: *ValkeyClient, value: *protocol.RESPValue) bun.JSExecutionTerminated!void {
         debug("Processing HELLO response", .{});
 
         switch (value.*) {
             .Error => |err| {
-                this.fail(err, protocol.RedisError.AuthenticationFailed);
-                return;
+                return this.fail(err, protocol.RedisError.AuthenticationFailed);
             },
             .SimpleString => |str| {
                 if (std.mem.eql(u8, str, "OK")) {
@@ -622,9 +615,7 @@ pub const ValkeyClient = struct {
                     this.onValkeyConnect(value);
                     return;
                 }
-                this.fail("Authentication failed (unexpected response)", protocol.RedisError.AuthenticationFailed);
-
-                return;
+                return this.fail("Authentication failed (unexpected response)", protocol.RedisError.AuthenticationFailed);
             },
             .Map => |map| {
                 // This is the HELLO response map
@@ -639,8 +630,7 @@ pub const ValkeyClient = struct {
                                     const proto_version = entry.value.Integer;
                                     debug("Server protocol version: {d}", .{proto_version});
                                     if (proto_version != 3) {
-                                        this.fail("Server does not support RESP3", protocol.RedisError.UnsupportedProtocol);
-                                        return;
+                                        return this.fail("Server does not support RESP3", protocol.RedisError.UnsupportedProtocol);
                                     }
                                 }
                             }
@@ -656,8 +646,7 @@ pub const ValkeyClient = struct {
                 return;
             },
             else => {
-                this.fail("Authentication failed with unexpected response", protocol.RedisError.AuthenticationFailed);
-                return;
+                return this.fail("Authentication failed with unexpected response", protocol.RedisError.AuthenticationFailed);
             },
         }
     }
@@ -667,10 +656,8 @@ pub const ValkeyClient = struct {
         debug("onData() {any}", .{value.*});
         // Special handling for the initial HELLO response
         if (!this.flags.is_authenticated) {
-            this.handleHelloResponse(value);
-
             // We've handled the HELLO response without consuming anything from the command queue
-            return;
+            return this.handleHelloResponse(value);
         }
 
         // For regular commands, get the next command+promise pair from the queue
@@ -699,14 +686,14 @@ pub const ValkeyClient = struct {
         defer loop.exit();
 
         if (value.* == .Error) {
-            promise_ptr.reject(globalThis, value.toJS(globalThis) catch |err| globalThis.takeError(err));
+            try promise_ptr.reject(globalThis, value.toJS(globalThis) catch |err| globalThis.takeError(err));
         } else {
-            promise_ptr.resolve(globalThis, value);
+            try promise_ptr.resolve(globalThis, value);
         }
     }
 
     /// Send authentication command to Valkey server
-    fn authenticate(this: *ValkeyClient) void {
+    fn authenticate(this: *ValkeyClient) bun.JSExecutionTerminated!void {
         // First send HELLO command for RESP3 protocol
         debug("Sending HELLO 3 command", .{});
 
@@ -738,8 +725,7 @@ pub const ValkeyClient = struct {
         };
 
         hello_cmd.write(this.writer()) catch |err| {
-            this.fail("Failed to write HELLO command", err);
-            return;
+            return this.fail("Failed to write HELLO command", err);
         };
 
         // If using a specific database, send SELECT command
@@ -751,23 +737,22 @@ pub const ValkeyClient = struct {
                 .args = .{ .raw = &[_][]const u8{db_str} },
             };
             select_cmd.write(this.writer()) catch |err| {
-                this.fail("Failed to write SELECT command", err);
-                return;
+                return this.fail("Failed to write SELECT command", err);
             };
         }
     }
 
     /// Handle socket open event
-    pub fn onOpen(this: *ValkeyClient, socket: uws.AnySocket) void {
+    pub fn onOpen(this: *ValkeyClient, socket: uws.AnySocket) bun.JSExecutionTerminated!void {
         this.socket = socket;
         this.write_buffer.deinit(this.allocator);
         this.read_buffer.deinit(this.allocator);
-        this.start();
+        return this.start();
     }
 
     /// Start the connection process
-    fn start(this: *ValkeyClient) void {
-        this.authenticate();
+    fn start(this: *ValkeyClient) bun.JSExecutionTerminated!void {
+        try this.authenticate();
         _ = this.flushData();
     }
 
@@ -852,8 +837,7 @@ pub const ValkeyClient = struct {
 
         switch (this.status) {
             .connecting, .connected => command.write(this.writer()) catch {
-                promise.reject(this.globalObject(), this.globalObject().createOutOfMemoryError());
-                return;
+                return promise.reject(this.globalObject(), this.globalObject().createOutOfMemoryError());
             },
             else => unreachable,
         }
@@ -892,11 +876,11 @@ pub const ValkeyClient = struct {
                 if (this.flags.enable_offline_queue) {
                     try this.enqueue(command, &promise);
                 } else {
-                    promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection is closed and offline queue is disabled", .{}).toJS());
+                    try promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection is closed and offline queue is disabled", .{}).toJS());
                 }
             },
             .failed => {
-                promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection has failed", .{}).toJS());
+                try promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection has failed", .{}).toJS());
             },
         }
 
@@ -942,19 +926,19 @@ pub const ValkeyClient = struct {
     }
 
     pub fn onValkeyConnect(this: *ValkeyClient, value: *protocol.RESPValue) void {
-        this.parent().onValkeyConnect(value);
+        return this.parent().onValkeyConnect(value);
     }
 
     pub fn onValkeyReconnect(this: *ValkeyClient) void {
-        this.parent().onValkeyReconnect();
+        return this.parent().onValkeyReconnect();
     }
 
-    pub fn onValkeyClose(this: *ValkeyClient) void {
-        this.parent().onValkeyClose();
+    pub fn onValkeyClose(this: *ValkeyClient) bun.JSExecutionTerminated!void {
+        return this.parent().onValkeyClose();
     }
 
-    pub fn onValkeyTimeout(this: *ValkeyClient) void {
-        this.parent().onValkeyTimeout();
+    pub fn onValkeyTimeout(this: *ValkeyClient) bun.JSExecutionTerminated!void {
+        return this.parent().onValkeyTimeout();
     }
 };
 

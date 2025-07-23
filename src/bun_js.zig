@@ -268,17 +268,17 @@ pub const Run = struct {
                 // PropertyCallback which means we don't have a WriteBarrier we can access
                 const global = vm.global;
                 const bun_object = vm.global.toJSValue().get(global, "Bun") catch |err| {
-                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    vm.global.reportActiveExceptionAsUnhandled(err) catch return;
                     break :do_redis_preconnect;
                 } orelse break :do_redis_preconnect;
                 const redis = bun_object.get(global, "redis") catch |err| {
-                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    vm.global.reportActiveExceptionAsUnhandled(err) catch return;
                     break :do_redis_preconnect;
                 } orelse break :do_redis_preconnect;
                 const client = redis.as(bun.valkey.JSValkeyClient) orelse break :do_redis_preconnect;
                 // If connection fails, this will become an unhandled promise rejection, which is fine.
                 _ = client.doConnect(vm.global, redis) catch |err| {
-                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    vm.global.reportActiveExceptionAsUnhandled(err) catch return;
                     break :do_redis_preconnect;
                 };
             }
@@ -288,19 +288,19 @@ pub const Run = struct {
             if (this.ctx.runtime_options.sql_preconnect) {
                 const global = vm.global;
                 const bun_object = vm.global.toJSValue().get(global, "Bun") catch |err| {
-                    global.reportActiveExceptionAsUnhandled(err);
+                    global.reportActiveExceptionAsUnhandled(err) catch return;
                     break :do_postgres_preconnect;
                 } orelse break :do_postgres_preconnect;
                 const sql_object = bun_object.get(global, "sql") catch |err| {
-                    global.reportActiveExceptionAsUnhandled(err);
+                    global.reportActiveExceptionAsUnhandled(err) catch return;
                     break :do_postgres_preconnect;
                 } orelse break :do_postgres_preconnect;
                 const connect_fn = sql_object.get(global, "connect") catch |err| {
-                    global.reportActiveExceptionAsUnhandled(err);
+                    global.reportActiveExceptionAsUnhandled(err) catch return;
                     break :do_postgres_preconnect;
                 } orelse break :do_postgres_preconnect;
                 _ = connect_fn.call(global, sql_object, &.{}) catch |err| {
-                    global.reportActiveExceptionAsUnhandled(err);
+                    global.reportActiveExceptionAsUnhandled(err) catch return;
                     break :do_postgres_preconnect;
                 };
             }
@@ -324,8 +324,8 @@ pub const Run = struct {
                 promise.setHandled(vm.global.vm());
 
                 if (vm.hot_reload != .none or handled) {
-                    vm.eventLoop().tick();
-                    vm.eventLoop().tickPossiblyForever();
+                    vm.eventLoop().tick() catch {}; // ??
+                    vm.eventLoop().tickPossiblyForever() catch {}; // ??
                 } else {
                     vm.exit_handler.exit_code = 1;
                     vm.onExit();
@@ -380,7 +380,7 @@ pub const Run = struct {
             vm.global.vm().releaseWeakRefs();
             _ = vm.arena.gc();
             _ = vm.global.vm().runGC(false);
-            vm.tick();
+            vm.tick() catch {}; // ??
         }
 
         {
@@ -389,24 +389,24 @@ pub const Run = struct {
 
                 while (true) {
                     while (vm.isEventLoopAlive()) {
-                        vm.tick();
+                        vm.tick() catch {}; // ??
 
                         // Report exceptions in hot-reloaded modules
                         vm.handlePendingInternalPromiseRejection();
 
-                        vm.eventLoop().autoTickActive();
+                        vm.eventLoop().autoTickActive() catch {}; // ??
                     }
 
-                    vm.onBeforeExit();
+                    vm.onBeforeExit() catch {}; // ??
 
                     vm.handlePendingInternalPromiseRejection();
 
-                    vm.eventLoop().tickPossiblyForever();
+                    vm.eventLoop().tickPossiblyForever() catch {}; // ??
                 }
             } else {
                 while (vm.isEventLoopAlive()) {
-                    vm.tick();
-                    vm.eventLoop().autoTickActive();
+                    vm.tick() catch {}; // ??
+                    vm.eventLoop().autoTickActive() catch {}; // ??
                 }
 
                 if (this.ctx.runtime_options.eval.eval_and_print) {
@@ -417,12 +417,12 @@ pub const Run = struct {
                                 .pending => {
                                     result._then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
 
-                                    vm.tick();
-                                    vm.eventLoop().autoTickActive();
+                                    vm.tick() catch {}; // ??
+                                    vm.eventLoop().autoTickActive() catch {}; // ??
 
                                     while (vm.isEventLoopAlive()) {
-                                        vm.tick();
-                                        vm.eventLoop().autoTickActive();
+                                        vm.tick() catch {}; // ??
+                                        vm.eventLoop().autoTickActive() catch {}; // ??
                                     }
 
                                     break :brk result;
@@ -437,7 +437,7 @@ pub const Run = struct {
                     to_print.print(vm.global, .Log, .Log);
                 }
 
-                vm.onBeforeExit();
+                vm.onBeforeExit() catch {}; // ??
             }
 
             if (vm.log.msgs.items.len > 0) {

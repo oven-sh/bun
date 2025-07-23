@@ -282,7 +282,7 @@ pub const LifecycleScriptSubprocess = struct {
         switch (process.watchOrReap()) {
             .err => |err| {
                 if (!process.hasExited())
-                    process.onExit(.{ .err = err }, &std.mem.zeroes(bun.spawn.Rusage));
+                    try process.onExit(.{ .err = err }, &std.mem.zeroes(bun.spawn.Rusage));
             },
             .result => {},
         }

@@ -67,10 +67,7 @@ pub fn messageWithTypeAndLevel(
     vals: [*]const JSValue,
     len: usize,
 ) callconv(JSC.conv) void {
-    messageWithTypeAndLevel_(ctype, message_type, level, global, vals, len) catch |err| switch (err) {
-        error.JSError => {},
-        error.OutOfMemory => global.throwOutOfMemory() catch {}, // TODO: properly propagate exception upwards
-    };
+    messageWithTypeAndLevel_(ctype, message_type, level, global, vals, len) catch |err| bun.jsc.host_fn.voidFromJSError(err, global);
 }
 fn messageWithTypeAndLevel_(
     //console_: *ConsoleObject,

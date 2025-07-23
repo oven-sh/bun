@@ -45,7 +45,7 @@ pub fn memoryCost(this: *const ServerWebSocket) usize {
 
 const log = Output.scoped(.WebSocketServer, false);
 
-pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
+pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) bun.JSExecutionTerminated!void {
     log("OnOpen", .{});
 
     this.flags.packed_websocket_ptr = @truncate(@intFromPtr(ws.raw()));
@@ -102,7 +102,7 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
             this_value.unprotect();
         }
 
-        handler.runErrorCallback(vm, globalObject, err_value);
+        try handler.runErrorCallback(vm, globalObject, err_value);
     }
 }
 
@@ -121,7 +121,7 @@ pub fn onMessage(
     ws: uws.AnyWebSocket,
     message: []const u8,
     opcode: uws.Opcode,
-) void {
+) bun.JSExecutionTerminated!void {
     log("onMessage({d}): {s}", .{
         @intFromEnum(opcode),
         message,
@@ -137,6 +137,8 @@ pub fn onMessage(
         return;
     }
 
+    const handler = this.handler;
+
     const loop = vm.eventLoop();
     loop.enter();
     defer loop.exit();
@@ -144,8 +146,14 @@ pub fn onMessage(
     const arguments = [_]JSValue{
         this.getThisValue(),
         switch (opcode) {
-            .text => bun.String.createUTF8ForJS(globalObject, message) catch .zero, // TODO: properly propagate exception upwards
-            .binary => this.binaryToJS(globalObject, message) catch .zero, // TODO: properly propagate exception upwards
+            .text => bun.String.createUTF8ForJS(globalObject, message) catch |e| {
+                const err = globalObject.takeException(e);
+                return handler.runErrorCallback(vm, globalObject, err);
+            },
+            .binary => this.binaryToJS(globalObject, message) catch |e| {
+                const err = globalObject.takeException(e);
+                return handler.runErrorCallback(vm, globalObject, err);
+            },
             else => unreachable,
         },
     };
@@ -162,8 +170,7 @@ pub fn onMessage(
     if (result.isEmptyOrUndefinedOrNull()) return;
 
     if (result.toError()) |err_value| {
-        this.handler.runErrorCallback(vm, globalObject, err_value);
-        return;
+        return this.handler.runErrorCallback(vm, globalObject, err_value);
     }
 
     if (result.asAnyPromise()) |promise| {
@@ -182,7 +189,7 @@ pub inline fn isClosed(this: *const ServerWebSocket) bool {
     return this.flags.closed;
 }
 
-pub fn onDrain(this: *ServerWebSocket, _: uws.AnyWebSocket) void {
+pub fn onDrain(this: *ServerWebSocket, _: uws.AnyWebSocket) bun.JSExecutionTerminated!void {
     log("onDrain", .{});
 
     const handler = this.handler;
@@ -205,7 +212,7 @@ pub fn onDrain(this: *ServerWebSocket, _: uws.AnyWebSocket) void {
         const result = corker.result;
 
         if (result.toError()) |err_value| {
-            handler.runErrorCallback(vm, globalObject, err_value);
+            try handler.runErrorCallback(vm, globalObject, err_value);
         }
     }
 }
@@ -229,7 +236,7 @@ fn binaryToJS(this: *const ServerWebSocket, globalThis: *JSC.JSGlobalObject, dat
     };
 }
 
-pub fn onPing(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) void {
+pub fn onPing(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) bun.JSExecutionTerminated!void {
     log("onPing: {s}", .{data});
 
     const handler = this.handler;
@@ -243,18 +250,23 @@ pub fn onPing(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) voi
     loop.enter();
     defer loop.exit();
 
+    const binary_js = this.binaryToJS(globalThis, data) catch |e| {
+        const err = globalThis.takeException(e);
+        return handler.runErrorCallback(vm, globalThis, err);
+    };
+
     _ = cb.call(
         globalThis,
         .js_undefined,
-        &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) catch .zero }, // TODO: properly propagate exception upwards
+        &[_]JSC.JSValue{ this.getThisValue(), binary_js },
     ) catch |e| {
         const err = globalThis.takeException(e);
         log("onPing error", .{});
-        handler.runErrorCallback(vm, globalThis, err);
+        try handler.runErrorCallback(vm, globalThis, err);
     };
 }
 
-pub fn onPong(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) void {
+pub fn onPong(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) bun.JSExecutionTerminated!void {
     log("onPong: {s}", .{data});
 
     const handler = this.handler;
@@ -271,14 +283,19 @@ pub fn onPong(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) voi
     loop.enter();
     defer loop.exit();
 
+    const binary_js = this.binaryToJS(globalThis, data) catch |e| {
+        const err = globalThis.takeException(e);
+        return handler.runErrorCallback(vm, globalThis, err);
+    };
+
     _ = cb.call(
         globalThis,
         .js_undefined,
-        &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) catch .zero }, // TODO: properly propagate exception upwards
+        &[_]JSC.JSValue{ this.getThisValue(), binary_js },
     ) catch |e| {
         const err = globalThis.takeException(e);
         log("onPong error", .{});
-        handler.runErrorCallback(vm, globalThis, err);
+        try handler.runErrorCallback(vm, globalThis, err);
     };
 }
 
@@ -327,15 +344,13 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
         const message_js = bun.String.createUTF8ForJS(globalObject, message) catch |e| {
             const err = globalObject.takeException(e);
             log("onClose error", .{});
-            handler.runErrorCallback(vm, globalObject, err);
-            return;
+            return handler.runErrorCallback(vm, globalObject, err) catch return;
         };
 
         _ = handler.onClose.call(globalObject, .js_undefined, &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), message_js }) catch |e| {
             const err = globalObject.takeException(e);
             log("onClose error", .{});
-            handler.runErrorCallback(vm, globalObject, err);
-            return;
+            return handler.runErrorCallback(vm, globalObject, err) catch return;
         };
     } else if (signal) |sig| {
         const loop = vm.eventLoop();

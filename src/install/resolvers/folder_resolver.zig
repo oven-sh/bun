@@ -328,6 +328,9 @@ pub const FolderResolution = union(Tag) {
     }
 };
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const Dependency = @import("../dependency.zig");
 const Npm = @import("../npm.zig");
 const std = @import("std");
@@ -341,10 +344,8 @@ const PackageID = @import("../install.zig").PackageID;
 const PackageManager = @import("../install.zig").PackageManager;
 
 const bun = @import("bun");
-const JSAst = bun.JSAst;
+const JSAst = bun.ast;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;
 
 const Semver = bun.Semver;

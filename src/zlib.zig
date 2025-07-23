@@ -929,9 +929,10 @@ pub const ZlibCompressorArrayList = struct {
     }
 };
 
-const bun = @import("bun");
-const mimalloc = @import("./allocators/mimalloc.zig");
 const std = @import("std");
+
+const bun = @import("bun");
+const mimalloc = bun.mimalloc;
 
 const internal = @import("zlib-internal");
 const DataType = @import("zlib-internal").DataType;

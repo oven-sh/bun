@@ -2,7 +2,7 @@ const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
-pub const js = JSC.Codegen.JSNativeBrotli;
+pub const js = jsc.Codegen.JSNativeBrotli;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -18,17 +18,17 @@ pub const getOnError = impl.getOnError;
 pub const finalize = impl.finalize;
 
 ref_count: RefCount,
-globalThis: *JSC.JSGlobalObject,
+globalThis: *jsc.JSGlobalObject,
 stream: Context = .{},
 write_result: ?[*]u32 = null,
 poll_ref: CountedKeepAlive = .{},
-this_value: JSC.Strong.Optional = .empty,
+this_value: jsc.Strong.Optional = .empty,
 write_in_progress: bool = false,
 pending_close: bool = false,
 closed: bool = false,
-task: JSC.WorkPoolTask = .{ .callback = undefined },
+task: jsc.WorkPoolTask = .{ .callback = undefined },
 
-pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*@This() {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*@This() {
     const arguments = callframe.argumentsUndef(1).ptr;
 
     var mode = arguments[0];
@@ -62,7 +62,7 @@ pub fn estimatedSize(this: *const @This()) usize {
     };
 }
 
-pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.argumentsUndef(3).slice();
     const this_value = callframe.this();
     if (arguments.len != 3) {
@@ -80,7 +80,7 @@ pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
     var err = this.stream.init();
     if (err.isError()) {
         try impl.emitError(this, globalThis, this_value, err);
-        return JSC.jsBoolean(false);
+        return jsc.jsBoolean(false);
     }
 
     const params_ = arguments[0].asArrayBuffer(globalThis).?.asU32();
@@ -93,13 +93,13 @@ pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
         err = this.stream.setParams(@intCast(i), d);
         if (err.isError()) {
             // try impl.emitError(this, globalThis, this_value, err); //XXX: onerror isn't set yet
-            return JSC.jsBoolean(false);
+            return jsc.jsBoolean(false);
         }
     }
-    return JSC.jsBoolean(true);
+    return jsc.jsBoolean(true);
 }
 
-pub fn params(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn params(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     _ = this;
     _ = globalThis;
     _ = callframe;
@@ -267,4 +267,4 @@ const CountedKeepAlive = @import("../node_zlib_binding.zig").CountedKeepAlive;
 const Error = @import("../node_zlib_binding.zig").Error;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;

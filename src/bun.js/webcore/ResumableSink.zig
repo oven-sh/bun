@@ -7,7 +7,7 @@ pub fn ResumableSink(
     comptime js: type,
     comptime Context: type,
     comptime onWrite: fn (context: *Context, chunk: []const u8) bool,
-    comptime onEnd: fn (context: *Context, err: ?JSC.JSValue) void,
+    comptime onEnd: fn (context: *Context, err: ?jsc.JSValue) void,
 ) type {
     return struct {
         const log = bun.Output.scoped(.ResumableSink, false);
@@ -26,10 +26,10 @@ pub fn ResumableSink(
         const setStream = js.streamSetCached;
         const getStream = js.streamGetCached;
         ref_count: RefCount,
-        self: JSC.Strong.Optional = JSC.Strong.Optional.empty,
+        self: jsc.Strong.Optional = jsc.Strong.Optional.empty,
         // We can have a detached self, and still have a strong reference to the stream
-        stream: JSC.WebCore.ReadableStream.Strong = .{},
-        globalThis: *JSC.JSGlobalObject,
+        stream: jsc.WebCore.ReadableStream.Strong = .{},
+        globalThis: *jsc.JSGlobalObject,
         context: *Context,
         highWaterMark: i64 = 16384,
         status: Status = .started,
@@ -41,23 +41,23 @@ pub fn ResumableSink(
             done,
         };
 
-        pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*@This() {
+        pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*@This() {
             return globalThis.throwInvalidArguments("ResumableSink is not constructable", .{});
         }
 
-        pub fn init(globalThis: *JSC.JSGlobalObject, stream: JSC.WebCore.ReadableStream, context: *Context) *@This() {
+        pub fn init(globalThis: *jsc.JSGlobalObject, stream: jsc.WebCore.ReadableStream, context: *Context) *@This() {
             return initExactRefs(globalThis, stream, context, 1);
         }
 
-        pub fn initExactRefs(globalThis: *JSC.JSGlobalObject, stream: JSC.WebCore.ReadableStream, context: *Context, ref_count: u32) *@This() {
+        pub fn initExactRefs(globalThis: *jsc.JSGlobalObject, stream: jsc.WebCore.ReadableStream, context: *Context, ref_count: u32) *@This() {
             const this = @This().new(.{
                 .globalThis = globalThis,
                 .context = context,
                 .ref_count = RefCount.initExactRefs(ref_count),
             });
             if (stream.isLocked(globalThis) or stream.isDisturbed(globalThis)) {
-                var err = JSC.SystemError{
-                    .code = bun.String.static(@tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE)),
+                var err = jsc.SystemError{
+                    .code = bun.String.static(@tagName(jsc.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE)),
                     .message = bun.String.static("Stream already used, please create a new one"),
                 };
                 const err_instance = err.toErrorInstance(globalThis);
@@ -110,11 +110,11 @@ pub fn ResumableSink(
                         _ = onWrite(this.context, bytes.items);
                     }
                     this.status = .piped;
-                    byte_stream.pipe = JSC.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this);
+                    byte_stream.pipe = jsc.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this);
                     this.ref(); // one ref for the pipe
 
                     // we only need the stream, we dont need to touch JS side yet
-                    this.stream = JSC.WebCore.ReadableStream.Strong.init(stream, this.globalThis);
+                    this.stream = jsc.WebCore.ReadableStream.Strong.init(stream, this.globalThis);
                     return this;
                 }
             }
@@ -124,13 +124,13 @@ pub fn ResumableSink(
             const js_stream = stream.toJS();
             js_stream.ensureStillAlive();
             _ = Bun__assignStreamIntoResumableSink(globalThis, js_stream, self);
-            this.self = JSC.Strong.Optional.create(self, globalThis);
+            this.self = jsc.Strong.Optional.create(self, globalThis);
             setStream(self, globalThis, js_stream);
             return this;
         }
 
-        pub fn jsSetHandlers(_: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, this_value: JSC.JSValue) bun.JSError!JSC.JSValue {
-            JSC.markBinding(@src());
+        pub fn jsSetHandlers(_: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue) bun.JSError!jsc.JSValue {
+            jsc.markBinding(@src());
             const args = callframe.arguments();
 
             if (args.len < 2) {
@@ -149,8 +149,8 @@ pub fn ResumableSink(
             return .js_undefined;
         }
 
-        pub fn jsStart(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            JSC.markBinding(@src());
+        pub fn jsStart(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+            jsc.markBinding(@src());
             const args = callframe.arguments();
             if (args.len > 0 and args[0].isObject()) {
                 if (try args[0].getOptionalInt(globalThis, "highWaterMark", i64)) |highWaterMark| {
@@ -161,8 +161,8 @@ pub fn ResumableSink(
             return .js_undefined;
         }
 
-        pub fn jsWrite(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            JSC.markBinding(@src());
+        pub fn jsWrite(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+            jsc.markBinding(@src());
             const args = callframe.arguments();
             // ignore any call if detached
             if (!this.self.has() or this.status == .done) return .js_undefined;
@@ -173,7 +173,7 @@ pub fn ResumableSink(
 
             const buffer = args[0];
             buffer.ensureStillAlive();
-            if (try JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer)) |sb| {
+            if (try jsc.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer)) |sb| {
                 defer sb.deinit();
                 const bytes = sb.slice();
                 log("jsWrite {}", .{bytes.len});
@@ -182,14 +182,14 @@ pub fn ResumableSink(
                     log("paused", .{});
                     this.status = .paused;
                 }
-                return JSC.jsBoolean(should_continue);
+                return jsc.jsBoolean(should_continue);
             }
 
             return globalThis.throwInvalidArguments("ResumableSink.write requires a string or buffer", .{});
         }
 
-        pub fn jsEnd(this: *@This(), _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            JSC.markBinding(@src());
+        pub fn jsEnd(this: *@This(), _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+            jsc.markBinding(@src());
             const args = callframe.arguments();
             // ignore any call if detached
             if (!this.self.has() or this.status == .done) return .js_undefined;
@@ -224,7 +224,7 @@ pub fn ResumableSink(
             }
         }
 
-        pub fn cancel(this: *@This(), reason: JSC.JSValue) void {
+        pub fn cancel(this: *@This(), reason: jsc.JSValue) void {
             if (this.status == .piped) {
                 reason.ensureStillAlive();
                 this.endPipe(reason);
@@ -266,7 +266,7 @@ pub fn ResumableSink(
                 setCancel(js_this, this.globalThis, .zero);
                 setStream(js_this, this.globalThis, .zero);
                 this.self.deinit();
-                this.self = JSC.Strong.Optional.empty;
+                this.self = jsc.Strong.Optional.empty;
             }
         }
         pub fn deinit(this: *@This()) void {
@@ -301,7 +301,7 @@ pub fn ResumableSink(
             const is_done = stream.isDone();
 
             if (is_done) {
-                const err: ?JSC.JSValue = brk_err: {
+                const err: ?jsc.JSValue = brk_err: {
                     if (stream == .err) {
                         const js_err, const was_strong = stream.err.toJSWeak(this.globalThis);
                         js_err.ensureStillAlive();
@@ -318,7 +318,7 @@ pub fn ResumableSink(
             }
         }
 
-        fn endPipe(this: *@This(), err: ?JSC.JSValue) void {
+        fn endPipe(this: *@This(), err: ?jsc.JSValue) void {
             log("endPipe", .{});
             if (this.status != .piped) return;
             this.status = .done;
@@ -351,14 +351,14 @@ pub fn ResumableSink(
     };
 }
 
-pub const ResumableFetchSink = ResumableSink(JSC.Codegen.JSResumableFetchSink, FetchTasklet, FetchTasklet.writeRequestData, FetchTasklet.writeEndRequest);
-pub const ResumableS3UploadSink = ResumableSink(JSC.Codegen.JSResumableS3UploadSink, S3UploadStreamWrapper, S3UploadStreamWrapper.writeRequestData, S3UploadStreamWrapper.writeEndRequest);
+pub const ResumableFetchSink = ResumableSink(jsc.Codegen.JSResumableFetchSink, FetchTasklet, FetchTasklet.writeRequestData, FetchTasklet.writeEndRequest);
+pub const ResumableS3UploadSink = ResumableSink(jsc.Codegen.JSResumableS3UploadSink, S3UploadStreamWrapper, S3UploadStreamWrapper.writeRequestData, S3UploadStreamWrapper.writeEndRequest);
 
-extern fn Bun__assignStreamIntoResumableSink(globalThis: *JSC.JSGlobalObject, stream: JSC.JSValue, sink: JSC.JSValue) JSC.JSValue;
+extern fn Bun__assignStreamIntoResumableSink(globalThis: *jsc.JSGlobalObject, stream: jsc.JSValue, sink: jsc.JSValue) jsc.JSValue;
 
 const std = @import("std");
 const FetchTasklet = @import("./fetch.zig").FetchTasklet;
 const S3UploadStreamWrapper = @import("../../s3/client.zig").S3UploadStreamWrapper;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;

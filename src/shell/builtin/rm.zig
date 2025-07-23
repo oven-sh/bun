@@ -295,7 +295,7 @@ pub noinline fn next(this: *Rm) Yield {
     }
 }
 
-pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?jsc.SystemError) Yield {
     log("Rm(0x{x}).onIOWriterChunk()", .{@intFromPtr(this)});
     if (comptime bun.Environment.allow_assert) {
         assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
@@ -465,9 +465,9 @@ pub const ShellRmTask = struct {
     err_mutex: bun.Mutex = .{},
     err: ?Syscall.Error = null,
 
-    event_loop: JSC.EventLoopHandle,
-    concurrent_task: JSC.EventLoopTask,
-    task: JSC.WorkPoolTask = .{
+    event_loop: jsc.EventLoopHandle,
+    concurrent_task: jsc.EventLoopTask,
+    task: jsc.WorkPoolTask = .{
         .callback = workPoolCallback,
     },
     join_style: JoinStyle,
@@ -505,9 +505,9 @@ pub const ShellRmTask = struct {
         need_to_wait: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
         deleting_after_waiting_for_children: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
         kind_hint: EntryKindHint,
-        task: JSC.WorkPoolTask = .{ .callback = runFromThreadPool },
+        task: jsc.WorkPoolTask = .{ .callback = runFromThreadPool },
         deleted_entries: std.ArrayList(u8),
-        concurrent_task: JSC.EventLoopTask,
+        concurrent_task: jsc.EventLoopTask,
 
         const EntryKindHint = enum { idk, dir, file };
 
@@ -527,7 +527,7 @@ pub const ShellRmTask = struct {
             return this.runFromMainThread();
         }
 
-        pub fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
+        pub fn runFromThreadPool(task: *jsc.WorkPoolTask) void {
             var this: *DirTask = @fieldParentPtr("task", task);
             this.runFromThreadPoolImpl();
         }
@@ -692,10 +692,10 @@ pub const ShellRmTask = struct {
                 .subtask_count = std.atomic.Value(usize).init(1),
                 .kind_hint = .idk,
                 .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
-                .concurrent_task = JSC.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
+                .concurrent_task = jsc.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
             },
             .event_loop = rm.bltn().parentCmd().base.eventLoop(),
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
             .error_signal = error_signal,
             .root_is_absolute = is_absolute,
             .join_style = JoinStyle.fromPath(root_path),
@@ -704,7 +704,7 @@ pub const ShellRmTask = struct {
     }
 
     pub fn schedule(this: *@This()) void {
-        JSC.WorkPool.schedule(&this.task);
+        jsc.WorkPool.schedule(&this.task);
     }
 
     pub fn enqueue(this: *ShellRmTask, parent_dir: *DirTask, path: [:0]const u8, is_absolute: bool, kind_hint: DirTask.EntryKindHint) void {
@@ -737,7 +737,7 @@ pub const ShellRmTask = struct {
             .subtask_count = std.atomic.Value(usize).init(1),
             .kind_hint = kind_hint,
             .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.event_loop),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.event_loop),
         };
 
         const count = parent_task.subtask_count.fetchAdd(1, .monotonic);
@@ -745,7 +745,7 @@ pub const ShellRmTask = struct {
             assert(count > 0);
         }
 
-        JSC.WorkPool.schedule(&subtask.task);
+        jsc.WorkPool.schedule(&subtask.task);
     }
 
     pub fn getcwd(this: *ShellRmTask) bun.FileDescriptor {
@@ -1157,7 +1157,7 @@ pub const ShellRmTask = struct {
         return out;
     }
 
-    pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+    pub fn workPoolCallback(task: *jsc.WorkPoolTask) void {
         var this: *ShellRmTask = @alignCast(@fieldParentPtr("task", task));
         this.root_task.runFromThreadPoolImpl();
     }
@@ -1209,9 +1209,9 @@ const Builtin = Interpreter.Builtin;
 
 const bun = @import("bun");
 const DirIterator = bun.DirIterator;
-const JSC = bun.JSC;
 const ResolvePath = bun.path;
 const assert = bun.assert;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
 const ExitCode = shell.ExitCode;

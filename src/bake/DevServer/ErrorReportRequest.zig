@@ -56,7 +56,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
     defer temp_alloc.free(message);
     const browser_url = try readString32(reader, temp_alloc);
     defer temp_alloc.free(browser_url);
-    var frames: ArrayListUnmanaged(JSC.ZigStackFrame) = .empty;
+    var frames: ArrayListUnmanaged(jsc.ZigStackFrame) = .empty;
     defer frames.deinit(temp_alloc);
     const stack_count = @min(try reader.readInt(u32, .little), 255); // does not support more than 255
     try frames.ensureTotalCapacity(temp_alloc, stack_count);
@@ -99,7 +99,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
 
     var runtime_lines: ?[5][]const u8 = null;
     var first_line_of_interest: usize = 0;
-    var top_frame_position: JSC.ZigStackFramePosition = undefined;
+    var top_frame_position: jsc.ZigStackFramePosition = undefined;
     var region_of_interest_line: u32 = 0;
     for (frames.items) |*frame| {
         const source_url = frame.source_url.value.ZigString.slice();
@@ -201,7 +201,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         frames.items.len = i;
     }
 
-    var exception: JSC.ZigException = .{
+    var exception: jsc.ZigException = .{
         .type = .Error,
         .runtime_type = .Nothing,
         .name = .init(name),
@@ -328,7 +328,7 @@ fn extractJsonEncodedSourceCode(contents: []const u8, target_line: u32, comptime
     // This function expects but does not assume the escape sequences
     // given are valid, and does not bubble errors up.
     var log = Log.init(arena);
-    var l: @import("../toml/toml_lexer.zig").Lexer = .{
+    var l: bun.interchange.toml.Lexer = .{
         .log = &log,
         .source = .initEmptyFile(""),
         .allocator = arena,
@@ -395,19 +395,19 @@ const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 const Log = bun.logger.Log;
 const MimeType = bun.http.MimeType;
 const RefPtr = bun.ptr.RefPtr;
-const StaticRoute = bun.server.StaticRoute;
+const StaticRoute = bun.api.server.StaticRoute;
 const Transpiler = bun.transpiler.Transpiler;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
-const HTMLBundle = JSC.API.HTMLBundle;
-const AnyBlob = JSC.WebCore.Blob.Any;
-const Plugin = JSC.API.JSBundler.Plugin;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const HTMLBundle = jsc.API.HTMLBundle;
+const AnyBlob = jsc.WebCore.Blob.Any;
+const Plugin = jsc.API.JSBundler.Plugin;
 
-const BunFrontendDevServerAgent = JSC.Debugger.BunFrontendDevServerAgent;
-const DebuggerId = JSC.Debugger.DebuggerId;
+const BunFrontendDevServerAgent = jsc.Debugger.BunFrontendDevServerAgent;
+const DebuggerId = jsc.Debugger.DebuggerId;
 
 const FrameworkRouter = bake.FrameworkRouter;
 const OpaqueFileId = FrameworkRouter.OpaqueFileId;

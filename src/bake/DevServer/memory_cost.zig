@@ -217,7 +217,7 @@ const HmrSocket = DevServer.HmrSocket;
 const VoidFieldTypes = bun.meta.VoidFieldTypes;
 const voidFieldTypeDiscardHelper = bun.meta.voidFieldTypeDiscardHelper;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
-const HTMLBundle = JSC.API.HTMLBundle;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const HTMLBundle = jsc.API.HTMLBundle;

@@ -219,7 +219,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
 
                 fn jsCode(file: @This()) []const u8 {
-                    assert(file.flags.kind.hasInlineJSCodeChunk());
+                    assert(file.flags.kind.hasInlinejscodeChunk());
                     return file.content.js_code_ptr[0..file.code_len];
                 }
 
@@ -330,7 +330,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             if (side == .client) {
                 graph += DevServer.memoryCostArrayList(g.current_css_files);
                 for (g.bundled_files.values()) |*file| {
-                    if (file.flags.kind.hasInlineJSCodeChunk()) code += file.code_len;
+                    if (file.flags.kind.hasInlinejscodeChunk()) code += file.code_len;
                     switch (file.sourceMap()) {
                         .ref => |ptr| {
                             source_maps += ptr.data.memoryCostWithDedupe(new_dedupe_bits);
@@ -374,7 +374,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         pub fn receiveChunk(
             g: *@This(),
             ctx: *HotUpdateContext,
-            index: bun.JSAst.Index,
+            index: bun.ast.Index,
             content: union(enum) {
                 js: struct {
                     code: []const u8,
@@ -592,7 +592,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             g: *@This(),
             ctx: *HotUpdateContext,
             comptime mode: enum { normal, css },
-            bundle_graph_index: bun.JSAst.Index,
+            bundle_graph_index: bun.ast.Index,
             temp_alloc: Allocator,
         ) bun.OOM!void {
             const log = bun.Output.scoped(.processChunkDependencies, false);
@@ -647,7 +647,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     // const ssr_index = ctx.scbs.getSSRIndex(bundle_graph_index.get()) orelse {
                     //     @panic("Unexpected missing server-component-boundary entry");
                     // };
-                    // try g.processChunkImportRecords(ctx, &quick_lookup, &new_imports, file_index, bun.JSAst.Index.init(ssr_index));
+                    // try g.processChunkImportRecords(ctx, &quick_lookup, &new_imports, file_index, bun.ast.Index.init(ssr_index));
                 }
             }
 
@@ -708,17 +708,17 @@ pub fn IncrementalGraph(side: bake.Side) type {
             quick_lookup: *TempLookup.HashTable,
             new_imports: *EdgeIndex.Optional,
             file_index: FileIndex,
-            bundler_index: bun.JSAst.Index,
+            bundler_index: bun.ast.Index,
         ) !void {
             bun.assert(bundler_index.isValid());
             bun.assert(ctx.loaders[bundler_index.get()].isCSS());
 
-            var sfb = std.heap.stackFallback(@sizeOf(bun.JSAst.Index) * 64, temp_alloc);
+            var sfb = std.heap.stackFallback(@sizeOf(bun.ast.Index) * 64, temp_alloc);
             const queue_alloc = sfb.get();
 
             // This queue avoids stack overflow.
             // Infinite loop is prevented by the tracing bits in `processEdgeAttachment`.
-            var queue: ArrayListUnmanaged(bun.JSAst.Index) = .empty;
+            var queue: ArrayListUnmanaged(bun.ast.Index) = .empty;
             defer queue.deinit(queue_alloc);
 
             for (ctx.import_records[bundler_index.get()].slice()) |import_record| {
@@ -868,7 +868,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             quick_lookup: *TempLookup.HashTable,
             new_imports: *EdgeIndex.Optional,
             file_index: FileIndex,
-            index: bun.JSAst.Index,
+            index: bun.ast.Index,
         ) !void {
             bun.assert(index.isValid());
             // don't call this function for CSS sources
@@ -1234,7 +1234,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
         /// Server CSS files are just used to be targets for graph traversal.
         /// Its content lives only on the client.
-        pub fn insertCssFileOnServer(g: *@This(), ctx: *HotUpdateContext, index: bun.JSAst.Index, abs_path: []const u8) bun.OOM!void {
+        pub fn insertCssFileOnServer(g: *@This(), ctx: *HotUpdateContext, index: bun.ast.Index, abs_path: []const u8) bun.OOM!void {
             g.owner().graph_safety_lock.assertLocked();
             const dev_allocator = g.owner().allocator;
 
@@ -1817,15 +1817,15 @@ const StaticRoute = bun.server.StaticRoute;
 const Transpiler = bun.transpiler.Transpiler;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
-const HTMLBundle = JSC.API.HTMLBundle;
-const AnyBlob = JSC.WebCore.Blob.Any;
-const Plugin = JSC.API.JSBundler.Plugin;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const HTMLBundle = jsc.API.HTMLBundle;
+const AnyBlob = jsc.WebCore.Blob.Any;
+const Plugin = jsc.API.JSBundler.Plugin;
 
-const BunFrontendDevServerAgent = JSC.Debugger.BunFrontendDevServerAgent;
-const DebuggerId = JSC.Debugger.DebuggerId;
+const BunFrontendDevServerAgent = jsc.Debugger.BunFrontendDevServerAgent;
+const DebuggerId = jsc.Debugger.DebuggerId;
 
 const FrameworkRouter = bake.FrameworkRouter;
 const OpaqueFileId = FrameworkRouter.OpaqueFileId;

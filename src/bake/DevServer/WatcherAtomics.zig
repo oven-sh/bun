@@ -93,7 +93,7 @@ pub fn watcherReleaseAndSubmitEvent(state: *WatcherAtomics, ev: *HotReloadEvent)
             ev.concurrent_task = .{
                 .auto_delete = false,
                 .next = null,
-                .task = JSC.Task.init(ev),
+                .task = jsc.Task.init(ev),
             };
             ev.contention_indicator.store(0, .seq_cst);
             ev.owner.vm.event_loop.enqueueTaskConcurrent(&ev.concurrent_task);
@@ -197,15 +197,15 @@ const StaticRoute = bun.server.StaticRoute;
 const Transpiler = bun.transpiler.Transpiler;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
-const HTMLBundle = JSC.API.HTMLBundle;
-const AnyBlob = JSC.WebCore.Blob.Any;
-const Plugin = JSC.API.JSBundler.Plugin;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const HTMLBundle = jsc.API.HTMLBundle;
+const AnyBlob = jsc.WebCore.Blob.Any;
+const Plugin = jsc.API.JSBundler.Plugin;
 
-const BunFrontendDevServerAgent = JSC.Debugger.BunFrontendDevServerAgent;
-const DebuggerId = JSC.Debugger.DebuggerId;
+const BunFrontendDevServerAgent = jsc.Debugger.BunFrontendDevServerAgent;
+const DebuggerId = jsc.Debugger.DebuggerId;
 
 const FrameworkRouter = bake.FrameworkRouter;
 const OpaqueFileId = FrameworkRouter.OpaqueFileId;

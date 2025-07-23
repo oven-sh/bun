@@ -206,7 +206,7 @@ fn writeString32(data: []const u8, w: Writer) !void {
     try w.writeAll(data);
 }
 
-// fn writeJsValue(value: JSValue, global: *JSC.JSGlobalObject, w: *Writer) !void {
+// fn writeJsValue(value: JSValue, global: *jsc.JSGlobalObject, w: *Writer) !void {
 //     if (value.isAggregateError(global)) {
 //         //
 //     }
@@ -254,15 +254,15 @@ const StaticRoute = bun.server.StaticRoute;
 const Transpiler = bun.transpiler.Transpiler;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
-const HTMLBundle = JSC.API.HTMLBundle;
-const AnyBlob = JSC.WebCore.Blob.Any;
-const Plugin = JSC.API.JSBundler.Plugin;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const HTMLBundle = jsc.API.HTMLBundle;
+const AnyBlob = jsc.WebCore.Blob.Any;
+const Plugin = jsc.API.JSBundler.Plugin;
 
-const BunFrontendDevServerAgent = JSC.Debugger.BunFrontendDevServerAgent;
-const DebuggerId = JSC.Debugger.DebuggerId;
+const BunFrontendDevServerAgent = jsc.Debugger.BunFrontendDevServerAgent;
+const DebuggerId = jsc.Debugger.DebuggerId;
 
 const FrameworkRouter = bake.FrameworkRouter;
 const OpaqueFileId = FrameworkRouter.OpaqueFileId;

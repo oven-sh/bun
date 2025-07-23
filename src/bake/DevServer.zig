@@ -253,7 +253,7 @@ pub const asset_prefix = internal_prefix ++ "/asset";
 /// Example: `/_bun/client/index-00000000f209a20e.js`
 pub const client_prefix = internal_prefix ++ "/client";
 
-pub const RouteBundle = @import("./RouteBundle.zig");
+pub const RouteBundle = @import("./DevServer/RouteBundle.zig");
 
 /// DevServer is stored on the heap, storing its allocator.
 pub fn init(options: Options) bun.JSOOM!*DevServer {
@@ -691,7 +691,7 @@ pub fn deinit(dev: *DevServer) void {
     bun.destroy(dev);
 }
 
-pub const MemoryCost = @import("./memory_cost.zig");
+pub const MemoryCost = @import("./DevServer/memory_cost.zig");
 pub const memoryCost = MemoryCost.memoryCost;
 pub const memoryCostDetailed = MemoryCost.memoryCostDetailed;
 pub const memoryCostArrayHashMap = MemoryCost.memoryCostArrayHashMap;
@@ -807,7 +807,7 @@ fn onNotFoundCorked(resp: AnyResponse) void {
     resp.end("Not Found", false);
 }
 
-fn onOutdatedJSCorked(resp: AnyResponse) void {
+fn onOutdatedjscorked(resp: AnyResponse) void {
     // Send a payload to instantly reload the page. This only happens when the
     // client bundle is invalidated while the page is loading, aka when you
     // perform many file updates that cannot be hot-updated.
@@ -864,7 +864,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     if (route_bundle.client_script_generation != generation or
         route_bundle.server_state != .loaded)
     {
-        return resp.corked(onOutdatedJSCorked, .{resp});
+        return resp.corked(onOutdatedjscorked, .{resp});
     }
 
     dev.onJsRequestWithBundle(route_bundle_index, resp, bun.http.Method.which(req.method()) orelse .POST);
@@ -2961,7 +2961,7 @@ fn printMemoryLine(dev: *DevServer) void {
     });
 }
 
-pub const PackedMap = @import("./PackedMap.zig");
+pub const PackedMap = @import("./DevServer/PackedMap.zig");
 pub const FileKind = enum(u2) {
     /// Files that failed to bundle or do not exist on disk will appear in the
     /// graph as "unknown".
@@ -2976,7 +2976,7 @@ pub const FileKind = enum(u2) {
     /// '/_bun/css/0000000000000000.css'
     css,
 
-    pub fn hasInlineJSCodeChunk(self: @This()) bool {
+    pub fn hasInlinejscodeChunk(self: @This()) bool {
         return switch (self) {
             .js, .asset => true,
             else => false,
@@ -2984,7 +2984,7 @@ pub const FileKind = enum(u2) {
     }
 };
 
-pub const IncrementalGraph = @import("./IncrementalGraph.zig").IncrementalGraph;
+pub const IncrementalGraph = @import("./DevServer/IncrementalGraph.zig").IncrementalGraph;
 
 pub const IncrementalResult = struct {
     /// When tracing a file's dependencies via `traceDependencies`, this is
@@ -3114,14 +3114,14 @@ fn initGraphTraceState(dev: *const DevServer, sfa: Allocator, extra_client_bits:
     return .{ .server_bits = server_bits, .client_bits = client_bits };
 }
 
-pub const DirectoryWatchStore = @import("./DirectoryWatchStore.zig");
+pub const DirectoryWatchStore = @import("./DevServer/DirectoryWatchStore.zig");
 
 pub const ChunkKind = enum(u1) {
     initial_response,
     hmr_chunk,
 };
 
-pub const SerializedFailure = @import("./SerializedFailure.zig");
+pub const SerializedFailure = @import("./DevServer/SerializedFailure.zig");
 
 // For debugging, it is helpful to be able to see bundles.
 pub fn dumpBundle(dump_dir: std.fs.Dir, graph: bake.Graph, rel_path: []const u8, chunk: []const u8, wrap: bool) !void {
@@ -3533,7 +3533,7 @@ pub const HmrTopic = enum(u8) {
     } });
 };
 
-pub const HmrSocket = @import("./HmrSocket.zig");
+pub const HmrSocket = @import("./DevServer/HmrSocket.zig");
 
 pub fn routeToBundleIndexSlow(dev: *DevServer, pattern: []const u8) ?RouteBundle.Index {
     var params: FrameworkRouter.MatchedParams = undefined;
@@ -3623,8 +3623,8 @@ pub fn inspector(dev: *const DevServer) ?*BunFrontendDevServerAgent {
     return null;
 }
 
-pub const HotReloadEvent = @import("./HotReloadEvent.zig");
-pub const WatcherAtomics = @import("./WatcherAtomics.zig");
+pub const HotReloadEvent = @import("./DevServer/HotReloadEvent.zig");
+pub const WatcherAtomics = @import("./DevServer/WatcherAtomics.zig");
 
 /// Called on watcher's thread; Access to dev-server state restricted.
 pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?[:0]u8, watchlist: Watcher.ItemList) void {
@@ -3939,9 +3939,9 @@ pub fn putOrOverwriteAsset(
     _ = try dev.assets.replacePath(path.text, contents, &.byExtension(path.name.extWithoutLeadingDot()), content_hash);
 }
 
-pub const Assets = @import("./Assets.zig");
+pub const Assets = @import("./DevServer/Assets.zig");
 
-pub const SourceMapStore = @import("./SourceMapStore.zig");
+pub const SourceMapStore = @import("./DevServer/SourceMapStore.zig");
 
 pub fn onPluginsResolved(dev: *DevServer, plugins: ?*Plugin) !void {
     dev.bundler_options.plugin = plugins;
@@ -3959,7 +3959,7 @@ pub fn onPluginsRejected(dev: *DevServer) !void {
     // TODO: allow recovery from this state
 }
 
-pub const ErrorReportRequest = @import("./ErrorReportRequest.zig");
+pub const ErrorReportRequest = @import("./DevServer/ErrorReportRequest.zig");
 
 /// Problem statement documented on `script_unref_payload`
 /// Takes 8 bytes: The generation ID in hex.
@@ -4026,7 +4026,6 @@ pub fn getDeinitCountForTesting() usize {
 
 const VoidFieldTypes = bun.meta.VoidFieldTypes;
 const voidFieldTypeDiscardHelper = bun.meta.voidFieldTypeDiscardHelper;
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 
 const bun = @import("bun");
 const AllocationScope = bun.AllocationScope;

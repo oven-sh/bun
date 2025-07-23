@@ -29,13 +29,13 @@ pub const Framework = struct {
 
     /// Cached to avoid re-creating the array every request.
     /// TODO: Invalidated when a layout is added or removed from this route.
-    cached_module_list: JSC.Strong.Optional,
+    cached_module_list: jsc.Strong.Optional,
     /// Cached to avoid re-creating the string every request.
     /// TODO: Invalidated when any client file associated with the route is updated.
-    cached_client_bundle_url: JSC.Strong.Optional,
+    cached_client_bundle_url: jsc.Strong.Optional,
     /// Cached to avoid re-creating the array every request.
     /// Invalidated when the list of CSS files changes.
-    cached_css_file_array: JSC.Strong.Optional,
+    cached_css_file_array: jsc.Strong.Optional,
 
     /// When state == .evaluation_failure, this is populated with the route
     /// evaluation error mirrored in the dev server hash map
@@ -137,7 +137,7 @@ pub fn memoryCost(rb: *const RouteBundle) usize {
     if (rb.client_bundle) |bundle| cost += bundle.memoryCost();
     switch (rb.data) {
         .framework => {
-            // the JSC.Strong.Optional children do not support memoryCost. likely not needed
+            // the jsc.Strong.Optional children do not support memoryCost. likely not needed
             // .evaluate_failure is not owned
         },
         .html => |*html| {
@@ -174,19 +174,19 @@ const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 const Log = bun.logger.Log;
 const MimeType = bun.http.MimeType;
 const RefPtr = bun.ptr.RefPtr;
-const StaticRoute = bun.server.StaticRoute;
+const StaticRoute = bun.api.server.StaticRoute;
 const Transpiler = bun.transpiler.Transpiler;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
-const HTMLBundle = JSC.API.HTMLBundle;
-const AnyBlob = JSC.WebCore.Blob.Any;
-const Plugin = JSC.API.JSBundler.Plugin;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const HTMLBundle = jsc.API.HTMLBundle;
+const AnyBlob = jsc.WebCore.Blob.Any;
+const Plugin = jsc.API.JSBundler.Plugin;
 
-const BunFrontendDevServerAgent = JSC.Debugger.BunFrontendDevServerAgent;
-const DebuggerId = JSC.Debugger.DebuggerId;
+const BunFrontendDevServerAgent = jsc.Debugger.BunFrontendDevServerAgent;
+const DebuggerId = jsc.Debugger.DebuggerId;
 
 const FrameworkRouter = bake.FrameworkRouter;
 const OpaqueFileId = FrameworkRouter.OpaqueFileId;

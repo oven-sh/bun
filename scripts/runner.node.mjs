@@ -153,6 +153,10 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: isBuildkite && isLinux,
     },
+    ["sentry-ci-dsn"]: {
+      type: "string",
+      default: undefined,
+    },
   },
 });
 
@@ -674,6 +678,26 @@ async function runTests() {
         }
         console.log(`saved core dumps to ${outfileAbs} (${statSync(outfileAbs).size} bytes) in ${elapsed} ms`);
         await uploadArtifact(outfileAbs);
+
+        // Upload to Sentry if sentry-ci-dsn is provided or available from environment
+        let sentryDsn = options["sentry-ci-dsn"];
+        let dsnSource = "CLI parameter";
+        
+        if (!sentryDsn) {
+          sentryDsn = getSentryDsnFromEnvironment();
+          dsnSource = "environment";
+        }
+        
+        if (sentryDsn) {
+          console.log(`Using Sentry DSN from ${dsnSource} for core dump upload`);
+          try {
+            await uploadCoreDumpsToSentry(coresDir, sentryDsn);
+          } catch (sentryErr) {
+            console.error("Error uploading core dumps to Sentry:", sentryErr);
+          }
+        } else {
+          console.log("No Sentry DSN available (checked CLI parameter and environment), skipping Sentry upload");
+        }
       } else {
         console.log(`no cores found in ${coresDir}`);
       }
@@ -2284,6 +2308,145 @@ function escapeXml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+/**
+ * Get Sentry DSN from environment variables or Buildkite secrets
+ * @returns {string | undefined} - Sentry DSN if available
+ */
+function getSentryDsnFromEnvironment() {
+  // First check if SENTRY_CI_DSN_URL is directly available as an environment variable
+  let sentryDsn = getEnv("SENTRY_CI_DSN_URL", false);
+  
+  if (sentryDsn) {
+    return sentryDsn;
+  }
+
+  // If running in Buildkite, try to get the secret
+  if (isBuildkite) {
+    try {
+      sentryDsn = getSecret("SENTRY_CI_DSN_URL", { required: false });
+      if (sentryDsn) {
+        return sentryDsn;
+      }
+    } catch (err) {
+      // Secret not available or other error, continue silently
+    }
+  }
+
+  // Also check for standard Sentry environment variables as fallback
+  sentryDsn = getEnv("SENTRY_DSN", false);
+  if (sentryDsn) {
+    return sentryDsn;
+  }
+
+  return undefined;
+}
+
+/**
+ * Upload core dumps to Sentry using sentry-cli
+ * @param {string} coresDir - Directory containing core dump files
+ * @param {string} sentryDsn - Sentry DSN for the project
+ */
+async function uploadCoreDumpsToSentry(coresDir, sentryDsn) {
+  // Check if sentry-cli is available in PATH
+  const sentryCliCheck = await spawnSafe({
+    command: "which",
+    args: ["sentry-cli"],
+    timeout: 5000,
+    stdout: () => {},
+    stderr: () => {},
+  });
+
+  if (!sentryCliCheck.ok) {
+    console.log("sentry-cli not found in PATH, skipping Sentry core dump upload");
+    return;
+  }
+
+  console.log("Uploading core dumps to Sentry...");
+  
+  // Parse DSN to extract organization and project if needed
+  const buildId = getEnv("BUILDKITE_BUILD_ID", false) || "unknown";
+  const commit = getCommit() || "unknown";
+  const branch = getBranch() || "unknown";
+  
+  // Get list of core dump files
+  const coreFiles = readdirSync(coresDir);
+  if (coreFiles.length === 0) {
+    console.log("No core dump files to upload to Sentry");
+    return;
+  }
+
+  // Set up environment variables for sentry-cli
+  const sentryEnv = {
+    ...process.env,
+    SENTRY_DSN: sentryDsn,
+  };
+
+  // Upload each core dump file to Sentry
+  for (const coreFile of coreFiles) {
+    const coreFilePath = join(coresDir, coreFile);
+    console.log(`Uploading core dump: ${coreFile}`);
+
+    try {
+      const uploadResult = await spawnSafe({
+        command: "sentry-cli",
+        args: [
+          "debug-files",
+          "upload",
+          "--wait",
+          "--include-sources",
+          coreFilePath,
+        ],
+        env: sentryEnv,
+        timeout: 120_000, // 2 minutes timeout for large core dumps
+        stdout: (chunk) => process.stdout.write(chunk),
+        stderr: (chunk) => process.stderr.write(chunk),
+      });
+
+      if (uploadResult.ok) {
+        console.log(`Successfully uploaded core dump ${coreFile} to Sentry`);
+      } else {
+        console.error(`Failed to upload core dump ${coreFile} to Sentry: ${uploadResult.error}`);
+      }
+    } catch (uploadErr) {
+      console.error(`Error uploading core dump ${coreFile} to Sentry:`, uploadErr);
+    }
+  }
+
+  // Also try to create a Sentry event for the core dump occurrence
+  try {
+    const eventResult = await spawnSafe({
+      command: "sentry-cli",
+      args: [
+        "send-event",
+        "--message",
+        `Core dumps found in CI build ${buildId} (${coreFiles.length} files)`,
+        "--tag",
+        `build_id:${buildId}`,
+        "--tag",
+        `commit:${commit}`,
+        "--tag",
+        `branch:${branch}`,
+        "--tag",
+        `core_count:${coreFiles.length}`,
+        "--level",
+        "error",
+      ],
+      env: sentryEnv,
+      timeout: 30_000,
+      stdout: () => {},
+      stderr: (chunk) => process.stderr.write(chunk),
+    });
+
+    if (eventResult.ok) {
+      console.log("Created Sentry event for core dump occurrence");
+    } else {
+      console.log(`Note: Could not create Sentry event (${eventResult.error}), but core dumps were uploaded`);
+    }
+  } catch (eventErr) {
+    console.log("Note: Could not create Sentry event, but core dumps were uploaded:", eventErr.message);
+  }
 }
 
 export async function main() {

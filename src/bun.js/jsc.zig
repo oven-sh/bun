@@ -200,7 +200,7 @@ pub const Subprocess = bun.api.Subprocess;
 ///     - Add it to generated_classes_list.zig
 ///     - Expose the generated methods:
 ///       ```zig
-///       pub const js = JSC.Codegen.JSMyClassName;
+///       pub const js = jsc.Codegen.JSMyClassName;
 ///       pub const toJS = js.toJS;
 ///       pub const fromJS = js.fromJS;
 ///       pub const fromJSDirect = js.fromJSDirect;

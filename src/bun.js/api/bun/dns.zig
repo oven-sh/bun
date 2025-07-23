@@ -52,7 +52,7 @@ const LibInfo = struct {
         return bun.C.dlsymWithHandle(*const GetaddrinfoAsyncCancel, "getaddrinfo_async_cancel", getHandle);
     }
 
-    pub fn lookup(this: *DNSResolver, query: GetAddrInfo, globalThis: *jsc.JSGlobalObject) bun.JSExecutionTerminated!JSC.JSValue {
+    pub fn lookup(this: *Resolver, query: GetAddrInfo, globalThis: *jsc.JSGlobalObject) bun.JSExecutionTerminated!jsc.JSValue {
         bun.Environment.onlyMac();
 
         const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return LibC.lookup(this, query, globalThis);
@@ -2148,7 +2148,7 @@ pub const Resolver = struct {
         }
     }
 
-    pub fn drainPendingHostNative(this: *Resolver, index: u8, globalObject: *JSC.JSGlobalObject, err: i32, result: GetAddrInfo.Result.Any) bun.JSError!void {
+    pub fn drainPendingHostNative(this: *Resolver, index: u8, globalObject: *jsc.JSGlobalObject, err: i32, result: GetAddrInfo.Result.Any) bun.JSError!void {
         log("drainPendingHostNative", .{});
         const key = this.getKey(index, "pending_host_cache_native", GetAddrInfoRequest);
         defer bun.default_allocator.destroy(key.lookup);

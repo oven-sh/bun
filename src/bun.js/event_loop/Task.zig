@@ -511,7 +511,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) bu
     return counter;
 }
 
-fn reportErrorOrTerminate(global: *JSC.JSGlobalObject, proof: bun.JSError) bun.JSExecutionTerminated!void {
+fn reportErrorOrTerminate(global: *jsc.JSGlobalObject, proof: bun.JSError) bun.JSExecutionTerminated!void {
     if (proof == error.JSExecutionTerminated) return error.JSExecutionTerminated;
     const vm = global.vm();
     const ex = global.takeException(proof).asException(vm).?;

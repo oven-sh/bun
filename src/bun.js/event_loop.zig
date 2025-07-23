@@ -483,7 +483,7 @@ pub fn tick(this: *EventLoop) bun.JSExecutionTerminated!void {
 }
 
 pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) bun.JSExecutionTerminated!void {
-    const jsc_vm = this.virtual_machine.jsc;
+    const jsc_vm = this.virtual_machine.jsc_vm;
     switch (promise.status(jsc_vm)) {
         .pending => {
             while (promise.status(jsc_vm) == .pending) {

@@ -579,7 +579,7 @@ pub const Interpreter = struct {
             }
             this.export_env.insert(EnvStr.initSlice("PWD"), EnvStr.initSlice(this.cwd()));
 
-            return Maybe(void).success;
+            return .success;
         }
 
         pub fn getHomedir(self: *ShellExecEnv) EnvStr {
@@ -1070,7 +1070,7 @@ pub const Interpreter = struct {
             }
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     pub fn run(this: *ThisInterpreter) !Maybe(void) {
@@ -1083,7 +1083,7 @@ pub const Interpreter = struct {
         this.started.store(true, .seq_cst);
         root.start().run();
 
-        return Maybe(void).success;
+        return .success;
     }
 
     pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -1970,7 +1970,7 @@ const which = bun.which;
 const jsc = bun.jsc;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const Maybe = jsc.Maybe;
+const Maybe = bun.sys.Maybe;
 
 const shell = bun.shell;
 const Yield = shell.Yield;

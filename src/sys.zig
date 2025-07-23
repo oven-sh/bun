@@ -671,7 +671,7 @@ pub fn fchown(fd: bun.FileDescriptor, uid: jsc.Node.uid_t, gid: jsc.Node.gid_t) 
             return err;
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     unreachable;
@@ -689,7 +689,7 @@ pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
             return err;
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     unreachable;
@@ -705,7 +705,7 @@ pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flag
             return err;
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     unreachable;
@@ -723,7 +723,7 @@ pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
             return err;
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     unreachable;
@@ -735,7 +735,7 @@ pub fn chdirOSPath(
 ) Maybe(void) {
     if (comptime Environment.isPosix) {
         const rc = syscall.chdir(destination);
-        return Maybe(void).errnoSysPD(rc, .chdir, path, destination) orelse Maybe(void).success;
+        return Maybe(void).errnoSysPD(rc, .chdir, path, destination) orelse .success;
     }
 
     if (comptime Environment.isWindows) {
@@ -743,12 +743,12 @@ pub fn chdirOSPath(
         defer bun.w_path_buffer_pool.put(wbuf);
         if (c.SetCurrentDirectoryW(bun.strings.toWDirPath(wbuf, destination)) == windows.FALSE) {
             log("SetCurrentDirectory({s}) = {d}", .{ destination, kernel32.GetLastError() });
-            return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse Maybe(void).success;
+            return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse .success;
         }
 
         log("SetCurrentDirectory({s}) = {d}", .{ destination, 0 });
 
-        return Maybe(void).success;
+        return .success;
     }
 
     @compileError("Not implemented yet");
@@ -777,10 +777,10 @@ pub fn chdir(path: anytype, destination: anytype) Maybe(void) {
     if (comptime Environment.isWindows) {
         if (comptime Type == *[*:0]u16) {
             if (kernel32.SetCurrentDirectory(destination) != 0) {
-                return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse Maybe(void).success;
+                return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse .success;
             }
 
-            return Maybe(void).success;
+            return .success;
         }
 
         if (comptime Type == bun.OSPathSliceZ or Type == [:0]u16) {
@@ -894,8 +894,8 @@ pub fn mkdiratA(dir_fd: bun.FileDescriptor, file_path: []const u8) Maybe(void) {
 
 pub fn mkdiratZ(dir_fd: bun.FileDescriptor, file_path: [*:0]const u8, mode: mode_t) Maybe(void) {
     return switch (Environment.os) {
-        .mac => Maybe(void).errnoSysP(syscall.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse Maybe(void).success,
-        .linux => Maybe(void).errnoSysP(linux.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse Maybe(void).success,
+        .mac => Maybe(void).errnoSysP(syscall.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse .success,
+        .linux => Maybe(void).errnoSysP(linux.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse .success,
         else => @compileError("mkdir is not implemented on this platform"),
     };
 }
@@ -919,7 +919,7 @@ pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: [:0]const u16, _: i32) Ma
         return .{ .err = dir_to_make.err };
     }
     dir_to_make.result.close();
-    return .{ .result = {} };
+    return .success;
 }
 
 pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
@@ -944,9 +944,9 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
 
 pub fn mkdir(file_path: [:0]const u8, flags: mode_t) Maybe(void) {
     return switch (Environment.os) {
-        .mac => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
+        .mac => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse .success,
 
-        .linux => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
+        .linux => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse .success,
 
         .windows => {
             const wbuf = bun.w_path_buffer_pool.get();
@@ -955,7 +955,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: mode_t) Maybe(void) {
                 bun.windows.CreateDirectoryW(bun.strings.toKernel32Path(wbuf, file_path).ptr, null),
                 .mkdir,
                 file_path,
-            ) orelse Maybe(void).success;
+            ) orelse .success;
         },
 
         else => @compileError("mkdir is not implemented on this platform"),
@@ -969,7 +969,7 @@ pub fn mkdirA(file_path: []const u8, flags: mode_t) Maybe(void) {
                 .errno = @intFromEnum(E.NOMEM),
                 .syscall = .open,
             },
-        }), flags), .mkdir, file_path) orelse Maybe(void).success;
+        }), flags), .mkdir, file_path) orelse .success;
     }
 
     if (comptime Environment.isLinux) {
@@ -978,7 +978,7 @@ pub fn mkdirA(file_path: []const u8, flags: mode_t) Maybe(void) {
                 .errno = @intFromEnum(E.NOMEM),
                 .syscall = .open,
             },
-        }), flags), .mkdir, file_path) orelse Maybe(void).success;
+        }), flags), .mkdir, file_path) orelse .success;
     }
 
     if (comptime Environment.isWindows) {
@@ -990,7 +990,7 @@ pub fn mkdirA(file_path: []const u8, flags: mode_t) Maybe(void) {
             kernel32.CreateDirectoryW(wpath.ptr, null),
             .mkdir,
             file_path,
-        ) orelse Maybe(void).success;
+        ) orelse .success;
     }
 }
 
@@ -1008,7 +1008,7 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: mode_t) Maybe(void) {
             }
 
             log("CreateDirectoryW({}) = 0", .{bun.fmt.fmtOSPath(file_path, .{})});
-            return Maybe(void).success;
+            return .success;
         },
     };
 }
@@ -1757,7 +1757,7 @@ pub fn access(path: bun.OSPathSliceZ, mode: i32) Maybe(void) {
             !(attrs.is_readonly) or
             (attrs.is_directory))
         {
-            return .{ .result = {} };
+            return .success;
         } else {
             return .{ .err = .{
                 .errno = @intFromEnum(E.PERM),
@@ -1766,7 +1766,7 @@ pub fn access(path: bun.OSPathSliceZ, mode: i32) Maybe(void) {
         }
     }
     // TODO: fix that bun's std library fork has a different parameter type.
-    return Maybe(void).errnoSysP(syscall.access(path, @bitCast(mode)), .access, path) orelse .{ .result = {} };
+    return Maybe(void).errnoSysP(syscall.access(path, @bitCast(mode)), .access, path) orelse .success;
 }
 
 pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
@@ -2388,7 +2388,7 @@ pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
             .FileEndOfFileInformation,
         );
 
-        return Maybe(void).errnoSysFd(rc, .ftruncate, fd) orelse Maybe(void).success;
+        return Maybe(void).errnoSysFd(rc, .ftruncate, fd) orelse .success;
     }
 
     return while (true) {
@@ -2396,7 +2396,7 @@ pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(void).success;
+        return .success;
     };
 }
 
@@ -2406,7 +2406,7 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2439,7 +2439,7 @@ pub fn renameatConcurrently(
     comptime opts: struct { move_fallback: bool = false },
 ) Maybe(void) {
     switch (renameatConcurrentlyWithoutFallback(from_dir_fd, from, to_dir_fd, to)) {
-        .result => return Maybe(void).success,
+        .result => return .success,
         .err => |e| {
             if (opts.move_fallback and e.getErrno() == E.XDEV) {
                 bun.Output.debugWarn("renameatConcurrently() failed with E.XDEV, falling back to moveFileZSlowMaybe()", .{});
@@ -2505,7 +2505,7 @@ pub fn renameatConcurrentlyWithoutFallback(
         }
     }
 
-    return Maybe(void).success;
+    return .success;
 }
 
 pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8, flags: RenameAt2Flags) Maybe(void) {
@@ -2528,7 +2528,7 @@ pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.F
         }
         if (comptime Environment.allow_assert)
             log("renameat2({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2560,7 +2560,7 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
         }
         if (comptime Environment.allow_assert)
             log("renameat({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2570,7 +2570,7 @@ pub fn chown(path: [:0]const u8, uid: posix.uid_t, gid: posix.gid_t) Maybe(void)
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2582,7 +2582,7 @@ pub fn symlink(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
             return err;
         }
         log("symlink({s}, {s}) = 0", .{ target, dest });
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2594,7 +2594,7 @@ pub fn symlinkat(target: [:0]const u8, dirfd: bun.FileDescriptor, dest: [:0]cons
             return err;
         }
         log("symlinkat({s}, {}, {s}) = 0", .{ target, dirfd, dest });
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2637,7 +2637,7 @@ pub fn symlinkOrJunction(dest: [:0]const u8, target: [:0]const u8, abs_fallback_
         const target_path = bun.strings.toWPathNormalizeAutoExtend(target16, target);
         switch (symlinkW(sym_path, target_path, .{ .directory = true })) {
             .result => {
-                return Maybe(void).success;
+                return .success;
             },
             .err => |err| {
                 switch (err.getErrno()) {
@@ -2715,7 +2715,7 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
             flags,
         });
 
-        return Maybe(void).success;
+        return .success;
     }
 
     unreachable;
@@ -2731,7 +2731,7 @@ pub fn clonefile(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
             return err;
         }
         log("clonefile({s}, {s}) = 0", .{ from, to });
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2775,7 +2775,7 @@ pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: posix.system.COPYFI
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2787,7 +2787,7 @@ pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: p
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2799,7 +2799,7 @@ pub fn unlinkW(from: [:0]const u16) Maybe(void) {
     }
 
     log("DeleteFileW({s}) = 0", .{bun.fmt.fmtPath(u16, from, .{})});
-    return Maybe(void).success;
+    return .success;
 }
 
 pub fn unlink(from: [:0]const u8) Maybe(void) {
@@ -2817,7 +2817,7 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
         }
 
         log("unlink({s}) = 0", .{from});
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2852,7 +2852,7 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
         }
         if (comptime Environment.allow_assert)
             log("unlinkat({}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
-        return Maybe(void).success;
+        return .success;
     }
     unreachable;
 }
@@ -2870,7 +2870,7 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
         }
         if (comptime Environment.allow_assert)
             log("unlinkat({}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2972,7 +2972,7 @@ pub fn setCloseOnExec(fd: bun.FileDescriptor) Maybe(void) {
         .err => |err| return .{ .err = err },
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub fn setsockopt(fd: bun.FileDescriptor, level: c_int, optname: u32, value: i32) Maybe(i32) {
@@ -2994,12 +2994,12 @@ pub fn setNoSigpipe(fd: bun.FileDescriptor) Maybe(void) {
     if (comptime Environment.isMac) {
         log("setNoSigpipe({})", .{fd});
         return switch (setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, 1)) {
-            .result => .{ .result = {} },
+            .result => .success,
             .err => |err| .{ .err = err },
         };
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 const socketpair_t = if (Environment.isLinux) i32 else c_uint;
@@ -3132,7 +3132,7 @@ pub fn socketpairImpl(domain: socketpair_t, socktype: socketpair_t, protocol: so
 pub fn munmap(memory: []align(page_size_min) const u8) Maybe(void) {
     if (Maybe(void).errnoSys(syscall.munmap(memory.ptr, memory.len), .munmap)) |err| {
         return err;
-    } else return Maybe(void).success;
+    } else return .success;
 }
 
 pub fn memfd_create(name: [:0]const u8, flags: u32) Maybe(bun.FileDescriptor) {
@@ -3353,11 +3353,11 @@ pub fn existsZ(path: [:0]const u8) bool {
     }
 }
 
-pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) jsc.Maybe(bool) {
+pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) bun.sys.Maybe(bool) {
     const has_sentinel = std.meta.sentinel(@TypeOf(subpath)) != null;
 
     if (comptime !has_sentinel) {
-        const path = std.os.toPosixPath(subpath) catch return jsc.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
+        const path = std.os.toPosixPath(subpath) catch return bun.sys.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
         return faccessat(dir_fd, path);
     }
 
@@ -3366,23 +3366,23 @@ pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) jsc.Maybe(bool) {
         const rc = linux.faccessat(dir_fd.cast(), subpath, linux.F_OK, 0);
         syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
         if (rc == 0) {
-            return jsc.Maybe(bool){ .result = true };
+            return bun.sys.Maybe(bool){ .result = true };
         }
 
-        return jsc.Maybe(bool){ .result = false };
+        return bun.sys.Maybe(bool){ .result = false };
     }
 
     // on other platforms use faccessat from libc
     const rc = std.c.faccessat(dir_fd.cast(), subpath, std.posix.F_OK, 0);
     syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
     if (rc == 0) {
-        return jsc.Maybe(bool){ .result = true };
+        return bun.sys.Maybe(bool){ .result = true };
     }
 
-    return jsc.Maybe(bool){ .result = false };
+    return bun.sys.Maybe(bool){ .result = false };
 }
 
-pub fn directoryExistsAt(dir: bun.FileDescriptor, subpath: anytype) jsc.Maybe(bool) {
+pub fn directoryExistsAt(dir: bun.FileDescriptor, subpath: anytype) bun.sys.Maybe(bool) {
     return switch (existsAtType(dir, subpath)) {
         //
         .err => |err| if (err.getErrno() == .NOENT)
@@ -3405,7 +3405,7 @@ pub fn futimens(fd: bun.FileDescriptor, atime: jsc.Node.TimeLike, mtime: jsc.Nod
         log("futimens({}, accessed=({d}, {d}), modified=({d}, {d})) = {d}", .{ fd, atime.sec, atime.nsec, mtime.sec, mtime.nsec, rc });
 
         if (rc == 0) {
-            return Maybe(void).success;
+            return .success;
         }
 
         switch (getErrno(rc)) {
@@ -3436,7 +3436,7 @@ fn utimensWithFlags(path: bun.OSPathSliceZ, atime: jsc.Node.TimeLike, mtime: jsc
         log("utimensat({d}, atime=({d}, {d}), mtime=({d}, {d})) = {d}", .{ std.fs.cwd().fd, atime.sec, atime.nsec, mtime.sec, mtime.nsec, rc });
 
         if (rc == 0) {
-            return Maybe(void).success;
+            return .success;
         }
 
         switch (getErrno(rc)) {
@@ -3482,7 +3482,7 @@ pub fn updateNonblocking(fd: bun.FileDescriptor, nonblocking: bool) Maybe(void) 
         }
     }
 
-    return Maybe(void).success;
+    return .success;
 }
 
 pub const ExistsAtType = enum {
@@ -3525,7 +3525,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
         };
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
         const rc = ntdll.NtQueryAttributesFile(&attr, &basic_info);
-        if (jsc.Maybe(bool).errnoSys(rc, .access)) |err| {
+        if (bun.sys.Maybe(bool).errnoSys(rc, .access)) |err| {
             syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {}", .{ bun.fmt.fmtOSPath(path, .{}), err });
             return .{ .err = err.err };
         }
@@ -3649,7 +3649,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
             linux.lseek(fd.cast(), @intCast(offset), posix.SEEK.SET),
             .lseek,
             fd,
-        ) orelse Maybe(void).success;
+        ) orelse .success;
     }
 
     if (comptime Environment.isMac) {
@@ -3657,7 +3657,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
             std.c.lseek(fd.cast(), @intCast(offset), posix.SEEK.SET),
             .lseek,
             fd,
-        ) orelse Maybe(void).success;
+        ) orelse .success;
     }
 
     if (comptime Environment.isWindows) {
@@ -3671,9 +3671,9 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
             windows.FILE_BEGIN,
         );
         if (rc == windows.FALSE) {
-            return Maybe(void).errnoSysFd(0, .lseek, fd) orelse Maybe(void).success;
+            return Maybe(void).errnoSysFd(0, .lseek, fd) orelse .success;
         }
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -3873,7 +3873,7 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
             CAP_DAC_READ_SEARCH.status.store(1, .monotonic);
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -4108,14 +4108,14 @@ pub const File = struct {
                 .err => |err| return .{ .err = err },
                 .result => |amt| {
                     if (amt == 0) {
-                        return .{ .result = {} };
+                        return .success;
                     }
                     remain = remain[amt..];
                 },
             }
         }
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn writeFile(
@@ -4132,7 +4132,7 @@ pub const File = struct {
             .err => |err| return .{ .err = err },
             .result => {},
         }
-        return .{ .result = {} };
+        return .success;
     }
 
     pub const ReadError = anyerror;
@@ -4251,7 +4251,7 @@ pub const File = struct {
 
         pub fn unwrap(self: *const ReadToEndResult) ![]u8 {
             if (self.err) |err| {
-                try (jsc.Maybe(void){ .err = err }).unwrap();
+                try (bun.sys.Maybe(void){ .err = err }).unwrap();
             }
             return self.bytes.items;
         }
@@ -4991,7 +4991,7 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
             _ = bun.c.fchown(out_handle.cast(), stat_.uid, stat_.gid);
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 }
 

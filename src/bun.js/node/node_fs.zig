@@ -77,7 +77,7 @@ pub const Async = struct {
     /// Used internally. Not from JavaScript.
     pub const AsyncMkdirp = struct {
         completion_ctx: *anyopaque,
-        completion: *const fn (*anyopaque, jsc.Maybe(void)) void,
+        completion: *const fn (*anyopaque, bun.sys.Maybe(void)) void,
 
         /// Memory is not owned by this struct
         path: []const u8,
@@ -101,7 +101,7 @@ pub const Async = struct {
                     this.completion(this.completion_ctx, .{ .err = err.withPath(bun.default_allocator.dupe(u8, err.path) catch bun.outOfMemory()) });
                 },
                 .result => {
-                    this.completion(this.completion_ctx, jsc.Maybe(void).success);
+                    this.completion(this.completion_ctx, .success);
                 },
             }
         }
@@ -133,7 +133,7 @@ pub const Async = struct {
             args: ArgumentType,
             globalObject: *jsc.JSGlobalObject,
             req: uv.fs_t = std.mem.zeroes(uv.fs_t),
-            result: jsc.Maybe(ReturnType),
+            result: bun.sys.Maybe(ReturnType),
             ref: bun.Async.KeepAlive = .{},
             tracker: jsc.Debugger.AsyncTaskTracker,
 
@@ -178,7 +178,7 @@ pub const Async = struct {
 
                         if (fd == 1 or fd == 2) {
                             log("uv close({}) SKIPPED", .{fd});
-                            task.result = Maybe(Return.Close).success;
+                            task.result = .success;
                             task.globalObject.bunVM().eventLoop().enqueueTask(jsc.Task.init(task));
                             return task.promise.value();
                         }
@@ -232,7 +232,7 @@ pub const Async = struct {
                         const bufs = args_.buffers.buffers.items;
 
                         if (bufs.len == 0) {
-                            task.result = Maybe(Return.Writev).success;
+                            task.result = .success;
                             task.globalObject.bunVM().eventLoop().enqueueTask(jsc.Task.init(task));
                             return task.promise.value();
                         }
@@ -289,7 +289,7 @@ pub const Async = struct {
 
             pub fn runFromJSThread(this: *Task) void {
                 const globalObject = this.globalObject;
-                const success = @as(jsc.Maybe(ReturnType).Tag, this.result) == .result;
+                const success = @as(bun.sys.Maybe(ReturnType).Tag, this.result) == .result;
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
@@ -340,7 +340,7 @@ pub const Async = struct {
             args: ArgumentType,
             globalObject: *jsc.JSGlobalObject,
             task: jsc.WorkPoolTask = .{ .callback = &workPoolCallback },
-            result: jsc.Maybe(ReturnType),
+            result: bun.sys.Maybe(ReturnType),
             ref: bun.Async.KeepAlive = .{},
             tracker: jsc.Debugger.AsyncTaskTracker,
 
@@ -388,7 +388,7 @@ pub const Async = struct {
 
             pub fn runFromJSThread(this: *Task) void {
                 const globalObject = this.globalObject;
-                const success = @as(jsc.Maybe(ReturnType).Tag, this.result) == .result;
+                const success = @as(bun.sys.Maybe(ReturnType).Tag, this.result) == .result;
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
@@ -452,7 +452,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         args: Arguments.Cp,
         evtloop: jsc.EventLoopHandle,
         task: jsc.WorkPoolTask = .{ .callback = &workPoolCallback },
-        result: jsc.Maybe(Return.Cp),
+        result: bun.sys.Maybe(Return.Cp),
         /// If this task is called by the shell then we shouldn't call this as
         /// it is not threadsafe and is unnecessary as the process will be kept
         /// alive by the shell instance
@@ -526,7 +526,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
 
                 const old_count = this.cp_task.subtask_count.fetchSub(1, .monotonic);
                 if (old_count == 1) {
-                    this.cp_task.finishConcurrently(Maybe(Return.Cp).success);
+                    this.cp_task.finishConcurrently(.success);
                 }
 
                 this.deinit();
@@ -662,7 +662,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             const globalObject = this.evtloop.globalObject() orelse {
                 @panic("No global object, this indicates a bug in Bun. Please file a GitHub issue.");
             };
-            const success = @as(jsc.Maybe(Return.Cp).Tag, this.result) == .result;
+            const success = @as(bun.sys.Maybe(Return.Cp).Tag, this.result) == .result;
             var promise_value = this.promise.value();
             var promise = this.promise.get();
             const result = switch (this.result) {
@@ -735,7 +735,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                         this.args,
                     );
                     if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !args.flags.errorOnExist) {
-                        this.finishConcurrently(Maybe(Return.Cp).success);
+                        this.finishConcurrently(.success);
                         return;
                     }
                     this.onCopy(src, dest);
@@ -763,7 +763,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     );
                     if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !args.flags.errorOnExist) {
                         this.onCopy(src, dest);
-                        this.finishConcurrently(Maybe(Return.Cp).success);
+                        this.finishConcurrently(.success);
                         return;
                     }
                     this.onCopy(src, dest);
@@ -783,7 +783,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             const success = ThisAsyncCpTask._cpAsyncDirectory(nodefs, args.flags, this, &src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len));
             const old_count = this.subtask_count.fetchSub(1, .monotonic);
             if (success and old_count == 1) {
-                this.finishConcurrently(Maybe(Return.Cp).success);
+                this.finishConcurrently(.success);
             }
         }
 
@@ -3358,7 +3358,7 @@ pub const NodeFS = struct {
                     data = data[written..];
                 }
 
-                return Maybe(Return.AppendFile).success;
+                return .success;
             },
             .path => |path_| {
                 const path = path_.sliceZ(&this.sync_error_buf);
@@ -3380,7 +3380,7 @@ pub const NodeFS = struct {
                     data = data[written..];
                 }
 
-                return Maybe(Return.AppendFile).success;
+                return .success;
             },
         }
     }
@@ -3401,7 +3401,7 @@ pub const NodeFS = struct {
                 .from_libuv = true,
             } };
         }
-        return Maybe(Return.Close).success;
+        return .success;
     }
 
     // since we use a 64 KB stack buffer, we should not let this function get inlined
@@ -3472,7 +3472,7 @@ pub const NodeFS = struct {
             }
         }
 
-        return Maybe(Return.CopyFile).success;
+        return .success;
     }
 
     // copy_file_range() is frequently not supported across devices, such as tmpfs.
@@ -3494,12 +3494,12 @@ pub const NodeFS = struct {
             }
         }
 
-        return Maybe(Return.CopyFile).success;
+        return .success;
     }
 
     pub fn copyFile(this: *NodeFS, args: Arguments.CopyFile, _: Flavor) Maybe(Return.CopyFile) {
         return switch (this.copyFileInner(args)) {
-            .result => .{ .result = {} },
+            .result => .success,
             .err => |err| .{ .err = .{
                 .errno = err.errno,
                 .syscall = .copyfile,
@@ -3778,7 +3778,7 @@ pub const NodeFS = struct {
 
         return switch (Syscall.chmod(path, args.mode)) {
             .err => |err| .{ .err = err.withPath(args.path.slice()) },
-            .result => Maybe(Return.Chmod).success,
+            .result => .success,
         };
     }
 
@@ -3794,7 +3794,7 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             return Syscall.fdatasync(args.fd);
         }
-        return Maybe(Return.Fdatasync).errnoSysFd(system.fdatasync(args.fd.native()), .fdatasync, args.fd) orelse Maybe(Return.Fdatasync).success;
+        return Maybe(Return.Fdatasync).errnoSysFd(system.fdatasync(args.fd.native()), .fdatasync, args.fd) orelse .success;
     }
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
@@ -3809,7 +3809,7 @@ pub const NodeFS = struct {
             return Syscall.fsync(args.fd);
         }
         return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd.native()), .fsync) orelse
-            Maybe(Return.Fsync).success;
+            .success;
     }
 
     pub fn ftruncate(_: *NodeFS, args: Arguments.FTruncate, _: Flavor) Maybe(Return.Ftruncate) {
@@ -3828,12 +3828,12 @@ pub const NodeFS = struct {
                     .fd = args.fd,
                 } }
             else
-                Maybe(Return.Futimes).success;
+                .success;
         }
 
         return switch (Syscall.futimens(args.fd, args.atime, args.mtime)) {
             .err => |err| .{ .err = err },
-            .result => Maybe(Return.Futimes).success,
+            .result => .success,
         };
     }
 
@@ -3844,7 +3844,7 @@ pub const NodeFS = struct {
 
         const path = args.path.sliceZ(&this.sync_error_buf);
         return Maybe(Return.Lchmod).errnoSysP(c.lchmod(path, @truncate(args.mode)), .lchmod, path) orelse
-            Maybe(Return.Lchmod).success;
+            .success;
     }
 
     pub fn lchown(this: *NodeFS, args: Arguments.LChown, _: Flavor) Maybe(Return.Lchown) {
@@ -3855,7 +3855,7 @@ pub const NodeFS = struct {
         const path = args.path.sliceZ(&this.sync_error_buf);
 
         return Maybe(Return.Lchown).errnoSysP(c.lchown(path, args.uid, args.gid), .lchown, path) orelse
-            Maybe(Return.Lchown).success;
+            .success;
     }
 
     pub fn link(this: *NodeFS, args: Arguments.Link, _: Flavor) Maybe(Return.Link) {
@@ -3871,7 +3871,7 @@ pub const NodeFS = struct {
         }
 
         return Maybe(Return.Link).errnoSysPD(system.link(from, to), .link, args.old_path.slice(), args.new_path.slice()) orelse
-            Maybe(Return.Link).success;
+            .success;
     }
 
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, _: Flavor) Maybe(Return.Lstat) {
@@ -4513,7 +4513,7 @@ pub const NodeFS = struct {
             }
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     pub fn readdirWithEntriesRecursiveAsync(
@@ -4541,7 +4541,7 @@ pub const NodeFS = struct {
                         // This is different than what Node does, at the time of writing.
                         // Node doesn't gracefully handle errors like these. It fails the entire operation.
                         .NOENT, .NOTDIR, .PERM => {
-                            return Maybe(void).success;
+                            return .success;
                         },
                         else => {},
                     }
@@ -4649,7 +4649,7 @@ pub const NodeFS = struct {
             }
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     fn readdirWithEntriesRecursiveSync(
@@ -4789,7 +4789,7 @@ pub const NodeFS = struct {
             }
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     fn shouldThrowOutOfMemoryEarlyForJavaScript(encoding: Encoding, size: usize, syscall: Syscall.Tag) ?Syscall.Error {
@@ -5348,7 +5348,7 @@ pub const NodeFS = struct {
             }
         }
 
-        return Maybe(Return.WriteFile).success;
+        return .success;
     }
 
     pub fn writeFile(this: *NodeFS, args: Arguments.WriteFile, _: Flavor) Maybe(Return.WriteFile) {
@@ -5564,7 +5564,7 @@ pub const NodeFS = struct {
                 };
             };
 
-            return Maybe(Return.Rmdir).success;
+            return .success;
         }
 
         if (comptime Environment.isWindows) {
@@ -5575,7 +5575,7 @@ pub const NodeFS = struct {
         }
 
         return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
-            Maybe(Return.Rmdir).success;
+            .success;
     }
 
     pub fn rm(this: *NodeFS, args: Arguments.Rm, _: Flavor) Maybe(Return.Rm) {
@@ -5611,7 +5611,7 @@ pub const NodeFS = struct {
 
                     error.FileNotFound => brk: {
                         if (args.force) {
-                            return Maybe(Return.Rm).success;
+                            return .success;
                         }
                         break :brk .NOENT;
                     },
@@ -5623,7 +5623,7 @@ pub const NodeFS = struct {
                     .err = bun.sys.Error.fromCode(errno, .rm).withPath(args.path.slice()),
                 };
             };
-            return Maybe(Return.Rm).success;
+            return .success;
         }
 
         const dest = args.path.sliceZ(&this.sync_error_buf);
@@ -5646,7 +5646,7 @@ pub const NodeFS = struct {
                         error.FileBusy => .BUSY,
                         error.FileNotFound => brk: {
                             if (args.force) {
-                                return Maybe(Return.Rm).success;
+                                return .success;
                             }
                             break :brk .NOENT;
                         },
@@ -5661,7 +5661,7 @@ pub const NodeFS = struct {
                     };
                 };
 
-                return Maybe(Return.Rm).success;
+                return .success;
             }
 
             {
@@ -5677,7 +5677,7 @@ pub const NodeFS = struct {
                     error.BadPathName => .INVAL,
                     error.FileNotFound => brk: {
                         if (args.force) {
-                            return Maybe(Return.Rm).success;
+                            return .success;
                         }
                         break :brk .NOENT;
                     },
@@ -5690,7 +5690,7 @@ pub const NodeFS = struct {
             }
         };
 
-        return Maybe(Return.Rm).success;
+        return .success;
     }
 
     pub fn statfs(this: *NodeFS, args: Arguments.StatFS, _: Flavor) Maybe(Return.StatFS) {
@@ -5830,7 +5830,7 @@ pub const NodeFS = struct {
         }
 
         return Maybe(Return.Truncate).errnoSysP(c.truncate(path.sliceZ(&this.sync_error_buf), len), .truncate, path.slice()) orelse
-            Maybe(Return.Truncate).success;
+            .success;
     }
 
     pub fn truncate(this: *NodeFS, args: Arguments.Truncate, _: Flavor) Maybe(Return.Truncate) {
@@ -5852,7 +5852,7 @@ pub const NodeFS = struct {
             };
         }
         return Maybe(Return.Unlink).errnoSysP(system.unlink(args.path.sliceZ(&this.sync_error_buf)), .unlink, args.path.slice()) orelse
-            Maybe(Return.Unlink).success;
+            .success;
     }
 
     pub fn watchFile(_: *NodeFS, args: Arguments.WatchFile, comptime flavor: Flavor) Maybe(Return.WatchFile) {
@@ -5894,7 +5894,7 @@ pub const NodeFS = struct {
                     .path = args.path.slice(),
                 } }
             else
-                Maybe(Return.Utimes).success;
+                .success;
         }
 
         return switch (Syscall.utimens(
@@ -5903,7 +5903,7 @@ pub const NodeFS = struct {
             args.mtime,
         )) {
             .err => |err| .{ .err = err.withPath(args.path.slice()) },
-            .result => Maybe(Return.Utimes).success,
+            .result => .success,
         };
     }
 
@@ -5926,7 +5926,7 @@ pub const NodeFS = struct {
                     .path = args.path.slice(),
                 } }
             else
-                Maybe(Return.Utimes).success;
+                .success;
         }
 
         bun.assert(args.mtime.nsec <= 1e9);
@@ -5934,7 +5934,7 @@ pub const NodeFS = struct {
 
         return switch (Syscall.lutimes(args.path.sliceZ(&this.sync_error_buf), args.atime, args.mtime)) {
             .err => |err| .{ .err = err.withPath(args.path.slice()) },
-            .result => Maybe(Return.Lutimes).success,
+            .result => .success,
         };
     }
 
@@ -6006,7 +6006,7 @@ pub const NodeFS = struct {
                     args,
                 );
                 if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !cp_flags.errorOnExist) {
-                    return Maybe(Return.Cp).success;
+                    return .success;
                 }
                 return r;
             }
@@ -6028,7 +6028,7 @@ pub const NodeFS = struct {
                     args,
                 );
                 if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !cp_flags.errorOnExist) {
-                    return Maybe(Return.Cp).success;
+                    return .success;
                 }
                 return r;
             }
@@ -6061,7 +6061,7 @@ pub const NodeFS = struct {
                     else => {},
                 }
             } else {
-                return Maybe(Return.Cp).success;
+                return .success;
             }
         }
 
@@ -6135,7 +6135,7 @@ pub const NodeFS = struct {
                 },
             }
         }
-        return Maybe(Return.Cp).success;
+        return .success;
     }
 
     /// On Windows, copying a file onto itself will return EBUSY, which is an
@@ -6166,7 +6166,7 @@ pub const NodeFS = struct {
         };
 
         if (statbuf.dev == new_statbuf.dev and statbuf.ino == new_statbuf.ino) {
-            return Maybe(Return.CopyFile).success;
+            return .success;
         }
 
         return result;
@@ -6917,7 +6917,7 @@ const Buffer = bun.api.node.Buffer;
 
 const jsc = bun.jsc;
 const ArrayBuffer = jsc.MarkedArrayBuffer;
-const Maybe = jsc.Maybe;
+const Maybe = bun.sys.Maybe;
 const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;
 
 const Encoding = jsc.Node.Encoding;

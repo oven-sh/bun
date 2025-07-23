@@ -592,13 +592,13 @@ pub const CopyFileWindows = struct {
         read_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
         uv_buf: libuv.uv_buf_t = .{ .base = undefined, .len = 0 },
 
-        pub fn start(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) jsc.Maybe(void) {
+        pub fn start(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) bun.sys.Maybe(void) {
             read_write_loop.read_buf.ensureTotalCapacityPrecise(64 * 1024) catch bun.outOfMemory();
 
             return read(read_write_loop, this);
         }
 
-        pub fn read(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) jsc.Maybe(void) {
+        pub fn read(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) bun.sys.Maybe(void) {
             read_write_loop.read_buf.items.len = 0;
             read_write_loop.uv_buf = libuv.uv_buf_t.init(read_write_loop.read_buf.allocatedSlice());
             const loop = this.event_loop.virtual_machine.event_loop_handle.?;
@@ -622,7 +622,7 @@ pub const CopyFileWindows = struct {
                 return .{ .err = err };
             }
 
-            return .{ .result = {} };
+            return .success;
         }
 
         fn onRead(req: *libuv.fs_t) callconv(.C) void {
@@ -807,7 +807,7 @@ pub const CopyFileWindows = struct {
         return promise;
     }
 
-    fn preparePathlike(pathlike: *jsc.Node.PathOrFileDescriptor, must_close: *bool, is_reading: bool) jsc.Maybe(bun.FileDescriptor) {
+    fn preparePathlike(pathlike: *jsc.Node.PathOrFileDescriptor, must_close: *bool, is_reading: bool) bun.sys.Maybe(bun.FileDescriptor) {
         if (pathlike.* == .path) {
             const fd = switch (bun.sys.openatWindowsT(
                 u8,
@@ -1120,7 +1120,7 @@ pub const CopyFileWindows = struct {
         this.copyfile();
     }
 
-    fn onMkdirpCompleteConcurrent(this: *CopyFileWindows, err_: jsc.Maybe(void)) void {
+    fn onMkdirpCompleteConcurrent(this: *CopyFileWindows, err_: bun.sys.Maybe(void)) void {
         bun.sys.syslog("mkdirp complete", .{});
         assert(this.err == null);
         this.err = if (err_ == .err) err_.err else null;

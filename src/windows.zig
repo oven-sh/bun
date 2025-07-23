@@ -3492,7 +3492,7 @@ const FILE_DISPOSITION_ON_CLOSE: ULONG = 0x00000008;
 const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
 
 // Copy-paste of the standard library function except without unreachable.
-pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.jsc.Maybe(void) {
+pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.sys.Maybe(void) {
     const create_options_flags: ULONG = if (options.remove_dir)
         FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT
     else
@@ -3535,7 +3535,7 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.js
         0,
     );
     bun.sys.syslog("NtCreateFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
-    if (bun.jsc.Maybe(void).errnoSys(rc, .open)) |err| {
+    if (bun.sys.Maybe(void).errnoSys(rc, .open)) |err| {
         return err;
     }
     defer _ = bun.windows.CloseHandle(tmp_handle);
@@ -3562,7 +3562,7 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.js
     );
     bun.sys.syslog("NtSetInformationFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
     switch (rc) {
-        .SUCCESS => return .{ .result = {} },
+        .SUCCESS => return .success,
         // INVALID_PARAMETER here means that the filesystem does not support FileDispositionInformationEx
         .INVALID_PARAMETER => {},
         // For all other statuses, fall down to the switch below to handle them.
@@ -3584,11 +3584,11 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.js
         );
         bun.sys.syslog("NtSetInformationFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
     }
-    if (bun.jsc.Maybe(void).errnoSys(rc, .NtSetInformationFile)) |err| {
+    if (bun.sys.Maybe(void).errnoSys(rc, .NtSetInformationFile)) |err| {
         return err;
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub const EXCEPTION_CONTINUE_EXECUTION = -1;
@@ -3902,7 +3902,7 @@ pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
     log("deleteOpenedFile({}) = {s}", .{ fd, @tagName(rc) });
 
     return if (rc == .SUCCESS)
-        Maybe(void).success
+        .success
     else
         Maybe(void).errno(rc, .NtSetInformationFile);
 }
@@ -3965,7 +3965,7 @@ pub fn moveOpenedFileAt(
     }
 
     return if (rc == .SUCCESS)
-        Maybe(void).success
+        .success
     else
         Maybe(void).errno(rc, .NtSetInformationFile);
 }

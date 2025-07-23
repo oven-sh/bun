@@ -472,7 +472,7 @@ const PathString = bun.PathString;
 const strings = bun.strings;
 
 const jsc = bun.jsc;
-const Maybe = jsc.Maybe;
+const Maybe = bun.sys.Maybe;
 const Entry = jsc.Node.Dirent;
 
 const std = @import("std");

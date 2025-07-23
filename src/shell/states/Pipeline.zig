@@ -302,7 +302,7 @@ fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
         }
         set_count.* += 1;
     }
-    return Maybe(void).success;
+    return .success;
 }
 
 fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO, evtloop: jsc.EventLoopHandle) IO.OutKind {
@@ -330,7 +330,7 @@ const bun = @import("bun");
 const assert = bun.assert;
 
 const jsc = bun.jsc;
-const Maybe = jsc.Maybe;
+const Maybe = bun.sys.Maybe;
 
 const shell = bun.shell;
 const ExitCode = bun.shell.ExitCode;

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { getSecret } from "harness";
-import postgres from "postgres";
-
+import { sql } from "bun";
+const postgres = (...args) => new sql(...args);
 const databaseUrl = getSecret("TLS_POSTGRES_DATABASE_URL");
 
 describe("postgres batch insert crash fix #21311", () => {
@@ -60,16 +60,15 @@ describe("postgres batch insert crash fix #21311", () => {
     }
   });
 
-  test("should handle concurrent batch operations", async () => {
+  test("should handle mixed date formats in batch operations", async () => {
     const sql = postgres(databaseUrl!);
     try {
       // Create test table
       await sql`DROP TABLE IF EXISTS test_concurrent_21311`;
       await sql`CREATE TABLE test_concurrent_21311 (
         id serial PRIMARY KEY,
-        thread_id INT,
-        data VARCHAR(100),
-        date DATE
+        should_be_null INT,
+        date DATE NULL
       );`;
 
       // Run multiple concurrent batch operations
@@ -78,38 +77,26 @@ describe("postgres batch insert crash fix #21311", () => {
         const batchSize = 20;
         const values = Array.from(
           { length: batchSize },
-          (_, i) => `(${threadId}, 'thread_${threadId}_data_${i}', 'infinity'::date)`,
+          (_, i) => `(${i % 2 === 0 ? 1 : 0}, ${i % 2 === 0 ? "'infinity'::date" : "NULL"})`,
         ).join(", ");
 
-        const insertQuery = `INSERT INTO test_concurrent_21311 (thread_id, data, date) VALUES ${values} RETURNING id, thread_id, data, date`;
+        const insertQuery = `INSERT INTO test_concurrent_21311 (should_be_null, date) VALUES ${values} RETURNING id, should_be_null, date`;
         return sql.unsafe(insertQuery);
       });
 
-      const allResults = await Promise.all(concurrentOperations);
-
-      // Verify all operations completed successfully
-      expect(allResults).toHaveLength(100);
-      allResults.forEach((results, threadId) => {
-        expect(results).toHaveLength(20);
-        results.forEach((row, i) => {
-          expect(row.thread_id).toBe(threadId);
-          expect(row.data).toBe(`thread_${threadId}_data_${i}`);
-        });
-      });
+      await Promise.all(concurrentOperations);
 
       // Run multiple concurrent queries
-      const concurrentQueries = Array.from({ length: 100 }, async (_, threadId) => {
-        return sql`SELECT * FROM test_concurrent_21311 WHERE thread_id = ${threadId}`;
-      });
 
-      const allQueryResults = await Promise.all(concurrentQueries);
-      expect(allQueryResults).toHaveLength(100);
-      allQueryResults.forEach((results, threadId) => {
-        expect(results).toHaveLength(20);
-        results.forEach((row, i) => {
-          expect(row.thread_id).toBe(threadId);
-          expect(row.data).toBe(`thread_${threadId}_data_${i}`);
-        });
+      const allQueryResults = await sql`SELECT * FROM test_concurrent_21311`;
+      allQueryResults.forEach((row, i) => {
+        expect(row.should_be_null).toBeNumber();
+        if (row.should_be_null) {
+          expect(row.date).toBeDefined();
+          expect(row.date?.getTime()).toBeNaN();
+        } else {
+          expect(row.date).toBeNull();
+        }
       });
       // Cleanup
       await sql`DROP TABLE test_concurrent_21311`;

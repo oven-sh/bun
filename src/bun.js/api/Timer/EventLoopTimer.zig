@@ -1,20 +1,20 @@
-const EventLoopTimer = @This();
+const Self = @This();
 
 /// The absolute time to fire this timer next.
 next: timespec,
 state: State = .PENDING,
 tag: Tag,
 /// Internal heap fields.
-heap: bun.io.heap.IntrusiveField(EventLoopTimer) = .{},
+heap: bun.io.heap.IntrusiveField(Self) = .{},
 
-pub fn initPaused(tag: Tag) EventLoopTimer {
+pub fn initPaused(tag: Tag) Self {
     return .{
         .next = .epoch,
         .tag = tag,
     };
 }
 
-pub fn less(_: void, a: *const EventLoopTimer, b: *const EventLoopTimer) bool {
+pub fn less(_: void, a: *const Self, b: *const Self) bool {
     const sec_order = std.math.order(a.next.sec, b.next.sec);
     if (sec_order != .eq) return sec_order == .lt;
 
@@ -70,17 +70,17 @@ pub const Tag = if (Environment.isWindows) enum {
             .TimerCallback => TimerCallback,
             .TimeoutObject => TimeoutObject,
             .ImmediateObject => ImmediateObject,
-            .TestRunner => JSC.Jest.TestRunner,
+            .TestRunner => jsc.Jest.TestRunner,
             .StatWatcherScheduler => StatWatcherScheduler,
             .UpgradedDuplex => uws.UpgradedDuplex,
             .DNSResolver => DNSResolver,
             .WindowsNamedPipe => uws.WindowsNamedPipe,
             .WTFTimer => WTFTimer,
-            .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
-            .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
-            .SubprocessTimeout => JSC.Subprocess,
-            .ValkeyConnectionReconnect => JSC.API.Valkey,
-            .ValkeyConnectionTimeout => JSC.API.Valkey,
+            .PostgresSQLConnectionTimeout => jsc.Postgres.PostgresSQLConnection,
+            .PostgresSQLConnectionMaxLifetime => jsc.Postgres.PostgresSQLConnection,
+            .SubprocessTimeout => jsc.Subprocess,
+            .ValkeyConnectionReconnect => jsc.API.Valkey,
+            .ValkeyConnectionTimeout => jsc.API.Valkey,
             .DevServerSweepSourceMaps,
             .DevServerMemoryVisualizerTick,
             => bun.bake.DevServer,
@@ -108,16 +108,16 @@ pub const Tag = if (Environment.isWindows) enum {
             .TimerCallback => TimerCallback,
             .TimeoutObject => TimeoutObject,
             .ImmediateObject => ImmediateObject,
-            .TestRunner => JSC.Jest.TestRunner,
+            .TestRunner => jsc.Jest.TestRunner,
             .StatWatcherScheduler => StatWatcherScheduler,
             .UpgradedDuplex => uws.UpgradedDuplex,
             .WTFTimer => WTFTimer,
             .DNSResolver => DNSResolver,
-            .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
-            .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
-            .ValkeyConnectionTimeout => JSC.API.Valkey,
-            .ValkeyConnectionReconnect => JSC.API.Valkey,
-            .SubprocessTimeout => JSC.Subprocess,
+            .PostgresSQLConnectionTimeout => jsc.Postgres.PostgresSQLConnection,
+            .PostgresSQLConnectionMaxLifetime => jsc.Postgres.PostgresSQLConnection,
+            .ValkeyConnectionTimeout => jsc.API.Valkey,
+            .ValkeyConnectionReconnect => jsc.API.Valkey,
+            .SubprocessTimeout => jsc.Subprocess,
             .DevServerSweepSourceMaps,
             .DevServerMemoryVisualizerTick,
             => bun.bake.DevServer,
@@ -128,7 +128,7 @@ pub const Tag = if (Environment.isWindows) enum {
 const TimerCallback = struct {
     callback: *const fn (*TimerCallback) Arm,
     ctx: *anyopaque,
-    event_loop_timer: EventLoopTimer,
+    event_loop_timer: Self,
 };
 
 pub const State = enum {
@@ -148,15 +148,15 @@ pub const State = enum {
 /// If self was created by set{Immediate,Timeout,Interval}, get a pointer to the common data
 /// for all those kinds of timers
 pub fn jsTimerInternals(self: anytype) switch (@TypeOf(self)) {
-    *EventLoopTimer => ?*TimerObjectInternals,
-    *const EventLoopTimer => ?*const TimerObjectInternals,
+    *Self => ?*TimerObjectInternals,
+    *const Self => ?*const TimerObjectInternals,
     else => |T| @compileError("wrong type " ++ @typeName(T) ++ " passed to jsTimerInternals"),
 } {
     switch (self.tag) {
         inline .TimeoutObject, .ImmediateObject => |tag| {
             const parent: switch (@TypeOf(self)) {
-                *EventLoopTimer => *tag.Type(),
-                *const EventLoopTimer => *const tag.Type(),
+                *Self => *tag.Type(),
+                *const Self => *const tag.Type(),
                 else => unreachable,
             } = @fieldParentPtr("event_loop_timer", self);
             return &parent.internals;
@@ -165,7 +165,7 @@ pub fn jsTimerInternals(self: anytype) switch (@TypeOf(self)) {
     }
 }
 
-fn ns(self: *const EventLoopTimer) u64 {
+fn ns(self: *const Self) u64 {
     return self.next.ns();
 }
 
@@ -174,19 +174,19 @@ pub const Arm = union(enum) {
     disarm,
 };
 
-pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Arm {
-    switch (this.tag) {
-        .PostgresSQLConnectionTimeout => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
-        .PostgresSQLConnectionMaxLifetime => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
-        .ValkeyConnectionTimeout => return @as(*api.Valkey, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
-        .ValkeyConnectionReconnect => return @as(*api.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", this))).onReconnectTimer(),
-        .DevServerMemoryVisualizerTick => return bun.bake.DevServer.emitMemoryVisualizerMessageTimer(this, now),
-        .DevServerSweepSourceMaps => return bun.bake.DevServer.SourceMapStore.sweepWeakRefs(this, now),
+pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
+    switch (self.tag) {
+        .PostgresSQLConnectionTimeout => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", self))).onConnectionTimeout(),
+        .PostgresSQLConnectionMaxLifetime => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", self))).onMaxLifetimeTimeout(),
+        .ValkeyConnectionTimeout => return @as(*api.Valkey, @alignCast(@fieldParentPtr("timer", self))).onConnectionTimeout(),
+        .ValkeyConnectionReconnect => return @as(*api.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", self))).onReconnectTimer(),
+        .DevServerMemoryVisualizerTick => return bun.bake.DevServer.emitMemoryVisualizerMessageTimer(self, now),
+        .DevServerSweepSourceMaps => return bun.bake.DevServer.SourceMapStore.sweepWeakRefs(self, now),
         inline else => |t| {
-            if (@FieldType(t.Type(), "event_loop_timer") != EventLoopTimer) {
+            if (@FieldType(t.Type(), "event_loop_timer") != Self) {
                 @compileError(@typeName(t.Type()) ++ " has wrong type for 'event_loop_timer'");
             }
-            var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", this));
+            var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", self));
             if (comptime t.Type() == TimeoutObject or t.Type() == ImmediateObject) {
                 return container.internals.fire(now, vm);
             }
@@ -207,7 +207,7 @@ pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Ar
                 }
             }
 
-            if (comptime t.Type() == JSC.Jest.TestRunner) {
+            if (comptime t.Type() == jsc.Jest.TestRunner) {
                 container.onTestTimeout(now, vm);
                 return .disarm;
             }
@@ -216,7 +216,7 @@ pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Ar
                 return container.checkTimeouts(now, vm);
             }
 
-            if (comptime t.Type() == JSC.Subprocess) {
+            if (comptime t.Type() == jsc.Subprocess) {
                 return container.timeoutCallback();
             }
 
@@ -225,24 +225,24 @@ pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Ar
     }
 }
 
-pub fn deinit(_: *EventLoopTimer) void {}
+pub fn deinit(_: *Self) void {}
 
 /// A timer created by WTF code and invoked by Bun's event loop
-const WTFTimer = @import("../../WTFTimer.zig");
+const WTFTimer = bun.api.Timer.WTFTimer;
 
 const std = @import("std");
-const DNSResolver = @import("../bun/dns_resolver.zig").DNSResolver;
 const StatWatcherScheduler = @import("../../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
-
-const ImmediateObject = @import("../Timer.zig").ImmediateObject;
-const TimeoutObject = @import("../Timer.zig").TimeoutObject;
-const TimerObjectInternals = @import("../Timer.zig").TimerObjectInternals;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const timespec = bun.timespec;
 const uws = bun.uws;
+const DNSResolver = bun.api.dns.Resolver;
 
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const api = JSC.API;
+const ImmediateObject = bun.api.Timer.ImmediateObject;
+const TimeoutObject = bun.api.Timer.TimeoutObject;
+const TimerObjectInternals = bun.api.Timer.TimerObjectInternals;
+
+const jsc = bun.jsc;
+const VirtualMachine = jsc.VirtualMachine;
+const api = jsc.API;

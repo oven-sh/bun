@@ -36,7 +36,7 @@ pub fn hash(this: *const Signature) u64 {
     return hasher.final();
 }
 
-pub fn generate(globalObject: *JSC.JSGlobalObject, query: []const u8, array_value: JSValue, columns: JSValue, prepared_statement_id: u64, unnamed: bool) !Signature {
+pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_value: JSValue, columns: JSValue, prepared_statement_id: u64, unnamed: bool) !Signature {
     var fields = std.ArrayList(int4).init(bun.default_allocator);
     var name = try std.ArrayList(u8).initCapacity(bun.default_allocator, query.len);
 
@@ -108,5 +108,5 @@ const QueryBindingIterator = @import("./QueryBindingIterator.zig").QueryBindingI
 const types = @import("./PostgresTypes.zig");
 const int4 = types.int4;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

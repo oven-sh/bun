@@ -471,9 +471,9 @@ const FD = bun.FD;
 const PathString = bun.PathString;
 const strings = bun.strings;
 
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
-const Entry = JSC.Node.Dirent;
+const jsc = bun.jsc;
+const Maybe = jsc.Maybe;
+const Entry = jsc.Node.Dirent;
 
 const std = @import("std");
 const mem = std.mem;

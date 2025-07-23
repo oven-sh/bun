@@ -17,7 +17,7 @@ pub const CallFrame = opaque {
     }
 
     /// This function protects out-of-bounds access by returning undefined
-    pub fn argument(self: *const CallFrame, i: usize) JSC.JSValue {
+    pub fn argument(self: *const CallFrame, i: usize) jsc.JSValue {
         return if (self.argumentsCount() > i) self.arguments()[i] else .js_undefined;
     }
 
@@ -27,12 +27,12 @@ pub const CallFrame = opaque {
 
     /// When this CallFrame belongs to a constructor, this value is not the `this`
     /// value, but instead the value of `new.target`.
-    pub fn this(self: *const CallFrame) JSC.JSValue {
+    pub fn this(self: *const CallFrame) jsc.JSValue {
         return self.asUnsafeJSValueArray()[offset_this_argument];
     }
 
     /// `JSValue` for the current function being called.
-    pub fn callee(self: *const CallFrame) JSC.JSValue {
+    pub fn callee(self: *const CallFrame) jsc.JSValue {
         return self.asUnsafeJSValueArray()[offset_callee];
     }
 
@@ -72,7 +72,7 @@ pub const CallFrame = opaque {
     ///   |          ......            |
     ///
     /// The proper return type of this should be []Register, but
-    inline fn asUnsafeJSValueArray(self: *const CallFrame) [*]const JSC.JSValue {
+    inline fn asUnsafeJSValueArray(self: *const CallFrame) [*]const jsc.JSValue {
         return @ptrCast(@alignCast(self));
     }
 
@@ -113,11 +113,11 @@ pub const CallFrame = opaque {
 
     fn Arguments(comptime max: usize) type {
         return struct {
-            ptr: [max]JSC.JSValue,
+            ptr: [max]jsc.JSValue,
             len: usize,
 
-            pub inline fn init(comptime i: usize, ptr: [*]const JSC.JSValue) @This() {
-                var args: [max]JSC.JSValue = std.mem.zeroes([max]JSC.JSValue);
+            pub inline fn init(comptime i: usize, ptr: [*]const jsc.JSValue) @This() {
+                var args: [max]jsc.JSValue = std.mem.zeroes([max]jsc.JSValue);
                 args[0..i].* = ptr[0..i].*;
 
                 return @This(){
@@ -126,8 +126,8 @@ pub const CallFrame = opaque {
                 };
             }
 
-            pub inline fn initUndef(comptime i: usize, ptr: [*]const JSC.JSValue) @This() {
-                var args: [max]JSC.JSValue = @splat(.js_undefined);
+            pub inline fn initUndef(comptime i: usize, ptr: [*]const jsc.JSValue) @This() {
+                var args: [max]jsc.JSValue = @splat(.js_undefined);
                 args[0..i].* = ptr[0..i].*;
                 return @This(){ .ptr = args, .len = i };
             }
@@ -209,10 +209,10 @@ pub const CallFrame = opaque {
     ///
     /// Prefer `Iterator` for a simpler iterator.
     pub const ArgumentsSlice = struct {
-        remaining: []const JSC.JSValue,
-        vm: *JSC.VirtualMachine,
+        remaining: []const jsc.JSValue,
+        vm: *jsc.VirtualMachine,
         arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator),
-        all: []const JSC.JSValue,
+        all: []const jsc.JSValue,
         threw: bool = false,
         protected: bun.bit_set.IntegerBitSet(32) = bun.bit_set.IntegerBitSet(32).initEmpty(),
         will_be_async: bool = false,
@@ -238,15 +238,15 @@ pub const CallFrame = opaque {
             slice.eat();
         }
 
-        pub fn protectEatNext(slice: *ArgumentsSlice) ?JSC.JSValue {
+        pub fn protectEatNext(slice: *ArgumentsSlice) ?jsc.JSValue {
             if (slice.remaining.len == 0) return null;
             return slice.nextEat();
         }
 
-        pub fn from(vm: *JSC.VirtualMachine, slice: []const JSC.JSValueRef) ArgumentsSlice {
-            return init(vm, @as([*]const JSC.JSValue, @ptrCast(slice.ptr))[0..slice.len]);
+        pub fn from(vm: *jsc.VirtualMachine, slice: []const jsc.JSValueRef) ArgumentsSlice {
+            return init(vm, @as([*]const jsc.JSValue, @ptrCast(slice.ptr))[0..slice.len]);
         }
-        pub fn init(vm: *JSC.VirtualMachine, slice: []const JSC.JSValue) ArgumentsSlice {
+        pub fn init(vm: *jsc.VirtualMachine, slice: []const jsc.JSValue) ArgumentsSlice {
             return ArgumentsSlice{
                 .remaining = slice,
                 .vm = vm,
@@ -255,9 +255,9 @@ pub const CallFrame = opaque {
             };
         }
 
-        pub fn initAsync(vm: *JSC.VirtualMachine, slice: []const JSC.JSValue) ArgumentsSlice {
+        pub fn initAsync(vm: *jsc.VirtualMachine, slice: []const jsc.JSValue) ArgumentsSlice {
             return ArgumentsSlice{
-                .remaining = bun.default_allocator.dupe(JSC.JSValue, slice),
+                .remaining = bun.default_allocator.dupe(jsc.JSValue, slice),
                 .vm = vm,
                 .all = slice,
                 .arena = bun.ArenaAllocator.init(bun.default_allocator),
@@ -277,7 +277,7 @@ pub const CallFrame = opaque {
         }
 
         /// Peek the next argument without eating it
-        pub fn next(slice: *ArgumentsSlice) ?JSC.JSValue {
+        pub fn next(slice: *ArgumentsSlice) ?jsc.JSValue {
             if (slice.remaining.len == 0) {
                 return null;
             }
@@ -285,7 +285,7 @@ pub const CallFrame = opaque {
             return slice.remaining[0];
         }
 
-        pub fn nextEat(slice: *ArgumentsSlice) ?JSC.JSValue {
+        pub fn nextEat(slice: *ArgumentsSlice) ?jsc.JSValue {
             if (slice.remaining.len == 0) {
                 return null;
             }
@@ -299,6 +299,6 @@ const bun = @import("bun");
 const std = @import("std");
 const VM = @import("./VM.zig").VM;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

@@ -53,7 +53,7 @@ pub const AnyPromise = union(enum) {
         };
     }
 
-    extern fn JSC__AnyPromise__wrap(*JSC.JSGlobalObject, JSValue, *anyopaque, *const fn (*anyopaque, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue) void;
+    extern fn JSC__AnyPromise__wrap(*jsc.JSGlobalObject, JSValue, *anyopaque, *const fn (*anyopaque, *jsc.JSGlobalObject) callconv(.C) jsc.JSValue) void;
 
     pub fn wrap(
         this: AnyPromise,
@@ -66,12 +66,12 @@ pub const AnyPromise = union(enum) {
         const Wrapper = struct {
             args: Args,
 
-            pub fn call(wrap_: *@This(), global: *JSC.JSGlobalObject) callconv(.c) JSC.JSValue {
-                return JSC.toJSHostCall(global, @src(), Fn, wrap_.args);
+            pub fn call(wrap_: *@This(), global: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
+                return jsc.toJSHostCall(global, @src(), Fn, wrap_.args);
             }
         };
 
-        var scope: JSC.CatchScope = undefined;
+        var scope: jsc.CatchScope = undefined;
         scope.init(globalObject, @src());
         defer scope.deinit();
         var ctx = Wrapper{ .args = args };
@@ -85,7 +85,7 @@ const std = @import("std");
 const JSInternalPromise = @import("./JSInternalPromise.zig").JSInternalPromise;
 const JSPromise = @import("./JSPromise.zig").JSPromise;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const VM = JSC.VM;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VM = jsc.VM;

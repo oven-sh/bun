@@ -1978,7 +1978,7 @@ pub const PosixToWinNormalizer = struct {
 /// Used in PathInlines.h
 /// gets cwd off of the global object
 export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
-    globalObject: *bun.JSC.JSGlobalObject,
+    globalObject: *bun.jsc.JSGlobalObject,
     in: bun.String,
 ) bun.String {
     const str = in.toUTF8WithoutRef(bun.default_allocator);
@@ -2058,7 +2058,7 @@ pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
 
 const Fs = @import("../fs.zig");
 const std = @import("std");
-const strings = @import("../string_immutable.zig");
 
 const bun = @import("bun");
 const assert = bun.assert;
+const strings = bun.strings;

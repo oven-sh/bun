@@ -15,7 +15,7 @@ immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
 next_immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
 
 concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
-global: *JSC.JSGlobalObject = undefined,
+global: *jsc.JSGlobalObject = undefined,
 virtual_machine: *VirtualMachine = undefined,
 waker: ?Waker = null,
 forever_timer: ?*uws.Timer = null,
@@ -70,7 +70,7 @@ pub fn exit(this: *EventLoop) void {
     defer this.debug.exit();
 
     if (count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
-        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc) catch {};
+        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc_vm) catch {};
     }
 
     this.entered_event_loop_count -= 1;
@@ -83,7 +83,7 @@ pub fn exitMaybeDrainMicrotasks(this: *EventLoop, allow_drain_microtask: bool) b
     defer this.debug.exit();
 
     if (allow_drain_microtask and count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
-        try this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+        try this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc_vm);
     }
 
     this.entered_event_loop_count -= 1;
@@ -106,10 +106,10 @@ pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
     }
 }
 
-extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
-pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, jsc_vm: *JSC.VM) bun.JSExecutionTerminated!void {
-    JSC.markBinding(@src());
-    var scope: JSC.CatchScope = undefined;
+extern fn JSC__JSGlobalObject__drainMicrotasks(*jsc.JSGlobalObject) void;
+pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalObject, jsc_vm: *jsc.VM) bun.JSExecutionTerminated!void {
+    jsc.markBinding(@src());
+    var scope: jsc.CatchScope = undefined;
     scope.init(globalObject, @src());
     defer scope.deinit();
 
@@ -127,13 +127,13 @@ pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalOb
 }
 
 pub fn drainMicrotasks(this: *EventLoop) bun.JSExecutionTerminated!void {
-    try this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+    try this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc_vm);
 }
 
 // should be called after exit()
 pub fn maybeDrainMicrotasks(this: *EventLoop) void {
     if (this.entered_event_loop_count == 0 and !this.virtual_machine.is_inside_deferred_task_queue) {
-        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc) catch {};
+        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc_vm) catch {};
     }
 }
 
@@ -146,26 +146,26 @@ pub fn maybeDrainMicrotasks(this: *EventLoop) void {
 /// Otherwise, you will risk a large number of microtasks being queued and
 /// not being drained, which can lead to catastrophic memory usage and
 /// application slowdown.
-pub fn runCallback(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) void {
+pub fn runCallback(this: *EventLoop, callback: jsc.JSValue, globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue, arguments: []const jsc.JSValue) void {
     this.enter();
     defer this.exit();
     _ = callback.call(globalObject, thisValue, arguments) catch |err|
         globalObject.reportActiveExceptionAsUnhandled(err);
 }
 
-fn externRunCallback1(global: *JSC.JSGlobalObject, callback: JSC.JSValue, thisValue: JSC.JSValue, arg0: JSC.JSValue) callconv(.c) void {
+fn externRunCallback1(global: *jsc.JSGlobalObject, callback: jsc.JSValue, thisValue: jsc.JSValue, arg0: jsc.JSValue) callconv(.c) void {
     const vm = global.bunVM();
     var loop = vm.eventLoop();
     loop.runCallback(callback, global, thisValue, &.{arg0});
 }
 
-fn externRunCallback2(global: *JSC.JSGlobalObject, callback: JSC.JSValue, thisValue: JSC.JSValue, arg0: JSC.JSValue, arg1: JSC.JSValue) callconv(.c) void {
+fn externRunCallback2(global: *jsc.JSGlobalObject, callback: jsc.JSValue, thisValue: jsc.JSValue, arg0: jsc.JSValue, arg1: jsc.JSValue) callconv(.c) void {
     const vm = global.bunVM();
     var loop = vm.eventLoop();
     loop.runCallback(callback, global, thisValue, &.{ arg0, arg1 });
 }
 
-fn externRunCallback3(global: *JSC.JSGlobalObject, callback: JSC.JSValue, thisValue: JSC.JSValue, arg0: JSC.JSValue, arg1: JSC.JSValue, arg2: JSC.JSValue) callconv(.c) void {
+fn externRunCallback3(global: *jsc.JSGlobalObject, callback: jsc.JSValue, thisValue: jsc.JSValue, arg0: jsc.JSValue, arg1: jsc.JSValue, arg2: jsc.JSValue) callconv(.c) void {
     const vm = global.bunVM();
     var loop = vm.eventLoop();
     loop.runCallback(callback, global, thisValue, &.{ arg0, arg1, arg2 });
@@ -177,7 +177,7 @@ comptime {
     @export(&externRunCallback3, .{ .name = "Bun__EventLoop__runCallback3" });
 }
 
-pub fn runCallbackWithResult(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) JSC.JSValue {
+pub fn runCallbackWithResult(this: *EventLoop, callback: jsc.JSValue, globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue, arguments: []const jsc.JSValue) jsc.JSValue {
     this.enter();
     defer this.exit();
 
@@ -445,8 +445,8 @@ pub fn processGCTimer(this: *EventLoop) void {
 }
 
 pub fn tick(this: *EventLoop) void {
-    JSC.markBinding(@src());
-    var scope: JSC.CatchScope = undefined;
+    jsc.markBinding(@src());
+    var scope: jsc.CatchScope = undefined;
     scope.init(this.global, @src());
     defer scope.deinit();
     this.entered_event_loop_count += 1;
@@ -461,7 +461,7 @@ pub fn tick(this: *EventLoop) void {
     this.processGCTimer();
 
     const global = ctx.global;
-    const global_vm = ctx.jsc;
+    const global_vm = ctx.jsc_vm;
 
     while (true) {
         while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
@@ -482,8 +482,8 @@ pub fn tick(this: *EventLoop) void {
     this.global.handleRejectedPromises();
 }
 
-pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
-    const jsc_vm = this.virtual_machine.jsc;
+pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
+    const jsc_vm = this.virtual_machine.jsc_vm;
     switch (promise.status(jsc_vm)) {
         .pending => {
             while (promise.status(jsc_vm) == .pending) {
@@ -498,9 +498,9 @@ pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
     }
 }
 
-pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) void {
+pub fn waitForPromiseWithTermination(this: *EventLoop, promise: jsc.AnyPromise) void {
     const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
-    const jsc_vm = this.virtual_machine.jsc;
+    const jsc_vm = this.virtual_machine.jsc_vm;
     switch (promise.status(jsc_vm)) {
         .pending => {
             while (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {
@@ -538,7 +538,7 @@ pub fn callTask(timer: *uws.Timer) callconv(.C) void {
 }
 
 pub fn ensureWaker(this: *EventLoop) void {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     if (this.virtual_machine.event_loop_handle == null) {
         if (comptime Environment.isWindows) {
             this.uws_loop = bun.uws.Loop.get();
@@ -548,15 +548,15 @@ pub fn ensureWaker(this: *EventLoop) void {
         }
 
         this.virtual_machine.gc_controller.init(this.virtual_machine);
-        // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
-        // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.jsc, JSC.VM.drainMicrotasks);
+        // _ = actual.addPostHandler(*jsc.EventLoop, this, jsc.EventLoop.afterUSocketsTick);
+        // _ = actual.addPreHandler(*jsc.VM, this.virtual_machine.jsc_vm, jsc.VM.drainMicrotasks);
     }
     if (comptime Environment.isWindows) {
         if (this.uws_loop == null) {
             this.uws_loop = bun.uws.Loop.get();
         }
     }
-    bun.uws.Loop.get().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(this));
+    bun.uws.Loop.get().internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(this));
 }
 
 /// Asynchronously run the garbage collector and track how much memory is now allocated
@@ -657,5 +657,5 @@ const Timer = bun.api.Timer;
 const Async = bun.Async;
 const Waker = bun.Async.Waker;
 
-const JSC = bun.JSC;
-const VirtualMachine = bun.JSC.VirtualMachine;
+const jsc = bun.jsc;
+const VirtualMachine = bun.jsc.VirtualMachine;

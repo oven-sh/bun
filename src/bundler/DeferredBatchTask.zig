@@ -23,7 +23,7 @@ pub fn schedule(this: *DeferredBatchTask) void {
         bun.assert(!this.running);
         this.running = false;
     }
-    this.getBundleV2().jsLoopForPlugins().enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
+    this.getBundleV2().jsLoopForPlugins().enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.Task.init(this)));
 }
 
 pub fn deinit(this: *DeferredBatchTask) void {
@@ -43,10 +43,10 @@ pub fn runOnJSThread(this: *DeferredBatchTask) void {
     ) catch return;
 }
 
-pub const Ref = @import("../ast/base.zig").Ref;
+pub const Ref = bun.ast.Ref;
 
-pub const Index = @import("../ast/base.zig").Index;
+pub const Index = bun.ast.Index;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
+const jsc = bun.jsc;

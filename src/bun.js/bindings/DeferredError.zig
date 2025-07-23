@@ -2,12 +2,12 @@
 // information until its ready to be materialized later.
 pub const DeferredError = struct {
     kind: Kind,
-    code: JSC.Node.ErrorCode,
+    code: jsc.Node.ErrorCode,
     msg: bun.String,
 
     pub const Kind = enum { plainerror, typeerror, rangeerror };
 
-    pub fn from(kind: Kind, code: JSC.Node.ErrorCode, comptime fmt: [:0]const u8, args: anytype) DeferredError {
+    pub fn from(kind: Kind, code: jsc.Node.ErrorCode, comptime fmt: [:0]const u8, args: anytype) DeferredError {
         return .{
             .kind = kind,
             .code = code,
@@ -29,6 +29,6 @@ pub const DeferredError = struct {
 const bun = @import("bun");
 const ZigString = @import("./ZigString.zig").ZigString;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

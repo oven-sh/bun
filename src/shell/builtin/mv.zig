@@ -78,7 +78,7 @@ pub const ShellMvBatchedTask = struct {
     err: ?Syscall.Error = null,
 
     task: ShellTask(@This(), runFromThreadPool, runFromMainThread, debug),
-    event_loop: JSC.EventLoopHandle,
+    event_loop: jsc.EventLoopHandle,
 
     pub fn runFromThreadPool(this: *@This()) void {
         // Moving multiple entries into a directory
@@ -203,7 +203,7 @@ pub fn next(this: *Mv) Yield {
                             .target = this.args.target,
                             .task = .{
                                 .event_loop = this.bltn().parentCmd().base.eventLoop(),
-                                .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
+                                .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
                             },
                         },
                         .state = .running,
@@ -276,7 +276,7 @@ pub fn next(this: *Mv) Yield {
                             .error_signal = undefined,
                             .task = .{
                                 .event_loop = this.bltn().parentCmd().base.eventLoop(),
-                                .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
+                                .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
                             },
                             .event_loop = this.bltn().parentCmd().base.eventLoop(),
                         };
@@ -313,7 +313,7 @@ pub fn next(this: *Mv) Yield {
     }
 }
 
-pub fn onIOWriterChunk(this: *Mv, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Mv, _: usize, e: ?jsc.SystemError) Yield {
     defer if (e) |err| err.deref();
     switch (this.state) {
         .waiting_write_err => {
@@ -499,9 +499,9 @@ const Builtin = Interpreter.Builtin;
 const Result = Interpreter.Builtin.Result;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
 const ResolvePath = bun.path;
 const assert = bun.assert;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
 const ExitCode = shell.ExitCode;

@@ -55,7 +55,7 @@ fn writeEntryItem(
     path: []const u8,
     hash: u64,
     loader: options.Loader,
-    kind: bun.JSC.API.BuildArtifact.OutputKind,
+    kind: bun.jsc.API.BuildArtifact.OutputKind,
 ) !void {
     try writer.writeAll("{");
 

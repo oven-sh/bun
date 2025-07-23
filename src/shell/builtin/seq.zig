@@ -109,7 +109,7 @@ fn print(this: *@This(), msg: []const u8) void {
     return;
 }
 
-pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?jsc.SystemError) Yield {
     if (maybe_e) |e| {
         defer e.deref();
         this.state = .err;
@@ -141,5 +141,5 @@ const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const Yield = bun.shell.Yield;

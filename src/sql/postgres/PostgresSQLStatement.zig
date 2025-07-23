@@ -21,7 +21,7 @@ pub const Error = union(enum) {
         }
     }
 
-    pub fn toJS(this: *const @This(), globalObject: *JSC.JSGlobalObject) JSValue {
+    pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) JSValue {
         return switch (this.*) {
             .protocol => |err| err.toJS(globalObject),
             .postgres_error => |err| postgresErrorToJS(globalObject, null, err),
@@ -117,14 +117,14 @@ pub fn deinit(this: *PostgresSQLStatement) void {
     bun.default_allocator.destroy(this);
 }
 
-pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *JSC.JSGlobalObject) PostgresCachedStructure {
+pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *jsc.JSGlobalObject) PostgresCachedStructure {
     if (this.cached_structure.has()) {
         return this.cached_structure;
     }
     this.checkForDuplicateFields();
 
     // lets avoid most allocations
-    var stack_ids: [70]JSC.JSObject.ExternColumnIdentifier = undefined;
+    var stack_ids: [70]jsc.JSObject.ExternColumnIdentifier = undefined;
     // lets de duplicate the fields early
     var nonDuplicatedCount = this.fields.len;
     for (this.fields) |*field| {
@@ -132,13 +132,13 @@ pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *JSC
             nonDuplicatedCount -= 1;
         }
     }
-    const ids = if (nonDuplicatedCount <= JSC.JSObject.maxInlineCapacity()) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
+    const ids = if (nonDuplicatedCount <= jsc.JSObject.maxInlineCapacity()) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(jsc.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
 
     var i: usize = 0;
     for (this.fields) |*field| {
         if (field.name_or_index == .duplicate) continue;
 
-        var id: *JSC.JSObject.ExternColumnIdentifier = &ids[i];
+        var id: *jsc.JSObject.ExternColumnIdentifier = &ids[i];
         switch (field.name_or_index) {
             .name => |name| {
                 id.value.name = String.createAtomIfPossible(name.slice());
@@ -156,10 +156,10 @@ pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *JSC
         i += 1;
     }
 
-    if (nonDuplicatedCount > JSC.JSObject.maxInlineCapacity()) {
+    if (nonDuplicatedCount > jsc.JSObject.maxInlineCapacity()) {
         this.cached_structure.set(globalObject, null, ids);
     } else {
-        this.cached_structure.set(globalObject, JSC.JSObject.createStructure(
+        this.cached_structure.set(globalObject, jsc.JSObject.createStructure(
             globalObject,
             owner,
             @truncate(ids.len),
@@ -187,5 +187,5 @@ const int4 = types.int4;
 const bun = @import("bun");
 const String = bun.String;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

@@ -31,18 +31,18 @@ pub fn create(task: Task) *ConcurrentTask {
 }
 
 pub fn createFrom(task: anytype) *ConcurrentTask {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     return create(Task.init(task));
 }
 
 pub fn fromCallback(ptr: anytype, comptime callback: anytype) *ConcurrentTask {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
 
     return create(ManagedTask.New(std.meta.Child(@TypeOf(ptr)), callback).init(ptr));
 }
 
 pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *ConcurrentTask {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
 
     this.* = .{
         .task = Task.init(of),
@@ -52,10 +52,11 @@ pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *Concur
     return this;
 }
 
-const bun = @import("bun");
 const std = @import("std");
+
+const bun = @import("bun");
 const UnboundedQueue = bun.threading.UnboundedQueue;
 
-const JSC = bun.JSC;
-const ManagedTask = JSC.ManagedTask;
-const Task = JSC.Task;
+const jsc = bun.jsc;
+const ManagedTask = jsc.ManagedTask;
+const Task = jsc.Task;

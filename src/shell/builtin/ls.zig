@@ -118,7 +118,7 @@ pub fn deinit(this: *Ls) void {
     this.alloc_scope.endScope();
 }
 
-pub fn onIOWriterChunk(this: *Ls, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Ls, _: usize, e: ?jsc.SystemError) Yield {
     if (e) |err| err.deref();
     if (this.state == .waiting_write_err) {
         return this.bltn().done(1);
@@ -226,14 +226,14 @@ pub const ShellLsTask = struct {
     err: ?Syscall.Error = null,
     result_kind: enum { file, dir, idk } = .idk,
 
-    event_loop: JSC.EventLoopHandle,
-    concurrent_task: JSC.EventLoopTask,
-    task: JSC.WorkPoolTask = .{
+    event_loop: jsc.EventLoopHandle,
+    concurrent_task: jsc.EventLoopTask,
+    task: jsc.WorkPoolTask = .{
         .callback = workPoolCallback,
     },
 
     pub fn schedule(this: *@This()) void {
-        JSC.WorkPool.schedule(&this.task);
+        jsc.WorkPool.schedule(&this.task);
     }
 
     pub fn create(
@@ -243,7 +243,7 @@ pub const ShellLsTask = struct {
         cwd: bun.FileDescriptor,
         path: [:0]const u8,
         owned_string: bool,
-        event_loop: JSC.EventLoopHandle,
+        event_loop: jsc.EventLoopHandle,
     ) *@This() {
         // We're going to free `task.path` so ensure it is allocated in this
         // scope and NOT a string literal or other string we don't own.
@@ -254,7 +254,7 @@ pub const ShellLsTask = struct {
             .ls = ls,
             .opts = opts,
             .cwd = cwd,
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(event_loop),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(event_loop),
             .event_loop = event_loop,
             .task_count = task_count,
             .path = path,
@@ -390,7 +390,7 @@ pub const ShellLsTask = struct {
         return err.withPath(this.ls.alloc_scope.allocator().dupeZ(u8, path[0..path.len]) catch bun.outOfMemory());
     }
 
-    pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+    pub fn workPoolCallback(task: *jsc.WorkPoolTask) void {
         var this: *@This() = @fieldParentPtr("task", task);
         this.run();
         this.doneLogic();
@@ -865,8 +865,8 @@ const Result = Interpreter.Builtin.Result;
 
 const bun = @import("bun");
 const DirIterator = bun.DirIterator;
-const JSC = bun.JSC;
 const Syscall = bun.sys;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
 const ExitCode = shell.ExitCode;

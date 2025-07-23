@@ -615,7 +615,7 @@ extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
 
 #endif
 
-extern "C" size_t Bun__ramSize()
+extern "C" [[ZIG_EXPORT(nothrow)]] size_t Bun__ramSize()
 {
     // This value is cached internally.
     return WTF::ramSize();

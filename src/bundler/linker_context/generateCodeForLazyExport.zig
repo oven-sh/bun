@@ -393,19 +393,16 @@ pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const BabyList = bun.BabyList;
 const ImportRecord = bun.ImportRecord;
-const string = bun.string;
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 
-const Index = bun.bundle_v2.Index;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Ref = bun.bundle_v2.Ref;
-
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const B = js_ast.B;
 const Binding = js_ast.Binding;
 const E = js_ast.E;
@@ -415,6 +412,10 @@ const Part = js_ast.Part;
 const S = js_ast.S;
 const Stmt = js_ast.Stmt;
 const Symbol = js_ast.Symbol;
+
+const Index = bun.bundle_v2.Index;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const Ref = bun.bundle_v2.Ref;
 
 const Logger = bun.logger;
 const Loc = Logger.Loc;

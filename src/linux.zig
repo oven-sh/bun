@@ -3,7 +3,7 @@
 //! If an API can be implemented on multiple platforms,
 //! it does not belong in this namespace.
 
-pub const memfd_allocator = @import("./allocators/linux_memfd_allocator.zig").LinuxMemFdAllocator;
+pub const MemFdAllocator = bun.allocators.LinuxMemFdAllocator;
 
 /// splice() moves data between two file descriptors without copying
 /// between kernel address space and user address space.  It

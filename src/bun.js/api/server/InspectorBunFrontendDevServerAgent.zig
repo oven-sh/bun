@@ -105,13 +105,13 @@ pub const BunFrontendDevServerAgent = struct {
     }
 
     export fn Bun__InspectorBunFrontendDevServerAgent__setEnabled(agent: ?*InspectorBunFrontendDevServerAgentHandle) void {
-        if (JSC.VirtualMachine.get().debugger) |*debugger| {
+        if (jsc.VirtualMachine.get().debugger) |*debugger| {
             debugger.frontend_dev_server_agent.handle = agent;
         }
     }
 };
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const DevServer = bun.bake.DevServer;
-const DebuggerId = JSC.Debugger.DebuggerId;
+const DebuggerId = jsc.Debugger.DebuggerId;

@@ -152,13 +152,12 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const JSPrinter = bun.js_printer;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const File = bun.sys.File;
 const initializeStore = bun.install.initializeStore;
 
-const JSAst = bun.JSAst;
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const Expr = js_ast.Expr;

@@ -159,10 +159,7 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 const bun = @import("bun");
 const std = @import("std");
 
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const StmtList = LinkerContext.StmtList;
-
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const B = js_ast.B;
 const Binding = js_ast.Binding;
 const E = js_ast.E;
@@ -171,6 +168,9 @@ const G = js_ast.G;
 const JSAst = js_ast.BundledAst;
 const S = js_ast.S;
 const Stmt = js_ast.Stmt;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const StmtList = LinkerContext.StmtList;
 
 const Logger = bun.logger;
 const Loc = Logger.Loc;

@@ -52,6 +52,6 @@ extern fn Bun__X509__toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) 
 const bun = @import("bun");
 const BoringSSL = bun.BoringSSL.c;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

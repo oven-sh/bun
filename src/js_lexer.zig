@@ -3364,6 +3364,8 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
     return bun.highway.indexOfInterestingCharacterInStringLiteral(text_, quote);
 }
 
+const string = []const u8;
+
 const FeatureFlags = @import("./feature_flags.zig");
 const JSIdentifier = @import("./js_lexer/identifier.zig");
 const tables = @import("./js_lexer_tables.zig");
@@ -3373,8 +3375,7 @@ const CodePoint = bun.CodePoint;
 const Environment = bun.Environment;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const js_ast = bun.JSAst;
-const string = bun.string;
+const js_ast = bun.ast;
 const strings = bun.strings;
 const Indentation = bun.js_printer.Options.Indentation;
 

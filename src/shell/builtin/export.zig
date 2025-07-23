@@ -23,7 +23,7 @@ pub fn writeOutput(this: *Export, comptime io_kind: @Type(.enum_literal), compti
     return this.bltn().done(0);
 }
 
-pub fn onIOWriterChunk(this: *Export, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Export, _: usize, e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.printing);
     }
@@ -136,8 +136,8 @@ const Builtin = Interpreter.Builtin;
 const BuiltinIO = Interpreter.Builtin.BuiltinIO;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
 const assert = bun.assert;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
 const ExitCode = shell.ExitCode;

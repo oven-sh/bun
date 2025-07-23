@@ -985,13 +985,14 @@ pub const Version = extern struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const assert = bun.assert;
-const string = bun.string;
 const strings = bun.strings;
 
 const ExternalString = bun.Semver.ExternalString;

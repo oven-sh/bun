@@ -67,7 +67,7 @@ pub fn setTimeout(self: AnyRequestContext, seconds: c_uint) bool {
     return false;
 }
 
-pub fn setCookies(self: AnyRequestContext, cookie_map: ?*JSC.WebCore.CookieMap) void {
+pub fn setCookies(self: AnyRequestContext, cookie_map: ?*jsc.WebCore.CookieMap) void {
     if (self.tagged_pointer.isNull()) {
         return;
     }
@@ -221,11 +221,11 @@ pub fn deref(self: AnyRequestContext) void {
     }
 }
 
-const DebugHTTPSServer = @import("../server.zig").DebugHTTPSServer;
-const DebugHTTPServer = @import("../server.zig").DebugHTTPServer;
-const HTTPSServer = @import("../server.zig").HTTPSServer;
-const HTTPServer = @import("../server.zig").HTTPServer;
-
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const uws = bun.uws;
+
+const DebugHTTPSServer = bun.api.DebugHTTPSServer;
+const DebugHTTPServer = bun.api.DebugHTTPServer;
+const HTTPSServer = bun.api.HTTPSServer;
+const HTTPServer = bun.api.HTTPServer;

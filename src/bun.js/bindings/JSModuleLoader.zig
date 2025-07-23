@@ -50,6 +50,6 @@ const JSInternalPromise = @import("./JSInternalPromise.zig").JSInternalPromise;
 const bun = @import("bun");
 const String = bun.String;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

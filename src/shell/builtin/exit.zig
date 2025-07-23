@@ -51,7 +51,7 @@ pub fn next(this: *Exit) Yield {
     }
 }
 
-pub fn onIOWriterChunk(this: *Exit, _: usize, maybe_e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Exit, _: usize, maybe_e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .waiting_io);
     }
@@ -82,8 +82,8 @@ const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
 const assert = bun.assert;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
 const ExitCode = shell.ExitCode;

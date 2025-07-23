@@ -1,8 +1,8 @@
 /// Valkey client wrapper for JavaScript
 pub const JSValkeyClient = struct {
     client: valkey.ValkeyClient,
-    globalObject: *JSC.JSGlobalObject,
-    this_value: JSC.JSRef = JSC.JSRef.empty(),
+    globalObject: *jsc.JSGlobalObject,
+    this_value: jsc.JSRef = jsc.JSRef.empty(),
     poll_ref: bun.Async.KeepAlive = .{},
     timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionTimeout,
@@ -20,7 +20,7 @@ pub const JSValkeyClient = struct {
     },
     ref_count: RefCount,
 
-    pub const js = JSC.Codegen.JSRedisClient;
+    pub const js = jsc.Codegen.JSRedisClient;
     pub const toJS = js.toJS;
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
@@ -31,11 +31,11 @@ pub const JSValkeyClient = struct {
     pub const new = bun.TrivialNew(@This());
 
     // Factory function to create a new Valkey client from JS
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*JSValkeyClient {
+    pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*JSValkeyClient {
         return try create(globalObject, callframe.arguments());
     }
 
-    pub fn create(globalObject: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JSError!*JSValkeyClient {
+    pub fn create(globalObject: *jsc.JSGlobalObject, arguments: []const JSValue) bun.JSError!*JSValkeyClient {
         const vm = globalObject.bunVM();
         const url_str = if (arguments.len < 1 or arguments[0].isUndefined())
             if (vm.transpiler.env.get("REDIS_URL") orelse vm.transpiler.env.get("VALKEY_URL")) |url|
@@ -148,31 +148,31 @@ pub const JSValkeyClient = struct {
         });
     }
 
-    pub fn getConnected(this: *JSValkeyClient, _: *JSC.JSGlobalObject) JSValue {
+    pub fn getConnected(this: *JSValkeyClient, _: *jsc.JSGlobalObject) JSValue {
         return JSValue.jsBoolean(this.client.status == .connected);
     }
 
-    pub fn getBufferedAmount(this: *JSValkeyClient, _: *JSC.JSGlobalObject) JSValue {
+    pub fn getBufferedAmount(this: *JSValkeyClient, _: *jsc.JSGlobalObject) JSValue {
         const len =
             this.client.write_buffer.len() +
             this.client.read_buffer.len();
         return JSValue.jsNumber(len);
     }
 
-    pub fn doConnect(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, this_value: JSValue) bun.JSError!JSValue {
+    pub fn doConnect(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, this_value: JSValue) bun.JSError!JSValue {
         this.ref();
         defer this.deref();
 
         // If already connected, resolve immediately
         if (this.client.status == .connected) {
-            return JSC.JSPromise.resolvedPromiseValue(globalObject, js.helloGetCached(this_value) orelse .js_undefined);
+            return jsc.JSPromise.resolvedPromiseValue(globalObject, js.helloGetCached(this_value) orelse .js_undefined);
         }
 
         if (js.connectionPromiseGetCached(this_value)) |promise| {
             return promise;
         }
 
-        const promise_ptr = JSC.JSPromise.create(globalObject);
+        const promise_ptr = jsc.JSPromise.create(globalObject);
         const promise = promise_ptr.toJS();
         js.connectionPromiseSetCached(this_value, globalObject, promise);
 
@@ -213,11 +213,11 @@ pub const JSValkeyClient = struct {
         return promise;
     }
 
-    pub fn jsConnect(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn jsConnect(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         return try this.doConnect(globalObject, callframe.this());
     }
 
-    pub fn jsDisconnect(this: *JSValkeyClient, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn jsDisconnect(this: *JSValkeyClient, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
         if (this.client.status == .disconnected) {
             return .js_undefined;
         }
@@ -225,25 +225,25 @@ pub const JSValkeyClient = struct {
         return .js_undefined;
     }
 
-    pub fn getOnConnect(_: *JSValkeyClient, thisValue: JSValue, _: *JSC.JSGlobalObject) JSValue {
+    pub fn getOnConnect(_: *JSValkeyClient, thisValue: JSValue, _: *jsc.JSGlobalObject) JSValue {
         if (js.onconnectGetCached(thisValue)) |value| {
             return value;
         }
         return .js_undefined;
     }
 
-    pub fn setOnConnect(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
+    pub fn setOnConnect(_: *JSValkeyClient, thisValue: JSValue, globalObject: *jsc.JSGlobalObject, value: JSValue) void {
         js.onconnectSetCached(thisValue, globalObject, value);
     }
 
-    pub fn getOnClose(_: *JSValkeyClient, thisValue: JSValue, _: *JSC.JSGlobalObject) JSValue {
+    pub fn getOnClose(_: *JSValkeyClient, thisValue: JSValue, _: *jsc.JSGlobalObject) JSValue {
         if (js.oncloseGetCached(thisValue)) |value| {
             return value;
         }
         return .js_undefined;
     }
 
-    pub fn setOnClose(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
+    pub fn setOnClose(_: *JSValkeyClient, thisValue: JSValue, globalObject: *jsc.JSGlobalObject, value: JSValue) void {
         js.oncloseSetCached(thisValue, globalObject, value);
     }
 
@@ -570,7 +570,7 @@ pub const JSValkeyClient = struct {
         this.client.socket = try this.client.address.connect(&this.client, ctx, this.client.tls != .none);
     }
 
-    pub fn send(this: *JSValkeyClient, globalThis: *JSC.JSGlobalObject, this_jsvalue: JSValue, command: *const Command) !*JSC.JSPromise {
+    pub fn send(this: *JSValkeyClient, globalThis: *jsc.JSGlobalObject, this_jsvalue: JSValue, command: *const Command) !*jsc.JSPromise {
         if (this.client.flags.needs_to_open_socket) {
             @branchHint(.unlikely);
 
@@ -580,7 +580,7 @@ pub const JSValkeyClient = struct {
             this.connect() catch |err| {
                 this.client.flags.needs_to_open_socket = true;
                 const err_value = globalThis.ERR(.SOCKET_CLOSED_BEFORE_CONNECTION, " {s} connecting to Valkey", .{@errorName(err)}).toJS();
-                const promise = JSC.JSPromise.create(globalThis);
+                const promise = jsc.JSPromise.create(globalThis);
                 promise.reject(globalThis, err_value);
                 return promise;
             };
@@ -806,7 +806,7 @@ fn SocketHandler(comptime ssl: bool) type {
 
 // Parse JavaScript options into Valkey client options
 const Options = struct {
-    pub fn fromJS(globalObject: *JSC.JSGlobalObject, options_obj: JSC.JSValue) !valkey.Options {
+    pub fn fromJS(globalObject: *jsc.JSGlobalObject, options_obj: jsc.JSValue) !valkey.Options {
         var this = valkey.Options{
             .enable_auto_pipelining = !bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING),
         };
@@ -839,7 +839,7 @@ const Options = struct {
             if (tls.isBoolean() or tls.isUndefinedOrNull()) {
                 this.tls = if (tls.toBoolean()) .enabled else .none;
             } else if (tls.isObject()) {
-                if (try JSC.API.ServerConfig.SSLConfig.fromJS(globalObject.bunVM(), globalObject, tls)) |ssl_config| {
+                if (try jsc.API.ServerConfig.SSLConfig.fromJS(globalObject.bunVM(), globalObject, tls)) |ssl_config| {
                     this.tls = .{ .custom = ssl_config };
                 } else {
                     return globalObject.throwInvalidArgumentType("tls", "tls", "object");
@@ -867,8 +867,8 @@ const BoringSSL = bun.BoringSSL;
 const String = bun.String;
 const Timer = bun.api.Timer;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;

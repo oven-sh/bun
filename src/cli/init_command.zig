@@ -1239,6 +1239,9 @@ const Template = enum {
     }
 };
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
 const options = @import("../options.zig");
@@ -1248,15 +1251,13 @@ const initializeStore = @import("./create_command.zig").initializeStore;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const JSPrinter = bun.js_printer;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;
 
 const exists = bun.sys.exists;

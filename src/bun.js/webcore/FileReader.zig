@@ -5,7 +5,7 @@ const log = Output.scoped(.FileReader, false);
 reader: IOReader = IOReader.init(FileReader),
 done: bool = false,
 pending: streams.Result.Pending = .{},
-pending_value: JSC.Strong.Optional = .empty,
+pending_value: jsc.Strong.Optional = .empty,
 pending_view: []u8 = &.{},
 fd: bun.FileDescriptor = bun.invalid_fd,
 start_offset: ?usize = null,
@@ -13,7 +13,7 @@ max_size: ?usize = null,
 total_readed: usize = 0,
 started: bool = false,
 waiting_for_onReaderDone: bool = false,
-event_loop: JSC.EventLoopHandle,
+event_loop: jsc.EventLoopHandle,
 lazy: Lazy = .{ .none = {} },
 buffered: std.ArrayListUnmanaged(u8) = .{},
 read_inside_on_pull: ReadDuringJSOnPullResult = .{ .none = {} },
@@ -43,7 +43,7 @@ pub const Lazy = union(enum) {
     };
 
     pub extern "c" fn open_as_nonblocking_tty(i32, i32) i32;
-    pub fn openFileBlob(file: *Blob.Store.File) JSC.Maybe(OpenedFileBlob) {
+    pub fn openFileBlob(file: *Blob.Store.File) jsc.Maybe(OpenedFileBlob) {
         var this = OpenedFileBlob{ .fd = bun.invalid_fd };
         var file_buf: bun.PathBuffer = undefined;
         var is_nonblocking = false;
@@ -153,7 +153,7 @@ pub const Lazy = union(enum) {
     }
 };
 
-pub fn eventLoop(this: *const FileReader) JSC.EventLoopHandle {
+pub fn eventLoop(this: *const FileReader) jsc.EventLoopHandle {
     return this.event_loop;
 }
 
@@ -212,7 +212,7 @@ pub fn onStart(this: *FileReader) streams.Start {
         }
     }
 
-    this.event_loop = JSC.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop());
+    this.event_loop = jsc.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop());
 
     if (was_lazy) {
         _ = this.parent().incrementCount();
@@ -466,7 +466,7 @@ fn isPulling(this: *const FileReader) bool {
     return this.read_inside_on_pull != .none;
 }
 
-pub fn onPull(this: *FileReader, buffer: []u8, array: JSC.JSValue) streams.Result {
+pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Result {
     array.ensureStillAlive();
     defer array.ensureStillAlive();
     const drained = this.drain();
@@ -614,7 +614,7 @@ pub fn onReaderDone(this: *FileReader) void {
                         globalThis,
                         .js_undefined,
                         &.{
-                            JSC.ArrayBuffer.fromBytes(buffered.items, .Uint8Array).toJS(globalThis) catch |err| {
+                            jsc.ArrayBuffer.fromBytes(buffered.items, .Uint8Array).toJS(globalThis) catch |err| {
                                 this.pending.result = .{ .err = .{ .WeakJSValue = globalThis.takeException(err) } };
                                 return;
                             },
@@ -672,8 +672,8 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.jsc;
 const Output = bun.Output;
+const jsc = bun.jsc;
 
 const webcore = bun.webcore;
 const Blob = webcore.Blob;

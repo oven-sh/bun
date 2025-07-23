@@ -13,7 +13,7 @@ pub const JSCDeferredWorkTask = opaque {
 };
 
 export fn Bun__eventLoop__incrementRefConcurrently(jsc_vm: *VirtualMachine, delta: c_int) void {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
 
     if (delta > 0) {
         jsc_vm.event_loop.refConcurrently();
@@ -23,7 +23,7 @@ export fn Bun__eventLoop__incrementRefConcurrently(jsc_vm: *VirtualMachine, delt
 }
 
 export fn Bun__queueJSCDeferredWorkTaskConcurrently(jsc_vm: *VirtualMachine, task: *JSCScheduler.JSCDeferredWorkTask) void {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     var loop = jsc_vm.eventLoop();
     loop.enqueueTaskConcurrent(ConcurrentTask.new(.{
         .task = Task.init(task),
@@ -33,7 +33,7 @@ export fn Bun__queueJSCDeferredWorkTaskConcurrently(jsc_vm: *VirtualMachine, tas
 }
 
 export fn Bun__tickWhilePaused(paused: *bool) void {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     VirtualMachine.get().eventLoop().tickWhilePaused(paused);
 }
 
@@ -45,7 +45,7 @@ comptime {
 
 const bun = @import("bun");
 
-const JSC = bun.JSC;
-const ConcurrentTask = JSC.ConcurrentTask;
-const Task = JSC.Task;
-const VirtualMachine = JSC.VirtualMachine;
+const jsc = bun.jsc;
+const ConcurrentTask = jsc.ConcurrentTask;
+const Task = jsc.Task;
+const VirtualMachine = jsc.VirtualMachine;

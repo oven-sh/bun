@@ -11,7 +11,7 @@ pub fn openForWriting(
     ctx: Ctx,
     comptime onForceSyncOrIsaTTY: *const fn (Ctx) void,
     comptime isPollable: *const fn (mode: bun.Mode) bool,
-) JSC.Maybe(bun.FileDescriptor) {
+) jsc.Maybe(bun.FileDescriptor) {
     return openForWritingImpl(
         dir,
         input_path,
@@ -42,8 +42,8 @@ pub fn openForWritingImpl(
     ctx: Ctx,
     comptime onForceSyncOrIsaTTY: *const fn (Ctx) void,
     comptime isPollable: *const fn (mode: bun.Mode) bool,
-    comptime openat: *const fn (dir: bun.FileDescriptor, path: [:0]const u8, flags: i32, mode: bun.Mode) JSC.Maybe(bun.FileDescriptor),
-) JSC.Maybe(bun.FileDescriptor) {
+    comptime openat: *const fn (dir: bun.FileDescriptor, path: [:0]const u8, flags: i32, mode: bun.Mode) jsc.Maybe(bun.FileDescriptor),
+) jsc.Maybe(bun.FileDescriptor) {
     const PathT = @TypeOf(input_path);
     if (PathT != bun.webcore.PathOrFileDescriptor and PathT != [:0]const u8 and PathT != [:0]u8) {
         @compileError("Only string or PathOrFileDescriptor is supported but got: " ++ @typeName(PathT));
@@ -137,4 +137,4 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
+const jsc = bun.jsc;

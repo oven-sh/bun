@@ -237,7 +237,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             },
             @field(Task.Tag, @typeName(JSCDeferredWorkTask)) => {
                 var jsc_task: *JSCDeferredWorkTask = task.get(JSCDeferredWorkTask).?;
-                JSC.markBinding(@src());
+                jsc.markBinding(@src());
                 jsc_task.run();
             },
             @field(Task.Tag, @typeName(WriteFileTask)) => {
@@ -518,8 +518,6 @@ const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.process.Waite
 
 const log = bun.Output.scoped(.Task, true);
 
-const ServerAllConnectionsClosedTask = @import("../api/server.zig").ServerAllConnectionsClosedTask;
-
 const Fetch = @import("../webcore/fetch.zig");
 const FetchTasklet = Fetch.FetchTasklet;
 
@@ -532,35 +530,13 @@ const Environment = bun.Environment;
 const TaggedPointerUnion = bun.TaggedPointerUnion;
 const shell = bun.shell;
 const FlushPendingFileSinkTask = bun.webcore.FileSink.FlushPendingTask;
+const ServerAllConnectionsClosedTask = bun.api.server.ServerAllConnectionsClosedTask;
 const CopyFilePromiseTask = bun.webcore.Blob.copy_file.CopyFilePromiseTask;
-const GetAddrInfoRequestTask = bun.api.DNS.GetAddrInfoRequest.Task;
+const GetAddrInfoRequestTask = bun.api.dns.GetAddrInfoRequest.Task;
 const ReadFileTask = bun.webcore.Blob.read_file.ReadFileTask;
 const WriteFileTask = bun.webcore.Blob.write_file.WriteFileTask;
 const FSWatchTask = bun.api.node.fs.Watcher.FSWatchTask;
 const ShellGlobTask = shell.interpret.Interpreter.Expansion.ShellGlobTask;
-
-const JSC = bun.JSC;
-const AnyTask = JSC.AnyTask;
-const CppTask = JSC.CppTask;
-const EventLoop = JSC.EventLoop;
-const ManagedTask = JSC.ManagedTask;
-const PosixSignalTask = JSC.PosixSignalTask;
-const VirtualMachine = JSC.VirtualMachine;
-const HotReloadTask = JSC.hot_reloader.HotReloader.Task;
-const StreamPending = JSC.WebCore.streams.Result.Pending;
-
-const NativeBrotli = JSC.API.NativeBrotli;
-const NativeZlib = JSC.API.NativeZlib;
-const NativeZstd = JSC.API.NativeZstd;
-const AsyncGlobWalkTask = JSC.API.Glob.WalkTask.AsyncGlobWalkTask;
-const AsyncTransformTask = JSC.API.JSTranspiler.TransformTask.AsyncTransformTask;
-
-const Timer = JSC.API.Timer;
-const ImmediateObject = Timer.ImmediateObject;
-const TimeoutObject = Timer.TimeoutObject;
-
-const RuntimeTranspilerStore = JSC.ModuleLoader.RuntimeTranspilerStore;
-const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
 
 const S3 = bun.S3;
 const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
@@ -613,6 +589,29 @@ const Utimes = AsyncFS.utimes;
 const Write = AsyncFS.write;
 const WriteFile = AsyncFS.writeFile;
 const Writev = AsyncFS.writev;
+
+const jsc = bun.jsc;
+const AnyTask = jsc.AnyTask;
+const CppTask = jsc.CppTask;
+const EventLoop = jsc.EventLoop;
+const ManagedTask = jsc.ManagedTask;
+const PosixSignalTask = jsc.PosixSignalTask;
+const VirtualMachine = jsc.VirtualMachine;
+const HotReloadTask = jsc.hot_reloader.HotReloader.Task;
+const StreamPending = jsc.WebCore.streams.Result.Pending;
+
+const NativeBrotli = jsc.API.NativeBrotli;
+const NativeZlib = jsc.API.NativeZlib;
+const NativeZstd = jsc.API.NativeZstd;
+const AsyncGlobWalkTask = jsc.API.Glob.WalkTask.AsyncGlobWalkTask;
+const AsyncTransformTask = jsc.API.JSTranspiler.TransformTask.AsyncTransformTask;
+
+const Timer = jsc.API.Timer;
+const ImmediateObject = Timer.ImmediateObject;
+const TimeoutObject = Timer.TimeoutObject;
+
+const RuntimeTranspilerStore = jsc.ModuleLoader.RuntimeTranspilerStore;
+const PollPendingModulesTask = jsc.ModuleLoader.AsyncModule.Queue;
 
 const ShellAsync = shell.Interpreter.Async;
 const ShellIOReaderAsyncDeinit = shell.Interpreter.AsyncDeinitReader;

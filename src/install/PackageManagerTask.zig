@@ -351,6 +351,8 @@ pub const Request = union {
     },
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const install = @import("./install.zig");
@@ -374,7 +376,6 @@ const Path = bun.path;
 const Semver = bun.Semver;
 const ThreadPool = bun.ThreadPool;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 const File = bun.sys.File;
 

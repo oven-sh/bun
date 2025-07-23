@@ -61,8 +61,8 @@ const string = []const u8;
 pub const Arena = std.heap.ArenaAllocator;
 pub const Braces = @import("./braces.zig");
 pub const Syscall = bun.sys;
-pub const WorkPoolTask = JSC.WorkPoolTask;
-pub const WorkPool = JSC.WorkPool;
+pub const WorkPoolTask = jsc.WorkPoolTask;
+pub const WorkPool = jsc.WorkPool;
 
 pub const Pipe = [2]bun.FileDescriptor;
 pub const SmolList = shell.SmolList;
@@ -239,13 +239,13 @@ pub const AssignCtx = Interpreter.Assigns.AssignCtx;
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
-    pub const js = JSC.Codegen.JSShellInterpreter;
+    pub const js = jsc.Codegen.JSShellInterpreter;
     pub const toJS = js.toJS;
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
 
-    command_ctx: bun.CLI.Command.Context,
-    event_loop: JSC.EventLoopHandle,
+    command_ctx: bun.cli.Command.Context,
+    event_loop: jsc.EventLoopHandle,
     /// This is the allocator used to allocate interpreter state
     allocator: Allocator,
 
@@ -263,10 +263,10 @@ pub const Interpreter = struct {
     // Necessary for builtin commands.
     keep_alive: bun.Async.KeepAlive = .{},
 
-    vm_args_utf8: std.ArrayList(JSC.ZigString.Slice),
+    vm_args_utf8: std.ArrayList(jsc.ZigString.Slice),
     async_commands_executing: u32 = 0,
 
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
 
     flags: packed struct(u8) {
         done: bool = false,
@@ -637,15 +637,15 @@ pub const Interpreter = struct {
         fn toJS(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
                 .syscall => |err| err.toJS(globalThis),
-                .other => |err| bun.JSC.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
+                .other => |err| bun.jsc.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
     };
 
-    pub fn createShellInterpreter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn createShellInterpreter(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
         const arguments_ = callframe.arguments_old(3);
-        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const resolve = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 
@@ -672,7 +672,7 @@ pub const Interpreter = struct {
             &export_env,
         );
 
-        const cwd_string: ?bun.JSC.ZigString.Slice = if (cwd) |c| brk: {
+        const cwd_string: ?bun.jsc.ZigString.Slice = if (cwd) |c| brk: {
             break :brk c.toUTF8(bun.default_allocator);
         } else null;
         defer if (cwd_string) |c| c.deinit();
@@ -707,13 +707,13 @@ pub const Interpreter = struct {
 
         interpreter.flags.quiet = quiet;
         interpreter.globalThis = globalThis;
-        const js_value = JSC.Codegen.JSShellInterpreter.toJS(interpreter, globalThis);
+        const js_value = jsc.Codegen.JSShellInterpreter.toJS(interpreter, globalThis);
 
         interpreter.this_jsvalue = js_value;
-        JSC.Codegen.JSShellInterpreter.resolveSetCached(js_value, globalThis, resolve);
-        JSC.Codegen.JSShellInterpreter.rejectSetCached(js_value, globalThis, reject);
+        jsc.Codegen.JSShellInterpreter.resolveSetCached(js_value, globalThis, resolve);
+        jsc.Codegen.JSShellInterpreter.rejectSetCached(js_value, globalThis, reject);
         interpreter.keep_alive.ref(globalThis.bunVM());
-        bun.Analytics.Features.shell += 1;
+        bun.analytics.Features.shell += 1;
         return js_value;
     }
 
@@ -764,8 +764,8 @@ pub const Interpreter = struct {
     /// If all initialization allocations succeed, the arena will be copied
     /// into the interpreter struct, so it is not a stale reference and safe to call `arena.deinit()` on error.
     pub fn init(
-        ctx: bun.CLI.Command.Context,
-        event_loop: JSC.EventLoopHandle,
+        ctx: bun.cli.Command.Context,
+        event_loop: jsc.EventLoopHandle,
         allocator: Allocator,
         shargs: *ShellArgs,
         jsobjs: []JSValue,
@@ -862,7 +862,7 @@ pub const Interpreter = struct {
                 .stderr = .pipe,
             },
 
-            .vm_args_utf8 = std.ArrayList(JSC.ZigString.Slice).init(bun.default_allocator),
+            .vm_args_utf8 = std.ArrayList(jsc.ZigString.Slice).init(bun.default_allocator),
             .__alloc_scope = if (bun.Environment.enableAllocScopes) bun.AllocationScope.init(allocator) else {},
             .globalThis = undefined,
         };
@@ -876,7 +876,7 @@ pub const Interpreter = struct {
         return .{ .result = interpreter };
     }
 
-    pub fn initAndRunFromFile(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
+    pub fn initAndRunFromFile(ctx: bun.cli.Command.Context, mini: *jsc.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
         var shargs = ShellArgs.init();
         const src = src: {
             var file = try std.fs.cwd().openFile(path, .{});
@@ -956,8 +956,8 @@ pub const Interpreter = struct {
         return code;
     }
 
-    pub fn initAndRunFromSource(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8, cwd: ?[]const u8) !ExitCode {
-        bun.Analytics.Features.standalone_shell += 1;
+    pub fn initAndRunFromSource(ctx: bun.cli.Command.Context, mini: *jsc.MiniEventLoop, path_for_errors: []const u8, src: []const u8, cwd: ?[]const u8) !ExitCode {
+        bun.analytics.Features.standalone_shell += 1;
         var shargs = ShellArgs.init();
         defer shargs.deinit();
 
@@ -1086,7 +1086,7 @@ pub const Interpreter = struct {
         return Maybe(void).success;
     }
 
-    pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         log("Interpreter(0x{x}) runFromJS", .{@intFromPtr(this)});
         _ = callframe; // autofix
 
@@ -1108,9 +1108,9 @@ pub const Interpreter = struct {
     fn ioToJSValue(globalThis: *JSGlobalObject, buf: *bun.ByteList) JSValue {
         const bytelist = buf.*;
         buf.* = .{};
-        const buffer: JSC.Node.Buffer = .{
+        const buffer: jsc.Node.Buffer = .{
             .allocator = bun.default_allocator,
-            .buffer = JSC.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
+            .buffer = jsc.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
         };
         return buffer.toNodeBuffer(globalThis);
     }
@@ -1144,7 +1144,7 @@ pub const Interpreter = struct {
             this.exit_code = exit_code;
             const this_jsvalue = this.this_jsvalue;
             if (this_jsvalue != .zero) {
-                if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
+                if (jsc.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
                     const loop = this.event_loop.js;
                     const globalThis = this.globalThis;
                     this.this_jsvalue = .zero;
@@ -1155,8 +1155,8 @@ pub const Interpreter = struct {
                         this.getBufferedStdout(globalThis),
                         this.getBufferedStderr(globalThis),
                     }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
-                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
-                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
+                    jsc.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
+                    jsc.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
                     loop.exit();
                 }
             }
@@ -1205,13 +1205,13 @@ pub const Interpreter = struct {
         this.allocator.destroy(this);
     }
 
-    pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         log("Interpreter(0x{x}) setQuiet()", .{@intFromPtr(this)});
         this.flags.quiet = true;
         return .js_undefined;
     }
 
-    pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const value = callframe.argument(0);
         const str = try bun.String.fromJS(value, globalThis);
 
@@ -1226,13 +1226,13 @@ pub const Interpreter = struct {
         return .js_undefined;
     }
 
-    pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const value1 = callframe.argument(0);
         if (!value1.isObject()) {
             return globalThis.throwInvalidArguments("env must be an object", .{});
         }
 
-        var object_iter = JSC.JSPropertyIterator(.{
+        var object_iter = jsc.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalThis, value1);
@@ -1262,22 +1262,22 @@ pub const Interpreter = struct {
         return .js_undefined;
     }
 
-    pub fn isRunning(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.hasPendingActivity());
+    pub fn isRunning(this: *ThisInterpreter, _: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        return jsc.JSValue.jsBoolean(this.hasPendingActivity());
     }
 
-    pub fn getStarted(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn getStarted(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         _ = globalThis; // autofix
         _ = callframe; // autofix
 
-        return JSC.JSValue.jsBoolean(this.started.load(.seq_cst));
+        return jsc.JSValue.jsBoolean(this.started.load(.seq_cst));
     }
 
-    pub fn getBufferedStdout(this: *ThisInterpreter, globalThis: *JSGlobalObject) JSC.JSValue {
+    pub fn getBufferedStdout(this: *ThisInterpreter, globalThis: *JSGlobalObject) jsc.JSValue {
         return ioToJSValue(globalThis, this.root_shell.buffered_stdout());
     }
 
-    pub fn getBufferedStderr(this: *ThisInterpreter, globalThis: *JSGlobalObject) JSC.JSValue {
+    pub fn getBufferedStderr(this: *ThisInterpreter, globalThis: *JSGlobalObject) jsc.JSValue {
         return ioToJSValue(globalThis, this.root_shell.buffered_stderr());
     }
 
@@ -1566,10 +1566,10 @@ pub fn ShellTask(
 ) type {
     return struct {
         task: WorkPoolTask = .{ .callback = &runFromThreadPool },
-        event_loop: JSC.EventLoopHandle,
+        event_loop: jsc.EventLoopHandle,
         // This is a poll because we want it to enter the uSockets loop
         ref: bun.Async.KeepAlive = .{},
-        concurrent_task: JSC.EventLoopTask,
+        concurrent_task: jsc.EventLoopTask,
 
         pub const InnerShellTask = @This();
 
@@ -1618,7 +1618,7 @@ inline fn errnocast(errno: anytype) u16 {
 
 /// 'js' event loop will always return JSError
 /// 'mini' event loop will always return noreturn and exit 1
-pub fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) bun.JSError!noreturn {
+pub fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: jsc.EventLoopHandle) bun.JSError!noreturn {
     return switch (event_loop) {
         .mini => e.throwMini(),
         .js => e.throwJS(event_loop.js.global),
@@ -1820,7 +1820,7 @@ pub fn OutputTask(
             }
         }
 
-        pub fn onIOWriterChunk(this: *@This(), _: usize, err: ?JSC.SystemError) Yield {
+        pub fn onIOWriterChunk(this: *@This(), _: usize, err: ?jsc.SystemError) Yield {
             log("OutputTask({s}, 0x{x}) onIOWriterChunk", .{ @typeName(Parent), @intFromPtr(this) });
             if (err) |e| {
                 e.deref();
@@ -1967,10 +1967,10 @@ const TaggedPointerUnion = bun.TaggedPointerUnion;
 const assert = bun.assert;
 const which = bun.which;
 
-const JSC = bun.JSC;
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const JSValue = bun.JSC.JSValue;
-const Maybe = JSC.Maybe;
+const jsc = bun.jsc;
+const JSGlobalObject = bun.jsc.JSGlobalObject;
+const JSValue = bun.jsc.JSValue;
+const Maybe = jsc.Maybe;
 
 const shell = bun.shell;
 const Yield = shell.Yield;

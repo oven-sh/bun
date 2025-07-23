@@ -92,7 +92,7 @@ pub fn forManifest(
             encoded_name = try std.mem.replaceOwned(u8, stack_fallback_allocator.get(), name, "/", "%2f");
         }
 
-        const tmp = bun.JSC.URL.join(
+        const tmp = bun.jsc.URL.join(
             bun.String.borrowUTF8(scope.url.href),
             bun.String.borrowUTF8(encoded_name),
         );
@@ -301,6 +301,8 @@ pub fn forTarball(
     }
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const install = @import("./install.zig");
@@ -319,7 +321,6 @@ const OOM = bun.OOM;
 const ThreadPool = bun.ThreadPool;
 const URL = bun.URL;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
 const Fs = bun.fs;

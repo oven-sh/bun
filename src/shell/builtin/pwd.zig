@@ -51,7 +51,7 @@ pub fn next(this: *Pwd) Yield {
     }
 }
 
-pub fn onIOWriterChunk(this: *Pwd, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Pwd, _: usize, e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .waiting_io);
     }
@@ -87,8 +87,8 @@ const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
 const assert = bun.assert;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
 const Yield = shell.Yield;

@@ -34,7 +34,7 @@ pub fn Err(comptime T: type) type {
             @compileError("fmt not implemented for " ++ @typeName(T));
         }
 
-        pub fn toJSString(this: @This(), allocator: Allocator, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
+        pub fn toJSString(this: @This(), allocator: Allocator, globalThis: *bun.jsc.JSGlobalObject) bun.jsc.JSValue {
             var error_string = ArrayList(u8){};
             defer error_string.deinit(allocator);
             error_string.writer(allocator).print("{}", .{this.kind}) catch unreachable;

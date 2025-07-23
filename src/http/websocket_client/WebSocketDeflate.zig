@@ -79,7 +79,7 @@ const COMPRESSION_BUFFER_SIZE = 4096;
 // DEFLATE trailer bytes added by Z_SYNC_FLUSH
 const DEFLATE_TRAILER = [_]u8{ 0x00, 0x00, 0xff, 0xff };
 
-pub fn init(allocator: std.mem.Allocator, params: Params, rare_data: *JSC.RareData) !*PerMessageDeflate {
+pub fn init(allocator: std.mem.Allocator, params: Params, rare_data: *jsc.RareData) !*PerMessageDeflate {
     const self = try allocator.create(PerMessageDeflate);
     self.* = .{
         .allocator = allocator,
@@ -219,6 +219,6 @@ pub fn compress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.ArrayLis
 const std = @import("std");
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const libdeflate = bun.libdeflate;
 const zlib = bun.zlib;

@@ -1,9 +1,9 @@
 pub const BufferVectorized = struct {
     pub fn fill(
-        str: *JSC.ZigString,
+        str: *jsc.ZigString,
         buf_ptr: [*]u8,
         fill_length: usize,
-        encoding: JSC.Node.Encoding,
+        encoding: jsc.Node.Encoding,
     ) callconv(.C) bool {
         if (str.len == 0) return true;
 
@@ -86,5 +86,5 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
-const Encoder = JSC.WebCore.encoding;
+const jsc = bun.jsc;
+const Encoder = jsc.WebCore.encoding;

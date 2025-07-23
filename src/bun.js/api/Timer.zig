@@ -168,7 +168,7 @@ pub const All = struct {
     }
 
     pub fn incrementTimerRef(this: *All, delta: i32) void {
-        const vm: *JSC.VirtualMachine = @alignCast(@fieldParentPtr("timer", this));
+        const vm: *jsc.VirtualMachine = @alignCast(@fieldParentPtr("timer", this));
 
         const old = this.active_timer_count;
         const new = old + delta;
@@ -365,7 +365,7 @@ pub const All = struct {
         promise: JSValue,
         countdown: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         bun.debugAssert(promise != .zero and countdown != .zero);
         const vm = global.bunVM();
         const id = vm.timer.last_id;
@@ -381,7 +381,7 @@ pub const All = struct {
         callback: JSValue,
         arguments: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         bun.debugAssert(callback != .zero and arguments != .zero);
         const vm = global.bunVM();
         const id = vm.timer.last_id;
@@ -397,7 +397,7 @@ pub const All = struct {
         arguments: JSValue,
         countdown: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         bun.debugAssert(callback != .zero and arguments != .zero and countdown != .zero);
         const vm = global.bunVM();
         const id = vm.timer.last_id;
@@ -413,7 +413,7 @@ pub const All = struct {
         arguments: JSValue,
         countdown: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         bun.debugAssert(callback != .zero and arguments != .zero and countdown != .zero);
         const vm = global.bunVM();
         const id = vm.timer.last_id;
@@ -435,7 +435,7 @@ pub const All = struct {
     }
 
     pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject, kind: Kind) JSError!void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
 
         const vm = globalThis.bunVM();
 
@@ -498,7 +498,7 @@ pub const All = struct {
         globalThis: *JSGlobalObject,
         id: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         try clearTimer(id, globalThis, .setImmediate);
         return .js_undefined;
     }
@@ -506,7 +506,7 @@ pub const All = struct {
         globalThis: *JSGlobalObject,
         id: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         try clearTimer(id, globalThis, .setTimeout);
         return .js_undefined;
     }
@@ -514,19 +514,19 @@ pub const All = struct {
         globalThis: *JSGlobalObject,
         id: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         try clearTimer(id, globalThis, .setInterval);
         return .js_undefined;
     }
 
     comptime {
-        @export(&JSC.host_fn.wrap3(setImmediate), .{ .name = "Bun__Timer__setImmediate" });
-        @export(&JSC.host_fn.wrap3(sleep), .{ .name = "Bun__Timer__sleep" });
-        @export(&JSC.host_fn.wrap4(setTimeout), .{ .name = "Bun__Timer__setTimeout" });
-        @export(&JSC.host_fn.wrap4(setInterval), .{ .name = "Bun__Timer__setInterval" });
-        @export(&JSC.host_fn.wrap2(clearImmediate), .{ .name = "Bun__Timer__clearImmediate" });
-        @export(&JSC.host_fn.wrap2(clearTimeout), .{ .name = "Bun__Timer__clearTimeout" });
-        @export(&JSC.host_fn.wrap2(clearInterval), .{ .name = "Bun__Timer__clearInterval" });
+        @export(&jsc.host_fn.wrap3(setImmediate), .{ .name = "Bun__Timer__setImmediate" });
+        @export(&jsc.host_fn.wrap3(sleep), .{ .name = "Bun__Timer__sleep" });
+        @export(&jsc.host_fn.wrap4(setTimeout), .{ .name = "Bun__Timer__setTimeout" });
+        @export(&jsc.host_fn.wrap4(setInterval), .{ .name = "Bun__Timer__setInterval" });
+        @export(&jsc.host_fn.wrap2(clearImmediate), .{ .name = "Bun__Timer__clearImmediate" });
+        @export(&jsc.host_fn.wrap2(clearTimeout), .{ .name = "Bun__Timer__clearTimeout" });
+        @export(&jsc.host_fn.wrap2(clearInterval), .{ .name = "Bun__Timer__clearInterval" });
         @export(&getNextID, .{ .name = "Bun__Timer__getNextID" });
     }
 };
@@ -569,7 +569,7 @@ pub const ID = extern struct {
 };
 
 /// A timer created by WTF code and invoked by Bun's event loop
-pub const WTFTimer = @import("../WTFTimer.zig");
+pub const WTFTimer = @import("./Timer/WTFTimer.zig");
 
 pub const internal_bindings = struct {
     /// Node.js has some tests that check whether timers fire at the right time. They check this
@@ -583,7 +583,7 @@ pub const internal_bindings = struct {
     /// thinking that the timing is wrong (this also happens when I run the modified test in
     /// Node.js). So the best course of action is for Bun to also expose a function that reveals the
     /// clock that is used to schedule timers.
-    pub fn timerClockMs(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn timerClockMs(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
         _ = globalThis;
         _ = callFrame;
         const now = timespec.now().ms();
@@ -601,7 +601,7 @@ const timespec = bun.timespec;
 const heap = bun.io.heap;
 const uv = bun.windows.libuv;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;

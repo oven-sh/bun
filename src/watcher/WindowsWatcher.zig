@@ -38,7 +38,7 @@ const DirWatcher = struct {
     dirHandle: w.HANDLE,
 
     // invalidates any EventIterators
-    fn prepare(this: *DirWatcher) bun.JSC.Maybe(void) {
+    fn prepare(this: *DirWatcher) bun.jsc.Maybe(void) {
         const filter: w.FileNotifyChangeFilter = .{ .file_name = true, .dir_name = true, .last_write = true, .creation = true };
         if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, 1, filter, null, &this.overlapped, null) == 0) {
             const err = w.kernel32.GetLastError();
@@ -140,7 +140,7 @@ const Timeout = enum(w.DWORD) {
 };
 
 // wait until new events are available
-pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.JSC.Maybe(?EventIterator) {
+pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.jsc.Maybe(?EventIterator) {
     switch (this.watcher.prepare()) {
         .err => |err| {
             log("prepare() returned error", .{});
@@ -197,7 +197,7 @@ pub fn stop(this: *WindowsWatcher) void {
     w.CloseHandle(this.iocp);
 }
 
-pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
+pub fn watchLoopCycle(this: *bun.Watcher) bun.jsc.Maybe(void) {
     const buf = &this.platform.buf;
     const base_idx = this.platform.base_idx;
 

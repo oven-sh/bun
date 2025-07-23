@@ -19,7 +19,7 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 }
 pub const decode = DecoderWrap(NoticeResponse, decodeInternal).decode;
 
-pub fn toJS(this: NoticeResponse, globalObject: *JSC.JSGlobalObject) JSValue {
+pub fn toJS(this: NoticeResponse, globalObject: *jsc.JSGlobalObject) JSValue {
     var b = bun.StringBuilder{};
     defer b.deinit(bun.default_allocator);
 
@@ -39,7 +39,7 @@ pub fn toJS(this: NoticeResponse, globalObject: *JSC.JSGlobalObject) JSValue {
         _ = b.append("\n");
     }
 
-    return JSC.ZigString.init(b.allocatedSlice()[0..b.len]).toJS(globalObject);
+    return jsc.ZigString.init(b.allocatedSlice()[0..b.len]).toJS(globalObject);
 }
 
 const bun = @import("bun");
@@ -48,5 +48,5 @@ const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
 const FieldMessage = @import("./FieldMessage.zig").FieldMessage;
 const NewReader = @import("./NewReader.zig").NewReader;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

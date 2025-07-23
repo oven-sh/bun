@@ -1,6 +1,6 @@
 const WebSocketServerContext = @This();
 
-globalObject: *JSC.JSGlobalObject = undefined,
+globalObject: *jsc.JSGlobalObject = undefined,
 handler: Handler = .{},
 
 maxPayloadLength: u32 = 1024 * 1024 * 16, // 16MB
@@ -13,19 +13,19 @@ resetIdleTimeoutOnSend: bool = true,
 closeOnBackpressureLimit: bool = false,
 
 pub const Handler = struct {
-    onOpen: JSC.JSValue = .zero,
-    onMessage: JSC.JSValue = .zero,
-    onClose: JSC.JSValue = .zero,
-    onDrain: JSC.JSValue = .zero,
-    onError: JSC.JSValue = .zero,
-    onPing: JSC.JSValue = .zero,
-    onPong: JSC.JSValue = .zero,
+    onOpen: jsc.JSValue = .zero,
+    onMessage: jsc.JSValue = .zero,
+    onClose: jsc.JSValue = .zero,
+    onDrain: jsc.JSValue = .zero,
+    onError: jsc.JSValue = .zero,
+    onPing: jsc.JSValue = .zero,
+    onPong: jsc.JSValue = .zero,
 
     app: ?*anyopaque = null,
 
     // Always set manually.
-    vm: *JSC.VirtualMachine = undefined,
-    globalObject: *JSC.JSGlobalObject = undefined,
+    vm: *jsc.VirtualMachine = undefined,
+    globalObject: *jsc.JSGlobalObject = undefined,
     active_connections: usize = 0,
 
     /// used by publish()
@@ -34,7 +34,7 @@ pub const Handler = struct {
         publish_to_self: bool = false,
     } = .{},
 
-    pub fn runErrorCallback(this: *const Handler, vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_value: JSC.JSValue) void {
+    pub fn runErrorCallback(this: *const Handler, vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObject, error_value: jsc.JSValue) void {
         const onError = this.onError;
         if (!onError.isEmptyOrUndefinedOrNull()) {
             _ = onError.call(globalObject, .js_undefined, &.{error_value}) catch |err|
@@ -45,7 +45,7 @@ pub const Handler = struct {
         _ = vm.uncaughtException(globalObject, error_value, false);
     }
 
-    pub fn fromJS(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) bun.JSError!Handler {
+    pub fn fromJS(globalObject: *jsc.JSGlobalObject, object: jsc.JSValue) bun.JSError!Handler {
         var handler = Handler{ .globalObject = globalObject, .vm = VirtualMachine.get() };
 
         var valid = false;
@@ -152,7 +152,7 @@ const DecompressTable = bun.ComptimeStringMap(i32, .{
     .{ "256KB", uws.DEDICATED_COMPRESSOR_256KB },
 });
 
-pub fn onCreate(globalObject: *JSC.JSGlobalObject, object: JSValue) bun.JSError!WebSocketServerContext {
+pub fn onCreate(globalObject: *jsc.JSGlobalObject, object: JSValue) bun.JSError!WebSocketServerContext {
     var server = WebSocketServerContext{};
     server.handler = try Handler.fromJS(globalObject, object);
 
@@ -272,8 +272,8 @@ const bun = @import("bun");
 const JSError = bun.JSError;
 const uws = bun.uws;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
-const ZigString = JSC.ZigString;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const ZigString = jsc.ZigString;

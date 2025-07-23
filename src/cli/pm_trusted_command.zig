@@ -345,7 +345,7 @@ pub const TrustCommand = struct {
 
         const package_json_source = logger.Source.initPathString(PackageManager.package_json_cwd, package_json_contents);
 
-        var package_json = bun.JSON.parseUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
+        var package_json = bun.json.parseUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
 
             Output.errGeneric("failed to parse package.json: {s}", .{@errorName(err)});
@@ -433,6 +433,8 @@ pub const TrustCommand = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 const Command = @import("../cli.zig").Command;
 const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
@@ -451,6 +453,5 @@ const Global = bun.Global;
 const Output = bun.Output;
 const Progress = bun.Progress;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 const String = bun.Semver.String;

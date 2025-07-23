@@ -32,5 +32,5 @@ pub const ResolvedSource = extern struct {
 
 const bun = @import("bun");
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

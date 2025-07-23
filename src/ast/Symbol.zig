@@ -479,7 +479,7 @@ const bun = @import("bun");
 const BabyList = bun.BabyList;
 const Output = bun.Output;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const DeclaredSymbol = js_ast.DeclaredSymbol;
 const G = js_ast.G;
 const ImportItemStatus = js_ast.ImportItemStatus;

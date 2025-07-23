@@ -6,7 +6,7 @@ pub fn deinit(this: *@This()) void {
     _ = this;
 }
 
-pub fn onIOWriterChunk(_: *@This(), _: usize, _: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(_: *@This(), _: usize, _: ?jsc.SystemError) Yield {
     return .done;
 }
 
@@ -23,5 +23,5 @@ const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const Yield = bun.shell.Yield;

@@ -222,10 +222,11 @@ pub const DataURL = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const string = bun.string;
 const strings = bun.strings;

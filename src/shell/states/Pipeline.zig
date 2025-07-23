@@ -191,7 +191,7 @@ pub fn next(this: *Pipeline) Yield {
     }
 }
 
-pub fn onIOWriterChunk(this: *Pipeline, _: usize, err: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Pipeline, _: usize, err: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .waiting_write_err);
     }
@@ -305,7 +305,7 @@ fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
     return Maybe(void).success;
 }
 
-fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO, evtloop: JSC.EventLoopHandle) IO.OutKind {
+fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO, evtloop: jsc.EventLoopHandle) IO.OutKind {
     // Last command in the pipeline should write to stdout
     if (proc_idx == cmd_count - 1) return io.stdout.ref();
     return .{
@@ -318,7 +318,7 @@ fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO, evtloop:
     };
 }
 
-fn readPipe(pipes: []Pipe, proc_idx: usize, io: *IO, evtloop: JSC.EventLoopHandle) IO.InKind {
+fn readPipe(pipes: []Pipe, proc_idx: usize, io: *IO, evtloop: jsc.EventLoopHandle) IO.InKind {
     // First command in the pipeline should read from stdin
     if (proc_idx == 0) return io.stdin.ref();
     return .{ .fd = IOReader.init(pipes[proc_idx - 1][0], evtloop) };
@@ -329,8 +329,8 @@ const std = @import("std");
 const bun = @import("bun");
 const assert = bun.assert;
 
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
+const jsc = bun.jsc;
+const Maybe = jsc.Maybe;
 
 const shell = bun.shell;
 const ExitCode = bun.shell.ExitCode;

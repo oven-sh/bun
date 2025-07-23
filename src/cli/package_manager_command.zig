@@ -561,6 +561,8 @@ fn printNodeModulesFolderStructure(
     }
 }
 
+const string = []const u8;
+
 const Dependency = @import("../install/dependency.zig");
 const Fs = @import("../fs.zig");
 const Lockfile = @import("../install/lockfile.zig");
@@ -587,6 +589,5 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const log = bun.log;
-const string = bun.string;
 const strings = bun.strings;
 const File = bun.sys.File;

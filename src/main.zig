@@ -35,10 +35,10 @@ pub fn main() void {
     // So it's safest to put it very early in the main function.
     if (Environment.isWindows) {
         _ = bun.windows.libuv.uv_replace_allocator(
-            &bun.Mimalloc.mi_malloc,
-            &bun.Mimalloc.mi_realloc,
-            &bun.Mimalloc.mi_calloc,
-            &bun.Mimalloc.mi_free,
+            &bun.mimalloc.mi_malloc,
+            &bun.mimalloc.mi_realloc,
+            &bun.mimalloc.mi_calloc,
+            &bun.mimalloc.mi_free,
         );
         environ = @ptrCast(std.os.environ.ptr);
         _environ = @ptrCast(std.os.environ.ptr);
@@ -52,12 +52,12 @@ pub fn main() void {
     Output.Source.Stdio.init();
     defer Output.flush();
     if (Environment.isX64 and Environment.enableSIMD and Environment.isPosix) {
-        bun_warn_avx_missing(bun.CLI.UpgradeCommand.Bun__githubBaselineURL.ptr);
+        bun_warn_avx_missing(bun.cli.UpgradeCommand.Bun__githubBaselineURL.ptr);
     }
 
     bun.StackCheck.configureThread();
 
-    bun.CLI.Cli.start(bun.default_allocator);
+    bun.cli.Cli.start(bun.default_allocator);
     bun.Global.exit(0);
 }
 

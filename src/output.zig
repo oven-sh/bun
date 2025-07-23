@@ -44,13 +44,8 @@ pub const Source = struct {
         stream: StreamType,
         err_stream: StreamType,
     ) Source {
-        if (comptime Environment.isDebug) {
-            if (comptime use_mimalloc) {
-                if (!source_set) {
-                    const Mimalloc = @import("./allocators/mimalloc.zig");
-                    Mimalloc.mi_option_set(.show_errors, 1);
-                }
-            }
+        if ((comptime Environment.isDebug and use_mimalloc) and !source_set) {
+            bun.mimalloc.mi_option_set(.show_errors, 1);
         }
         source_set = true;
 
@@ -75,7 +70,7 @@ pub const Source = struct {
         bun.StackCheck.configureThread();
     }
 
-    pub fn configureNamedThread(name: StringTypes.stringZ) void {
+    pub fn configureNamedThread(name: [:0]const u8) void {
         Global.setThreadName(name);
         configureThread();
     }
@@ -1284,6 +1279,8 @@ pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
     .unbuffered_reader = .{ .context = .{ .handle = if (Environment.isWindows) undefined else .stdin() } },
 };
 
+const string = []const u8;
+
 const Environment = @import("./env.zig");
 const root = @import("root");
 const std = @import("std");
@@ -1292,9 +1289,7 @@ const SystemTimer = @import("./system_timer.zig").Timer;
 const bun = @import("bun");
 const ComptimeStringMap = bun.ComptimeStringMap;
 const Global = bun.Global;
-const StringTypes = bun.StringTypes;
 const c = bun.c;
-const string = bun.string;
 const strings = bun.strings;
 const use_mimalloc = bun.use_mimalloc;
 const File = bun.sys.File;

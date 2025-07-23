@@ -21,7 +21,7 @@ const WindowsNamedPipe = @This();
 
 wrapper: ?WrapperType,
 pipe: if (Environment.isWindows) ?*uv.Pipe else void, // any duplex
-vm: *bun.JSC.VirtualMachine, //TODO: create a timeout version that dont need the JSC VM
+vm: *bun.jsc.VirtualMachine, //TODO: create a timeout version that dont need the jsc VM
 
 writer: bun.io.StreamingWriter(WindowsNamedPipe, .{
     .onClose = onClose,
@@ -261,7 +261,7 @@ pub fn onTimeout(this: *WindowsNamedPipe) EventLoopTimer.Arm {
 pub fn from(
     pipe: *uv.Pipe,
     handlers: WindowsNamedPipe.Handlers,
-    vm: *JSC.VirtualMachine,
+    vm: *jsc.VirtualMachine,
 ) WindowsNamedPipe {
     if (Environment.isPosix) {
         @compileError("WindowsNamedPipe is not supported on POSIX systems");
@@ -298,7 +298,7 @@ fn onConnect(this: *WindowsNamedPipe, status: uv.ReturnCode) void {
     this.flush();
 }
 
-pub fn getAcceptedBy(this: *WindowsNamedPipe, server: *uv.Pipe, ssl_ctx: ?*BoringSSL.SSL_CTX) JSC.Maybe(void) {
+pub fn getAcceptedBy(this: *WindowsNamedPipe, server: *uv.Pipe, ssl_ctx: ?*BoringSSL.SSL_CTX) jsc.Maybe(void) {
     bun.assert(this.pipe != null);
     this.flags.disconnected = true;
 
@@ -346,7 +346,7 @@ pub fn getAcceptedBy(this: *WindowsNamedPipe, server: *uv.Pipe, ssl_ctx: ?*Borin
     }
     return .{ .result = {} };
 }
-pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
+pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?jsc.API.ServerConfig.SSLConfig) jsc.Maybe(void) {
     bun.assert(this.pipe != null);
     this.flags.disconnected = true;
 
@@ -382,7 +382,7 @@ pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?JSC.A
     return .{ .result = {} };
 }
 
-pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
+pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?jsc.API.ServerConfig.SSLConfig) jsc.Maybe(void) {
     bun.assert(this.pipe != null);
     this.flags.disconnected = true;
     // ref because we are connecting
@@ -414,7 +414,7 @@ pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?JSC.API.
     this.connect_req.data = this;
     return this.pipe.?.connect(&this.connect_req, path, this, onConnect);
 }
-pub fn startTLS(this: *WindowsNamedPipe, ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
+pub fn startTLS(this: *WindowsNamedPipe, ssl_options: jsc.API.ServerConfig.SSLConfig, is_client: bool) !void {
     this.flags.is_ssl = true;
     if (this.start(is_client)) {
         this.wrapper = try WrapperType.init(ssl_options, is_client, .{
@@ -580,7 +580,7 @@ const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const BoringSSL = bun.BoringSSL.c;
 const uv = bun.windows.libuv;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;

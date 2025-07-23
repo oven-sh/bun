@@ -11,8 +11,8 @@ state: union(enum) {
     },
     done: ExitCode,
 } = .idle,
-event_loop: JSC.EventLoopHandle,
-concurrent_task: JSC.EventLoopTask,
+event_loop: jsc.EventLoopHandle,
+concurrent_task: jsc.EventLoopTask,
 
 pub const ParentPtr = StatePtrUnion(.{
     Binary,
@@ -45,7 +45,7 @@ pub fn init(
         .parent = parent,
         .io = io,
         .event_loop = interpreter.event_loop,
-        .concurrent_task = JSC.EventLoopTask.fromEventLoop(interpreter.event_loop),
+        .concurrent_task = jsc.EventLoopTask.fromEventLoop(interpreter.event_loop),
     };
     return async_cmd;
 }
@@ -158,7 +158,7 @@ pub fn runFromMainThreadMini(this: *Async, _: *void) void {
 const std = @import("std");
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
 const ExitCode = bun.shell.ExitCode;

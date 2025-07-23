@@ -12,7 +12,7 @@ pub const Tmpfile = struct {
     pub fn create(
         destination_dir: bun.FileDescriptor,
         tmpfilename: [:0]const u8,
-    ) bun.JSC.Maybe(Tmpfile) {
+    ) bun.jsc.Maybe(Tmpfile) {
         const perm = 0o644;
         var tmpfile = Tmpfile{
             .destination_dir = destination_dir,

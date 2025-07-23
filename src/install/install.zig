@@ -271,12 +271,13 @@ pub const PatchedDep = Lockfile.PatchedDep;
 pub const patch = @import("./patch_install.zig");
 pub const PatchTask = patch.PatchTask;
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
-const JSAst = bun.JSAst;
+const JSAst = bun.ast;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
 
 const Semver = bun.Semver;
 const String = Semver.String;

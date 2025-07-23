@@ -226,7 +226,7 @@ pub const Parser = struct {
             var log = bun.logger.Log.init(arena_allocator);
             defer log.deinit();
             // Try to parse it and it if fails will just treat it as a string
-            const json_val: Expr = bun.JSON.parseUTF8Impl(&src, &log, arena_allocator, true) catch {
+            const json_val: Expr = bun.json.parseUTF8Impl(&src, &log, arena_allocator, true) catch {
                 break :out;
             };
 
@@ -494,9 +494,9 @@ pub const Parser = struct {
 
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub const IniTestingAPIs = struct {
-    const JSC = bun.JSC;
+    const jsc = bun.jsc;
 
-    pub fn loadNpmrcFromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn loadNpmrcFromJS(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const arg = callframe.argument(0);
         const npmrc_contents = try arg.toBunString(globalThis);
         defer npmrc_contents.deref();
@@ -515,7 +515,7 @@ pub const IniTestingAPIs = struct {
         const env = if (envjs.isEmptyOrUndefinedOrNull()) globalThis.bunVM().transpiler.env else brk: {
             var envmap = bun.DotEnv.Map.HashTable.init(allocator);
             const envobj = envjs.getObject() orelse return globalThis.throwTypeError("env must be an object", .{});
-            var object_iter = try JSC.JSPropertyIterator(.{
+            var object_iter = try jsc.JSPropertyIterator(.{
                 .skip_empty_name = false,
                 .include_value = true,
             }).init(globalThis, envobj);
@@ -548,8 +548,8 @@ pub const IniTestingAPIs = struct {
             break :brk envstable;
         };
 
-        const install = try allocator.create(bun.Schema.Api.BunInstall);
-        install.* = std.mem.zeroes(bun.Schema.Api.BunInstall);
+        const install = try allocator.create(bun.schema.api.BunInstall);
+        install.* = std.mem.zeroes(bun.schema.api.BunInstall);
         var configs = std.ArrayList(ConfigIterator.Item).init(allocator);
         defer configs.deinit();
         loadNpmrc(allocator, install, env, ".npmrc", &log, source, &configs) catch {
@@ -578,7 +578,7 @@ pub const IniTestingAPIs = struct {
             default_registry_password.deref();
         }
 
-        return (try JSC.JSObject.create(.{
+        return (try jsc.JSObject.create(.{
             .default_registry_url = default_registry_url,
             .default_registry_token = default_registry_token,
             .default_registry_username = default_registry_username,
@@ -586,7 +586,7 @@ pub const IniTestingAPIs = struct {
         }, globalThis)).toJS();
     }
 
-    pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn parse(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const arguments_ = callframe.arguments_old(1);
         const arguments = arguments_.slice();
 
@@ -811,7 +811,7 @@ pub const ScopeIterator = struct {
         no_value,
     };
 
-    const Item = struct { scope: []const u8, registry: bun.Schema.Api.NpmRegistry };
+    const Item = struct { scope: []const u8, registry: bun.schema.api.NpmRegistry };
 
     pub fn next(this: *ScopeIterator) OOM!?Option(Item) {
         if (this.prop_idx >= this.config.properties.len) return null;
@@ -829,7 +829,7 @@ pub const ScopeIterator = struct {
                                 .registry = brk: {
                                     if (prop.value) |value| {
                                         if (value.asUtf8StringLiteral()) |str| {
-                                            var parser = bun.Schema.Api.NpmRegistry.Parser{
+                                            var parser = bun.schema.api.NpmRegistry.Parser{
                                                 .log = this.log,
                                                 .source = this.source,
                                                 .allocator = this.allocator,
@@ -852,7 +852,7 @@ pub const ScopeIterator = struct {
 
 pub fn loadNpmrcConfig(
     allocator: std.mem.Allocator,
-    install: *bun.Schema.Api.BunInstall,
+    install: *bun.schema.api.BunInstall,
     env: *bun.DotEnv.Loader,
     auto_loaded: bool,
     npmrc_paths: []const [:0]const u8,
@@ -897,7 +897,7 @@ pub fn loadNpmrcConfig(
 
 pub fn loadNpmrc(
     allocator: std.mem.Allocator,
-    install: *bun.Schema.Api.BunInstall,
+    install: *bun.schema.api.BunInstall,
     env: *bun.DotEnv.Loader,
     npmrc_path: [:0]const u8,
     log: *bun.logger.Log,
@@ -915,7 +915,7 @@ pub fn loadNpmrc(
 
     if (out.asProperty("registry")) |query| {
         if (query.expr.asUtf8StringLiteral()) |str| {
-            var p = bun.Schema.Api.NpmRegistry.Parser{
+            var p = bun.schema.api.NpmRegistry.Parser{
                 .allocator = allocator,
                 .log = log,
                 .source = source,
@@ -1069,7 +1069,7 @@ pub fn loadNpmrc(
         }
     }
 
-    var registry_map = install.scoped orelse bun.Schema.Api.NpmRegistryMap{};
+    var registry_map = install.scoped orelse bun.schema.api.NpmRegistryMap{};
 
     // Process scopes
     {
@@ -1205,9 +1205,9 @@ pub fn loadNpmrc(
 
             if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
                 // Apply config to default registry
-                const v: *bun.Schema.Api.NpmRegistry = brk: {
+                const v: *bun.schema.api.NpmRegistry = brk: {
                     if (install.default_registry) |*r| break :brk r;
-                    install.default_registry = bun.Schema.Api.NpmRegistry{
+                    install.default_registry = bun.schema.api.NpmRegistry{
                         .password = "",
                         .token = "",
                         .username = "",
@@ -1268,7 +1268,7 @@ pub fn loadNpmrc(
 
 fn @"handle _auth"(
     allocator: Allocator,
-    v: *bun.Schema.Api.NpmRegistry,
+    v: *bun.schema.api.NpmRegistry,
     conf_item: *const ConfigIterator.Item,
     log: *bun.logger.Log,
     source: *const bun.logger.Source,
@@ -1341,7 +1341,7 @@ const Output = bun.Output;
 const Loc = bun.logger.Loc;
 const Registry = bun.install.Npm.Registry;
 
-const js_ast = bun.JSAst;
-const E = bun.JSAst.E;
-const Expr = bun.JSAst.Expr;
+const js_ast = bun.ast;
+const E = bun.ast.E;
+const Expr = bun.ast.Expr;
 const Rope = js_ast.E.Object.Rope;

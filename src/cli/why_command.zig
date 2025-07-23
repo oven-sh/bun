@@ -477,6 +477,8 @@ pub const WhyCommand = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 const PackageID = @import("../install/install.zig").PackageID;
 const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
@@ -485,7 +487,6 @@ const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const Semver = bun.Semver;
-const string = bun.string;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const PackageManager = bun.install.PackageManager;

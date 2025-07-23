@@ -1,4 +1,4 @@
-src/bake/bake.bind.ts
+src/bake.bind.ts
 src/bake/DevServer.bind.ts
 src/bun.js/api/BunObject.bind.ts
 src/bun.js/bindgen_test.bind.ts

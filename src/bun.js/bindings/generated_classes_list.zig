@@ -74,7 +74,7 @@ pub const Classes = struct {
     pub const NativeBrotli = api.NativeBrotli;
     pub const NodeHTTPResponse = api.NodeHTTPResponse;
     pub const FrameworkFileSystemRouter = bun.bake.FrameworkRouter.JSFrameworkRouter;
-    pub const DNSResolver = api.DNS.DNSResolver;
+    pub const DNSResolver = api.dns.Resolver;
     pub const S3Client = webcore.S3Client;
     pub const S3Stat = webcore.S3Stat;
     pub const ResumableFetchSink = webcore.ResumableFetchSink;
@@ -87,7 +87,7 @@ pub const Classes = struct {
 };
 
 const bun = @import("bun");
-const jsc = bun.JSC;
+const jsc = bun.jsc;
 const webcore = bun.webcore;
 
 const api = bun.api;

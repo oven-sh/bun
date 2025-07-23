@@ -27,11 +27,17 @@ At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-i
 - Run scripts from package.json
 - Visual lockfile viewer for old binary lockfiles (`bun.lockb`)
 
+## Bun test runner integration
+
+Run and debug tests directly from VSCode's Testing panel. The extension automatically discovers test files, shows inline test status, and provides rich error messages with diffs.
+
+![Test runner example](https://raw.githubusercontent.com/oven-sh/bun/refs/heads/main/packages/bun-vscode/assets/bun-test.gif)
+
 ## In-editor error messages
 
 When running programs with Bun from a Visual Studio Code terminal, Bun will connect to the extension and report errors as they happen, at the exact location they happened. We recommend using this feature with `bun --watch` so you can see errors on every save.
 
-![Error messages example](https://raw.githubusercontent.com/oven-sh/bun/refs/heads/main/packages/bun-vscode/error-messages.gif)
+![Error messages example](https://raw.githubusercontent.com/oven-sh/bun/refs/heads/main/packages/bun-vscode/assets/error-messages.gif)
 
 <div align="center">
 <sup>In the example above VSCode is saving on every keypress. Under normal configuration you'd only see errors on every save.</sup>

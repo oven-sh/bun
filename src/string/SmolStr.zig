@@ -266,7 +266,8 @@ test "Creating an inlined SmolStr does not allocate" {
     try t.expect(hello.isInlined());
 }
 
-const BabyList = @import("../baby_list.zig").BabyList;
+const bun = @import("bun");
+const BabyList = bun.collections.BabyList;
 
 const std = @import("std");
 const t = std.testing;

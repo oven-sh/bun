@@ -33,8 +33,8 @@ pub const AnyPostgresError = error{
     UnknownFormatCode,
 };
 
-pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {
-    const error_code: JSC.Error = switch (err) {
+pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {
+    const error_code: jsc.Error = switch (err) {
         error.ConnectionClosed => .POSTGRES_CONNECTION_CLOSED,
         error.ExpectedRequest => .POSTGRES_EXPECTED_REQUEST,
         error.ExpectedStatement => .POSTGRES_EXPECTED_STATEMENT,
@@ -83,5 +83,5 @@ pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8
 
 const bun = @import("bun");
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

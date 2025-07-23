@@ -29,7 +29,7 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 
 pub const decode = DecoderWrap(ErrorResponse, decodeInternal).decode;
 
-pub fn toJS(this: ErrorResponse, globalObject: *JSC.JSGlobalObject) JSValue {
+pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
     var b = bun.StringBuilder{};
     defer b.deinit(bun.default_allocator);
 
@@ -119,7 +119,7 @@ pub fn toJS(this: ErrorResponse, globalObject: *JSC.JSGlobalObject) JSValue {
         .{ "table", table, void },
         .{ "where", where, void },
     };
-    const error_code: JSC.Error =
+    const error_code: jsc.Error =
         // https://www.postgresql.org/docs/8.1/errcodes-appendix.html
         if (code.eqlComptime("42601"))
             .POSTGRES_SYNTAX_ERROR
@@ -132,14 +132,14 @@ pub fn toJS(this: ErrorResponse, globalObject: *JSC.JSGlobalObject) JSValue {
             const value = brk: {
                 if (field.@"2" == i32) {
                     if (field.@"1".toInt32()) |val| {
-                        break :brk JSC.JSValue.jsNumberFromInt32(val);
+                        break :brk jsc.JSValue.jsNumberFromInt32(val);
                     }
                 }
 
                 break :brk field.@"1".toJS(globalObject);
             };
 
-            err.put(globalObject, JSC.ZigString.static(field.@"0"), value);
+            err.put(globalObject, jsc.ZigString.static(field.@"0"), value);
         }
     }
 
@@ -154,5 +154,5 @@ const NewReader = @import("./NewReader.zig").NewReader;
 const bun = @import("bun");
 const String = bun.String;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

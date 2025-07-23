@@ -630,6 +630,8 @@ pub const OutdatedCommand = struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -639,9 +641,8 @@ const Output = bun.Output;
 const PathBuffer = bun.PathBuffer;
 const glob = bun.glob;
 const path = bun.path;
-const string = bun.string;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const FileSystem = bun.fs.FileSystem;
 const Table = bun.fmt.Table;
 

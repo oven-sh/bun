@@ -351,7 +351,7 @@ const Output = bun.Output;
 const assert = bun.assert;
 const logger = bun.logger;
 const strings = bun.strings;
-const Expr = bun.JSAst.Expr;
+const Expr = bun.ast.Expr;
 const String = bun.Semver.String;
 
 const Dependency = bun.install.Dependency;

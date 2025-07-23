@@ -15,11 +15,11 @@ pub fn StatFSType(comptime big: bool) type {
 
         const This = @This();
 
-        pub fn toJS(this: *const This, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+        pub fn toJS(this: *const This, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             return statfsToJS(this, globalObject);
         }
 
-        fn statfsToJS(this: *const This, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+        fn statfsToJS(this: *const This, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             if (big) {
                 return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__createJSBigIntStatFSObject, .{
                     globalObject,
@@ -80,11 +80,11 @@ pub fn StatFSType(comptime big: bool) type {
     };
 }
 
-extern fn Bun__JSBigIntStatFSObjectConstructor(*JSC.JSGlobalObject) JSC.JSValue;
-extern fn Bun__JSStatFSObjectConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+extern fn Bun__JSBigIntStatFSObjectConstructor(*jsc.JSGlobalObject) jsc.JSValue;
+extern fn Bun__JSStatFSObjectConstructor(*jsc.JSGlobalObject) jsc.JSValue;
 
 extern fn Bun__createJSStatFSObject(
-    globalObject: *JSC.JSGlobalObject,
+    globalObject: *jsc.JSGlobalObject,
     fstype: i64,
     bsize: i64,
     blocks: i64,
@@ -92,10 +92,10 @@ extern fn Bun__createJSStatFSObject(
     bavail: i64,
     files: i64,
     ffree: i64,
-) JSC.JSValue;
+) jsc.JSValue;
 
 extern fn Bun__createJSBigIntStatFSObject(
-    globalObject: *JSC.JSGlobalObject,
+    globalObject: *jsc.JSGlobalObject,
     fstype: i64,
     bsize: i64,
     blocks: i64,
@@ -103,7 +103,7 @@ extern fn Bun__createJSBigIntStatFSObject(
     bavail: i64,
     files: i64,
     ffree: i64,
-) JSC.JSValue;
+) jsc.JSValue;
 
 pub const StatFSSmall = StatFSType(false);
 pub const StatFSBig = StatFSType(true);
@@ -121,14 +121,14 @@ pub const StatFS = union(enum) {
         }
     }
 
-    pub fn toJSNewlyCreated(this: *const StatFS, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    pub fn toJSNewlyCreated(this: *const StatFS, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return switch (this.*) {
             .big => |*big| big.toJS(globalObject),
             .small => |*small| small.toJS(globalObject),
         };
     }
 
-    pub inline fn toJS(this: *StatFS, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub inline fn toJS(this: *StatFS, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         _ = this;
         _ = globalObject;
 
@@ -138,4 +138,4 @@ pub const StatFS = union(enum) {
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
+const jsc = bun.jsc;

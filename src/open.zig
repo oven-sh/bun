@@ -25,7 +25,7 @@ pub fn openURL(url: stringZ) void {
             .stdin = .inherit,
 
             .windows = if (Environment.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
             },
         }) catch break :maybe_fallback) {
             // don't fallback:
@@ -434,6 +434,9 @@ pub const EditorContext = struct {
     }
 };
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const DotEnv = @import("./env_loader.zig");
 const std = @import("std");
 
@@ -442,6 +445,4 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;

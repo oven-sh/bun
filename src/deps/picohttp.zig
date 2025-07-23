@@ -365,6 +365,8 @@ pub const phr_parse_headers = c.phr_parse_headers;
 pub const phr_decode_chunked = c.phr_decode_chunked;
 pub const phr_decode_chunked_is_in_data = c.phr_decode_chunked_is_in_data;
 
+const string = []const u8;
+
 const c = @import("./picohttpparser.zig");
 
 const bun = @import("bun");
@@ -372,7 +374,6 @@ const Environment = bun.Environment;
 const Output = bun.Output;
 const StringBuilder = bun.StringBuilder;
 const assert = bun.assert;
-const string = bun.string;
 const strings = bun.strings;
 
 const std = @import("std");

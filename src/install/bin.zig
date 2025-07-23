@@ -611,7 +611,7 @@ pub const Bin = extern struct {
                 return;
             }
 
-            bun.Analytics.Features.binlinks += 1;
+            bun.analytics.Features.binlinks += 1;
 
             if (comptime !Environment.isWindows)
                 this.createSymlink(abs_target, abs_dest, global)
@@ -1041,6 +1041,9 @@ pub const Bin = extern struct {
     };
 };
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const Dependency = @import("./dependency.zig");
 const Environment = @import("../env.zig");
 const std = @import("std");
@@ -1050,11 +1053,9 @@ const ExternalStringList = @import("./install.zig").ExternalStringList;
 const Lockfile = Install.Lockfile;
 
 const bun = @import("bun");
-const JSON = bun.JSON;
+const JSON = bun.json;
 const OOM = bun.OOM;
 const path = bun.path;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;
 
 const Semver = bun.Semver;

@@ -2,7 +2,7 @@ pub const WTF = struct {
     extern fn WTF__parseDouble(bytes: [*]const u8, length: usize, counted: *usize) f64;
 
     pub fn parseDouble(buf: []const u8) !f64 {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
 
         if (buf.len == 0)
             return error.InvalidCharacter;
@@ -32,4 +32,4 @@ pub const WTF = struct {
 };
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;

@@ -89,7 +89,7 @@ pub fn endScope(this: *Base) void {
     }
 }
 
-pub inline fn eventLoop(this: *const Base) JSC.EventLoopHandle {
+pub inline fn eventLoop(this: *const Base) jsc.EventLoopHandle {
     return this.interpreter.event_loop;
 }
 
@@ -129,7 +129,7 @@ pub fn leakSlice(this: *Base, memory: anytype) void {
 const std = @import("std");
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 
 const Interpreter = bun.shell.Interpreter;
 const IO = bun.shell.Interpreter.IO;

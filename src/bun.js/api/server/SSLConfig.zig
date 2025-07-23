@@ -33,11 +33,11 @@ client_renegotiation_window: u32 = 0,
 const BlobFileContentResult = struct {
     data: [:0]const u8,
 
-    fn init(comptime fieldname: []const u8, js_obj: JSC.JSValue, global: *JSC.JSGlobalObject) bun.JSError!?BlobFileContentResult {
+    fn init(comptime fieldname: []const u8, js_obj: jsc.JSValue, global: *jsc.JSGlobalObject) bun.JSError!?BlobFileContentResult {
         {
-            const body = try JSC.WebCore.Body.Value.fromJS(global, js_obj);
+            const body = try jsc.WebCore.Body.Value.fromJS(global, js_obj);
             if (body == .Blob and body.Blob.store != null and body.Blob.store.?.data == .file) {
-                var fs: JSC.Node.fs.NodeFS = .{};
+                var fs: jsc.Node.fs.NodeFS = .{};
                 const read = fs.readFileWithOptions(.{ .path = body.Blob.store.?.data.file.pathlike }, .sync, .null_terminated);
                 switch (read) {
                     .err => {
@@ -221,7 +221,7 @@ pub fn deinit(this: *SSLConfig) void {
 
 pub const zero = SSLConfig{};
 
-pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSValue) bun.JSError!?SSLConfig {
+pub fn fromJS(vm: *jsc.VirtualMachine, global: *jsc.JSGlobalObject, obj: jsc.JSValue) bun.JSError!?SSLConfig {
     var result = zero;
     errdefer result.deinit();
 
@@ -259,7 +259,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
                 var valid_count: u32 = 0;
                 for (0..count) |i| {
                     const item = try js_obj.getIndex(global, @intCast(i));
-                    if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                    if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
@@ -309,7 +309,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
             }
         } else {
             const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
-            if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+            if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                 defer sb.deinit();
                 const sliced = sb.slice();
                 if (sliced.len > 0) {
@@ -343,7 +343,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
     }
 
     if (try obj.getTruthy(global, "ALPNProtocols")) |protocols| {
-        if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), protocols)) |sb| {
+        if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), protocols)) |sb| {
             defer sb.deinit();
             const sliced = sb.slice();
             if (sliced.len > 0) {
@@ -367,7 +367,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
                 var valid_count: u32 = 0;
                 for (0..count) |i| {
                     const item = try js_obj.getIndex(global, @intCast(i));
-                    if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                    if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
@@ -417,7 +417,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
             }
         } else {
             const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
-            if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+            if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                 defer sb.deinit();
                 const sliced = sb.slice();
                 if (sliced.len > 0) {
@@ -476,7 +476,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
                 var valid_count: u32 = 0;
                 for (0..count) |i| {
                     const item = try js_obj.getIndex(global, @intCast(i));
-                    if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                    if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
@@ -526,7 +526,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
             }
         } else {
             const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
-            if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+            if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                 defer sb.deinit();
                 const sliced = sb.slice();
                 if (sliced.len > 0) {
@@ -616,7 +616,7 @@ const bun = @import("bun");
 const strings = bun.strings;
 const uws = bun.uws;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;

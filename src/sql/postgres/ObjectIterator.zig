@@ -2,15 +2,15 @@ const ObjectIterator = @This();
 
 array: JSValue,
 columns: JSValue = .zero,
-globalObject: *JSC.JSGlobalObject,
+globalObject: *jsc.JSGlobalObject,
 cell_i: usize = 0,
 row_i: usize = 0,
-current_row: JSC.JSValue = .zero,
+current_row: jsc.JSValue = .zero,
 columns_count: usize = 0,
 array_length: usize = 0,
 any_failed: bool = false,
 
-pub fn next(this: *ObjectIterator) ?JSC.JSValue {
+pub fn next(this: *ObjectIterator) ?jsc.JSValue {
     if (this.row_i >= this.array_length) {
         return null;
     }
@@ -22,7 +22,7 @@ pub fn next(this: *ObjectIterator) ?JSC.JSValue {
     const globalObject = this.globalObject;
 
     if (this.current_row == .zero) {
-        this.current_row = JSC.JSObject.getIndex(this.array, globalObject, @intCast(row_i)) catch {
+        this.current_row = jsc.JSObject.getIndex(this.array, globalObject, @intCast(row_i)) catch {
             this.any_failed = true;
             return null;
         };
@@ -39,7 +39,7 @@ pub fn next(this: *ObjectIterator) ?JSC.JSValue {
         }
     }
 
-    const property = JSC.JSObject.getIndex(this.columns, globalObject, @intCast(cell_i)) catch {
+    const property = jsc.JSObject.getIndex(this.columns, globalObject, @intCast(cell_i)) catch {
         this.any_failed = true;
         return null;
     };
@@ -59,5 +59,5 @@ pub fn next(this: *ObjectIterator) ?JSC.JSValue {
 
 const bun = @import("bun");
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

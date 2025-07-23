@@ -1237,11 +1237,12 @@ inline fn float64(num: anytype) f64 {
     return @as(f64, @floatFromInt(num));
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const CodePoint = bun.CodePoint;
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;

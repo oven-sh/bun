@@ -15,15 +15,15 @@
 const UpgradedDuplex = @This();
 
 wrapper: ?WrapperType,
-origin: JSC.Strong.Optional = .empty, // any duplex
-global: ?*JSC.JSGlobalObject = null,
+origin: jsc.Strong.Optional = .empty, // any duplex
+global: ?*jsc.JSGlobalObject = null,
 ssl_error: CertError = .{},
-vm: *JSC.VirtualMachine,
+vm: *jsc.VirtualMachine,
 handlers: Handlers,
-onDataCallback: JSC.Strong.Optional = .empty,
-onEndCallback: JSC.Strong.Optional = .empty,
-onWritableCallback: JSC.Strong.Optional = .empty,
-onCloseCallback: JSC.Strong.Optional = .empty,
+onDataCallback: jsc.Strong.Optional = .empty,
+onEndCallback: jsc.Strong.Optional = .empty,
+onWritableCallback: jsc.Strong.Optional = .empty,
+onCloseCallback: jsc.Strong.Optional = .empty,
 event_loop_timer: EventLoopTimer = .{
     .next = .epoch,
     .tag = .UpgradedDuplex,
@@ -55,7 +55,7 @@ pub const Handlers = struct {
     onClose: *const fn (*anyopaque) void,
     onEnd: *const fn (*anyopaque) void,
     onWritable: *const fn (*anyopaque) void,
-    onError: *const fn (*anyopaque, JSC.JSValue) void,
+    onError: *const fn (*anyopaque, jsc.JSValue) void,
     onTimeout: *const fn (*anyopaque) void,
 };
 
@@ -97,7 +97,7 @@ fn callWriteOrEnd(this: *UpgradedDuplex, data: ?[]const u8, msg_more: bool) void
         const globalThis = this.global.?;
         const writeOrEnd = if (msg_more) duplex.getFunction(globalThis, "write") catch return orelse return else duplex.getFunction(globalThis, "end") catch return orelse return;
         if (data) |data_| {
-            const buffer = JSC.ArrayBuffer.BinaryType.toJS(.Buffer, data_, globalThis) catch |err| {
+            const buffer = jsc.ArrayBuffer.BinaryType.toJS(.Buffer, data_, globalThis) catch |err| {
                 this.handlers.onError(this.handlers.ctx, globalThis.takeException(err));
                 return;
             };
@@ -139,15 +139,15 @@ fn onInternalReceiveData(this: *UpgradedDuplex, data: []const u8) void {
 }
 
 fn onReceivedData(
-    globalObject: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
     log("onReceivedData", .{});
 
     const function = callframe.callee();
     const args = callframe.arguments_old(1);
 
-    if (JSC.host_fn.getFunctionData(function)) |self| {
+    if (jsc.host_fn.getFunctionData(function)) |self| {
         const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
         if (args.len >= 1) {
             const data_arg = args.ptr[0];
@@ -172,14 +172,14 @@ fn onReceivedData(
 }
 
 fn onEnd(
-    globalObject: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
 ) void {
     log("onEnd", .{});
     _ = globalObject;
     const function = callframe.callee();
 
-    if (JSC.host_fn.getFunctionData(function)) |self| {
+    if (jsc.host_fn.getFunctionData(function)) |self| {
         const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
 
         if (this.wrapper != null) {
@@ -189,15 +189,15 @@ fn onEnd(
 }
 
 fn onWritable(
-    globalObject: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
     log("onWritable", .{});
 
     _ = globalObject;
     const function = callframe.callee();
 
-    if (JSC.host_fn.getFunctionData(function)) |self| {
+    if (jsc.host_fn.getFunctionData(function)) |self| {
         const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
         // flush pending data
         if (this.wrapper) |*wrapper| {
@@ -211,15 +211,15 @@ fn onWritable(
 }
 
 fn onCloseJS(
-    globalObject: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
     log("onCloseJS", .{});
 
     _ = globalObject;
     const function = callframe.callee();
 
-    if (JSC.host_fn.getFunctionData(function)) |self| {
+    if (jsc.host_fn.getFunctionData(function)) |self| {
         const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
         // flush pending data
         if (this.wrapper) |*wrapper| {
@@ -248,8 +248,8 @@ pub fn onTimeout(this: *UpgradedDuplex) EventLoopTimer.Arm {
 }
 
 pub fn from(
-    globalThis: *JSC.JSGlobalObject,
-    origin: JSC.JSValue,
+    globalThis: *jsc.JSGlobalObject,
+    origin: jsc.JSValue,
     handlers: UpgradedDuplex.Handlers,
 ) UpgradedDuplex {
     return UpgradedDuplex{
@@ -261,13 +261,13 @@ pub fn from(
     };
 }
 
-pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-    const array = try JSC.JSValue.createEmptyArray(globalThis, 4);
+pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    const array = try jsc.JSValue.createEmptyArray(globalThis, 4);
     array.ensureStillAlive();
 
     {
         const callback = this.onDataCallback.get() orelse brk: {
-            const dataCallback = JSC.host_fn.NewFunctionWithData(
+            const dataCallback = jsc.host_fn.NewFunctionWithData(
                 globalThis,
                 null,
                 0,
@@ -277,7 +277,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
             );
             dataCallback.ensureStillAlive();
 
-            JSC.host_fn.setFunctionData(dataCallback, this);
+            jsc.host_fn.setFunctionData(dataCallback, this);
 
             this.onDataCallback = .create(dataCallback, globalThis);
             break :brk dataCallback;
@@ -287,7 +287,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
 
     {
         const callback = this.onEndCallback.get() orelse brk: {
-            const endCallback = JSC.host_fn.NewFunctionWithData(
+            const endCallback = jsc.host_fn.NewFunctionWithData(
                 globalThis,
                 null,
                 0,
@@ -297,7 +297,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
             );
             endCallback.ensureStillAlive();
 
-            JSC.host_fn.setFunctionData(endCallback, this);
+            jsc.host_fn.setFunctionData(endCallback, this);
 
             this.onEndCallback = .create(endCallback, globalThis);
             break :brk endCallback;
@@ -307,7 +307,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
 
     {
         const callback = this.onWritableCallback.get() orelse brk: {
-            const writableCallback = JSC.host_fn.NewFunctionWithData(
+            const writableCallback = jsc.host_fn.NewFunctionWithData(
                 globalThis,
                 null,
                 0,
@@ -317,7 +317,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
             );
             writableCallback.ensureStillAlive();
 
-            JSC.host_fn.setFunctionData(writableCallback, this);
+            jsc.host_fn.setFunctionData(writableCallback, this);
             this.onWritableCallback = .create(writableCallback, globalThis);
             break :brk writableCallback;
         };
@@ -326,7 +326,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
 
     {
         const callback = this.onCloseCallback.get() orelse brk: {
-            const closeCallback = JSC.host_fn.NewFunctionWithData(
+            const closeCallback = jsc.host_fn.NewFunctionWithData(
                 globalThis,
                 null,
                 0,
@@ -336,7 +336,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
             );
             closeCallback.ensureStillAlive();
 
-            JSC.host_fn.setFunctionData(closeCallback, this);
+            jsc.host_fn.setFunctionData(closeCallback, this);
             this.onCloseCallback = .create(closeCallback, globalThis);
             break :brk closeCallback;
         };
@@ -346,7 +346,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
     return array;
 }
 
-pub fn startTLS(this: *UpgradedDuplex, ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
+pub fn startTLS(this: *UpgradedDuplex, ssl_options: jsc.API.ServerConfig.SSLConfig, is_client: bool) !void {
     this.wrapper = try WrapperType.init(ssl_options, is_client, .{
         .ctx = this,
         .onOpen = UpgradedDuplex.onOpen,
@@ -458,19 +458,19 @@ pub fn deinit(this: *UpgradedDuplex) void {
 
     this.origin.deinit();
     if (this.onDataCallback.get()) |callback| {
-        JSC.host_fn.setFunctionData(callback, null);
+        jsc.host_fn.setFunctionData(callback, null);
         this.onDataCallback.deinit();
     }
     if (this.onEndCallback.get()) |callback| {
-        JSC.host_fn.setFunctionData(callback, null);
+        jsc.host_fn.setFunctionData(callback, null);
         this.onEndCallback.deinit();
     }
     if (this.onWritableCallback.get()) |callback| {
-        JSC.host_fn.setFunctionData(callback, null);
+        jsc.host_fn.setFunctionData(callback, null);
         this.onWritableCallback.deinit();
     }
     if (this.onCloseCallback.get()) |callback| {
-        JSC.host_fn.setFunctionData(callback, null);
+        jsc.host_fn.setFunctionData(callback, null);
         this.onCloseCallback.deinit();
     }
     var ssl_error = this.ssl_error;
@@ -483,7 +483,7 @@ const log = bun.Output.scoped(.UpgradedDuplex, false);
 const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const BoringSSL = bun.BoringSSL.c;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 

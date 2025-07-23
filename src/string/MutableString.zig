@@ -345,7 +345,7 @@ pub const BufferedWriter = struct {
         return pending.len;
     }
 
-    const E = bun.JSAst.E;
+    const E = bun.ast.E;
 
     /// Write a E.String to the buffer.
     /// This automatically encodes UTF-16 into UTF-8 using
@@ -455,10 +455,11 @@ pub fn writeAll(self: *MutableString, bytes: string) Allocator.Error!usize {
     return bytes.len;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const js_lexer = bun.js_lexer;
-const string = bun.string;
 const strings = bun.strings;

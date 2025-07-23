@@ -22,13 +22,13 @@ pub const InternalLoopData = extern struct {
     parent_ptr: ?*anyopaque,
     parent_tag: c_char,
     iteration_nr: usize,
-    jsc_vm: ?*JSC.VM,
+    jsc_vm: ?*jsc.VM,
 
     pub fn recvSlice(this: *InternalLoopData) []u8 {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
     }
 
-    pub fn setParentEventLoop(this: *InternalLoopData, parent: JSC.EventLoopHandle) void {
+    pub fn setParentEventLoop(this: *InternalLoopData, parent: jsc.EventLoopHandle) void {
         switch (parent) {
             .js => |ptr| {
                 this.parent_tag = 1;
@@ -41,12 +41,12 @@ pub const InternalLoopData = extern struct {
         }
     }
 
-    pub fn getParent(this: *InternalLoopData) JSC.EventLoopHandle {
+    pub fn getParent(this: *InternalLoopData) jsc.EventLoopHandle {
         const parent = this.parent_ptr orelse @panic("Parent loop not set - pointer is null");
         return switch (this.parent_tag) {
             0 => @panic("Parent loop not set - tag is zero"),
-            1 => .{ .js = bun.cast(*JSC.EventLoop, parent) },
-            2 => .{ .mini = bun.cast(*JSC.MiniEventLoop, parent) },
+            1 => .{ .js = bun.cast(*jsc.EventLoop, parent) },
+            2 => .{ .mini = bun.cast(*jsc.MiniEventLoop, parent) },
             else => @panic("Parent loop data corrupted - tag is invalid"),
         };
     }
@@ -55,7 +55,7 @@ pub const InternalLoopData = extern struct {
 };
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 
 const uws = bun.uws;
 const ConnectingSocket = uws.ConnectingSocket;

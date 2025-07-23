@@ -621,7 +621,7 @@ pub const Poll = struct {
         }
     }
 
-    pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: bun.FileDescriptor) JSC.Maybe(void) {
+    pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: bun.FileDescriptor) jsc.Maybe(void) {
         const watcher_fd = loop.pollfd();
 
         log("register: {s} ({})", .{ @tagName(flag), fd });
@@ -655,7 +655,7 @@ pub const Poll = struct {
                 &event,
             );
 
-            if (JSC.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
+            if (jsc.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
                 return errno;
             }
             // Only mark if it successfully registered.
@@ -675,7 +675,7 @@ pub const Poll = struct {
         });
         this.flags.remove(.needs_rearm);
 
-        return JSC.Maybe(void).success;
+        return jsc.Maybe(void).success;
     }
 };
 
@@ -694,8 +694,8 @@ pub const MaxBuf = @import("./MaxBuf.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
 const assert = bun.assert;
+const jsc = bun.jsc;
 const sys = bun.sys;
 const ReadFile = bun.webcore.Blob.read_file.ReadFile;
 const WriteFile = bun.webcore.Blob.write_file.WriteFile;

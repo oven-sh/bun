@@ -1048,7 +1048,7 @@ pub const DataCell = extern struct {
                 debug("putImpl: index {d} >= list.len {d}, ignoring extra field", .{ index, this.list.len });
                 return false;
             }
-            
+
             const field = &this.fields[index];
             const oid = field.type_oid;
             debug("index: {d}, oid: {d}", .{ index, oid });

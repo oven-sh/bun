@@ -17,20 +17,18 @@ describe("postgres batch insert crash fix #21311", () => {
 
       // Generate a large batch of data to insert
       const batchSize = 100;
-      const values = Array.from({ length: batchSize }, (_, i) => 
-        `('batch_data_${i}')`
-      ).join(', ');
+      const values = Array.from({ length: batchSize }, (_, i) => `('batch_data_${i}')`).join(", ");
 
       // This query would previously crash with "index out of bounds: index 0, len 0"
       // on Windows when the fields metadata wasn't properly initialized
       const insertQuery = `INSERT INTO test_batch_21311 (data) VALUES ${values} RETURNING id, data`;
-      
+
       const results = await sql.unsafe(insertQuery);
-      
+
       expect(results).toHaveLength(batchSize);
-      expect(results[0]).toHaveProperty('id');
-      expect(results[0]).toHaveProperty('data');
-      expect(results[0].data).toBe('batch_data_0');
+      expect(results[0]).toHaveProperty("id");
+      expect(results[0]).toHaveProperty("data");
+      expect(results[0].data).toBe("batch_data_0");
       expect(results[batchSize - 1].data).toBe(`batch_data_${batchSize - 1}`);
 
       // Cleanup
@@ -52,7 +50,7 @@ describe("postgres batch insert crash fix #21311", () => {
 
       // Query that returns no rows - this tests the empty fields scenario
       const results = await sql`SELECT * FROM test_empty_21311 WHERE id = -1`;
-      
+
       expect(results).toHaveLength(0);
 
       // Cleanup
@@ -77,16 +75,17 @@ describe("postgres batch insert crash fix #21311", () => {
       // This tests potential race conditions in field metadata setup
       const concurrentOperations = Array.from({ length: 5 }, async (_, threadId) => {
         const batchSize = 20;
-        const values = Array.from({ length: batchSize }, (_, i) => 
-          `(${threadId}, 'thread_${threadId}_data_${i}')`
-        ).join(', ');
+        const values = Array.from(
+          { length: batchSize },
+          (_, i) => `(${threadId}, 'thread_${threadId}_data_${i}')`,
+        ).join(", ");
 
         const insertQuery = `INSERT INTO test_concurrent_21311 (thread_id, data) VALUES ${values} RETURNING id, thread_id, data`;
         return sql.unsafe(insertQuery);
       });
 
       const allResults = await Promise.all(concurrentOperations);
-      
+
       // Verify all operations completed successfully
       expect(allResults).toHaveLength(5);
       allResults.forEach((results, threadId) => {

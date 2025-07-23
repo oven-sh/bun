@@ -122,9 +122,11 @@ using namespace Zig;
     } while (0)
 
 // Assert that the environment is not performing garbage collection
-#define NAPI_CHECK_ENV_NOT_IN_GC(_env) \
-    do {                               \
-        (_env)->checkGC();             \
+#define NAPI_CHECK_ENV_NOT_IN_GC(_env)                                          \
+    do {                                                                    \
+        if (!(_env)->checkGC()) [[unlikely]] {                             \
+            return napi_set_last_error(_env, napi_generic_failure);        \
+        }                                                                   \
     } while (0)
 
 // Return the specified code if condition is false. Only use for input validation.

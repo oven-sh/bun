@@ -183,13 +183,13 @@ public:
         return this->vm().isCollectorBusyOnCurrentThread();
     }
 
-    void checkGC() const
+    bool checkGC() const
     {
-        NAPI_RELEASE_ASSERT(!inGC(),
-            "Attempted to call a non-GC-safe function inside a NAPI finalizer from a NAPI module with version %d.\n"
-            "Finalizers must not create new objects during garbage collection. Use the `node_api_post_finalizer` function\n"
-            "inside the finalizer to defer the code to the next event loop tick.\n",
-            m_napiModule.nm_version);
+        if (inGC()) [[unlikely]] {
+            // Instead of crashing, return false to indicate GC-unsafe operation
+            return false;
+        }
+        return true;
     }
 
     bool isVMTerminating() const

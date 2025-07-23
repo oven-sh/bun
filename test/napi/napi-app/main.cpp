@@ -3,6 +3,7 @@
 #include "async_tests.h"
 #include "class_test.h"
 #include "conversion_tests.h"
+#include "gc_crash_test.h"
 #include "get_string_tests.h"
 #include "js_test_helpers.h"
 #include "standalone_tests.h"
@@ -37,6 +38,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   register_wrap_tests(env, exports);
   register_conversion_tests(env, exports);
   register_get_string_tests(env, exports);
+  InitGCCrashTest(env, exports);
 
   return exports;
 }

@@ -579,6 +579,9 @@ pub const PatchTask = struct {
     }
 };
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const std = @import("std");
 
 const Fs = @import("../fs.zig");
@@ -590,8 +593,6 @@ const Output = bun.Output;
 const PackageManager = bun.PackageManager;
 const Progress = bun.Progress;
 const ThreadPool = bun.ThreadPool;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const String = bun.Semver.String;
 const Task = bun.install.Task;
 

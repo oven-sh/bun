@@ -57,7 +57,7 @@ pub const VM = opaque {
     }
     extern fn JSC__VM__reportExtraMemory(*VM, usize) void;
     pub fn reportExtraMemory(this: *VM, size: usize) void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         JSC__VM__reportExtraMemory(this, size);
     }
 
@@ -116,28 +116,28 @@ pub const VM = opaque {
 
     extern fn JSC__VM__notifyNeedTermination(vm: *VM) void;
 
-    /// Fires NeedTermination Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notifyNeedTermination(vm: *VM) void {
         JSC__VM__notifyNeedTermination(vm);
     }
 
     extern fn JSC__VM__notifyNeedWatchdogCheck(vm: *VM) void;
 
-    /// Fires NeedWatchdogCheck Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    /// Fires NeedWatchdogCheck Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notifyNeedWatchdogCheck(vm: *VM) void {
         JSC__VM__notifyNeedWatchdogCheck(vm);
     }
 
     extern fn JSC__VM__notifyNeedDebuggerBreak(vm: *VM) void;
 
-    /// Fires NeedDebuggerBreak Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    /// Fires NeedDebuggerBreak Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notifyNeedDebuggerBreak(vm: *VM) void {
         JSC__VM__notifyNeedDebuggerBreak(vm);
     }
 
     extern fn JSC__VM__notifyNeedShellTimeoutCheck(vm: *VM) void;
 
-    /// Fires NeedShellTimeoutCheck Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    /// Fires NeedShellTimeoutCheck Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notifyNeedShellTimeoutCheck(vm: *VM) void {
         JSC__VM__notifyNeedShellTimeoutCheck(vm);
     }
@@ -191,6 +191,6 @@ pub const VM = opaque {
 
 const bun = @import("bun");
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

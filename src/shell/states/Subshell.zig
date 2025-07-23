@@ -57,7 +57,7 @@ pub fn initDupeShellState(
     node: *const ast.Subshell,
     parent: ParentPtr,
     io: IO,
-) bun.JSC.Maybe(*Subshell) {
+) bun.jsc.Maybe(*Subshell) {
     const subshell = parent.create(Subshell);
     subshell.* = .{
         .base = State.initWithNewAllocScope(.subshell, interpreter, shell_state),
@@ -157,7 +157,7 @@ pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yiel
     bun.shell.unreachableState("Subshell.childDone", "expected Script or Expansion");
 }
 
-pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .wait_write_err);
     }
@@ -190,8 +190,8 @@ pub fn writeFailingError(this: *Subshell, comptime fmt: []const u8, args: anytyp
 const std = @import("std");
 
 const bun = @import("bun");
-const JSC = bun.JSC;
 const assert = bun.assert;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
 const ExitCode = bun.shell.ExitCode;

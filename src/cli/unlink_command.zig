@@ -130,15 +130,16 @@ fn unlink(ctx: Command.Context) !void {
     }
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const Path = bun.path;
-const string = bun.string;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const Bin = bun.install.Bin;
 const Features = bun.install.Features;

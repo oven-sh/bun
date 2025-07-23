@@ -193,7 +193,7 @@ pub const DataCell = extern struct {
         if (slice.len <= count) return "";
         return slice[count..];
     }
-    fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, globalObject: *JSC.JSGlobalObject, offset: ?*usize, comptime is_json_sub_array: bool) !DataCell {
+    fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, globalObject: *jsc.JSGlobalObject, offset: ?*usize, comptime is_json_sub_array: bool) !DataCell {
         const closing_brace = if (is_json_sub_array) ']' else '}';
         const opening_brace = if (is_json_sub_array) '[' else '{';
         if (bytes.len < 2 or bytes[0] != opening_brace) {
@@ -587,7 +587,7 @@ pub const DataCell = extern struct {
         return DataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
     }
 
-    pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
+    pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, globalObject: *jsc.JSGlobalObject) !DataCell {
         switch (oid) {
             // TODO: .int2_array, .float8_array
             inline .int4_array, .float4_array => |tag| {
@@ -1001,22 +1001,22 @@ pub const DataCell = extern struct {
         binary: bool = false,
         bigint: bool = false,
         count: usize = 0,
-        globalObject: *JSC.JSGlobalObject,
+        globalObject: *jsc.JSGlobalObject,
 
         extern fn JSC__constructObjectFromDataCell(
-            *JSC.JSGlobalObject,
+            *jsc.JSGlobalObject,
             JSValue,
             JSValue,
             [*]DataCell,
             u32,
             Flags,
             u8, // result_mode
-            ?[*]JSC.JSObject.ExternColumnIdentifier, // names
+            ?[*]jsc.JSObject.ExternColumnIdentifier, // names
             u32, // names count
         ) JSValue;
 
-        pub fn toJS(this: *Putter, globalObject: *JSC.JSGlobalObject, array: JSValue, structure: JSValue, flags: Flags, result_mode: PostgresSQLQueryResultMode, cached_structure: ?PostgresCachedStructure) JSValue {
-            var names: ?[*]JSC.JSObject.ExternColumnIdentifier = null;
+        pub fn toJS(this: *Putter, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: Flags, result_mode: PostgresSQLQueryResultMode, cached_structure: ?PostgresCachedStructure) JSValue {
+            var names: ?[*]jsc.JSObject.ExternColumnIdentifier = null;
             var names_count: u32 = 0;
             if (cached_structure) |c| {
                 if (c.fields) |f| {
@@ -1101,5 +1101,5 @@ const short = types.short;
 const bun = @import("bun");
 const String = bun.String;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

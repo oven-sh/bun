@@ -58,7 +58,7 @@ vm: *VirtualMachine,
 /// May be `null` if not attached to an HTTP server yet. When no server is
 /// available, functions taking in requests and responses are unavailable.
 /// However, a lot of testing in this mode is missing, so it may hit assertions.
-server: ?bun.JSC.API.AnyServer,
+server: ?bun.jsc.API.AnyServer,
 /// Contains the tree of routes. This structure contains FileIndex
 router: FrameworkRouter,
 /// Every navigatable route has bundling state here.
@@ -103,8 +103,8 @@ has_tailwind_plugin_hack: ?bun.StringArrayHashMapUnmanaged(void) = null,
 
 // These values are handles to the functions in `hmr-runtime-server.ts`.
 // For type definitions, see `./bake.private.d.ts`
-server_fetch_function_callback: JSC.Strong.Optional,
-server_register_update_callback: JSC.Strong.Optional,
+server_fetch_function_callback: jsc.Strong.Optional,
+server_register_update_callback: jsc.Strong.Optional,
 
 // Watching
 bun_watcher: *bun.Watcher,
@@ -738,7 +738,7 @@ fn scanInitialRoutes(dev: *DevServer) !void {
 /// Returns true if a catch-all handler was attached.
 pub fn setRoutes(dev: *DevServer, server: anytype) !bool {
     // TODO: all paths here must be prefixed with publicPath if set.
-    dev.server = bun.JSC.API.AnyServer.from(server);
+    dev.server = bun.jsc.API.AnyServer.from(server);
     const app = server.app.?;
     const is_ssl = @typeInfo(@TypeOf(app)).pointer.child.is_ssl;
 
@@ -1177,7 +1177,7 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
 fn onFrameworkRequestWithBundle(
     dev: *DevServer,
     route_bundle_index: RouteBundle.Index,
-    req: bun.JSC.API.SavedRequest.Union,
+    req: bun.jsc.API.SavedRequest.Union,
     resp: AnyResponse,
 ) bun.JSError!void {
     const route_bundle = dev.routeBundlePtr(route_bundle_index);
@@ -1422,7 +1422,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
 
 fn generateJavaScriptCodeForHTMLFile(
     dev: *DevServer,
-    index: bun.JSAst.Index,
+    index: bun.ast.Index,
     import_records: []bun.BabyList(bun.ImportRecord),
     input_file_sources: []bun.logger.Source,
     loaders: []bun.options.Loader,
@@ -1500,7 +1500,7 @@ pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: anytype) void {
     _ = dev;
 
     // const ctx = &dev.vm.rareData().editor_context;
-    // ctx.autoDetectEditor(JSC.VirtualMachine.get().transpiler.env);
+    // ctx.autoDetectEditor(jsc.VirtualMachine.get().transpiler.env);
     // const line: ?[]const u8 = req.header("editor-line");
     // const column: ?[]const u8 = req.header("editor-column");
 
@@ -1538,7 +1538,7 @@ pub const DeferredRequest = struct {
 
     const Handler = union(enum) {
         /// For a .framework route. This says to call and render the page.
-        server_handler: bun.JSC.API.SavedRequest,
+        server_handler: bun.jsc.API.SavedRequest,
         /// For a .html route. Serve the bundled HTML page.
         bundled_html_page: ResponseAndMethod,
         /// Do nothing and free this node. To simplify lifetimes,
@@ -1622,10 +1622,10 @@ pub fn startAsyncBundle(
     // Ref server to keep it from closing.
     if (dev.server) |server| server.onPendingRequest();
 
-    var heap = try ThreadlocalArena.init();
+    var heap = try ThreadLocalArena.init();
     errdefer heap.deinit();
     const allocator = heap.allocator();
-    const ast_memory_allocator = try allocator.create(bun.JSAst.ASTMemoryAllocator);
+    const ast_memory_allocator = try allocator.create(bun.ast.ASTMemoryAllocator);
     var ast_scope = ast_memory_allocator.enter(allocator);
     defer ast_scope.exit();
 
@@ -1640,7 +1640,7 @@ pub fn startAsyncBundle(
         allocator,
         .{ .js = dev.vm.eventLoop() },
         false, // watching is handled separately
-        JSC.WorkPool.get(),
+        jsc.WorkPool.get(),
         heap,
     );
     bv2.bun_watcher = dev.bun_watcher;
@@ -1832,8 +1832,8 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
     return client_bundle;
 }
 
-fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!JSC.JSValue {
-    assert(route_bundle.data == .framework); // a JSC.JSValue has no purpose, and therefore isn't implemented.
+fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!jsc.JSValue {
+    assert(route_bundle.data == .framework); // a jsc.JSValue has no purpose, and therefore isn't implemented.
     if (Environment.allow_assert) assert(!route_bundle.data.framework.cached_css_file_array.has());
     assert(route_bundle.server_state == .loaded); // page is unfit to load
 
@@ -1852,7 +1852,7 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!J
     try dev.traceAllRouteImports(route_bundle, &gts, .find_css);
 
     const names = dev.client_graph.current_css_files.items;
-    const arr = try JSC.JSArray.createEmpty(dev.vm.global, names.len);
+    const arr = try jsc.JSArray.createEmpty(dev.vm.global, names.len);
     for (names, 0..) |item, i| {
         var buf: [asset_prefix.len + @sizeOf(u64) * 2 + "/.css".len]u8 = undefined;
         const path = std.fmt.bufPrint(&buf, asset_prefix ++ "/{s}.css", .{
@@ -1896,9 +1896,9 @@ fn traceAllRouteImports(dev: *DevServer, route_bundle: *RouteBundle, gts: *Graph
     }
 }
 
-fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *JSC.JSGlobalObject, items: []const IncrementalGraph(.server).FileIndex) bun.JSError!JSValue {
+fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *jsc.JSGlobalObject, items: []const IncrementalGraph(.server).FileIndex) bun.JSError!JSValue {
     if (items.len == 0) return .null;
-    const arr = try JSC.JSArray.createEmpty(global, items.len);
+    const arr = try jsc.JSArray.createEmpty(global, items.len);
     const names = dev.server_graph.bundled_files.keys();
     for (items, 0..) |item, i| {
         const str = bun.String.cloneUTF8(dev.relativePath(names[item.get()]));
@@ -1915,7 +1915,7 @@ pub const HotUpdateContext = struct {
     /// bundle_v2.Graph.ast.items(.import_records)
     import_records: []bun.ImportRecord.List,
     /// bundle_v2.Graph.server_component_boundaries.slice()
-    scbs: bun.JSAst.ServerComponentBoundary.List.Slice,
+    scbs: bun.ast.ServerComponentBoundary.List.Slice,
     /// bundle_v2.Graph.input_files.items(.loader)
     loaders: []bun.options.Loader,
     /// Which files have a server-component boundary.
@@ -1936,7 +1936,7 @@ pub const HotUpdateContext = struct {
     pub fn getCachedIndex(
         rc: *const HotUpdateContext,
         comptime side: bake.Side,
-        i: bun.JSAst.Index,
+        i: bun.ast.Index,
     ) *IncrementalGraph(side).FileIndex.Optional {
         const start = switch (side) {
             .client => 0,
@@ -2082,7 +2082,7 @@ pub fn finalizeBundle(
     for (result.cssChunks(), result.css_file_list.values()) |*chunk, metadata| {
         assert(chunk.content == .css);
 
-        const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
+        const index = bun.ast.Index.init(chunk.entry_point.source_index);
 
         const code = try chunk.intermediate_output.code(
             dev.allocator,
@@ -2146,7 +2146,7 @@ pub fn finalizeBundle(
     }
 
     for (result.htmlChunks()) |*chunk| {
-        const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
+        const index = bun.ast.Index.init(chunk.entry_point.source_index);
         const compile_result = chunk.compile_results_for_chunk[0].html;
         const generated_js = try dev.generateJavaScriptCodeForHTMLFile(
             index,
@@ -2206,11 +2206,11 @@ pub fn finalizeBundle(
         }
     }
     for (result.htmlChunks()) |*chunk| {
-        const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
+        const index = bun.ast.Index.init(chunk.entry_point.source_index);
         try dev.client_graph.processChunkDependencies(&ctx, .normal, index, bv2.graph.allocator);
     }
     for (result.cssChunks()) |*chunk| {
-        const entry_index = bun.JSAst.Index.init(chunk.entry_point.source_index);
+        const entry_index = bun.ast.Index.init(chunk.entry_point.source_index);
         try dev.client_graph.processChunkDependencies(&ctx, .css, entry_index, bv2.graph.allocator);
     }
 
@@ -3548,15 +3548,15 @@ pub fn routeToBundleIndexSlow(dev: *DevServer, pattern: []const u8) ?RouteBundle
 
 const c = struct {
     // BakeSourceProvider.cpp
-    extern fn BakeGetDefaultExportFromModule(global: *JSC.JSGlobalObject, module: JSValue) JSValue;
+    extern fn BakeGetDefaultExportFromModule(global: *jsc.JSGlobalObject, module: JSValue) JSValue;
 
-    fn BakeLoadServerHmrPatch(global: *JSC.JSGlobalObject, code: bun.String) bun.JSError!JSValue {
-        const f = @extern(*const fn (*JSC.JSGlobalObject, bun.String) callconv(.c) JSValue, .{ .name = "BakeLoadServerHmrPatch" }).*;
+    fn BakeLoadServerHmrPatch(global: *jsc.JSGlobalObject, code: bun.String) bun.JSError!JSValue {
+        const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String) callconv(.c) JSValue, .{ .name = "BakeLoadServerHmrPatch" }).*;
         return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code });
     }
 
-    fn BakeLoadInitialServerCode(global: *JSC.JSGlobalObject, code: bun.String, separate_ssr_graph: bool) bun.JSError!JSValue {
-        const f = @extern(*const fn (*JSC.JSGlobalObject, bun.String, bool) callconv(.c) JSValue, .{ .name = "BakeLoadInitialServerCode" }).*;
+    fn BakeLoadInitialServerCode(global: *jsc.JSGlobalObject, code: bun.String, separate_ssr_graph: bool) bun.JSError!JSValue {
+        const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, bool) callconv(.c) JSValue, .{ .name = "BakeLoadInitialServerCode" }).*;
         return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code, separate_ssr_graph });
     }
 };
@@ -4042,19 +4042,10 @@ const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 const Log = bun.logger.Log;
 const MimeType = bun.http.MimeType;
 const RefPtr = bun.ptr.RefPtr;
-const StaticRoute = bun.server.StaticRoute;
+const ThreadLocalArena = bun.allocators.MimallocArena;
 const Transpiler = bun.transpiler.Transpiler;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
-
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const VirtualMachine = JSC.VirtualMachine;
-const HTMLBundle = JSC.API.HTMLBundle;
-const AnyBlob = JSC.WebCore.Blob.Any;
-const Plugin = JSC.API.JSBundler.Plugin;
-
-const BunFrontendDevServerAgent = JSC.Debugger.BunFrontendDevServerAgent;
-const DebuggerId = JSC.Debugger.DebuggerId;
+const StaticRoute = bun.api.server.StaticRoute;
 
 const FrameworkRouter = bake.FrameworkRouter;
 const OpaqueFileId = FrameworkRouter.OpaqueFileId;
@@ -4063,6 +4054,16 @@ const Route = FrameworkRouter.Route;
 const BundleV2 = bun.bundle_v2.BundleV2;
 const Chunk = bun.bundle_v2.Chunk;
 const ContentHasher = bun.bundle_v2.ContentHasher;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const HTMLBundle = jsc.API.HTMLBundle;
+const AnyBlob = jsc.WebCore.Blob.Any;
+const Plugin = jsc.API.JSBundler.Plugin;
+
+const BunFrontendDevServerAgent = jsc.Debugger.BunFrontendDevServerAgent;
+const DebuggerId = jsc.Debugger.DebuggerId;
 
 const SourceMap = bun.sourcemap;
 const VLQ = SourceMap.VLQ;

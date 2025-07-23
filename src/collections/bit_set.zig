@@ -1,7 +1,7 @@
 //! This is a fork of Zig standard library bit_set.zig
 //! - https://github.com/ziglang/zig/pull/14129
 //! - AutoBitset which optimally chooses between a dynamic or static bitset.
-//! Prefer our fork over std.bit_set.zig.
+//! Prefer our fork over std.bit_set.
 //!
 //! This file defines several variants of bit sets.  A bit set
 //! is a densely stored set of integers with a known maximum,

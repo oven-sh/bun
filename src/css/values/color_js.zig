@@ -44,7 +44,7 @@ const OutputColorFormat = enum {
     });
 };
 
-fn colorIntFromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue, comptime property: []const u8) bun.JSError!i32 {
+fn colorIntFromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue, comptime property: []const u8) bun.JSError!i32 {
     if (input == .zero or input.isUndefined() or !input.isNumber()) {
         return globalThis.throwInvalidArgumentType("color", property, "integer");
     }
@@ -131,7 +131,7 @@ pub const Ansi256 = struct {
     }
 };
 
-pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = callFrame.argumentsAsArray(2);
     if (args[0].isUndefined()) {
         return globalThis.throwInvalidArgumentType("color", "input", "string, number, or object");
@@ -156,7 +156,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
 
         break :brk OutputColorFormat.css;
     };
-    var input = JSC.ZigString.Slice.empty;
+    var input = jsc.ZigString.Slice.empty;
     defer input.deinit();
 
     var parsed_color: css.CssColor.ParseResult = brk: {
@@ -236,7 +236,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
         .result => |*result| {
             const format: OutputColorFormat = if (unresolved_format == .ansi) switch (bun.Output.Source.colorDepth()) {
                 // No color terminal, therefore return an empty string
-                .none => return JSC.JSValue.jsEmptyString(globalThis),
+                .none => return jsc.JSValue.jsEmptyString(globalThis),
                 .@"16" => .ansi_16,
                 .@"16m" => .ansi_16m,
                 .@"256" => .ansi_256,
@@ -278,33 +278,33 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                             const rgba = srgba.into(.RGBA);
                             switch (tag) {
                                 .@"{rgba}" => {
-                                    const object = JSC.JSValue.createEmptyObject(globalThis, 4);
-                                    object.put(globalThis, "r", JSC.JSValue.jsNumber(rgba.red));
-                                    object.put(globalThis, "g", JSC.JSValue.jsNumber(rgba.green));
-                                    object.put(globalThis, "b", JSC.JSValue.jsNumber(rgba.blue));
-                                    object.put(globalThis, "a", JSC.JSValue.jsNumber(rgba.alphaF32()));
+                                    const object = jsc.JSValue.createEmptyObject(globalThis, 4);
+                                    object.put(globalThis, "r", jsc.JSValue.jsNumber(rgba.red));
+                                    object.put(globalThis, "g", jsc.JSValue.jsNumber(rgba.green));
+                                    object.put(globalThis, "b", jsc.JSValue.jsNumber(rgba.blue));
+                                    object.put(globalThis, "a", jsc.JSValue.jsNumber(rgba.alphaF32()));
                                     return object;
                                 },
                                 .@"{rgb}" => {
-                                    const object = JSC.JSValue.createEmptyObject(globalThis, 4);
-                                    object.put(globalThis, "r", JSC.JSValue.jsNumber(rgba.red));
-                                    object.put(globalThis, "g", JSC.JSValue.jsNumber(rgba.green));
-                                    object.put(globalThis, "b", JSC.JSValue.jsNumber(rgba.blue));
+                                    const object = jsc.JSValue.createEmptyObject(globalThis, 4);
+                                    object.put(globalThis, "r", jsc.JSValue.jsNumber(rgba.red));
+                                    object.put(globalThis, "g", jsc.JSValue.jsNumber(rgba.green));
+                                    object.put(globalThis, "b", jsc.JSValue.jsNumber(rgba.blue));
                                     return object;
                                 },
                                 .@"[rgb]" => {
-                                    const object = try JSC.JSValue.createEmptyArray(globalThis, 3);
-                                    try object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
-                                    try object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
-                                    try object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
+                                    const object = try jsc.JSValue.createEmptyArray(globalThis, 3);
+                                    try object.putIndex(globalThis, 0, jsc.JSValue.jsNumber(rgba.red));
+                                    try object.putIndex(globalThis, 1, jsc.JSValue.jsNumber(rgba.green));
+                                    try object.putIndex(globalThis, 2, jsc.JSValue.jsNumber(rgba.blue));
                                     return object;
                                 },
                                 .@"[rgba]" => {
-                                    const object = try JSC.JSValue.createEmptyArray(globalThis, 4);
-                                    try object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
-                                    try object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
-                                    try object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
-                                    try object.putIndex(globalThis, 3, JSC.JSValue.jsNumber(rgba.alpha));
+                                    const object = try jsc.JSValue.createEmptyArray(globalThis, 4);
+                                    try object.putIndex(globalThis, 0, jsc.JSValue.jsNumber(rgba.red));
+                                    try object.putIndex(globalThis, 1, jsc.JSValue.jsNumber(rgba.green));
+                                    try object.putIndex(globalThis, 2, jsc.JSValue.jsNumber(rgba.blue));
+                                    try object.putIndex(globalThis, 3, jsc.JSValue.jsNumber(rgba.alpha));
                                     return object;
                                 },
                                 .number => {
@@ -312,7 +312,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                                     int |= @as(u32, rgba.red) << 16;
                                     int |= @as(u32, rgba.green) << 8;
                                     int |= @as(u32, rgba.blue);
-                                    return JSC.JSValue.jsNumber(int);
+                                    return jsc.JSValue.jsNumber(int);
                                 },
                                 .hex => {
                                     break :color bun.String.createFormat("#{}{}{}", .{ bun.fmt.hexIntLower(rgba.red), bun.fmt.hexIntLower(rgba.green), bun.fmt.hexIntLower(rgba.blue) });
@@ -409,7 +409,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
             defer dest.deinit(allocator);
             const writer = dest.writer(allocator);
 
-            const symbols = bun.JSAst.Symbol.Map{};
+            const symbols = bun.ast.Symbol.Map{};
             var printer = css.Printer(@TypeOf(writer)).new(
                 allocator,
                 std.ArrayList(u8).init(allocator),
@@ -438,5 +438,5 @@ const RGBA = color.RGBA;
 const SRGB = color.SRGB;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
 const css = bun.css;
+const jsc = bun.jsc;

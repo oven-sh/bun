@@ -2850,11 +2850,27 @@ export function printEnvironment() {
         }
       });
     }
+    if (isLinux) {
+      startGroup("Memory", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "free -m -w"], { stdio: "inherit" });
+        }
+      });
+    }
     if (isWindows) {
       startGroup("Disk (win)", () => {
         const shell = which(["pwsh"]);
         if (shell) {
           spawnSync([shell, "-c", "get-psdrive"], { stdio: "inherit" });
+        }
+      });
+      startGroup("Memory", () => {
+        const shell = which(["pwsh"]);
+        if (shell) {
+          spawnSync([shell, "-c", "Get-Counter '\\Memory\\Available MBytes'"], { stdio: "inherit" });
+          console.log();
+          spawnSync([shell, "-c", "Get-CimInstance Win32_PhysicalMemory"], { stdio: "inherit" });
         }
       });
     }

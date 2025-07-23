@@ -112,9 +112,11 @@ pub const Decompressor = union(enum) {
         }
     }
 };
-const bun = @import("bun");
-const MutableString = bun.MutableString;
+
 const Zlib = @import("../zlib.zig");
-const Brotli = bun.brotli;
-const zstd = bun.zstd;
 const Encoding = @import("./Encoding.zig").Encoding;
+
+const bun = @import("bun");
+const Brotli = bun.brotli;
+const MutableString = bun.MutableString;
+const zstd = bun.zstd;

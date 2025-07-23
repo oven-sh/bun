@@ -591,7 +591,7 @@ pub fn runTasks(
                 }
 
                 manager.extracted_count += 1;
-                bun.Analytics.Features.extracted_packages += 1;
+                bun.analytics.Features.extracted_packages += 1;
 
                 if (comptime @TypeOf(callbacks.onExtract) != void) {
                     switch (Ctx) {
@@ -1054,7 +1054,7 @@ pub fn generateNetworkTaskForTarball(
     return network_task;
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
@@ -1064,7 +1064,6 @@ const Output = bun.Output;
 const ThreadPool = bun.ThreadPool;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
 const Fs = bun.fs;

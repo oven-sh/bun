@@ -1,13 +1,4 @@
-const bun = @import("bun");
-const std = @import("std");
-const Async = bun.Async;
-const JSC = bun.JSC;
-const uv = bun.windows.libuv;
-const Source = @import("./source.zig").Source;
 const log = bun.Output.scoped(.PipeWriter, true);
-const FileType = @import("./pipes.zig").FileType;
-const OOM = bun.OOM;
-const Environment = bun.Environment;
 
 pub const WriteResult = union(enum) {
     done: usize,
@@ -41,7 +32,7 @@ pub fn PosixPipeWriter(
             };
         }
 
-        fn tryWriteWithWriteFn(this: *This, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
+        fn tryWriteWithWriteFn(this: *This, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) jsc.Maybe(usize)) WriteResult {
             const fd = getFd(this);
 
             var offset: usize = 0;
@@ -72,7 +63,7 @@ pub fn PosixPipeWriter(
             return .{ .wrote = offset };
         }
 
-        fn writeToFileType(comptime file_type: FileType) *const (fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) {
+        fn writeToFileType(comptime file_type: FileType) *const (fn (bun.FileDescriptor, []const u8) jsc.Maybe(usize)) {
             comptime return switch (file_type) {
                 .nonblocking_pipe, .file => &bun.sys.write,
                 .pipe => &writeToBlockingPipe,
@@ -80,7 +71,7 @@ pub fn PosixPipeWriter(
             };
         }
 
-        fn writeToBlockingPipe(fd: bun.FileDescriptor, buf: []const u8) JSC.Maybe(usize) {
+        fn writeToBlockingPipe(fd: bun.FileDescriptor, buf: []const u8) jsc.Maybe(usize) {
             if (comptime bun.Environment.isLinux) {
                 if (bun.linux.RWFFlagSupport.isMaybeSupported()) {
                     return bun.sys.writeNonblocking(fd, buf);
@@ -89,7 +80,7 @@ pub fn PosixPipeWriter(
 
             switch (bun.isWritable(fd)) {
                 .ready, .hup => return bun.sys.write(fd, buf),
-                .not_ready => return JSC.Maybe(usize){ .err = bun.sys.Error.retry },
+                .not_ready => return jsc.Maybe(usize){ .err = bun.sys.Error.retry },
             }
         }
 
@@ -174,8 +165,6 @@ pub fn PosixPipeWriter(
         }
     };
 }
-
-const PollOrFd = @import("./pipes.zig").PollOrFd;
 
 /// See below for the expected signature of `function_table`. In many cases, the
 /// function table can be the same as `Parent`. `anytype` is used because of a
@@ -350,12 +339,12 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
             }
         }
 
-        pub fn start(this: *PosixWriter, fd: bun.FileDescriptor, pollable: bool) JSC.Maybe(void) {
+        pub fn start(this: *PosixWriter, fd: bun.FileDescriptor, pollable: bool) jsc.Maybe(void) {
             this.pollable = pollable;
             if (!pollable) {
                 bun.assert(this.handle != .poll);
                 this.handle = .{ .fd = fd };
-                return JSC.Maybe(void){ .result = {} };
+                return jsc.Maybe(void){ .result = {} };
             }
             var poll = this.getPoll() orelse brk: {
                 this.handle = .{ .poll = this.createPoll(fd) };
@@ -365,14 +354,14 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
 
             switch (poll.registerWithFd(loop, .writable, .dispatch, fd)) {
                 .err => |err| {
-                    return JSC.Maybe(void){ .err = err };
+                    return jsc.Maybe(void){ .err = err };
                 },
                 .result => {
                     this.enableKeepingProcessAlive(@as(*Parent, @ptrCast(this.parent)).eventLoop());
                 },
             }
 
-            return JSC.Maybe(void){ .result = {} };
+            return jsc.Maybe(void){ .result = {} };
         }
     };
 }
@@ -706,19 +695,19 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
             return !this.is_done and poll.canEnableKeepingProcessAlive();
         }
 
-        pub fn enableKeepingProcessAlive(this: *PosixWriter, event_loop: JSC.EventLoopHandle) void {
+        pub fn enableKeepingProcessAlive(this: *PosixWriter, event_loop: jsc.EventLoopHandle) void {
             if (this.is_done) return;
             const poll = this.getPoll() orelse return;
 
             poll.enableKeepingProcessAlive(event_loop);
         }
 
-        pub fn disableKeepingProcessAlive(this: *PosixWriter, event_loop: JSC.EventLoopHandle) void {
+        pub fn disableKeepingProcessAlive(this: *PosixWriter, event_loop: jsc.EventLoopHandle) void {
             const poll = this.getPoll() orelse return;
             poll.disableKeepingProcessAlive(event_loop);
         }
 
-        pub fn updateRef(this: *PosixWriter, event_loop: JSC.EventLoopHandle, value: bool) void {
+        pub fn updateRef(this: *PosixWriter, event_loop: jsc.EventLoopHandle, value: bool) void {
             if (value) {
                 this.enableKeepingProcessAlive(event_loop);
             } else {
@@ -746,11 +735,11 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
             this.handle.close(this.parent, onClose);
         }
 
-        pub fn start(this: *PosixWriter, fd: bun.FileDescriptor, is_pollable: bool) JSC.Maybe(void) {
+        pub fn start(this: *PosixWriter, fd: bun.FileDescriptor, is_pollable: bool) jsc.Maybe(void) {
             if (!is_pollable) {
                 this.close();
                 this.handle = .{ .fd = fd };
-                return JSC.Maybe(void){ .result = {} };
+                return jsc.Maybe(void){ .result = {} };
             }
 
             const loop = this.parent.eventLoop();
@@ -761,12 +750,12 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
 
             switch (poll.registerWithFd(loop.loop(), .writable, .dispatch, fd)) {
                 .err => |err| {
-                    return JSC.Maybe(void){ .err = err };
+                    return jsc.Maybe(void){ .err = err };
                 },
                 .result => {},
             }
 
-            return JSC.Maybe(void){ .result = {} };
+            return jsc.Maybe(void){ .result = {} };
         }
     };
 }
@@ -777,7 +766,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
 ///   source: ?Source = null,
 ///   parent: *Parent = undefined,
 ///   is_done: bool = false,
-///   pub fn startWithCurrentPipe(this: *WindowsPipeWriter) bun.JSC.Maybe(void),
+///   pub fn startWithCurrentPipe(this: *WindowsPipeWriter) bun.jsc.Maybe(void),
 ///   fn onClosePipe(pipe: *uv.Pipe) callconv(.C) void,
 /// };
 fn BaseWindowsPipeWriter(
@@ -872,14 +861,14 @@ fn BaseWindowsPipeWriter(
             // no-op
         }
 
-        pub fn startWithPipe(this: *WindowsPipeWriter, pipe: *uv.Pipe) bun.JSC.Maybe(void) {
+        pub fn startWithPipe(this: *WindowsPipeWriter, pipe: *uv.Pipe) bun.jsc.Maybe(void) {
             bun.assert(this.source == null);
             this.source = .{ .pipe = pipe };
             this.setParent(this.parent);
             return this.startWithCurrentPipe();
         }
 
-        pub fn startSync(this: *WindowsPipeWriter, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
+        pub fn startSync(this: *WindowsPipeWriter, fd: bun.FileDescriptor, _: bool) bun.jsc.Maybe(void) {
             bun.assert(this.source == null);
             const source = Source{
                 .sync_file = Source.openFile(fd),
@@ -890,7 +879,7 @@ fn BaseWindowsPipeWriter(
             return this.startWithCurrentPipe();
         }
 
-        pub fn startWithFile(this: *WindowsPipeWriter, fd: bun.FileDescriptor) bun.JSC.Maybe(void) {
+        pub fn startWithFile(this: *WindowsPipeWriter, fd: bun.FileDescriptor) bun.jsc.Maybe(void) {
             bun.assert(this.source == null);
             const source: bun.io.Source = .{ .file = Source.openFile(fd) };
             source.setData(this);
@@ -899,7 +888,7 @@ fn BaseWindowsPipeWriter(
             return this.startWithCurrentPipe();
         }
 
-        pub fn start(this: *WindowsPipeWriter, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
+        pub fn start(this: *WindowsPipeWriter, fd: bun.FileDescriptor, _: bool) bun.jsc.Maybe(void) {
             bun.assert(this.source == null);
             const source = switch (Source.open(uv.Loop.get(), fd)) {
                 .result => |source| source,
@@ -972,7 +961,7 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
             return @sizeOf(@This()) + this.write_buffer.len;
         }
 
-        pub fn startWithCurrentPipe(this: *WindowsWriter) bun.JSC.Maybe(void) {
+        pub fn startWithCurrentPipe(this: *WindowsWriter) bun.jsc.Maybe(void) {
             bun.assert(this.source != null);
             this.is_done = false;
             this.write();
@@ -1260,7 +1249,7 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             onClose(this.parent);
         }
 
-        pub fn startWithCurrentPipe(this: *WindowsWriter) bun.JSC.Maybe(void) {
+        pub fn startWithCurrentPipe(this: *WindowsWriter) bun.jsc.Maybe(void) {
             bun.assert(this.source != null);
             this.is_done = false;
             return .{ .result = {} };
@@ -1501,3 +1490,16 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
 
 pub const BufferedWriter = if (bun.Environment.isPosix) PosixBufferedWriter else WindowsBufferedWriter;
 pub const StreamingWriter = if (bun.Environment.isPosix) PosixStreamingWriter else WindowsStreamingWriter;
+
+const std = @import("std");
+const Source = @import("./source.zig").Source;
+
+const FileType = @import("./pipes.zig").FileType;
+const PollOrFd = @import("./pipes.zig").PollOrFd;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const OOM = bun.OOM;
+const jsc = bun.jsc;
+const uv = bun.windows.libuv;

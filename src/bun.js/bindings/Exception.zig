@@ -1,9 +1,3 @@
-const JSC = bun.JSC;
-const bun = @import("bun");
-const JSGlobalObject = JSC.JSGlobalObject;
-const ZigStackTrace = @import("ZigStackTrace.zig").ZigStackTrace;
-const JSValue = JSC.JSValue;
-
 /// Opaque representation of a JavaScript exception
 pub const Exception = opaque {
     extern fn JSC__Exception__getStackTrace(this: *Exception, global: *JSGlobalObject, stack: *ZigStackTrace) void;
@@ -17,3 +11,10 @@ pub const Exception = opaque {
         return JSC__Exception__asJSValue(this);
     }
 };
+
+const bun = @import("bun");
+const ZigStackTrace = @import("./ZigStackTrace.zig").ZigStackTrace;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

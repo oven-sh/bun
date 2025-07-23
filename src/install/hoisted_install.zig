@@ -1,24 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const FileSystem = bun.fs.FileSystem;
-const install = bun.install;
-const PackageManager = install.PackageManager;
-const Lockfile = install.Lockfile;
-const Command = bun.CLI.Command;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const PackageInstall = install.PackageInstall;
-const Progress = bun.Progress;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const ProgressStrings = PackageManager.ProgressStrings;
-const Bin = install.Bin;
-const PackageInstaller = PackageManager.PackageInstaller;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const PackageID = install.PackageID;
-const TreeContext = PackageInstaller.TreeContext;
-
 pub fn installHoistedPackages(
     this: *PackageManager,
     ctx: Command.Context,
@@ -26,7 +5,7 @@ pub fn installHoistedPackages(
     install_root_dependencies: bool,
     log_level: PackageManager.Options.LogLevel,
 ) !PackageInstall.Summary {
-    bun.Analytics.Features.hoisted_bun_install += 1;
+    bun.analytics.Features.hoisted_bun_install += 1;
 
     const original_trees = this.lockfile.buffers.trees;
     const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
@@ -376,3 +355,28 @@ pub fn installHoistedPackages(
 
     return summary;
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const strings = bun.strings;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const Command = bun.cli.Command;
+const FileSystem = bun.fs.FileSystem;
+
+const install = bun.install;
+const Bin = install.Bin;
+const Lockfile = install.Lockfile;
+const PackageID = install.PackageID;
+const PackageInstall = install.PackageInstall;
+
+const PackageManager = install.PackageManager;
+const ProgressStrings = PackageManager.ProgressStrings;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
+
+const PackageInstaller = PackageManager.PackageInstaller;
+const TreeContext = PackageInstaller.TreeContext;

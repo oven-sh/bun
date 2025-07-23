@@ -1,7 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const ArrayList = std.ArrayListUnmanaged;
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const VendorPrefix = css.VendorPrefix;
@@ -1654,3 +1650,9 @@ pub fn convertStopsToWebkit(allocator: Allocator, items: *const ArrayList(Gradie
 
     return stops;
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

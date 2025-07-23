@@ -1,7 +1,8 @@
 const Headers = @This();
+
 pub const Entry = struct {
-    name: Api.StringPointer,
-    value: Api.StringPointer,
+    name: api.StringPointer,
+    value: api.StringPointer,
 
     pub const List = bun.MultiArrayList(Entry);
 };
@@ -38,7 +39,7 @@ pub fn get(this: *const Headers, name: []const u8) ?[]const u8 {
 pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
     var offset: u32 = @truncate(this.buf.items.len);
     try this.buf.ensureUnusedCapacity(this.allocator, name.len + value.len);
-    const name_ptr = Api.StringPointer{
+    const name_ptr = api.StringPointer{
         .offset = offset,
         .length = @truncate(name.len),
     };
@@ -46,7 +47,7 @@ pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
     offset = @truncate(this.buf.items.len);
     this.buf.appendSliceAssumeCapacity(value);
 
-    const value_ptr = Api.StringPointer{
+    const value_ptr = api.StringPointer{
         .offset = offset,
         .length = @truncate(value.len),
     };
@@ -75,7 +76,7 @@ pub fn getContentType(this: *const Headers) ?[]const u8 {
     }
     return null;
 }
-pub fn asStr(this: *const Headers, ptr: Api.StringPointer) []const u8 {
+pub fn asStr(this: *const Headers, ptr: api.StringPointer) []const u8 {
     return if (ptr.offset + ptr.length <= this.buf.items.len)
         this.buf.items[ptr.offset..][0..ptr.length]
     else
@@ -174,9 +175,11 @@ pub fn from(fetch_headers_ref: ?*FetchHeaders, allocator: std.mem.Allocator, opt
     return headers;
 }
 
-const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
+
 const bun = @import("bun");
 const picohttp = bun.picohttp;
+const api = bun.schema.api;
+
 const Blob = bun.webcore.Blob;
 const FetchHeaders = bun.webcore.FetchHeaders;

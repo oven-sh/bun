@@ -74,6 +74,10 @@ if (isMusl) {
   failingJsNativeApiTests = jsNativeApiTests;
 }
 
+// Tests that intentionally abort and should not generate core dumps when they abort
+// due to a Node-API error
+const abortingJsNativeApiTests = ["test_finalizer/test_fatal_finalize.js"];
+
 for (const t of failingJsNativeApiTests) {
   if (!jsNativeApiTests.includes(t)) {
     console.error(`attempt to skip ${t} which is not a real js-native-api test`);
@@ -129,13 +133,16 @@ describe("js-native-api tests", () => {
   for (const test of jsNativeApiTests) {
     describe.skipIf(failingJsNativeApiTests.includes(test))(`${test}`, () => {
       it("passes", () => {
+        const env = abortingJsNativeApiTests.includes(test)
+          ? { ...bunEnv, BUN_INTERNAL_SUPPRESS_CORE_ON_NAPI_ABORT: "1" }
+          : bunEnv;
         const result = spawnSync({
           cmd: [bunExe(), "run", test],
           cwd: jsNativeApiRoot,
           stderr: "inherit",
           stdout: "ignore",
           stdin: "inherit",
-          env: bunEnv,
+          env,
         });
         expect(result.success).toBeTrue();
         expect(result.exitCode).toBe(0);

@@ -1022,6 +1022,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     bunEnv["TEMP"] = tmpdirPath;
   }
   try {
+    const existingCores = options["coredump-upload"] ? readdirSync(coresDir) : [];
     const result = await spawnSafe({
       command: execPath,
       args,
@@ -1031,10 +1032,16 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       stdout,
       stderr,
     });
+    const newCores = options["coredump-upload"] ? readdirSync(coresDir).filter(c => !existingCores.includes(c)) : [];
     let crashes = "";
-    if (options["coredump-upload"] && result.signalCode !== null) {
-      const corePath = join(coresDir, `${basename(execPath)}-${result.pid}.core`);
-      if (existsSync(corePath)) {
+    if (options["coredump-upload"] && (result.signalCode !== null || newCores.length > 0)) {
+      // warn if the main PID crashed and we don't have a core
+      if (result.signalCode !== null && !newCores.some(c => c.endsWith(`${result.pid}.core`))) {
+        crashes += `main process killed by ${result.signalCode} but no core file found at ${corePath}\n`;
+      }
+
+      for (const coreName of newCores) {
+        const corePath = join(coresDir, coreName);
         let out = "";
         const gdb = await spawnSafe({
           command: "gdb",
@@ -1048,7 +1055,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
         if (!gdb.ok) {
           crashes += `failed to get backtrace from GDB: ${gdb.error}\n`;
         } else {
-          crashes += "======== Stack traces from GDB: ========\n";
+          crashes += `======== Stack trace from GDB for ${coreName}: ========\n`;
           for (const line of out.split("\n")) {
             // filter GDB output since it is pretty verbose
             if (
@@ -1060,8 +1067,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
             }
           }
         }
-      } else {
-        crashes += `process killed by ${result.signalCode} but no core file found at ${corePath}\n`;
       }
     }
 

@@ -107,8 +107,8 @@ pub const MultiPartUpload = struct {
     storage_class: ?Storageclass = null,
     credentials: *S3Credentials,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
-    vm: *JSC.VirtualMachine,
-    globalThis: *JSC.JSGlobalObject,
+    vm: *jsc.VirtualMachine,
+    globalThis: *jsc.JSGlobalObject,
 
     buffered: bun.io.StreamBuffer = .{},
 
@@ -764,5 +764,5 @@ const S3SimpleRequest = @import("./simple_request.zig");
 const executeSimpleS3Request = S3SimpleRequest.executeSimpleS3Request;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const strings = bun.strings;

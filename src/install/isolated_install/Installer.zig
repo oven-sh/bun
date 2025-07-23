@@ -1271,6 +1271,8 @@ pub const Installer = struct {
     }
 };
 
+const string = []const u8;
+
 const Hardlinker = @import("./Hardlinker.zig");
 const std = @import("std");
 const FileCopier = @import("./FileCopier.zig").FileCopier;
@@ -1284,11 +1286,10 @@ const OOM = bun.OOM;
 const Output = bun.Output;
 const Progress = bun.Progress;
 const ThreadPool = bun.ThreadPool;
-const string = bun.string;
 const strings = bun.strings;
 const sys = bun.sys;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const Mutex = bun.threading.Mutex;
 const String = bun.Semver.String;
 

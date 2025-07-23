@@ -163,7 +163,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["fail-on-coredump-or-report"]: {
       type: "boolean",
-      default: false, // STAB-861
+      default: true,
     },
   },
 });

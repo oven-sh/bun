@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { getSecret } from "harness";
-import { sql } from "bun";
-const postgres = (...args) => new sql(...args);
+import { SQL } from "bun";
+const postgres = (...args) => new SQL(...args);
 const databaseUrl = getSecret("TLS_POSTGRES_DATABASE_URL");
 
 describe("postgres batch insert crash fix #21311", () => {

@@ -5,6 +5,7 @@
 test/cli/create/create-jsx.test.ts [ FAIL ] # false > react spa (no tailwind) > build
 test/bundler/native-plugin.test.ts [ FAIL ] # prints name when plugin crashes
 test/cli/install/bun-run.test.ts [ FAIL ] # should pass arguments correctly in scripts
+test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > segfault should report
 test/regression/issue/17454/destructure_string.test.ts [ FAIL ] # destructure string does not become string
 
 # Tests that are flaky

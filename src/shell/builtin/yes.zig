@@ -154,13 +154,13 @@ pub const YesTask = struct {
         }
     }
 
-    pub fn runFromMainThread(this: *@This()) void {
+    pub fn runFromMainThread(this: *@This()) bun.JSExecutionTerminated!void {
         const yes: *Yes = @fieldParentPtr("task", this);
-        yes.writeNoIO().run();
+        return yes.writeNoIO().run();
     }
 
-    pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
-        this.runFromMainThread();
+    pub fn runFromMainThreadMini(this: *@This(), _: *void) bun.JSExecutionTerminated!void {
+        return this.runFromMainThread();
     }
 };
 

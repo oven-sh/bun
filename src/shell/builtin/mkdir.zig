@@ -99,7 +99,7 @@ pub fn next(this: *Mkdir) Yield {
     }
 }
 
-pub fn onShellMkdirTaskDone(this: *Mkdir, task: *ShellMkdirTask) void {
+pub fn onShellMkdirTaskDone(this: *Mkdir, task: *ShellMkdirTask) bun.JSExecutionTerminated!void {
     defer task.deinit();
     this.state.exec.tasks_done += 1;
     var output = task.takeOutput();
@@ -113,10 +113,9 @@ pub fn onShellMkdirTaskDone(this: *Mkdir, task: *ShellMkdirTask) void {
     if (err) |e| {
         const error_string = this.bltn().taskErrorToString(.mkdir, e);
         this.state.exec.err = e;
-        output_task.start(error_string).run();
-        return;
+        return output_task.start(error_string).run();
     }
-    output_task.start(null).run();
+    return output_task.start(null).run();
 }
 
 pub const ShellMkdirOutputTask = OutputTask(Mkdir, .{
@@ -220,13 +219,13 @@ pub const ShellMkdirTask = struct {
         WorkPool.schedule(&this.task);
     }
 
-    pub fn runFromMainThread(this: *@This()) void {
+    pub fn runFromMainThread(this: *@This()) bun.JSExecutionTerminated!void {
         debug("{} runFromJS", .{this});
-        this.mkdir.onShellMkdirTaskDone(this);
+        return this.mkdir.onShellMkdirTaskDone(this);
     }
 
-    pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
-        this.runFromMainThread();
+    pub fn runFromMainThreadMini(this: *@This(), _: *void) bun.JSExecutionTerminated!void {
+        return this.runFromMainThread();
     }
 
     fn runFromThreadPool(task: *JSC.WorkPoolTask) void {

@@ -42,14 +42,14 @@ pub const JSInternalPromise = opaque {
         return JSC__JSInternalPromise__rejectedPromise(globalThis, value);
     }
 
-    pub fn resolve(this: *JSInternalPromise, globalThis: *JSGlobalObject, value: JSValue) void {
-        JSC__JSInternalPromise__resolve(this, globalThis, value);
+    pub fn resolve(this: *JSInternalPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSExecutionTerminated!void {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSInternalPromise__resolve, .{ this, globalThis, value }) catch return error.JSExecutionTerminated;
     }
-    pub fn reject(this: *JSInternalPromise, globalThis: *JSGlobalObject, value: JSValue) void {
-        JSC__JSInternalPromise__reject(this, globalThis, value);
+    pub fn reject(this: *JSInternalPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSExecutionTerminated!void {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSInternalPromise__reject, .{ this, globalThis, value }) catch return error.JSExecutionTerminated;
     }
-    pub fn rejectAsHandled(this: *JSInternalPromise, globalThis: *JSGlobalObject, value: JSValue) void {
-        JSC__JSInternalPromise__rejectAsHandled(this, globalThis, value);
+    pub fn rejectAsHandled(this: *JSInternalPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSExecutionTerminated!void {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSInternalPromise__rejectAsHandled, .{ this, globalThis, value }) catch return error.JSExecutionTerminated;
     }
 
     pub fn create(globalThis: *JSGlobalObject) *JSInternalPromise {

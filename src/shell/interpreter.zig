@@ -1081,7 +1081,7 @@ pub const Interpreter = struct {
 
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .seq_cst);
-        root.start().run();
+        try root.start().run();
 
         return Maybe(void).success;
     }
@@ -1099,7 +1099,7 @@ pub const Interpreter = struct {
 
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .seq_cst);
-        root.start().run();
+        try root.start().run();
         if (globalThis.hasException()) return error.JSError;
 
         return .js_undefined;
@@ -1115,12 +1115,12 @@ pub const Interpreter = struct {
         return buffer.toNodeBuffer(globalThis);
     }
 
-    pub fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) void {
+    pub fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) bun.JSExecutionTerminated!void {
         log("asyncCommandDone {}", .{@"async"});
         @"async".actuallyDeinit();
         this.async_commands_executing -= 1;
         if (this.async_commands_executing == 0 and this.exit_code != null) {
-            this.finish(this.exit_code.?).run();
+            try this.finish(this.exit_code.?).run();
         }
     }
 
@@ -1561,7 +1561,7 @@ pub fn ShellTask(
     comptime runFromThreadPool_: fn (*Ctx) void,
     /// Function that is called on the main thread, once the event loop
     /// processes that the task is done
-    comptime runFromMainThread_: fn (*Ctx) void,
+    comptime runFromMainThread_: fn (*Ctx) bun.JSExecutionTerminated!void,
     comptime debug: bun.Output.LogFunction,
 ) type {
     return struct {
@@ -1599,15 +1599,15 @@ pub fn ShellTask(
             this.onFinish();
         }
 
-        pub fn runFromMainThread(this: *@This()) void {
+        pub fn runFromMainThread(this: *@This()) bun.JSExecutionTerminated!void {
             debug("runFromJS", .{});
             const ctx: *Ctx = @fieldParentPtr("task", this);
             this.ref.unref(this.event_loop);
-            runFromMainThread_(ctx);
+            return runFromMainThread_(ctx);
         }
 
-        pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
-            this.runFromMainThread();
+        pub fn runFromMainThreadMini(this: *@This(), _: *void) bun.JSExecutionTerminated!void {
+            return this.runFromMainThread();
         }
     };
 }

@@ -127,7 +127,7 @@ pub fn onIOWriterChunk(this: *Ls, _: usize, e: ?JSC.SystemError) Yield {
     return this.next();
 }
 
-pub fn onShellLsTaskDone(this: *Ls, task: *ShellLsTask) void {
+pub fn onShellLsTaskDone(this: *Ls, task: *ShellLsTask) bun.JSExecutionTerminated!void {
     this.state.exec.tasks_done += 1;
     var output = task.takeOutput();
 
@@ -157,11 +157,10 @@ pub fn onShellLsTaskDone(this: *Ls, task: *ShellLsTask) void {
         };
         task.err = null;
         task.deinit();
-        output_task.start(error_string).run();
-        return;
+        return output_task.start(error_string).run();
     }
     task.deinit();
-    output_task.start(null).run();
+    return output_task.start(null).run();
 }
 
 pub const ShellLsOutputTask = OutputTask(Ls, .{
@@ -411,13 +410,13 @@ pub const ShellLsTask = struct {
         return ret;
     }
 
-    pub fn runFromMainThread(this: *@This()) void {
+    pub fn runFromMainThread(this: *@This()) bun.JSExecutionTerminated!void {
         debug("runFromMainThread", .{});
-        this.ls.onShellLsTaskDone(this);
+        return this.ls.onShellLsTaskDone(this);
     }
 
-    pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
-        this.runFromMainThread();
+    pub fn runFromMainThreadMini(this: *@This(), _: *void) bun.JSExecutionTerminated!void {
+        return this.runFromMainThread();
     }
 
     pub fn deinit(this: *@This()) void {

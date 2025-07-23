@@ -607,7 +607,7 @@ pub const AsyncModule = struct {
         promise_value.ensureStillAlive();
         this.poll_ref.unref(vm);
         this.deinit();
-        promise.rejectAsHandled(globalThis, error_instance);
+        try promise.rejectAsHandled(globalThis, error_instance);
     }
     pub fn downloadError(this: *AsyncModule, vm: *VirtualMachine, import_record_id: u32, result: PackageDownloadError) !void {
         const globalThis = this.globalThis;
@@ -701,7 +701,7 @@ pub const AsyncModule = struct {
         promise_value.ensureStillAlive();
         this.poll_ref.unref(vm);
         this.deinit();
-        promise.rejectAsHandled(globalThis, error_instance);
+        try promise.rejectAsHandled(globalThis, error_instance);
     }
 
     pub fn resumeLoadingModule(this: *AsyncModule, log: *logger.Log) !ResolvedSource {

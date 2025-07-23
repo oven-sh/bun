@@ -56,12 +56,12 @@ pub const ShellMvCheckTargetTask = struct {
         this.result = .{ .result = fd };
     }
 
-    pub fn runFromMainThread(this: *@This()) void {
-        this.mv.checkTargetTaskDone(this);
+    pub fn runFromMainThread(this: *@This()) bun.JSExecutionTerminated!void {
+        return this.mv.checkTargetTaskDone(this);
     }
 
-    pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
-        this.runFromMainThread();
+    pub fn runFromMainThreadMini(this: *@This(), _: *void) bun.JSExecutionTerminated!void {
+        return this.runFromMainThread();
     }
 };
 
@@ -159,12 +159,12 @@ pub const ShellMvBatchedTask = struct {
         // TODO
     }
 
-    pub fn runFromMainThread(this: *@This()) void {
-        this.mv.batchedMoveTaskDone(this);
+    pub fn runFromMainThread(this: *@This()) bun.JSExecutionTerminated!void {
+        return this.mv.batchedMoveTaskDone(this);
     }
 
-    pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
-        this.runFromMainThread();
+    pub fn runFromMainThreadMini(this: *@This(), _: *void) bun.JSExecutionTerminated!void {
+        return this.runFromMainThread();
     }
 };
 
@@ -327,7 +327,7 @@ pub fn onIOWriterChunk(this: *Mv, _: usize, e: ?JSC.SystemError) Yield {
     }
 }
 
-pub fn checkTargetTaskDone(this: *Mv, task: *ShellMvCheckTargetTask) void {
+pub fn checkTargetTaskDone(this: *Mv, task: *ShellMvCheckTargetTask) bun.JSExecutionTerminated!void {
     _ = task;
 
     if (comptime bun.Environment.allow_assert) {
@@ -336,10 +336,10 @@ pub fn checkTargetTaskDone(this: *Mv, task: *ShellMvCheckTargetTask) void {
     }
 
     this.state.check_target.state = .done;
-    this.next().run();
+    return this.next().run();
 }
 
-pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
+pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) bun.JSExecutionTerminated!void {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .executing);
         assert(this.state.executing.tasks_done < this.state.executing.task_count);
@@ -366,7 +366,7 @@ pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
         }
         this.state = .done;
 
-        this.next().run();
+        return this.next().run();
     }
 }
 

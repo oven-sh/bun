@@ -402,7 +402,7 @@ fn parseFlag(this: *Opts, _: *Builtin, flag: []const u8) ParseFlagsResult {
     return .continue_parsing;
 }
 
-pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
+pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) bun.JSExecutionTerminated!void {
     var exec = &this.state.exec;
     const tasks_done = switch (exec.state) {
         .idle => @panic("Invalid state"),
@@ -415,8 +415,7 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
                 if (this.bltn().stderr.needsIO()) |safeguard| {
                     log("Rm(0x{x}) task=0x{x} ERROR={s}", .{ @intFromPtr(this), @intFromPtr(task), error_string });
                     exec.incrementOutputCount(.output_count);
-                    this.bltn().stderr.enqueue(this, error_string, safeguard).run();
-                    return;
+                    return this.bltn().stderr.enqueue(this, error_string, safeguard).run();
                 } else {
                     _ = this.bltn().writeNoIO(.stderr, error_string);
                 }
@@ -431,7 +430,7 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
         exec.getOutputCount(.output_done) >= exec.getOutputCount(.output_count))
     {
         this.state = .{ .done = .{ .exit_code = if (exec.err) |theerr| theerr.errno else 0 } };
-        this.next().run();
+        try this.next().run();
     }
 }
 
@@ -519,13 +518,13 @@ pub const ShellRmTask = struct {
             return ret;
         }
 
-        pub fn runFromMainThread(this: *DirTask) void {
+        pub fn runFromMainThread(this: *DirTask) bun.JSExecutionTerminated!void {
             debug("DirTask(0x{x}, path={s}) runFromMainThread", .{ @intFromPtr(this), this.path });
-            this.task_manager.rm.writeVerbose(this).run();
+            return this.task_manager.rm.writeVerbose(this).run();
         }
 
-        pub fn runFromMainThreadMini(this: *DirTask, _: *void) void {
-            this.runFromMainThread();
+        pub fn runFromMainThreadMini(this: *DirTask, _: *void) bun.JSExecutionTerminated!void {
+            return this.runFromMainThread();
         }
 
         pub fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
@@ -1163,12 +1162,12 @@ pub const ShellRmTask = struct {
         this.root_task.runFromThreadPoolImpl();
     }
 
-    pub fn runFromMainThread(this: *ShellRmTask) void {
-        this.rm.onShellRmTaskDone(this);
+    pub fn runFromMainThread(this: *ShellRmTask) bun.JSExecutionTerminated!void {
+        return this.rm.onShellRmTaskDone(this);
     }
 
-    pub fn runFromMainThreadMini(this: *ShellRmTask, _: *void) void {
-        this.rm.onShellRmTaskDone(this);
+    pub fn runFromMainThreadMini(this: *ShellRmTask, _: *void) bun.JSExecutionTerminated!void {
+        return this.runFromMainThread();
     }
 
     pub fn deinit(this: *ShellRmTask) void {

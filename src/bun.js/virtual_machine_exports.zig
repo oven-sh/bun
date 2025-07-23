@@ -14,7 +14,7 @@ pub export fn Bun__getVM() *JSC.VirtualMachine {
 
 /// Caller must check for termination exception
 pub export fn Bun__drainMicrotasks() void {
-    JSC.VirtualMachine.get().eventLoop().tick();
+    JSC.VirtualMachine.get().eventLoop().tick() catch return;
 }
 
 export fn Bun__readOriginTimer(vm: *JSC.VirtualMachine) u64 {
@@ -122,7 +122,7 @@ pub export fn Bun__handleHandledPromise(global: *JSGlobalObject, promise: *JSC.J
     const Context = struct {
         globalThis: *JSC.JSGlobalObject,
         promise: JSC.JSValue,
-        pub fn callback(context: *@This()) void {
+        pub fn callback(context: *@This()) bun.JSExecutionTerminated!void {
             _ = context.globalThis.bunVM().handledPromise(context.globalThis, context.promise);
             context.promise.unprotect();
             bun.default_allocator.destroy(context);

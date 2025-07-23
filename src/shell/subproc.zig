@@ -903,7 +903,7 @@ pub const ShellSubprocess = struct {
         return this.process.wait(sync);
     }
 
-    pub fn onProcessExit(this: *@This(), _: *Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
+    pub fn onProcessExit(this: *@This(), _: *Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) bun.JSExecutionTerminated!void {
         log("onProcessExit({x}, {any})", .{ @intFromPtr(this), status });
         const exit_code: ?u8 = brk: {
             if (status == .exited) {
@@ -926,7 +926,7 @@ pub const ShellSubprocess = struct {
         if (exit_code) |code| {
             const cmd = this.cmd_parent;
             if (cmd.exit_code == null) {
-                cmd.onExit(code);
+                try cmd.onExit(code);
             }
         }
     }
@@ -1007,11 +1007,11 @@ pub const PipeReader = struct {
         written: usize = 0,
         err: ?JSC.SystemError = null,
 
-        pub fn doWrite(this: *CapturedWriter, chunk: []const u8) void {
+        pub fn doWrite(this: *CapturedWriter, chunk: []const u8) bun.JSExecutionTerminated!void {
             if (this.dead or this.err != null) return;
 
             log("CapturedWriter(0x{x}, {s}) doWrite len={d} parent_amount={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), chunk.len, this.parent().buffered_output.len() });
-            this.writer.enqueue(this, null, chunk).run();
+            return this.writer.enqueue(this, null, chunk).run();
         }
 
         pub fn getBuffer(this: *CapturedWriter) []const u8 {
@@ -1151,12 +1151,13 @@ pub const PipeReader = struct {
 
     pub const toJS = toReadableStream;
 
+    // TODO: properly propagate exception upwards
     pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadState) bool {
         var this: *PipeReader = @ptrCast(@alignCast(ptr));
         this.buffered_output.append(chunk);
         log("PipeReader(0x{x}, {s}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), @tagName(this.out_type), chunk.len, @tagName(has_more) });
 
-        this.captured_writer.doWrite(chunk);
+        this.captured_writer.doWrite(chunk) catch return false;
 
         const should_continue = has_more != .eof;
 
@@ -1172,6 +1173,7 @@ pub const PipeReader = struct {
         return should_continue;
     }
 
+    // TODO: properly propagate exception upwards
     pub fn onReaderDone(this: *PipeReader) void {
         log("onReaderDone(0x{x}, {s})", .{ @intFromPtr(this), @tagName(this.out_type) });
         const owned = this.toOwnedSlice();
@@ -1180,13 +1182,9 @@ pub const PipeReader = struct {
         // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
         this.ref();
         defer this.deref();
-        this.trySignalDoneToCmd().run();
-
-        if (this.process) |process| {
-            // this.process = null;
-            process.onCloseIO(this.kind(process));
-            this.deref();
-        }
+        defer if (this.process) |_| this.deref();
+        defer if (this.process) |p| p.onCloseIO(this.kind(p));
+        this.trySignalDoneToCmd().run() catch return;
     }
 
     pub fn trySignalDoneToCmd(
@@ -1294,6 +1292,7 @@ pub const PipeReader = struct {
         }
     }
 
+    // TODO: properly propagate exception upwards
     pub fn onReaderError(this: *PipeReader, err: bun.sys.Error) void {
         log("PipeReader(0x{x}) onReaderError {}", .{ @intFromPtr(this), err });
         if (this.state == .done) {
@@ -1303,12 +1302,9 @@ pub const PipeReader = struct {
         // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
         this.ref();
         defer this.deref();
-        this.trySignalDoneToCmd().run();
-        if (this.process) |process| {
-            // this.process = null;
-            process.onCloseIO(this.kind(process));
-            this.deref();
-        }
+        defer if (this.process) |_| this.deref();
+        defer if (this.process) |p| p.onCloseIO(this.kind(p));
+        this.trySignalDoneToCmd().run() catch return;
     }
 
     pub fn close(this: *PipeReader) void {

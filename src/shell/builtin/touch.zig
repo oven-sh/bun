@@ -102,7 +102,7 @@ pub fn writeFailingError(this: *Touch, buf: []const u8, exit_code: ExitCode) Yie
     return this.bltn().done(exit_code);
 }
 
-pub fn onShellTouchTaskDone(this: *Touch, task: *ShellTouchTask) void {
+pub fn onShellTouchTaskDone(this: *Touch, task: *ShellTouchTask) bun.JSExecutionTerminated!void {
     log("{} onShellTouchTaskDone {} tasks_done={d} tasks_count={d}", .{ this, task, this.state.exec.tasks_done, this.state.exec.tasks_count });
 
     defer bun.default_allocator.destroy(task);
@@ -117,11 +117,10 @@ pub fn onShellTouchTaskDone(this: *Touch, task: *ShellTouchTask) void {
         });
         const error_string = this.bltn().taskErrorToString(.touch, e);
         this.state.exec.err = e;
-        output_task.start(error_string).run();
-        return;
+        return output_task.start(error_string).run();
     }
 
-    this.next().run();
+    return this.next().run();
 }
 
 pub const ShellTouchOutputTask = OutputTask(Touch, .{
@@ -209,13 +208,13 @@ pub const ShellTouchTask = struct {
         WorkPool.schedule(&this.task);
     }
 
-    pub fn runFromMainThread(this: *@This()) void {
+    pub fn runFromMainThread(this: *@This()) bun.JSExecutionTerminated!void {
         debug("{} runFromJS", .{this});
-        this.touch.onShellTouchTaskDone(this);
+        return this.touch.onShellTouchTaskDone(this);
     }
 
-    pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
-        this.runFromMainThread();
+    pub fn runFromMainThreadMini(this: *@This(), _: *void) bun.JSExecutionTerminated!void {
+        return this.runFromMainThread();
     }
 
     fn runFromThreadPool(task: *JSC.WorkPoolTask) void {

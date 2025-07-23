@@ -79,14 +79,14 @@ pub const ShellAsyncSubprocessDone = struct {
         }
     }
 
-    pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
-        this.runFromMainThread();
+    pub fn runFromMainThreadMini(this: *@This(), _: *void) bun.JSExecutionTerminated!void {
+        return this.runFromMainThread();
     }
 
-    pub fn runFromMainThread(this: *ShellAsyncSubprocessDone) void {
+    pub fn runFromMainThread(this: *ShellAsyncSubprocessDone) bun.JSExecutionTerminated!void {
         log("{} runFromMainThread", .{this});
         defer this.deinit();
-        this.cmd.parent.childDone(this.cmd, this.cmd.exit_code orelse 0).run();
+        return this.cmd.parent.childDone(this.cmd, this.cmd.exit_code orelse 0).run();
     }
 
     pub fn deinit(this: *ShellAsyncSubprocessDone) void {
@@ -676,14 +676,14 @@ pub fn hasFinished(this: *Cmd) bool {
 }
 
 /// Called by Subprocess
-pub fn onExit(this: *Cmd, exit_code: ExitCode) void {
+pub fn onExit(this: *Cmd, exit_code: ExitCode) bun.JSExecutionTerminated!void {
     this.exit_code = exit_code;
 
     const has_finished = this.hasFinished();
     log("cmd exit code={d} has_finished={any} ({x})", .{ exit_code, has_finished, @intFromPtr(this) });
     if (has_finished) {
         this.state = .done;
-        this.next().run();
+        try this.next().run();
     }
 }
 

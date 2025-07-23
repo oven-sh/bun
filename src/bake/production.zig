@@ -184,11 +184,33 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             const default = BakeGetDefaultExportFromModule(vm.global, config_entry_point_string.toJS(vm.global));
 
             if (!default.isObject()) {
-                Output.panic("TODO: print this error better, default export is not an object", .{});
+                Output.panic(
+                    \\Your config file's default export must be an object.
+                    \\
+                    \\Example:
+                    \\  export default {
+                    \\    app: {
+                    \\      framework: "react",
+                    \\    }
+                    \\  }
+                    \\
+                    \\Learn more at https://bun.com/docs/ssg
+                , .{});
             }
 
             const app = try default.get(vm.global, "app") orelse {
-                Output.panic("TODO: print this error better, default export needs an 'app' object", .{});
+                Output.panic(
+                    \\Your config file's default export must contain an "app" property.
+                    \\
+                    \\Example:
+                    \\  export default {
+                    \\    app: {
+                    \\      framework: "react",
+                    \\    }
+                    \\  }
+                    \\
+                    \\Learn more at https://bun.com/docs/ssg
+                , .{});
             };
 
             break :config try bake.UserOptions.fromJS(app, vm.global);
@@ -409,7 +431,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                     },
                     .asset => {},
                     .bytecode => {},
-                    .sourcemap => @panic("TODO: register source map"),
+                    .sourcemap => {},
                 }
             },
         }

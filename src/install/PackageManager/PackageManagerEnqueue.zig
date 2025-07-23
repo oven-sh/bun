@@ -1763,6 +1763,8 @@ fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, 
     return false;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -1771,7 +1773,6 @@ const Output = bun.Output;
 const Path = bun.path;
 const ThreadPool = bun.ThreadPool;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
 const Semver = bun.Semver;

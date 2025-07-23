@@ -1,22 +1,29 @@
---- a/libarchive/archive_write_add_filter_gzip.c
-+++ b/libarchive/archive_write_add_filter_gzip.c
-@@ -58,6 +58,7 @@ archive_write_set_compression_gzip(struct archive *a)
- struct private_data {
+--- a/libarchive/archive_write_add_filter_gzip.c	2025-07-21 06:29:58.505101515 +0000
++++ b/libarchive/archive_write_add_filter_gzip.c	2025-07-21 06:44:09.023676935 +0000
+@@ -59,12 +59,13 @@
  	int		 compression_level;
  	int		 timestamp;
-+	unsigned char 	os;
+ 	char	*original_filename;
++	unsigned char	 os;
  #ifdef HAVE_ZLIB_H
  	z_stream	 stream;
  	int64_t		 total_in;
-@@ -106,6 +107,7 @@ archive_write_add_filter_gzip(struct archive *_a)
- 		archive_set_error(&a->archive, ENOMEM, "Out of memory");
+ 	unsigned char	*compressed;
+ 	size_t		 compressed_buffer_size;
+-	unsigned long	 crc;
++	uint32_t	 crc;
+ #else
+ 	struct archive_write_program_data *pdata;
+ #endif
+@@ -108,6 +109,7 @@
  		return (ARCHIVE_FATAL);
  	}
-+	data->os = 3; /* default Unix */
  	f->data = data;
++	data->os = 3; /* default Unix */
  	f->open = &archive_compressor_gzip_open;
  	f->options = &archive_compressor_gzip_options;
-@@ -166,6 +168,30 @@ archive_compressor_gzip_options(struct archive_write_filter *f, const char *key,
+ 	f->close = &archive_compressor_gzip_close;
+@@ -177,6 +179,30 @@
  		return (ARCHIVE_OK);
  	}
  
@@ -47,7 +54,7 @@
  	/* Note: The "warn" return is just to inform the options
  	 * supervisor that we didn't handle it.  It will generate
  	 * a suitable error if no one used this option. */
-@@ -226,7 +252,7 @@ archive_compressor_gzip_open(struct archive_write_filter *f)
+@@ -236,7 +262,7 @@
  	    data->compressed[8] = 4;
      else
  	    data->compressed[8] = 0;

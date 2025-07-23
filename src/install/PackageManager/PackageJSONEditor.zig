@@ -781,7 +781,7 @@ const Semver = bun.Semver;
 const logger = bun.logger;
 const strings = bun.strings;
 
-const JSAst = bun.JSAst;
+const JSAst = bun.ast;
 const E = JSAst.E;
 const Expr = JSAst.Expr;
 const G = JSAst.G;

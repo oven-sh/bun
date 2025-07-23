@@ -1039,6 +1039,16 @@ pub const DataCell = extern struct {
         }
 
         fn putImpl(this: *Putter, index: u32, optional_bytes: ?*Data, comptime is_raw: bool) !bool {
+            // Bounds check to prevent crash when fields/list arrays are empty
+            if (index >= this.fields.len) {
+                debug("putImpl: index {d} >= fields.len {d}, ignoring extra field", .{ index, this.fields.len });
+                return false;
+            }
+            if (index >= this.list.len) {
+                debug("putImpl: index {d} >= list.len {d}, ignoring extra field", .{ index, this.list.len });
+                return false;
+            }
+            
             const field = &this.fields[index];
             const oid = field.type_oid;
             debug("index: {d}, oid: {d}", .{ index, oid });

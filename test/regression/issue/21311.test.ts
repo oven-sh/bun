@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { getSecret } from "harness";
 import postgres from "postgres";
 
-const databaseUrl = getSecret("TLS_POSTGRES_DATABASE_URL") || "postgres://postgres@localhost:5432/test_bun_postgres";
+const databaseUrl = getSecret("TLS_POSTGRES_DATABASE_URL");
 
 describe("postgres batch insert crash fix #21311", () => {
   test("should handle large batch inserts without crashing", async () => {
@@ -68,26 +68,27 @@ describe("postgres batch insert crash fix #21311", () => {
       await sql`CREATE TABLE test_concurrent_21311 (
         id serial PRIMARY KEY,
         thread_id INT,
-        data VARCHAR(100)
+        data VARCHAR(100),
+        date DATE
       );`;
 
       // Run multiple concurrent batch operations
       // This tests potential race conditions in field metadata setup
-      const concurrentOperations = Array.from({ length: 5 }, async (_, threadId) => {
+      const concurrentOperations = Array.from({ length: 100 }, async (_, threadId) => {
         const batchSize = 20;
         const values = Array.from(
           { length: batchSize },
-          (_, i) => `(${threadId}, 'thread_${threadId}_data_${i}')`,
+          (_, i) => `(${threadId}, 'thread_${threadId}_data_${i}', 'infinity'::date)`,
         ).join(", ");
 
-        const insertQuery = `INSERT INTO test_concurrent_21311 (thread_id, data) VALUES ${values} RETURNING id, thread_id, data`;
+        const insertQuery = `INSERT INTO test_concurrent_21311 (thread_id, data, date) VALUES ${values} RETURNING id, thread_id, data, date`;
         return sql.unsafe(insertQuery);
       });
 
       const allResults = await Promise.all(concurrentOperations);
 
       // Verify all operations completed successfully
-      expect(allResults).toHaveLength(5);
+      expect(allResults).toHaveLength(100);
       allResults.forEach((results, threadId) => {
         expect(results).toHaveLength(20);
         results.forEach((row, i) => {
@@ -96,6 +97,20 @@ describe("postgres batch insert crash fix #21311", () => {
         });
       });
 
+      // Run multiple concurrent queries
+      const concurrentQueries = Array.from({ length: 100 }, async (_, threadId) => {
+        return sql`SELECT * FROM test_concurrent_21311 WHERE thread_id = ${threadId}`;
+      });
+
+      const allQueryResults = await Promise.all(concurrentQueries);
+      expect(allQueryResults).toHaveLength(100);
+      allQueryResults.forEach((results, threadId) => {
+        expect(results).toHaveLength(20);
+        results.forEach((row, i) => {
+          expect(row.thread_id).toBe(threadId);
+          expect(row.data).toBe(`thread_${threadId}_data_${i}`);
+        });
+      });
       // Cleanup
       await sql`DROP TABLE test_concurrent_21311`;
     } finally {

@@ -294,4 +294,65 @@ describe("bundler", () => {
     run: true,
     capture: ["1 /* Value */", "1 /* Value */", "1 /* Value */"],
   });
+
+  // https://github.com/oven-sh/bun/issues/5344
+  itBundled("regression/DuplicateExports#5344", {
+    files: {
+      "/entry-b.ts": `
+        export function b() {}
+      `,
+      "/entry-a.ts": `
+        export { b } from "./entry-b.ts";
+        export function a() {}
+      `,
+    },
+    entryPoints: ["/entry-a.ts", "/entry-b.ts"],
+    outdir: "/out",
+    format: "esm",
+    splitting: true,
+    onAfterBundle(api) {
+      // Check entry-b.js output for duplicate exports
+      const entryB = api.readFile("/out/entry-b.js");
+      
+      // Count all export statements (both single line and multiline)
+      const exportMatches = entryB.match(/export\s*\{[^}]*\}/g);
+      
+      if (exportMatches && exportMatches.length > 1) {
+        throw new Error(`Found ${exportMatches.length} export statements (expected 1) in entry-b.js:\n${exportMatches.join('\n')}\n\nFull output:\n${entryB}`);
+      }
+    },
+  });
+
+  // Additional test case for multiple re-exports
+  itBundled("regression/DuplicateExports#5344-MultipleReExports", {
+    files: {
+      "/lib.ts": `
+        export const value = 42;
+        export function helper() { return "helper"; }
+      `,
+      "/intermediate.ts": `
+        export { value, helper } from "./lib.ts";
+      `,
+      "/entry.ts": `
+        export { value, helper } from "./intermediate.ts";
+        export const main = "main";
+      `,
+    },
+    entryPoints: ["/entry.ts", "/intermediate.ts", "/lib.ts"],
+    outdir: "/out",
+    format: "esm",
+    splitting: true,
+    onAfterBundle(api) {
+      // Check each file for duplicate exports
+      const files = ["entry.js", "intermediate.js", "lib.js"];
+      for (const file of files) {
+        const content = api.readFile(`/out/${file}`);
+        const exportMatches = content.match(/export\s*\{[^}]*\}/g);
+        
+        if (exportMatches && exportMatches.length > 1) {
+          throw new Error(`Found ${exportMatches.length} export statements (expected max 1) in ${file}:\n${exportMatches.join('\n')}\n\nFull output:\n${content}`);
+        }
+      }
+    },
+  });
 });

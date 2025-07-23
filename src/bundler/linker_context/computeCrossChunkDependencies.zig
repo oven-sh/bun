@@ -334,7 +334,13 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                         );
                     }
 
-                    if (clause_items.len > 0) {
+                    // Only generate cross-chunk export statements if there are items to export
+                    // and if this chunk is not an entry point with sorted export aliases
+                    // (which indicates it will generate its own exports in generateEntryPointTailJS)
+                    const sorted_and_filtered_export_aliases = c.graph.meta.items(.sorted_and_filtered_export_aliases)[chunk.entry_point.source_index];
+                    const should_skip_cross_chunk_exports = chunk.entry_point.is_entry_point and sorted_and_filtered_export_aliases.len > 0;
+                    
+                    if (clause_items.len > 0 and !should_skip_cross_chunk_exports) {
                         var stmts = BabyList(js_ast.Stmt).initCapacity(c.allocator, 1) catch unreachable;
                         const export_clause = c.allocator.create(js_ast.S.ExportClause) catch unreachable;
                         export_clause.* = .{

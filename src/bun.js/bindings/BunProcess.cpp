@@ -152,6 +152,8 @@ BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
 extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
 
+extern "C" void Bun__suppressCoreOnProcessKillSelfIfDesired();
+
 static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue);
 bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* process, JSValue code);
 
@@ -3646,6 +3648,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     RETURN_IF_EXCEPTION(scope, {});
 
 #if !OS(WINDOWS)
+    if (pid == getpid()) {
+        Bun__suppressCoreOnProcessKillSelfIfDesired();
+    }
     int result = kill(pid, signal);
     if (result < 0)
         result = errno;

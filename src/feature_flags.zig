@@ -35,6 +35,8 @@ pub const RuntimeFeatureFlag = enum {
     BUN_INTERNAL_SUPPRESS_CORE_ON_UV_STUB,
     /// Suppress creating a core dump when we abort due to a fatal Node-API error
     BUN_INTERNAL_SUPPRESS_CORE_ON_NAPI_ABORT,
+    /// Suppress creating a core dump when `process._kill()` is passed its own PID
+    BUN_INTERNAL_SUPPRESS_CORE_ON_PROCESS_KILL_SELF,
     BUN_NO_CODESIGN_MACHO_BINARY,
     BUN_TRACE,
     NODE_NO_WARNINGS,

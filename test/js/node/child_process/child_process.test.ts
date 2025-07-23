@@ -454,7 +454,10 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
     process.kill(process.pid, "SIGTRAP");
   `;
 
-  const { signal } = spawnSync(bunExe(), ["-e", trapCode]);
+  const { signal } = spawnSync(bunExe(), ["-e", trapCode], {
+    // @ts-expect-error
+    env: { ...bunEnv, BUN_INTERNAL_SUPPRESS_CORE_ON_PROCESS_KILL_SELF: "1" },
+  });
 
   expect(signal).toBe("SIGTRAP");
 });

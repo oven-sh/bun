@@ -1,5 +1,5 @@
-import { itBundled } from "./expectBundled";
 import { describe } from "bun:test";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("compile/ProcessExecArgvEmpty", {

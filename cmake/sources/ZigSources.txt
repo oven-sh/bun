@@ -36,8 +36,16 @@ src/async/windows_event_loop.zig
 src/baby_list.zig
 src/bake/bake.zig
 src/bake/DevServer.zig
+src/bake/DirectoryWatchStore.zig
+src/bake/ErrorReportRequest.zig
 src/bake/FrameworkRouter.zig
+src/bake/HmrSocket.zig
+src/bake/IncrementalGraph.zig
+src/bake/memory_cost.zig
+src/bake/PackedMap.zig
 src/bake/production.zig
+src/bake/SerializedFailure.zig
+src/bake/SourceMapStore.zig
 src/base64/base64.zig
 src/bit_set.zig
 src/bits.zig

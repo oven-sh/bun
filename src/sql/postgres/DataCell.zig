@@ -714,6 +714,10 @@ pub const DataCell = extern struct {
                 }
             },
             .date, .timestamp, .timestamptz => |tag| {
+                if (bytes.len == 0) {
+                    // In what case would this happen?
+                    return DataCell{ .tag = .date, .value = .{ .date = std.math.nan(f64) } };
+                }
                 if (binary and bytes.len == 8) {
                     switch (tag) {
                         .timestamptz => return DataCell{ .tag = .date_with_time_zone, .value = .{ .date_with_time_zone = types.date.fromBinary(bytes) } },

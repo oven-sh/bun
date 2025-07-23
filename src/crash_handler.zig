@@ -1703,6 +1703,18 @@ pub fn dumpCurrentStackTrace(first_address: ?usize, limits: WriteStackTraceLimit
     dumpStackTrace(stack, limits);
 }
 
+/// If POSIX, and the existing soft limit for core dumps (ulimit -Sc) is nonzero, change it to zero.
+/// Used in places where we intentionally crash for testing purposes.
+pub fn suppressCoreDumpsIfNecessary() void {
+    if (bun.Environment.isPosix) {
+        var existing_limit = std.posix.getrlimit(.CORE) catch return;
+        if (existing_limit.cur > 0 or existing_limit.cur == std.posix.RLIM.INFINITY) {
+            existing_limit.cur = 0;
+            std.posix.setrlimit(.CORE, existing_limit) catch {};
+        }
+    }
+}
+
 /// A variant of `std.builtin.StackTrace` that stores its data within itself
 /// instead of being a pointer. This allows storing captured stack traces
 /// for later printing.
@@ -1756,19 +1768,6 @@ pub const js_bindings = struct {
     const jsc = bun.jsc;
     const JSValue = jsc.JSValue;
 
-    /// If POSIX, and the existing soft limit for core dumps (ulimit -Sc) is nonzero, change it to zero.
-    /// Used in the APIs for testing the crash handler so that we don't produce core dumps when we
-    /// intentionally crash.
-    fn disableCoreDumpsIfNecessary() void {
-        if (bun.Environment.isPosix) {
-            var existing_limit = std.posix.getrlimit(.CORE) catch return;
-            if (existing_limit.cur > 0 or existing_limit.cur == std.posix.RLIM.INFINITY) {
-                existing_limit.cur = 0;
-                std.posix.setrlimit(.CORE, existing_limit) catch {};
-            }
-        }
-    }
-
     pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
         const obj = jsc.JSValue.createEmptyObject(global, 3);
         inline for (.{
@@ -1800,7 +1799,7 @@ pub const js_bindings = struct {
 
     pub fn jsSegfault(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         @setRuntimeSafety(false);
-        disableCoreDumpsIfNecessary();
+        suppressCoreDumpsIfNecessary();
         const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
         ptr[0] = 0xDEADBEEF;
         std.mem.doNotOptimizeAway(&ptr);
@@ -1808,7 +1807,7 @@ pub const js_bindings = struct {
     }
 
     pub fn jsPanic(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        disableCoreDumpsIfNecessary();
+        suppressCoreDumpsIfNecessary();
         bun.crash_handler.panicImpl("invoked crashByPanic() handler", null, null);
     }
 
@@ -1817,12 +1816,12 @@ pub const js_bindings = struct {
     }
 
     pub fn jsOutOfMemory(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        disableCoreDumpsIfNecessary();
+        suppressCoreDumpsIfNecessary();
         bun.outOfMemory();
     }
 
     pub fn jsRaiseIgnoringPanicHandler(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        disableCoreDumpsIfNecessary();
+        suppressCoreDumpsIfNecessary();
         bun.Global.raiseIgnoringPanicHandler(.SIGSEGV);
     }
 
@@ -2183,6 +2182,9 @@ export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C)
 export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C) void {
     bun.analytics.Features.unsupported_uv_function += 1;
     unsupported_uv_function = name;
+    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CORE_ON_UV_STUB)) {
+        suppressCoreDumpsIfNecessary();
+    }
     std.debug.panic("unsupported uv function: {s}", .{name.?});
 }
 

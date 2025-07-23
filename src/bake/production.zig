@@ -184,7 +184,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             const default = BakeGetDefaultExportFromModule(vm.global, config_entry_point_string.toJS(vm.global));
 
             if (!default.isObject()) {
-                Output.panic(
+                return global.throwInvalidArguments(
                     \\Your config file's default export must be an object.
                     \\
                     \\Example:
@@ -199,7 +199,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             }
 
             const app = try default.get(vm.global, "app") orelse {
-                Output.panic(
+                return global.throwInvalidArguments(
                     \\Your config file's default export must contain an "app" property.
                     \\
                     \\Example:

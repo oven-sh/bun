@@ -3789,7 +3789,7 @@ class Http2Server extends net.Server {
       options = {};
     }
     options = initializeOptions(options);
-    super(options, connectionListener);
+    super(options);
     this[kSessions] = new SafeSet();
 
     this.setMaxListeners(0);
@@ -3804,7 +3804,7 @@ class Http2Server extends net.Server {
     if (event === "connection") {
       // TODO: implement this at net/tls level to allow to inject socket in the server
       // this works for now for Http2Server
-      connectionListener.$call(this, ...args);
+      super.prependOnceListener("connection", connectionListener);
     }
     return super.emit(event, ...args);
   }

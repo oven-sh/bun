@@ -336,7 +336,6 @@ pub fn SliceChild(comptime T: type) type {
     return T;
 }
 
-
 /// userland implementation of https://github.com/ziglang/zig/issues/21879
 pub fn VoidFieldTypes(comptime T: type) type {
     const fields = @typeInfo(T).@"struct".fields;
@@ -359,5 +358,3 @@ pub fn voidFieldTypeDiscardHelper(data: anytype) void {
 
 const bun = @import("bun");
 const std = @import("std");
-
-

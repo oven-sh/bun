@@ -209,15 +209,15 @@ pub fn memoryCostArrayHashMap(map: anytype) usize {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
+const jsc = bun.jsc;
+const HTMLBundle = jsc.API.HTMLBundle;
+
 const DevServer = bun.bake.DevServer;
 const DeferredRequest = DevServer.DeferredRequest;
-const IncrementalResult = DevServer.IncrementalResult;
 const HmrSocket = DevServer.HmrSocket;
+const IncrementalResult = DevServer.IncrementalResult;
+
 const VoidFieldTypes = bun.meta.VoidFieldTypes;
 const voidFieldTypeDiscardHelper = bun.meta.voidFieldTypeDiscardHelper;
-
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const VirtualMachine = jsc.VirtualMachine;
-const HTMLBundle = jsc.API.HTMLBundle;

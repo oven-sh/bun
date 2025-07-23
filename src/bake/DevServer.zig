@@ -4024,23 +4024,17 @@ pub fn getDeinitCountForTesting() usize {
     return dev_server_deinit_count_for_testing;
 }
 
-const VoidFieldTypes = bun.meta.VoidFieldTypes;
-const voidFieldTypeDiscardHelper = bun.meta.voidFieldTypeDiscardHelper;
-
 const bun = @import("bun");
 const AllocationScope = bun.AllocationScope;
 const Environment = bun.Environment;
-const Mutex = bun.Mutex;
 const Output = bun.Output;
-const StringJoiner = bun.StringJoiner;
+const SourceMap = bun.sourcemap;
 const Watcher = bun.Watcher;
 const assert = bun.assert;
-const assert_eql = bun.assert_eql;
 const bake = bun.bake;
 const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 const Log = bun.logger.Log;
 const MimeType = bun.http.MimeType;
-const RefPtr = bun.ptr.RefPtr;
 const ThreadLocalArena = bun.allocators.MimallocArena;
 const Transpiler = bun.transpiler.Transpiler;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
@@ -4064,12 +4058,11 @@ const Plugin = jsc.API.JSBundler.Plugin;
 const BunFrontendDevServerAgent = jsc.Debugger.BunFrontendDevServerAgent;
 const DebuggerId = jsc.Debugger.DebuggerId;
 
-const SourceMap = bun.sourcemap;
-const VLQ = SourceMap.VLQ;
+const VoidFieldTypes = bun.meta.VoidFieldTypes;
+const voidFieldTypeDiscardHelper = bun.meta.voidFieldTypeDiscardHelper;
 
 const uws = bun.uws;
 const AnyResponse = bun.uws.AnyResponse;
-const AnyWebSocket = uws.AnyWebSocket;
 const Request = uws.Request;
 
 const std = @import("std");

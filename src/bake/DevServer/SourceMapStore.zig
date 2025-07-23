@@ -506,24 +506,21 @@ pub fn getParsedSourceMap(store: *SourceMapStore, script_id: Key, arena: Allocat
 }
 
 const bun = @import("bun");
-const std = @import("std");
 const Environment = bun.Environment;
-
+const Output = bun.Output;
+const SourceMap = bun.sourcemap;
+const StringJoiner = bun.StringJoiner;
+const assert = bun.assert;
 const bake = bun.bake;
-
-const Allocator = std.mem.Allocator;
-const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
+const VoidFieldTypes = bun.meta.VoidFieldTypes;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 
 const DevServer = bun.bake.DevServer;
 const ChunkKind = DevServer.ChunkKind;
 const PackedMap = DevServer.PackedMap;
-const StringJoiner = bun.StringJoiner;
 const dumpBundle = DevServer.dumpBundle;
-const Output = bun.Output;
-const SourceMap = bun.sourcemap;
-const VoidFieldTypes = bun.meta.VoidFieldTypes;
-const assert = bun.assert;
 const mapLog = DevServer.mapLog;
-const igLog = DevServer.igLog;
-const debug = DevServer.debug;
+
+const std = @import("std");
+const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
+const Allocator = std.mem.Allocator;

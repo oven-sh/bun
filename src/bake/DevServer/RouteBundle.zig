@@ -148,64 +148,20 @@ pub fn memoryCost(rb: *const RouteBundle) usize {
     return cost;
 }
 
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const bun = @import("bun");
-const VoidFieldTypes = bun.meta.VoidFieldTypes;
-const AllocationScope = bun.AllocationScope;
-const Environment = bun.Environment;
-const Mutex = bun.Mutex;
-const Output = bun.Output;
-const StringJoiner = bun.StringJoiner;
-const Watcher = bun.Watcher;
-const assert = bun.assert;
-const assert_eql = bun.assert_eql;
 const bake = bun.bake;
+const jsc = bun.jsc;
+const RefPtr = bun.ptr.RefPtr;
+const HTMLBundle = jsc.API.HTMLBundle;
+const StaticRoute = bun.api.server.StaticRoute;
+
 const DevServer = bake.DevServer;
 const IncrementalGraph = DevServer.IncrementalGraph;
-const ChunkKind = DevServer.ChunkKind;
-const EntryPointList = DevServer.EntryPointList;
-const GraphTraceState = DevServer.GraphTraceState;
-const igLog = DevServer.igLog;
-const debug = DevServer.debug;
 const SerializedFailure = DevServer.SerializedFailure;
-const HotUpdateContext = DevServer.HotUpdateContext;
-const PackedMap = DevServer.PackedMap;
-const FileKind = DevServer.FileKind;
-const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
-const Log = bun.logger.Log;
-const MimeType = bun.http.MimeType;
-const RefPtr = bun.ptr.RefPtr;
-const StaticRoute = bun.api.server.StaticRoute;
-const Transpiler = bun.transpiler.Transpiler;
-const EventLoopTimer = bun.api.Timer.EventLoopTimer;
-
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const VirtualMachine = jsc.VirtualMachine;
-const HTMLBundle = jsc.API.HTMLBundle;
-const AnyBlob = jsc.WebCore.Blob.Any;
-const Plugin = jsc.API.JSBundler.Plugin;
-
-const BunFrontendDevServerAgent = jsc.Debugger.BunFrontendDevServerAgent;
-const DebuggerId = jsc.Debugger.DebuggerId;
+const SourceMapStore = DevServer.SourceMapStore;
 
 const FrameworkRouter = bake.FrameworkRouter;
-const OpaqueFileId = FrameworkRouter.OpaqueFileId;
 const Route = FrameworkRouter.Route;
-
-const BundleV2 = bun.bundle_v2.BundleV2;
-const Chunk = bun.bundle_v2.Chunk;
-const ContentHasher = bun.bundle_v2.ContentHasher;
-
-const SourceMap = bun.sourcemap;
-const SourceMapStore = DevServer.SourceMapStore;
-const VLQ = SourceMap.VLQ;
-
-const uws = bun.uws;
-const AnyResponse = bun.uws.AnyResponse;
-const AnyWebSocket = uws.AnyWebSocket;
-const Request = uws.Request;
-
-const std = @import("std");
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
-const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
-const Allocator = std.mem.Allocator;

@@ -178,7 +178,7 @@ pub fn run(first: *HotReloadEvent) void {
 
     const dev = first.owner;
 
-    if (Environment.isDebug) {
+    if (comptime Environment.isDebug) {
         assert(first.debug_mutex.tryLock());
         assert(first.contention_indicator.load(.seq_cst) == 0);
     }
@@ -197,12 +197,13 @@ pub fn run(first: *HotReloadEvent) void {
 
     const timer = first.timer;
 
-    if (dev.watcher_atomics.recycleEventFromDevServer(first)) |second| {
-        if (Environment.isDebug) {
-            assert(second.debug_mutex.tryLock());
+    var current = first;
+    while (true) {
+        current.processFileList(dev, &entry_points, temp_alloc);
+        current = dev.watcher_atomics.recycleEventFromDevServer(current) orelse break;
+        if (comptime Environment.isDebug) {
+            assert(current.debug_mutex.tryLock());
         }
-        second.processFileList(dev, &entry_points, temp_alloc);
-        dev.watcher_atomics.recycleSecondEventFromDevServer(second);
     }
 
     if (entry_points.set.count() == 0) {

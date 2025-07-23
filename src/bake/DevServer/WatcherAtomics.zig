@@ -1,55 +1,73 @@
-/// All code working with atomics to communicate watcher <-> DevServer is here.
-/// It attempts to recycle as much memory as possible, since files are very
-/// frequently updated (the whole point of HMR)
-const WatcherAtomics = @This();
+//! All code working with atomics to communicate watcher <-> DevServer is here.
+//! It attempts to recycle as much memory as possible, since files are very
+//! frequently updated (the whole point of HMR)
 
-/// Only two hot-reload events exist ever, which is possible since only one
-/// bundle may be active at once. Memory is reused by swapping between these
-/// two. These items are aligned to cache lines to reduce contention, since
-/// these structures are carefully passed between two threads.
-events: [2]HotReloadEvent align(std.atomic.cache_line),
-/// 0  - no watch
-/// 1  - has fired additional watch
-/// 2+ - new events available, watcher is waiting on bundler to finish
-watcher_events_emitted: std.atomic.Value(u32),
-/// Which event is the watcher holding on to.
-/// This is not atomic because only the watcher thread uses this value.
-current: u1 align(std.atomic.cache_line),
+const Self = @This();
 
-watcher_has_event: std.debug.SafetyLock,
-dev_server_has_event: std.debug.SafetyLock,
+/// Only one event can run at any given time. We need three events because:
+///
+/// * One event may be actively running on the dev server thread.
+/// * One event may be "pending", i.e., it was added by the watcher thread but not immediately
+///   started because an event was already running.
+/// * One event must be available for the watcher thread to initialize and submit. If an event
+///   is already pending, this new event will replace the pending one, and the pending one will
+///   become available.
+events: [3]HotReloadEvent,
 
-pub fn init(dev: *DevServer) WatcherAtomics {
-    return .{
-        .events = .{ .initEmpty(dev), .initEmpty(dev) },
-        .current = 0,
-        .watcher_events_emitted = .init(0),
-        .watcher_has_event = .{},
-        .dev_server_has_event = .{},
-    };
+/// The next event to be run. If an event is already running, new events are stored in this
+/// field instead of scheduled directly, and will be run once the current event finishes.
+next_event: std.atomic.Value(NextEvent) align(std.atomic.cache_line) = .init(.done),
+
+// Only the watcher thread uses these two fields. They are both indices into the `events` array,
+// and indicate which elements are in-use and not available for modification. Only two such events
+// can ever be in use at once, so we can always find a free event in the array of length 3.
+current_event: ?u2 = null,
+pending_event: ?u2 = null,
+
+// Debug fields to ensure methods are being called in the right order.
+dbg_watcher_event: DbgEventPtr = if (Environment.allow_assert) null,
+dbg_server_event: DbgEventPtr = if (Environment.allow_assert) null,
+
+const NextEvent = enum(u8) {
+    /// An event is running, and no next event is pending.
+    waiting = std.math.maxInt(u8) - 1,
+    /// No event is running.
+    done = std.math.maxInt(u8),
+    /// Any other value represents an index into the `events` array.
+    _,
+};
+
+const DbgEventPtr = if (Environment.allow_assert) ?*HotReloadEvent else void;
+
+pub fn init(dev: *DevServer) Self {
+    var self = Self{ .events = undefined };
+    for (&self.events) |*event| {
+        event.* = .initEmpty(dev);
+    }
+    return self;
 }
 
 /// Atomically get a *HotReloadEvent that is not used by the DevServer thread
 /// Call `watcherRelease` when it is filled with files.
-pub fn watcherAcquireEvent(state: *WatcherAtomics) *HotReloadEvent {
-    state.watcher_has_event.lock();
+///
+/// Called from watcher thread.
+pub fn watcherAcquireEvent(self: *Self) *HotReloadEvent {
+    var available = [_]bool{true} ** 3;
+    if (self.current_event) |i| available[i] = false;
+    if (self.pending_event) |i| available[i] = false;
 
-    var ev: *HotReloadEvent = &state.events[state.current];
-    switch (ev.contention_indicator.swap(1, .seq_cst)) {
-        0 => {
-            // New event is unreferenced by the DevServer thread.
-        },
-        1 => {
-            @branchHint(.unlikely);
-            // DevServer stole this event. Unlikely but possible when
-            // the user is saving very heavily (10-30 times per second)
-            state.current +%= 1;
-            ev = &state.events[state.current];
-            if (Environment.allow_assert) {
-                bun.assert(ev.contention_indicator.swap(1, .seq_cst) == 0);
-            }
-        },
-        else => unreachable,
+    const index = for (available, 0..) |is_available, i| {
+        if (is_available) break i;
+    } else unreachable;
+    const ev = &self.events[index];
+
+    if (comptime Environment.allow_assert) {
+        bun.assertf(
+            self.dbg_watcher_event == null,
+            "must call `watcherReleaseEvent` before calling `watcherAcquireEvent` again",
+            .{},
+        );
+        self.dbg_watcher_event = ev;
     }
 
     // Initialize the timer if it is empty.
@@ -58,110 +76,131 @@ pub fn watcherAcquireEvent(state: *WatcherAtomics) *HotReloadEvent {
 
     ev.owner.bun_watcher.thread_lock.assertLocked();
 
-    if (Environment.isDebug)
+    if (comptime Environment.isDebug)
         assert(ev.debug_mutex.tryLock());
-
     return ev;
 }
 
 /// Release the pointer from `watcherAcquireHotReloadEvent`, submitting
 /// the event if it contains new files.
-pub fn watcherReleaseAndSubmitEvent(state: *WatcherAtomics, ev: *HotReloadEvent) void {
-    state.watcher_has_event.unlock();
+///
+/// Called from watcher thread.
+pub fn watcherReleaseAndSubmitEvent(self: *Self, ev: *HotReloadEvent) void {
     ev.owner.bun_watcher.thread_lock.assertLocked();
 
-    if (Environment.isDebug) {
+    if (comptime Environment.allow_assert) {
+        bun.assertf(
+            self.dbg_watcher_event != null,
+            "must call `watcherAcquireEvent` before `watcherReleaseAndSubmitEvent`",
+            .{},
+        );
+        bun.assertf(
+            self.dbg_watcher_event == ev,
+            "watcherReleaseAndSubmitEvent: bad event; did not come from `watcherAcquireEvent`",
+            .{},
+        );
+        self.dbg_watcher_event = null;
+    }
+
+    if (comptime Environment.isDebug) {
         for (std.mem.asBytes(&ev.timer)) |b| {
             if (b != 0xAA) break;
         } else @panic("timer is undefined memory in watcherReleaseAndSubmitEvent");
+        ev.debug_mutex.unlock();
     }
 
-    if (Environment.isDebug)
-        ev.debug_mutex.unlock();
+    if (ev.isEmpty()) return;
+    // There are files to be processed.
 
-    if (!ev.isEmpty()) {
-        @branchHint(.likely);
-        // There are files to be processed, increment this count first.
-        const prev_count = state.watcher_events_emitted.fetchAdd(1, .seq_cst);
-
-        if (prev_count == 0) {
-            @branchHint(.likely);
-            // Submit a task to the DevServer, notifying it that there is
-            // work to do. The watcher will move to the other event.
+    const ev_index: u2 = @intCast(ev - &self.events[0]);
+    const old_next = self.next_event.swap(@enumFromInt(ev_index), .acq_rel);
+    switch (old_next) {
+        .done => {
+            // Dev server is done running events. We need to schedule the event directly.
+            self.current_event = ev_index;
+            self.pending_event = null;
+            // .monotonic because the dev server is not running events right now.
+            // (could technically be made non-atomic)
+            self.next_event.store(.waiting, .monotonic);
+            if (comptime Environment.allow_assert) {
+                bun.assertf(
+                    self.dbg_server_event == null,
+                    "no event should be running right now",
+                    .{},
+                );
+                // Not atomic because the dev server is not running events right now.
+                self.dbg_server_event = ev;
+            }
             ev.concurrent_task = .{
                 .auto_delete = false,
                 .next = null,
                 .task = jsc.Task.init(ev),
             };
-            ev.contention_indicator.store(0, .seq_cst);
             ev.owner.vm.event_loop.enqueueTaskConcurrent(&ev.concurrent_task);
-            state.current +%= 1;
-        } else {
-            // DevServer thread has already notified once. Sending
-            // a second task would give ownership of both events to
-            // them. Instead, DevServer will steal this item since
-            // it can observe `watcher_events_emitted >= 2`.
-            ev.contention_indicator.store(0, .seq_cst);
-        }
-    } else {
-        ev.contention_indicator.store(0, .seq_cst);
-    }
+        },
 
-    if (Environment.allow_assert) {
-        bun.assert(ev.contention_indicator.load(.monotonic) == 0); // always must be reset
+        .waiting => {
+            if (self.pending_event != null) {
+                // `pending_event` is running, which means we're done with `current_event`.
+                self.current_event = self.pending_event;
+            } // else, no pending event yet, but not done with `current_event`.
+            self.pending_event = ev_index;
+        },
+
+        else => {
+            // This is an index into the `events` array.
+            const old_index: u2 = @intCast(@intFromEnum(old_next));
+            bun.assertf(
+                self.pending_event == old_index,
+                "watcherReleaseAndSubmitEvent: expected `pending_event` to be {d}; got {?d}",
+                .{ old_index, self.pending_event },
+            );
+            // The old pending event hadn't been run yet, so we can replace it with `ev`.
+            self.pending_event = ev_index;
+        },
     }
 }
 
-/// Called by DevServer after it receives a task callback. If this returns
-/// another event, that event must be recycled with `recycleSecondEventFromDevServer`
-pub fn recycleEventFromDevServer(state: *WatcherAtomics, first_event: *HotReloadEvent) ?*HotReloadEvent {
-    first_event.reset();
+/// Called by DevServer after it receives a task callback. If this returns another event,
+/// that event should be passed again to this function, and so on, until this function
+/// returns null.
+///
+/// Runs on dev server thread.
+pub fn recycleEventFromDevServer(self: *Self, old_event: *HotReloadEvent) ?*HotReloadEvent {
+    old_event.reset();
 
-    // Reset the watch count to zero, while detecting if
-    // the other watch event was submitted.
-    if (state.watcher_events_emitted.swap(0, .seq_cst) >= 2) {
-        // Cannot use `state.current` because it will contend with the watcher.
-        // Since there are are two events, one pointer comparison suffices
-        const other_event = if (first_event == &state.events[0])
-            &state.events[1]
-        else
-            &state.events[0];
+    if (comptime Environment.allow_assert) {
+        // Not atomic because watcher won't modify this value while an event is running.
+        const dbg_event = self.dbg_server_event;
+        self.dbg_server_event = null;
+        bun.assertf(
+            dbg_event == old_event,
+            "recycleEventFromDevServer: old_event: expected {?*}, got {?*}",
+            .{ dbg_event, old_event },
+        );
+    }
 
-        switch (other_event.contention_indicator.swap(1, .seq_cst)) {
-            0 => {
-                // DevServer holds the event now.
-                state.dev_server_has_event.lock();
-                return other_event;
+    const event = while (true) {
+        const next = self.next_event.swap(.waiting, .acq_rel);
+        switch (next) {
+            .waiting => {
+                // Success order is not .acq_rel because the swap above performed an .acquire load.
+                // Failure order is .monotonic because we're going to perform an .acquire load
+                // in the next loop iteration.
+                if (self.next_event.cmpxchgWeak(.waiting, .done, .release, .monotonic) != null)
+                    continue; // another event may have been added
+                return null; // done running events
             },
-            1 => {
-                // The watcher is currently using this event.
-                // `watcher_events_emitted` is already zero, so it will
-                // always submit.
-
-                // Not 100% confident in this logic, but the only way
-                // to hit this is by saving extremely frequently, and
-                // a followup save will just trigger the reload.
-                return null;
-            },
-            else => unreachable,
+            .done => unreachable,
+            else => break &self.events[@intFromEnum(next)],
         }
+    };
+
+    if (comptime Environment.allow_assert) {
+        // Not atomic because watcher won't modify this value while an event is running.
+        self.dbg_server_event = event;
     }
-
-    // If a watch callback had already acquired the event, that is fine as
-    // it will now read 0 when deciding if to submit the task.
-    return null;
-}
-
-pub fn recycleSecondEventFromDevServer(state: *WatcherAtomics, second_event: *HotReloadEvent) void {
-    second_event.reset();
-
-    state.dev_server_has_event.unlock();
-    if (Environment.allow_assert) {
-        const result = second_event.contention_indicator.swap(0, .seq_cst);
-        bun.assert(result == 1);
-    } else {
-        second_event.contention_indicator.store(0, .seq_cst);
-    }
+    return event;
 }
 
 const std = @import("std");
@@ -174,4 +213,3 @@ const jsc = bun.jsc;
 
 const DevServer = bake.DevServer;
 const HotReloadEvent = DevServer.HotReloadEvent;
-const debug = DevServer.debug;

@@ -763,7 +763,7 @@ pub const H2FrameParser = struct {
         closeAfterDrain: bool = false,
         endAfterHeaders: bool = false,
         isWaitingMoreHeaders: bool = false,
-        padding: ?u8 = 0,
+        padding: ?u8 = null,
         paddingStrategy: PaddingStrategy = .none,
         rstCode: u32 = 0,
         streamDependency: u32 = 0,
@@ -977,9 +977,9 @@ pub const H2FrameParser = struct {
                                 client.queuedDataSize -= able_to_send.len;
                                 written.* += able_to_send.len;
 
-                                const padding = this.getPadding(able_to_send.len, max_size);
+                                const padding = this.getPadding(able_to_send.len, max_size - 1);
                                 const payload_size = able_to_send.len + (if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0);
-
+                                log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, able_to_send.len, max_size, payload_size });
                                 this.remoteUsedWindowSize += payload_size;
                                 client.remoteUsedWindowSize += payload_size;
 
@@ -996,9 +996,9 @@ pub const H2FrameParser = struct {
                                 _ = dataHeader.write(@TypeOf(writer), writer);
                                 if (padding != 0) {
                                     var buffer = shared_request_buffer[0..];
-                                    bun.memmove(buffer[1..][0..able_to_send.len], buffer[0..][0..able_to_send.len]);
+                                    bun.memmove(buffer[1..][0..able_to_send.len], able_to_send);
                                     buffer[0] = padding;
-                                    break :brk (writer.write(buffer[0 .. FrameHeader.byteSize + payload_size]) catch 0) != 0;
+                                    break :brk (writer.write(buffer[0..payload_size]) catch 0) != 0;
                                 } else {
                                     break :brk (writer.write(able_to_send) catch 0) != 0;
                                 }
@@ -1008,8 +1008,9 @@ pub const H2FrameParser = struct {
                                 client.queuedDataSize -= frame_slice.len;
                                 written.* += frame_slice.len;
 
-                                const padding = this.getPadding(frame_slice.len, max_size);
+                                const padding = this.getPadding(frame_slice.len, max_size - 1);
                                 const payload_size = frame_slice.len + (if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0);
+                                log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, frame_slice.len, max_size, payload_size });
                                 this.remoteUsedWindowSize += payload_size;
                                 client.remoteUsedWindowSize += payload_size;
                                 var flags: u8 = if (frame.end_stream and !this.waitForTrailers) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
@@ -1025,9 +1026,9 @@ pub const H2FrameParser = struct {
                                 _ = dataHeader.write(@TypeOf(writer), writer);
                                 if (padding != 0) {
                                     var buffer = shared_request_buffer[0..];
-                                    bun.memmove(buffer[1..][0..frame_slice.len], buffer[0..][0..frame_slice.len]);
+                                    bun.memmove(buffer[1..][0..frame_slice.len], frame_slice);
                                     buffer[0] = padding;
-                                    break :brk (writer.write(buffer[0 .. FrameHeader.byteSize + payload_size]) catch 0) != 0;
+                                    break :brk (writer.write(buffer[0..payload_size]) catch 0) != 0;
                                 } else {
                                     break :brk (writer.write(frame_slice) catch 0) != 0;
                                 }
@@ -1109,7 +1110,7 @@ pub const H2FrameParser = struct {
             client.queuedDataSize += frame.len;
         }
 
-        pub fn init(streamIdentifier: u32, initialWindowSize: u32, remoteWindowSize: u32) Stream {
+        pub fn init(streamIdentifier: u32, initialWindowSize: u32, remoteWindowSize: u32, paddingStrategy: PaddingStrategy) Stream {
             const stream = Stream{
                 .id = streamIdentifier,
                 .state = .OPEN,
@@ -1118,6 +1119,7 @@ pub const H2FrameParser = struct {
                 .usedWindowSize = 0,
                 .weight = 36,
                 .dataFrameQueue = .{},
+                .paddingStrategy = paddingStrategy,
             };
             return stream;
         }
@@ -1942,10 +1944,11 @@ pub const H2FrameParser = struct {
     }
 
     pub fn handleDataFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
-        log("handleDataFrame {s}", .{if (this.isServer) "server" else "client"});
+        log("handleDataFrame {s} data.len: {d}", .{ if (this.isServer) "server" else "client", data.len });
         this.readBuffer.reset();
 
         var stream = stream_ orelse {
+            log("received data frame on stream that does not exist", .{});
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Data frame on connection stream", this.lastStreamID, true);
             return data.len;
         };
@@ -1953,14 +1956,16 @@ pub const H2FrameParser = struct {
         const settings = this.remoteSettings orelse this.localSettings;
 
         if (frame.length > settings.maxFrameSize) {
+            log("received data frame with length: {d} and max frame size: {d}", .{ frame.length, settings.maxFrameSize });
             this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid dataframe frame size", this.lastStreamID, true);
             return data.len;
         }
 
         const end: usize = @min(@as(usize, @intCast(this.remainingLength)), data.len);
         var payload = data[0..end];
-
-        var data_needed: isize = this.remainingLength;
+        // windows size considering the full frame.length received so far
+        this.ajustWindowSize(stream, @truncate(payload.len));
+        const previous_remaining_length: isize = this.remainingLength;
 
         this.remainingLength -= @intCast(end);
         var padding: u8 = 0;
@@ -1974,39 +1979,43 @@ pub const H2FrameParser = struct {
                 }
                 padding = payload[0];
                 stream.padding = payload[0];
-                payload = payload[1..];
             }
         }
-
         if (this.remainingLength < 0) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid data frame size", this.lastStreamID, true);
             return data.len;
         }
         var emitted = false;
-        // ignore padding
-        if (data_needed > padding) {
-            data_needed -= padding;
-            var start: usize = 0;
-            var padded_length = payload.len;
-            if (padding > 0) {
-                // skip the padding byte
-                start = 1;
-                // include the padding byte
-                padded_length = padding + 1;
-            }
-            payload = payload[start..@min(@as(usize, @intCast(data_needed)), payload.len)];
-            // if padding is more than 0 so we need to consider the padding length in the window size
-            // its fine to truncate since u24 is the max frame size
-            this.ajustWindowSize(stream, @truncate(padded_length));
-            const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
-            this.dispatchWithExtra(.onStreamData, stream.getIdentifier(), chunk);
-            emitted = true;
-        } else {
-            data_needed = 0;
+
+        const start_idx = frame.length - @as(usize, @intCast(previous_remaining_length));
+        if (start_idx < 1 and padding > 0 and payload.len > 0) {
+            // we need to skip the padding byte
+            payload = payload[1..];
         }
 
+        if (payload.len > 0) {
+            // amount of data received so far
+            const received_size = frame.length - this.remainingLength;
+            // max size possible for the chunk without padding and skipping the start_idx
+            const max_payload_size: usize = frame.length - padding - @as(usize, if (padding > 0) 1 else 0) - start_idx;
+            payload = payload[0..@min(payload.len, max_payload_size)];
+            log("received_size: {d} max_payload_size: {d} padding: {d} payload.len: {d}", .{
+                received_size,
+                max_payload_size,
+                padding,
+                payload.len,
+            });
+
+            if (payload.len > 0) {
+                // no padding, just emit the data
+                const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
+                this.dispatchWithExtra(.onStreamData, stream.getIdentifier(), chunk);
+                emitted = true;
+            }
+        }
         if (this.remainingLength == 0) {
             this.currentFrame = null;
+            stream.padding = null;
             if (emitted) {
                 // we need to revalidate the stream ptr after emitting onStreamData
                 const entry = this.streams.getEntry(frame.streamIdentifier) orelse return end;
@@ -2451,7 +2460,12 @@ pub const H2FrameParser = struct {
         // new stream open
         const entry = this.streams.getOrPut(streamIdentifier) catch bun.outOfMemory();
 
-        entry.value_ptr.* = Stream.init(streamIdentifier, this.localSettings.initialWindowSize, if (this.remoteSettings) |s| s.initialWindowSize else DEFAULT_WINDOW_SIZE);
+        entry.value_ptr.* = Stream.init(
+            streamIdentifier,
+            this.localSettings.initialWindowSize,
+            if (this.remoteSettings) |s| s.initialWindowSize else DEFAULT_WINDOW_SIZE,
+            this.paddingStrategy,
+        );
         const ctx_value = this.strong_ctx.get() orelse return entry.value_ptr;
         const callback = this.handlers.onStreamStart;
         if (callback != .zero) {
@@ -3264,8 +3278,9 @@ pub const H2FrameParser = struct {
                     // the callback will only be called after the last frame is sended
                     stream.queueFrame(this, slice, if (offset >= payload.len) callback else .js_undefined, offset >= payload.len and close);
                 } else {
-                    const padding = stream.getPadding(size, max_size);
-                    const payload_size = size + (if (padding != 0) padding + 1 else 0);
+                    const padding = stream.getPadding(size, max_size - 1);
+                    const payload_size = size + (if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0);
+                    log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, size, max_size, payload_size });
                     stream.remoteUsedWindowSize += payload_size;
                     this.remoteUsedWindowSize += payload_size;
                     var flags: u8 = if (end_stream) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
@@ -3276,14 +3291,14 @@ pub const H2FrameParser = struct {
                         .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
                         .flags = flags,
                         .streamIdentifier = @intCast(stream_id),
-                        .length = payload_size,
+                        .length = @truncate(payload_size),
                     };
                     _ = dataHeader.write(@TypeOf(writer), writer);
                     if (padding != 0) {
                         var buffer = shared_request_buffer[0..];
-                        bun.memmove(buffer[1..][0..size], buffer[0..][0..size]);
+                        bun.memmove(buffer[1..][0..slice.len], slice);
                         buffer[0] = padding;
-                        _ = writer.write(buffer[0 .. FrameHeader.byteSize + payload_size]) catch 0;
+                        _ = writer.write(buffer[0..payload_size]) catch 0;
                     } else {
                         _ = writer.write(slice) catch 0;
                     }
@@ -3968,7 +3983,6 @@ pub const H2FrameParser = struct {
         const stream = this.handleReceivedStreamID(stream_id) orelse {
             return jsc.JSValue.jsNumber(-1);
         };
-        stream.paddingStrategy = this.paddingStrategy;
         if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
             stream.setContext(stream_ctx_arg, globalObject);
         }
@@ -4133,6 +4147,7 @@ pub const H2FrameParser = struct {
 
         const padding = stream.getPadding(encoded_size, buffer.len - 1);
         const payload_size = encoded_size + (if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0);
+        log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, encoded_size, buffer.len - 1, payload_size });
         if (padding != 0) {
             flags |= @intFromEnum(HeadersFrameFlags.PADDED);
         }

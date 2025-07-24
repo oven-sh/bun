@@ -343,9 +343,9 @@ pub fn isFilteredDependencyOrWorkspace(
         if (manager.options.log_level.isVerbose()) {
             const meta = &pkg_metas[pkg_id];
             const name = lockfile.str(&pkg_names[pkg_id]);
-            const os_match = if (manager.options.target_os) |os| meta.os.isMatchWithTarget(os) else true;
-            const arch_match = if (manager.options.target_cpu) |cpu| meta.arch.isMatchWithTarget(cpu) else true;
-            const libc_match = if (manager.options.target_libc) |libc| meta.libc.isMatchWithTarget(libc) else true;
+            const os_match = meta.os.isMatchWithTarget(manager.options.target_os orelse meta.os);
+            const arch_match = meta.arch.isMatchWithTarget(manager.options.target_cpu orelse meta.arch);
+            const libc_match = meta.libc.isMatchWithTarget(manager.options.target_libc orelse meta.libc);
 
             Output.prettyError("<d>Skip installing<r> <b>{s}<r> <d>- ", .{name});
             if (!os_match) {

@@ -589,7 +589,7 @@ pub const NodeCommand = struct {
                         var dest_buf: bun.OSPathBuffer = undefined;
                         const src_path = bun.strings.toWPathNormalized(&src_buf, version_binary);
                         const dest_path = bun.strings.toWPathNormalized(&dest_buf, global_binary);
-                        
+
                         bun.copyFile(src_path, dest_path).unwrap() catch |copy_err| {
                             Output.prettyErrorln("<r><red>error:<r> Failed to copy Node binary: {}", .{copy_err});
                             Global.exit(1);

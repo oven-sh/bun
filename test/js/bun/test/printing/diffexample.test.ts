@@ -146,8 +146,8 @@ test("no color", async () => {
                                    ^
     error: expect(received).toEqual(expected)
 
-    Expected: "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0E"
-    Received: "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0D"
+    Expected: "Hello 👋 世界 🌎"
+    Received: "Hello 👋 世界 🌍"
 
 
           at <anonymous> (FILE:LINE)
@@ -185,9 +185,9 @@ test("no color", async () => {
         arabic: "اختبار",
     -   chinese: "测试文本",
     +   chinese: "测试字符串",
-        emoji: "\\uD83D\\uDD25\\uD83D\\uDCA7\\uD83C\\uDF0A",
-    -   mixed: "Hello 世界 \\uD83C\\uDF0E",
-    +   mixed: "Hello 世界 \\uD83C\\uDF0D",
+        emoji: "🔥💧🌊",
+    -   mixed: "Hello 世界 🌎",
+    +   mixed: "Hello 世界 🌍",
       }
 
     - Expected  - 2
@@ -403,8 +403,8 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-    Expected: "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0D!"
-    Received: "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0E!"
+    Expected: "Hello 👋 世界 🌍!"
+    Received: "Hello 👋 世界 🌎!"
 
 
           at <anonymous> (FILE:LINE)

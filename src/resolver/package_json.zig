@@ -832,10 +832,11 @@ pub const PackageJSON = struct {
                                 arch.apply(str);
                             }
                         }
-
                         package_json.arch = arch.combine();
                     } else if (os_field.asString(bun.default_allocator)) |str| {
-                        package_json.arch = Architecture.fromString(str);
+                        var arch = Architecture.none.negatable();
+                        arch.apply(str);
+                        package_json.arch = arch.combine();
                     }
                 }
 
@@ -848,10 +849,11 @@ pub const PackageJSON = struct {
                                 os.apply(str);
                             }
                         }
-
                         package_json.os = os.combine();
                     } else if (os_field.asString(bun.default_allocator)) |str| {
-                        package_json.os = OperatingSystem.fromString(str);
+                        var os = OperatingSystem.none.negatable();
+                        os.apply(str);
+                        package_json.os = os.combine();
                     }
                 }
 
@@ -866,7 +868,9 @@ pub const PackageJSON = struct {
                         }
                         package_json.libc = libc.combine();
                     } else if (libc_field.asString(bun.default_allocator)) |str| {
-                        package_json.libc = Libc.fromString(str);
+                        var libc = Libc.none.negatable();
+                        libc.apply(str);
+                        package_json.libc = libc.combine();
                     }
                 }
 

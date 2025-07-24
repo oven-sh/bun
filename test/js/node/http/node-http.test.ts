@@ -3350,3 +3350,62 @@ describe("HTTP Server Security Tests - Advanced", () => {
     });
   });
 });
+
+it("rejectUnauthorized in agents should work", async () => {
+  using server = Bun.serve({
+    tls: COMMON_TLS_CERT,
+    fetch(req) {
+      return new Response("Hello World");
+    },
+  });
+
+  for (const url of [server.url, server.url.href]) {
+    {
+      const { promise, resolve, reject } = Promise.withResolvers();
+
+      const req = https.request(
+        {
+          url,
+          agent: new https.Agent({
+            rejectUnauthorized: false,
+          }),
+        },
+        res => {
+          try {
+            expect(res.statusCode).toBe(200);
+            expect(res.headers["content-type"]).toBe("text/plain;charset=utf-8");
+            expect(res.headers["content-length"]).toBe("11");
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+        },
+      );
+      req.on("error", reject);
+      req.end();
+      await promise;
+    }
+  }
+  {
+    const rejectUnauthorized = https.globalAgent.options.rejectUnauthorized;
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      https.globalAgent.options.rejectUnauthorized = false;
+      const req = https.request(server.url, res => {
+        try {
+          expect(res.statusCode).toBe(200);
+          expect(res.headers["content-type"]).toBe("text/plain;charset=utf-8");
+          expect(res.headers["content-length"]).toBe("11");
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+      req.on("error", reject);
+      req.end();
+      await promise;
+    } finally {
+      https.globalAgent.options.rejectUnauthorized = rejectUnauthorized;
+    }
+  }
+});

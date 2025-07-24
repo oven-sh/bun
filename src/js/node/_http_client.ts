@@ -614,8 +614,7 @@ function ClientRequest(input, options, cb) {
     const urlStr = input;
     try {
       var urlObject = new URL(urlStr);
-    } catch (_err) {
-      void _err;
+    } catch {
       throw $ERR_INVALID_URL(`Invalid URL: ${urlStr}`);
     }
     input = urlToHttpOptions(urlObject);
@@ -634,7 +633,16 @@ function ClientRequest(input, options, cb) {
   } else {
     options = ObjectAssign(input || {}, options);
   }
-
+  {
+    const url = options.url;
+    if (typeof url === "string") {
+      try {
+        options.url = new URL(url);
+      } catch {
+        throw $ERR_INVALID_URL(`Invalid URL: ${url}`);
+      }
+    }
+  }
   this[kTls] = null;
   this[kAbortController] = null;
 
@@ -668,7 +676,7 @@ function ClientRequest(input, options, cb) {
   }
 
   const defaultPort = options.defaultPort || this[kAgent].defaultPort;
-  const port = (this[kPort] = options.port || defaultPort || 80);
+  const port = (this[kPort] = options?.url?.port || options.port || defaultPort || 80);
   this[kUseDefaultPort] = this[kPort] === defaultPort;
   const host =
     (this[kHost] =

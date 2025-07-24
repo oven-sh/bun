@@ -1,5 +1,5 @@
 pub const Installer = struct {
-    trusted_dependencies_mutex: bun.Mutex,
+    trusted_dependencies_mutex: Mutex,
     // this is not const for `lockfile.trusted_dependencies`
     lockfile: *Lockfile,
 
@@ -13,8 +13,8 @@ pub const Installer = struct {
 
     store: *const Store,
 
-    tasks: bun.UnboundedQueue(Task, .next) = .{},
-    preallocated_tasks: Task.Preallocated,
+    task_queue: bun.UnboundedQueue(Task, .next) = .{},
+    tasks: []Task,
 
     supported_backend: std.atomic.Value(PackageInstall.Method),
 
@@ -25,13 +25,9 @@ pub const Installer = struct {
     }
 
     pub fn startTask(this: *Installer, entry_id: Store.Entry.Id) void {
-        const task = this.preallocated_tasks.get();
-
-        task.* = .{
-            .entry_id = entry_id,
-            .installer = this,
-        };
-
+        const task = &this.tasks[entry_id.get()];
+        bun.debugAssert(task.result == .none or task.result == .blocked);
+        task.result = .none;
         this.manager.thread_pool.schedule(.from(&task.task));
     }
 
@@ -256,15 +252,13 @@ pub const Installer = struct {
     }
 
     pub const Task = struct {
-        const Preallocated = bun.HiveArray(Task, 128).Fallback;
-
         entry_id: Store.Entry.Id,
         installer: *Installer,
 
-        task: ThreadPool.Task = .{ .callback = &callback },
-        next: ?*Task = null,
+        task: ThreadPool.Task,
+        next: ?*Task,
 
-        result: Result = .none,
+        result: Result,
 
         const Result = union(enum) {
             none,
@@ -424,9 +418,9 @@ pub const Installer = struct {
 
                             backend: switch (PackageInstall.Method.hardlink) {
                                 .hardlink => {
-                                    var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDir();
+                                    var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDirLongPath();
                                     defer src.deinit();
-                                    src.append(pkg_res.value.folder.slice(string_buf));
+                                    src.appendJoin(pkg_res.value.folder.slice(string_buf));
 
                                     var dest: bun.RelPath(.{ .unit = .os, .sep = .auto }) = .init();
                                     defer dest.deinit();
@@ -444,6 +438,23 @@ pub const Installer = struct {
                                         .err => |err| {
                                             if (err.getErrno() == .XDEV) {
                                                 continue :backend .copyfile;
+                                            }
+
+                                            if (PackageManager.verbose_install) {
+                                                Output.prettyErrorln(
+                                                    \\<red><b>error<r><d>:<r>Failed to hardlink package folder
+                                                    \\{}
+                                                    \\<d>From: {s}<r>
+                                                    \\<d>  To: {}<r>
+                                                    \\<r>
+                                                ,
+                                                    .{
+                                                        err,
+                                                        bun.fmt.fmtOSPath(src.slice(), .{ .path_sep = .auto }),
+                                                        bun.fmt.fmtOSPath(dest.slice(), .{ .path_sep = .auto }),
+                                                    },
+                                                );
+                                                Output.flush();
                                             }
                                             return .failure(.{ .link_package = err });
                                         },
@@ -486,6 +497,22 @@ pub const Installer = struct {
                                     switch (try file_copier.copy(&.{})) {
                                         .result => {},
                                         .err => |err| {
+                                            if (PackageManager.verbose_install) {
+                                                Output.prettyErrorln(
+                                                    \\<red><b>error<r><d>:<r>Failed to copy package
+                                                    \\{}
+                                                    \\<d>From: {s}<r>
+                                                    \\<d>  To: {}<r>
+                                                    \\<r>
+                                                ,
+                                                    .{
+                                                        err,
+                                                        bun.fmt.fmtOSPath(src_path.slice(), .{ .path_sep = .auto }),
+                                                        bun.fmt.fmtOSPath(dest.slice(), .{ .path_sep = .auto }),
+                                                    },
+                                                );
+                                                Output.flush();
+                                            }
                                             return .failure(.{ .link_package = err });
                                         },
                                     }
@@ -553,13 +580,22 @@ pub const Installer = struct {
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {
                                 .result => |fd| fd,
                                 .err => |err| {
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyErrorln(
+                                            "Failed to open cache directory for hardlink: {s}",
+                                            .{
+                                                pkg_cache_dir_subpath.slice(),
+                                            },
+                                        );
+                                        Output.flush();
+                                    }
                                     return .failure(.{ .link_package = err });
                                 },
                             };
 
-                            var src: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = .from(cache_dir_path.slice());
+                            var src: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = .fromLongPath(cache_dir_path.slice());
                             defer src.deinit();
-                            src.append(pkg_cache_dir_subpath.slice());
+                            src.appendJoin(pkg_cache_dir_subpath.slice());
 
                             var hardlinker: Hardlinker = .{
                                 .src_dir = cached_package_dir.?,
@@ -574,6 +610,22 @@ pub const Installer = struct {
                                         installer.supported_backend.store(.copyfile, .monotonic);
                                         continue :backend .copyfile;
                                     }
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyErrorln(
+                                            \\<red><b>error<r><d>:<r>Failed to hardlink package
+                                            \\{}
+                                            \\<d>From: {s}<r>
+                                            \\<d>  To: {}<r>
+                                            \\<r>
+                                        ,
+                                            .{
+                                                err,
+                                                pkg_cache_dir_subpath.slice(),
+                                                bun.fmt.fmtOSPath(dest_subpath.slice(), .{ .path_sep = .auto }),
+                                            },
+                                        );
+                                        Output.flush();
+                                    }
                                     return .failure(.{ .link_package = err });
                                 },
                             }
@@ -586,6 +638,22 @@ pub const Installer = struct {
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {
                                 .result => |fd| fd,
                                 .err => |err| {
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyErrorln(
+                                            \\<red><b>error<r><d>:<r>Failed to open cache directory for copyfile
+                                            \\{}
+                                            \\<d>From: {s}<r>
+                                            \\<d>  To: {}<r>
+                                            \\<r>
+                                        ,
+                                            .{
+                                                err,
+                                                pkg_cache_dir_subpath.slice(),
+                                                bun.fmt.fmtOSPath(dest_subpath.slice(), .{ .path_sep = .auto }),
+                                            },
+                                        );
+                                        Output.flush();
+                                    }
                                     return .failure(.{ .link_package = err });
                                 },
                             };
@@ -603,6 +671,22 @@ pub const Installer = struct {
                             switch (try file_copier.copy(&.{})) {
                                 .result => {},
                                 .err => |err| {
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyErrorln(
+                                            \\<red><b>error<r><d>:<r>Failed to copy package
+                                            \\{}
+                                            \\<d>From: {s}<r>
+                                            \\<d>  To: {}<r>
+                                            \\<r>
+                                        ,
+                                            .{
+                                                err,
+                                                pkg_cache_dir_subpath.slice(),
+                                                bun.fmt.fmtOSPath(dest_subpath.slice(), .{ .path_sep = .auto }),
+                                            },
+                                        );
+                                        Output.flush();
+                                    }
                                     return .failure(.{ .link_package = err });
                                 },
                             }
@@ -616,9 +700,7 @@ pub const Installer = struct {
                     const dependencies = lockfile.buffers.dependencies.items;
 
                     for (entry_dependencies[this.entry_id.get()].slice()) |dep| {
-                        const dep_node_id = entry_node_ids[dep.entry_id.get()];
-                        const dep_dep_id = node_dep_ids[dep_node_id.get()];
-                        const dep_name = dependencies[dep_dep_id].name;
+                        const dep_name = dependencies[dep.dep_id].name;
 
                         var dest: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
                         defer dest.deinit();
@@ -941,7 +1023,7 @@ pub const Installer = struct {
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .done, @src());
                     }
                     this.result = .done;
-                    this.installer.tasks.push(this);
+                    this.installer.task_queue.push(this);
                     this.installer.manager.wake();
                 },
                 .blocked => {
@@ -949,7 +1031,7 @@ pub const Installer = struct {
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .check_if_blocked, @src());
                     }
                     this.result = .blocked;
-                    this.installer.tasks.push(this);
+                    this.installer.task_queue.push(this);
                     this.installer.manager.wake();
                 },
                 .fail => |err| {
@@ -958,7 +1040,7 @@ pub const Installer = struct {
                     }
                     this.installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .monotonic);
                     this.result = .{ .err = err.clone(bun.default_allocator) };
-                    this.installer.tasks.push(this);
+                    this.installer.task_queue.push(this);
                     this.installer.manager.wake();
                 },
             }
@@ -1184,11 +1266,11 @@ pub const Installer = struct {
     }
 };
 
-// @sortImports
+const string = []const u8;
 
+const Hardlinker = @import("./Hardlinker.zig");
 const std = @import("std");
 const FileCopier = @import("./FileCopier.zig").FileCopier;
-const Hardlinker = @import("./Hardlinker.zig").Hardlinker;
 const Symlinker = @import("./Symlinker.zig").Symlinker;
 
 const bun = @import("bun");
@@ -1199,11 +1281,11 @@ const OOM = bun.OOM;
 const Output = bun.Output;
 const Progress = bun.Progress;
 const ThreadPool = bun.ThreadPool;
-const string = bun.string;
 const strings = bun.strings;
 const sys = bun.sys;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
+const Mutex = bun.threading.Mutex;
 const String = bun.Semver.String;
 
 const install = bun.install;

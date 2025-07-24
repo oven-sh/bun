@@ -1,35 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const stringZ = bun.stringZ;
-const strings = bun.strings;
-const Progress = bun.Progress;
-const install = bun.install;
-const String = bun.Semver.String;
-const PackageManager = install.PackageManager;
-const Lockfile = install.Lockfile;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
-const BuntagHashBuf = install.BuntagHashBuf;
-const buntaghashbuf_make = install.buntaghashbuf_make;
-const Repository = install.Repository;
-const Resolution = install.Resolution;
-const MutableString = bun.MutableString;
-const logger = bun.logger;
-const Npm = install.Npm;
-const initializeStore = install.initializeStore;
-const JSON = bun.JSON;
-const Walker = @import("../walker_skippable.zig");
-const ThreadPool = bun.ThreadPool;
-const JSC = bun.JSC;
-const Syscall = bun.sys;
-const FileSystem = bun.fs.FileSystem;
-const Path = bun.path;
-const PackageID = install.PackageID;
-
 pub const PackageInstall = struct {
     /// TODO: Change to bun.FD.Dir
     cache_dir: std.fs.Dir,
@@ -528,7 +496,7 @@ pub const PackageInstall = struct {
         }
     };
 
-    threadlocal var node_fs_for_package_installer: bun.JSC.Node.fs.NodeFS = .{};
+    threadlocal var node_fs_for_package_installer: bun.jsc.Node.fs.NodeFS = .{};
 
     fn initInstallDir(this: *@This(), state: *InstallDirState, destination_dir: std.fs.Dir, method: Method) Result {
         const destbase = destination_dir;
@@ -772,7 +740,7 @@ pub const PackageInstall = struct {
         src: [:0]bun.OSPathChar,
         dest: [:0]bun.OSPathChar,
         basename: u16,
-        task: bun.JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
+        task: bun.jsc.WorkPoolTask = .{ .callback = &runFromThreadPool },
         err: ?anyerror = null,
 
         pub const Queue = NewTaskQueue(@This());
@@ -808,7 +776,7 @@ pub const PackageInstall = struct {
             });
         }
 
-        pub fn runFromThreadPool(task: *bun.JSC.WorkPoolTask) void {
+        pub fn runFromThreadPool(task: *bun.jsc.WorkPoolTask) void {
             var iter: *@This() = @fieldParentPtr("task", task);
             defer queue.completeOne();
             if (iter.run()) |err| {
@@ -1169,9 +1137,9 @@ pub const PackageInstall = struct {
                     pub const new = bun.TrivialNew(@This());
 
                     absolute_path: []const u8,
-                    task: JSC.WorkPoolTask = .{ .callback = &run },
+                    task: jsc.WorkPoolTask = .{ .callback = &run },
 
-                    pub fn run(task: *JSC.WorkPoolTask) void {
+                    pub fn run(task: *jsc.WorkPoolTask) void {
                         var unintall_task: *@This() = @fieldParentPtr("task", task);
                         var debug_timer = bun.Output.DebugTimer.start();
                         defer {
@@ -1496,3 +1464,38 @@ pub const PackageInstall = struct {
         return this.installWithCopyfile(destination_dir);
     }
 };
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const Walker = @import("../walker_skippable.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.json;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Path = bun.path;
+const Progress = bun.Progress;
+const Syscall = bun.sys;
+const ThreadPool = bun.ThreadPool;
+const jsc = bun.jsc;
+const logger = bun.logger;
+const strings = bun.strings;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const FileSystem = bun.fs.FileSystem;
+const String = bun.Semver.String;
+
+const install = bun.install;
+const BuntagHashBuf = install.BuntagHashBuf;
+const Lockfile = install.Lockfile;
+const Npm = install.Npm;
+const PackageID = install.PackageID;
+const PackageManager = install.PackageManager;
+const Repository = install.Repository;
+const Resolution = install.Resolution;
+const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
+const buntaghashbuf_make = install.buntaghashbuf_make;
+const initializeStore = install.initializeStore;

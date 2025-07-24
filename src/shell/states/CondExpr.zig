@@ -200,7 +200,7 @@ fn doStat(this: *CondExpr) Yield {
     const stat_task = bun.new(ShellCondExprStatTask, .{
         .task = .{
             .event_loop = this.base.eventLoop(),
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.base.eventLoop()),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.base.eventLoop()),
         },
         .condexpr = this,
         .path = this.args.items[0],
@@ -253,7 +253,7 @@ pub fn writeFailingError(this: *CondExpr, comptime fmt: []const u8, args: anytyp
     return this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
 }
 
-pub fn onIOWriterChunk(this: *CondExpr, _: usize, err: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *CondExpr, _: usize, err: ?jsc.SystemError) Yield {
     if (err != null) {
         defer err.?.deref();
         const exit_code: ExitCode = @intFromEnum(err.?.getErrno());
@@ -268,27 +268,29 @@ pub fn onIOWriterChunk(this: *CondExpr, _: usize, err: ?JSC.SystemError) Yield {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
+const assert = bun.assert;
+
+const jsc = bun.jsc;
+const Maybe = jsc.Maybe;
+
 const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellExecEnv = Interpreter.ShellExecEnv;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-const ShellSyscall = bun.shell.interpret.ShellSyscall;
-
 const Async = bun.shell.Interpreter.Async;
 const Binary = bun.shell.Interpreter.Binary;
 const Expansion = bun.shell.Interpreter.Expansion;
-const Stmt = bun.shell.Interpreter.Stmt;
+const IO = bun.shell.Interpreter.IO;
 const Pipeline = bun.shell.Interpreter.Pipeline;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Stmt = bun.shell.Interpreter.Stmt;
 
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
-const assert = bun.assert;
+const ShellSyscall = bun.shell.interpret.ShellSyscall;
 const ShellTask = bun.shell.interpret.ShellTask;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;

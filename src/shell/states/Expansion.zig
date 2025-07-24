@@ -743,8 +743,8 @@ pub const ShellGlobTask = struct {
     walker: *GlobWalker,
 
     result: std.ArrayList([:0]const u8),
-    event_loop: JSC.EventLoopHandle,
-    concurrent_task: JSC.EventLoopTask,
+    event_loop: jsc.EventLoopHandle,
+    concurrent_task: jsc.EventLoopTask,
     // This is a poll because we want it to enter the uSockets loop
     ref: bun.Async.KeepAlive = .{},
     err: ?Err = null,
@@ -759,7 +759,7 @@ pub const ShellGlobTask = struct {
         pub fn toJS(this: Err, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
                 .syscall => |err| err.toJS(globalThis),
-                .unknown => |err| JSC.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
+                .unknown => |err| jsc.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
     };
@@ -771,7 +771,7 @@ pub const ShellGlobTask = struct {
         this.* = .{
             .alloc_scope = alloc_scope,
             .event_loop = expansion.base.eventLoop(),
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(expansion.base.eventLoop()),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(expansion.base.eventLoop()),
             .walker = walker,
             .expansion = expansion,
             .result = std.ArrayList([:0]const u8).init(this.alloc_scope.allocator()),
@@ -848,36 +848,37 @@ pub const ShellGlobTask = struct {
 };
 
 const std = @import("std");
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-
 const Allocator = std.mem.Allocator;
 
-const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
+const bun = @import("bun");
+const assert = bun.assert;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const Maybe = jsc.Maybe;
+
 const ExitCode = bun.shell.ExitCode;
-const GlobWalker = bun.shell.interpret.GlobWalker;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
+
+const Interpreter = bun.shell.Interpreter;
+const Assigns = bun.shell.Interpreter.Assigns;
+const Cmd = bun.shell.Interpreter.Cmd;
+const CondExpr = bun.shell.Interpreter.CondExpr;
+const IO = bun.shell.Interpreter.IO;
+const Script = bun.shell.Interpreter.Script;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-const EnvStr = bun.shell.interpret.EnvStr;
-
-const Script = bun.shell.Interpreter.Script;
-const Cmd = bun.shell.Interpreter.Cmd;
-const Assigns = bun.shell.Interpreter.Assigns;
-const CondExpr = bun.shell.Interpreter.CondExpr;
 const Subshell = bun.shell.Interpreter.Subshell;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const Maybe = JSC.Maybe;
-const assert = bun.assert;
 const Arena = bun.shell.interpret.Arena;
 const Braces = bun.shell.interpret.Braces;
+const EnvStr = bun.shell.interpret.EnvStr;
+const GlobWalker = bun.shell.interpret.GlobWalker;
 const OOM = bun.shell.interpret.OOM;
-const WorkPoolTask = bun.shell.interpret.WorkPoolTask;
-const WorkPool = bun.shell.interpret.WorkPool;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const Syscall = bun.shell.interpret.Syscall;
+const WorkPool = bun.shell.interpret.WorkPool;
+const WorkPoolTask = bun.shell.interpret.WorkPoolTask;
+const log = bun.shell.interpret.log;

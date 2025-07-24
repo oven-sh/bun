@@ -1,7 +1,3 @@
-const std = @import("std");
-const builtin = @import("builtin");
-const bun = @import("bun");
-
 pub const BuildTarget = enum { native, wasm, wasi };
 pub const build_target: BuildTarget = brk: {
     if (@import("builtin").cpu.arch.isWasm()) {
@@ -177,3 +173,7 @@ else if (isAarch64)
     .arm64
 else
     @compileError("Please add your architecture to the Architecture enum");
+
+const builtin = @import("builtin");
+const bun = @import("bun");
+const std = @import("std");

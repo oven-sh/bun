@@ -1,15 +1,8 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
-const bits = bun.bits;
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
-
-const properties_impl = @import("./properties_impl.zig");
 
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
@@ -239,7 +232,6 @@ const Position = position.Position;
 
 const Result = css.Result;
 
-const BabyList = bun.BabyList;
 const SmallList = css.SmallList;
 pub const Property = union(PropertyIdTag) {
     @"background-color": CssColor,
@@ -10360,3 +10352,11 @@ pub const PropertyIdTag = enum(u16) {
         };
     }
 };
+
+const properties_impl = @import("./properties_impl.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const bits = bun.bits;

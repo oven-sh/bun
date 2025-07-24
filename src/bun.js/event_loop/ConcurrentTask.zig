@@ -7,6 +7,7 @@
 //!
 //! If `auto_delete` is true, the task is automatically deallocated when it's finished.
 //! Otherwise, it's expected that the containing struct will deallocate the task.
+
 const ConcurrentTask = @This();
 
 task: Task = undefined,
@@ -30,18 +31,18 @@ pub fn create(task: Task) *ConcurrentTask {
 }
 
 pub fn createFrom(task: anytype) *ConcurrentTask {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     return create(Task.init(task));
 }
 
 pub fn fromCallback(ptr: anytype, comptime callback: anytype) *ConcurrentTask {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
 
     return create(ManagedTask.New(std.meta.Child(@TypeOf(ptr)), callback).init(ptr));
 }
 
 pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *ConcurrentTask {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
 
     this.* = .{
         .task = Task.init(of),
@@ -52,8 +53,10 @@ pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *Concur
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
-const Task = JSC.Task;
-const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
-const ManagedTask = JSC.ManagedTask;
+const UnboundedQueue = bun.threading.UnboundedQueue;
+
+const jsc = bun.jsc;
+const ManagedTask = jsc.ManagedTask;
+const Task = jsc.Task;

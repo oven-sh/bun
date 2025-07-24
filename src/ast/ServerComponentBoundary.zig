@@ -112,12 +112,10 @@ pub const List = struct {
     };
 };
 
-// @sortImports
-
 const bun = @import("bun");
 const std = @import("std");
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const Index = js_ast.Index;
 const ServerComponentBoundary = js_ast.ServerComponentBoundary;
 const UseDirective = js_ast.UseDirective;

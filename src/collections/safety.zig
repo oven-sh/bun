@@ -26,10 +26,10 @@ fn hasPtr(alloc: Allocator) bool {
     return alloc.vtable == arena_vtable or
         bun.AllocationScope.downcast(alloc) != null or
         bun.MemoryReportingAllocator.isInstance(alloc) or
-        ((comptime bun.Environment.isLinux) and bun.linux.memfd_allocator.isInstance(alloc)) or
+        ((comptime bun.Environment.isLinux) and LinuxMemFdAllocator.isInstance(alloc)) or
         bun.MaxHeapAllocator.isInstance(alloc) or
-        alloc.vtable == c_allocator.vtable or
-        alloc.vtable == z_allocator.vtable or
+        alloc.vtable == bun.allocators.c_allocator.vtable or
+        alloc.vtable == bun.allocators.z_allocator.vtable or
         bun.MimallocArena.isInstance(alloc) or
         bun.jsc.CachedBytecode.isInstance(alloc) or
         bun.bundle_v2.allocatorHasPointer(alloc) or
@@ -84,8 +84,5 @@ pub const AllocPtr = struct {
 const bun = @import("bun");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const LinuxMemFdAllocator = bun.allocators.LinuxMemFdAllocator;
 const enabled = bun.Environment.ci_assert;
-
-const global_allocators = @import("./allocators/memory_allocator.zig");
-const c_allocator = global_allocators.c_allocator;
-const z_allocator = global_allocators.z_allocator;

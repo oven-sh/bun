@@ -7,5 +7,6 @@ pub const NPMClient = struct {
     };
 };
 
+const string = []const u8;
+
 const bun = @import("bun");
-const string = bun.string;

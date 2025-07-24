@@ -170,14 +170,14 @@ pub const TransformTask = struct {
         }
 
         const global = this.global;
-        const code = this.output_code;
+        var code = this.output_code;
         this.output_code = bun.String.empty;
         this.deinit();
 
-        return finish(code, global, promise);
+        return finish(&code, global, promise);
     }
 
-    noinline fn finish(code: bun.String, global: *JSGlobalObject, promise: *jsc.JSPromise) bun.JSExecutionTerminated!void {
+    noinline fn finish(code: *bun.String, global: *JSGlobalObject, promise: *jsc.JSPromise) bun.JSExecutionTerminated!void {
         try promise.resolve(global, code.transferToJS(global));
     }
 

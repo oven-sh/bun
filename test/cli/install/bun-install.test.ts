@@ -39,6 +39,7 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry.js";
+import { getAbi } from "../../../scripts/utils.mjs";
 
 expect.extend({
   toBeWorkspaceLink,
@@ -8796,6 +8797,51 @@ describe("platform-specific dependencies", () => {
 
     const platformDir = join(package_dir, "node_modules", "@platform-test");
     const installedPackages = existsSync(platformDir) ? readdirSync(platformDir) : [];
+
+    expect(installedPackages).toContainValues(packages);
+    expect(installedPackages).toHaveLength(packages.length);
+  });
+
+  test(`installs current platform of (os: ${process.platform}, cpu: ${process.arch}, libc: ${getAbi() || "n/a"})`, async () => {
+    const urls: string[] = [];
+    setHandler(e => platformTestHandler(e, urls));
+
+    await write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "test-registry-platform-filtering",
+        dependencies: {
+          "platform-test": "1.0.0",
+        },
+      }),
+    );
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const [err, exitCode] = await Promise.all([new Response(stderr).text(), exited]);
+    if (exitCode !== 0) {
+      console.log(err);
+    }
+    expect(exitCode).toBe(0);
+
+    const platformDir = join(package_dir, "node_modules", "@platform-test");
+    const installedPackages = existsSync(platformDir) ? readdirSync(platformDir) : [];
+
+    const packages = [`${process.platform}-${process.arch}`] as string[];
+    if (process.platform === "linux") {
+      const abi = getAbi();
+      if (abi === "musl") {
+        packages.push(`linux-${process.arch}-musl`);
+      } else if (abi === "gnu") {
+        packages.push(`linux-${process.arch}-glibc`);
+      }
+    }
 
     expect(installedPackages).toContainValues(packages);
     expect(installedPackages).toHaveLength(packages.length);

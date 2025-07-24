@@ -474,7 +474,7 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
     .split(/\r?\n/)
     .slice(1);
   if (isLinux) {
-    out1 = out1.replace("12 packages installed", "13 packages installed");
+    out1 = out1.map(line => line.replace("12 packages installed", "13 packages installed"));
   }
   expect(out1).toMatchInlineSnapshot(`
     [

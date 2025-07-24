@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import path from "path";
+import { normalizeBunSnapshot } from "harness";
 
 test("hashbang still works after bounds check fix", async () => {
   const dir = tempDirWithFiles("hashbang", {
@@ -22,9 +24,7 @@ test("hashbang still works after bounds check fix", async () => {
   expect(stdout.trim()).toBe("hello");
 });
 
-import { expect, test } from "bun:test";
-import path from "path";
-import { normalizeBunSnapshot, tempDirWithFiles } from "harness";
+
 
 test("lexer handles single # character without bounds error", async () => {
   const dir = tempDirWithFiles("single-hash", {

@@ -4840,7 +4840,7 @@ pub const Expect = struct {
         }
 
         // Handle failure
-        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
 
         const signature = comptime getSignature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);

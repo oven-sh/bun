@@ -21,3 +21,29 @@ test("hashbang still works after bounds check fix", async () => {
   expect(exitCode).toBe(0);
   expect(stdout.trim()).toBe("hello");
 });
+
+import { expect, test } from "bun:test";
+import path from "path";
+import { normalizeBunSnapshot, tempDirWithFiles } from "harness";
+
+test("lexer handles single # character without bounds error", async () => {
+  const dir = tempDirWithFiles("single-hash", {
+    "single-hash.js": "#",
+  });
+
+  // Using Bun.build to exercise the lexer directly
+  try {
+    await Bun.build({
+      entrypoints: [path.join(dir, "single-hash.js")],
+      target: "node",
+    });
+    expect.unreachable();
+  } catch (e) {
+    expect(normalizeBunSnapshot(Bun.inspect(e!.errors[0]), dir)).toMatchInlineSnapshot(`
+      "1 | #
+          ^
+      error: Syntax Error
+          at <dir>/single-hash.js:1:1"
+    `);
+  }
+});

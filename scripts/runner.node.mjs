@@ -1809,7 +1809,7 @@ function formatTestToMarkdown(result, concise, retries) {
       markdown += ` on ${platform}`;
     }
     if (retries > 0) {
-      markdown += ` (${retries} retries)`;
+      markdown += ` (${retries} ${retries === 1 ? "retry" : "retries"})`;
     }
 
     if (concise) {

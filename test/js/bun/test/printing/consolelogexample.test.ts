@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 test("Bun.inspect", async () => {
   expect(Bun.inspect("abc\ndef\nghi")).toMatchInlineSnapshot(`""abc\\ndef\\nghi""`);
@@ -14,6 +14,10 @@ test("console.log output", async () => {
   const result = Bun.spawn({
     cmd: [bunExe(), import.meta.dir + "/consolelog.fixture.ts"],
     stdio: ["inherit", "pipe", "pipe"],
+    env: {
+      ...bunEnv,
+      FORCE_COLOR: "0",
+    },
   });
   await result.exited;
   const stdout = await result.stdout.text();

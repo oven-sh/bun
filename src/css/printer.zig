@@ -123,7 +123,7 @@ pub fn Printer(comptime Writer: type) type {
         error_kind: ?css.PrinterError = null,
         import_info: ?ImportInfo = null,
         public_path: []const u8,
-        symbols: *const bun.JSAst.Symbol.Map,
+        symbols: *const bun.ast.Symbol.Map,
         local_names: ?*const css.LocalsResultsMap = null,
         /// NOTE This should be the same mimalloc heap arena allocator
         allocator: Allocator,
@@ -241,7 +241,7 @@ pub fn Printer(comptime Writer: type) type {
             options: PrinterOptions,
             import_info: ?ImportInfo,
             local_names: ?*const css.LocalsResultsMap,
-            symbols: *const bun.JSAst.Symbol.Map,
+            symbols: *const bun.ast.Symbol.Map,
         ) This {
             return .{
                 .sources = null,

@@ -92,7 +92,7 @@ pub fn BundleThread(CompletionStruct: type) type {
                 instance.generation +|= 1;
 
                 if (has_bundled) {
-                    bun.Mimalloc.mi_collect(false);
+                    bun.mimalloc.mi_collect(false);
                     has_bundled = false;
                 }
 
@@ -102,7 +102,7 @@ pub fn BundleThread(CompletionStruct: type) type {
 
         /// This is called from `Bun.build` in JavaScript.
         fn generateInNewThread(completion: *CompletionStruct, generation: bun.Generation) !void {
-            var heap = try ThreadlocalArena.init();
+            var heap = try ThreadLocalArena.init();
             defer heap.deinit();
 
             const allocator = heap.allocator();
@@ -121,9 +121,9 @@ pub fn BundleThread(CompletionStruct: type) type {
                 transpiler,
                 null, // TODO: Kit
                 allocator,
-                JSC.AnyEventLoop.init(allocator),
+                jsc.AnyEventLoop.init(allocator),
                 false,
-                JSC.WorkPool.get(),
+                jsc.WorkPool.get(),
                 heap,
             );
 
@@ -161,9 +161,9 @@ pub fn BundleThread(CompletionStruct: type) type {
     };
 }
 
-pub const Ref = @import("../ast/base.zig").Ref;
+pub const Ref = bun.ast.Ref;
 
-pub const Index = @import("../ast/base.zig").Index;
+pub const Index = bun.ast.Index;
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
@@ -171,21 +171,22 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 
 const Logger = @import("../logger.zig");
 const Timer = @import("../system_timer.zig");
-const allocators = @import("../allocators.zig");
-const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
 const options = @import("../options.zig");
 const std = @import("std");
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 
 const bun = @import("bun");
 const Async = bun.Async;
 const Environment = bun.Environment;
-const JSC = bun.JSC;
 const Output = bun.Output;
 const Transpiler = bun.Transpiler;
 const bake = bun.bake;
 const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const jsc = bun.jsc;
+
+const allocators = bun.allocators;
+const ThreadLocalArena = bun.allocators.MimallocArena;
 
 const bundler = bun.bundle_v2;
 const BundleV2 = bundler.BundleV2;

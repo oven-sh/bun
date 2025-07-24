@@ -206,7 +206,8 @@ pub const Integrity = extern struct {
     }
 };
 
-const bun = @import("bun");
 const std = @import("std");
-const strings = @import("../string_immutable.zig");
 const Crypto = @import("../sha.zig").Hashers;
+
+const bun = @import("bun");
+const strings = bun.strings;

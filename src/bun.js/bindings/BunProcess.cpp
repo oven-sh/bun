@@ -537,6 +537,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
+        // Module self-registered via static constructor
+        if (globalObject->m_pendingNapiModule) {
+            // Execute the stored registration function now that dlopen has completed
+            Napi::executePendingNapiModule(globalObject);
+
+            // Clear the pending module
+            globalObject->m_pendingNapiModule = {};
+        }
+
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         globalObject->napiModuleRegisterCallCount = 0;
         globalObject->m_pendingNapiModuleAndExports[0].clear();

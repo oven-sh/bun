@@ -5,11 +5,11 @@ import { normalizeBunSnapshot } from "harness";
 
 test("hashbang still works after bounds check fix", async () => {
   const dir = tempDirWithFiles("hashbang", {
-    "script.js": "#!/usr/bin/env node\nconsole.log('hello');",
+    "script.js": "#!/usr/bin/env bun\nconsole.log('hello');",
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "script.js"],
+    cmd: [bunExe(), "--bun", "script.js"],
     env: bunEnv,
     cwd: dir,
   });

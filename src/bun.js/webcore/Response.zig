@@ -780,4 +780,9 @@ const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;
 const Request = jsc.WebCore.Request;
 
+const Blob = jsc.WebCore.Blob;
+const InternalBlob = jsc.WebCore.Blob.Internal;
 const HTMLBundle = jsc.API.HTMLBundle;
+
+const Body = jsc.WebCore.Body;
+const BodyMixin = jsc.WebCore.Body.Mixin;

@@ -490,7 +490,7 @@ pub const Value = union(Tag) {
                 return value;
             },
             .Route => {
-                return JSC.WebCore.ReadableStream.empty(globalThis);
+                return jsc.WebCore.ReadableStream.empty(globalThis);
             },
             .Locked => {
                 var locked = &this.Locked;

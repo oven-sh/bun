@@ -485,7 +485,7 @@ pub const Route = struct {
         server: ?AnyServer = null,
         route: *Route,
         status_code: u16 = 200,
-        headers: ?*JSC.WebCore.FetchHeaders = null,
+        headers: ?*jsc.WebCore.FetchHeaders = null,
 
         pub fn deinit(this: *PendingResponse) void {
             if (this.is_response_pending) {

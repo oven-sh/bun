@@ -1963,7 +1963,7 @@ pub const H2FrameParser = struct {
 
         const end: usize = @min(@as(usize, @intCast(this.remainingLength)), data.len);
         var payload = data[0..end];
-        // windows size considering the full frame.length received so far
+        // window size considering the full frame.length received so far
         this.adjustWindowSize(stream, @truncate(payload.len));
         const previous_remaining_length: isize = this.remainingLength;
 

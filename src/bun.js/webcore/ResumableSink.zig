@@ -182,7 +182,7 @@ pub fn ResumableSink(
                     log("paused", .{});
                     this.status = .paused;
                 }
-                return jsc.jsBoolean(should_continue);
+                return .jsBoolean(should_continue);
             }
 
             return globalThis.throwInvalidArguments("ResumableSink.write requires a string or buffer", .{});

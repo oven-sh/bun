@@ -259,7 +259,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
 
     // We store based on the option value rather than option type,
     // preserving the users intent for author to deal with.
-    const new_value = if (value.isUndefined()) jsc.jsBoolean(!negative) else value;
+    const new_value: JSValue = if (value.isUndefined()) .jsBoolean(!negative) else value;
 
     const is_multiple = if (option_idx) |idx| options[idx].multiple else false;
     if (is_multiple) {
@@ -660,7 +660,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     // Phase 0.B: Parse and validate config
 
     const config_strict: JSValue = (if (config) |c| try c.getOwn(globalThis, "strict") else null) orelse JSValue.jsBoolean(true);
-    var config_allow_positionals: JSValue = if (config) |c| try c.getOwn(globalThis, "allowPositionals") orelse jsc.jsBoolean(!config_strict.toBoolean()) else jsc.jsBoolean(!config_strict.toBoolean());
+    var config_allow_positionals: JSValue = if (config) |c| try c.getOwn(globalThis, "allowPositionals") orelse .jsBoolean(!config_strict.toBoolean()) else .jsBoolean(!config_strict.toBoolean());
     const config_return_tokens: JSValue = (if (config) |c| try c.getOwn(globalThis, "tokens") else null) orelse JSValue.jsBoolean(false);
     const config_allow_negative: JSValue = if (config) |c| try c.getOwn(globalThis, "allowNegative") orelse .false else .false;
     const config_options: JSValue = if (config) |c| try c.getOwn(globalThis, "options") orelse .js_undefined else .js_undefined;
@@ -668,7 +668,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     const strict = try validators.validateBoolean(globalThis, config_strict, "strict", .{});
 
     if (config_allow_positionals.isUndefinedOrNull()) {
-        config_allow_positionals = jsc.jsBoolean(!strict);
+        config_allow_positionals = .jsBoolean(!strict);
     }
 
     const allow_positionals = try validators.validateBoolean(globalThis, config_allow_positionals, "allowPositionals", .{});

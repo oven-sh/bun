@@ -417,42 +417,55 @@ pub fn migrateNPMLockfile(
 
                 .arch = if (pkg.get("cpu")) |cpu_array| arch: {
                     var arch = Npm.Architecture.none.negatable();
-                    if (cpu_array.data != .e_array) return error.InvalidNPMLockfile;
-                    if (cpu_array.data.e_array.items.len == 0) {
-                        break :arch arch.combine();
-                    }
-
-                    for (cpu_array.data.e_array.items.slice()) |item| {
-                        if (item.data != .e_string) return error.InvalidNPMLockfile;
-                        arch.apply(item.data.e_string.data);
+                    if (cpu_array.data == .e_array) {
+                        if (cpu_array.data.e_array.items.len == 0) {
+                            break :arch arch.combine();
+                        }
+                        for (cpu_array.data.e_array.items.slice()) |item| {
+                            if (item.data != .e_string) return error.InvalidNPMLockfile;
+                            arch.apply(item.data.e_string.data);
+                        }
+                    } else if (cpu_array.data == .e_string) {
+                        arch.apply(cpu_array.data.e_string.data);
+                    } else {
+                        return error.InvalidNPMLockfile;
                     }
                     break :arch arch.combine();
                 } else .all,
 
                 .os = if (pkg.get("os")) |os_array| os: {
                     var os = Npm.OperatingSystem.none.negatable();
-                    if (os_array.data != .e_array) return error.InvalidNPMLockfile;
-                    if (os_array.data.e_array.items.len == 0) {
-                        break :os .all;
+                    if (os_array.data == .e_array) {
+                        if (os_array.data.e_array.items.len == 0) {
+                            break :os .all;
+                        }
+                        for (os_array.data.e_array.items.slice()) |item| {
+                            if (item.data != .e_string) return error.InvalidNPMLockfile;
+                            os.apply(item.data.e_string.data);
+                        }
+                    } else if (os_array.data == .e_string) {
+                        os.apply(os_array.data.e_string.data);
+                    } else {
+                        return error.InvalidNPMLockfile;
                     }
 
-                    for (os_array.data.e_array.items.slice()) |item| {
-                        if (item.data != .e_string) return error.InvalidNPMLockfile;
-                        os.apply(item.data.e_string.data);
-                    }
                     break :os os.combine();
                 } else .all,
 
                 .libc = if (pkg.get("libc")) |libc_array| libc: {
                     var libc = Npm.Libc.none.negatable();
-                    if (libc_array.data != .e_array) return error.InvalidNPMLockfile;
-                    if (libc_array.data.e_array.items.len == 0) {
-                        break :libc .all;
-                    }
-
-                    for (libc_array.data.e_array.items.slice()) |item| {
-                        if (item.data != .e_string) return error.InvalidNPMLockfile;
-                        libc.apply(item.data.e_string.data);
+                    if (libc_array.data == .e_array) {
+                        if (libc_array.data.e_array.items.len == 0) {
+                            break :libc .all;
+                        }
+                        for (libc_array.data.e_array.items.slice()) |item| {
+                            if (item.data != .e_string) return error.InvalidNPMLockfile;
+                            libc.apply(item.data.e_string.data);
+                        }
+                    } else if (libc_array.data == .e_string) {
+                        libc.apply(libc_array.data.e_string.data);
+                    } else {
+                        return error.InvalidNPMLockfile;
                     }
                     break :libc libc.combine();
                 } else .all,

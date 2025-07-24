@@ -38,11 +38,11 @@ pub const Meta = extern struct {
         return !this.arch.isMatch() or !this.os.isMatch() or !this.libc.isMatch();
     }
 
-    pub fn isDisabledWithTarget(this: *const Meta, target_os: ?Npm.OperatingSystem, target_cpu: ?Npm.Architecture, target_libc: ?Npm.Libc) bool {
-        if (target_os != null or target_cpu != null or target_libc != null) {
-            const os_match = if (target_os) |os| this.os.isMatchWithTarget(os) else true;
-            const cpu_match = if (target_cpu) |cpu| this.arch.isMatchWithTarget(cpu) else true;
-            const libc_match = if (target_libc) |libc| this.libc.isMatchWithTarget(libc) else true;
+    pub fn isDisabledWithTarget(this: *const Meta, manager: *const PackageManager) bool {
+        if (manager.options.target_os != null or manager.options.target_cpu != null or manager.options.target_libc != null) {
+            const os_match = this.os.isMatchWithTarget(manager.options.target_os orelse this.os);
+            const cpu_match = this.arch.isMatchWithTarget(manager.options.target_cpu orelse this.arch);
+            const libc_match = this.libc.isMatchWithTarget(manager.options.target_libc orelse this.libc);
             return !os_match or !cpu_match or !libc_match;
         } else {
             return this.isDisabled();
@@ -92,4 +92,5 @@ const install = bun.install;
 const Npm = install.Npm;
 const Origin = install.Origin;
 const PackageID = install.PackageID;
+const PackageManager = install.PackageManager;
 const invalid_package_id = install.invalid_package_id;

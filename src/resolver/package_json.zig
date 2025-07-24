@@ -824,8 +824,7 @@ pub const PackageJSON = struct {
                     }
                 }
                 if (json.get("cpu")) |os_field| {
-                    if (os_field.asArray()) |array_const| {
-                        var array = array_const;
+                    if (os_field.asArray()) |array| {
                         var arch = Architecture.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
@@ -834,12 +833,13 @@ pub const PackageJSON = struct {
                         }
 
                         package_json.arch = arch.combine();
+                    } else if (os_field.asString(bun.default_allocator)) |str| {
+                        package_json.arch = Architecture.fromString(str);
                     }
                 }
 
                 if (json.get("os")) |os_field| {
-                    var tmp = os_field.asArray();
-                    if (tmp) |*array| {
+                    if (os_field.asArray()) |array| {
                         var os = OperatingSystem.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
@@ -848,12 +848,13 @@ pub const PackageJSON = struct {
                         }
 
                         package_json.os = os.combine();
+                    } else if (os_field.asString(bun.default_allocator)) |str| {
+                        package_json.os = OperatingSystem.fromString(str);
                     }
                 }
 
                 if (json.get("libc")) |libc_field| {
-                    if (libc_field.asArray()) |array_const| {
-                        var array = array_const;
+                    if (libc_field.asArray()) |array| {
                         var libc = Libc.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
@@ -861,6 +862,8 @@ pub const PackageJSON = struct {
                             }
                         }
                         package_json.libc = libc.combine();
+                    } else if (libc_field.asString(bun.default_allocator)) |str| {
+                        package_json.libc = Libc.fromString(str);
                     }
                 }
 

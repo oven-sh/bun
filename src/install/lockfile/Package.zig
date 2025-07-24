@@ -56,8 +56,8 @@ pub const Package = extern struct {
         return this.meta.isDisabled();
     }
 
-    pub inline fn isDisabledWithTarget(this: *const Package, target_os: ?Npm.OperatingSystem, target_cpu: ?Npm.Architecture, target_libc: ?Npm.Libc) bool {
-        return this.meta.isDisabledWithTarget(target_os, target_cpu, target_libc);
+    pub inline fn isDisabledWithTarget(this: *const Package, manager: *const PackageManager) bool {
+        return this.meta.isDisabledWithTarget(manager);
     }
 
     pub const Alphabetizer = struct {

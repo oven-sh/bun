@@ -339,7 +339,7 @@ pub fn isFilteredDependencyOrWorkspace(
     const res = &pkg_resolutions[pkg_id];
     const parent_res = &pkg_resolutions[parent_pkg_id];
 
-    if (pkg_metas[pkg_id].isDisabledWithTarget(manager.options.target_os, manager.options.target_cpu, manager.options.target_libc)) {
+    if (pkg_metas[pkg_id].isDisabledWithTarget(manager)) {
         if (manager.options.log_level.isVerbose()) {
             const meta = &pkg_metas[pkg_id];
             const name = lockfile.str(&pkg_names[pkg_id]);

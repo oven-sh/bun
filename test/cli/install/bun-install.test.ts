@@ -17,7 +17,9 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  isLinux,
   isWindows,
+  libcFamily,
   readdirSorted,
   runBunInstall,
   tempDirWithFiles,
@@ -27,7 +29,6 @@ import {
   toHaveBins,
 } from "harness";
 import { basename, join, resolve, sep } from "path";
-import { getAbi } from "../../../scripts/utils.mjs";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -8802,7 +8803,7 @@ describe("platform-specific dependencies", () => {
     expect(installedPackages).toHaveLength(packages.length);
   });
 
-  test(`installs current platform of (os: ${process.platform}, cpu: ${process.arch}, libc: ${getAbi() || "n/a"})`, async () => {
+  test(`installs current platform of (os: ${process.platform}, cpu: ${process.arch}, libc: ${isLinux ? libcFamily : "n/a"})`, async () => {
     const urls: string[] = [];
     setHandler(e => platformTestHandler(e, urls));
 
@@ -8833,14 +8834,9 @@ describe("platform-specific dependencies", () => {
     const platformDir = join(package_dir, "node_modules", "@platform-test");
     const installedPackages = existsSync(platformDir) ? readdirSync(platformDir) : [];
 
-    const packages = [`${process.platform}-${process.arch}`] as string[];
-    if (process.platform === "linux") {
-      const abi = getAbi();
-      if (abi === "musl") {
-        packages.push(`linux-${process.arch}-musl`);
-      } else if (abi === "gnu") {
-        packages.push(`linux-${process.arch}-glibc`);
-      }
+    const packages = [`${process.platform}-${process.arch}`];
+    if (isLinux) {
+      packages.push(`linux-${process.arch}-${libcFamily}`);
     }
 
     expect(installedPackages).toContainValues(packages);

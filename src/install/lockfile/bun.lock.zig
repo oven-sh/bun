@@ -656,7 +656,7 @@ pub const Stringifier = struct {
         try writer.writeAll("}\n");
     }
 
-    /// Writes a single line object. Contains dependencies, os, cpu, libc), and bin
+    /// Writes a single line object. Contains dependencies, os, cpu, libc, and bin
     /// { "devDependencies": { "one": "1.1.1", "two": "2.2.2" }, "os": "none" }
     fn writePackageInfoObject(
         writer: anytype,

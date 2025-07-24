@@ -20,11 +20,9 @@ class Serializer {
 }
 class DefaultDeserializer extends Deserializer {}
 class DefaultSerializer extends Serializer {}
-class GCProfiler {
-  constructor() {
-    notimpl("GCProfiler");
-  }
-}
+const {
+  GCProfiler,
+} = $cpp("JSGCProfiler.cpp", "createGCProfilerFunctions");
 
 function cachedDataVersionTag() {
   notimpl("cachedDataVersionTag");
@@ -192,6 +190,7 @@ export default {
   Serializer,
   DefaultDeserializer,
   DefaultSerializer,
+  GCProfiler,
 };
 
 hideFromStack(

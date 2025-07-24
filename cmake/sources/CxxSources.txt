@@ -79,6 +79,7 @@ src/bun.js/bindings/JSDOMWrapper.cpp
 src/bun.js/bindings/JSDOMWrapperCache.cpp
 src/bun.js/bindings/JSEnvironmentVariableMap.cpp
 src/bun.js/bindings/JSFFIFunction.cpp
+src/bun.js/bindings/JSGCProfiler.cpp
 src/bun.js/bindings/JSMockFunction.cpp
 src/bun.js/bindings/JSNextTickQueue.cpp
 src/bun.js/bindings/JSNodePerformanceHooksHistogram.cpp

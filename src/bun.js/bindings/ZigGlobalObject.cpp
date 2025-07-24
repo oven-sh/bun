@@ -163,6 +163,7 @@
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
 #include "JSX509Certificate.h"
+#include "JSGCProfiler.h"
 #include "JSSign.h"
 #include "JSVerify.h"
 #include "JSHmac.h"
@@ -2784,6 +2785,10 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_JSX509CertificateClassStructure.initLater([](LazyClassStructure::Initializer& init) {
         setupX509CertificateClassStructure(init);
+    });
+
+    m_JSGCProfilerClassStructure.initLater([](LazyClassStructure::Initializer& init) {
+        Bun::setupGCProfilerClassStructure(init);
     });
 
     m_JSSignClassStructure.initLater(

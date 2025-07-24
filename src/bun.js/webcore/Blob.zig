@@ -980,7 +980,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             const promise_value = promise.asValue(ctx);
             promise_value.ensureStillAlive();
             write_file_promise.promise.strong.set(ctx, promise_value);
-            _ = write_file.WriteFileWindows.create(
+            _ = try write_file.WriteFileWindows.create(
                 ctx.bunVM().eventLoop(),
                 destination_blob.*,
                 source_blob.*,

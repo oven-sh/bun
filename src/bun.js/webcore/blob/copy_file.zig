@@ -639,7 +639,7 @@ pub const CopyFileWindows = struct {
             bun.sys.syslog("uv_fs_read({}, {d}) = {d}", .{ source_fd, read_buf.len, rc.int() });
             if (rc.toError(.read)) |err| {
                 this.err = err;
-                this.onReadWriteLoopComplete();
+                this.onReadWriteLoopComplete() catch return;
                 return;
             }
 
@@ -648,7 +648,7 @@ pub const CopyFileWindows = struct {
 
             if (rc.int() == 0) {
                 // Handle EOF. We can't read any more.
-                this.onReadWriteLoopComplete();
+                this.onReadWriteLoopComplete() catch return;
                 return;
             }
 
@@ -667,7 +667,7 @@ pub const CopyFileWindows = struct {
 
             if (rc2.toError(.write)) |err| {
                 this.err = err;
-                this.onReadWriteLoopComplete();
+                this.onReadWriteLoopComplete() catch return;
                 return;
             }
         }
@@ -685,7 +685,7 @@ pub const CopyFileWindows = struct {
 
             if (rc.toError(.write)) |err| {
                 this.err = err;
-                this.onReadWriteLoopComplete();
+                this.onReadWriteLoopComplete() catch return;
                 return;
             }
 
@@ -696,7 +696,7 @@ pub const CopyFileWindows = struct {
             if (wrote < buf.len) {
                 if (wrote == 0) {
                     // Handle EOF. We can't write any more.
-                    this.onReadWriteLoopComplete();
+                    this.onReadWriteLoopComplete() catch return;
                     return;
                 }
 
@@ -717,7 +717,7 @@ pub const CopyFileWindows = struct {
 
                 if (rc2.toError(.write)) |err| {
                     this.err = err;
-                    this.onReadWriteLoopComplete();
+                    this.onReadWriteLoopComplete() catch return;
                     return;
                 }
 
@@ -728,7 +728,7 @@ pub const CopyFileWindows = struct {
             switch (this.read_write_loop.read(this)) {
                 .err => |err| {
                     this.err = err;
-                    this.onReadWriteLoopComplete();
+                    this.onReadWriteLoopComplete() catch return;
                 },
                 .result => {},
             }
@@ -765,16 +765,15 @@ pub const CopyFileWindows = struct {
         }
     };
 
-    pub fn onReadWriteLoopComplete(this: *CopyFileWindows) void {
+    pub fn onReadWriteLoopComplete(this: *CopyFileWindows) bun.JSExecutionTerminated!void {
         this.event_loop.unrefConcurrently();
 
         if (this.err) |err| {
             this.err = null;
-            this.throw(err);
-            return;
+            return this.throw(err);
         }
 
-        this.onComplete(this.read_write_loop.written);
+        try this.onComplete(this.read_write_loop.written);
     }
 
     pub const new = bun.TrivialNew(@This());
@@ -785,7 +784,7 @@ pub const CopyFileWindows = struct {
         event_loop: *jsc.EventLoop,
         mkdirp_if_not_exists: bool,
         size_: Blob.SizeType,
-    ) jsc.JSValue {
+    ) bun.JSExecutionTerminated!jsc.JSValue {
         destination_file_store.ref();
         source_file_store.ref();
         const result = CopyFileWindows.new(.{
@@ -801,7 +800,7 @@ pub const CopyFileWindows = struct {
 
         // On error, this function might free the CopyFileWindows struct.
         // So we can no longer reference it beyond this point.
-        result.copyfile();
+        try result.copyfile();
 
         return promise;
     }
@@ -842,7 +841,7 @@ pub const CopyFileWindows = struct {
         }
     }
 
-    fn prepareReadWriteLoop(this: *CopyFileWindows) void {
+    fn prepareReadWriteLoop(this: *CopyFileWindows) bun.JSExecutionTerminated!void {
         // Open the destination first, so that if we need to call
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
@@ -850,27 +849,22 @@ pub const CopyFileWindows = struct {
             .result => |fd| fd,
             .err => |err| {
                 if (this.mkdirp_if_not_exists and err.getErrno() == .NOENT) {
-                    this.mkdirp();
-                    return;
+                    return this.mkdirp();
                 }
-
-                this.throw(err);
-                return;
+                return this.throw(err);
             },
         };
 
         this.read_write_loop.source_fd = switch (preparePathlike(&this.source_file_store.data.file.pathlike, &this.read_write_loop.must_close_source_fd, true)) {
             .result => |fd| fd,
             .err => |err| {
-                this.throw(err);
-                return;
+                return this.throw(err);
             },
         };
 
         switch (this.read_write_loop.start(this)) {
             .err => |err| {
-                this.throw(err);
-                return;
+                return this.throw(err);
             },
             .result => {
                 this.event_loop.refConcurrently();
@@ -878,10 +872,10 @@ pub const CopyFileWindows = struct {
         }
     }
 
-    fn copyfile(this: *CopyFileWindows) void {
+    fn copyfile(this: *CopyFileWindows) bun.JSExecutionTerminated!void {
         // This is for making it easier for us to test this code path
         if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE)) {
-            this.prepareReadWriteLoop();
+            try this.prepareReadWriteLoop();
             return;
         }
 
@@ -898,17 +892,17 @@ pub const CopyFileWindows = struct {
                 .fd => |fd| {
                     switch (bun.sys.File.from(fd).kind()) {
                         .err => |err| {
-                            this.throw(err);
+                            try this.throw(err);
                             return;
                         },
                         .result => |kind| {
                             switch (kind) {
                                 .directory => {
-                                    this.throw(bun.sys.Error.fromCode(.ISDIR, .open));
+                                    try this.throw(bun.sys.Error.fromCode(.ISDIR, .open));
                                     return;
                                 },
                                 .character_device => {
-                                    this.prepareReadWriteLoop();
+                                    try this.prepareReadWriteLoop();
                                     return;
                                 },
                                 else => {
@@ -916,7 +910,7 @@ pub const CopyFileWindows = struct {
                                         // This case can happen when either:
                                         // - NUL device
                                         // - Pipe. `cat foo.txt | bun bar.ts`
-                                        this.prepareReadWriteLoop();
+                                        try this.prepareReadWriteLoop();
                                         return;
                                     };
                                     pathbuf1[out.len] = 0;
@@ -936,17 +930,17 @@ pub const CopyFileWindows = struct {
                 .fd => |fd| {
                     switch (bun.sys.File.from(fd).kind()) {
                         .err => |err| {
-                            this.throw(err);
+                            try this.throw(err);
                             return;
                         },
                         .result => |kind| {
                             switch (kind) {
                                 .directory => {
-                                    this.throw(bun.sys.Error.fromCode(.ISDIR, .open));
+                                    try this.throw(bun.sys.Error.fromCode(.ISDIR, .open));
                                     return;
                                 },
                                 .character_device => {
-                                    this.prepareReadWriteLoop();
+                                    try this.prepareReadWriteLoop();
                                     return;
                                 },
                                 else => {
@@ -954,7 +948,7 @@ pub const CopyFileWindows = struct {
                                         // This case can happen when either:
                                         // - NUL device
                                         // - Pipe. `cat foo.txt | bun bar.ts`
-                                        this.prepareReadWriteLoop();
+                                        try this.prepareReadWriteLoop();
                                         return;
                                     };
                                     pathbuf2[out.len] = 0;
@@ -979,7 +973,7 @@ pub const CopyFileWindows = struct {
         );
 
         if (rc.errno()) |errno| {
-            this.throw(.{
+            return this.throw(.{
                 // #6336
                 .errno = if (errno == @intFromEnum(bun.sys.SystemErrno.EPERM))
                     @as(c_int, @intCast(@intFromEnum(bun.sys.SystemErrno.ENOENT)))
@@ -988,12 +982,11 @@ pub const CopyFileWindows = struct {
                 .syscall = .copyfile,
                 .path = old_path,
             });
-            return;
         }
         this.event_loop.refConcurrently();
     }
 
-    pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
+    pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) bun.JSExecutionTerminated!void {
         const globalThis = this.event_loop.global;
         const promise = this.promise.swap();
         const err_instance = err.toJS(globalThis);
@@ -1002,7 +995,7 @@ pub const CopyFileWindows = struct {
         event_loop.enter();
         defer event_loop.exit();
         this.deinit();
-        promise.reject(globalThis, err_instance);
+        return promise.reject(globalThis, err_instance);
     }
 
     fn onCopyFile(req: *libuv.fs_t) callconv(.C) void {
@@ -1017,7 +1010,7 @@ pub const CopyFileWindows = struct {
         if (rc.errEnum()) |errno| {
             if (this.mkdirp_if_not_exists and errno == .NOENT) {
                 req.deinit();
-                this.mkdirp();
+                this.mkdirp() catch return;
                 return;
             } else {
                 var err = bun.sys.Error.fromCode(
@@ -1035,15 +1028,15 @@ pub const CopyFileWindows = struct {
                     err = err.withFd(destination.pathlike.fd);
                 }
 
-                this.throw(err);
+                this.throw(err) catch return;
             }
             return;
         }
 
-        this.onComplete(req.statbuf.size);
+        this.onComplete(req.statbuf.size) catch return;
     }
 
-    pub fn onComplete(this: *CopyFileWindows, written_actual: usize) void {
+    pub fn onComplete(this: *CopyFileWindows, written_actual: usize) bun.JSExecutionTerminated!void {
         var written = written_actual;
         if (written != @as(@TypeOf(written), @intCast(this.size)) and this.size != Blob.max_size) {
             this.truncate();
@@ -1056,7 +1049,7 @@ pub const CopyFileWindows = struct {
         defer event_loop.exit();
 
         this.deinit();
-        promise.resolve(globalThis, jsc.JSValue.jsNumberFromUint64(written));
+        return promise.resolve(globalThis, jsc.JSValue.jsNumberFromUint64(written));
     }
 
     fn truncate(this: *CopyFileWindows) void {
@@ -1082,18 +1075,15 @@ pub const CopyFileWindows = struct {
         bun.destroy(this);
     }
 
-    fn mkdirp(
-        this: *CopyFileWindows,
-    ) void {
+    fn mkdirp(this: *CopyFileWindows) bun.JSExecutionTerminated!void {
         bun.sys.syslog("mkdirp", .{});
         this.mkdirp_if_not_exists = false;
         var destination = &this.destination_file_store.data.file;
         if (destination.pathlike != .path) {
-            this.throw(.{
+            return this.throw(.{
                 .errno = @as(c_int, @intCast(@intFromEnum(bun.sys.SystemErrno.EINVAL))),
                 .syscall = .mkdir,
             });
-            return;
         }
 
         this.event_loop.refConcurrently();
@@ -1106,17 +1096,17 @@ pub const CopyFileWindows = struct {
         }).schedule();
     }
 
-    fn onMkdirpComplete(this: *CopyFileWindows) void {
+    fn onMkdirpComplete(this: *CopyFileWindows) bun.JSExecutionTerminated!void {
         this.event_loop.unrefConcurrently();
 
         if (bun.take(&this.err)) |err| {
-            this.throw(err);
+            try this.throw(err);
             var err2 = err;
             err2.deinit();
             return;
         }
 
-        this.copyfile();
+        try this.copyfile();
     }
 
     fn onMkdirpCompleteConcurrent(this: *CopyFileWindows, err_: jsc.Maybe(void)) void {

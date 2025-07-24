@@ -361,7 +361,7 @@ pub const WriteFileWindows = struct {
         onWriteFileContext: *anyopaque,
         onCompleteCallback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
-    ) *WriteFileWindows {
+    ) bun.JSExecutionTerminated!*WriteFileWindows {
         const write_file = WriteFileWindows.new(.{
             .file_blob = file_blob,
             .bytes_blob = bytes_blob,
@@ -379,7 +379,7 @@ pub const WriteFileWindows = struct {
 
         switch (file_blob.store.?.data.file.pathlike) {
             .path => {
-                write_file.open();
+                try write_file.open();
             },
             .fd => {
                 write_file.fd = brk: {
@@ -397,7 +397,7 @@ pub const WriteFileWindows = struct {
                     break :brk file_blob.store.?.data.file.pathlike.fd.uv();
                 };
 
-                write_file.doWriteLoop(write_file.loop());
+                try write_file.doWriteLoop(write_file.loop());
             },
         }
 
@@ -409,18 +409,17 @@ pub const WriteFileWindows = struct {
         return this.event_loop.virtual_machine.event_loop_handle.?;
     }
 
-    pub fn open(this: *WriteFileWindows) void {
+    pub fn open(this: *WriteFileWindows) bun.JSExecutionTerminated!void {
         const path = this.file_blob.store.?.data.file.pathlike.path.slice();
         this.io_request.data = this;
         const rc = uv.uv_fs_open(
             this.loop(),
             &this.io_request,
             &(std.posix.toPosixPath(path) catch {
-                this.throw(bun.sys.Error{
+                return this.throw(bun.sys.Error{
                     .errno = @intFromEnum(bun.sys.E.NAMETOOLONG),
                     .syscall = .open,
                 });
-                return;
             }),
             uv.O.CREAT | uv.O.WRONLY | uv.O.NOCTTY | uv.O.NONBLOCK | uv.O.SEQUENTIAL | uv.O.TRUNC,
             0o644,
@@ -431,7 +430,7 @@ pub const WriteFileWindows = struct {
         if (rc.errEnum()) |err| {
             bun.assert(err != .NOENT);
 
-            this.throw(.{
+            try this.throw(.{
                 .errno = @intFromEnum(err),
                 .path = path,
                 .syscall = .open,
@@ -462,14 +461,14 @@ pub const WriteFileWindows = struct {
                 .errno = @intFromEnum(err),
                 .path = this.file_blob.store.?.data.file.pathlike.path.slice(),
                 .syscall = .open,
-            });
+            }) catch return;
             return;
         }
 
         this.fd = @intCast(rc.int());
 
         // the loop must be copied
-        this.doWriteLoop(this.loop());
+        this.doWriteLoop(this.loop()) catch return;
     }
 
     fn mkdirp(this: *WriteFileWindows) void {
@@ -487,18 +486,17 @@ pub const WriteFileWindows = struct {
         }).schedule();
     }
 
-    fn onMkdirpComplete(this: *WriteFileWindows) void {
+    fn onMkdirpComplete(this: *WriteFileWindows) bun.JSExecutionTerminated!void {
         this.event_loop.unrefConcurrently();
 
         const err = this.err;
         this.err = null;
         if (err) |err_| {
-            this.throw(err_);
-            bun.default_allocator.free(err_.path);
-            return;
+            defer bun.default_allocator.free(err_.path);
+            return this.throw(err_);
         }
 
-        this.open();
+        return this.open();
     }
 
     fn onMkdirpCompleteConcurrent(this: *WriteFileWindows, err_: jsc.Maybe(void)) void {
@@ -516,44 +514,44 @@ pub const WriteFileWindows = struct {
             this.throw(.{
                 .errno = @intCast(err),
                 .syscall = .write,
-            });
+            }) catch return;
             return;
         }
 
         this.total_written += @intCast(rc.int());
-        this.doWriteLoop(this.loop());
+        this.doWriteLoop(this.loop()) catch return;
     }
 
-    pub fn onFinish(container: *WriteFileWindows) void {
+    pub fn onFinish(container: *WriteFileWindows) bun.JSExecutionTerminated!void {
         container.event_loop.unrefConcurrently();
         var event_loop = container.event_loop;
         event_loop.enter();
         defer event_loop.exit();
 
         // We don't need to enqueue task since this is already in a task.
-        container.runFromJSThread();
+        return container.runFromJSThread();
     }
 
-    pub fn runFromJSThread(this: *WriteFileWindows) void {
+    pub fn runFromJSThread(this: *WriteFileWindows) bun.JSExecutionTerminated!void {
         const cb = this.onCompleteCallback;
         const cb_ctx = this.onCompleteCtx;
 
         if (this.toSystemError()) |err| {
             this.deinit();
-            cb(cb_ctx, .{
+            return cb(cb_ctx, .{
                 .err = err,
             });
         } else {
             const wrote = this.total_written;
             this.deinit();
-            cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
+            return cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
         }
     }
 
-    pub fn throw(this: *WriteFileWindows, err: bun.sys.Error) void {
+    pub fn throw(this: *WriteFileWindows, err: bun.sys.Error) bun.JSExecutionTerminated!void {
         bun.assert(this.err == null);
         this.err = err;
-        this.onFinish();
+        try this.onFinish();
     }
 
     pub fn toSystemError(this: *WriteFileWindows) ?jsc.SystemError {
@@ -570,13 +568,12 @@ pub const WriteFileWindows = struct {
         return null;
     }
 
-    pub fn doWriteLoop(this: *WriteFileWindows, uv_loop: *uv.Loop) void {
+    pub fn doWriteLoop(this: *WriteFileWindows, uv_loop: *uv.Loop) bun.JSExecutionTerminated!void {
         var remain = this.bytes_blob.sharedView();
         remain = remain[@min(this.total_written, remain.len)..];
 
         if (remain.len == 0 or this.err != null) {
-            this.onFinish();
-            return;
+            return this.onFinish();
         }
 
         this.uv_bufs[0].base = @constCast(remain.ptr);
@@ -591,11 +588,10 @@ pub const WriteFileWindows = struct {
         }
 
         if (rc.errno()) |err| {
-            this.throw(.{
+            return this.throw(.{
                 .errno = err,
                 .syscall = .write,
             });
-            return;
         }
 
         if (rc.int() != 0) bun.Output.panic("unexpected return code from uv_fs_write: {d}", .{rc.int()});
@@ -620,14 +616,14 @@ pub const WriteFileWindows = struct {
         bytes_blob: Blob,
         comptime Context: type,
         context: Context,
-        comptime callback: *const fn (ctx: Context, bytes: WriteFileResultType) void,
+        comptime callback: *const fn (ctx: Context, bytes: WriteFileResultType) bun.JSExecutionTerminated!void,
         mkdirp_if_not_exists: bool,
-    ) *WriteFileWindows {
+    ) bun.JSExecutionTerminated!*WriteFileWindows {
         return WriteFileWindows.createWithCtx(
             file_blob,
             bytes_blob,
             event_loop,
-            @as(*anyopaque, @ptrCast(context)),
+            @ptrCast(context),
             @ptrCast(callback),
             mkdirp_if_not_exists,
         );

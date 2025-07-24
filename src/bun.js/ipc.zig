@@ -1332,7 +1332,7 @@ pub const IPCHandlers = struct {
                         log("hit NotEnoughBytes3", .{});
                         return;
                     },
-                    error.InvalidFormat, error.JSError => {
+                    error.InvalidFormat, error.JSError, error.JSExecutionTerminated => {
                         send_queue.closeSocket(.failure, .user);
                         return;
                     },
@@ -1343,7 +1343,7 @@ pub const IPCHandlers = struct {
                     },
                 };
 
-                try handleIPCMessage(send_queue, result.message, globalThis);
+                handleIPCMessage(send_queue, result.message, globalThis) catch {}; // XXX:
 
                 if (result.bytes_consumed < slice.len) {
                     slice = slice[result.bytes_consumed..];

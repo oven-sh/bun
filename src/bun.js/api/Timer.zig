@@ -130,7 +130,7 @@ pub const All = struct {
     pub fn onUVTimer(uv_timer_t: *uv.Timer) callconv(.C) void {
         const all: *All = @fieldParentPtr("uv_timer", uv_timer_t);
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("timer", all));
-        all.drainTimers(vm);
+        all.drainTimers(vm) catch return;
         all.ensureUVTimer(vm);
     }
 

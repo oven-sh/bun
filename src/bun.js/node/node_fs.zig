@@ -305,14 +305,10 @@ pub const Async = struct {
                 defer tracker.didDispatch(globalObject);
 
                 this.deinit();
-                switch (success) {
-                    false => {
-                        promise.reject(globalObject, result);
-                    },
-                    true => {
-                        promise.resolve(globalObject, result);
-                    },
-                }
+                return switch (success) {
+                    false => promise.reject(globalObject, result),
+                    true => promise.resolve(globalObject, result),
+                };
             }
 
             pub fn deinit(this: *Task) void {

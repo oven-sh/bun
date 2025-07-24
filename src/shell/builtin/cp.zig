@@ -220,8 +220,7 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) bun.JSExecutionTerminate
             {
                 log("{} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
                 this.state.exec.ebusy.tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
-                this.next().run();
-                return;
+                return this.next().run();
             }
         } else {
             const tgt_absolute = task.tgt_absolute;

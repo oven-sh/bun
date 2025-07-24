@@ -227,16 +227,17 @@ pub const FSWatcher = struct {
         /// this runs on JS Context Thread
         pub fn run(this: *FSWatchTaskWindows) bun.JSError!void {
             var ctx = this.ctx;
+            defer ctx.unrefTask();
 
             switch (this.event) {
                 inline .rename, .change => |*path, event_type| {
                     if (ctx.encoding == .utf8) {
-                        ctx.emitWithFilename(path.string.transferToJS(ctx.globalThis), event_type);
+                        try ctx.emitWithFilename(path.string.transferToJS(ctx.globalThis), event_type);
                     } else {
                         const bytes = path.bytes_to_free;
+                        defer bun.default_allocator.free(bytes);
                         path.bytes_to_free = "";
-                        ctx.emit(bytes, event_type);
-                        bun.default_allocator.free(bytes);
+                        try ctx.emit(bytes, event_type);
                     }
                 },
                 .@"error" => |err| {
@@ -246,11 +247,9 @@ pub const FSWatcher = struct {
                     ctx.emitIfAborted();
                 },
                 .close => {
-                    ctx.emit("", .close);
+                    try ctx.emit("", .close);
                 },
             }
-
-            ctx.unrefTask();
         }
 
         pub fn deinit(this: *FSWatchTaskWindows) void {
@@ -494,11 +493,11 @@ pub const FSWatcher = struct {
         try this.close();
     }
 
-    pub fn emitWithFilename(this: *FSWatcher, file_name: jsc.JSValue, comptime eventType: EventType) void {
+    pub fn emitWithFilename(this: *FSWatcher, file_name: jsc.JSValue, comptime eventType: EventType) bun.JSExecutionTerminated!void {
         const js_this = this.js_this;
         if (js_this == .zero) return;
         const listener = js.listenerGetCached(js_this) orelse return;
-        emitJS(listener, this.globalThis, file_name, eventType);
+        return emitJS(listener, this.globalThis, file_name, eventType);
     }
 
     pub fn emit(this: *FSWatcher, file_name: string, comptime event_type: EventType) bun.JSError!void {

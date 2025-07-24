@@ -169,17 +169,18 @@ const LibUVBackend = struct {
 
     fn onRawLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t, _: c_int, _: ?*libuv.addrinfo) callconv(.C) void {
         //TODO: We schedule a task to run because otherwise the promise will not be solved, we need to investigate this
-        const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
         const Holder = struct {
             uv_info: *libuv.uv_getaddrinfo_t,
             task: jsc.AnyTask,
 
             pub fn run(held: *@This()) void {
                 defer bun.default_allocator.destroy(held);
-                GetAddrInfoRequest.onLibUVComplete(held.uv_info);
+                const this: *GetAddrInfoRequest = @alignCast(@ptrCast(held.uv_info.data));
+                GetAddrInfoRequest.onLibUVComplete(held.uv_info) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         };
 
+        const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
         var holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
         holder.* = .{
             .uv_info = uv_info,
@@ -850,7 +851,7 @@ pub const GetAddrInfoRequest = struct {
         return head.processGetAddrInfo(err_, timeout, result);
     }
 
-    pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t) void {
+    pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t) bun.JSError!void {
         log("onLibUVComplete: status={d}", .{uv_info.retcode.int()});
         const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
         bun.assert(uv_info == &this.backend.libc.uv);
@@ -860,14 +861,14 @@ pub const GetAddrInfoRequest = struct {
 
         if (this.resolver_for_caching) |resolver| {
             if (this.cache.pending_cache) {
-                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, uv_info.retcode.int(), .{ .addrinfo = uv_info.addrinfo });
+                try resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, uv_info.retcode.int(), .{ .addrinfo = uv_info.addrinfo });
                 return;
             }
         }
 
         var head = this.head;
-        head.processGetAddrInfoNative(uv_info.retcode.int(), uv_info.addrinfo);
-        head.globalThis.allocator().destroy(this);
+        defer head.globalThis.allocator().destroy(this);
+        try head.processGetAddrInfoNative(uv_info.retcode.int(), uv_info.addrinfo);
     }
 };
 

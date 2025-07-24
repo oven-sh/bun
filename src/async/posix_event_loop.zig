@@ -770,12 +770,14 @@ pub const FilePoll = struct {
                 error.JSExecutionTerminated => return false,
             };
             return true;
-        } else if (comptime Environment.isLinux) {
+        }
+        if (comptime Environment.isLinux) {
             onEpollEvent(file_poll, loop, &loop.ready_polls[@as(usize, @intCast(loop.current_ready_poll))]) catch |err| switch (err) {
                 error.JSExecutionTerminated => return false,
             };
             return true;
         }
+        return true;
     }
 
     const Pollable = bun.TaggedPointerUnion(.{

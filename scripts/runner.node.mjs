@@ -1069,7 +1069,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     if (options["coredump-upload"] && (result.signalCode !== null || newCores.length > 0)) {
       // warn if the main PID crashed and we don't have a core
       if (result.signalCode !== null && !newCores.some(c => c.endsWith(`${result.pid}.core`))) {
-        crashes += `main process killed by ${result.signalCode} but no core file found at ${corePath}\n`;
+        crashes += `main process killed by ${result.signalCode} but no core file found\n`;
       }
 
       if (options["fail-on-coredump-or-report"] && newCores.length > 0) {

@@ -3139,11 +3139,11 @@ exports[`bun pm migrate for existing yarn.lock yarn-stuff: yarn-stuff 1`] = `
 
     "reg": ["abbrev@1.1.1", "", {}, "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q=="],
 
-    "remote": ["remote@1.1.1", "", {}, ""],
+    "remote": ["remote@https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz#f8f2c887ad10bf67f634f005b6987fed3179aac8", {}],
 
     "symlink": ["symlink@file:./abbrev-link-target", {}],
 
-    "tarball": ["tarball@file:abbrev-1.1.1.tgz", {}],
+    "tarball": ["tarball@abbrev-1.1.1.tgz", {}],
   }
 }
 "

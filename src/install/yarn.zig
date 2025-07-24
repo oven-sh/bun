@@ -13,6 +13,7 @@ pub const YarnLock = struct {
         file: ?string = null,
         os: ?[]const []const u8 = null,
         cpu: ?[]const []const u8 = null,
+        git_repo_name: ?string = null,
 
         pub fn deinit(self: *Entry, allocator: Allocator) void {
             allocator.free(self.specs);
@@ -33,6 +34,9 @@ pub const YarnLock = struct {
             }
             if (self.cpu) |cpu_list| {
                 allocator.free(cpu_list);
+            }
+            if (self.git_repo_name) |name| {
+                allocator.free(name);
             }
         }
 
@@ -149,20 +153,14 @@ pub const YarnLock = struct {
                 strings.hasPrefixComptime(version, "../");
         }
 
-        pub fn parseGitUrl(self: *const YarnLock, version: []const u8) !struct { url: []const u8, commit: ?[]const u8 } {
+        pub fn parseGitUrl(self: *const YarnLock, version: []const u8) !struct { url: []const u8, commit: ?[]const u8, owner: ?[]const u8, repo: ?[]const u8 } {
             var url = version;
             var commit: ?[]const u8 = null;
+            var owner: ?[]const u8 = null;
+            var repo: ?[]const u8 = null;
 
             if (strings.hasPrefixComptime(url, "git+")) {
                 url = url[4..];
-            }
-
-            if (strings.hasPrefixComptime(url, "github:")) {
-                url = try std.fmt.allocPrint(
-                    self.allocator,
-                    "https://github.com/{s}",
-                    .{url[7..]},
-                );
             }
 
             if (strings.indexOf(url, "#")) |hash_idx| {
@@ -170,7 +168,36 @@ pub const YarnLock = struct {
                 url = url[0..hash_idx];
             }
 
-            return .{ .url = url, .commit = commit };
+            if (strings.hasPrefixComptime(version, "github:")) {
+                const github_path = version["github:".len..];
+                const path_without_commit = if (strings.indexOf(github_path, "#")) |idx| github_path[0..idx] else github_path;
+                
+                if (strings.indexOf(path_without_commit, "/")) |slash_idx| {
+                    owner = path_without_commit[0..slash_idx];
+                    repo = path_without_commit[slash_idx + 1 ..];
+                }
+                url = try std.fmt.allocPrint(
+                    self.allocator,
+                    "https://github.com/{s}",
+                    .{path_without_commit},
+                );
+            } else if (strings.contains(url, "github.com")) {
+                var remaining = url;
+                if (strings.indexOf(remaining, "github.com/")) |idx| {
+                    remaining = remaining[idx + "github.com/".len ..];
+                }
+                if (strings.indexOf(remaining, "/")) |slash_idx| {
+                    owner = remaining[0..slash_idx];
+                    const after_owner = remaining[slash_idx + 1 ..];
+                    if (strings.endsWithComptime(after_owner, ".git")) {
+                        repo = after_owner[0 .. after_owner.len - ".git".len];
+                    } else {
+                        repo = after_owner;
+                    }
+                }
+            }
+
+            return .{ .url = url, .commit = commit, .owner = owner, .repo = repo };
         }
 
         pub fn parseNpmAlias(version: []const u8) struct { package: []const u8, version: []const u8 } {
@@ -352,6 +379,10 @@ pub const YarnLock = struct {
                             const git_info = try Entry.parseGitUrl(self, value);
                             current_entry.?.resolved = git_info.url;
                             current_entry.?.commit = git_info.commit;
+                            // Store the actual repository name for git dependencies
+                            if (git_info.repo) |repo_name| {
+                                current_entry.?.git_repo_name = try self.allocator.dupe(u8, repo_name);
+                            }
                         } else if (Entry.isNpmAlias(value)) {
                             const alias_info = Entry.parseNpmAlias(value);
                             current_entry.?.version = alias_info.version;
@@ -709,15 +740,23 @@ pub fn migrateYarnLockfile(
 
     for (yarn_lock.entries.items, 0..) |entry, yarn_idx| {
         var is_npm_alias = false;
+        var is_direct_url = false;
         for (entry.specs) |spec| {
             if (strings.contains(spec, "@npm:")) {
                 is_npm_alias = true;
                 break;
             }
+            if (strings.contains(spec, "@https://") or strings.contains(spec, "@http://")) {
+                is_direct_url = true;
+            }
         }
 
         const name = if (is_npm_alias and entry.resolved != null)
             YarnLock.Entry.getPackageNameFromResolvedUrl(entry.resolved.?) orelse YarnLock.Entry.getNameFromSpec(entry.specs[0])
+        else if (is_direct_url)
+            YarnLock.Entry.getNameFromSpec(entry.specs[0])
+        else if (entry.git_repo_name) |repo_name|
+            repo_name
         else
             YarnLock.Entry.getNameFromSpec(entry.specs[0]);
         const version = entry.version;
@@ -791,6 +830,14 @@ pub fn migrateYarnLockfile(
             }
         }
 
+        var is_direct_url_dep = false;
+        for (entry.specs) |spec| {
+            if (strings.contains(spec, "@https://") or strings.contains(spec, "@http://")) {
+                is_direct_url_dep = true;
+                break;
+            }
+        }
+        
         const base_name = if (is_npm_alias and entry.resolved != null)
             YarnLock.Entry.getPackageNameFromResolvedUrl(entry.resolved.?) orelse YarnLock.Entry.getNameFromSpec(entry.specs[0])
         else
@@ -814,22 +861,66 @@ pub fn migrateYarnLockfile(
                 if (entry.workspace) {
                     break :blk Resolution.init(.{ .workspace = try string_buf.append(base_name) });
                 } else if (entry.file) |file| {
-                    break :blk Resolution.init(.{ .folder = try string_buf.append(file) });
+                    if (strings.endsWithComptime(file, ".tgz") or strings.endsWithComptime(file, ".tar.gz")) {
+                        break :blk Resolution.init(.{ .local_tarball = try string_buf.append(file) });
+                    } else {
+                        break :blk Resolution.init(.{ .folder = try string_buf.append(file) });
+                    }
                 } else if (entry.commit) |commit| {
                     if (entry.resolved) |resolved| {
-                        break :blk Resolution.init(.{
-                            .git = .{
-                                .owner = try string_buf.append(base_name),
-                                .repo = try string_buf.append(resolved),
-                                .committish = try string_buf.append(commit),
-                                .resolved = try string_buf.append(commit),
-                                .package_name = try string_buf.append(base_name),
-                            },
-                        });
+                        var owner_str: []const u8 = "";
+                        var repo_str: []const u8 = resolved;
+                        
+                        if (strings.contains(resolved, "github.com/")) {
+                            if (strings.indexOf(resolved, "github.com/")) |idx| {
+                                const after_github = resolved[idx + "github.com/".len ..];
+                                if (strings.indexOf(after_github, "/")) |slash_idx| {
+                                    owner_str = after_github[0..slash_idx];
+                                    repo_str = after_github[slash_idx + 1 ..];
+                                    if (strings.endsWithComptime(repo_str, ".git")) {
+                                        repo_str = repo_str[0 .. repo_str.len - 4];
+                                    }
+                                }
+                            }
+                        }
+                        
+                        const actual_name = if (entry.git_repo_name) |repo_name| repo_name else base_name;
+                        
+                        if (owner_str.len > 0 and repo_str.len > 0) {
+                            break :blk Resolution.init(.{
+                                .github = .{
+                                    .owner = try string_buf.append(owner_str),
+                                    .repo = try string_buf.append(repo_str),
+                                    .committish = try string_buf.append(commit[0..@min(7, commit.len)]), // Shorten to 7 chars
+                                    .resolved = try string_buf.append(commit[0..@min(7, commit.len)]),
+                                    .package_name = try string_buf.append(actual_name),
+                                },
+                            });
+                        } else {
+                            break :blk Resolution.init(.{
+                                .git = .{
+                                    .owner = try string_buf.append(owner_str),
+                                    .repo = try string_buf.append(repo_str),
+                                    .committish = try string_buf.append(commit),
+                                    .resolved = try string_buf.append(commit),
+                                    .package_name = try string_buf.append(actual_name),
+                                },
+                            });
+                        }
                     }
                     break :blk Resolution{};
                 } else if (entry.resolved) |resolved| {
-                    if (YarnLock.Entry.isRemoteTarball(resolved) or strings.endsWithComptime(resolved, ".tgz")) {
+                    if (is_direct_url_dep) {
+                        break :blk Resolution.init(.{
+                            .remote_tarball = try string_buf.append(resolved),
+                        });
+                    }
+                    
+                    if (YarnLock.Entry.isRemoteTarball(resolved)) {
+                        break :blk Resolution.init(.{
+                            .remote_tarball = try string_buf.append(resolved),
+                        });
+                    } else if (strings.endsWithComptime(resolved, ".tgz")) {
                         break :blk Resolution.init(.{
                             .remote_tarball = try string_buf.append(resolved),
                         });
@@ -1569,7 +1660,6 @@ pub fn migrateYarnLockfile(
 }
 
 const Dependency = @import("./dependency.zig");
-const JSON = @import("../json_parser.zig");
 const Npm = @import("./npm.zig");
 const std = @import("std");
 const Bin = @import("./bin.zig").Bin;
@@ -1594,5 +1684,6 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const logger = bun.logger;
-const string = bun.string;
+const string = []const u8;
 const strings = bun.strings;
+const JSON = bun.json;

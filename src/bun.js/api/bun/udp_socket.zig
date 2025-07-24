@@ -94,7 +94,7 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         _ = callback.call(globalThis, udpSocket.thisValue, &.{
             udpSocket.thisValue,
             udpSocket.config.binary_type.toJS(slice, globalThis) catch return, // TODO: properly propagate exception upwards
-            jsc.jsNumber(port),
+            .jsNumber(port),
             hostname_string.transferToJS(globalThis),
         }) catch |err| {
             udpSocket.callErrorHandler(.zero, udpSocket.globalThis.takeException(err)) catch return; // TODO: properly propagate exception upwards
@@ -429,13 +429,13 @@ pub const UDPSocket = struct {
         }
 
         var addr = std.mem.zeroes(std.posix.sockaddr.storage);
-        if (!try parseAddr(this, globalThis, jsc.jsNumber(0), arguments[0], &addr)) {
+        if (!try parseAddr(this, globalThis, .jsNumber(0), arguments[0], &addr)) {
             return globalThis.throwValue(try bun.jsc.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.INVAL))), .setsockopt).?.toJS(globalThis));
         }
 
         var interface = std.mem.zeroes(std.posix.sockaddr.storage);
 
-        const res = if (arguments.len > 1 and try parseAddr(this, globalThis, jsc.jsNumber(0), arguments[1], &interface)) blk: {
+        const res = if (arguments.len > 1 and try parseAddr(this, globalThis, .jsNumber(0), arguments[1], &interface)) blk: {
             if (addr.family != interface.family) {
                 return globalThis.throwInvalidArguments("Family mismatch between address and interface", .{});
             }
@@ -468,12 +468,12 @@ pub const UDPSocket = struct {
         }
 
         var source_addr: std.posix.sockaddr.storage = undefined;
-        if (!try parseAddr(this, globalThis, jsc.jsNumber(0), arguments[0], &source_addr)) {
+        if (!try parseAddr(this, globalThis, .jsNumber(0), arguments[0], &source_addr)) {
             return globalThis.throwValue(try bun.jsc.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.INVAL))), .setsockopt).?.toJS(globalThis));
         }
 
         var group_addr: std.posix.sockaddr.storage = undefined;
-        if (!try parseAddr(this, globalThis, jsc.jsNumber(0), arguments[1], &group_addr)) {
+        if (!try parseAddr(this, globalThis, .jsNumber(0), arguments[1], &group_addr)) {
             return globalThis.throwValue(try bun.jsc.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.INVAL))), .setsockopt).?.toJS(globalThis));
         }
 
@@ -483,7 +483,7 @@ pub const UDPSocket = struct {
 
         var interface: std.posix.sockaddr.storage = undefined;
 
-        const res = if (arguments.len > 2 and try parseAddr(this, globalThis, jsc.jsNumber(0), arguments[2], &interface)) blk: {
+        const res = if (arguments.len > 2 and try parseAddr(this, globalThis, .jsNumber(0), arguments[2], &interface)) blk: {
             if (source_addr.family != interface.family) {
                 return globalThis.throwInvalidArguments("Family mismatch among source, group and interface addresses", .{});
             }
@@ -517,7 +517,7 @@ pub const UDPSocket = struct {
 
         var addr: std.posix.sockaddr.storage = undefined;
 
-        if (!try parseAddr(this, globalThis, jsc.jsNumber(0), arguments[0], &addr)) {
+        if (!try parseAddr(this, globalThis, .jsNumber(0), arguments[0], &addr)) {
             return .false;
         }
 

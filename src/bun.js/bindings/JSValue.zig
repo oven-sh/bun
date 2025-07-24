@@ -2270,7 +2270,7 @@ pub const JSValue = enum(i64) {
                     try array.putIndex(
                         globalObject,
                         @truncate(i),
-                        jsc.jsNumber(item),
+                        .jsNumber(item),
                     );
                 }
                 return array;

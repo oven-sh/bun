@@ -358,7 +358,7 @@ pub const JSGlobalObject = opaque {
         const err = createErrorInstance(this, message, args);
         err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
         if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
-        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), try jsc.toJS(this, i32, errno));
+        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), try .fromAny(this, i32, errno));
         return this.throwValue(err);
     }
 

@@ -3269,11 +3269,11 @@ const Return = struct {
                 },
                 .buffers => {
                     defer bun.default_allocator.free(this.buffers);
-                    return jsc.toJS(globalObject, []Buffer, this.buffers);
+                    return .fromAny(globalObject, []Buffer, this.buffers);
                 },
                 .files => {
                     // automatically freed
-                    return jsc.toJS(globalObject, []const bun.String, this.files);
+                    return .fromAny(globalObject, []const bun.String, this.files);
                 },
             }
         }

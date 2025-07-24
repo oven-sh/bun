@@ -2067,8 +2067,8 @@ pub fn jsCreateSocketPair(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JS
     _ = bun.FD.fromNative(fds_[1]).updateNonblocking(true);
 
     const array = try jsc.JSValue.createEmptyArray(global, 2);
-    try array.putIndex(global, 0, jsc.jsNumber(fds_[0]));
-    try array.putIndex(global, 1, jsc.jsNumber(fds_[1]));
+    try array.putIndex(global, 0, .jsNumber(fds_[0]));
+    try array.putIndex(global, 1, .jsNumber(fds_[1]));
     return array;
 }
 

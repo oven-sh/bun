@@ -955,11 +955,11 @@ pub fn getOnData(_: *NodeHTTPResponse, thisValue: jsc.JSValue, _: *jsc.JSGlobalO
 }
 
 pub fn getHasCustomOnData(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject) jsc.JSValue {
-    return jsc.jsBoolean(this.flags.hasCustomOnData);
+    return .jsBoolean(this.flags.hasCustomOnData);
 }
 
 pub fn getUpgraded(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject) jsc.JSValue {
-    return jsc.jsBoolean(this.flags.upgraded);
+    return .jsBoolean(this.flags.upgraded);
 }
 
 pub fn setHasCustomOnData(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, value: JSValue) void {

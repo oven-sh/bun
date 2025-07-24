@@ -1219,9 +1219,9 @@ pub const H2FrameParser = struct {
 
     /// Calculate the new window size for the connection and the stream
     /// https://datatracker.ietf.org/doc/html/rfc7540#section-6.9.1
-    fn ajustWindowSize(this: *H2FrameParser, stream: ?*Stream, payloadSize: u32) void {
+    fn adjustWindowSize(this: *H2FrameParser, stream: ?*Stream, payloadSize: u32) void {
         this.usedWindowSize +|= payloadSize;
-        log("ajustWindowSize {} {} {} {}", .{ this.usedWindowSize, this.windowSize, this.isServer, payloadSize });
+        log("adjustWindowSize {} {} {} {}", .{ this.usedWindowSize, this.windowSize, this.isServer, payloadSize });
         if (this.usedWindowSize > this.windowSize) {
             // we are receiving more data than we are allowed to
             this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
@@ -1964,7 +1964,7 @@ pub const H2FrameParser = struct {
         const end: usize = @min(@as(usize, @intCast(this.remainingLength)), data.len);
         var payload = data[0..end];
         // windows size considering the full frame.length received so far
-        this.ajustWindowSize(stream, @truncate(payload.len));
+        this.adjustWindowSize(stream, @truncate(payload.len));
         const previous_remaining_length: isize = this.remainingLength;
 
         this.remainingLength -= @intCast(end);

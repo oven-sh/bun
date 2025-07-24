@@ -11,8 +11,8 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import { existsSync, readdirSync } from "fs";
+import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
   bunExe,
@@ -8763,45 +8763,42 @@ describe("platform-specific dependencies", () => {
     { os: "win32", cpu: "x64", libc: "*" },
     { os: "win32", cpu: "ia32", libc: "*" },
   ];
-  test.each(platforms)(
-    "filters (os: $os, cpu: $cpu, libc: $libc)",
-    async ({ os, cpu, libc }) => {
-      const urls: string[] = [];
-      setHandler(e => platformTestHandler(e, urls));
+  test.each(platforms)("filters (os: $os, cpu: $cpu, libc: $libc)", async ({ os, cpu, libc }) => {
+    const urls: string[] = [];
+    setHandler(e => platformTestHandler(e, urls));
 
-      await write(
-        join(package_dir, "package.json"),
-        JSON.stringify({
-          name: "test-registry-platform-filtering",
-          dependencies: {
-            "platform-test": "1.0.0",
-          },
-        }),
-      );
+    await write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "test-registry-platform-filtering",
+        dependencies: {
+          "platform-test": "1.0.0",
+        },
+      }),
+    );
 
-      const { stderr, exited } = spawn({
-        cmd: [bunExe(), "install", `--os=${os}`, `--cpu=${cpu}`, `--libc=${libc}`],
-        cwd: package_dir,
-        stdout: "pipe",
-        stderr: "pipe",
-        env,
-      });
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", `--os=${os}`, `--cpu=${cpu}`, `--libc=${libc}`],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
 
-      const [err, exitCode] = await Promise.all([new Response(stderr).text(), exited]);
-      if (exitCode !== 0) {
-        console.log(err);
-      }
-      expect(exitCode).toBe(0);
+    const [err, exitCode] = await Promise.all([new Response(stderr).text(), exited]);
+    if (exitCode !== 0) {
+      console.log(err);
+    }
+    expect(exitCode).toBe(0);
 
-      const platformDir = join(package_dir, "node_modules", "@platform-test");
-      const installedPackages = existsSync(platformDir) ? readdirSync(platformDir) : [];
+    const platformDir = join(package_dir, "node_modules", "@platform-test");
+    const installedPackages = existsSync(platformDir) ? readdirSync(platformDir) : [];
 
-      const installedName = (os + "-" + cpu + (libc === "musl" ? "-musl" : "")).replace("win32", "windows");
+    const installedName = (os + "-" + cpu + (libc === "musl" ? "-musl" : "")).replace("win32", "windows");
 
-      expect(installedPackages).toContain(installedName);
-      expect(installedPackages).toHaveLength(os === "linux" && libc === "*" ? 2 : 1);
-    },
-  );
+    expect(installedPackages).toContain(installedName);
+    expect(installedPackages).toHaveLength(os === "linux" && libc === "*" ? 2 : 1);
+  });
 
   test("wildcards should show all platforms", async () => {
     const urls: string[] = [];

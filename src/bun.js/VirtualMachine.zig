@@ -2179,7 +2179,7 @@ pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const 
 pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
     const promise = try this.reloadEntryPoint(entry_path);
     this.eventLoop().performGC();
-    
+
     // For workers with top-level await, we need to dispatch online and fire early messages
     // before waiting for the promise to resolve, so that messages can be processed
     // even while the top-level await is pending
@@ -2187,14 +2187,14 @@ pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) any
         if (worker.hasRequestedTerminate()) {
             return error.WorkerTerminated;
         }
-        
+
         // Dispatch online and fire early messages before waiting for promise
         // This allows the worker to receive messages even with top-level await
         bun.jsc.markBinding(@src());
         bun.jsc.fromJSHostCallGeneric(this.global, @src(), WebWorker__dispatchOnline, .{ worker.cpp_worker, this.global }) catch {};
         bun.jsc.fromJSHostCallGeneric(this.global, @src(), WebWorker__fireEarlyMessages, .{ worker.cpp_worker, this.global }) catch {};
     }
-    
+
     this.eventLoop().waitForPromiseWithTermination(jsc.AnyPromise{
         .internal = promise,
     });

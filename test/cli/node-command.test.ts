@@ -1,7 +1,7 @@
-import { test, expect, describe, beforeAll, setDefaultTimeout } from "bun:test";
+import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
-import { existsSync, mkdirSync, writeFileSync, chmodSync, rmSync } from "fs";
 
 // if BUN_DEBUG_QUIET_LOGS is set, we'll wait longer for tests to complete
 if (process.env.BUN_DEBUG_QUIET_LOGS) {

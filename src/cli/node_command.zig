@@ -1,21 +1,3 @@
-const bun = @import("bun");
-const Command = @import("../cli.zig").Command;
-const std = @import("std");
-const Output = bun.Output;
-const Global = bun.Global;
-const strings = bun.strings;
-const Env = bun.Environment;
-const Fs = bun.fs;
-const which = @import("../which.zig").which;
-const Options = @import("../install/PackageManager/PackageManagerOptions.zig");
-const Bin = @import("../install/bin.zig");
-const HTTP = bun.http;
-const AsyncHTTP = HTTP.AsyncHTTP;
-const URL = bun.URL;
-const MutableString = bun.MutableString;
-const Archiver = bun.libarchive.Archiver;
-const Zlib = @import("../zlib.zig");
-
 pub const NodeCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         const relevant_args = bun.argv[2..];
@@ -803,3 +785,20 @@ pub const NodeCommand = struct {
         }
     }
 };
+
+const Options = @import("../install/PackageManager/PackageManagerOptions.zig");
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+const which = @import("../which.zig").which;
+
+const bun = @import("bun");
+const Env = bun.Environment;
+const Global = bun.Global;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const URL = bun.URL;
+const strings = bun.strings;
+const Archiver = bun.libarchive.Archiver;
+
+const HTTP = bun.http;
+const AsyncHTTP = HTTP.AsyncHTTP;

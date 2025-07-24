@@ -527,7 +527,7 @@ pub const NodeCommand = struct {
             const path = bun.strings.toWPathNormalized(&buf, version_binary);
             break :blk bun.sys.access(path, 0);
         } else bun.sys.access(version_binary, 0);
-        
+
         if (access_result == .result) {
             if (set_as_default) {
                 Output.prettyln("<r><green>✓<r> Node.js v{s} is already installed", .{version});
@@ -578,7 +578,7 @@ pub const NodeCommand = struct {
             const path = bun.strings.toWPathNormalized(&buf, version_binary);
             break :blk bun.sys.access(path, 0);
         } else bun.sys.access(version_binary, 0);
-        
+
         if (access_result2 != .result) {
             const version_dir = try std.fmt.allocPrint(allocator, "{s}/node-{s}", .{ cache_dir, version });
             defer allocator.free(version_dir);
@@ -737,7 +737,7 @@ pub const NodeCommand = struct {
             const path = bun.strings.toWPathNormalized(&buf, version_binary);
             break :blk bun.sys.access(path, 0);
         } else bun.sys.access(version_binaryZ3, 0);
-        
+
         if (access_result3 == .result) {
             try runNode(allocator, version_binary, args);
         } else {
@@ -760,7 +760,7 @@ pub const NodeCommand = struct {
             const path = bun.strings.toWPathNormalized(&buf, node_symlink);
             break :blk bun.sys.access(path, 0);
         } else bun.sys.access(node_symlink, 0);
-        
+
         if (access_result4 == .result) {
             try runNode(allocator, node_symlink, args);
             return;
@@ -925,7 +925,7 @@ pub const NodeCommand = struct {
                             const path = bun.strings.toWPathNormalized(&buf, test_node);
                             break :blk bun.sys.access(path, 0);
                         } else bun.sys.access(test_node, 0);
-                        
+
                         if (access_result5 == .result) {
                             found_other_dir = true;
                         }

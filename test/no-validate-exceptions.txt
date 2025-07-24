@@ -52,6 +52,7 @@ vendor/elysia/test/macro/macro.test.ts
 vendor/elysia/test/path/group.test.ts
 vendor/elysia/test/path/guard.test.ts
 vendor/elysia/test/path/path.test.ts
+vendor/elysia/test/path/plugin.test.ts
 vendor/elysia/test/plugins/affix.test.ts
 vendor/elysia/test/plugins/checksum.test.ts
 vendor/elysia/test/plugins/error-propagation.test.ts

@@ -328,7 +328,6 @@ const std = @import("std");
 
 const bun = @import("bun");
 const assert = bun.assert;
-
 const jsc = bun.jsc;
 const Maybe = bun.sys.Maybe;
 

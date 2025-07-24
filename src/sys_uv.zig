@@ -401,8 +401,6 @@ pub const Tag = @import("./sys.zig").Tag;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FileDescriptor = bun.FileDescriptor;
+const Maybe = bun.sys.Maybe;
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const uv = bun.windows.libuv;
-
-const jsc = bun.jsc;
-const Maybe = bun.sys.Maybe;

@@ -1673,16 +1673,17 @@ const match = @import("./match.zig").match;
 
 const bun = @import("bun");
 const BunString = bun.String;
-const Syscall = bun.sys;
 const CodepointIterator = bun.strings.UnsignedCodepointIterator;
 const isAllAscii = bun.strings.isAllASCII;
 
 const jsc = bun.jsc;
-const Maybe = bun.sys.Maybe;
 const ZigString = bun.jsc.ZigString;
 
 const Cursor = CodepointIterator.Cursor;
 const Codepoint = CodepointIterator.Cursor.CodePointType;
+
+const Syscall = bun.sys;
+const Maybe = bun.sys.Maybe;
 
 const std = @import("std");
 const ArrayList = std.ArrayListUnmanaged;

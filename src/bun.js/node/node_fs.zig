@@ -6917,7 +6917,6 @@ const Buffer = bun.api.node.Buffer;
 
 const jsc = bun.jsc;
 const ArrayBuffer = jsc.MarkedArrayBuffer;
-const Maybe = bun.sys.Maybe;
 const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;
 
 const Encoding = jsc.Node.Encoding;
@@ -6930,6 +6929,7 @@ const gid_t = jsc.Node.gid_t;
 const uid_t = jsc.Node.uid_t;
 
 const E = bun.sys.E;
+const Maybe = bun.sys.Maybe;
 const SystemErrno = bun.sys.SystemErrno;
 
 const windows = bun.windows;

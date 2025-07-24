@@ -469,9 +469,8 @@ const builtin = @import("builtin");
 const bun = @import("bun");
 const FD = bun.FD;
 const PathString = bun.PathString;
-const strings = bun.strings;
-
 const jsc = bun.jsc;
+const strings = bun.strings;
 const Maybe = bun.sys.Maybe;
 const Entry = jsc.Node.Dirent;
 

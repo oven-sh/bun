@@ -2243,9 +2243,9 @@ const Environment = bun.Environment;
 const Output = bun.Output;
 const PosixSpawn = bun.spawn;
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const Maybe = bun.sys.Maybe;
 const ShellSubprocess = bun.shell.ShellSubprocess;
 const uv = bun.windows.libuv;
 
 const jsc = bun.jsc;
-const Maybe = bun.sys.Maybe;
 const Subprocess = jsc.Subprocess;

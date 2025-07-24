@@ -695,7 +695,6 @@ pub const MaxBuf = @import("./MaxBuf.zig");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const assert = bun.assert;
-const jsc = bun.jsc;
 const sys = bun.sys;
 const ReadFile = bun.webcore.Blob.read_file.ReadFile;
 const WriteFile = bun.webcore.Blob.write_file.WriteFile;

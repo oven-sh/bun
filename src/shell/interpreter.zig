@@ -1966,11 +1966,11 @@ const ResolvePath = bun.path;
 const TaggedPointerUnion = bun.TaggedPointerUnion;
 const assert = bun.assert;
 const which = bun.which;
+const Maybe = bun.sys.Maybe;
 
 const jsc = bun.jsc;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const Maybe = bun.sys.Maybe;
 
 const shell = bun.shell;
 const Yield = shell.Yield;

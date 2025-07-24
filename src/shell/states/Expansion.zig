@@ -852,11 +852,11 @@ const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const assert = bun.assert;
+const Maybe = bun.sys.Maybe;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const Maybe = bun.sys.Maybe;
 
 const ExitCode = bun.shell.ExitCode;
 const Yield = bun.shell.Yield;

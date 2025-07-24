@@ -120,8 +120,6 @@ pub const Symlinker = struct {
     }
 };
 
-// @sortImports
-
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;

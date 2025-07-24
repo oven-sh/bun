@@ -1,16 +1,16 @@
 /// A non-owning reference to either the JS event loop or the mini event loop.
 pub const EventLoopHandle = union(EventLoopKind) {
-    js: *JSC.EventLoop,
+    js: *jsc.EventLoop,
     mini: *MiniEventLoop,
 
-    pub fn globalObject(this: EventLoopHandle) ?*JSC.JSGlobalObject {
+    pub fn globalObject(this: EventLoopHandle) ?*jsc.JSGlobalObject {
         return switch (this) {
             .js => this.js.global,
             .mini => null,
         };
     }
 
-    pub fn stdout(this: EventLoopHandle) *JSC.WebCore.Blob.Store {
+    pub fn stdout(this: EventLoopHandle) *jsc.WebCore.Blob.Store {
         return switch (this) {
             .js => this.js.virtual_machine.rareData().stdout(),
             .mini => this.mini.stdout(),
@@ -25,7 +25,7 @@ pub const EventLoopHandle = union(EventLoopKind) {
         return null;
     }
 
-    pub fn stderr(this: EventLoopHandle) *JSC.WebCore.Blob.Store {
+    pub fn stderr(this: EventLoopHandle) *jsc.WebCore.Blob.Store {
         return switch (this) {
             .js => this.js.virtual_machine.rareData().stderr(),
             .mini => this.mini.stderr(),
@@ -54,8 +54,8 @@ pub const EventLoopHandle = union(EventLoopKind) {
         const Context = @TypeOf(context);
         return switch (Context) {
             *VirtualMachine => .{ .js = context.eventLoop() },
-            *JSC.EventLoop => .{ .js = context },
-            *JSC.MiniEventLoop => .{ .mini = context },
+            *jsc.EventLoop => .{ .js = context },
+            *jsc.MiniEventLoop => .{ .mini = context },
             *AnyEventLoop => switch (context.*) {
                 .js => .{ .js = context.js },
                 .mini => .{ .mini = &context.mini },
@@ -144,8 +144,8 @@ pub const EventLoopHandle = union(EventLoopKind) {
 };
 
 pub const EventLoopTask = union(EventLoopKind) {
-    js: JSC.ConcurrentTask,
-    mini: JSC.AnyTaskWithExtraContext,
+    js: jsc.ConcurrentTask,
+    mini: jsc.AnyTaskWithExtraContext,
 
     pub fn init(kind: EventLoopKind) EventLoopTask {
         switch (kind) {
@@ -154,7 +154,7 @@ pub const EventLoopTask = union(EventLoopKind) {
         }
     }
 
-    pub fn fromEventLoop(loop: JSC.EventLoopHandle) EventLoopTask {
+    pub fn fromEventLoop(loop: jsc.EventLoopHandle) EventLoopTask {
         switch (loop) {
             .js => return .{ .js = .{} },
             .mini => return .{ .mini = .{} },
@@ -163,16 +163,18 @@ pub const EventLoopTask = union(EventLoopKind) {
 };
 
 pub const EventLoopTaskPtr = union {
-    js: *JSC.ConcurrentTask,
-    mini: *JSC.AnyTaskWithExtraContext,
+    js: *jsc.ConcurrentTask,
+    mini: *jsc.AnyTaskWithExtraContext,
 };
 
 const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Async = bun.Async;
-const VirtualMachine = JSC.VirtualMachine;
-const MiniEventLoop = JSC.MiniEventLoop;
 const Allocator = std.mem.Allocator;
-const AnyEventLoop = JSC.AnyEventLoop;
-const EventLoopKind = JSC.EventLoopKind;
+
+const bun = @import("bun");
+const Async = bun.Async;
+
+const jsc = bun.jsc;
+const AnyEventLoop = jsc.AnyEventLoop;
+const EventLoopKind = jsc.EventLoopKind;
+const MiniEventLoop = jsc.MiniEventLoop;
+const VirtualMachine = jsc.VirtualMachine;

@@ -986,7 +986,7 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
@@ -1000,9 +1000,8 @@ const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const Semver = bun.Semver;
 const String = Semver.String;

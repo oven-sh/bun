@@ -28,9 +28,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { userInfo } from "node:os";
+import { availableParallelism, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
+import pLimit from "./p-limit.mjs";
 import {
   getAbi,
   getAbiVersion,
@@ -63,6 +64,7 @@ import {
   unzip,
   uploadArtifact,
 } from "./utils.mjs";
+
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
@@ -152,6 +154,10 @@ const { values: options, positionals: filters } = parseArgs({
     ["coredump-upload"]: {
       type: "boolean",
       default: isBuildkite && isLinux,
+    },
+    ["parallel"]: {
+      type: "boolean",
+      default: false,
     },
   },
 });
@@ -341,6 +347,10 @@ async function runTests() {
   const failedResults = [];
   const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
 
+  const parallelism = options["parallel"] ? availableParallelism() : 1;
+  console.log("parallelism", parallelism);
+  const limit = pLimit(parallelism);
+
   /**
    * @param {string} title
    * @param {function} fn
@@ -350,17 +360,21 @@ async function runTests() {
     const index = ++i;
 
     let result, failure, flaky;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let attempt = 1;
+    for (; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) {
         await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
       }
 
-      result = await startGroup(
-        attempt === 1
-          ? `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`
-          : `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title} ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`,
-        fn,
-      );
+      let grouptitle = `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`;
+      if (attempt > 1) grouptitle += ` ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`;
+
+      if (parallelism > 1) {
+        console.log(grouptitle);
+        result = await fn();
+      } else {
+        result = await startGroup(grouptitle, fn);
+      }
 
       const { ok, stdoutPreview, error } = result;
       if (ok) {
@@ -375,6 +389,7 @@ async function runTests() {
       const color = attempt >= maxAttempts ? "red" : "yellow";
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
       startGroup(label, () => {
+        if (parallelism > 1) return;
         process.stderr.write(stdoutPreview);
       });
 
@@ -395,14 +410,15 @@ async function runTests() {
       // Group flaky tests together, regardless of the title
       const context = flaky ? "flaky" : title;
       const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+      if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
       if (title.startsWith("vendor")) {
-        const content = formatTestToMarkdown({ ...failure, testPath: title });
+        const content = formatTestToMarkdown({ ...failure, testPath: title }, false, attempt - 1);
         if (content) {
           reportAnnotationToBuildKite({ context, label: title, content, style });
         }
       } else {
-        const content = formatTestToMarkdown(failure);
+        const content = formatTestToMarkdown(failure, false, attempt - 1);
         if (content) {
           reportAnnotationToBuildKite({ context, label: title, content, style });
         }
@@ -412,10 +428,10 @@ async function runTests() {
     if (isGithubAction) {
       const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
       if (summaryPath) {
-        const longMarkdown = formatTestToMarkdown(failure);
+        const longMarkdown = formatTestToMarkdown(failure, false, attempt - 1);
         appendFileSync(summaryPath, longMarkdown);
       }
-      const shortMarkdown = formatTestToMarkdown(failure, true);
+      const shortMarkdown = formatTestToMarkdown(failure, true, attempt - 1);
       appendFileSync("comment.md", shortMarkdown);
     }
 
@@ -434,48 +450,62 @@ async function runTests() {
   }
 
   if (!failedResults.length) {
-    for (const testPath of tests) {
-      const absoluteTestPath = join(testsPath, testPath);
-      const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
-      if (isNodeTest(testPath)) {
-        const testContent = readFileSync(absoluteTestPath, "utf-8");
-        const runWithBunTest =
-          title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");
-        const subcommand = runWithBunTest ? "test" : "run";
-        const env = {
-          FORCE_COLOR: "0",
-          NO_COLOR: "1",
-          BUN_DEBUG_QUIET_LOGS: "1",
-        };
-        if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
-          env.BUN_JSC_validateExceptionChecks = "1";
-        }
-        await runTest(title, async () => {
-          const { ok, error, stdout } = await spawnBun(execPath, {
-            cwd: cwd,
-            args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
-            timeout: getNodeParallelTestTimeout(title),
-            env,
-            stdout: chunk => pipeTestStdout(process.stdout, chunk),
-            stderr: chunk => pipeTestStdout(process.stderr, chunk),
-          });
-          const mb = 1024 ** 3;
-          const stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
-          return {
-            testPath: title,
-            ok: ok,
-            status: ok ? "pass" : "fail",
-            error: error,
-            errors: [],
-            tests: [],
-            stdout: stdout,
-            stdoutPreview: stdoutPreview,
-          };
-        });
-      } else {
-        await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
-      }
-    }
+    await Promise.all(
+      tests.map(testPath =>
+        limit(() => {
+          const absoluteTestPath = join(testsPath, testPath);
+          const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
+          if (isNodeTest(testPath)) {
+            const testContent = readFileSync(absoluteTestPath, "utf-8");
+            const runWithBunTest =
+              title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");
+            const subcommand = runWithBunTest ? "test" : "run";
+            const env = {
+              FORCE_COLOR: "0",
+              NO_COLOR: "1",
+              BUN_DEBUG_QUIET_LOGS: "1",
+            };
+            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
+              env.BUN_JSC_validateExceptionChecks = "1";
+            }
+            return runTest(title, async () => {
+              const { ok, error, stdout } = await spawnBun(execPath, {
+                cwd: cwd,
+                args: [
+                  subcommand,
+                  "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"),
+                  absoluteTestPath,
+                ],
+                timeout: getNodeParallelTestTimeout(title),
+                env,
+                stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
+                stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              });
+              const mb = 1024 ** 3;
+              const stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
+              return {
+                testPath: title,
+                ok: ok,
+                status: ok ? "pass" : "fail",
+                error: error,
+                errors: [],
+                tests: [],
+                stdout: stdout,
+                stdoutPreview: stdoutPreview,
+              };
+            });
+          } else {
+            return runTest(title, async () =>
+              spawnBunTest(execPath, join("test", testPath), {
+                cwd,
+                stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
+                stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              }),
+            );
+          }
+        }),
+      ),
+    );
   }
 
   if (vendorTests?.length) {
@@ -517,7 +547,7 @@ async function runTests() {
 
   if (isGithubAction) {
     reportOutputToGitHubAction("failing_tests_count", failedResults.length);
-    const markdown = formatTestToMarkdown(failedResults);
+    const markdown = formatTestToMarkdown(failedResults, false, 0);
     reportOutputToGitHubAction("failing_tests", markdown);
   }
 
@@ -1059,7 +1089,7 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   const env = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
   };
-  if (basename(execPath).includes("asan") && shouldValidateExceptions(relative(cwd, absPath))) {
+  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
   }
 
@@ -1068,8 +1098,8 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
     cwd: options["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
     env,
-    stdout: chunk => pipeTestStdout(process.stdout, chunk),
-    stderr: chunk => pipeTestStdout(process.stderr, chunk),
+    stdout: options.stdout,
+    stderr: options.stderr,
   });
   const { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
 
@@ -1731,9 +1761,10 @@ function getTestLabel() {
 /**
  * @param  {TestResult | TestResult[]} result
  * @param  {boolean} concise
+ * @param  {number} retries
  * @returns {string}
  */
-function formatTestToMarkdown(result, concise) {
+function formatTestToMarkdown(result, concise, retries) {
   const results = Array.isArray(result) ? result : [result];
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
@@ -1776,6 +1807,9 @@ function formatTestToMarkdown(result, concise) {
     }
     if (platform) {
       markdown += ` on ${platform}`;
+    }
+    if (retries > 0) {
+      markdown += ` (${retries} ${retries === 1 ? "retry" : "retries"})`;
     }
 
     if (concise) {

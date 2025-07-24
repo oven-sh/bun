@@ -1,10 +1,8 @@
+const UUID = @This();
+
 //https://github.com/dmgk/zig-uuid
-const std = @import("std");
-const fmt = std.fmt;
-const bun = @import("bun");
 
 pub const Error = error{InvalidUUID};
-const UUID = @This();
 
 bytes: [16]u8,
 
@@ -283,3 +281,8 @@ pub const UUID5 = struct {
         return self.toUUID().format(layout, options, writer);
     }
 };
+
+const bun = @import("bun");
+
+const std = @import("std");
+const fmt = std.fmt;

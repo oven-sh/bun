@@ -1166,7 +1166,9 @@ pub const UV_E = struct {
     pub const UNATCH = -uv.UV_EUNATCH;
     pub const NOEXEC = -uv.UV_ENOEXEC;
 };
-const std = @import("std");
+
 const bun = @import("bun");
-const uv = bun.windows.libuv;
+const std = @import("std");
+
 const Win32Error = bun.windows.Win32Error;
+const uv = bun.windows.libuv;

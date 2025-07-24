@@ -1,5 +1,5 @@
 //! This is a slow, dynamically-allocated one-off task
-//! Use it when you can't add to JSC.Task directly and managing the lifetime of the Task struct is overly complex
+//! Use it when you can't add to jsc.Task directly and managing the lifetime of the Task struct is overly complex
 
 const ManagedTask = @This();
 
@@ -42,5 +42,6 @@ pub fn New(comptime Type: type, comptime Callback: anytype) type {
 }
 
 const bun = @import("bun");
-const JSC = bun.JSC;
-const Task = JSC.Task;
+
+const jsc = bun.jsc;
+const Task = jsc.Task;

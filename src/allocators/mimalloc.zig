@@ -202,7 +202,6 @@ pub const MI_SMALL_WSIZE_MAX = @as(c_int, 128);
 pub const MI_SMALL_SIZE_MAX = MI_SMALL_WSIZE_MAX * @import("std").zig.c_translation.sizeof(?*anyopaque);
 pub const MI_ALIGNMENT_MAX = (@as(c_int, 16) * @as(c_int, 1024)) * @as(c_ulong, 1024);
 
-const std = @import("std");
 pub fn canUseAlignedAlloc(len: usize, alignment: usize) bool {
     return alignment > 0 and std.math.isPowerOfTwo(alignment) and !mi_malloc_satisfies_alignment(alignment, len);
 }
@@ -211,3 +210,5 @@ inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
     return (alignment == @sizeOf(*anyopaque) or
         (alignment == MI_MAX_ALIGN_SIZE and size >= (MI_MAX_ALIGN_SIZE / 2)));
 }
+
+const std = @import("std");

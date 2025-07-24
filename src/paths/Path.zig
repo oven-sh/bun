@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Output = bun.Output;
-const PathBuffer = bun.PathBuffer;
-const WPathBuffer = bun.WPathBuffer;
-const Environment = bun.Environment;
-const FD = bun.FD;
-
 const Options = struct {
     check_length: CheckLength = .assume_always_less_than_max_path,
     sep: PathSeparators = .any,
@@ -971,3 +963,12 @@ pub fn Path(comptime opts: Options) type {
         }
     };
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const Output = bun.Output;
+const PathBuffer = bun.PathBuffer;
+const WPathBuffer = bun.WPathBuffer;

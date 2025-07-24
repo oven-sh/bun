@@ -266,20 +266,21 @@ fn wrapRulesWithConditions(
     }
 }
 
-const bun = @import("bun");
-const BabyList = bun.BabyList;
-const DataURL = bun.bundle_v2.DataURL;
-const Logger = bun.logger;
-const Loc = Logger.Loc;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const ThreadPoolLib = bun.ThreadPool;
-
-const std = @import("std");
-const ImportRecord = bun.ImportRecord;
-
-const bundler = bun.bundle_v2;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const ImportRecord = bun.ImportRecord;
+const ThreadPoolLib = bun.ThreadPool;
+
+const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
+const DataURL = bun.bundle_v2.DataURL;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+
+const Logger = bun.logger;
+const Loc = Logger.Loc;

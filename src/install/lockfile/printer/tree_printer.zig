@@ -136,12 +136,7 @@ fn shouldPrintPackageInstall(
     // It's possible this package was installed but the dependency is disabled.
     // Have "zod@1.0.0" in dependencies and `zod2@npm:zod@1.0.0` in devDependencies
     // and install with --omit=dev.
-    if (this.lockfile.isResolvedDependencyDisabled(
-        dep_id,
-        this.options.local_package_features,
-        &pkg_metas[package_id],
-        manager
-    )) {
+    if (this.lockfile.isResolvedDependencyDisabled(dep_id, this.options.local_package_features, &pkg_metas[package_id], manager)) {
         return .no;
     }
 

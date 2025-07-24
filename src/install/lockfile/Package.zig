@@ -52,12 +52,8 @@ pub const Package = extern struct {
         pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = .{ .workspace = true } };
     };
 
-    pub inline fn isDisabled(this: *const Package) bool {
-        return this.meta.isDisabled();
-    }
-
-    pub inline fn isDisabledWithTarget(this: *const Package, manager: *const PackageManager) bool {
-        return this.meta.isDisabledWithTarget(manager);
+    pub inline fn isDisabled(this: *const Package, manager: *const ?PackageManager) bool {
+        return this.meta.isDisabled(manager);
     }
 
     pub const Alphabetizer = struct {

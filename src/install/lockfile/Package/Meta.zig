@@ -34,19 +34,11 @@ pub const Meta = extern struct {
 
     /// Does the `cpu` arch and `os` match the requirements listed in the package?
     /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
-    pub fn isDisabled(this: *const Meta) bool {
-        return !this.arch.isMatch() or !this.os.isMatch() or !this.libc.isMatch();
-    }
-
-    pub fn isDisabledWithTarget(this: *const Meta, manager: *const PackageManager) bool {
-        if (manager.options.target_os != null or manager.options.target_cpu != null or manager.options.target_libc != null) {
-            const os_match = this.os.isMatchWithTarget(manager.options.target_os orelse this.os);
-            const cpu_match = this.arch.isMatchWithTarget(manager.options.target_cpu orelse this.arch);
-            const libc_match = this.libc.isMatchWithTarget(manager.options.target_libc orelse this.libc);
-            return !os_match or !cpu_match or !libc_match;
-        } else {
-            return this.isDisabled();
-        }
+    pub fn isDisabled(this: *const Meta, manager: *const PackageManager) bool {
+        const os_match = this.os.isMatch(manager.options.target_os);
+        const cpu_match = this.arch.isMatch(manager.options.target_cpu);
+        const libc_match = this.libc.isMatch(manager.options.target_libc);
+        return !os_match or !cpu_match or !libc_match;
     }
 
     pub fn hasInstallScript(this: *const Meta) bool {

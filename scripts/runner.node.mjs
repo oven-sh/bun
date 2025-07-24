@@ -547,7 +547,7 @@ async function runTests() {
 
   if (isGithubAction) {
     reportOutputToGitHubAction("failing_tests_count", failedResults.length);
-    const markdown = formatTestToMarkdown(failedResults, false);
+    const markdown = formatTestToMarkdown(failedResults, false, 0);
     reportOutputToGitHubAction("failing_tests", markdown);
   }
 

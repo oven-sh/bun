@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, jest } from "bun:test";
+import { beforeEach, describe, expect, jest, test } from "bun:test";
 
 // Example functions for testing toHaveReturnedWith
 export function add(a: number, b: number): number {
@@ -276,7 +276,7 @@ describe("toHaveLastReturnedWith Examples", () => {
 
     test("should pass when last call returns expected string", () => {
       mockGreet("Alice"); // Returns "Hello, Alice!"
-      mockGreet("Bob");   // Returns "Hello, Bob!"
+      mockGreet("Bob"); // Returns "Hello, Bob!"
       mockGreet("Carol"); // Returns "Hello, Carol!" - last call
 
       expect(mockGreet).toHaveLastReturnedWith("Hello, Carol!");
@@ -293,7 +293,7 @@ describe("toHaveLastReturnedWith Examples", () => {
     test("drink returns La Croix (Orange) last", () => {
       const beverage1 = { name: "La Croix (Lemon)" };
       const beverage2 = { name: "La Croix (Orange)" };
-      
+
       mockDrink(beverage1);
       mockDrink(beverage2);
 
@@ -307,11 +307,8 @@ describe("toHaveLastReturnedWith Examples", () => {
     });
 
     test("should pass with null as last return value", () => {
-      const mockNullFunction = jest.fn()
-        .mockReturnValueOnce(5)
-        .mockReturnValueOnce("test")
-        .mockReturnValueOnce(null);
-      
+      const mockNullFunction = jest.fn().mockReturnValueOnce(5).mockReturnValueOnce("test").mockReturnValueOnce(null);
+
       mockNullFunction();
       mockNullFunction();
       mockNullFunction(); // Returns null
@@ -320,10 +317,8 @@ describe("toHaveLastReturnedWith Examples", () => {
     });
 
     test("should pass with undefined as last return value", () => {
-      const mockUndefinedFunction = jest.fn()
-        .mockReturnValueOnce(10)
-        .mockReturnValueOnce(undefined);
-      
+      const mockUndefinedFunction = jest.fn().mockReturnValueOnce(10).mockReturnValueOnce(undefined);
+
       mockUndefinedFunction();
       mockUndefinedFunction(); // Returns undefined
 
@@ -334,7 +329,7 @@ describe("toHaveLastReturnedWith Examples", () => {
       const mockArrayFunction = jest.fn();
       mockArrayFunction.mockReturnValueOnce([1, 2]);
       mockArrayFunction.mockReturnValueOnce([3, 4, 5]);
-      
+
       mockArrayFunction();
       mockArrayFunction(); // Returns [3, 4, 5]
 
@@ -356,7 +351,7 @@ describe("toHaveLastReturnedWith Examples", () => {
 
     test("should fail when checking non-last return value", () => {
       mockGreet("Alice"); // Returns "Hello, Alice!"
-      mockGreet("Bob");   // Returns "Hello, Bob!" - last call
+      mockGreet("Bob"); // Returns "Hello, Bob!" - last call
 
       // This will fail because last call returned "Hello, Bob!", not "Hello, Alice!"
       expect(() => {
@@ -372,14 +367,15 @@ describe("toHaveLastReturnedWith Examples", () => {
     });
 
     test("should fail when last call threw an error", () => {
-      const mockThrowFunction = jest.fn()
+      const mockThrowFunction = jest
+        .fn()
         .mockReturnValueOnce(5)
         .mockImplementationOnce(() => {
           throw new Error("Test error");
         });
-      
+
       mockThrowFunction(); // Returns 5
-      
+
       // Last call will throw
       expect(() => {
         mockThrowFunction();
@@ -405,7 +401,7 @@ describe("toHaveLastReturnedWith Examples", () => {
       const mockArrayFunction = jest.fn();
       mockArrayFunction.mockReturnValueOnce([1, 2]);
       mockArrayFunction.mockReturnValueOnce([3, 4, 5]);
-      
+
       mockArrayFunction();
       mockArrayFunction(); // Returns [3, 4, 5]
 
@@ -421,10 +417,10 @@ describe("toHaveLastReturnedWith Examples", () => {
       const mockFunctionFactory = jest.fn();
       const fn1 = (x: number) => x * 2;
       const fn2 = (x: number) => x * 3;
-      
+
       mockFunctionFactory.mockReturnValueOnce(fn1);
       mockFunctionFactory.mockReturnValueOnce(fn2);
-      
+
       mockFunctionFactory();
       const lastResult = mockFunctionFactory(); // Returns fn2
 
@@ -436,10 +432,10 @@ describe("toHaveLastReturnedWith Examples", () => {
       const mockComplexFunction = jest.fn();
       const obj1 = { id: 1, data: { nested: { value: 10 } } };
       const obj2 = { id: 2, data: { nested: { value: 20 } } };
-      
+
       mockComplexFunction.mockReturnValueOnce(obj1);
       mockComplexFunction.mockReturnValueOnce(obj2);
-      
+
       mockComplexFunction();
       mockComplexFunction(); // Returns obj2
 
@@ -472,10 +468,10 @@ describe("toHaveLastReturnedWith Examples", () => {
       const sym1 = Symbol("first");
       const sym2 = Symbol("last");
       const mockSymbolFunction = jest.fn();
-      
+
       mockSymbolFunction.mockReturnValueOnce(sym1);
       mockSymbolFunction.mockReturnValueOnce(sym2);
-      
+
       mockSymbolFunction();
       mockSymbolFunction(); // Returns sym2
 

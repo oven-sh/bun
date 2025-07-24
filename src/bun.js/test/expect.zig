@@ -4584,7 +4584,7 @@ pub const Expect = struct {
     const AllCallsFormatter = struct {
         globalThis: *JSGlobalObject,
         returns: JSValue,
-        formatter: *JSC.ConsoleObject.Formatter,
+        formatter: *jsc.ConsoleObject.Formatter,
 
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const len = try self.returns.getLength(self.globalThis);
@@ -4623,7 +4623,7 @@ pub const Expect = struct {
     const SuccessfulReturnsFormatter = struct {
         globalThis: *JSGlobalObject,
         successful_returns: *const std.ArrayList(JSValue),
-        formatter: *JSC.ConsoleObject.Formatter,
+        formatter: *jsc.ConsoleObject.Formatter,
 
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const len = self.successful_returns.items.len;
@@ -4642,7 +4642,7 @@ pub const Expect = struct {
     };
 
     pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
 
         const thisValue = callframe.this();
         const arguments = callframe.arguments_old(1).slice();
@@ -4700,7 +4700,7 @@ pub const Expect = struct {
         }
 
         // Handle failure
-        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
 
         const signature = comptime getSignature("toHaveReturnedWith", "<green>expected<r>", false);
@@ -4788,7 +4788,7 @@ pub const Expect = struct {
     }
 
     pub fn toHaveLastReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
 
         const thisValue = callframe.this();
         const arguments = callframe.arguments_old(1).slice();

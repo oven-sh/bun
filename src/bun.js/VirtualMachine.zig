@@ -1555,11 +1555,11 @@ fn _resolve(
         return;
     } else if (strings.hasPrefixComptime(specifier, js_ast.Macro.namespaceWithColon)) {
         ret.result = null;
-        ret.path = specifier;
+        ret.path = try bun.default_allocator.dupe(u8, specifier);
         return;
     } else if (strings.hasPrefixComptime(specifier, node_fallbacks.import_path)) {
         ret.result = null;
-        ret.path = specifier;
+        ret.path = try bun.default_allocator.dupe(u8, specifier);
         return;
     } else if (jsc.ModuleLoader.HardcodedModule.Alias.get(specifier, .bun)) |result| {
         ret.result = null;
@@ -1570,12 +1570,12 @@ fn _resolve(
             strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
     {
         ret.result = null;
-        ret.path = specifier;
+        ret.path = try bun.default_allocator.dupe(u8, specifier);
         return;
     } else if (strings.hasPrefixComptime(specifier, "blob:")) {
         ret.result = null;
         if (jsc.WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])) {
-            ret.path = specifier;
+            ret.path = try bun.default_allocator.dupe(u8, specifier);
             return;
         } else {
             return error.ModuleNotFound;

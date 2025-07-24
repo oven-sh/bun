@@ -567,6 +567,8 @@ pub const Command = struct {
             RootCommandMatcher.case("run") => .RunCommand,
             RootCommandMatcher.case("help") => .HelpCommand,
 
+            RootCommandMatcher.case("node") => .NodeCommand,
+
             RootCommandMatcher.case("exec") => .ExecCommand,
 
             RootCommandMatcher.case("outdated") => .OutdatedCommand,
@@ -997,6 +999,7 @@ pub const Command = struct {
                 .BuildCommand => Arguments.build_params,
                 .TestCommand => Arguments.test_params,
                 .BunxCommand => Arguments.run_params,
+                .NodeCommand => Arguments.auto_only_params,
                 else => Arguments.base_params_ ++ Arguments.runtime_params_ ++ Arguments.transpiler_params_,
             };
         }

@@ -145,17 +145,35 @@ pub const NodeCommand = struct {
         const cache_dir = try getNodeCacheDir(allocator);
         defer allocator.free(cache_dir);
 
-        std.fs.makeDirAbsolute(cache_dir) catch |err| {
-            if (err != error.PathAlreadyExists) return err;
-        };
+        const cache_dirZ = try allocator.dupeZ(u8, cache_dir);
+        defer allocator.free(cache_dirZ);
+
+        switch (bun.sys.mkdir(cache_dirZ, 0o755)) {
+            .result => {},
+            .err => |err| {
+                if (err.errno != @intFromEnum(bun.sys.E.EXIST)) {
+                    return err.toZigErr();
+                }
+            },
+        }
 
         const cache_file = try std.fs.path.join(allocator, &.{ cache_dir, ".version-cache" });
         defer allocator.free(cache_file);
 
-        var file = try std.fs.createFileAbsolute(cache_file, .{});
-        defer file.close();
+        const cache_fileZ = try allocator.dupeZ(u8, cache_file);
+        defer allocator.free(cache_fileZ);
 
-        try file.writeAll(data);
+        const fd = switch (bun.sys.open(cache_fileZ, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+            .result => |fd| fd,
+            .err => |err| return err.toZigErr(),
+        };
+        defer fd.close();
+
+        var file = bun.sys.File{ .handle = fd };
+        switch (file.writeAll(data)) {
+            .result => {},
+            .err => |err| return err.toZigErr(),
+        }
     }
 
     fn fetchNodeVersion(allocator: std.mem.Allocator, filter: VersionFilter, major_version: ?[]const u8) ![]const u8 {
@@ -325,13 +343,29 @@ pub const NodeCommand = struct {
         if (parent_dir) |parent| {
             std.fs.cwd().makePath(parent) catch {};
         }
-        std.fs.makeDirAbsolute(dest_dir) catch |err| {
-            if (err != error.PathAlreadyExists) return err;
-        };
+
+        const dest_dirZ = try allocator.dupeZ(u8, dest_dir);
+        defer allocator.free(dest_dirZ);
+
+        switch (bun.sys.mkdir(dest_dirZ, 0o755)) {
+            .result => {},
+            .err => |err| {
+                if (err.errno != @intFromEnum(bun.sys.E.EXIST)) {
+                    if (is_quiet) Output.prettyErrorln("", .{});
+                    Output.prettyErrorln("<r><red>error:<r> Failed to create directory {s}: {}", .{ dest_dir, err });
+                    Global.exit(1);
+                }
+            },
+        }
 
         const temp_archive = try std.fmt.allocPrint(allocator, "{s}.download." ++ node_archive_ext, .{dest_dir});
         defer allocator.free(temp_archive);
-        defer std.fs.deleteFileAbsolute(temp_archive) catch {};
+        defer {
+            if (allocator.dupeZ(u8, temp_archive)) |temp_archiveZ| {
+                defer allocator.free(temp_archiveZ);
+                _ = bun.sys.unlink(temp_archiveZ);
+            } else |_| {}
+        }
 
         const url = URL.parse(url_str);
         var response_buffer = try MutableString.init(allocator, 0);
@@ -351,30 +385,48 @@ pub const NodeCommand = struct {
             Global.exit(1);
         }
 
-        var file = try std.fs.createFileAbsolute(temp_archive, .{});
-        defer file.close();
+        const temp_archiveZ = try allocator.dupeZ(u8, temp_archive);
+        defer allocator.free(temp_archiveZ);
 
-        try file.writeAll(response_buffer.list.items);
+        const fd = switch (bun.sys.open(temp_archiveZ, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+            .result => |fd| fd,
+            .err => |err| {
+                if (is_quiet) Output.prettyErrorln("", .{});
+                Output.prettyErrorln("<r><red>error:<r> Failed to create file {s}: {}", .{ temp_archive, err });
+                Global.exit(1);
+            },
+        };
+        defer fd.close();
 
-        try extractNodeArchive(allocator, temp_archive, dest_dir, version);
+        var file = bun.sys.File{ .handle = fd };
+        switch (file.writeAll(response_buffer.list.items)) {
+            .result => {},
+            .err => |err| {
+                if (is_quiet) Output.prettyErrorln("", .{});
+                Output.prettyErrorln("<r><red>error:<r> Failed to write archive {s}: {}", .{ temp_archive, err });
+                Global.exit(1);
+            },
+        }
+
+        try extractNodeArchive(allocator, temp_archive, dest_dir, version, is_quiet);
     }
 
-    fn extractNodeArchive(allocator: std.mem.Allocator, archive_path: []const u8, dest_dir: []const u8, version: []const u8) !void {
-        // Read the archive file into memory
+    fn extractNodeArchive(allocator: std.mem.Allocator, archive_path: []const u8, dest_dir: []const u8, version: []const u8, is_quiet: bool) !void {
+        _ = version;
         const archive_data = std.fs.cwd().readFileAlloc(allocator, archive_path, std.math.maxInt(usize)) catch |err| {
+            if (is_quiet) Output.prettyErrorln("", .{});
             Output.prettyErrorln("<r><red>error:<r> Failed to read archive {s}: {}", .{ archive_path, err });
             Global.exit(1);
         };
         defer allocator.free(archive_data);
 
-        // Open the destination directory
         var dest_dir_handle = std.fs.openDirAbsolute(dest_dir, .{}) catch |err| {
+            if (is_quiet) Output.prettyErrorln("", .{});
             Output.prettyErrorln("<r><red>error:<r> Failed to open destination directory {s}: {}", .{ dest_dir, err });
             Global.exit(1);
         };
         defer dest_dir_handle.close();
 
-        // Use Bun's built-in libarchive-based extraction
         _ = Archiver.extractToDir(
             archive_data,
             dest_dir_handle,
@@ -382,32 +434,78 @@ pub const NodeCommand = struct {
             void,
             {},
             .{
-                .depth_to_skip = 0,
-                .close_handles = false,
+                .depth_to_skip = 1,
+                .close_handles = true,
             },
         ) catch |err| {
+            if (is_quiet) Output.prettyErrorln("", .{});
             Output.prettyErrorln("<r><red>error:<r> Failed to extract archive {s}: {}", .{ archive_path, err });
             Global.exit(1);
         };
 
-        const extracted_dir = try std.fmt.allocPrint(allocator, "{s}/node-v{s}-" ++ node_platform, .{ dest_dir, version });
-        defer allocator.free(extracted_dir);
-
-        const src_binary = try std.fs.path.join(allocator, &.{ extracted_dir, "bin", node_binary_name });
+        const src_binary = if (Env.isWindows)
+            try std.fs.path.join(allocator, &.{ dest_dir, node_binary_name })
+        else
+            try std.fs.path.join(allocator, &.{ dest_dir, "bin", node_binary_name });
         defer allocator.free(src_binary);
 
         const dest_binary = try std.fs.path.join(allocator, &.{ dest_dir, node_binary_name });
         defer allocator.free(dest_binary);
 
-        try std.fs.copyFileAbsolute(src_binary, dest_binary, .{});
+        if (!Env.isWindows or !strings.eql(src_binary, dest_binary)) {
+            if (Env.isWindows) {
+                const src_binaryZ = try allocator.dupeZ(u8, src_binary);
+                defer allocator.free(src_binaryZ);
+                const dest_binaryZ = try allocator.dupeZ(u8, dest_binary);
+                defer allocator.free(dest_binaryZ);
 
-        if (Env.isPosix) {
-            var dest_file = try std.fs.openFileAbsolute(dest_binary, .{ .mode = .read_write });
-            defer dest_file.close();
-            try dest_file.chmod(0o755);
+                bun.copyFile(src_binaryZ, dest_binaryZ).unwrap() catch |err| {
+                    if (is_quiet) Output.prettyErrorln("", .{});
+                    Output.prettyErrorln("<r><red>error:<r> Failed to copy binary: {}", .{err});
+                    Global.exit(1);
+                };
+            } else {
+                const src_fd = switch (bun.sys.open(try allocator.dupeZ(u8, src_binary), bun.O.RDONLY, 0)) {
+                    .result => |fd| fd,
+                    .err => |err| {
+                        if (is_quiet) Output.prettyErrorln("", .{});
+                        Output.prettyErrorln("<r><red>error:<r> Failed to open source binary: {}", .{err});
+                        Global.exit(1);
+                    },
+                };
+                defer src_fd.close();
+
+                const dest_fd = switch (bun.sys.open(try allocator.dupeZ(u8, dest_binary), bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o755)) {
+                    .result => |fd| fd,
+                    .err => |err| {
+                        if (is_quiet) Output.prettyErrorln("", .{});
+                        Output.prettyErrorln("<r><red>error:<r> Failed to create dest binary: {}", .{err});
+                        Global.exit(1);
+                    },
+                };
+                defer dest_fd.close();
+
+                bun.copyFile(src_fd, dest_fd).unwrap() catch |err| {
+                    if (is_quiet) Output.prettyErrorln("", .{});
+                    Output.prettyErrorln("<r><red>error:<r> Failed to copy binary: {}", .{err});
+                    Global.exit(1);
+                };
+            }
         }
 
-        std.fs.deleteTreeAbsolute(extracted_dir) catch {};
+        if (Env.isPosix) {
+            const dest_binaryZ = try allocator.dupeZ(u8, dest_binary);
+            defer allocator.free(dest_binaryZ);
+
+            switch (bun.sys.chmod(dest_binaryZ, 0o755)) {
+                .result => {},
+                .err => |err| {
+                    if (is_quiet) Output.prettyErrorln("", .{});
+                    Output.prettyErrorln("<r><red>error:<r> Failed to chmod {s}: {}", .{ dest_binary, err });
+                    Global.exit(1);
+                },
+            }
+        }
     }
 
     fn installNodeVersion(ctx: Command.Context, version_spec: []const u8, set_as_default: bool) !void {
@@ -421,14 +519,14 @@ pub const NodeCommand = struct {
         const version_dir = try std.fmt.allocPrint(allocator, "{s}/node-{s}", .{ cache_dir, version });
         defer allocator.free(version_dir);
 
-        const version_binary = try std.fmt.allocPrint(allocator, "{s}/" ++ node_binary_name, .{version_dir});
+        const version_binary = try std.fmt.allocPrintZ(allocator, "{s}/" ++ node_binary_name, .{version_dir});
         defer allocator.free(version_binary);
 
-        if (std.fs.accessAbsolute(version_binary, .{})) |_| {
+        if (bun.sys.access(version_binary, 0) == .result) {
             if (set_as_default) {
                 Output.prettyln("<r><green>✓<r> Node.js v{s} is already installed", .{version});
             }
-        } else |_| {
+        } else {
             if (set_as_default) {
                 try downloadNode(allocator, version, version_dir);
                 Output.prettyln("<r><green>✓<r> Successfully installed Node.js v{s}", .{version});
@@ -454,50 +552,70 @@ pub const NodeCommand = struct {
         const bin_dir = try getNodeBinDir(allocator);
         defer allocator.free(bin_dir);
 
-        std.fs.makeDirAbsolute(bin_dir) catch |err| {
-            if (err != error.PathAlreadyExists) return err;
-        };
+        const bin_dirZ = try allocator.dupeZ(u8, bin_dir);
+        defer allocator.free(bin_dirZ);
 
-        const version_binary = try std.fmt.allocPrint(allocator, "{s}/node-{s}/" ++ node_binary_name, .{ cache_dir, version });
+        switch (bun.sys.mkdir(bin_dirZ, 0o755)) {
+            .result => {},
+            .err => |err| {
+                if (err.errno != @intFromEnum(bun.sys.E.EXIST)) {
+                    return err.toZigErr();
+                }
+            },
+        }
+
+        const version_binary = try std.fmt.allocPrintZ(allocator, "{s}/node-{s}/" ++ node_binary_name, .{ cache_dir, version });
         defer allocator.free(version_binary);
 
-        std.fs.accessAbsolute(version_binary, .{}) catch {
+        if (bun.sys.access(version_binary, 0) != .result) {
             const version_dir = try std.fmt.allocPrint(allocator, "{s}/node-{s}", .{ cache_dir, version });
             defer allocator.free(version_dir);
 
             Output.prettyErrorln("<r><yellow>warn:<r> Node.js v{s} binary not found, downloading...", .{version});
             try downloadNode(allocator, version, version_dir);
-        };
+        }
 
-        const global_binary = try std.fs.path.join(allocator, &.{ bin_dir, node_binary_name });
+        const global_binary = try std.fs.path.joinZ(allocator, &.{ bin_dir, node_binary_name });
         defer allocator.free(global_binary);
 
-        std.fs.deleteFileAbsolute(global_binary) catch {};
+        _ = bun.sys.unlink(global_binary);
 
-        if (Env.isWindows) {
-            std.fs.createFileAbsolute(global_binary, .{}) catch {};
-            std.fs.deleteFileAbsolute(global_binary) catch {};
+        switch (bun.sys.link(u8, version_binary, global_binary)) {
+            .result => {},
+            .err => |err| switch (err.getErrno()) {
+                .XDEV => {
+                    if (Env.isWindows) {
+                        bun.copyFile(version_binary, global_binary).unwrap() catch |copy_err| {
+                            Output.prettyErrorln("<r><red>error:<r> Failed to copy Node binary: {}", .{copy_err});
+                            Global.exit(1);
+                        };
+                    } else {
+                        const src_fd = switch (bun.sys.open(version_binary, bun.O.RDONLY, 0)) {
+                            .result => |fd| fd,
+                            .err => |open_err| {
+                                Output.prettyErrorln("<r><red>error:<r> Failed to open source binary: {}", .{open_err});
+                                Global.exit(1);
+                            },
+                        };
+                        defer src_fd.close();
 
-            std.fs.Dir.hardLink(
-                std.fs.cwd(),
-                version_binary,
-                std.fs.cwd(),
-                global_binary,
-            ) catch |err| {
-                if (err == error.NotSameFileSystem) {
-                    try std.fs.copyFileAbsolute(version_binary, global_binary, .{});
-                } else {
-                    return err;
-                }
-            };
-        } else {
-            std.posix.link(version_binary, global_binary) catch |err| {
-                if (err == error.CrossDevice) {
-                    try std.fs.copyFileAbsolute(version_binary, global_binary, .{});
-                } else {
-                    return err;
-                }
-            };
+                        const dest_fd = switch (bun.sys.open(global_binary, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o755)) {
+                            .result => |fd| fd,
+                            .err => |open_err| {
+                                Output.prettyErrorln("<r><red>error:<r> Failed to create dest binary: {}", .{open_err});
+                                Global.exit(1);
+                            },
+                        };
+                        defer dest_fd.close();
+
+                        bun.copyFile(src_fd, dest_fd).unwrap() catch |copy_err| {
+                            Output.prettyErrorln("<r><red>error:<r> Failed to copy Node binary: {}", .{copy_err});
+                            Global.exit(1);
+                        };
+                    }
+                },
+                else => return err.toZigErr(),
+            },
         }
     }
 
@@ -512,11 +630,19 @@ pub const NodeCommand = struct {
         const bin_dir = try getNodeBinDir(allocator);
         defer allocator.free(bin_dir);
 
-        std.fs.makeDirAbsolute(bin_dir) catch |err| {
-            if (err != error.PathAlreadyExists) return err;
-        };
+        const bin_dirZ2 = try allocator.dupeZ(u8, bin_dir);
+        defer allocator.free(bin_dirZ2);
 
-        const global_binary = try std.fs.path.join(allocator, &.{ bin_dir, node_binary_name });
+        switch (bun.sys.mkdir(bin_dirZ2, 0o755)) {
+            .result => {},
+            .err => |err| {
+                if (err.errno != @intFromEnum(bun.sys.E.EXIST)) {
+                    return err.toZigErr();
+                }
+            },
+        }
+
+        const global_binary = try std.fs.path.joinZ(allocator, &.{ bin_dir, node_binary_name });
         defer allocator.free(global_binary);
 
         const bun_exe = bun.selfExePath() catch {
@@ -524,29 +650,47 @@ pub const NodeCommand = struct {
             Global.crash();
         };
 
-        std.fs.deleteFileAbsolute(global_binary) catch {};
+        _ = bun.sys.unlink(global_binary);
 
-        if (Env.isWindows) {
-            std.fs.Dir.hardLink(
-                std.fs.cwd(),
-                bun_exe,
-                std.fs.cwd(),
-                global_binary,
-            ) catch |err| {
-                if (err == error.NotSameFileSystem) {
-                    try std.fs.copyFileAbsolute(bun_exe, global_binary, .{});
-                } else {
-                    return err;
-                }
-            };
-        } else {
-            std.posix.link(bun_exe, global_binary) catch |err| {
-                if (err == error.CrossDevice) {
-                    try std.fs.copyFileAbsolute(bun_exe, global_binary, .{});
-                } else {
-                    return err;
-                }
-            };
+        switch (bun.sys.link(u8, bun_exe, global_binary)) {
+            .result => {},
+            .err => |err| switch (err.getErrno()) {
+                .XDEV => {
+                    if (Env.isWindows) {
+                        const bun_exeZ = try allocator.dupeZ(u8, bun_exe);
+                        defer allocator.free(bun_exeZ);
+
+                        bun.copyFile(bun_exeZ, global_binary).unwrap() catch |copy_err| {
+                            Output.prettyErrorln("<r><red>error:<r> Failed to copy Bun binary: {}", .{copy_err});
+                            Global.exit(1);
+                        };
+                    } else {
+                        const src_fd = switch (bun.sys.open(try allocator.dupeZ(u8, bun_exe), bun.O.RDONLY, 0)) {
+                            .result => |fd| fd,
+                            .err => |open_err| {
+                                Output.prettyErrorln("<r><red>error:<r> Failed to open Bun binary: {}", .{open_err});
+                                Global.exit(1);
+                            },
+                        };
+                        defer src_fd.close();
+
+                        const dest_fd = switch (bun.sys.open(global_binary, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o755)) {
+                            .result => |fd| fd,
+                            .err => |open_err| {
+                                Output.prettyErrorln("<r><red>error:<r> Failed to create dest binary: {}", .{open_err});
+                                Global.exit(1);
+                            },
+                        };
+                        defer dest_fd.close();
+
+                        bun.copyFile(src_fd, dest_fd).unwrap() catch |copy_err| {
+                            Output.prettyErrorln("<r><red>error:<r> Failed to copy Bun binary: {}", .{copy_err});
+                            Global.exit(1);
+                        };
+                    }
+                },
+                else => return err.toZigErr(),
+            },
         }
 
         Output.prettyln("<r><green>✓<r> Successfully aliased 'node' to Bun", .{});
@@ -566,9 +710,12 @@ pub const NodeCommand = struct {
         const version_binary = try std.fmt.allocPrint(allocator, "{s}/node-{s}/" ++ node_binary_name, .{ cache_dir, version });
         defer allocator.free(version_binary);
 
-        if (std.fs.accessAbsolute(version_binary, .{})) |_| {
+        const version_binaryZ3 = try allocator.dupeZ(u8, version_binary);
+        defer allocator.free(version_binaryZ3);
+
+        if (bun.sys.access(version_binaryZ3, 0) == .result) {
             try runNode(allocator, version_binary, args);
-        } else |_| {
+        } else {
             try installNodeVersion(ctx, version_spec, false);
             try runNode(allocator, version_binary, args);
         }
@@ -580,13 +727,13 @@ pub const NodeCommand = struct {
         const bin_dir = try getNodeBinDir(allocator);
         defer allocator.free(bin_dir);
 
-        const node_symlink = try std.fs.path.join(allocator, &.{ bin_dir, node_binary_name });
+        const node_symlink = try std.fs.path.joinZ(allocator, &.{ bin_dir, node_binary_name });
         defer allocator.free(node_symlink);
 
-        if (std.fs.accessAbsolute(node_symlink, .{})) |_| {
+        if (bun.sys.access(node_symlink, 0) == .result) {
             try runNode(allocator, node_symlink, args);
             return;
-        } else |_| {}
+        }
 
         var path_buf2: bun.PathBuffer = undefined;
         const path_env2 = bun.getenvZ("PATH") orelse "";
@@ -740,11 +887,11 @@ pub const NodeCommand = struct {
                         }
                         break;
                     } else if (entry.len > 0) {
-                        const test_node = try std.fs.path.join(allocator, &.{ entry, "node" });
+                        const test_node = try std.fs.path.joinZ(allocator, &.{ entry, "node" });
                         defer allocator.free(test_node);
-                        if (std.fs.accessAbsolute(test_node, .{})) |_| {
+                        if (bun.sys.access(test_node, 0) == .result) {
                             found_other_dir = true;
-                        } else |_| {}
+                        }
                     }
                 }
 

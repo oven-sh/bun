@@ -872,7 +872,7 @@ pub fn resolve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     const arguments = callframe.arguments_old(3);
     const value = doResolve(globalObject, arguments.slice()) catch |e| {
         const err = globalObject.takeError(e);
-        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, err);
+        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, err);
     };
     return jsc.JSPromise.resolvedPromiseValue(globalObject, value);
 }

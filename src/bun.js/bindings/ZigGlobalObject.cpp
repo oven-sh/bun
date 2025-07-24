@@ -4501,7 +4501,6 @@ JSC::JSPromise* GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC
 
 JSC::JSPromise* GlobalObject::instantiateStreaming(JSGlobalObject* globalObject, JSC::JSValue source, JSC::JSObject* importObject)
 {
-
     return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::FullCompile, importObject);
 }
 

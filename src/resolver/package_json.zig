@@ -824,7 +824,8 @@ pub const PackageJSON = struct {
                     }
                 }
                 if (json.get("cpu")) |os_field| {
-                    if (os_field.asArray()) |array| {
+                    var temp = os_field.asArray();
+                    if (temp) |*array| {
                         var arch = Architecture.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
@@ -839,7 +840,8 @@ pub const PackageJSON = struct {
                 }
 
                 if (json.get("os")) |os_field| {
-                    if (os_field.asArray()) |array| {
+                    var temp = os_field.asArray();
+                    if (temp) |*array| {
                         var os = OperatingSystem.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
@@ -854,7 +856,8 @@ pub const PackageJSON = struct {
                 }
 
                 if (json.get("libc")) |libc_field| {
-                    if (libc_field.asArray()) |array| {
+                    var temp = libc_field.asArray();
+                    if (temp) |*array| {
                         var libc = Libc.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {

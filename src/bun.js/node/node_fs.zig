@@ -3158,7 +3158,7 @@ pub const StringOrUndefined = union(enum) {
 
     pub fn toJS(this: *const StringOrUndefined, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         return switch (this.*) {
-            .string => this.string.toJS(globalObject),
+            .string => this.string.transferToJS(globalObject),
             .none => .js_undefined,
         };
     }

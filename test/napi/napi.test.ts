@@ -512,6 +512,10 @@ describe("napi", () => {
   it("works when the module register function throws", async () => {
     expect(() => require("./napi-app/build/Debug/throw_addon.node")).toThrow(new Error("oops!"));
   });
+
+  it("runs the napi_module_register callback after dlopen finishes", () => {
+    checkSameOutput("test_constructor_order", []);
+  });
 });
 
 async function checkSameOutput(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
